@@ -1,0 +1,14 @@
+- networks: 
+    - network:
+      - id: 137
+      - rpc-url: https://polygon-rpc.com
+      - start-block: 34316032
+    
+- contracts:
+  - contract:  
+    - name: LensProtocolProfiles
+    - abi: 
+      - "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
+    - address: 0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d
+    - events: 
+      - Transfer  
