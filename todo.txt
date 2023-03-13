@@ -1,0 +1,8 @@
+1. Create project template
+2. Create Codegen
+    - generate types from schema
+    - generate types from abi
+    - generate combined ethers filter
+    - generate Index file that starts up everything, creates the contexts and passes them to handlers
+    - generate a context stub
+    - generate handler template
