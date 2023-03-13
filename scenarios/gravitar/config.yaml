@@ -6,6 +6,8 @@ networks:
       - id: 137
       - rpc-url: https://polygon-rpc.com
       - start-block: 34316032
+
+handler: ./handler.js
     
 contracts:
   - contract:  
@@ -15,8 +17,8 @@ contracts:
         - "event UpdatedGravatar(uint256,address,string,string)"
     - address: 0x2E645469f354BB4F5c8a05B3b30A929361cf77eC
     - events: 
-      - NewGravatar  
-      - UpdatedGravatar  
+      - NewGravatar
+      - UpdatedGravatar
 
 #From The Graph Example
 #
