@@ -20,7 +20,7 @@ let eventRouter = async (event: EventTypes.event) => {
 }
 
 let processEventBatch = async (eventBatch: array<EventTypes.event>) => {
-  for i in 0 to eventBatch->Belt.Array.length - 1 {
+  for i in 0 to eventBatch->Belt.Array.length {
     await eventBatch[i]->eventRouter
   }
 

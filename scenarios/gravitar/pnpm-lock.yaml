@@ -1,0 +1,26 @@
+lockfileVersion: 5.4
+
+importers:
+
+  .:
+    specifiers:
+      generated: workspace:*
+      rescript: ^10.1.2
+    dependencies:
+      generated: link:generated
+    devDependencies:
+      rescript: 10.1.3
+
+  generated:
+    specifiers:
+      rescript: ^10.1.2
+    devDependencies:
+      rescript: 10.1.3
+
+packages:
+
+  /rescript/10.1.3:
+    resolution: {integrity: sha512-5qaf63As6nkbrMRJ85kZ0ifLzKAGPOGLuoJ4zFVGZIp4oMePRt6bCKWAIX7zgbRDfRPa3jSu+EnoY2873gxaIA==}
+    hasBin: true
+    requiresBuild: true
+    dev: true

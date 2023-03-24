@@ -1,14 +1,14 @@
 {
-  "name": "generated",
+  "name": "gravitar",
   "version": "0.1.0",
-  "sources": [
-    {
+  "sources": {
     "dir" : "src",
     "subdirs" : true
-  }],
+  },
   "package-specs": {
     "module": "commonjs",
     "in-source": true
   },
-  "suffix": ".bs.js"
+  "bs-dependencies": ["generated"],
+  "pinned-dependencies": ["generated"]
 }
