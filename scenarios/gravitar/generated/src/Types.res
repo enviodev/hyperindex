@@ -39,3 +39,15 @@ type gravatarEntity = {
   imageUrl: string,
   updatesCount: int,
 }
+
+//*************
+//** CONTEXT **
+//*************
+
+type gravitarController = {
+  insert: gravatarEntity => unit,
+  update: gravatarEntity => unit,
+  readEntities: array<gravatarEntity>,
+}
+
+type context = {@as("Gravatar") gravatar: gravitarController}
