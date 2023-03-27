@@ -1,11 +1,11 @@
 @module("../../src/EventHandlers.js")
 external gravatarNewGravatarEventHandler: (
-  EventTypes.eventLog<EventTypes.newGravatarEvent>,
+  Types.eventLog<Types.newGravatarEvent>,
   ContextStub.context,
 ) => unit = "gravatarNewGravatarEventHandler"
 
 @module("../../src/EventHandlers.js")
 external gravatarUpdateGravatarEventHandler: (
-  EventTypes.eventLog<EventTypes.updateGravatarEvent>,
+  Types.eventLog<Types.updateGravatarEvent>,
   ContextStub.context,
 ) => unit = "gravatarUpdateGravatarEventHandler"
