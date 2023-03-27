@@ -2,10 +2,9 @@
 'use strict';
 
 var Curry = require("rescript/lib/js/curry.js");
-var Belt_Array = require("rescript/lib/js/belt_Array.js");
 var Belt_Option = require("rescript/lib/js/belt_Option.js");
 
-function gravatarNewGravatarReadEntities(_event) {
+function gravatarNewGravatarLoadEntities(_event) {
   return [];
 }
 
@@ -19,14 +18,14 @@ function gravatarNewGravatarEventHandler($$event, context) {
       });
 }
 
-function gravatarUpdateGravatarReadEntities($$event) {
+function gravatarUpdateGravatarLoadEntities($$event) {
   return [/* GravatarRead */{
             _0: $$event.params.id
           }];
 }
 
 function gravatarUpdateGravatarEventHandler($$event, context) {
-  var updatesCount = Belt_Option.mapWithDefault(Belt_Array.get(context.Gravatar.readEntities, 0), 1, (function (gravatar) {
+  var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.Gravatar.loadedEntities.getById, $$event.params.id), 1, (function (gravatar) {
           return gravatar.updatesCount + 1 | 0;
         }));
   Curry._1(context.Gravatar.update, {
@@ -38,8 +37,8 @@ function gravatarUpdateGravatarEventHandler($$event, context) {
       });
 }
 
-exports.gravatarNewGravatarReadEntities = gravatarNewGravatarReadEntities;
+exports.gravatarNewGravatarLoadEntities = gravatarNewGravatarLoadEntities;
 exports.gravatarNewGravatarEventHandler = gravatarNewGravatarEventHandler;
-exports.gravatarUpdateGravatarReadEntities = gravatarUpdateGravatarReadEntities;
+exports.gravatarUpdateGravatarLoadEntities = gravatarUpdateGravatarLoadEntities;
 exports.gravatarUpdateGravatarEventHandler = gravatarUpdateGravatarEventHandler;
 /* No side effect */

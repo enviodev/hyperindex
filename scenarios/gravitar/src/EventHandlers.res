@@ -1,7 +1,7 @@
 open Types
 
 //user defined function that read entities based on the event log
-let gravatarNewGravatarReadEntities = (_event: eventLog<newGravatarEvent>): array<entityRead> => {
+let gravatarNewGravatarLoadEntities = (_event: eventLog<newGravatarEvent>): array<entityRead> => {
   []
 }
 
@@ -18,7 +18,7 @@ let gravatarNewGravatarEventHandler = (event: eventLog<newGravatarEvent>, contex
 }
 
 //user defined function that read entities based on the event log
-let gravatarUpdateGravatarReadEntities = (event: eventLog<updateGravatarEvent>): array<
+let gravatarUpdateGravatarLoadEntities = (event: eventLog<updateGravatarEvent>): array<
   entityRead,
 > => {
   [GravatarRead(event.params.id)]
@@ -29,9 +29,10 @@ let gravatarUpdateGravatarEventHandler = (
   context: context,
 ) => {
   let updatesCount =
-    context.gravatar.readEntities
-    ->Belt.Array.get(0)
-    ->Belt.Option.mapWithDefault(1, gravatar => gravatar.updatesCount + 1)
+    context.gravatar.loadedEntities.getById(event.params.id)->Belt.Option.mapWithDefault(
+      1,
+      gravatar => gravatar.updatesCount + 1,
+    )
 
   let gravatar: gravatarEntity = {
     id: event.params.id,

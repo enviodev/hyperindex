@@ -3,28 +3,38 @@ let generateCombinedFilter = (): combinedFilter => {
   ()->Obj.magic
 }
 
-let eventRouter = async (event: Types.event) => {
+let eventRouter = (event: Types.event, context) => {
   switch event {
-  | NewGravatar(event) =>
-    //assemble context
-    let newGravatarContext = await Context.loadNewGravatarContext()
-    Handlers.gravatarNewGravatarEventHandler(event, newGravatarContext)
-    await Context.saveNewGravatarContext()
+  | NewGravatar(event) => Handlers.gravatarNewGravatarEventHandler(event, context)
 
-  | UpdateGravatar(event) => {
-      let updateGravatarContext = await Context.loadUpdateGravatarContext()
-      Handlers.gravatarUpdateGravatarEventHandler(event, updateGravatarContext)
-      await Context.saveUpdateGravatarContext()
-    }
+  | UpdateGravatar(event) => Handlers.gravatarUpdateGravatarEventHandler(event, context)
   }
 }
 
-let processEventBatch = async (eventBatch: array<Types.event>) => {
-  for i in 0 to eventBatch->Belt.Array.length - 1 {
-    await eventBatch[i]->eventRouter
-  }
+let loadReadEntities = async (eventBatch: array<Types.event>) => {
+  let readEntities =
+    eventBatch
+    ->Belt.Array.map(event => {
+      switch event {
+      | NewGravatar(event) => event->Handlers.gravatarNewGravatarLoadEntities
+      | UpdateGravatar(event) => event->Handlers.gravatarUpdateGravatarLoadEntities
+      }
+    })
+    ->Belt.Array.concatMany
 
-  // eventBatch->Belt.Array.forEach(event => event->eventRouter->ignore)
+  await readEntities->IO.loadEntities
+}
+
+let processEventBatch = async (eventBatch: array<Types.event>) => {
+  let ioBatch = IO.createBatch()
+
+  await eventBatch->loadReadEntities
+
+  let context = IO.getContext()
+
+  eventBatch->Belt.Array.forEach(event => event->eventRouter(context))
+
+  await ioBatch->IO.executeBatch
 }
 
 let startIndexer = () => {
