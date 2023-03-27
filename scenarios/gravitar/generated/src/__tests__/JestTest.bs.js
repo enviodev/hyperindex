@@ -2,11 +2,16 @@
 'use strict';
 
 var Jest = require("@glennsl/rescript-jest/src/jest.bs.js");
+var Curry = require("rescript/lib/js/curry.js");
+var Index = require("../Index.bs.js");
+var MockEvents = require("../__mocks__/MockEvents.bs.js");
+var Js_promise2 = require("rescript/lib/js/js_promise2.js");
 
-Jest.describe("First test", (function (param) {
-        Jest.test("test 1", (function (param) {
-                console.log("test1");
-                return Jest.Expect.toBe(Jest.Expect.expect(1), 1);
+Jest.describe("E2E Mock Event Batch", (function (param) {
+        Jest.testAsync("3 newGravitar, 3 updateGravitar", undefined, (function (resolve) {
+                Js_promise2.then(Index.processEventBatch(MockEvents.eventBatch), (function (param) {
+                        return Promise.resolve(Curry._1(resolve, Jest.pass));
+                      }));
               }));
       }));
 

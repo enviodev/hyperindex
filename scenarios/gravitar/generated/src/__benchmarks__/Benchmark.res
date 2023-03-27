@@ -1,8 +1,12 @@
 open JestBench
 
 benchmarkSuite(
-  "test benchmark 1",
+  "benchmark E2E demo",
   {
-    "log test": () => Js.log("benchmark success"),
+    "3 newGravitar & 3 updateGravitar": defer => {
+      Index.processEventBatch(MockEvents.eventBatch)
+      ->Js.Promise2.then(_ => defer.resolve(.)->Js.Promise2.resolve)
+      ->ignore
+    },
   },
 )

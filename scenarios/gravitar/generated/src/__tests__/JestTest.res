@@ -1,9 +1,9 @@
 open Jest
-open Expect
 
-describe("First test", () => {
-  test("test 1", () => {
-    Js.log("test1")
-    expect(1)->toBe(1)
+describe("E2E Mock Event Batch", () => {
+  testAsync("3 newGravitar, 3 updateGravitar", resolve => {
+    Index.processEventBatch(MockEvents.eventBatch)
+    ->Js.Promise2.then(_ => pass->resolve->Js.Promise2.resolve)
+    ->ignore
   })
 })
