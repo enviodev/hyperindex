@@ -3,4 +3,5 @@ type Gravatar @entity {
   owner: Bytes!
   displayName: String!
   imageUrl: String!
+  updatesCount: Int!
 }
