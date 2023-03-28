@@ -32,6 +32,12 @@ type id = string
 
 type entityRead = GravatarRead(id)
 
+let entitySerialize = (entity: entityRead) => {
+  switch entity {
+  | GravatarRead(gravatarId) => `gravatar${gravatarId}`
+  }
+}
+
 type gravatarEntity = {
   id: string,
   owner: string,
