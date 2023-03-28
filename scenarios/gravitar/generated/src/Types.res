@@ -32,6 +32,12 @@ type id = string
 
 type entityRead = GravatarRead(id)
 
+let entitySerialize = (entity: entityRead) => {
+  switch entity {
+  | GravatarRead(gravatarId) => `gravatar${gravatarId}`
+  }
+}
+
 type gravatarEntity = {
   id: string,
   owner: string,
@@ -40,6 +46,14 @@ type gravatarEntity = {
   updatesCount: int,
 }
 
+type entity = GravatarEntity(gravatarEntity)
+
+type crud = Create | Read | Update | Delete
+
+type inMemoryStoreRow<'a> = {
+  crud: crud,
+  entity: 'a,
+}
 //*************
 //** CONTEXT **
 //*************

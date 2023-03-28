@@ -4,7 +4,8 @@ let insertMock = (id => id)->Jest.JestJs.fn
 let updateMock = (id => id)->Jest.JestJs.fn
 
 let loadedEntities = {
-  getById: _id => Some(MockEntities.gravatarEntity1), //dataframe should store which event was reading this and limit access
+  getById: id => IO.InMemoryStore.getGravatar(~id),
+  // Some(MockEntities.gravatarEntity1), //dataframe should store which event was reading this and limit access
   getAllLoaded: () => [MockEntities.gravatarEntity1], //Note this should call the read function in handlers and grab all the loaded entities related to this event,
 }
 
@@ -13,10 +14,12 @@ let context = {
     insert: gravatarInsert => {
       /* Js.log2("Insert:", gravatarInsert.id) */
       insertMock->Jest.MockJs.fn(gravatarInsert.id)->ignore
+      IO.InMemoryStore.setGravatar(~gravatar=gravatarInsert, ~crud=Types.Create)
     },
     update: gravatarUpdate => {
       /* Js.log2("update:", gravatarUpdate.id) */
       updateMock->Jest.MockJs.fn(gravatarUpdate.id)->ignore
+      IO.InMemoryStore.setGravatar(~gravatar=gravatarUpdate, ~crud=Types.Update)
     },
     loadedEntities,
   },
