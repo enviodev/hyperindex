@@ -1,9 +1,30 @@
 open Jest
-
+open Expect
 describe("E2E Mock Event Batch", () => {
-  testAsync("3 newGravitar, 3 updateGravitar", resolve => {
-    Index.processEventBatch(MockEvents.eventBatch)
-    ->Js.Promise2.then(_ => pass->resolve->Js.Promise2.resolve)
-    ->ignore
+  beforeAllPromise(async () => {
+    await Index.processEventBatch(MockEvents.eventBatch)
+  })
+
+  afterAll(() => {
+    ContextStub.insertMock->MockJs.mockClear
+    ContextStub.updateMock->MockJs.mockClear
+  })
+
+  test("3 newGravitar event insert calls in order", () => {
+    let insertCalls = ContextStub.insertMock->MockJs.calls
+    expect(insertCalls)->toEqual([
+      MockEvents.newGravatar1.id,
+      MockEvents.newGravatar2.id,
+      MockEvents.newGravatar3.id,
+    ])
+  })
+
+  test("3 updateGravitar event insert calls in order", () => {
+    let insertCalls = ContextStub.insertMock->MockJs.calls
+    expect(insertCalls)->toEqual([
+      MockEvents.updateGravatar1.id,
+      MockEvents.updateGravatar2.id,
+      MockEvents.updateGravatar3.id,
+    ])
   })
 })

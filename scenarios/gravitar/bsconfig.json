@@ -2,9 +2,10 @@
   "name": "gravitar",
   "version": "0.1.0",
   "sources": {
-    "dir" : "src",
-    "subdirs" : true
+    "dir": "src",
+    "subdirs": true
   },
+  "suffix": ".bs.js",
   "package-specs": {
     "module": "commonjs",
     "in-source": true

@@ -1,11 +1,11 @@
-// import { NewGravatar, UpdatedGravatar } from "../generated/Gravatar/Gravatar";
-// import { Gravatar } from "../generated/schema";
 open Types
 
-let gravatarNewGravatarEventHandler = (
-  event: eventLog<newGravatarEvent>,
-  context: ContextStub.context,
-) => {
+//user defined function that read entities based on the event log
+let gravatarNewGravatarLoadEntities = (_event: eventLog<newGravatarEvent>): array<entityRead> => {
+  []
+}
+
+let gravatarNewGravatarEventHandler = (event: eventLog<newGravatarEvent>, context: context) => {
   let gravatarObject: gravatarEntity = {
     id: event.params.id,
     owner: event.params.owner,
@@ -16,22 +16,30 @@ let gravatarNewGravatarEventHandler = (
 
   context.gravatar.insert(gravatarObject)
 }
+
 //user defined function that read entities based on the event log
-let updateGravatarEntityRead = (event: eventLog<updateGravatarEvent>): array<entityRead> => {
+let gravatarUpdateGravatarLoadEntities = (event: eventLog<updateGravatarEvent>): array<
+  entityRead,
+> => {
   [GravatarRead(event.params.id)]
 }
 
 let gravatarUpdateGravatarEventHandler = (
   event: eventLog<updateGravatarEvent>,
-  context: ContextStub.context,
+  context: context,
 ) => {
-  let entities = context.readGravatarEntities
+  let updatesCount =
+    context.gravatar.loadedEntities.getById(event.params.id)->Belt.Option.mapWithDefault(
+      1,
+      gravatar => gravatar.updatesCount + 1,
+    )
+
   let gravatar: gravatarEntity = {
     id: event.params.id,
     owner: event.params.owner,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
-    updatesCount: entities[0].updateCounts + 1,
+    updatesCount,
   }
 
   context.gravatar.update(gravatar)
