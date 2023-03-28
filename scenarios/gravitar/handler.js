@@ -1,6 +1,6 @@
-import { NewGravatar, UpdatedGravatar } from "../generated/Gravity/Gravity";
+import { NewGravatar, UpdatedGravatar } from "../generated/Gravatar/Gravatar";
 import { Gravatar } from "../generated/schema";
-lensProtocolProfilesTransferEventHandler;
+
 let gravatarNewGravatarEventHandler = (event: NewGravatar, context) => {
   let gravatarObject = {
     id: event.params.id,

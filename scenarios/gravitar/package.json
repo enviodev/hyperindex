@@ -1,11 +1,10 @@
 {
-  "name": "generated",
+  "name": "gravitar",
   "version": "0.1.0",
   "scripts": {
     "clean": "rescript clean",
     "build": "rescript build",
-    "watch": "rescript build -w",
-    "test": "node --watch ./src/tests/Test.bs.js"
+    "watch": "rescript build -w"
   },
   "keywords": [
     "ReScript"
@@ -14,5 +13,9 @@
   "license": "MIT",
   "devDependencies": {
     "rescript": "^10.1.2"
+  },
+  "dependencies": {
+    "generated": "workspace:*"
+
   }
 }
