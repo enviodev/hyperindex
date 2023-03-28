@@ -10,5 +10,6 @@
     "module": "commonjs",
     "in-source": true
   },
-  "suffix": ".bs.js"
+  "suffix": ".bs.js",
+  "bs-dependencies": ["@glennsl/rescript-jest"]
 }

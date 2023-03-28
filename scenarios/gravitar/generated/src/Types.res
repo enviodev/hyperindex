@@ -25,3 +25,17 @@ type eventLog<'a> = {
 type event =
   | NewGravatar(eventLog<newGravatarEvent>)
   | UpdateGravatar(eventLog<updateGravatarEvent>)
+
+// generated entity types:
+
+type id = string
+
+type entityRead = GravatarRead(id)
+
+type gravatarEntity = {
+  id: string,
+  owner: string,
+  displayName: string,
+  imageUrl: string,
+  updatesCount: int,
+}

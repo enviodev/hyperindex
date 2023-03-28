@@ -1,6 +1,6 @@
 type gravitarController = {
-  insert: SchemaTypes.gravatar => unit,
-  update: SchemaTypes.gravatar => unit,
+  insert: Types.gravatarEntity => unit,
+  update: Types.gravatarEntity => unit,
 }
 type context = {@as("Gravatar") gravatar: gravitarController}
 
