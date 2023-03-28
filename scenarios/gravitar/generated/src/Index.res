@@ -3,7 +3,7 @@ let generateCombinedFilter = (): combinedFilter => {
   ()->Obj.magic
 }
 
-let eventRouter = async (event: EventTypes.event) => {
+let eventRouter = async (event: Types.event) => {
   switch event {
   | NewGravatar(event) =>
     //assemble context
@@ -19,7 +19,7 @@ let eventRouter = async (event: EventTypes.event) => {
   }
 }
 
-let processEventBatch = async (eventBatch: array<EventTypes.event>) => {
+let processEventBatch = async (eventBatch: array<Types.event>) => {
   for i in 0 to eventBatch->Belt.Array.length - 1 {
     await eventBatch[i]->eventRouter
   }
