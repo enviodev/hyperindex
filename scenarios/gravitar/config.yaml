@@ -2,30 +2,28 @@ version: 0.0.0
 description: Gravatar for Ethereum
 repository: https://github.com/graphprotocol/example-subgraph
 networks: 
-    - network:
-        id: 137
-        rpc-url: https://polygon-rpc.com
-        start-block: 34316032
+    - id: 137
+      rpc-url: https://polygon-rpc.com
+      start-block: 34316032
 
 handler: ./handler.js # What if people want to use different handler files per contract, or per network.
 
 # TODO: this isn't multi-chain compatible - think of how to allow different contracts on different chains. (maybe not for MVP)
 contracts:
-  - contract:  
-      name: Gravatar
-      abi: 
-          - "event NewGravatar(uint256,address,string,string)"
-          - "event UpdatedGravatar(uint256,address,string,string)"
-      address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC" # TODO: work out if this can be a different type to string
-      events: 
-      - NewGravatar:
-          requiredEntities: [] # empty signifies no requirements
-      - UpdatedGravatar:
-          requiredEntities: # if this field isn't specified it should default to include all entities
-            - Gravatar:
-                allowArbitrary: false # this defauls to false
-                labels: 
-                - "gravatarWithChanges"
+  - name: Gravatar
+    abi: 
+        - "event NewGravatar(uint256,address,string,string)"
+        - "event UpdatedGravatar(uint256,address,string,string)"
+    address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC" # TODO: work out if this can be a different type to string
+    events: 
+    - name: "NewGravatar"
+      requiredEntities: [] # empty signifies no requirements
+    - name: "UpdatedGravatar"
+      requiredEntities: # if this field isn't specified it should default to include all entities
+        - name: "Gravatar"
+          allowArbitrary: false # this defauls to false
+          labels: 
+          - "gravatarWithChanges"
 
 #From The Graph Example
 #

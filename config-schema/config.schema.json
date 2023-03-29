@@ -1,10 +1,11 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "YAML Config with Contract and Events",
+  "description": "Schema for a YAML config with a contract and events",
   "type": "object",
   "properties": {
     "version": {
-      "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+      "type": "string"
     },
     "description": {
       "type": "string"
@@ -17,138 +18,94 @@
       "items": {
         "type": "object",
         "properties": {
-          "network": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "integer"
-              },
-              "rpc-url": {
-                "type": "string"
-              },
-              "start-block": {
-                "type": "integer"
-              }
-            },
-            "required": [
-              "id",
-              "rpc-url",
-              "start-block"
-            ]
+          "id": {
+            "type": "integer"
+          },
+          "rpc-url": {
+            "type": "string"
+          },
+          "start-block": {
+            "type": "integer"
           }
         },
         "required": [
-          "network"
+          "id",
+          "rpc-url",
+          "start-block"
         ]
       }
-    },
-    "handler": {
-      "type": "string"
     },
     "contracts": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
-          "contract": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "abi": {
-                "type": "array",
-                "items": {
+          "name": {
+            "type": "string"
+          },
+          "abi": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "address": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
                   "type": "string"
-                }
-              },
-              "address": {
-                "type": "string"
-              },
-              "events": {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "NewGravatar": {
-                      "type": "object",
-                      "properties": {
-                        "requiredEntities": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "Gravatar": {
-                                "type": "object",
-                                "properties": {
-                                  "allowArbitrary": {
-                                    "type": "boolean",
-                                    "default": false
-                                  },
-                                  "labels": {
-                                    "type": "array",
-                                    "items": {
-                                      "type": "string"
-                                    }
-                                  }
-                                },
-                                "required": []
-                              }
-                            }
+                },
+                "requiredEntities": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "Gravatar": {
+                        "type": "object",
+                        "properties": {
+                          "allowArbitrary": {
+                            "type": "boolean"
                           },
-                          "default": []
-                        }
-                      }
-                    },
-                    "UpdatedGravatar": {
-                      "type": "object",
-                      "properties": {
-                        "requiredEntities": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "Gravatar": {
-                                "type": "object",
-                                "properties": {
-                                  "allowArbitrary": {
-                                    "type": "boolean",
-                                    "default": false
-                                  },
-                                  "labels": {
-                                    "type": "array",
-                                    "items": {
-                                      "type": "string"
-                                    }
-                                  }
-                                },
-                                "required": []
-                              }
+                          "labels": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
                             }
                           }
-                        }
+                        },
+                        "required": [
+                          "allowArbitrary",
+                          "labels"
+                        ]
                       }
                     }
                   }
                 }
-              }
-            },
-            "required": [
-              "name",
-              "abi",
-              "address",
-              "events"
-            ]
+              },
+              "required": [
+                "name"
+              ]
+            }
           }
         },
         "required": [
-          "contract"
+          "name",
+          "abi",
+          "address",
+          "events"
         ]
       }
     }
   },
   "required": [
     "version",
+    "description",
+    "repository",
     "networks",
     "contracts"
   ]
