@@ -9,3 +9,4 @@ edition = "2021"
 handlebars = "4.3.6"
 serde = { version = "1.0.159", features = ["derive"] }
 serde_json = "1.0.95"
+serde_yaml = "0.9.19"
