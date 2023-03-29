@@ -30,7 +30,7 @@ let processEventBatch = async (eventBatch: array<Types.event>) => {
 
   await eventBatch->loadReadEntities
 
-  let context = IO.getContext()
+  let context = ContextStub.context
 
   eventBatch->Belt.Array.forEach(event => event->eventRouter(context))
 
