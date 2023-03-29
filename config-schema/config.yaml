@@ -1,0 +1,25 @@
+version: 0.0.0
+description: Example schema to show all the things
+repository: https://github.com/example/example
+networks: 
+- network:
+    id: 137
+    rpc-url: https://polygon-rpc.com
+    start-block: 34316032
+    
+contracts:
+- contract:  
+    name: LensProtocolProfiles
+    abi: 
+    - "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
+    address: "0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"
+    events:
+    - Transfer
+    - UpdatedGravatar:
+        requiredEntities: # if this field isn't specified it should default to include all entities
+        - Gravatar:
+            allowArbitrary: false # this defauls to false
+            labels: 
+            - "gravatarWithChanges"
+    - NewGravatar:
+        requiredEntities: [] # empty signifies no requirements
