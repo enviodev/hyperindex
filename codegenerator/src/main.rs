@@ -140,6 +140,7 @@ struct EventType {
 #[derive(Serialize)]
 struct TypesTemplate {
     events: Vec<EventType>,
+    entities: Vec<EventType>,
 }
 
 fn generate_types(event_types: Vec<EventType>) -> Result<(), Box<dyn Error>> {
@@ -153,6 +154,32 @@ fn generate_types(event_types: Vec<EventType>) -> Result<(), Box<dyn Error>> {
 
     let types_data = TypesTemplate {
         events: event_types,
+        entities: vec![EventType {
+            name_lower_camel: String::from("gravatar"),
+            name_upper_camel: String::from("Gravatar"),
+            params: vec![
+                EventTypeParam {
+                    key_string: String::from("id"),
+                    type_string: String::from("string"),
+                },
+                EventTypeParam {
+                    key_string: String::from("owner"),
+                    type_string: String::from("string"),
+                },
+                EventTypeParam {
+                    key_string: String::from("displayName"),
+                    type_string: String::from("string"),
+                },
+                EventTypeParam {
+                    key_string: String::from("imageUrl"),
+                    type_string: String::from("string"),
+                },
+                EventTypeParam {
+                    key_string: String::from("updatesCount"),
+                    type_string: String::from("int"),
+                },
+            ],
+        }],
     };
 
     let rendered_string = handlebars.render("Types.res", &types_data)?;
@@ -164,7 +191,7 @@ fn generate_types(event_types: Vec<EventType>) -> Result<(), Box<dyn Error>> {
 }
 
 fn write_to_file_in_generated(filename: &str, content: &str) -> std::io::Result<()> {
-    let gen_dir_path = "../generated";
+    let gen_dir_path = "../scenarios/test_codegen";
     fs::create_dir_all(gen_dir_path)?;
     fs::write(format! {"{}/{}", gen_dir_path, filename}, content)
 }

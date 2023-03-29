@@ -1,4 +1,4 @@
-//************
+ ff//************
 //** EVENTS **
 //************
 
@@ -56,9 +56,10 @@ type {{entity.name_lower_camel}}Entity = {
   {{/each}}
 }
 
+{{/each}}
 type entity = 
 {{#each entities as | entity |}}
-  | {{entity.name_upper_camel}}Entity({{event.name_lower_camel}}Entity)
+  | {{entity.name_upper_camel}}Entity({{entity.name_lower_camel}}Entity)
 {{/each}}
 
 
@@ -84,7 +85,6 @@ type entityController<'a> = {
   loadedEntities: loadedEntitiesReader<'a>,
 }
 
-type entity = 
 {{#each entities as | entity |}}
 type {{entity.name_lower_camel}}Controller = entityController<{{entity.name_lower_camel}}Entity>
 {{/each}}
@@ -92,6 +92,6 @@ type {{entity.name_lower_camel}}Controller = entityController<{{entity.name_lowe
 
 type context = {
   {{#each entities as | entity |}}
-  @as("{{entity.name_upper_camel}}") {{entity.name_lower_camel}}: {{entity.name_lower_camel}}Controller}
+  @as("{{entity.name_upper_camel}}") {{entity.name_lower_camel}}: {{entity.name_lower_camel}}Controller
   {{/each}}
 }
