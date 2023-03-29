@@ -9,6 +9,8 @@ use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 
+use ethereum_abi::Abi;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Network {
     id: i32,
@@ -19,7 +21,7 @@ struct Network {
 #[derive(Debug, Serialize, Deserialize)]
 struct Contract {
     name: String,
-    abi: Vec<String>,
+    abi: String,
     address: String,
     events: Vec<String>,
 }
@@ -34,8 +36,11 @@ struct Config {
     contracts: Vec<Contract>,
 }
 
+const CODE_GEN_PATH: &str = "../scenarios/test_codegen/generated";
+const CURRENT_DIR_PATH: &str = "../scenarios/test_codegen";
+
 fn main() {
-    let config_dir: &str = "../scenarios/test_codegen/config.yaml";
+    let config_dir = format!("{}/{}", CURRENT_DIR_PATH, "config.yaml");
 
     let config = std::fs::read_to_string(&config_dir).unwrap();
 
@@ -57,37 +62,72 @@ fn main() {
     //     }
     // }
 
-    copy_directory("templates/static", "../scenarios/test_codegen").unwrap();
+    copy_directory("templates/static", CODE_GEN_PATH).unwrap();
 
     let mut event_types: Vec<EventType> = Vec::new(); //parse_event_signature(abi);
 
     for contract in deserialized_yaml.contracts.iter() {
-        for abi in contract.abi.iter() {
-            event_types.push(parse_event_signature(abi));
+        let contract_abi: Abi = serde_json::from_str(&contract.abi).expect("failed to parse abi");
+        let events: Vec<ethereum_abi::Event> = contract_abi.events;
+        for event_name in contract.events.iter() {
+            let event = events.iter().find(|&event| &event.name == event_name);
+
+            match event {
+                Some(event) => {
+                    let event_type = EventType {
+                        name_lower_camel: event.name,
+                        name_upper_camel: event.name,
+                        params: event
+                            .inputs
+                            .iter()
+                            .map(|&input| EventTypeParam {
+                                key_string: input.name,
+                                type_string: match input.type_ {
+                                    ethereum_abi::Type::Uint(size) => "int",
+                                    ethereum_abi::Type::Int(size) => "int",
+                                    ethereum_abi::Type::Bool => "bool",
+                                    ethereum_abi::Type::Address => "string",
+                                    ethereum_abi::Type::Bytes => "string",
+                                    _ => "other",
+                                }
+                                .to_owned(),
+                            })
+                            .collect(),
+                    };
+                }
+                None => (),
+            }
+
+            // event_types.push(parse_event_signature(abi));
         }
     }
 
+    // let test = Abi::from_reader(abi_str);
     match generate_types(event_types) {
         Err(e) => println!("Error: {}", e),
         Ok(()) => (),
     };
     // write_static_files_to_generated().unwrap();
     // write_to_file_in_generated("test.txt", content).unwrap();
-    // println!("installing packages... ");
+    println!("installing packages... ");
 
-    // Command::new("pnpm")
-    //     .arg("install")
-    //     .current_dir("../generated")
-    //     .spawn()
-    //     .unwrap();
+    Command::new("pnpm")
+        .arg("install")
+        .current_dir(CODE_GEN_PATH)
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
     //
-    // print!("building code");
-    //
-    // Command::new("pnpm")
-    //     .arg("build")
-    //     .current_dir("../generated")
-    //     .spawn()
-    //     .unwrap();
+    print!("building code");
+
+    Command::new("pnpm")
+        .arg("build")
+        .current_dir(CODE_GEN_PATH)
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
 }
 
 fn parse_event_signature(event_signature: &str) -> EventType {
@@ -191,9 +231,8 @@ fn generate_types(event_types: Vec<EventType>) -> Result<(), Box<dyn Error>> {
 }
 
 fn write_to_file_in_generated(filename: &str, content: &str) -> std::io::Result<()> {
-    let gen_dir_path = "../scenarios/test_codegen";
-    fs::create_dir_all(gen_dir_path)?;
-    fs::write(format! {"{}/{}", gen_dir_path, filename}, content)
+    fs::create_dir_all(CODE_GEN_PATH)?;
+    fs::write(format! {"{}/{}", CODE_GEN_PATH, filename}, content)
 }
 
 pub fn copy_directory<U: AsRef<Path>, V: AsRef<Path>>(
