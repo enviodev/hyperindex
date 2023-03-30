@@ -1,130 +1,34 @@
 use std::error::Error;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use handlebars::Handlebars;
 
-use serde::{Deserialize, Serialize};
-use serde_yaml;
-
-use ethereum_abi::Abi;
+use serde::Serialize;
 
 mod entity_parsing;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct Network {
-    id: i32,
-    rpc_url: String,
-    start_block: i32,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Contract {
-    name: String,
-    abi: String,
-    address: String,
-    events: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Config {
-    version: String,
-    description: String,
-    repository: String,
-    networks: Vec<Network>,
-    handler: String,
-    contracts: Vec<Contract>,
-}
+mod event_parsing;
 
 const CODE_GEN_PATH: &str = "../scenarios/test_codegen/generated";
 const CURRENT_DIR_PATH: &str = "../scenarios/test_codegen";
 
-fn main() {
-    let config_dir = format!("{}/{}", CURRENT_DIR_PATH, "config.yaml");
+fn main() -> Result<(), Box<dyn Error>> {
+    copy_directory("templates/static", CODE_GEN_PATH)?;
 
-    let config = std::fs::read_to_string(&config_dir).unwrap();
+    let event_types = event_parsing::get_event_record_types_from_config()?;
+    let entity_types = entity_parsing::get_entity_record_types_from_schema()?;
 
-    let deserialized_yaml: Config = serde_yaml::from_str(&config).unwrap();
-    // Generate the type-safe contract bindings by providing the ABI
-    // definition in human readable format
-    // abigen!(
-    //     IUniswapV2Pair,
-    //     r#"[
-    //         function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
-    //     ]"#,
-    // );
-    // for contract in deserialized_yaml.contracts.iter() {
-    //     // let test = ethers_rs::from_abi(&contract.abi.try_into( ff).unwrap());
-    //     let test = ethers::contract::abigen!(Gravitar, r#"[event NewGravatar(uint256 id,address owner,string displayName,string imageUrl)]"#)
+    generate_types(event_types, entity_types)?;
 
-    //     for abi in contract.abi.iter() {
-    //         let _ = parse_event_signature(abi);
-    //     }
-    // }
-
-    copy_directory("templates/static", CODE_GEN_PATH).unwrap();
-
-    let mut event_types: Vec<RecordType> = Vec::new(); //parse_event_signature(abi);
-
-    for contract in deserialized_yaml.contracts.iter() {
-        let abi_path = format!("{}/{}", CURRENT_DIR_PATH, contract.abi);
-        let abi_file = std::fs::read_to_string(abi_path).unwrap();
-        let contract_abi: Abi = serde_json::from_str(&abi_file).expect("failed to parse abi");
-        let events: Vec<ethereum_abi::Event> = contract_abi.events;
-        for event_name in contract.events.iter() {
-            println!("{event_name}");
-            let event = events.iter().find(|&event| &event.name == event_name);
-
-            match event {
-                Some(event) => {
-                    let event_type = RecordType {
-                        name: event.name.to_owned().to_capitalized_options(),
-                        params: event
-                            .inputs
-                            .iter()
-                            .map(|input| ParamType {
-                                key: input.name.to_owned(),
-                                type_: match input.type_ {
-                                    ethereum_abi::Type::Uint(_size) => "int",
-                                    ethereum_abi::Type::Int(_size) => "int",
-                                    ethereum_abi::Type::Bool => "bool",
-                                    ethereum_abi::Type::Address => "string",
-                                    ethereum_abi::Type::Bytes => "string",
-                                    ethereum_abi::Type::String => "string",
-                                    ethereum_abi::Type::FixedBytes(_) => "type_not_handled",
-                                    ethereum_abi::Type::Array(_) => "type_not_handled",
-                                    ethereum_abi::Type::FixedArray(_, _) => "type_not_handled",
-                                    ethereum_abi::Type::Tuple(_) => "type_not_handled",
-                                }
-                                .to_owned(),
-                            })
-                            .collect(),
-                    };
-                    event_types.push(event_type);
-                }
-                None => (),
-            };
-        }
-    }
-
-    // let test = Abi::from_reader(abi_str);
-    match generate_types(event_types) {
-        Err(e) => println!("Error: {}", e),
-        Ok(()) => (),
-    };
-    // write_static_files_to_generated().unwrap();
-    // write_to_file_in_generated("test.txt", content).unwrap();
     println!("installing packages... ");
 
     Command::new("pnpm")
         .arg("install")
         .current_dir(CODE_GEN_PATH)
-        .spawn()
-        .unwrap()
-        .wait()
-        .unwrap();
+        .spawn()?
+        .wait()?;
 
     print!("formatting code");
 
@@ -133,20 +37,18 @@ fn main() {
         .arg("format")
         .arg("-all")
         .current_dir(CODE_GEN_PATH)
-        .spawn()
-        .unwrap()
-        .wait()
-        .unwrap();
+        .spawn()?
+        .wait()?;
 
     print!("building code");
 
     Command::new("pnpm")
         .arg("build")
         .current_dir(CODE_GEN_PATH)
-        .spawn()
-        .unwrap()
-        .wait()
-        .unwrap();
+        .spawn()?
+        .wait()?;
+
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -190,39 +92,6 @@ impl Capitalize for String {
     }
 }
 
-fn parse_event_signature(event_signature: &str) -> RecordType {
-    //"event NewGravatar(uint256 id,address owner,string displayName,string imageUrl)"
-    // trim and remove `event`
-    // get event name as first word up until first bracket
-    // get the substring between brackets and split by commas
-    // convert into rescript types
-
-    // let test = ethers_rs::from_abi(event_signature);
-    println!("{}", event_signature);
-
-    RecordType {
-        name: String::from("NewGravatar").to_capitalized_options(),
-        params: vec![
-            ParamType {
-                key: String::from("id"),
-                type_: String::from("string"),
-            },
-            ParamType {
-                key: String::from("owner"),
-                type_: String::from("string"),
-            },
-            ParamType {
-                key: String::from("displayName"),
-                type_: String::from("string"),
-            },
-            ParamType {
-                key: String::from("imageUrl"),
-                type_: String::from("string"),
-            },
-        ],
-    }
-}
-
 #[derive(Serialize)]
 struct ParamType {
     key: String,
@@ -230,7 +99,7 @@ struct ParamType {
 }
 
 #[derive(Serialize)]
-struct RecordType {
+pub struct RecordType {
     name: CapitalizedOptions,
     params: Vec<ParamType>,
 }
@@ -241,42 +110,20 @@ struct TypesTemplate {
     entities: Vec<RecordType>,
 }
 
-fn generate_types(event_types: Vec<RecordType>) -> Result<(), Box<dyn Error>> {
-    // let source = fs::read_to_string("templates/dynamic/src/Types.res")?;
-
+fn generate_types(
+    event_types: Vec<RecordType>,
+    entity_types: Vec<RecordType>,
+) -> Result<(), Box<dyn Error>> {
     let mut handlebars = Handlebars::new();
 
     handlebars.set_strict_mode(true);
+    handlebars.register_escape_fn(handlebars::no_escape);
 
     handlebars.register_template_file("Types.res", "templates/dynamic/src/Types.res")?;
 
     let types_data = TypesTemplate {
         events: event_types,
-        entities: vec![RecordType {
-            name: String::from("gravatar").to_capitalized_options(),
-            params: vec![
-                ParamType {
-                    key: String::from("id"),
-                    type_: String::from("string"),
-                },
-                ParamType {
-                    key: String::from("owner"),
-                    type_: String::from("string"),
-                },
-                ParamType {
-                    key: String::from("displayName"),
-                    type_: String::from("string"),
-                },
-                ParamType {
-                    key: String::from("imageUrl"),
-                    type_: String::from("string"),
-                },
-                ParamType {
-                    key: String::from("updatesCount"),
-                    type_: String::from("int"),
-                },
-            ],
-        }],
+        entities: entity_types,
     };
 
     let rendered_string = handlebars.render("Types.res", &types_data)?;
