@@ -9,6 +9,10 @@ use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 
+use ethereum_abi::Abi;
+
+mod entity_parsing;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Network {
     id: i32,
@@ -19,7 +23,7 @@ struct Network {
 #[derive(Debug, Serialize, Deserialize)]
 struct Contract {
     name: String,
-    abi: Vec<String>,
+    abi: String,
     address: String,
     events: Vec<String>,
 }
@@ -34,8 +38,11 @@ struct Config {
     contracts: Vec<Contract>,
 }
 
+const CODE_GEN_PATH: &str = "../scenarios/test_codegen/generated";
+const CURRENT_DIR_PATH: &str = "../scenarios/test_codegen";
+
 fn main() {
-    let config_dir: &str = "../scenarios/test_codegen/config.yaml";
+    let config_dir = format!("{}/{}", CURRENT_DIR_PATH, "config.yaml");
 
     let config = std::fs::read_to_string(&config_dir).unwrap();
 
@@ -57,40 +64,133 @@ fn main() {
     //     }
     // }
 
-    copy_directory("templates/static", "../scenarios/test_codegen").unwrap();
+    copy_directory("templates/static", CODE_GEN_PATH).unwrap();
 
-    let mut event_types: Vec<EventType> = Vec::new(); //parse_event_signature(abi);
+    let mut event_types: Vec<RecordType> = Vec::new(); //parse_event_signature(abi);
 
     for contract in deserialized_yaml.contracts.iter() {
-        for abi in contract.abi.iter() {
-            event_types.push(parse_event_signature(abi));
+        let abi_path = format!("{}/{}", CURRENT_DIR_PATH, contract.abi);
+        let abi_file = std::fs::read_to_string(abi_path).unwrap();
+        let contract_abi: Abi = serde_json::from_str(&abi_file).expect("failed to parse abi");
+        let events: Vec<ethereum_abi::Event> = contract_abi.events;
+        for event_name in contract.events.iter() {
+            println!("{event_name}");
+            let event = events.iter().find(|&event| &event.name == event_name);
+
+            match event {
+                Some(event) => {
+                    let event_type = RecordType {
+                        name: event.name.to_owned().to_capitalized_options(),
+                        params: event
+                            .inputs
+                            .iter()
+                            .map(|input| ParamType {
+                                key: input.name.to_owned(),
+                                type_: match input.type_ {
+                                    ethereum_abi::Type::Uint(_size) => "int",
+                                    ethereum_abi::Type::Int(_size) => "int",
+                                    ethereum_abi::Type::Bool => "bool",
+                                    ethereum_abi::Type::Address => "string",
+                                    ethereum_abi::Type::Bytes => "string",
+                                    ethereum_abi::Type::String => "string",
+                                    ethereum_abi::Type::FixedBytes(_) => "type_not_handled",
+                                    ethereum_abi::Type::Array(_) => "type_not_handled",
+                                    ethereum_abi::Type::FixedArray(_, _) => "type_not_handled",
+                                    ethereum_abi::Type::Tuple(_) => "type_not_handled",
+                                }
+                                .to_owned(),
+                            })
+                            .collect(),
+                    };
+                    event_types.push(event_type);
+                }
+                None => (),
+            };
         }
     }
 
+    // let test = Abi::from_reader(abi_str);
     match generate_types(event_types) {
         Err(e) => println!("Error: {}", e),
         Ok(()) => (),
     };
     // write_static_files_to_generated().unwrap();
     // write_to_file_in_generated("test.txt", content).unwrap();
-    // println!("installing packages... ");
+    println!("installing packages... ");
 
-    // Command::new("pnpm")
-    //     .arg("install")
-    //     .current_dir("../generated")
-    //     .spawn()
-    //     .unwrap();
-    //
-    // print!("building code");
-    //
-    // Command::new("pnpm")
-    //     .arg("build")
-    //     .current_dir("../generated")
-    //     .spawn()
-    //     .unwrap();
+    Command::new("pnpm")
+        .arg("install")
+        .current_dir(CODE_GEN_PATH)
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+
+    print!("formatting code");
+
+    Command::new("pnpm")
+        .arg("rescript")
+        .arg("format")
+        .arg("-all")
+        .current_dir(CODE_GEN_PATH)
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
+
+    print!("building code");
+
+    Command::new("pnpm")
+        .arg("build")
+        .current_dir(CODE_GEN_PATH)
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap();
 }
 
-fn parse_event_signature(event_signature: &str) -> EventType {
+#[derive(Serialize)]
+struct CapitalizedOptions {
+    capitalized: String,
+    uncapitalized: String,
+}
+
+trait Capitalize {
+    fn capitalize(&self) -> String;
+
+    fn uncapitalize(&self) -> String;
+
+    fn to_capitalized_options(&self) -> CapitalizedOptions;
+}
+
+impl Capitalize for String {
+    fn capitalize(&self) -> String {
+        let mut chars = self.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        }
+    }
+    fn uncapitalize(&self) -> String {
+        let mut chars = self.chars();
+        match chars.next() {
+            None => String::new(),
+            Some(first) => first.to_lowercase().collect::<String>() + chars.as_str(),
+        }
+    }
+
+    fn to_capitalized_options(&self) -> CapitalizedOptions {
+        let capitalized = self.capitalize();
+        let uncapitalized = self.uncapitalize();
+
+        CapitalizedOptions {
+            capitalized,
+            uncapitalized,
+        }
+    }
+}
+
+fn parse_event_signature(event_signature: &str) -> RecordType {
     //"event NewGravatar(uint256 id,address owner,string displayName,string imageUrl)"
     // trim and remove `event`
     // get event name as first word up until first bracket
@@ -100,50 +200,48 @@ fn parse_event_signature(event_signature: &str) -> EventType {
     // let test = ethers_rs::from_abi(event_signature);
     println!("{}", event_signature);
 
-    EventType {
-        name_lower_camel: String::from("newGravatar"),
-        name_upper_camel: String::from("NewGravatar"),
+    RecordType {
+        name: String::from("NewGravatar").to_capitalized_options(),
         params: vec![
-            EventTypeParam {
-                key_string: String::from("id"),
-                type_string: String::from("string"),
+            ParamType {
+                key: String::from("id"),
+                type_: String::from("string"),
             },
-            EventTypeParam {
-                key_string: String::from("owner"),
-                type_string: String::from("string"),
+            ParamType {
+                key: String::from("owner"),
+                type_: String::from("string"),
             },
-            EventTypeParam {
-                key_string: String::from("displayName"),
-                type_string: String::from("string"),
+            ParamType {
+                key: String::from("displayName"),
+                type_: String::from("string"),
             },
-            EventTypeParam {
-                key_string: String::from("imageUrl"),
-                type_string: String::from("string"),
+            ParamType {
+                key: String::from("imageUrl"),
+                type_: String::from("string"),
             },
         ],
     }
 }
 
 #[derive(Serialize)]
-struct EventTypeParam {
-    key_string: String,
-    type_string: String,
+struct ParamType {
+    key: String,
+    type_: String,
 }
 
 #[derive(Serialize)]
-struct EventType {
-    name_lower_camel: String,
-    name_upper_camel: String,
-    params: Vec<EventTypeParam>,
+struct RecordType {
+    name: CapitalizedOptions,
+    params: Vec<ParamType>,
 }
 
 #[derive(Serialize)]
 struct TypesTemplate {
-    events: Vec<EventType>,
-    entities: Vec<EventType>,
+    events: Vec<RecordType>,
+    entities: Vec<RecordType>,
 }
 
-fn generate_types(event_types: Vec<EventType>) -> Result<(), Box<dyn Error>> {
+fn generate_types(event_types: Vec<RecordType>) -> Result<(), Box<dyn Error>> {
     // let source = fs::read_to_string("templates/dynamic/src/Types.res")?;
 
     let mut handlebars = Handlebars::new();
@@ -154,29 +252,28 @@ fn generate_types(event_types: Vec<EventType>) -> Result<(), Box<dyn Error>> {
 
     let types_data = TypesTemplate {
         events: event_types,
-        entities: vec![EventType {
-            name_lower_camel: String::from("gravatar"),
-            name_upper_camel: String::from("Gravatar"),
+        entities: vec![RecordType {
+            name: String::from("gravatar").to_capitalized_options(),
             params: vec![
-                EventTypeParam {
-                    key_string: String::from("id"),
-                    type_string: String::from("string"),
+                ParamType {
+                    key: String::from("id"),
+                    type_: String::from("string"),
                 },
-                EventTypeParam {
-                    key_string: String::from("owner"),
-                    type_string: String::from("string"),
+                ParamType {
+                    key: String::from("owner"),
+                    type_: String::from("string"),
                 },
-                EventTypeParam {
-                    key_string: String::from("displayName"),
-                    type_string: String::from("string"),
+                ParamType {
+                    key: String::from("displayName"),
+                    type_: String::from("string"),
                 },
-                EventTypeParam {
-                    key_string: String::from("imageUrl"),
-                    type_string: String::from("string"),
+                ParamType {
+                    key: String::from("imageUrl"),
+                    type_: String::from("string"),
                 },
-                EventTypeParam {
-                    key_string: String::from("updatesCount"),
-                    type_string: String::from("int"),
+                ParamType {
+                    key: String::from("updatesCount"),
+                    type_: String::from("int"),
                 },
             ],
         }],
@@ -191,9 +288,8 @@ fn generate_types(event_types: Vec<EventType>) -> Result<(), Box<dyn Error>> {
 }
 
 fn write_to_file_in_generated(filename: &str, content: &str) -> std::io::Result<()> {
-    let gen_dir_path = "../scenarios/test_codegen";
-    fs::create_dir_all(gen_dir_path)?;
-    fs::write(format! {"{}/{}", gen_dir_path, filename}, content)
+    fs::create_dir_all(CODE_GEN_PATH)?;
+    fs::write(format! {"{}/{}", CODE_GEN_PATH, filename}, content)
 }
 
 pub fn copy_directory<U: AsRef<Path>, V: AsRef<Path>>(
@@ -244,4 +340,30 @@ pub fn copy_directory<U: AsRef<Path>, V: AsRef<Path>>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Capitalize;
+    #[test]
+    fn string_capitalize() {
+        let string = String::from("hello");
+        let capitalized = string.capitalize();
+        assert_eq!(capitalized, "Hello");
+    }
+
+    #[test]
+    fn string_uncapitalize() {
+        let string = String::from("Hello");
+        let uncapitalized = string.uncapitalize();
+        assert_eq!(uncapitalized, "hello");
+    }
+
+    #[test]
+    fn string_to_capitalization_options() {
+        let string = String::from("Hello");
+        let capitalization_options = string.to_capitalized_options();
+        assert_eq!(capitalization_options.uncapitalized, "hello");
+        assert_eq!(capitalization_options.capitalized, "Hello");
+    }
 }
