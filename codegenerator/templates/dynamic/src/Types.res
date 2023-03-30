@@ -14,52 +14,48 @@ type eventLog<'a> = {
 }
 
 {{#each events as | event |}}
-type {{event.name_lower_camel}}Event = {
+type {{event.name.uncapitalized}}Event = {
   {{#each event.params as | param |}}
-  {{param.key_string}} : {{param.type_string}},
+  {{param.key}} : {{param.type_}},
   {{/each}}
 }
 
 {{/each}}
-
 type event =
 {{#each events as | event |}}
-  | {{event.name_upper_camel}}(eventLog<{{event.name_lower_camel}}Event>)
+  | {{event.name.capitalized}}(eventLog<{{event.name.uncapitalized}}Event>)
 {{/each}}
-
 
 //*************
 //***ENTITIES**
 //*************
 
-
 type id = string
-
 
 type entityRead = 
 {{#each entities as | entity |}}
-| {{entity.name_upper_camel}}Read(id)
+| {{entity.name.capitalized}}Read(id)
 {{/each}}
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
   {{#each entities as | entity |}}
-  | {{entity.name_upper_camel}}Read(id) => `{{entity.name_lower_camel}}{id}`
+  | {{entity.name.capitalized}}Read(id) => `{{entity.name.uncapitalized}}${id}`
   {{/each}}
   }
 }
 
 {{#each entities as | entity |}}
-type {{entity.name_lower_camel}}Entity = {
+type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{param.key_string}} : {{param.type_string}},
+  {{param.key}} : {{param.type_}},
   {{/each}}
 }
 
 {{/each}}
 type entity = 
 {{#each entities as | entity |}}
-  | {{entity.name_upper_camel}}Entity({{entity.name_lower_camel}}Entity)
+  | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
 {{/each}}
 
 
@@ -86,12 +82,12 @@ type entityController<'a> = {
 }
 
 {{#each entities as | entity |}}
-type {{entity.name_lower_camel}}Controller = entityController<{{entity.name_lower_camel}}Entity>
+type {{entity.name.uncapitalized}}Controller = entityController<{{entity.name.uncapitalized}}Entity>
 {{/each}}
 
 
 type context = {
   {{#each entities as | entity |}}
-  @as("{{entity.name_upper_camel}}") {{entity.name_lower_camel}}: {{entity.name_lower_camel}}Controller
+  @as("{{entity.name.capitalized}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}Controller
   {{/each}}
 }

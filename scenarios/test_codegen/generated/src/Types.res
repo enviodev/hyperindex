@@ -14,53 +14,46 @@ type eventLog<'a> = {
 }
 
 type newGravatarEvent = {
-  id : string,
-  owner : string,
-  displayName : string,
-  imageUrl : string,
+  id: int,
+  owner: string,
+  displayName: string,
+  imageUrl: string,
 }
 
-type newGravatarEvent = {
-  id : string,
-  owner : string,
-  displayName : string,
-  imageUrl : string,
+type updatedGravatarEvent = {
+  id: int,
+  owner: string,
+  displayName: string,
+  imageUrl: string,
 }
-
 
 type event =
   | NewGravatar(eventLog<newGravatarEvent>)
-  | NewGravatar(eventLog<newGravatarEvent>)
-
+  | UpdatedGravatar(eventLog<updatedGravatarEvent>)
 
 //*************
 //***ENTITIES**
 //*************
 
-
 type id = string
 
-
-type entityRead = 
-| GravatarRead(id)
+type entityRead = GravatarRead(id)
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
-  | GravatarRead(id) => `gravatar{id}`
+  | GravatarRead(id) => `gravatar${id}`
   }
 }
 
 type gravatarEntity = {
-  id : string,
-  owner : string,
-  displayName : string,
-  imageUrl : string,
-  updatesCount : int,
+  id: string,
+  owner: string,
+  displayName: string,
+  imageUrl: string,
+  updatesCount: int,
 }
 
-type entity = 
-  | GravatarEntity(gravatarEntity)
-
+type entity = GravatarEntity(gravatarEntity)
 
 type crud = Create | Read | Update | Delete
 
@@ -86,7 +79,4 @@ type entityController<'a> = {
 
 type gravatarController = entityController<gravatarEntity>
 
-
-type context = {
-  @as("Gravatar") gravatar: gravatarController
-}
+type context = {@as("Gravatar") gravatar: gravatarController}
