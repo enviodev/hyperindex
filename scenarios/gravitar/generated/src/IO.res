@@ -21,6 +21,7 @@ module InMemoryStore = {
     | (Some(Read), Create)
     | (Some(Update), Create)
     | (Some(Delete), Create) =>
+      // dont know if this is an update or create
       Update
     | (Some(Create), Read) => Create
     | (Some(Read), Read) => Read
@@ -30,7 +31,7 @@ module InMemoryStore = {
     | (Some(Read), Update) => Update
     | (Some(Update), Update) => Update
     | (Some(Delete), Update) => Update
-    | (Some(Create), Delete) => Delete
+    | (Some(Create), Delete) => Delete // interesting to note to line 23
     | (Some(Read), Delete) => Delete
     | (Some(Update), Delete) => Delete
     | (Some(Delete), Delete) => Delete

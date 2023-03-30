@@ -1,5 +1,6 @@
 open Jest
 open Expect
+open Types
 describe("E2E Mock Event Batch", () => {
   beforeAllPromise(async () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
@@ -27,6 +28,43 @@ describe("E2E Mock Event Batch", () => {
       MockEvents.updateGravatar1.id,
       MockEvents.updateGravatar2.id,
       MockEvents.updateGravatar3.id,
+    ])
+  })
+
+  test("Validate inmemory store state", () => {
+    let inMemoryStore = IO.InMemoryStore.gravatarDict.contents
+    let inMemoryStoreRows = inMemoryStore->Js.Dict.values
+    expect(inMemoryStoreRows)->toEqual([
+      {
+        crud: Update,
+        entity: {
+          id: "1",
+          owner: "0x123",
+          displayName: "update1",
+          imageUrl: "https://gravatar1.com",
+          updatesCount: 2,
+        },
+      },
+      {
+        crud: Update,
+        entity: {
+          id: "2",
+          owner: "0x456",
+          displayName: "update2",
+          imageUrl: "https://gravatar2.com",
+          updatesCount: 2,
+        },
+      },
+      {
+        crud: Create,
+        entity: {
+          id: "3",
+          owner: "0x789",
+          displayName: "update3",
+          imageUrl: "https://gravatar3.com",
+          updatesCount: 2,
+        },
+      },
     ])
   })
 })
