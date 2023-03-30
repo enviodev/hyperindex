@@ -1,4 +1,4 @@
-//************
+ ff//************
 //** EVENTS **
 //************
 
@@ -28,4 +28,70 @@ type event =
 {{/each}}
 
 
-//Context types
+//*************
+//***ENTITIES**
+//*************
+
+
+type id = string
+
+
+type entityRead = 
+{{#each entities as | entity |}}
+| {{entity.name_upper_camel}}Read(id)
+{{/each}}
+
+let entitySerialize = (entity: entityRead) => {
+  switch entity {
+  {{#each entities as | entity |}}
+  | {{entity.name_upper_camel}}Read(id) => `{{entity.name_lower_camel}}{id}`
+  {{/each}}
+  }
+}
+
+{{#each entities as | entity |}}
+type {{entity.name_lower_camel}}Entity = {
+  {{#each entity.params as | param |}}
+  {{param.key_string}} : {{param.type_string}},
+  {{/each}}
+}
+
+{{/each}}
+type entity = 
+{{#each entities as | entity |}}
+  | {{entity.name_upper_camel}}Entity({{entity.name_lower_camel}}Entity)
+{{/each}}
+
+
+type crud = Create | Read | Update | Delete
+
+type inMemoryStoreRow<'a> = {
+  crud: crud,
+  entity: 'a,
+}
+
+//*************
+//** CONTEXT **
+//*************
+
+type loadedEntitiesReader<'a> = {
+  getById: id => option<'a>,
+  getAllLoaded: unit => array<'a>,
+}
+
+type entityController<'a> = {
+  insert: 'a => unit,
+  update: 'a => unit,
+  loadedEntities: loadedEntitiesReader<'a>,
+}
+
+{{#each entities as | entity |}}
+type {{entity.name_lower_camel}}Controller = entityController<{{entity.name_lower_camel}}Entity>
+{{/each}}
+
+
+type context = {
+  {{#each entities as | entity |}}
+  @as("{{entity.name_upper_camel}}") {{entity.name_lower_camel}}: {{entity.name_lower_camel}}Controller
+  {{/each}}
+}

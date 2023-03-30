@@ -6,59 +6,101 @@ use std::process::Command;
 
 use handlebars::Handlebars;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_yaml;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Network {
+    id: i32,
+    rpc_url: String,
+    start_block: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Contract {
+    name: String,
+    abi: Vec<String>,
+    address: String,
+    events: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Config {
+    version: String,
+    description: String,
+    repository: String,
+    networks: Vec<Network>,
+    handler: String,
+    contracts: Vec<Contract>,
+}
 
 fn main() {
-    copy_directory("templates/static", "../generated").unwrap();
-    match generate_types() {
+    let config_dir: &str = "../scenarios/test_codegen/config.yaml";
+
+    let config = std::fs::read_to_string(&config_dir).unwrap();
+
+    let deserialized_yaml: Config = serde_yaml::from_str(&config).unwrap();
+    // Generate the type-safe contract bindings by providing the ABI
+    // definition in human readable format
+    // abigen!(
+    //     IUniswapV2Pair,
+    //     r#"[
+    //         function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
+    //     ]"#,
+    // );
+    // for contract in deserialized_yaml.contracts.iter() {
+    //     // let test = ethers_rs::from_abi(&contract.abi.try_into( ff).unwrap());
+    //     let test = ethers::contract::abigen!(Gravitar, r#"[event NewGravatar(uint256 id,address owner,string displayName,string imageUrl)]"#)
+
+    //     for abi in contract.abi.iter() {
+    //         let _ = parse_event_signature(abi);
+    //     }
+    // }
+
+    copy_directory("templates/static", "../scenarios/test_codegen").unwrap();
+
+    let mut event_types: Vec<EventType> = Vec::new(); //parse_event_signature(abi);
+
+    for contract in deserialized_yaml.contracts.iter() {
+        for abi in contract.abi.iter() {
+            event_types.push(parse_event_signature(abi));
+        }
+    }
+
+    match generate_types(event_types) {
         Err(e) => println!("Error: {}", e),
         Ok(()) => (),
     };
     // write_static_files_to_generated().unwrap();
     // write_to_file_in_generated("test.txt", content).unwrap();
-    println!("installing packages... ");
+    // println!("installing packages... ");
 
-    Command::new("pnpm")
-        .arg("install")
-        .current_dir("../generated")
-        .spawn()
-        .unwrap();
-
-    print!("building code");
-
-    Command::new("pnpm")
-        .arg("build")
-        .current_dir("../generated")
-        .spawn()
-        .unwrap();
+    // Command::new("pnpm")
+    //     .arg("install")
+    //     .current_dir("../generated")
+    //     .spawn()
+    //     .unwrap();
+    //
+    // print!("building code");
+    //
+    // Command::new("pnpm")
+    //     .arg("build")
+    //     .current_dir("../generated")
+    //     .spawn()
+    //     .unwrap();
 }
 
-#[derive(Serialize)]
-struct EventTypeParam {
-    key_string: String,
-    type_string: String,
-}
+fn parse_event_signature(event_signature: &str) -> EventType {
+    //"event NewGravatar(uint256 id,address owner,string displayName,string imageUrl)"
+    // trim and remove `event`
+    // get event name as first word up until first bracket
+    // get the substring between brackets and split by commas
+    // convert into rescript types
 
-#[derive(Serialize)]
-struct EventType {
-    name_lower_camel: String,
-    name_upper_camel: String,
-    params: Vec<EventTypeParam>,
-}
+    // let test = ethers_rs::from_abi(event_signature);
+    println!("{}", event_signature);
 
-#[derive(Serialize)]
-struct TypesTemplate {
-    events: Vec<EventType>,
-}
-
-fn generate_types() -> Result<(), Box<dyn Error>> {
-    let mut handlebars = Handlebars::new();
-    handlebars.set_strict_mode(true);
-    // let source = fs::read_to_string("templates/dynamic/src/Types.res")?;
-
-    handlebars.register_template_file("Types.res", "templates/dynamic/src/Types.res")?;
-
-    let event1 = EventType {
+    EventType {
         name_lower_camel: String::from("newGravatar"),
         name_upper_camel: String::from("NewGravatar"),
         params: vec![
@@ -79,33 +121,65 @@ fn generate_types() -> Result<(), Box<dyn Error>> {
                 type_string: String::from("string"),
             },
         ],
-    };
+    }
+}
 
-    let event2 = EventType {
-        name_lower_camel: String::from("updateGravatar"),
-        name_upper_camel: String::from("UpdateGravatar"),
-        params: vec![
-            EventTypeParam {
-                key_string: String::from("id"),
-                type_string: String::from("string"),
-            },
-            EventTypeParam {
-                key_string: String::from("owner"),
-                type_string: String::from("string"),
-            },
-            EventTypeParam {
-                key_string: String::from("displayName"),
-                type_string: String::from("string"),
-            },
-            EventTypeParam {
-                key_string: String::from("imageUrl"),
-                type_string: String::from("string"),
-            },
-        ],
-    };
+#[derive(Serialize)]
+struct EventTypeParam {
+    key_string: String,
+    type_string: String,
+}
+
+#[derive(Serialize)]
+struct EventType {
+    name_lower_camel: String,
+    name_upper_camel: String,
+    params: Vec<EventTypeParam>,
+}
+
+#[derive(Serialize)]
+struct TypesTemplate {
+    events: Vec<EventType>,
+    entities: Vec<EventType>,
+}
+
+fn generate_types(event_types: Vec<EventType>) -> Result<(), Box<dyn Error>> {
+    // let source = fs::read_to_string("templates/dynamic/src/Types.res")?;
+
+    let mut handlebars = Handlebars::new();
+
+    handlebars.set_strict_mode(true);
+
+    handlebars.register_template_file("Types.res", "templates/dynamic/src/Types.res")?;
 
     let types_data = TypesTemplate {
-        events: vec![event1, event2],
+        events: event_types,
+        entities: vec![EventType {
+            name_lower_camel: String::from("gravatar"),
+            name_upper_camel: String::from("Gravatar"),
+            params: vec![
+                EventTypeParam {
+                    key_string: String::from("id"),
+                    type_string: String::from("string"),
+                },
+                EventTypeParam {
+                    key_string: String::from("owner"),
+                    type_string: String::from("string"),
+                },
+                EventTypeParam {
+                    key_string: String::from("displayName"),
+                    type_string: String::from("string"),
+                },
+                EventTypeParam {
+                    key_string: String::from("imageUrl"),
+                    type_string: String::from("string"),
+                },
+                EventTypeParam {
+                    key_string: String::from("updatesCount"),
+                    type_string: String::from("int"),
+                },
+            ],
+        }],
     };
 
     let rendered_string = handlebars.render("Types.res", &types_data)?;
@@ -117,7 +191,7 @@ fn generate_types() -> Result<(), Box<dyn Error>> {
 }
 
 fn write_to_file_in_generated(filename: &str, content: &str) -> std::io::Result<()> {
-    let gen_dir_path = "../generated";
+    let gen_dir_path = "../scenarios/test_codegen";
     fs::create_dir_all(gen_dir_path)?;
     fs::write(format! {"{}/{}", gen_dir_path, filename}, content)
 }
