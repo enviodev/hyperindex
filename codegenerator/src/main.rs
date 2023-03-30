@@ -11,6 +11,8 @@ use serde_yaml;
 
 use ethereum_abi::Abi;
 
+mod entity_parsing;
+
 #[derive(Debug, Serialize, Deserialize)]
 struct Network {
     id: i32,
