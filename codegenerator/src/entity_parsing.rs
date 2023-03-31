@@ -1,41 +1,49 @@
-use crate::CURRENT_DIR_PATH;
+use crate::{Capitalize, Error, ParamType, RecordType, CURRENT_DIR_PATH};
 use graphql_parser::schema::{Definition, Type, TypeDefinition};
 
-pub fn get_entity_types_from_schema() {
+pub fn get_entity_record_types_from_schema() -> Result<Vec<RecordType>, Box<dyn Error>> {
     let schema_path = format!("{}/{}", CURRENT_DIR_PATH, "schema.graphql");
     let schema_string = std::fs::read_to_string(schema_path).expect("failed to read schema file");
     let schema_doc =
         graphql_parser::parse_schema::<String>(&schema_string).expect("failed to parse");
+    let mut schema_object_types = Vec::new();
+
     for definition in schema_doc.definitions.iter() {
-        let def = match definition {
-            Definition::SchemaDefinition(_) => "schema def",
+        match definition {
+            Definition::SchemaDefinition(_) => (),
             Definition::TypeDefinition(def) => match def {
-                TypeDefinition::Scalar(_) => "Scalar",
+                TypeDefinition::Scalar(_) => (),
                 TypeDefinition::Object(object) => {
                     println!("{:?}", object.name);
-                    let _fields = object
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            let field_type = gql_type_to_rescript_type(&field.field_type).unwrap();
-                            let field = format!("{} : {}", field.name.to_owned(), field_type);
-                            println!("{field}");
-                            field
-                        })
-                        .collect::<String>();
-
-                    "Object"
+                    schema_object_types.push(object);
                 }
-                TypeDefinition::Interface(_) => "Interface",
-                TypeDefinition::Union(_) => "Union",
-                TypeDefinition::Enum(_) => "Enum",
-                TypeDefinition::InputObject(_) => "InputObj",
+                TypeDefinition::Interface(_) => (),
+                TypeDefinition::Union(_) => (),
+                TypeDefinition::Enum(_) => (),
+                TypeDefinition::InputObject(_) => (),
             },
-            Definition::DirectiveDefinition(_) => "directives def",
-            Definition::TypeExtension(_) => " type extension",
+            Definition::DirectiveDefinition(_) => (),
+            Definition::TypeExtension(_) => (),
         };
-        println!("{:?}", def);
     }
+    let mut entity_records = Vec::new();
+    for object in schema_object_types.iter() {
+        let mut params = Vec::new();
+        for field in object.fields.iter() {
+            let param_type = gql_type_to_rescript_type(&field.field_type)?;
+
+            params.push(ParamType {
+                key: field.name.to_owned(),
+                type_: param_type,
+            })
+        }
+
+        entity_records.push(RecordType {
+            name: object.name.to_owned().to_capitalized_options(),
+            params: params,
+        })
+    }
+    Ok(entity_records)
 }
 
 enum NullableContainer {
@@ -48,12 +56,14 @@ fn gql_named_types_to_rescript_types(named_type: &str) -> Result<String, String>
         "ID" => Ok("string".to_owned()),
         "String" => Ok("string".to_owned()),
         "Int" => Ok("int".to_owned()),
+        "BigInt" => Ok("BigInt.t".to_owned()),
         "Float" => Ok("float".to_owned()),
         "Bytes" => Ok("string".to_owned()),
         "Boolean" => Ok("bool".to_owned()),
         _ => Err("Failed to parse gql scalar".to_owned()),
     }
 }
+
 fn gql_type_to_rescript_type_with_contriner_wrapper(
     gql_type: &Type<String>,
     container_type: NullableContainer,
@@ -96,9 +106,48 @@ fn gql_type_to_rescript_type(gql_type: &Type<String>) -> Result<String, String> 
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_parsing::get_entity_types_from_schema;
+    use crate::entity_parsing::gql_type_to_rescript_type;
+    use graphql_parser::schema::Type;
+
     #[test]
-    fn gql_parse() {
-        get_entity_types_from_schema()
+    fn gql_type_to_rescript_type_string() {
+        let gql_string_type = Type::NamedType("String".to_owned());
+        let result = gql_type_to_rescript_type(&gql_string_type).unwrap();
+
+        assert_eq!(result, "option<string>".to_owned());
+    }
+
+    #[test]
+    fn gql_type_to_rescript_type_int() {
+        let gql_int_type = Type::NamedType("Int".to_owned());
+        let result = gql_type_to_rescript_type(&gql_int_type).unwrap();
+
+        assert_eq!(result, "option<int>".to_owned());
+    }
+
+    // #[test]
+    // fn gql_type_to_rescript_type_non_null_int() {
+    //     let gql_int_type = Type::NonNullType::(Type::NamedType("Int".to_owned()));
+    //     let result = gql_type_to_rescript_type(&gql_int_type).unwrap();
+    //
+    //     assert_eq!(result, "int".to_owned());
+    // }
+
+    #[test]
+    fn gql_type_to_rescript_type_non_null_array() {
+        let gql_int_type = Type::NonNullType(Box::new(Type::ListType(Box::new(
+            Type::NonNullType(Box::new(Type::NamedType("Int".to_owned()))),
+        ))));
+        let result = gql_type_to_rescript_type(&gql_int_type).unwrap();
+
+        assert_eq!(result, "array<int>".to_owned());
+    }
+
+    #[test]
+    fn gql_type_to_rescript_type_null_array_int() {
+        let gql_int_type = Type::ListType(Box::new(Type::NamedType("Int".to_owned())));
+        let result = gql_type_to_rescript_type(&gql_int_type).unwrap();
+
+        assert_eq!(result, "option<array<option<int>>>".to_owned());
     }
 }
