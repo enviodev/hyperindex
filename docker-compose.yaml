@@ -15,15 +15,17 @@ services:
       - my-proxy-net
   pg-admin:
     container_name: indexly-pg-admin
+    image: dpage/pgadmin4:latest
     restart: always
     ports:
       - "${PGADMIN_PUBLIC_PORT:-6543}:80"
     environment:
       - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:-dev@float.capital}
       - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD:-testing}
-    image: dpage/pgadmin4:latest
     networks:
       - my-proxy-net
+    volumes:
+      - ./.config/pgadmin/servers.json:/pgadmin4/servers.json
 volumes:
   db_data:
 networks:
