@@ -16,27 +16,18 @@ try {
   config = require("./secretsManager.example.js");
 }
 
-const {
-  mnemonic,
-  arrayPvtKeys,
-  etherscanApiKey,
-  polygonscanApiKey,
-  mumbaiProviderUrl,
-  polygonProviderUrl,
-} = config;
+const { mnemonic, arrayPvtKeys, etherscanApiKey } = config;
 
 let runCoverage =
   !process.env.DONT_RUN_REPORT_SUMMARY ||
   process.env.DONT_RUN_REPORT_SUMMARY.toUpperCase() != "TRUE";
 if (runCoverage) {
   require("hardhat-abi-exporter");
-  // require("hardhat-gas-reporter");
 }
 
 module.exports = {
-  // This is a sample solc configuration that specifies which version of solc to use
   solidity: {
-    version: "0.8.3",
+    version: "0.8.19",
     settings: {
       optimizer: {
         enabled: true,
@@ -53,30 +44,6 @@ module.exports = {
     },
     ganache: {
       url: "http://localhost:8545",
-    },
-    polygon: {
-      chainId: 137,
-      // "https://matic-mainnet-full-rpc.bwarelabs.com/",
-      // "https://rpc-mainnet.matic.network",
-      // "https://matic-mainnet.chainstacklabs.com",
-      url: polygonProviderUrl || "https://polygon-rpc.com/",
-      accounts: { mnemonic },
-      gasPrice: 300000000000, // 300 gwei
-      // gas: 10000000, // <- defaults to 'auto'
-    },
-    fuji: {
-      chainId: 43113,
-      url: "https://api.avax-test.network/ext/bc/C/rpc",
-      accounts: { mnemonic },
-      gasPrice: 60000000000, // 60 gwei
-      // gas: 10000000, // <- defaults to 'auto'
-    },
-    mumbai: {
-      chainId: 80001,
-      url: mumbaiProviderUrl || "https://rpc-mumbai.maticvigil.com/v1",
-      accounts: { mnemonic },
-      gasPrice: 50000000000, // 3 gwei
-      gas: 5000000,
     },
   },
   paths: {},
@@ -107,6 +74,6 @@ module.exports = {
     spacing: 2,
   },
   etherscan: {
-    apiKey: polygonscanApiKey,
+    apiKey: etherscanApiKey,
   },
 };

@@ -2,7 +2,7 @@ task("new-gravatar", "Create new gravatar")
   .addParam("name", "gravatar display name", undefined, types.string)
   .addParam("image", "gravatar image url", undefined, types.string)
   .addParam(
-    "userIndex",
+    "userIndex", // this is --user-index whe running via command line
     "user to create new gravatar from accounts",
     undefined,
     types.int
