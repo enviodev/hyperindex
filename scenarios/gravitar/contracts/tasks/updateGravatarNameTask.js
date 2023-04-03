@@ -1,13 +1,12 @@
-task("new-gravatar", "Create new gravatar")
+task("update-gravatar-name", "Update existing gravatar name")
   .addParam("name", "gravatar display name", undefined, types.string)
-  .addParam("image", "gravatar image url", undefined, types.string)
   .addParam(
     "userIndex", // this is --user-index whe running via command line
-    "user to create new gravatar from accounts",
+    "user updating existing gravatar from accounts",
     undefined,
     types.int
   )
-  .setAction(async ({ name, image, userIndex }) => {
+  .setAction(async ({ name, userIndex }) => {
     const accounts = await ethers.getSigners();
     const user = accounts[userIndex];
 
@@ -17,11 +16,11 @@ task("new-gravatar", "Create new gravatar")
       "GravatarRegistry",
       Gravatar.address
     );
-    const newGravatar1Tx = await gravatar
-      .connect(user)
-      .createGravatar(name, image);
 
-    await newGravatar1Tx.wait();
+    const updateGravatarNameTx = await gravatar
+      .connect(user)
+      .updateGravatarName(name);
+    await updateGravatarNameTx.wait();
 
     let gravatarCheck = await gravatar.getGravatar(user.address);
     console.log(gravatarCheck);

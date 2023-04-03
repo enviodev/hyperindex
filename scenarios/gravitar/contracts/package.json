@@ -29,6 +29,8 @@
     "test": "npx hardhat test",
     "hardhat": "hardhat",
     "task:new-gravatar": "npx hardhat new-gravatar",
+    "task:update-gravatar-name": "npx hardhat update-gravatar-name",
+    "task:update-gravatar-image": "npx hardhat update-gravatar-image",
     "hardhat-node": "npx hardhat node"
   }
 }
