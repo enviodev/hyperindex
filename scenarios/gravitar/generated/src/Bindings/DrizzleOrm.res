@@ -67,4 +67,8 @@ module Drizzle = {
   type migrationsConfig = {migrationsFolder: string}
   @module("drizzle-orm/node-postgres/migrator")
   external migrate: (db, migrationsConfig) => promise<unit> = "migrate"
+
+  type values<'a, 'b> = (insertion, array<'a>) => 'b
+  @send
+  external values: (insertion, array<'a>) => 'b = "values"
 }

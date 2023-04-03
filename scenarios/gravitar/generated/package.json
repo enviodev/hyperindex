@@ -8,7 +8,7 @@
     "test-demo": "node --watch ./src/tests/Test.bs.js",
     "test": "jest",
     "bench": "jest --projects ./jest-bench.config.json",
-    "db-migrate": "drizzle-kit generate:pg --out migrations-folder --schema src/db/schema.bs.js"
+    "db-migrate": "drizzle-kit generate:pg --out migrations-folder --schema src/DbSchema.bs.js"
   },
   "keywords": [
     "ReScript"

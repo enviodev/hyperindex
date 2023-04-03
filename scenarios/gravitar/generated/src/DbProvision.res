@@ -8,6 +8,12 @@ let pool = DrizzleOrm.Pool.make(
   },
 )
 
-let db = DrizzleOrm.Drizzle.make(~pool)
+%%private(let db = DrizzleOrm.Drizzle.make(~pool))
 
-DrizzleOrm.Drizzle.migrate(db, {migrationsFolder: "./migrations-folder"})->ignore
+let migrateDb = () => DrizzleOrm.Drizzle.migrate(db, {migrationsFolder: "./migrations-folder"})
+
+let getDb = async () => {
+  // TODO: make this only migrate once, rather than every time.
+  await migrateDb()
+  db
+}
