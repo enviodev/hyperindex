@@ -46,7 +46,9 @@ module BigInt = {
 
 type abi
 
-let makeAbi = (abiArray: array<string>): abi => abiArray->Obj.magic
+let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Obj.magic
+
+let makeAbi = (abi: Js.Json.t): abi => abi->Obj.magic
 
 type ethAddress
 
