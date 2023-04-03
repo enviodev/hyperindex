@@ -1,11 +1,8 @@
 require("hardhat-spdx-license-identifier");
-//require("@tenderly/hardhat-tenderly"); // https://hardhat.org/plugins/tenderly-hardhat-tenderly.html
-//require("solidity-coverage");
 require("hardhat-deploy");
 require("@nomiclabs/hardhat-ethers");
 require("@nomiclabs/hardhat-etherscan");
 require("@nomiclabs/hardhat-waffle");
-//require("hardhat-docgen");
 require("hardhat-gas-reporter");
 require("./tasks");
 
