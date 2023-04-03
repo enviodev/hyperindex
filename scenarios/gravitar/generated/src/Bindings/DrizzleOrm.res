@@ -1,36 +1,36 @@
 module Schema = {
-  type table
+  type table<'rowType> = 'rowType
 
   @module("drizzle-orm/pg-core")
-  external pgTable: (~name: string, ~columns: 'columns) => table = "pgTable"
+  external pgTable: (~name: string, ~fields: 'fields) => table<'rowType> = "pgTable"
 
-  type column
+  type field
 
   @module("drizzle-orm/pg-core")
-  external serial: string => column = "serial"
+  external serial: string => field = "serial"
   @module("drizzle-orm/pg-core")
-  external text: string => column = "text"
+  external text: string => field = "text"
   @module("drizzle-orm/pg-core")
-  external integer: string => column = "integer"
+  external integer: string => field = "integer"
   @module("drizzle-orm/pg-core")
-  external numeric: string => column = "numeric"
+  external numeric: string => field = "numeric"
   @module("drizzle-orm/pg-core")
-  external boolean: string => column = "boolean"
+  external boolean: string => field = "boolean"
   @module("drizzle-orm/pg-core")
-  external json: string => column = "json"
+  external json: string => field = "json"
   @module("drizzle-orm/pg-core")
-  external jsonb: string => column = "jsonb"
+  external jsonb: string => field = "jsonb"
   @module("drizzle-orm/pg-core")
-  external time: string => column = "time"
+  external time: string => field = "time"
   @module("drizzle-orm/pg-core")
-  external timestamp: string => column = "timestamp"
+  external timestamp: string => field = "timestamp"
   @module("drizzle-orm/pg-core")
-  external date: string => column = "date"
+  external date: string => field = "date"
   @module("drizzle-orm/pg-core")
-  external varchar: string => column = "varchar"
+  external varchar: string => field = "varchar"
 
   @send
-  external primaryKey: column => column = "primaryKey"
+  external primaryKey: field => field = "primaryKey"
 }
 
 module Pool = {
@@ -51,8 +51,10 @@ module Pool = {
 module Drizzle = {
   type db
 
-  @module
-  external make: (~pool: Pool.t) => db = "drizzle-orm/node-postgres"
+  //TODO: If we use any other methods on drizzle perhap have a drizzle
+  //type with send methods
+  @module("drizzle-orm/node-postgres")
+  external make: (~pool: Pool.t) => db = "drizzle"
 
   type selector
 
@@ -62,13 +64,27 @@ module Drizzle = {
   type insertion
 
   @send
-  external insert: (db, ~table: Schema.table) => insertion = "instert"
+  external insert: (db, ~table: Schema.table<'a>) => insertion = "insert"
 
   type migrationsConfig = {migrationsFolder: string}
   @module("drizzle-orm/node-postgres/migrator")
   external migrate: (db, migrationsConfig) => promise<unit> = "migrate"
 
-  type values<'a, 'b> = (insertion, array<'a>) => 'b
+  type returnedValues<'a> = 'a
+  type values<'a, 'b> = (insertion, array<'a>) => returnedValues<'b>
   @send
-  external values: (insertion, array<'a>) => 'b = "values"
+  external values: (insertion, array<'a>) => returnedValues<'b> = "values"
+
+  type targetConflict<'conflictId, 'valuesToSet> = {
+    target: 'conflictId,
+    set?: 'valuesToSet,
+  }
+
+  @send
+  external onConflictDoUpdate: (returnedValues<'a>, targetConflict<'a, 'b>) => 'c =
+    "onConflictDoUpdate"
+
+  @send
+  external onConflictDoNothing: (returnedValues<'a>, targetConflict<'a, 'b>) => 'c =
+    "onConflictDoNothing"
 }

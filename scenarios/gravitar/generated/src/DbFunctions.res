@@ -23,17 +23,25 @@ let setGravatarDb = (~gravatar: Types.gravatarEntity) => {
 /*
 let batchUpsertGravatars = async (gravatarsArray) => {
   await db
-    .insert(users)
+    .insert(gravatarsTable)
     .values(gravatarsArray)
-    .onConflictDoUpdate(gravatarsArray.map((gravatar) => { target: gravatar.id, set: { owner: gravitar.owner, displayName: gravitar.displayName, imageUrl: gravitar.imageUrl, updatesCount: gravitar.updatesCount } });
+    .onConflictDoUpdate( { target: gravatarsTable.id, set: { owner: gravitar.owner, displayName: gravitar.displayName, imageUrl: gravitar.imageUrl, updatesCount: gravitar.updatesCount } });
 };
 */
 
 let batchSetGravatar = async (batch: array<Types.gravatarEntity>) => {
   let db = await DbProvision.getDb()
 
-  db->Drizzle.insert(~table=DbSchema.gravatar)->gravatarValues(batch)
+  db
+  ->Drizzle.insert(~table=DbSchema.gravatar)
+  ->gravatarValues(batch)
+  ->Drizzle.onConflictDoUpdate({target: DbSchema.gravatar.id, set: DbSchema.gravatar})
 }
+
+let test = batchSetGravatar([
+  {id: "hi", owner: "hello", displayName: "hi mom", updatesCount: 201, imageUrl: "hi.com"},
+  {id: "hi2", owner: "hello", displayName: "hi mom", updatesCount: 201, imageUrl: "hi.com"},
+])
 
 let batchDeleteGravatar = (batch: array<Types.gravatarEntity>) => {
   batch
