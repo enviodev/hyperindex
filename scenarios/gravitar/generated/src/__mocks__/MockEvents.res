@@ -19,21 +19,21 @@ let newGravatar3: Types.newGravatarEvent = {
   imageUrl: "https://gravatar3.com",
 }
 
-let updateGravatar1: Types.updateGravatarEvent = {
+let updatedGravatar1: Types.updatedGravatarEvent = {
   id: "1",
   owner: "0x123",
   displayName: "update1",
   imageUrl: "https://gravatar1.com",
 }
 
-let updateGravatar2: Types.updateGravatarEvent = {
+let updatedGravatar2: Types.updatedGravatarEvent = {
   id: "2",
   owner: "0x456",
   displayName: "update2",
   imageUrl: "https://gravatar2.com",
 }
 
-let updateGravatar3: Types.updateGravatarEvent = {
+let updatedGravatar3: Types.updatedGravatarEvent = {
   id: "3",
   owner: "0x789",
   displayName: "update3",
@@ -73,8 +73,8 @@ let newGravatarEventLog3: Types.eventLog<Types.newGravatarEvent> = {
   logIndex: 1,
 }
 
-let updateGravatarEventLog1: Types.eventLog<Types.updateGravatarEvent> = {
-  params: updateGravatar1,
+let updatedGravatarEventLog1: Types.eventLog<Types.updatedGravatarEvent> = {
+  params: updatedGravatar1,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
@@ -84,8 +84,8 @@ let updateGravatarEventLog1: Types.eventLog<Types.updateGravatarEvent> = {
   logIndex: 1,
 }
 
-let updateGravatarEventLog2: Types.eventLog<Types.updateGravatarEvent> = {
-  params: updateGravatar2,
+let updatedGravatarEventLog2: Types.eventLog<Types.updatedGravatarEvent> = {
+  params: updatedGravatar2,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
@@ -95,8 +95,8 @@ let updateGravatarEventLog2: Types.eventLog<Types.updateGravatarEvent> = {
   logIndex: 1,
 }
 
-let updateGravatarEventLog3: Types.eventLog<Types.updateGravatarEvent> = {
-  params: updateGravatar3,
+let updatedGravatarEventLog3: Types.eventLog<Types.updatedGravatarEvent> = {
+  params: updatedGravatar3,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
@@ -110,7 +110,7 @@ let eventBatch: array<Types.event> = [
   NewGravatar(newGravatarEventLog1),
   NewGravatar(newGravatarEventLog2),
   NewGravatar(newGravatarEventLog3),
-  UpdateGravatar(updateGravatarEventLog1),
-  UpdateGravatar(updateGravatarEventLog2),
-  UpdateGravatar(updateGravatarEventLog3),
+  UpdatedGravatar(updatedGravatarEventLog1),
+  UpdatedGravatar(updatedGravatarEventLog2),
+  UpdatedGravatar(updatedGravatarEventLog3),
 ]
