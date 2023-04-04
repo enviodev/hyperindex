@@ -20,12 +20,10 @@ let loadReadEntities = async (eventBatch: array<Types.event>) => {
   await readEntities->IO.loadEntities
 }
 
-let processEventBatch = async (eventBatch: array<Types.event>) => {
+let processEventBatch = async (eventBatch: array<Types.event>, ~context) => {
   let ioBatch = IO.createBatch()
 
   await eventBatch->loadReadEntities
-
-  let context = ContextStub.context
 
   eventBatch->Belt.Array.forEach(event => event->eventRouter(context))
 
