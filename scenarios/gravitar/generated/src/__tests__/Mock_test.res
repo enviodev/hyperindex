@@ -1,20 +1,21 @@
 open Jest
 open Expect
 open Types
+
 describe("E2E Mock Event Batch", () => {
   beforeAllPromise(async () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
-    await EventProcessing.processEventBatch(MockEvents.eventBatch)
+    await EventProcessing.processEventBatch(MockEvents.eventBatch, ~context=ContextMock.mockContext)
   })
 
   afterAll(() => {
-    ContextStub.insertMock->MockJs.mockClear
-    ContextStub.updateMock->MockJs.mockClear
+    ContextMock.insertMock->MockJs.mockClear
+    ContextMock.updateMock->MockJs.mockClear
   })
 
   test("3 newGravitar event insert calls in order", () => {
-    let insertCalls = ContextStub.insertMock->MockJs.calls
+    let insertCalls = ContextMock.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
       MockEvents.newGravatar1.id,
       MockEvents.newGravatar2.id,
@@ -23,12 +24,20 @@ describe("E2E Mock Event Batch", () => {
   })
 
   test("3 updateGravitar event insert calls in order", () => {
-    let insertCalls = ContextStub.insertMock->MockJs.calls
+    let insertCalls = ContextMock.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
       MockEvents.updatedGravatar1.id,
       MockEvents.updatedGravatar2.id,
       MockEvents.updatedGravatar3.id,
     ])
+  })
+})
+
+describe("E2E Db check", () => {
+  beforeAllPromise(async () => {
+    DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
+    DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
+    await EventProcessing.processEventBatch(MockEvents.eventBatch, ~context=Context.getContext())
   })
 
   test("Validate inmemory store state", () => {
