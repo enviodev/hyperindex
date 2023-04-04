@@ -93,15 +93,3 @@ let executeBatch = async () => {
     DbStub.batchSetGravatar(setGravatars),
   )->Promise.all2
 }
-
-module InMemoryStore = {
-  let gravatarDict: Js.Dict.t<Types.gravatarEntity> = Js.Dict.empty()
-
-  let getGravatar = (~id: string) => {
-    Js.Dict.get(gravatarDict, id)
-  }
-
-  let setGravatar = (~id: string, ~gravatar: Types.gravatarEntity) => {
-    Js.Dict.set(gravatarDict, id, gravatar)
-  }
-}
