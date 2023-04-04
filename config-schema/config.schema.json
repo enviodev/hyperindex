@@ -21,17 +21,17 @@
           "id": {
             "type": "integer"
           },
-          "rpc-url": {
+          "rpc_url": {
             "type": "string"
           },
-          "start-block": {
+          "start_block": {
             "type": "integer"
           }
         },
         "required": [
           "id",
-          "rpc-url",
-          "start-block"
+          "rpc_url",
+          "start_block"
         ]
       }
     },
@@ -44,10 +44,7 @@
             "type": "string"
           },
           "abi": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+            "type": "string"
           },
           "address": {
             "type": "string"
@@ -60,46 +57,40 @@
                 "name": {
                   "type": "string"
                 },
-                "requiredEntities": {
+                "read_entities": {
                   "type": "array",
                   "items": {
                     "type": "object",
                     "properties": {
-                      "Gravatar": {
-                        "type": "object",
-                        "properties": {
-                          "allowArbitrary": {
-                            "type": "boolean"
-                          },
-                          "labels": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          }
-                        },
-                        "required": [
-                          "allowArbitrary",
-                          "labels"
-                        ]
+                      "name": {
+                        "type": "string"
+                      },
+                      "labels": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       }
-                    }
+                    },
+                    "required": [
+                      "name"
+                    ]
                   }
                 }
-              },
-              "required": [
-                "name"
-              ]
-            }
+              }
+            },
+            "required": [
+              "name"
+            ]
           }
-        },
-        "required": [
-          "name",
-          "abi",
-          "address",
-          "events"
-        ]
-      }
+        }
+      },
+      "required": [
+        "name",
+        "abi",
+        "address",
+        "events"
+      ]
     }
   },
   "required": [

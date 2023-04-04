@@ -9,10 +9,10 @@ handler: ./handler.js
 contracts:
   - name: Gravatar
     abi: abis/gravitar-abi.json
-    address: 0x2E645469f354BB4F5c8a05B3b30A929361cf77eC
+    address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
     events:
-      - NewGravatar
-      - UpdatedGravatar
+      - name: NewGravatar
+      - name: UpdatedGravatar
 #From The Graph Example
 #
 # specVersion: 0.0.2

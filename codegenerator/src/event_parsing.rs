@@ -18,9 +18,11 @@ pub fn get_event_record_types_from_config() -> Result<Vec<RecordType>, Box<dyn E
         let abi_file = std::fs::read_to_string(abi_path)?;
         let contract_abi: Abi = serde_json::from_str(&abi_file).expect("failed to parse abi");
         let events: Vec<ethereum_abi::Event> = contract_abi.events;
-        for event_name in contract.events.iter() {
-            println!("{event_name}");
-            let event = events.iter().find(|&event| &event.name == event_name);
+        for event in contract.events.iter() {
+            println!("{}", event.name);
+            let event = events
+                .iter()
+                .find(|&abi_event| abi_event.name == event.name);
 
             match event {
                 Some(event) => {
@@ -64,11 +66,21 @@ struct Network {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+struct ReadEntity {
+    name: String,
+    labels: Vec<String>,
+}
+#[derive(Debug, Serialize, Deserialize)]
+struct Event {
+    name: String,
+    read_entities: Option<Vec<ReadEntity>>,
+}
+#[derive(Debug, Serialize, Deserialize)]
 struct Contract {
     name: String,
     abi: String,
     address: String,
-    events: Vec<String>,
+    events: Vec<Event>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

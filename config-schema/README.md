@@ -13,4 +13,5 @@ Then run the following to validate the config files:
 ```bash
 ajv validate -s ./config.schema.json -d ../scenarios/gravitar/config.yaml
 ajv validate -s ./config.schema.json -d ../scenarios/lens/config.yaml
+ajv validate -s ./config.schema.json -d ../scenarios/test_codegen/config.yaml
 ```

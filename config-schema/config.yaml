@@ -3,21 +3,18 @@ description: Example schema to show all the things
 repository: https://github.com/example/example
 networks: 
 - id: 137
-  rpc-url: https://polygon-rpc.com
-  start-block: 34316032
+  rpc_url: https://polygon-rpc.com
 
 contracts:
 - name: LensProtocolProfiles
-  abi: 
-  - "event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"
+  abi: abis/example-abi.json
   address: "0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"
   events:
   - name: "Transfer"
   - name: "UpdatedGravatar"
-    requiredEntities: # if this field isn't specified it should default to include all entities
-    - Gravatar:
-        allowArbitrary: false # this defauls to false
-        labels: 
-        - "gravatarWithChanges"
+    read_entities:
+    - name: Gravatar
+      labels: 
+      - "gravatarWithChanges"
   - name: "NewGravatar"
-    requiredEntities: [] # empty signifies no requirements
+    read_entities: []
