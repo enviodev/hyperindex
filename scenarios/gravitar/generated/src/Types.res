@@ -4,7 +4,7 @@ type newGravatarEvent = {
   displayName: string,
   imageUrl: string,
 }
-type updateGravatarEvent = {
+type updatedGravatarEvent = {
   id: string,
   owner: string,
   displayName: string,
@@ -24,7 +24,7 @@ type eventLog<'a> = {
 
 type event =
   | NewGravatar(eventLog<newGravatarEvent>)
-  | UpdateGravatar(eventLog<updateGravatarEvent>)
+  | UpdatedGravatar(eventLog<updatedGravatarEvent>)
 
 // generated entity types:
 

@@ -12,5 +12,5 @@
     "in-source": true
   },
   "suffix": ".bs.js",
-  "bs-dependencies": ["@glennsl/rescript-jest", "@ryyppy/rescript-promise"]
+  "bs-dependencies": ["@glennsl/rescript-jest", "@ryyppy/rescript-promise", "rescript-nodejs"]
 }

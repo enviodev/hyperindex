@@ -5,7 +5,7 @@ describe("E2E Mock Event Batch", () => {
   beforeAllPromise(async () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
-    await Index.processEventBatch(MockEvents.eventBatch)
+    await EventProcessing.processEventBatch(MockEvents.eventBatch)
   })
 
   afterAll(() => {
@@ -25,9 +25,9 @@ describe("E2E Mock Event Batch", () => {
   test("3 updateGravitar event insert calls in order", () => {
     let insertCalls = ContextStub.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
-      MockEvents.updateGravatar1.id,
-      MockEvents.updateGravatar2.id,
-      MockEvents.updateGravatar3.id,
+      MockEvents.updatedGravatar1.id,
+      MockEvents.updatedGravatar2.id,
+      MockEvents.updatedGravatar3.id,
     ])
   })
 
