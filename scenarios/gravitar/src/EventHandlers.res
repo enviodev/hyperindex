@@ -18,14 +18,14 @@ let gravatarNewGravatarEventHandler = (event: eventLog<newGravatarEvent>, contex
 }
 
 //user defined function that read entities based on the event log
-let gravatarUpdateGravatarLoadEntities = (event: eventLog<updateGravatarEvent>): array<
+let gravatarUpdatedGravatarLoadEntities = (event: eventLog<updatedGravatarEvent>): array<
   entityRead,
 > => {
   [GravatarRead(event.params.id)]
 }
 
-let gravatarUpdateGravatarEventHandler = (
-  event: eventLog<updateGravatarEvent>,
+let gravatarUpdatedGravatarEventHandler = (
+  event: eventLog<updatedGravatarEvent>,
   context: context,
 ) => {
   let updatesCount =

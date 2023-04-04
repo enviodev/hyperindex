@@ -1,15 +1,6 @@
-type newGravatarEvent = {
-  id: string,
-  owner: string,
-  displayName: string,
-  imageUrl: string,
-}
-type updatedGravatarEvent = {
-  id: string,
-  owner: string,
-  displayName: string,
-  imageUrl: string,
-}
+//************
+//** EVENTS **
+//************
 
 type eventLog<'a> = {
   params: 'a,
@@ -22,11 +13,27 @@ type eventLog<'a> = {
   logIndex: int,
 }
 
+type newGravatarEvent = {
+  id: int,
+  owner: string,
+  displayName: string,
+  imageUrl: string,
+}
+
+type updatedGravatarEvent = {
+  id: int,
+  owner: string,
+  displayName: string,
+  imageUrl: string,
+}
+
 type event =
   | NewGravatar(eventLog<newGravatarEvent>)
   | UpdatedGravatar(eventLog<updatedGravatarEvent>)
 
-// generated entity types:
+//*************
+//***ENTITIES**
+//*************
 
 type id = string
 
@@ -34,7 +41,7 @@ type entityRead = GravatarRead(id)
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
-  | GravatarRead(gravatarId) => `gravatar${gravatarId}`
+  | GravatarRead(id) => `gravatar${id}`
   }
 }
 
@@ -54,6 +61,7 @@ type inMemoryStoreRow<'a> = {
   crud: crud,
   entity: 'a,
 }
+
 //*************
 //** CONTEXT **
 //*************
@@ -69,6 +77,6 @@ type entityController<'a> = {
   loadedEntities: loadedEntitiesReader<'a>,
 }
 
-type gravitarController = entityController<gravatarEntity>
+type gravatarController = entityController<gravatarEntity>
 
-type context = {@as("Gravatar") gravatar: gravitarController}
+type context = {@as("Gravatar") gravatar: gravatarController}

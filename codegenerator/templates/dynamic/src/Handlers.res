@@ -10,12 +10,12 @@ external gravatarNewGravatarEventHandler: (
 ) => unit = "gravatarNewGravatarEventHandler"
 
 @module("../../src/EventHandlers.bs.js")
-external gravatarUpdatedGravatarLoadEntities: Types.eventLog<Types.updatedGravatarEvent> => array<
+external gravatarUpdateGravatarLoadEntities: Types.eventLog<Types.updateGravatarEvent> => array<
   Types.entityRead,
-> = "gravatarUpdatedGravatarLoadEntities"
+> = "gravatarUpdateGravatarLoadEntities"
 
 @module("../../src/EventHandlers.bs.js")
-external gravatarUpdatedGravatarEventHandler: (
-  Types.eventLog<Types.updatedGravatarEvent>,
+external gravatarUpdateGravatarEventHandler: (
+  Types.eventLog<Types.updateGravatarEvent>,
   Types.context,
-) => unit = "gravatarUpdatedGravatarEventHandler"
+) => unit = "gravatarUpdateGravatarEventHandler"
