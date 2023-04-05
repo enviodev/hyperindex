@@ -8,57 +8,54 @@ let gravatarValues: Drizzle.values<Types.gravatarEntity, gravatarValues> = (
   gravatarEntities,
 ) => insertion->Drizzle.values(gravatarEntities)
 
-let deleteDictKey = (_dict: Js.Dict.t<'a>, _key: string) => %raw(`delete _dict[_key]`)
-
-let databaseDict: Js.Dict.t<Types.gravatarEntity> = Js.Dict.empty()
-
-let getGravatarDb = (~id: string) => {
-  Js.Dict.get(databaseDict, id)
-}
-
-let setGravatarDb = (~gravatar: Types.gravatarEntity) => {
-  Js.Dict.set(databaseDict, gravatar.id, gravatar)
-}
-
-/*
-let batchUpsertGravatars = async (gravatarsArray) => {
-  await db
-    .insert(gravatarsTable)
-    .values(gravatarsArray)
-    .onConflictDoUpdate( { target: gravatarsTable.id, set: { owner: gravitar.owner, displayName: gravitar.displayName, imageUrl: gravitar.imageUrl, updatesCount: gravitar.updatesCount } });
-};
-*/
-
 let batchSetGravatar = async (batch: array<Types.gravatarEntity>) => {
-  let db = await DbProvision.getDb()
-
-  db
-  ->Drizzle.insert(~table=DbSchema.gravatar)
-  ->gravatarValues(batch)
-  ->Drizzle.onConflictDoUpdate({target: DbSchema.gravatar.id, set: DbSchema.gravatar})
-}
-
-let test = batchSetGravatar([
-  {id: "hi", owner: "hello", displayName: "hi mom", updatesCount: 201, imageUrl: "hi.com"},
-  {id: "hi2", owner: "hello", displayName: "hi mom", updatesCount: 201, imageUrl: "hi.com"},
-  {id: "hi", owner: "hello2", displayName: "hi mom", updatesCount: 201, imageUrl: "hi.com"},
-])
-
-let batchDeleteGravatar = (batch: array<Types.gravatarEntity>) => {
-  batch
-  ->Belt.Array.forEach(entity => {
-    deleteDictKey(databaseDict, entity.id)
-  })
-  ->Promise.resolve
-}
-
-let readGravatarEntities = (entityReads: array<Types.entityRead>): promise<array<Types.entity>> => {
-  entityReads
-  ->Belt.Array.keepMap(entityRead => {
-    switch entityRead {
-    | GravatarRead(id) =>
-      getGravatarDb(~id)->Belt.Option.map(gravatar => Types.GravatarEntity(gravatar))
+  let getGravatarWithoutId = (
+    gravatarEntity: Types.gravatarEntity,
+  ): DbSchema.gravitarTableRowOptionalFields => {
+    {
+      owner: gravatarEntity.owner,
+      displayName: gravatarEntity.displayName,
+      imageUrl: gravatarEntity.imageUrl,
+      updatesCount: gravatarEntity.updatesCount,
     }
+  }
+
+  let db = await DbProvision.getDb()
+  await batch
+  ->Belt.Array.map(dbEntry => {
+    db
+    ->Drizzle.insert(~table=DbSchema.gravatar)
+    ->gravatarValues(dbEntry)
+    ->Drizzle.onConflictDoUpdate({
+      target: DbSchema.gravatar.id,
+      set: getGravatarWithoutId(dbEntry),
+    })
   })
-  ->Promise.resolve
+  ->Promise.all
+}
+
+let batchDeleteGravatar = async (batch: array<Types.id>) => {
+  let db = await DbProvision.getDb()
+  await batch
+  ->Belt.Array.map(entityIdToDelete => {
+    db
+    ->Drizzle.delete(~table=DbSchema.gravatar)
+    ->Drizzle.where(~condition=Drizzle.eq(~field=DbSchema.gravatar.id, ~value=entityIdToDelete))
+  })
+  ->Promise.all
+}
+
+let readGravatarEntities = async (gravatarIds: array<Types.id>): array<Types.gravatarEntity> => {
+  let db = await DbProvision.getDb()
+  let result =
+    await gravatarIds
+    ->Belt.Array.map(gravatarId => {
+      db
+      ->Drizzle.select
+      ->Drizzle.from(~table=DbSchema.gravatar)
+      ->Drizzle.where(~condition=Drizzle.eq(~field=DbSchema.gravatar.id, ~value=gravatarId))
+    })
+    ->Promise.all
+
+  result
 }

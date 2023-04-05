@@ -18,13 +18,13 @@ function gravatarNewGravatarEventHandler($$event, context) {
       });
 }
 
-function gravatarUpdateGravatarLoadEntities($$event) {
+function gravatarUpdatedGravatarLoadEntities($$event) {
   return [/* GravatarRead */{
             _0: $$event.params.id
           }];
 }
 
-function gravatarUpdateGravatarEventHandler($$event, context) {
+function gravatarUpdatedGravatarEventHandler($$event, context) {
   var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.Gravatar.loadedEntities.getById, $$event.params.id), 1, (function (gravatar) {
           return gravatar.updatesCount + 1 | 0;
         }));
@@ -39,6 +39,6 @@ function gravatarUpdateGravatarEventHandler($$event, context) {
 
 exports.gravatarNewGravatarLoadEntities = gravatarNewGravatarLoadEntities;
 exports.gravatarNewGravatarEventHandler = gravatarNewGravatarEventHandler;
-exports.gravatarUpdateGravatarLoadEntities = gravatarUpdateGravatarLoadEntities;
-exports.gravatarUpdateGravatarEventHandler = gravatarUpdateGravatarEventHandler;
+exports.gravatarUpdatedGravatarLoadEntities = gravatarUpdatedGravatarLoadEntities;
+exports.gravatarUpdatedGravatarEventHandler = gravatarUpdatedGravatarEventHandler;
 /* No side effect */

@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Test DB",
+      "Group": "Server Group 1",
+      "Port": 5432,
+      "Username": "postgres",
+      "Host": "indexly-postgres",
+      "SSLMode": "prefer",
+      "MaintenanceDB": "postgres"
+    }
+  }
+}

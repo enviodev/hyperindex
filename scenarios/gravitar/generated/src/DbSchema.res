@@ -11,7 +11,7 @@ type gravatarTablefields = {
 %%private(
   let gravatarTablefields = {
     id: text("id")->primaryKey,
-    owner: text("owner osf the gravatar"),
+    owner: text("owner of the gravatar"),
     displayName: text("display name of the gravatar"),
     imageUrl: text("image url of the gravatar"),
     updatesCount: integer("updates count of the gravatar"),
@@ -19,11 +19,11 @@ type gravatarTablefields = {
 )
 
 type gravitarTableRow = {
-  id: string,
-  owner: string,
-  displayName: string,
-  imageUrl: string,
-  updatesCount: int,
+  id: DrizzleOrm.Schema.fieldSelector,
+  owner: DrizzleOrm.Schema.fieldSelector,
+  displayName: DrizzleOrm.Schema.fieldSelector,
+  imageUrl: DrizzleOrm.Schema.fieldSelector,
+  updatesCount: DrizzleOrm.Schema.fieldSelector,
 }
 
 type gravitarTableRowOptionalFields = {

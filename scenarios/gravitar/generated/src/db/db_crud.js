@@ -1,9 +1,35 @@
-let { db } = require("./db_crud.js");
+let { db } = require("./db.js");
+let { gravatar } = require("./schema.js");
 
-let batchUpsertGravatars = async (gravatarsArray) => {
-  await db
-    .insert(users)
-    .values(gravatarsArray)
-    .onConflictDoUpdate(gravatarsArray.map((gravatar) => { target: gravatar.id, set: { owner: gravitar.owner, displayName: gravitar.displayName, imageUrl: gravitar.imageUrl, updatesCount: gravitar.updatesCount } });
+let batchSetGravatars = async (gravatarsArray) => {
+  let res = await db.insert(gravatar).values(gravatarsArray);
+
+  let obj = Object.entries(res);
+  console.log(obj);
 };
 
+let test = batchSetGravatars(
+  // {
+  //   id: "hi",
+  //   owner: "hello",
+  //   displayName: "hi mom",
+  //   updatesCount: 201,
+  //   imageUrl: "hi.com",
+  // },
+  // {
+  //   id: "hi2",
+  //   owner: "hello",
+  //   displayName: "hi mom",
+  //   updatesCount: 201,
+  //   imageUrl: "hi.com",
+  // },
+  [
+    {
+      id: "hi4",
+      owner: "hello2",
+      displayName: "hi mom",
+      updatesCount: 201,
+      imageUrl: "hi.com",
+    },
+  ]
+);

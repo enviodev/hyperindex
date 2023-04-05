@@ -4,7 +4,7 @@ type newGravatarEvent = {
   displayName: string,
   imageUrl: string,
 }
-type updateGravatarEvent = {
+type updatedGravatarEvent = {
   id: string,
   owner: string,
   displayName: string,
@@ -24,7 +24,7 @@ type eventLog<'a> = {
 
 type event =
   | NewGravatar(eventLog<newGravatarEvent>)
-  | UpdateGravatar(eventLog<updateGravatarEvent>)
+  | UpdatedGravatar(eventLog<updatedGravatarEvent>)
 
 // generated entity types:
 
@@ -46,7 +46,21 @@ type gravatarEntity = {
   updatesCount: int,
 }
 
-type entity = GravatarEntity(gravatarEntity)
+type entity = GravatarEntity
+
+let serializeEntity = entity =>
+  switch entity {
+  | GravatarEntity => "GravatarEntity"
+  }
+
+exception EntityParseError
+let parseEntity = entityString =>
+  switch entityString {
+  | "GravatarEntity" => GravatarEntity
+  | _ => EntityParseError->raise
+  }
+
+type entityWithData = GravatarEntity(gravatarEntity)
 
 type crud = Create | Read | Update | Delete
 

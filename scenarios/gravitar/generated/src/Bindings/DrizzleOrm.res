@@ -1,6 +1,8 @@
 module Schema = {
   type table<'rowType> = 'rowType
 
+  type fieldSelector
+
   @module("drizzle-orm/pg-core")
   external pgTable: (~name: string, ~fields: 'fields) => table<'rowType> = "pgTable"
 
@@ -56,35 +58,49 @@ module Drizzle = {
   @module("drizzle-orm/node-postgres")
   external make: (~pool: Pool.t) => db = "drizzle"
 
-  type selector
-
-  @send
-  external select: db => selector = "select"
-
   type insertion
 
   @send
   external insert: (db, ~table: Schema.table<'a>) => insertion = "insert"
+
+  type deletion
+  type crudOperation<'a>
+  @send
+  external delete: (db, ~table: Schema.table<'a>) => crudOperation<deletion> = "delete"
+
+  type whereSelector
+  @module("drizzle-orm/expressions")
+  external eq: (~field: Schema.fieldSelector, ~value: 'a) => whereSelector = "eq"
+
+  @send
+  external where: (crudOperation<'a>, ~condition: 'condition) => promise<'b> = "where"
+
+  type selection
+  @send external select: db => crudOperation<selection> = "select"
+
+  @send external from: (crudOperation<'a>, ~table: Schema.table<'b>) => crudOperation<'a> = "from"
 
   type migrationsConfig = {migrationsFolder: string}
   @module("drizzle-orm/node-postgres/migrator")
   external migrate: (db, migrationsConfig) => promise<unit> = "migrate"
 
   type returnedValues<'a> = 'a
-  type values<'a, 'b> = (insertion, array<'a>) => returnedValues<'b>
+  type values<'a, 'b> = (insertion, 'a) => returnedValues<'b>
   @send
-  external values: (insertion, array<'a>) => returnedValues<'b> = "values"
+  external values: (insertion, 'a) => returnedValues<'b> = "values"
 
   type targetConflict<'conflictId, 'valuesToSet> = {
     target: 'conflictId,
     set?: 'valuesToSet,
   }
 
+  type dbReturn = unit // unit until we care about this
+
   @send
-  external onConflictDoUpdate: (returnedValues<'a>, targetConflict<'b, 'c>) => 'd =
+  external onConflictDoUpdate: (returnedValues<'a>, targetConflict<'b, 'c>) => promise<dbReturn> =
     "onConflictDoUpdate"
 
   @send
-  external onConflictDoNothing: (returnedValues<'a>, targetConflict<'b, 'c>) => 'd =
+  external onConflictDoNothing: (returnedValues<'a>, targetConflict<'b, 'c>) => promise<dbReturn> =
     "onConflictDoNothing"
 }
