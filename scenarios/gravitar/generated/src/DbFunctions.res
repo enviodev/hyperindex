@@ -41,6 +41,7 @@ let batchSetGravatar = async (batch: array<Types.gravatarEntity>) => {
 let test = batchSetGravatar([
   {id: "hi", owner: "hello", displayName: "hi mom", updatesCount: 201, imageUrl: "hi.com"},
   {id: "hi2", owner: "hello", displayName: "hi mom", updatesCount: 201, imageUrl: "hi.com"},
+  {id: "hi", owner: "hello2", displayName: "hi mom", updatesCount: 201, imageUrl: "hi.com"},
 ])
 
 let batchDeleteGravatar = (batch: array<Types.gravatarEntity>) => {

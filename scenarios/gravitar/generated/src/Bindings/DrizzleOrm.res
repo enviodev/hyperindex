@@ -81,10 +81,10 @@ module Drizzle = {
   }
 
   @send
-  external onConflictDoUpdate: (returnedValues<'a>, targetConflict<'a, 'b>) => 'c =
+  external onConflictDoUpdate: (returnedValues<'a>, targetConflict<'b, 'c>) => 'd =
     "onConflictDoUpdate"
 
   @send
-  external onConflictDoNothing: (returnedValues<'a>, targetConflict<'a, 'b>) => 'c =
+  external onConflictDoNothing: (returnedValues<'a>, targetConflict<'b, 'c>) => 'd =
     "onConflictDoNothing"
 }
