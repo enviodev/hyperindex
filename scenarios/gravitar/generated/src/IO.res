@@ -82,10 +82,13 @@ let createBatch = () => {
 let executeBatch = async () => {
   let gravatarRows = InMemoryStore.gravatarDict.contents->Js.Dict.values
 
-  let deleteGravatars =
-    gravatarRows->Belt.Array.keepMap(gravatarRow =>
+  let deleteGravatarIds =
+    gravatarRows
+    ->Belt.Array.keepMap(gravatarRow =>
       gravatarRow.crud == Types.Delete ? Some(gravatarRow.entity) : None
     )
+    ->Belt.Array.map(gravatar => gravatar.id)
+
   let setGravatars =
     gravatarRows->Belt.Array.keepMap(gravatarRow =>
       gravatarRow.crud == Types.Create || gravatarRow.crud == Update
@@ -94,7 +97,7 @@ let executeBatch = async () => {
     )
 
   await (
-    DbStub.batchDeleteGravatar(deleteGravatars),
-    DbStub.batchSetGravatar(setGravatars),
+    DbFunctions.batchDeleteGravatar(deleteGravatarIds),
+    DbFunctions.batchSetGravatar(setGravatars),
   )->Promise.all2
 }

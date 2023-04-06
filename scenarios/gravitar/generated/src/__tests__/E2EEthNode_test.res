@@ -4,7 +4,7 @@ open Jest
 describe("E2E Mock Event Batch", () => {
   beforeAllPromise(() => {
     SetupRpcNode.setupNodeAndContracts()
-  }, ~timeout=30000)
+  }, ~timeout=60000)
 
   testPromise("Complete E2E", async () => {
     let localChainConfig = Config.config->Js.Dict.unsafeGet("31337")

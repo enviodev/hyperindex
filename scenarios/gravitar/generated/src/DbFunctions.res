@@ -57,5 +57,5 @@ let readGravatarEntities = async (gravatarIds: array<Types.id>): array<Types.gra
     })
     ->Promise.all
 
-  result
+  result->Belt.Array.concatMany
 }
