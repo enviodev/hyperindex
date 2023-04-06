@@ -1,0 +1,20 @@
+version: 0.0.0
+description: Example schema to show all the things
+repository: https://github.com/example/example
+networks: 
+- id: 137
+  rpc_url: https://polygon-rpc.com
+
+contracts:
+- name: LensProtocolProfiles
+  abi: abis/example-abi.json
+  address: "0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"
+  events:
+  - name: "Transfer"
+  - name: "UpdatedGravatar"
+    read_entities:
+    - name: Gravatar
+      labels: 
+      - "gravatarWithChanges"
+  - name: "NewGravatar"
+    read_entities: []
