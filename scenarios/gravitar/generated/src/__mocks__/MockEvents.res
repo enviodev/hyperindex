@@ -1,40 +1,40 @@
 let newGravatar1: Types.newGravatarEvent = {
-  id: "1",
+  id: "1001",
   owner: "0x123",
   displayName: "gravatar1",
   imageUrl: "https://gravatar1.com",
 }
 
 let newGravatar2: Types.newGravatarEvent = {
-  id: "2",
+  id: "1002",
   owner: "0x456",
   displayName: "gravatar2",
   imageUrl: "https://gravatar2.com",
 }
 
 let newGravatar3: Types.newGravatarEvent = {
-  id: "3",
+  id: "1003",
   owner: "0x789",
   displayName: "gravatar3",
   imageUrl: "https://gravatar3.com",
 }
 
 let updatedGravatar1: Types.updatedGravatarEvent = {
-  id: "1",
+  id: "1001",
   owner: "0x123",
   displayName: "update1",
   imageUrl: "https://gravatar1.com",
 }
 
 let updatedGravatar2: Types.updatedGravatarEvent = {
-  id: "2",
+  id: "1002",
   owner: "0x456",
   displayName: "update2",
   imageUrl: "https://gravatar2.com",
 }
 
 let updatedGravatar3: Types.updatedGravatarEvent = {
-  id: "3",
+  id: "1003",
   owner: "0x789",
   displayName: "update3",
   imageUrl: "https://gravatar3.com",

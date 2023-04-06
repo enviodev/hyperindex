@@ -46,7 +46,21 @@ type gravatarEntity = {
   updatesCount: int,
 }
 
-type entity = GravatarEntity(gravatarEntity)
+type entity = GravatarEntity
+
+let serializeEntity = entity =>
+  switch entity {
+  | GravatarEntity => "GravatarEntity"
+  }
+
+exception EntityParseError
+let parseEntity = entityString =>
+  switch entityString {
+  | "GravatarEntity" => GravatarEntity
+  | _ => EntityParseError->raise
+  }
+
+type entityWithData = GravatarEntity(gravatarEntity)
 
 type crud = Create | Read | Update | Delete
 

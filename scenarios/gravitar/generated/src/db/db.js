@@ -16,8 +16,8 @@ const pool = new Pool({
   database: "indexly-dev",
 });
 
+const db = drizzle(pool);
 async function main() {
-  const db = drizzle(pool);
   await migrate(db, { migrationsFolder: "./migrations-folder" });
   // await db.insert(users).values({
   //   id: 123,
@@ -29,10 +29,8 @@ async function main() {
   //   fullName: "Jono Prest",
   //   phone: "555-555-5555",
   // });
-  console.log("inserted user")
-  const allUsers = await db.select().from(gravatar);
-
-  console.log("all users", allUsers);
 }
 
 main();
+
+module.exports.db = db;

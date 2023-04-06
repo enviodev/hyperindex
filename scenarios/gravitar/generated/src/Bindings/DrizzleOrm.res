@@ -1,36 +1,38 @@
 module Schema = {
-  type table
+  type table<'rowType> = 'rowType
+
+  type fieldSelector
 
   @module("drizzle-orm/pg-core")
-  external pgTable: (~name: string, ~columns: 'columns) => table = "pgTable"
+  external pgTable: (~name: string, ~fields: 'fields) => table<'rowType> = "pgTable"
 
-  type column
+  type field
 
   @module("drizzle-orm/pg-core")
-  external serial: string => column = "serial"
+  external serial: string => field = "serial"
   @module("drizzle-orm/pg-core")
-  external text: string => column = "text"
+  external text: string => field = "text"
   @module("drizzle-orm/pg-core")
-  external integer: string => column = "integer"
+  external integer: string => field = "integer"
   @module("drizzle-orm/pg-core")
-  external numeric: string => column = "numeric"
+  external numeric: string => field = "numeric"
   @module("drizzle-orm/pg-core")
-  external boolean: string => column = "boolean"
+  external boolean: string => field = "boolean"
   @module("drizzle-orm/pg-core")
-  external json: string => column = "json"
+  external json: string => field = "json"
   @module("drizzle-orm/pg-core")
-  external jsonb: string => column = "jsonb"
+  external jsonb: string => field = "jsonb"
   @module("drizzle-orm/pg-core")
-  external time: string => column = "time"
+  external time: string => field = "time"
   @module("drizzle-orm/pg-core")
-  external timestamp: string => column = "timestamp"
+  external timestamp: string => field = "timestamp"
   @module("drizzle-orm/pg-core")
-  external date: string => column = "date"
+  external date: string => field = "date"
   @module("drizzle-orm/pg-core")
-  external varchar: string => column = "varchar"
+  external varchar: string => field = "varchar"
 
   @send
-  external primaryKey: column => column = "primaryKey"
+  external primaryKey: field => field = "primaryKey"
 }
 
 module Pool = {
@@ -51,20 +53,54 @@ module Pool = {
 module Drizzle = {
   type db
 
-  @module
-  external make: (~pool: Pool.t) => db = "drizzle-orm/node-postgres"
-
-  type selector
-
-  @send
-  external select: db => selector = "select"
+  //TODO: If we use any other methods on drizzle perhap have a drizzle
+  //type with send methods
+  @module("drizzle-orm/node-postgres")
+  external make: (~pool: Pool.t) => db = "drizzle"
 
   type insertion
 
   @send
-  external insert: (db, ~table: Schema.table) => insertion = "instert"
+  external insert: (db, ~table: Schema.table<'a>) => insertion = "insert"
+
+  type deletion
+  type crudOperation<'a>
+  @send
+  external delete: (db, ~table: Schema.table<'a>) => crudOperation<deletion> = "delete"
+
+  type whereSelector
+  @module("drizzle-orm/expressions")
+  external eq: (~field: Schema.fieldSelector, ~value: 'a) => whereSelector = "eq"
+
+  @send
+  external where: (crudOperation<'a>, ~condition: 'condition) => promise<'b> = "where"
+
+  type selection
+  @send external select: db => crudOperation<selection> = "select"
+
+  @send external from: (crudOperation<'a>, ~table: Schema.table<'b>) => crudOperation<'a> = "from"
 
   type migrationsConfig = {migrationsFolder: string}
   @module("drizzle-orm/node-postgres/migrator")
   external migrate: (db, migrationsConfig) => promise<unit> = "migrate"
+
+  type returnedValues<'a> = 'a
+  type values<'a, 'b> = (insertion, 'a) => returnedValues<'b>
+  @send
+  external values: (insertion, 'a) => returnedValues<'b> = "values"
+
+  type targetConflict<'conflictId, 'valuesToSet> = {
+    target: 'conflictId,
+    set?: 'valuesToSet,
+  }
+
+  type dbReturn = unit // unit until we care about this
+
+  @send
+  external onConflictDoUpdate: (returnedValues<'a>, targetConflict<'b, 'c>) => promise<dbReturn> =
+    "onConflictDoUpdate"
+
+  @send
+  external onConflictDoNothing: (returnedValues<'a>, targetConflict<'b, 'c>) => promise<dbReturn> =
+    "onConflictDoNothing"
 }

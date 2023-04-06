@@ -18,7 +18,7 @@ let config: chainConfigs = [
   (
     "31337",
     {
-      rpcUrl: "http://localhost:8545",
+      rpcUrl: "http://127.0.0.1:8545",
       chainId: 31337,
       startBlock: 0,
       contracts: [

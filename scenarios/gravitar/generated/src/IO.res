@@ -45,24 +45,29 @@ module InMemoryStore = {
     gravatarDict := Js.Dict.empty()
   }
 }
+type uniqueEntityReadIds = Js.Dict.t<Types.id>
+type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
 let loadEntities = async (entityBatch: array<Types.entityRead>) => {
-  let uniqueEntities: Js.Dict.t<Types.entityRead> = Js.Dict.empty()
+  // 1. Get all unique entityRead values
+  /// TODO: we probably want to pass this in in a batched way, and not have to group them like this.
+  ///       just doing this to get E2E working.
+  let uniqueGravatarsDict = Js.Dict.empty()
 
-  //1. Get all unique entityRead values
   entityBatch->Belt.Array.forEach(entity => {
-    let _ = Js.Dict.set(uniqueEntities, entity->Types.entitySerialize, entity)
-  })
-
-  let uniqueEntitiesArray = uniqueEntities->Js.Dict.values
-
-  let entitiesArray = await DbStub.readGravatarEntities(uniqueEntitiesArray)
-
-  entitiesArray->Belt.Array.forEach(entity => {
     switch entity {
-    | GravatarEntity(gravatar) => InMemoryStore.setGravatar(~gravatar, ~crud=Types.Read)
+    | GravatarRead(gravatar) =>
+      let _ = Js.Dict.set(uniqueGravatarsDict, entity->Types.entitySerialize, gravatar)
     }
   })
+
+  let gravatarEntitiesArray = await DbFunctions.readGravatarEntities(
+    Js.Dict.values(uniqueGravatarsDict),
+  )
+
+  gravatarEntitiesArray->Belt.Array.forEach(gravatar =>
+    InMemoryStore.setGravatar(~gravatar, ~crud=Types.Read)
+  )
 }
 
 let createBatch = () => {
@@ -77,10 +82,13 @@ let createBatch = () => {
 let executeBatch = async () => {
   let gravatarRows = InMemoryStore.gravatarDict.contents->Js.Dict.values
 
-  let deleteGravatars =
-    gravatarRows->Belt.Array.keepMap(gravatarRow =>
+  let deleteGravatarIds =
+    gravatarRows
+    ->Belt.Array.keepMap(gravatarRow =>
       gravatarRow.crud == Types.Delete ? Some(gravatarRow.entity) : None
     )
+    ->Belt.Array.map(gravatar => gravatar.id)
+
   let setGravatars =
     gravatarRows->Belt.Array.keepMap(gravatarRow =>
       gravatarRow.crud == Types.Create || gravatarRow.crud == Update
@@ -89,7 +97,7 @@ let executeBatch = async () => {
     )
 
   await (
-    DbStub.batchDeleteGravatar(deleteGravatars),
-    DbStub.batchSetGravatar(setGravatars),
+    DbFunctions.batchDeleteGravatar(deleteGravatarIds),
+    DbFunctions.batchSetGravatar(setGravatars),
   )->Promise.all2
 }

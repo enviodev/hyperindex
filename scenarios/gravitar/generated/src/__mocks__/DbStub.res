@@ -26,13 +26,10 @@ let batchDeleteGravatar = (batch: array<Types.gravatarEntity>) => {
   ->Promise.resolve
 }
 
-let readGravatarEntities = (entityReads: array<Types.entityRead>): promise<array<Types.entity>> => {
+let readGravatarEntities = (entityReads: array<Types.id>): promise<array<Types.gravatarEntity>> => {
   entityReads
-  ->Belt.Array.keepMap(entityRead => {
-    switch entityRead {
-    | GravatarRead(id) =>
-      getGravatarDb(~id)->Belt.Option.map(gravatar => Types.GravatarEntity(gravatar))
-    }
+  ->Belt.Array.keepMap(id => {
+    getGravatarDb(~id)->Belt.Option.map(gravatar => gravatar)
   })
   ->Promise.resolve
 }

@@ -35,9 +35,15 @@ describe("E2E Mock Event Batch", () => {
 
 describe("E2E Db check", () => {
   beforeAllPromise(async () => {
-    DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
-    DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
+    let _ = await DbFunctions.batchSetGravatar([
+      MockEntities.gravatarEntity1,
+      MockEntities.gravatarEntity2,
+    ])
     await EventProcessing.processEventBatch(MockEvents.eventBatch, ~context=Context.getContext())
+    //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
+    // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
+    // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
+    // await EventProcessing.processEventBatch(MockEvents.eventBatch, ~context=Context.getContext())
   })
 
   test("Validate inmemory store state", () => {
@@ -47,7 +53,7 @@ describe("E2E Db check", () => {
       {
         crud: Update,
         entity: {
-          id: "1",
+          id: "1001",
           owner: "0x123",
           displayName: "update1",
           imageUrl: "https://gravatar1.com",
@@ -57,7 +63,7 @@ describe("E2E Db check", () => {
       {
         crud: Update,
         entity: {
-          id: "2",
+          id: "1002",
           owner: "0x456",
           displayName: "update2",
           imageUrl: "https://gravatar2.com",
@@ -67,7 +73,7 @@ describe("E2E Db check", () => {
       {
         crud: Create,
         entity: {
-          id: "3",
+          id: "1003",
           owner: "0x789",
           displayName: "update3",
           imageUrl: "https://gravatar3.com",

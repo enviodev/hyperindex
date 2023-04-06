@@ -1,0 +1,54 @@
+{
+  "version": "5",
+  "dialect": "pg",
+  "id": "5bd50061-4f0d-414b-9b2f-075eda0ed173",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "gravatar": {
+      "name": "gravatar",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "owner osf the gravatar": {
+          "name": "owner osf the gravatar",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "display name of the gravatar": {
+          "name": "display name of the gravatar",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "image url of the gravatar": {
+          "name": "image url of the gravatar",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updates count of the gravatar": {
+          "name": "updates count of the gravatar",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {}
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  }
+}
