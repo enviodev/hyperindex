@@ -13,7 +13,9 @@ type eventLog<'a> = {
   logIndex: int,
 }
 
-{{#each events as | event |}}
+{{#each contracts as | contract |}}
+module {{contract.name.capitalized}}Contract = {
+{{#each contract.events as | event |}}
 type {{event.name.uncapitalized}}Event = {
   {{#each event.params as | param |}}
   {{param.key}} : {{param.type_}},
@@ -21,9 +23,15 @@ type {{event.name.uncapitalized}}Event = {
 }
 
 {{/each}}
+}
+
+{{/each}}
+
 type event =
-{{#each events as | event |}}
-  | {{event.name.capitalized}}(eventLog<{{event.name.uncapitalized}}Event>)
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}Event>)
+{{/each}}
 {{/each}}
 
 //*************
