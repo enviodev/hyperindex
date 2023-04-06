@@ -1,0 +1,33 @@
+services:
+  indexly-postgres:
+    container_name: indexly-postgres
+    image: postgres:13
+    restart: always
+    ports:
+      - "${POSTGRES_EXTERNAL_PORT:-5433}:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-testing}
+      POSTGRES_USER: postgres
+      POSTGRES_DB: indexly-dev
+    networks:
+      - my-proxy-net
+  pg-admin:
+    container_name: indexly-pg-admin
+    image: dpage/pgadmin4:latest
+    restart: always
+    ports:
+      - "${PGADMIN_PUBLIC_PORT:-6543}:80"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:-dev@float.capital}
+      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD:-testing}
+    networks:
+      - my-proxy-net
+    volumes:
+      - ./.config/pgadmin/servers.json:/pgadmin4/servers.json
+volumes:
+  db_data:
+networks:
+  my-proxy-net:
+    name: local_test_network
