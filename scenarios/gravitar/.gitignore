@@ -26,3 +26,5 @@ lib/*
 .bsb.lock
 /node_modules/
 benchmarks/
+artifacts
+cache

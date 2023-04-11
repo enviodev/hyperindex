@@ -71,7 +71,7 @@ describe("E2E Db check", () => {
         },
       },
       {
-        crud: Create,
+        crud: Create, // NOTE: if this is not run against a fresh database it will get an `Update` instead of `Create`
         entity: {
           id: "1003",
           owner: "0x789",
