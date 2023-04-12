@@ -13,23 +13,25 @@ type eventLog<'a> = {
   logIndex: int,
 }
 
-type newGravatarEvent = {
-  id: int,
-  owner: string,
-  displayName: string,
-  imageUrl: string,
-}
+module GravatarContract = {
+  type newGravatarEvent = {
+    id: int,
+    owner: string,
+    displayName: string,
+    imageUrl: string,
+  }
 
-type updatedGravatarEvent = {
-  id: int,
-  owner: string,
-  displayName: string,
-  imageUrl: string,
+  type updatedGravatarEvent = {
+    id: int,
+    owner: string,
+    displayName: string,
+    imageUrl: string,
+  }
 }
 
 type event =
-  | NewGravatar(eventLog<newGravatarEvent>)
-  | UpdatedGravatar(eventLog<updatedGravatarEvent>)
+  | GravatarContract_NewGravatar(eventLog<GravatarContract.newGravatarEvent>)
+  | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.updatedGravatarEvent>)
 
 //*************
 //***ENTITIES**

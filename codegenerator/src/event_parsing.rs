@@ -1,24 +1,25 @@
-use crate::{Capitalize, Error, ParamType, RecordType, CURRENT_DIR_PATH};
+use crate::{Capitalize, Contract, Error, ParamType, RecordType, CURRENT_DIR_PATH};
 use serde::{Deserialize, Serialize};
 
 use serde_yaml;
 
 use ethereum_abi::Abi;
 
-pub fn get_event_record_types_from_config() -> Result<Vec<RecordType>, Box<dyn Error>> {
+pub fn get_contract_types_from_config() -> Result<Vec<Contract>, Box<dyn Error>> {
     let config_dir = format!("{}/{}", CURRENT_DIR_PATH, "config.yaml");
 
     let config = std::fs::read_to_string(&config_dir)?;
 
     let deserialized_yaml: Config = serde_yaml::from_str(&config)?;
-    let mut event_types: Vec<RecordType> = Vec::new(); //parse_event_signature(abi);
+    let mut contracts: Vec<Contract> = Vec::new();
 
-    for contract in deserialized_yaml.contracts.iter() {
-        let abi_path = format!("{}/{}", CURRENT_DIR_PATH, contract.abi);
+    for config_contract in deserialized_yaml.contracts.iter() {
+        let mut event_types: Vec<RecordType> = Vec::new();
+        let abi_path = format!("{}/{}", CURRENT_DIR_PATH, config_contract.abi);
         let abi_file = std::fs::read_to_string(abi_path)?;
         let contract_abi: Abi = serde_json::from_str(&abi_file).expect("failed to parse abi");
         let events: Vec<ethereum_abi::Event> = contract_abi.events;
-        for event in contract.events.iter() {
+        for event in config_contract.events.iter() {
             println!("{}", event.name);
             let event = events
                 .iter()
@@ -54,8 +55,14 @@ pub fn get_event_record_types_from_config() -> Result<Vec<RecordType>, Box<dyn E
                 None => (),
             };
         }
+        let contract = Contract {
+            name: config_contract.name.to_capitalized_options(),
+            address: config_contract.address.clone(),
+            events: event_types,
+        };
+        contracts.push(contract);
     }
-    Ok(event_types)
+    Ok(contracts)
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -76,7 +83,7 @@ struct Event {
     read_entities: Option<Vec<ReadEntity>>,
 }
 #[derive(Debug, Serialize, Deserialize)]
-struct Contract {
+struct ConfigContract {
     name: String,
     abi: String,
     address: String,
@@ -90,5 +97,5 @@ struct Config {
     repository: String,
     networks: Vec<Network>,
     handler: String,
-    contracts: Vec<Contract>,
+    contracts: Vec<ConfigContract>,
 }

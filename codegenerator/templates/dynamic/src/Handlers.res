@@ -1,21 +1,19 @@
+{{#each contracts as | contract |}}
+module {{contract.name.capitalized}}Contract = {
+{{#each contract.events as | event |}}
 @module("../../src/EventHandlers.bs.js")
-external gravatarNewGravatarLoadEntities: Types.eventLog<Types.newGravatarEvent> => array<
+external {{event.name.uncapitalized}}LoadEntities: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}Event> => array<
   Types.entityRead,
-> = "gravatarNewGravatarLoadEntities"
+> = "{{event.name.capitalized}}LoadEntities"
 
 @module("../../src/EventHandlers.bs.js")
-external gravatarNewGravatarEventHandler: (
-  Types.eventLog<Types.newGravatarEvent>,
+external {{event.name.uncapitalized}}Handler: (
+  Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}Event>,
   Types.context,
-) => unit = "gravatarNewGravatarEventHandler"
+) => unit = "{{event.name.capitalized}}Handler"
 
-@module("../../src/EventHandlers.bs.js")
-external gravatarUpdateGravatarLoadEntities: Types.eventLog<Types.updateGravatarEvent> => array<
-  Types.entityRead,
-> = "gravatarUpdateGravatarLoadEntities"
+{{/each}}
+}
 
-@module("../../src/EventHandlers.bs.js")
-external gravatarUpdateGravatarEventHandler: (
-  Types.eventLog<Types.updateGravatarEvent>,
-  Types.context,
-) => unit = "gravatarUpdateGravatarEventHandler"
+{{/each}}
+
