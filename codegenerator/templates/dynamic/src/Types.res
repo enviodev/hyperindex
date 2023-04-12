@@ -34,6 +34,22 @@ type event =
 {{/each}}
 {{/each}}
 
+type eventName =
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+{{/each}}
+{{/each}}
+
+let eventNameToString = (eventName: eventName) => switch eventName {
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event => "{{event.name.capitalized}}"
+{{/each}}
+{{/each}}
+}
+
+
 //*************
 //***ENTITIES**
 //*************

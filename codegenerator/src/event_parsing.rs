@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{Capitalize, Contract, Error, ParamType, RecordType, CURRENT_DIR_PATH};
 use serde::{Deserialize, Serialize};
 
@@ -65,28 +67,31 @@ pub fn get_contract_types_from_config() -> Result<Vec<Contract>, Box<dyn Error>>
     Ok(contracts)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+type NetworkId = i32;
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct Network {
-    id: i32,
+    id: NetworkId,
     rpc_url: String,
     start_block: i32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct ReadEntity {
     name: String,
     labels: Vec<String>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct Event {
     name: String,
     read_entities: Option<Vec<ReadEntity>>,
 }
-#[derive(Debug, Serialize, Deserialize)]
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct ConfigContract {
     name: String,
     abi: String,
     address: String,
+    networks: Option<Vec<NetworkId>>,
     events: Vec<Event>,
 }
 
@@ -99,3 +104,172 @@ struct Config {
     handler: String,
     contracts: Vec<ConfigContract>,
 }
+
+#[derive(Debug, PartialEq)]
+struct ChainConfig {
+    network_config: Network,
+    contracts: Vec<ConfigContract>,
+}
+
+fn convert_config_to_chain_configs(config: &Config) -> Vec<ChainConfig> {
+    let mut network_map: HashMap<NetworkId, ChainConfig> = HashMap::new();
+
+    let mut all_network_ids = Vec::new();
+
+    for network in config.networks.iter() {
+        all_network_ids.push(network.id);
+        let chain_config = ChainConfig {
+            network_config: network.clone(),
+            contracts: vec![],
+        };
+
+        network_map.insert(network.id, chain_config);
+    }
+    for contract in config.contracts.iter() {
+        let contract_network_ids = match &contract.networks {
+            Some(network_ids) => network_ids.clone(),
+            None => all_network_ids.clone(),
+        };
+
+        for network_id in contract_network_ids.iter() {
+            let mut network_config = network_map.get_mut(network_id).expect(
+                format!("Contract network {} not defined in networks", network_id).as_str(),
+            );
+            network_config.contracts.push(contract.clone());
+        }
+
+        //check for networks and if nothing push to each network
+    }
+    let chain_configs: Vec<ChainConfig> = network_map.into_values().collect();
+    chain_configs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChainConfig;
+
+    #[test]
+    fn convert_to_chain_configs_case_1() {
+        let network1 = super::Network {
+            id: 1,
+            rpc_url: String::from("https://eth.com"),
+            start_block: 0,
+        };
+
+        let network2 = super::Network {
+            id: 2,
+            rpc_url: String::from("https://network2.com"),
+            start_block: 123,
+        };
+
+        let networks = vec![network1.clone(), network2.clone()];
+
+        let event1 = super::Event {
+            name: String::from("NewGravatar"),
+            read_entities: None,
+        };
+
+        let event2 = super::Event {
+            name: String::from("UpdateGravatar"),
+            read_entities: None,
+        };
+
+        let contract1 = super::ConfigContract {
+            networks: None,
+            name: String::from("Contract1"),
+            abi: String::from("abi/Contract1.json"),
+            address: String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"),
+            events: vec![event1, event2],
+        };
+
+        let contracts = vec![contract1.clone()];
+
+        let config = super::Config {
+            version: String::from("1.0.0"),
+            description: String::from("Test Scenario 1"),
+            repository: String::from("github.indexer.com"),
+            networks,
+            contracts: contracts.clone(),
+            handler: String::from("../src/Contract1Handler.bs.js"),
+        };
+
+        let chain_configs = super::convert_config_to_chain_configs(&config);
+
+        let chain_config_1 = ChainConfig {
+            network_config: network1,
+            contracts: contracts.clone(),
+        };
+        let chain_config_2 = ChainConfig {
+            network_config: network2,
+            contracts: contracts,
+        };
+
+        assert_eq!(chain_configs[0], chain_config_1);
+        assert_eq!(chain_configs[1], chain_config_2);
+    }
+
+    #[test]
+    fn convert_to_chain_configs_case_2() {
+        let network1 = super::Network {
+            id: 1,
+            rpc_url: String::from("https://eth.com"),
+            start_block: 0,
+        };
+
+        let network2 = super::Network {
+            id: 2,
+            rpc_url: String::from("https://network2.com"),
+            start_block: 123,
+        };
+
+        let networks = vec![network1.clone(), network2.clone()];
+
+        let event1 = super::Event {
+            name: String::from("NewGravatar"),
+            read_entities: None,
+        };
+
+        let event2 = super::Event {
+            name: String::from("UpdateGravatar"),
+            read_entities: None,
+        };
+
+        let contract1 = super::ConfigContract {
+            networks: Some(vec![1]),
+            name: String::from("Contract1"),
+            abi: String::from("abi/Contract1.json"),
+            address: String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"),
+            events: vec![event1, event2],
+        };
+
+        let contracts = vec![contract1.clone()];
+
+        let config = super::Config {
+            version: String::from("1.0.0"),
+            description: String::from("Test Scenario 1"),
+            repository: String::from("github.indexer.com"),
+            networks,
+            contracts: contracts.clone(),
+            handler: String::from("../src/Contract1Handler.bs.js"),
+        };
+
+        let chain_configs = super::convert_config_to_chain_configs(&config);
+
+        let chain_config_1 = ChainConfig {
+            network_config: network1,
+            contracts: contracts.clone(),
+        };
+        let chain_config_2 = ChainConfig {
+            network_config: network2,
+            contracts: vec![],
+        };
+
+        assert_eq!(chain_configs[0], chain_config_1);
+        assert_eq!(chain_configs[1], chain_config_2);
+    }
+}
+
+// network -> contracts
+//
+//loop through every contract and get networkIds,
+//hashmap of networkIds push contracts that match onto relevant networkIds

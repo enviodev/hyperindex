@@ -33,6 +33,16 @@ type event =
   | GravatarContract_NewGravatar(eventLog<GravatarContract.newGravatarEvent>)
   | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.updatedGravatarEvent>)
 
+type eventName =
+  | GravatarContract_NewGravatarEvent
+  | GravatarContract_UpdatedGravatarEvent
+
+let eventNameToString = (eventName: eventName) =>
+  switch eventName {
+  | GravatarContract_NewGravatarEvent => "NewGravatar"
+  | GravatarContract_UpdatedGravatarEvent => "UpdatedGravatar"
+  }
+
 //*************
 //***ENTITIES**
 //*************
