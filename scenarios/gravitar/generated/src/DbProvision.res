@@ -1,7 +1,8 @@
 let pool = DrizzleOrm.Pool.make(
   ~config={
-    host: "127.0.0.1",
-    port: 5433,
+    // TODO: use proper environment variables with defaults.
+    host: "postgres",
+    port: 5432,
     user: "postgres",
     password: "testing",
     database: "indexly-dev",
