@@ -41,9 +41,14 @@ jobs:
       - uses: pnpm/action-setup@v2
         with:
           version: 7
-
+      
       - name: Install dependencies
         run: pnpm install
+
+      - name: Build code
+        run: |
+          cd generated
+          pnpm build
 
       - name: Run tests
         run: |
