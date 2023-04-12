@@ -33,6 +33,9 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+        ports:
+          # Maps tcp port 5432 on service container to the host port 5433
+          - 5433:5432
 
     steps:
       - name: Check out repository code
@@ -41,7 +44,8 @@ jobs:
       - uses: pnpm/action-setup@v2
         with:
           version: 7
-      
+
+      # TODO: add pnpm caching
       - name: Install dependencies
         run: pnpm install
 
