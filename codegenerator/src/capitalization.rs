@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug, PartialEq)]
 pub struct CapitalizedOptions {
     capitalized: String,
     uncapitalized: String,

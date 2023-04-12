@@ -13,13 +13,13 @@ pub use config_parsing::{entity_parsing, event_parsing};
 pub mod capitalization;
 
 use capitalization::CapitalizedOptions;
-#[derive(Serialize)]
+#[derive(Serialize, Debug, PartialEq)]
 struct ParamType {
     key: String,
     type_: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug, PartialEq)]
 pub struct RecordType {
     name: CapitalizedOptions,
     params: Vec<ParamType>,

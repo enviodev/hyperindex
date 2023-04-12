@@ -34,10 +34,20 @@ struct ContractNetwork {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ConfigContract {
     name: String,
+    // Eg for implementing a custom deserializer
+    //  #[serde(deserialize_with = "abi_path_to_abi")]
     abi_file_path: String,
     networks: Vec<ContractNetwork>,
     events: Vec<Event>,
 }
+
+// fn abi_path_to_abi<'de, D>(deserializer: D) -> Result<u64, D::Error>
+// where
+//     D: Deserializer<'de>,
+// {
+//     let abi_file_path: &str = Deserialize::deserialize(deserializer)?;
+//     // ... convert to abi herer
+// }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct SingleContract {
@@ -99,7 +109,7 @@ fn convert_config_to_chain_configs(config: &Config) -> Vec<ChainConfig> {
             for contract_address in contract_network.addresses.iter() {
                 let single_contract = SingleContract {
                     name: contract.name.clone(),
-                    abi: String::from("../../abis/Dummy.json"),
+                    abi: contract.abi_file_path.clone(),
                     address: contract_address.clone(),
                     events: contract.events.clone(),
                 };
@@ -128,9 +138,7 @@ fn convert_config_to_chain_configs(config: &Config) -> Vec<ChainConfig> {
 
 #[cfg(test)]
 mod tests {
-    use crate::event_parsing::ContractNetwork;
-
-    use super::ChainConfig;
+    use super::{ChainConfig, ContractNetwork};
 
     #[test]
     fn convert_to_chain_configs_case_1() {
@@ -174,7 +182,7 @@ mod tests {
         let contract1 = super::ConfigContract {
             networks: contract_networks_config,
             name: String::from("Contract1"),
-            abi: String::from("abi/Contract1.json"),
+            abi_file_path: String::from("abi/Contract1.json"),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -253,7 +261,7 @@ mod tests {
         let contract1 = super::ConfigContract {
             networks: contract_networks_config,
             name: String::from("Contract1"),
-            abi: String::from("abi/Contract1.json"),
+            abi_file_path: String::from("abi/Contract1.json"),
             events: vec![event1.clone(), event2.clone()],
         };
 
