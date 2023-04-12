@@ -1,71 +1,10 @@
 use std::collections::HashMap;
+use std::error::Error;
 
-use crate::{Capitalize, Contract, Error, ParamType, RecordType, CURRENT_DIR_PATH};
+pub mod entity_parsing;
+pub mod event_parsing;
+
 use serde::{Deserialize, Serialize};
-
-use serde_yaml;
-
-use ethereum_abi::Abi;
-
-pub fn get_contract_types_from_config() -> Result<Vec<Contract>, Box<dyn Error>> {
-    let config_dir = format!("{}/{}", CURRENT_DIR_PATH, "config.yaml");
-
-    let config = std::fs::read_to_string(&config_dir)?;
-
-    let deserialized_yaml: Config = serde_yaml::from_str(&config)?;
-    let mut contracts: Vec<Contract> = Vec::new();
-
-    for config_contract in deserialized_yaml.contracts.iter() {
-        let mut event_types: Vec<RecordType> = Vec::new();
-        let abi_path = format!("{}/{}", CURRENT_DIR_PATH, config_contract.abi);
-        let abi_file = std::fs::read_to_string(abi_path)?;
-        let contract_abi: Abi = serde_json::from_str(&abi_file).expect("failed to parse abi");
-        let events: Vec<ethereum_abi::Event> = contract_abi.events;
-        for event in config_contract.events.iter() {
-            println!("{}", event.name);
-            let event = events
-                .iter()
-                .find(|&abi_event| abi_event.name == event.name);
-
-            match event {
-                Some(event) => {
-                    let event_type = RecordType {
-                        name: event.name.to_owned().to_capitalized_options(),
-                        params: event
-                            .inputs
-                            .iter()
-                            .map(|input| ParamType {
-                                key: input.name.to_owned(),
-                                type_: match input.type_ {
-                                    ethereum_abi::Type::Uint(_size) => "int",
-                                    ethereum_abi::Type::Int(_size) => "int",
-                                    ethereum_abi::Type::Bool => "bool",
-                                    ethereum_abi::Type::Address => "string",
-                                    ethereum_abi::Type::Bytes => "string",
-                                    ethereum_abi::Type::String => "string",
-                                    ethereum_abi::Type::FixedBytes(_) => "type_not_handled",
-                                    ethereum_abi::Type::Array(_) => "type_not_handled",
-                                    ethereum_abi::Type::FixedArray(_, _) => "type_not_handled",
-                                    ethereum_abi::Type::Tuple(_) => "type_not_handled",
-                                }
-                                .to_owned(),
-                            })
-                            .collect(),
-                    };
-                    event_types.push(event_type);
-                }
-                None => (),
-            };
-        }
-        let contract = Contract {
-            name: config_contract.name.to_capitalized_options(),
-            address: config_contract.address.clone(),
-            events: event_types,
-        };
-        contracts.push(contract);
-    }
-    Ok(contracts)
-}
 
 type NetworkId = i32;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -87,16 +26,29 @@ struct Event {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct ConfigContract {
+struct ContractNetwork {
+    id: NetworkId,
+    addresses: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct ConfigContract {
+    name: String,
+    abi_file_path: String,
+    networks: Vec<ContractNetwork>,
+    events: Vec<Event>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct SingleContract {
     name: String,
     abi: String,
     address: String,
-    networks: Option<Vec<NetworkId>>,
     events: Vec<Event>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Config {
+pub struct Config {
     version: String,
     description: String,
     repository: String,
@@ -105,10 +57,19 @@ struct Config {
     contracts: Vec<ConfigContract>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 struct ChainConfig {
     network_config: Network,
-    contracts: Vec<ConfigContract>,
+    contracts: Vec<SingleContract>,
+}
+
+pub fn get_config_from_yaml(project_root_path: &str) -> Result<Config, Box<dyn Error>> {
+    let config_dir = format!("{}/{}", project_root_path, "config.yaml");
+
+    let config = std::fs::read_to_string(&config_dir)?;
+
+    let deserialized_yaml: Config = serde_yaml::from_str(&config)?;
+    Ok(deserialized_yaml)
 }
 
 fn convert_config_to_chain_configs(config: &Config) -> Vec<ChainConfig> {
@@ -125,31 +86,56 @@ fn convert_config_to_chain_configs(config: &Config) -> Vec<ChainConfig> {
 
         network_map.insert(network.id, chain_config);
     }
-    for contract in config.contracts.iter() {
-        let contract_network_ids = match &contract.networks {
-            Some(network_ids) => network_ids.clone(),
-            None => all_network_ids.clone(),
-        };
 
-        for network_id in contract_network_ids.iter() {
-            let mut network_config = network_map.get_mut(network_id).expect(
-                format!("Contract network {} not defined in networks", network_id).as_str(),
+    for contract in config.contracts.iter() {
+        for contract_network in contract.networks.iter() {
+            let network_config = network_map.get_mut(&contract_network.id).expect(
+                format!(
+                    "Contract network {} not defined in networks",
+                    contract_network.id
+                )
+                .as_str(),
             );
-            network_config.contracts.push(contract.clone());
+            for contract_address in contract_network.addresses.iter() {
+                let single_contract = SingleContract {
+                    name: contract.name.clone(),
+                    abi: String::from("../../abis/Dummy.json"),
+                    address: contract_address.clone(),
+                    events: contract.events.clone(),
+                };
+                network_config.contracts.push(single_contract);
+            }
         }
 
         //check for networks and if nothing push to each network
     }
-    let chain_configs: Vec<ChainConfig> = network_map.into_values().collect();
+
+    let mut chain_configs: Vec<ChainConfig> = Vec::new();
+    for network in config.networks.iter() {
+        let chain_config = network_map.get(&network.id).expect(
+            format!(
+                "Network id {} should have been set in first iteration",
+                network.id
+            )
+            .as_str(),
+        );
+
+        chain_configs.push(chain_config.clone());
+    }
+
     chain_configs
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::event_parsing::ContractNetwork;
+
     use super::ChainConfig;
 
     #[test]
     fn convert_to_chain_configs_case_1() {
+        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
+        let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let network1 = super::Network {
             id: 1,
             rpc_url: String::from("https://eth.com"),
@@ -174,12 +160,22 @@ mod tests {
             read_entities: None,
         };
 
+        let contract_network_config1 = ContractNetwork {
+            id: 1,
+            addresses: vec![address1.clone()],
+        };
+
+        let contract_network_config2 = super::ContractNetwork {
+            id: 2,
+            addresses: vec![address2.clone()],
+        };
+
+        let contract_networks_config = vec![contract_network_config1, contract_network_config2];
         let contract1 = super::ConfigContract {
-            networks: None,
+            networks: contract_networks_config,
             name: String::from("Contract1"),
             abi: String::from("abi/Contract1.json"),
-            address: String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"),
-            events: vec![event1, event2],
+            events: vec![event1.clone(), event2.clone()],
         };
 
         let contracts = vec![contract1.clone()];
@@ -195,13 +191,26 @@ mod tests {
 
         let chain_configs = super::convert_config_to_chain_configs(&config);
 
+        let single_contract1 = super::SingleContract {
+            name: String::from("Contract1"),
+            abi: String::from("abi/Contract1.json"),
+            address: address1.clone(),
+            events: vec![event1.clone(), event2.clone()],
+        };
+        let single_contract2 = super::SingleContract {
+            name: String::from("Contract1"),
+            abi: String::from("abi/Contract1.json"),
+            address: address2.clone(),
+            events: vec![event1, event2],
+        };
+
         let chain_config_1 = ChainConfig {
             network_config: network1,
-            contracts: contracts.clone(),
+            contracts: vec![single_contract1],
         };
         let chain_config_2 = ChainConfig {
             network_config: network2,
-            contracts: contracts,
+            contracts: vec![single_contract2],
         };
 
         assert_eq!(chain_configs[0], chain_config_1);
@@ -210,6 +219,7 @@ mod tests {
 
     #[test]
     fn convert_to_chain_configs_case_2() {
+        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let network1 = super::Network {
             id: 1,
             rpc_url: String::from("https://eth.com"),
@@ -234,12 +244,17 @@ mod tests {
             read_entities: None,
         };
 
+        let contract_network_config1 = ContractNetwork {
+            id: 1,
+            addresses: vec![address1.clone()],
+        };
+
+        let contract_networks_config = vec![contract_network_config1];
         let contract1 = super::ConfigContract {
-            networks: Some(vec![1]),
+            networks: contract_networks_config,
             name: String::from("Contract1"),
             abi: String::from("abi/Contract1.json"),
-            address: String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"),
-            events: vec![event1, event2],
+            events: vec![event1.clone(), event2.clone()],
         };
 
         let contracts = vec![contract1.clone()];
@@ -255,9 +270,16 @@ mod tests {
 
         let chain_configs = super::convert_config_to_chain_configs(&config);
 
+        let single_contract1 = super::SingleContract {
+            name: String::from("Contract1"),
+            abi: String::from("abi/Contract1.json"),
+            address: address1.clone(),
+            events: vec![event1, event2],
+        };
+
         let chain_config_1 = ChainConfig {
             network_config: network1,
-            contracts: contracts.clone(),
+            contracts: vec![single_contract1],
         };
         let chain_config_2 = ChainConfig {
             network_config: network2,
@@ -268,8 +290,3 @@ mod tests {
         assert_eq!(chain_configs[1], chain_config_2);
     }
 }
-
-// network -> contracts
-//
-//loop through every contract and get networkIds,
-//hashmap of networkIds push contracts that match onto relevant networkIds

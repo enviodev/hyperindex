@@ -1,4 +1,4 @@
-version: 0.0.2
+version: 0.0.0
 description: Gravatar for Ethereum
 repository: https://github.com/graphprotocol/example-subgraph
 networks:
@@ -8,43 +8,22 @@ networks:
   - id: 1
     rpc_url: https://eth.com
     start_block: 34316032
-handler: ./handler.js
+handler: ./handler.js # What if people want to use different handler files per contract, or per network.
+# TODO: this isn't multi-chain compatible - think of how to allow different contracts on different chains. (maybe not for MVP)
 contracts:
   - name: Gravatar
     abi: abis/gravitar-abi.json
-    address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
     networks: #should be optional, if none provided defaults to all networks defined
-      - 137
-      - 1
+      - id: 137
+        addresses: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+      - id: 1
+        addresses: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
     events:
-      - name: NewGravatar
-      - name: UpdatedGravatar
-#From The Graph Example
-#
-# specVersion: 0.0.2
-# description: Gravatar for Ethereum
-# repository: https://github.com/graphprotocol/example-subgraph
-# schema:
-#   file: ./schema.graphql
-# dataSources:
-#   - kind: ethereum/contract
-#     name: Gravity
-#     network: mainnet
-#     source:
-#       address: '0x2E645469f354BB4F5c8a05B3b30A929361cf77eC'
-#       abi: Gravity
-#     mapping:
-#       kind: ethereum/events
-#       apiVersion: 0.0.5
-#       language: wasm/assemblyscript
-#       entities:
-#         - Gravatar
-#       abis:
-#         - name: Gravity
-#           file: ./abis/Gravity.json
-#       eventHandlers:
-#         - event: NewGravatar(uint256,address,string,string)
-#           handler: handleNewGravatar
-#         - event: UpdatedGravatar(uint256,address,string,string)
-#           handler: handleUpdatedGravatar
-#       file: ./src/mapping.ts
+      - name: "NewGravatar"
+        requiredEntities: [] # empty signifies no requirements
+      - name: "UpdatedGravatar"
+        requiredEntities: # if this field isn't specified it should default to include all entities
+          - name: "Gravatar"
+            allowArbitrary: false # this defauls to false
+            labels:
+              - "gravatarWithChanges"
