@@ -17,10 +17,10 @@ const CURRENT_DIR_PATH: &str = "../scenarios/test_codegen";
 fn main() -> Result<(), Box<dyn Error>> {
     copy_directory("templates/static", CODE_GEN_PATH)?;
 
-    let event_types = event_parsing::get_event_record_types_from_config()?;
+    let contract_types = event_parsing::get_contract_types_from_config()?;
     let entity_types = entity_parsing::get_entity_record_types_from_schema()?;
 
-    generate_types(event_types, entity_types)?;
+    generate_types(contract_types, entity_types)?;
 
     println!("installing packages... ");
 
@@ -103,15 +103,20 @@ pub struct RecordType {
     name: CapitalizedOptions,
     params: Vec<ParamType>,
 }
-
+#[derive(Serialize)]
+pub struct Contract {
+    name: CapitalizedOptions,
+    address: String,
+    events: Vec<RecordType>,
+}
 #[derive(Serialize)]
 struct TypesTemplate {
-    events: Vec<RecordType>,
+    contracts: Vec<Contract>,
     entities: Vec<RecordType>,
 }
 
 fn generate_types(
-    event_types: Vec<RecordType>,
+    contracts: Vec<Contract>,
     entity_types: Vec<RecordType>,
 ) -> Result<(), Box<dyn Error>> {
     let mut handlebars = Handlebars::new();
@@ -120,17 +125,24 @@ fn generate_types(
     handlebars.register_escape_fn(handlebars::no_escape);
 
     handlebars.register_template_file("Types.res", "templates/dynamic/src/Types.res")?;
+    handlebars.register_template_file("Handlers.res", "templates/dynamic/src/Handlers.res")?;
+    handlebars.register_template_file(
+        "EventProcessing.res",
+        "templates/dynamic/src/EventProcessing.res",
+    )?;
 
     let types_data = TypesTemplate {
-        events: event_types,
+        contracts,
         entities: entity_types,
     };
 
-    let rendered_string = handlebars.render("Types.res", &types_data)?;
+    let rendered_string_types = handlebars.render("Types.res", &types_data)?;
+    let rendered_string_handlers = handlebars.render("Handlers.res", &types_data)?;
+    let rendered_string_event_processing = handlebars.render("EventProcessing.res", &types_data)?;
 
-    println!("{}", rendered_string);
-
-    write_to_file_in_generated("src/Types.res", &rendered_string)?;
+    write_to_file_in_generated("src/Types.res", &rendered_string_types)?;
+    write_to_file_in_generated("src/Handlers.res", &rendered_string_handlers)?;
+    write_to_file_in_generated("src/EventProcessing.res", &rendered_string_event_processing)?;
     Ok(())
 }
 
