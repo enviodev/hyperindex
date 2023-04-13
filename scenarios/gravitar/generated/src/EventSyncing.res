@@ -225,15 +225,11 @@ let processAllEventsFromBlockNumber = async (
 
 let processAllEvents = (chainConfig: Config.chainConfig) => {
   let startBlock = chainConfig.startBlock
-  let rpcUrl = chainConfig.rpcUrl
-  let chainId = chainConfig.chainId
-
-  let provider = Ethers.JsonRpcProvider.make(~rpcUrl, ~chainId)
 
   processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
     ~blockInterval=10000,
-    ~provider,
+    ~provider=chainConfig.provider,
   )
 }
