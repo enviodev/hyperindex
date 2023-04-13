@@ -178,6 +178,13 @@ module JsonRpcProvider = {
 
   let onBlock = (t, callback: int => unit) => t->onWithBlockNoReturn(#block, callback)
 
+  type networkInfo = {
+    chainId: int,
+    name: string
+  }
+  @send
+  external getNetwork: t => networkInfo = "getNetwork"
+
   @send
   external getBlockNumber: t => promise<int> = "getBlockNumber"
 

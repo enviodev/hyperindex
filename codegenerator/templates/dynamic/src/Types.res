@@ -95,8 +95,10 @@ type inMemoryStoreRow<'a> = {
 //*************
 
 type loadedEntitiesReader<'a> = {
-  getById: id => option<'a>,
-  getAllLoaded: unit => array<'a>,
+  {{#each entities as |entity|}}
+  get{{entity.name.capitalized}}ById: id => option<'a>,
+  getAllLoaded{{entity.name.capitalized}}: unit => array<'a>,
+  {{/each}}
 }
 
 type entityController<'a> = {
