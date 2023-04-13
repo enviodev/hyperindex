@@ -4,5 +4,9 @@
       "fileMatch": ["config.yaml"],
       "url": "./config-schema/config-scheama.json"
     }
-  ]
+  ],
+  "rust-analyzer.linkedProjects": [
+    "/codegenerator/Cargo.toml"
+  ],
+  "rust-analyzer.showUnlinkedFileNotification": false
 }
