@@ -6,12 +6,12 @@ use crate::{
 
 use ethereum_abi::{Abi, Event};
 
-fn parse_abi(abi: &str) -> Result<Abi, Box<dyn Error>> {
+pub fn parse_abi(abi: &str) -> Result<Abi, Box<dyn Error>> {
     let abi: Abi = serde_json::from_str(abi)?;
     Ok(abi)
 }
 
-fn get_abi_from_file_path(file_path: &str) -> Result<Abi, Box<dyn Error>> {
+pub fn get_abi_from_file_path(file_path: &str) -> Result<Abi, Box<dyn Error>> {
     let abi_file = std::fs::read_to_string(file_path)?;
     parse_abi(&abi_file)
 }
@@ -21,7 +21,7 @@ fn abi_type_to_rescript_string(abi_type: &ethereum_abi::Type) -> String {
         ethereum_abi::Type::Uint(_size) => String::from("Ethers.BigInt.t"),
         ethereum_abi::Type::Int(_size) => String::from("Ethers.BigInt.t"),
         ethereum_abi::Type::Bool => String::from("bool"),
-        ethereum_abi::Type::Address => String::from("Ethers.address"),
+        ethereum_abi::Type::Address => String::from("Ethers.ethAddress"),
         ethereum_abi::Type::Bytes => String::from("string"),
         ethereum_abi::Type::String => String::from("string"),
         ethereum_abi::Type::FixedBytes(_) => String::from("type_not_handled"),
@@ -107,14 +107,16 @@ fn get_contract_type_from_config_contract(
 
 pub fn get_contract_types_from_config(
     project_root_path: &str,
-    config: Config,
+    config: &Config,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let mut contracts: Vec<Contract> = Vec::new();
-    for config_contract in config.contracts.iter() {
-        let abi_path = format!("{}/{}", project_root_path, config_contract.abi_file_path);
-        let contract_abi = get_abi_from_file_path(&abi_path)?;
-        let contract = get_contract_type_from_config_contract(config_contract, contract_abi);
-        contracts.push(contract);
+    for network in config.networks.iter() {
+        for config_contract in network.contracts.iter() {
+            let abi_path = format!("{}/{}", project_root_path, config_contract.abi_file_path);
+            let contract_abi = get_abi_from_file_path(&abi_path)?;
+            let contract = get_contract_type_from_config_contract(config_contract, contract_abi);
+            contracts.push(contract);
+        }
     }
     Ok(contracts)
 }
@@ -162,7 +164,7 @@ mod tests {
                 },
                 ParamType {
                     key: input2_name,
-                    type_: String::from("Ethers.address"),
+                    type_: String::from("Ethers.ethAddress"),
                 },
             ],
         };

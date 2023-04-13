@@ -83,6 +83,6 @@ type entityController<'a> = {
   loadedEntities: loadedEntitiesReader<'a>,
 }
 
-type gravitarController = entityController<gravatarEntity>
+type gravatarController = entityController<gravatarEntity>
 
-type context = {@as("Gravatar") gravatar: gravitarController}
+type context = {@as("Gravatar") gravatar: gravatarController}

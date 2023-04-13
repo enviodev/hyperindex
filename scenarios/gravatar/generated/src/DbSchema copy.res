@@ -18,7 +18,7 @@ type gravatarTablefields = {
   }
 )
 
-type gravitarTableRow = {
+type gravatarTableRow = {
   id: DrizzleOrm.Schema.fieldSelector,
   owner: DrizzleOrm.Schema.fieldSelector,
   displayName: DrizzleOrm.Schema.fieldSelector,
@@ -26,7 +26,7 @@ type gravitarTableRow = {
   updatesCount: DrizzleOrm.Schema.fieldSelector,
 }
 
-type gravitarTableRowOptionalFields = {
+type gravatarTableRowOptionalFields = {
   id?: string,
   owner?: string,
   displayName?: string,
@@ -34,4 +34,4 @@ type gravitarTableRowOptionalFields = {
   updatesCount?: int,
 }
 
-let gravatar: table<gravitarTableRow> = pgTable(~name="gravatar", ~fields=gravatarTablefields)
+let gravatar: table<gravatarTableRow> = pgTable(~name="gravatar", ~fields=gravatarTablefields)

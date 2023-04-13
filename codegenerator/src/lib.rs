@@ -8,7 +8,7 @@ use serde::Serialize;
 
 pub mod config_parsing;
 
-pub use config_parsing::{entity_parsing, event_parsing};
+pub use config_parsing::{entity_parsing, event_parsing, ChainConfigTemplate};
 
 pub mod capitalization;
 
@@ -33,10 +33,12 @@ pub struct Contract {
 struct TypesTemplate {
     contracts: Vec<Contract>,
     entities: Vec<RecordType>,
+    chain_configs: Vec<ChainConfigTemplate>,
 }
 
-pub fn generate_types(
+pub fn generate_templates(
     contracts: Vec<Contract>,
+    chain_configs: Vec<ChainConfigTemplate>,
     entity_types: Vec<RecordType>,
     codegen_path: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -47,27 +49,48 @@ pub fn generate_types(
 
     handlebars.register_template_file("Types.res", "templates/dynamic/src/Types.res")?;
     handlebars.register_template_file("Handlers.res", "templates/dynamic/src/Handlers.res")?;
+    handlebars
+        .register_template_file("DbFunctions.res", "templates/dynamic/src/DbFunctions.res")?;
     handlebars.register_template_file(
         "EventProcessing.res",
         "templates/dynamic/src/EventProcessing.res",
     )?;
+    handlebars.register_template_file("Config.res", "templates/dynamic/src/Config.res")?;
+    handlebars.register_template_file("Abis.res", "templates/dynamic/src/Abis.res")?;
+    handlebars.register_template_file("IO.res", "templates/dynamic/src/IO.res")?;
+    handlebars.register_template_file("DbSchema.res", "templates/dynamic/src/DbSchema.res")?;
 
     let types_data = TypesTemplate {
         contracts,
         entities: entity_types,
+        chain_configs,
     };
 
     let rendered_string_types = handlebars.render("Types.res", &types_data)?;
+    let rendered_string_abi = handlebars.render("Abis.res", &types_data)?;
     let rendered_string_handlers = handlebars.render("Handlers.res", &types_data)?;
+    let rendered_string_db_functions = handlebars.render("DbFunctions.res", &types_data)?;
     let rendered_string_event_processing = handlebars.render("EventProcessing.res", &types_data)?;
+    let rendered_string_config = handlebars.render("Config.res", &types_data)?;
+    let rendered_string_io = handlebars.render("IO.res", &types_data)?;
+    let rendered_string_db_schema = handlebars.render("DbSchema.res", &types_data)?;
 
     write_to_file_in_generated("src/Types.res", &rendered_string_types, codegen_path)?;
+    write_to_file_in_generated("src/Config.res", &rendered_string_config, codegen_path)?;
+    write_to_file_in_generated("src/Abis.res", &rendered_string_abi, codegen_path)?;
     write_to_file_in_generated("src/Handlers.res", &rendered_string_handlers, codegen_path)?;
+    write_to_file_in_generated(
+        "src/DbFunctions.res",
+        &rendered_string_db_functions,
+        codegen_path,
+    )?;
     write_to_file_in_generated(
         "src/EventProcessing.res",
         &rendered_string_event_processing,
         codegen_path,
     )?;
+    write_to_file_in_generated("src/IO.res", &rendered_string_io, codegen_path)?;
+    write_to_file_in_generated("src/DbSchema.res", &rendered_string_db_schema, codegen_path)?;
     Ok(())
 }
 

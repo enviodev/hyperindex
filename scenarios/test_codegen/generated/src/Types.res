@@ -15,15 +15,15 @@ type eventLog<'a> = {
 
 module GravatarContract = {
   type newGravatarEvent = {
-    id: int,
-    owner: string,
+    id: Ethers.BigInt.t,
+    owner: Ethers.ethAddress,
     displayName: string,
     imageUrl: string,
   }
 
   type updatedGravatarEvent = {
-    id: int,
-    owner: string,
+    id: Ethers.BigInt.t,
+    owner: Ethers.ethAddress,
     displayName: string,
     imageUrl: string,
   }
