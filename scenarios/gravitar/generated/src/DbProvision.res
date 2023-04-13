@@ -1,13 +1,4 @@
-let pool = DrizzleOrm.Pool.make(
-  ~config={
-    // TODO: use proper environment variables with defaults.
-    host: "postgres",
-    port: 5432,
-    user: "postgres",
-    password: "testing",
-    database: "indexly-dev",
-  },
-)
+let pool = DrizzleOrm.Pool.make(~config=Config.db)
 
 %%private(let db = DrizzleOrm.Drizzle.make(~pool))
 
