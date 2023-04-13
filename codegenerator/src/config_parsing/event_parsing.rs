@@ -39,12 +39,25 @@ fn abi_type_to_rescript_string(abi_type: &ethereum_abi::Type) -> String {
             //Reference type means it should reference a type anoted above
             let rescript_abi_types: Vec<String> = abi_types
                 .iter()
-                .map(|(_field_name, abi_type)| {
-                    format!("array<{}>", abi_type_to_rescript_string(abi_type))
-                })
+                .map(|(_field_name, abi_type)| abi_type_to_rescript_string(abi_type))
                 .collect();
 
             format!("({})", rescript_abi_types.join(", "))
+            //when this comes in we actually want to make a new record, simply define the name of the record in
+            //here and then push the append the record to the head of an array of records that need to be
+            //defined before this.
+            //We need to ensure that there is no duplication of these "sub record" types
+            //
+            //need a function that takes an event type makes the record but takes a  second argument of an
+            //array of sub records that can be appended.
+            //these sub records should be tested for their uniqueness in both naming and shape
+            //all sub records of all records need to be tested for uniqueness and naming
+            //
+            //rescript type should be an enum
+            //
+            //an initial implementation could avoid aliases but should still check for double names and either
+            //remove the second if they have the same record type or add an incrementor to the the name of the
+            //second (the name should then be changed where it gets referenced)
         }
     }
 }
@@ -112,7 +125,7 @@ mod tests {
     use crate::{capitalization::Capitalize, ParamType, RecordType};
     use ethereum_abi::{Event, Param, Type};
 
-    use super::get_record_type_from_event;
+    use super::{abi_type_to_rescript_string, get_record_type_from_event};
     #[test]
     fn abi_event_to_record_1() {
         let input1_name = String::from("id");
@@ -155,5 +168,33 @@ mod tests {
         };
         assert_eq!(parsed_record, expected_record)
     }
-    //Todo: test array and tuple types
+
+    #[test]
+    fn test_record_type_array() {
+        let array_string_type = Type::Array(Box::new(Type::String));
+        let parsed_rescript_string = abi_type_to_rescript_string(&array_string_type);
+
+        assert_eq!(parsed_rescript_string, String::from("array<string>"))
+    }
+    #[test]
+    fn test_record_type_fixed_array() {
+        let array_string_type = Type::FixedArray(Box::new(Type::String), 1);
+        let parsed_rescript_string = abi_type_to_rescript_string(&array_string_type);
+
+        assert_eq!(parsed_rescript_string, String::from("array<string>"))
+    }
+
+    #[test]
+    fn test_record_type_tuple() {
+        let tuple_type = Type::Tuple(vec![
+            (String::from("unused_name"), Type::String),
+            (String::from("unused_name2"), Type::Uint(256)),
+        ]);
+        let parsed_rescript_string = abi_type_to_rescript_string(&tuple_type);
+
+        assert_eq!(
+            parsed_rescript_string,
+            String::from("(string, Ethers.BigInt.t)")
+        )
+    }
 }
