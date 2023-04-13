@@ -5,25 +5,17 @@ networks:
   - id: 137
     rpc_url: https://polygon-rpc.com
     start_block: 34316032
-  - id: 1
-    rpc_url: https://eth.com
-    start_block: 34316032
-handler: ./handler.js # What if people want to use different handler files per contract, or per network.
-# TODO: this isn't multi-chain compatible - think of how to allow different contracts on different chains. (maybe not for MVP)
-contracts:
-  - name: Gravatar
-    abi: abis/gravitar-abi.json
-    networks: #should be optional, if none provided defaults to all networks defined
-      - id: 137
-        addresses: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
-      - id: 1
-        addresses: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
-    events:
-      - name: "NewGravatar"
-        requiredEntities: [] # empty signifies no requirements
-      - name: "UpdatedGravatar"
-        requiredEntities: # if this field isn't specified it should default to include all entities
-          - name: "Gravatar"
-            allowArbitrary: false # this defauls to false
-            labels:
-              - "gravatarWithChanges"
+    contracts:
+      - name: Gravatar
+        abi_file_path: abis/gravitar-abi.json
+        address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+        handler: ./src/EventHandlers.bs.js
+        events:
+          - name: "NewGravatar"
+            requiredEntities: [] # empty signifies no requirements
+          - name: "UpdatedGravatar"
+            requiredEntities: # if this field isn't specified it should default to include all entities
+              - name: "Gravatar"
+                allowArbitrary: false # this defauls to false
+                labels:
+                  - "gravatarWithChanges"

@@ -2,7 +2,7 @@ type contract = {
   name: string,
   abi: Ethers.abi,
   address: Ethers.ethAddress,
-  events: array<string>,
+  events: array<Types.eventName>,
 }
 
 type chainConfig = {
@@ -15,20 +15,29 @@ type chainConfig = {
 type chainConfigs = Js.Dict.t<chainConfig>
 
 let config: chainConfigs = [
-  (
-    "31337",
-    {
-      rpcUrl: "http://127.0.0.1:8545",
-      chainId: 31337,
-      startBlock: 0,
-      contracts: [
-        {
-          name: "GravatarRegistry",
-          abi: Abis.gravatarAbi->Ethers.makeAbi,
-          address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
-          events: [GravatarContract_NewGravatarEvent, GravatarContract_UpdateGravatarEvent],
-        },
-      ],
-    },
-  ),
+{{#each chain_configs as | chain_config |}}
+(
+  "{{chain_config.network_config.id}}",
+  {
+    rpcUrl: "{{chain_config.network_config.rpc_url}}",
+    chainId: {{chain_config.network_config.id}},
+    startBlock: {{chain_config.network_config.start_block}},
+    contracts: [
+      {{#each chain_config.contracts as | contract |}}
+      {
+        name: "{{contract.name.capitalized}}",
+          abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
+          address: "{{contract.address}}"->Ethers.getAddressFromStringUnsafe,
+          events: [
+            {{#each contract.events as | event |}}
+            {{contract.name.capitalized}}Contract_{{event.capitalized}}Event,
+            {{/each}}
+            ],
+      }
+      {{/each}}
+    ]
+
+  }
+)
+{{/each}}
 ]->Js.Dict.fromArray
