@@ -11,7 +11,7 @@ let gravatarValues: Drizzle.values<Types.gravatarEntity, gravatarValues> = (
 let batchSetGravatar = async (batch: array<Types.gravatarEntity>) => {
   let getGravatarWithoutId = (
     gravatarEntity: Types.gravatarEntity,
-  ): DbSchema.gravitarTableRowOptionalFields => {
+  ): DbSchema.gravatarTableRowOptionalFields => {
     {
       owner: gravatarEntity.owner,
       displayName: gravatarEntity.displayName,

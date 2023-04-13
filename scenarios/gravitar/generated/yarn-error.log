@@ -14,7 +14,7 @@ Platform:
   linux x64
 
 Trace: 
-  Error: ENOENT: no such file or directory, copyfile '/home/jasoons/.cache/yarn/v6/npm-camelcase-7.0.1-f02e50af9fd7782bc8b88a3558c32fd3a388f048-integrity/node_modules/camelcase/index.d.ts' -> '/home/jasoons/Documents/code/float/indexer2/indexer/scenarios/gravitar/generated/node_modules/drizzle-kit/node_modules/camelcase/index.d.ts'
+  Error: ENOENT: no such file or directory, copyfile '/home/jasoons/.cache/yarn/v6/npm-camelcase-7.0.1-f02e50af9fd7782bc8b88a3558c32fd3a388f048-integrity/node_modules/camelcase/index.d.ts' -> '/home/jasoons/Documents/code/float/indexer2/indexer/scenarios/gravatar/generated/node_modules/drizzle-kit/node_modules/camelcase/index.d.ts'
 
 npm manifest: 
   {

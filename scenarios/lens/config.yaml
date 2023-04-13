@@ -1,14 +1,14 @@
 version: 0.0.0
 description: Lens Protocol (decentralized, non-custodial social graph)
 repository: https://github.com/lens-protocol/core
-networks: 
-- id: 137
-  rpc_url: https://polygon-rpc.com
-  start_block: 34316032
-    
+networks:
+  - id: 137
+    rpc_url: https://polygon-rpc.com
+    start_block: 34316032
+
 contracts:
-- name: LensProtocolProfiles
-  abi: abis/gravitar-abi.json
-  address: "0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"
-  events:
-  - name: "Transfer"
+  - name: LensProtocolProfiles
+    abi: abis/gravatar-abi.json
+    address: "0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"
+    events:
+      - name: "Transfer"

@@ -14,7 +14,7 @@ describe("E2E Mock Event Batch", () => {
     ContextMock.updateMock->MockJs.mockClear
   })
 
-  test("3 newGravitar event insert calls in order", () => {
+  test("3 newgravatar event insert calls in order", () => {
     let insertCalls = ContextMock.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
       MockEvents.newGravatar1.id,
@@ -23,7 +23,7 @@ describe("E2E Mock Event Batch", () => {
     ])
   })
 
-  test("3 updateGravitar event insert calls in order", () => {
+  test("3 updategravatar event insert calls in order", () => {
     let insertCalls = ContextMock.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
       MockEvents.updatedGravatar1.id,
