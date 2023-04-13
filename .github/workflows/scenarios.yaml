@@ -54,4 +54,4 @@ jobs:
       - name: Run tests
         run: |
           cd generated
-          pnpm test
+          PG_HOST="postgres" pnpm test
