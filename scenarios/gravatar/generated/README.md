@@ -1,13 +1,11 @@
-
-
 # Build
+
 ```
-npm run build
+pnpm run build
 ```
 
 # Watch
 
 ```
-npm run watch
+pnpm run watch
 ```
-

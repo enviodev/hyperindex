@@ -2,7 +2,7 @@ open Types
 
 let loadedEntities = {
   getById: id => IO.InMemoryStore.getGravatar(~id),
-  getAllLoaded: () => [MockEntities.gravatarEntity1], //Note this should call the read function in handlers and grab all the loaded entities related to this event,
+  getAllLoaded: () => [], //Note this should call the read function in handlers and grab all the loaded entities related to this event,
 }
 
 %%private(
