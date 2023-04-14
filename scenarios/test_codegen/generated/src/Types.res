@@ -78,15 +78,15 @@ type inMemoryStoreRow<'a> = {
 //** CONTEXT **
 //*************
 
-type loadedEntitiesReader<'a> = {
-  getGravatarById: id => option<'a>,
-  getAllLoadedGravatar: unit => array<'a>,
+type loadedEntitiesReader = {
+  getGravatarById: id => option<gravatarEntity>,
+  getAllLoadedGravatar: unit => array<gravatarEntity>,
 }
 
 type entityController<'a> = {
   insert: 'a => unit,
   update: 'a => unit,
-  loadedEntities: loadedEntitiesReader<'a>,
+  loadedEntities: loadedEntitiesReader,
 }
 
 type gravatarController = entityController<gravatarEntity>

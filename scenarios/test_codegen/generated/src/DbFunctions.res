@@ -14,6 +14,7 @@ module Gravatar = {
       gravatarEntity: Types.gravatarEntity,
     ): DbSchema.Gravatar.gravatarTableRowOptionalFields => {
       {
+        id: gravatarEntity.id,
         owner: gravatarEntity.owner,
         displayName: gravatarEntity.displayName,
         imageUrl: gravatarEntity.imageUrl,
