@@ -11,15 +11,16 @@ pub mod config_parsing;
 pub use config_parsing::{entity_parsing, event_parsing, ChainConfigTemplate};
 
 pub mod capitalization;
+pub mod linked_hashtable;
 
 use capitalization::CapitalizedOptions;
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize, Debug, PartialEq, Clone)]
 struct ParamType {
     key: String,
     type_: String,
 }
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct RecordType {
     name: CapitalizedOptions,
     params: Vec<ParamType>,

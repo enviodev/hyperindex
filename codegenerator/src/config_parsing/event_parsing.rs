@@ -1,7 +1,7 @@
 use crate::{
     capitalization::Capitalize,
     config_parsing::{Config, ConfigContract},
-    Contract, Error, ParamType, RecordType,
+    linked_hashtable, Contract, Error, ParamType, RecordType,
 };
 
 use ethereum_abi::{Abi, Event};
@@ -15,6 +15,14 @@ pub fn get_abi_from_file_path(file_path: &str) -> Result<Abi, Box<dyn Error>> {
     let abi_file = std::fs::read_to_string(file_path)?;
     parse_abi(&abi_file)
 }
+
+// struct RescriptRecordsHirarchy {
+//
+// };
+//
+// impl RescriptRecordsHirarchy {
+//
+// }
 
 fn abi_type_to_rescript_string(abi_type: &ethereum_abi::Type) -> String {
     match abi_type {
