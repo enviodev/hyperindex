@@ -94,17 +94,17 @@ type inMemoryStoreRow<'a> = {
 //** CONTEXT **
 //*************
 
-type loadedEntitiesReader<'a> = {
+type loadedEntitiesReader = {
   {{#each entities as |entity|}}
-  get{{entity.name.capitalized}}ById: id => option<'a>,
-  getAllLoaded{{entity.name.capitalized}}: unit => array<'a>,
+  get{{entity.name.capitalized}}ById: id => option<{{entity.name.uncapitalized}}Entity>,
+  getAllLoaded{{entity.name.capitalized}}: unit => array<{{entity.name.uncapitalized}}Entity>,
   {{/each}}
 }
 
 type entityController<'a> = {
   insert: 'a => unit,
   update: 'a => unit,
-  loadedEntities: loadedEntitiesReader<'a>,
+  loadedEntities: loadedEntitiesReader,
 }
 
 {{#each entities as | entity |}}

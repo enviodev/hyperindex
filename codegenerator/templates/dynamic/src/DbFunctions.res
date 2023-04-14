@@ -15,10 +15,9 @@ module {{entity.name.capitalized}} = {
       {{entity.name.uncapitalized}}Entity: Types.{{entity.name.uncapitalized}}Entity,
     ): DbSchema.{{entity.name.capitalized}}.{{entity.name.uncapitalized}}TableRowOptionalFields => {
       {
-        owner: {{entity.name.uncapitalized}}Entity.owner,
-        displayName: {{entity.name.uncapitalized}}Entity.displayName,
-        imageUrl: {{entity.name.uncapitalized}}Entity.imageUrl,
-        updatesCount: {{entity.name.uncapitalized}}Entity.updatesCount,
+        {{#each entity.params as | param | }}
+        {{param.key}}: {{entity.name.uncapitalized}}Entity.{{param.key}},
+        {{/each}}
       }
     }
 
