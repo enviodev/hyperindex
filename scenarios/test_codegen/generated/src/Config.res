@@ -6,20 +6,38 @@ type contract = {
 }
 
 type chainConfig = {
-  rpcUrl: string,
-  chainId: int,
+  provider: Ethers.JsonRpcProvider.t,
   startBlock: int,
   contracts: array<contract>,
 }
 
 type chainConfigs = Js.Dict.t<chainConfig>
 
+%%private(let envSafe = EnvSafe.make())
+
+let db: DrizzleOrm.Pool.poolConfig = {
+  host: envSafe->EnvSafe.get(~name="PG_HOST", ~struct=S.string(), ~devFallback="localhost", ()),
+  port: envSafe->EnvSafe.get(~name="PG_PORT", ~struct=S.int()->S.Int.port(), ~devFallback=5432, ()),
+  user: envSafe->EnvSafe.get(~name="PG_USER", ~struct=S.string(), ~devFallback="postgres", ()),
+  password: envSafe->EnvSafe.get(
+    ~name="PG_PASSWORD",
+    ~struct=S.string(),
+    ~devFallback="testing",
+    (),
+  ),
+  database: envSafe->EnvSafe.get(
+    ~name="PG_DATABASE",
+    ~struct=S.string(),
+    ~devFallback="indexly-dev",
+    (),
+  ),
+}
+
 let config: chainConfigs = [
   (
     "137",
     {
-      rpcUrl: "https://polygon-rpc.com",
-      chainId: 137,
+      provider: Ethers.JsonRpcProvider.make(~rpcUrl="https://polygon-rpc.com", ~chainId=137),
       startBlock: 34316032,
       contracts: [
         {

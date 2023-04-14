@@ -59,6 +59,10 @@ pub fn generate_templates(
     handlebars.register_template_file("Abis.res", "templates/dynamic/src/Abis.res")?;
     handlebars.register_template_file("IO.res", "templates/dynamic/src/IO.res")?;
     handlebars.register_template_file("DbSchema.res", "templates/dynamic/src/DbSchema.res")?;
+    handlebars.register_template_file("Converters.res", "templates/dynamic/src/Converters.res")?;
+    handlebars
+        .register_template_file("EventSyncing.res", "templates/dynamic/src/EventSyncing.res")?;
+    handlebars.register_template_file("Context.res", "templates/dynamic/src/Context.res")?;
 
     let types_data = TypesTemplate {
         contracts,
@@ -74,6 +78,9 @@ pub fn generate_templates(
     let rendered_string_config = handlebars.render("Config.res", &types_data)?;
     let rendered_string_io = handlebars.render("IO.res", &types_data)?;
     let rendered_string_db_schema = handlebars.render("DbSchema.res", &types_data)?;
+    let rendered_string_converters = handlebars.render("Converters.res", &types_data)?;
+    let rendered_string_event_syncing = handlebars.render("EventSyncing.res", &types_data)?;
+    let rendered_string_context = handlebars.render("Context.res", &types_data)?;
 
     write_to_file_in_generated("src/Types.res", &rendered_string_types, codegen_path)?;
     write_to_file_in_generated("src/Config.res", &rendered_string_config, codegen_path)?;
@@ -91,6 +98,17 @@ pub fn generate_templates(
     )?;
     write_to_file_in_generated("src/IO.res", &rendered_string_io, codegen_path)?;
     write_to_file_in_generated("src/DbSchema.res", &rendered_string_db_schema, codegen_path)?;
+    write_to_file_in_generated(
+        "src/Converters.res",
+        &rendered_string_converters,
+        codegen_path,
+    )?;
+    write_to_file_in_generated(
+        "src/EventSyncing.res",
+        &rendered_string_event_syncing,
+        codegen_path,
+    )?;
+    write_to_file_in_generated("src/Context.res", &rendered_string_context, codegen_path)?;
     Ok(())
 }
 

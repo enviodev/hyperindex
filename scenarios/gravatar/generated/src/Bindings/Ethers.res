@@ -187,6 +187,13 @@ module JsonRpcProvider = {
   @send
   external getBlockNumber: t => promise<int> = "getBlockNumber"
 
+  type networkInfo = {
+    chainId: int,
+    name: string
+  }
+  @send
+  external getNetwork: t => networkInfo = "getNetwork"
+
   type block = {
     _difficulty: BigInt.t,
     difficulty: int,

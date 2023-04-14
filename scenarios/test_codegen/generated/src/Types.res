@@ -79,8 +79,8 @@ type inMemoryStoreRow<'a> = {
 //*************
 
 type loadedEntitiesReader<'a> = {
-  getById: id => option<'a>,
-  getAllLoaded: unit => array<'a>,
+  getGravatarById: id => option<'a>,
+  getAllLoadedGravatar: unit => array<'a>,
 }
 
 type entityController<'a> = {
