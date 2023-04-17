@@ -90,7 +90,6 @@ pub fn convert_config_to_chain_configs(
 
         for contract in network.contracts.iter() {
             for contract_address in contract.address.iter() {
-                let output_path = format!("{}/{}", project_root_path, contract.abi_file_path);
                 let single_contract = SingleContractTemplate {
                     name: contract.name.to_capitalized_options(),
                     abi: event_parsing::get_abi_from_file_path(
