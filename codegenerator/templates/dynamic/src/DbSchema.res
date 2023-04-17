@@ -31,4 +31,7 @@ module {{entity.name.capitalized}} = {
   let {{entity.name.uncapitalized}}: table<{{entity.name.uncapitalized}}TableRow> = pgTable(~name="{{entity.name.uncapitalized}}", ~fields={{entity.name.uncapitalized}}Tablefields)
 }
 
+// re-declaired here to create exports for db migrations
+let {{entity.name.uncapitalized}} = {{entity.name.capitalized}}.{{entity.name.uncapitalized}}
+
 {{/each}}

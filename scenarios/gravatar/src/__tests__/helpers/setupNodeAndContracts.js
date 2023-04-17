@@ -5,9 +5,12 @@ module.exports.default = setupNodeAndContracts = async () => {
   await hre.run("compile");
   let accounts = await hre.ethers.getSigners();
 
+  console.log("1")
+
   const GravatarRegistry = await hre.ethers.getContractFactory("GravatarRegistry");
   const gravatar = await GravatarRegistry.deploy();
 
+  console.log("2")
   const deployer = accounts[0];
   const user1 = accounts[1];
 
@@ -15,11 +18,13 @@ module.exports.default = setupNodeAndContracts = async () => {
     "First Gravatar",
     "https://something.com"
   );
+  console.log("3")
 
   const newGravatar2Tx = await gravatar
     .connect(user1)
     .createGravatar("Second Gravatar", "https://something2.com");
 
+  console.log("gravatar", await gravatar.getAddress())
   const updateGravatarName1Tx = await gravatar.updateGravatarName(
     "First Update Gravatar"
   );

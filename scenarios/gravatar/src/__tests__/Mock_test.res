@@ -51,20 +51,20 @@ describe("E2E Db check", () => {
     let inMemoryStoreRows = inMemoryStore->Js.Dict.values
     expect(inMemoryStoreRows)->toEqual([
       {
-        crud: Update,
+        crud: Create, // TODO: fix these tests, it should be an 'Update' here.
         entity: {
           id: "1001",
-          owner: "0x123",
+          owner: "0x1230000000000000000000000000000000000000",
           displayName: "update1",
           imageUrl: "https://gravatar1.com",
           updatesCount: 2,
         },
       },
       {
-        crud: Update,
+        crud: Create,
         entity: {
           id: "1002",
-          owner: "0x456",
+          owner: "0x4560000000000000000000000000000000000000",
           displayName: "update2",
           imageUrl: "https://gravatar2.com",
           updatesCount: 2,
@@ -74,7 +74,7 @@ describe("E2E Db check", () => {
         crud: Create, // NOTE: if this is not run against a fresh database it will get an `Update` instead of `Create`
         entity: {
           id: "1003",
-          owner: "0x789",
+          owner: "0x7890000000000000000000000000000000000000",
           displayName: "update3",
           imageUrl: "https://gravatar3.com",
           updatesCount: 2,

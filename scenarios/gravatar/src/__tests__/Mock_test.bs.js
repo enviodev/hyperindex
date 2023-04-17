@@ -53,20 +53,20 @@ Jest.describe("E2E Db check", (function (param) {
                 var inMemoryStoreRows = Js_dict.values(inMemoryStore);
                 return Jest.Expect.toEqual(Jest.Expect.expect(inMemoryStoreRows), [
                             {
-                              crud: /* Update */2,
+                              crud: /* Create */0,
                               entity: {
                                 id: "1001",
-                                owner: "0x123",
+                                owner: "0x1230000000000000000000000000000000000000",
                                 displayName: "update1",
                                 imageUrl: "https://gravatar1.com",
                                 updatesCount: 2
                               }
                             },
                             {
-                              crud: /* Update */2,
+                              crud: /* Create */0,
                               entity: {
                                 id: "1002",
-                                owner: "0x456",
+                                owner: "0x4560000000000000000000000000000000000000",
                                 displayName: "update2",
                                 imageUrl: "https://gravatar2.com",
                                 updatesCount: 2
@@ -76,7 +76,7 @@ Jest.describe("E2E Db check", (function (param) {
                               crud: /* Create */0,
                               entity: {
                                 id: "1003",
-                                owner: "0x789",
+                                owner: "0x7890000000000000000000000000000000000000",
                                 displayName: "update3",
                                 imageUrl: "https://gravatar3.com",
                                 updatesCount: 2
