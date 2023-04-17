@@ -26,4 +26,6 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
     - name: Run generate
-      run: cargo run --verbose
+      run: |
+        cargo run --verbose -- codegen -d ../scenarios/gravatar
+        cargo run --verbose -- codegen -d ../scenarios/test_codegen

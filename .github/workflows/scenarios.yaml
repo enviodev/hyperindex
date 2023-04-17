@@ -52,6 +52,7 @@ jobs:
 
       - name: Build code
         run: |
+          pnpm clean # probably not needed, but getting different results in pipeline to locally.
           pnpm build
 
       - name: Run tests
