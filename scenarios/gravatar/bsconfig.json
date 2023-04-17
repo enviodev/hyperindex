@@ -10,6 +10,6 @@
     "module": "commonjs",
     "in-source": true
   },
-  "bs-dependencies": ["generated"],
+  "bs-dependencies": ["generated", "@glennsl/rescript-jest","@ryyppy/rescript-promise"],
   "pinned-dependencies": ["generated"]
 }
