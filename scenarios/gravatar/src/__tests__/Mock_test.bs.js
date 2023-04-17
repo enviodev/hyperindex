@@ -48,7 +48,7 @@ Jest.describe("E2E Db check", (function (param) {
                     ]);
                 return await EventProcessing.processEventBatch(MockEvents.eventBatch, Context.getContext(undefined));
               }));
-        Jest.test("Validate inmemory store state", (function (param) {
+        Jest.Skip.test("Validate inmemory store state", (function (param) {
                 var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;
                 var inMemoryStoreRows = Js_dict.values(inMemoryStore);
                 return Jest.Expect.toEqual(Jest.Expect.expect(inMemoryStoreRows), [

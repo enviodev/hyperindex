@@ -13,8 +13,6 @@ jobs:
   container-job:
     # Containers must run in Linux based operating systems
     runs-on: ubuntu-latest
-    # Docker Hub image that `container-job` executes in
-    container: node:18.15
 
     # Service containers to run with `container-job`
     services:
@@ -41,6 +39,12 @@ jobs:
       - uses: pnpm/action-setup@v2
         with:
           version: 7
+      
+
+      - name: generate code
+        run: |
+          cd ../../codegenerator
+          cargo run -- codegen -d ../scenarios/gravatar
 
       # TODO: add pnpm caching
       - name: Install dependencies
@@ -48,6 +52,7 @@ jobs:
 
       - name: Build code
         run: |
+          pnpm clean # probably not needed, but getting different results in pipeline to locally.
           pnpm build
 
       - name: Run tests
