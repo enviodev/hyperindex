@@ -57,10 +57,11 @@ pub struct Config {
 //     // ... convert to abi herer
 // }
 
+type StringifiedAbi = String;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct SingleContractTemplate {
     name: CapitalizedOptions,
-    abi: Abi,
+    abi: StringifiedAbi,
     address: String,
     events: Vec<CapitalizedOptions>,
 }
@@ -90,11 +91,13 @@ pub fn convert_config_to_chain_configs(
 
         for contract in network.contracts.iter() {
             for contract_address in contract.address.iter() {
+                let parsed_abi: Abi = event_parsing::get_abi_from_file_path(
+                    format!("{}/{}", project_root_path, contract.abi_file_path).as_str(),
+                )?;
+                let stringified_abi = serde_json::to_string(&parsed_abi)?;
                 let single_contract = SingleContractTemplate {
                     name: contract.name.to_capitalized_options(),
-                    abi: event_parsing::get_abi_from_file_path(
-                        format!("{}/{}", project_root_path, contract.abi_file_path).as_str(),
-                    )?,
+                    abi: stringified_abi,
                     address: contract_address.clone(),
                     events: contract
                         .events
@@ -117,9 +120,11 @@ pub fn convert_config_to_chain_configs(
 
 #[cfg(test)]
 mod tests {
-    use crate::{capitalization::Capitalize, event_parsing};
+    use crate::capitalization::Capitalize;
 
     use super::ChainConfigTemplate;
+
+    use std::fs;
 
     #[test]
     fn convert_to_chain_configs_case_1() {
@@ -161,9 +166,8 @@ mod tests {
             networks,
         };
 
-        let chain_configs = super::convert_config_to_chain_configs(&config, ".").unwrap();
-
-        let abi = event_parsing::get_abi_from_file_path(&(abi_file_path)).unwrap();
+        let chain_configs = super::convert_config_to_chain_configs(&config, "dummy path").unwrap();
+        let abi = fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi,
@@ -250,7 +254,7 @@ mod tests {
             event2.name.to_capitalized_options(),
         ];
 
-        let abi = event_parsing::get_abi_from_file_path(&(abi_file_path)).unwrap();
+        let abi = fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi.clone(),
