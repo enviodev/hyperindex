@@ -48,7 +48,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .spawn()?
                 .wait()?;
 
-            print!("formatting code");
+            println!("clean build directory");
+
+            Command::new("pnpm")
+                .arg("clean")
+                .current_dir(code_gen_path)
+                .spawn()?
+                .wait()?;
+
+            println!("formatting code");
 
             Command::new("pnpm")
                 .arg("rescript")
@@ -58,10 +66,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .spawn()?
                 .wait()?;
 
-            print!("building code");
+            println!("building code");
 
             Command::new("pnpm")
                 .arg("build")
+                .current_dir(code_gen_path)
+                .spawn()?
+                .wait()?;
+
+            println!("generate db bigrations");
+
+            Command::new("pnpm")
+                .arg("db-migrate")
                 .current_dir(code_gen_path)
                 .spawn()?
                 .wait()?;

@@ -1,15 +1,6 @@
-type newGravatarEvent = {
-  id: string,
-  owner: string,
-  displayName: string,
-  imageUrl: string,
-}
-type updatedGravatarEvent = {
-  id: string,
-  owner: string,
-  displayName: string,
-  imageUrl: string,
-}
+//************
+//** EVENTS **
+//************
 
 type eventLog<'a> = {
   params: 'a,
@@ -22,11 +13,39 @@ type eventLog<'a> = {
   logIndex: int,
 }
 
-type event =
-  | NewGravatar(eventLog<newGravatarEvent>)
-  | UpdatedGravatar(eventLog<updatedGravatarEvent>)
+module GravatarContract = {
+  type newGravatarEvent = {
+    id: Ethers.BigInt.t,
+    owner: Ethers.ethAddress,
+    displayName: string,
+    imageUrl: string,
+  }
 
-// generated entity types:
+  type updatedGravatarEvent = {
+    id: Ethers.BigInt.t,
+    owner: Ethers.ethAddress,
+    displayName: string,
+    imageUrl: string,
+  }
+}
+
+type event =
+  | GravatarContract_NewGravatar(eventLog<GravatarContract.newGravatarEvent>)
+  | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.updatedGravatarEvent>)
+
+type eventName =
+  | GravatarContract_NewGravatarEvent
+  | GravatarContract_UpdatedGravatarEvent
+
+let eventNameToString = (eventName: eventName) =>
+  switch eventName {
+  | GravatarContract_NewGravatarEvent => "NewGravatar"
+  | GravatarContract_UpdatedGravatarEvent => "UpdatedGravatar"
+  }
+
+//*************
+//***ENTITIES**
+//*************
 
 type id = string
 
@@ -34,7 +53,7 @@ type entityRead = GravatarRead(id)
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
-  | GravatarRead(gravatarId) => `gravatar${gravatarId}`
+  | GravatarRead(id) => `gravatar${id}`
   }
 }
 
@@ -46,21 +65,7 @@ type gravatarEntity = {
   updatesCount: int,
 }
 
-type entity = GravatarEntity
-
-let serializeEntity = entity =>
-  switch entity {
-  | GravatarEntity => "GravatarEntity"
-  }
-
-exception EntityParseError
-let parseEntity = entityString =>
-  switch entityString {
-  | "GravatarEntity" => GravatarEntity
-  | _ => EntityParseError->raise
-  }
-
-type entityWithData = GravatarEntity(gravatarEntity)
+type entity = GravatarEntity(gravatarEntity)
 
 type crud = Create | Read | Update | Delete
 
@@ -68,19 +73,20 @@ type inMemoryStoreRow<'a> = {
   crud: crud,
   entity: 'a,
 }
+
 //*************
 //** CONTEXT **
 //*************
 
-type loadedEntitiesReader<'a> = {
-  getById: id => option<'a>,
-  getAllLoaded: unit => array<'a>,
+type loadedEntitiesReader = {
+  getGravatarById: id => option<gravatarEntity>,
+  getAllLoadedGravatar: unit => array<gravatarEntity>,
 }
 
 type entityController<'a> = {
   insert: 'a => unit,
   update: 'a => unit,
-  loadedEntities: loadedEntitiesReader<'a>,
+  loadedEntities: loadedEntitiesReader,
 }
 
 type gravatarController = entityController<gravatarEntity>

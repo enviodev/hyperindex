@@ -25,31 +25,31 @@ Jest.describe("E2E Mock Event Batch", (function (param) {
         Jest.test("3 newgravatar event insert calls in order", (function (param) {
                 var insertCalls = Jest.MockJs.calls(ContextMock.insertMock);
                 return Jest.Expect.toEqual(Jest.Expect.expect(insertCalls), [
-                            MockEvents.newGravatar1.id,
-                            MockEvents.newGravatar2.id,
-                            MockEvents.newGravatar3.id
+                            MockEvents.newGravatar1.id.toString(),
+                            MockEvents.newGravatar2.id.toString(),
+                            MockEvents.newGravatar3.id.toString()
                           ]);
               }));
         Jest.test("3 updategravatar event insert calls in order", (function (param) {
                 var insertCalls = Jest.MockJs.calls(ContextMock.insertMock);
                 return Jest.Expect.toEqual(Jest.Expect.expect(insertCalls), [
-                            MockEvents.updatedGravatar1.id,
-                            MockEvents.updatedGravatar2.id,
-                            MockEvents.updatedGravatar3.id
+                            MockEvents.updatedGravatar1.id.toString(),
+                            MockEvents.updatedGravatar2.id.toString(),
+                            MockEvents.updatedGravatar3.id.toString()
                           ]);
               }));
       }));
 
 Jest.describe("E2E Db check", (function (param) {
         Jest.beforeAllPromise(undefined, (async function (param) {
-                await DbFunctions.batchSetGravatar([
+                await DbFunctions.Gravatar.batchSetGravatar([
                       MockEntities.gravatarEntity1,
                       MockEntities.gravatarEntity2
                     ]);
                 return await EventProcessing.processEventBatch(MockEvents.eventBatch, Context.getContext(undefined));
               }));
         Jest.test("Validate inmemory store state", (function (param) {
-                var inMemoryStore = IO.InMemoryStore.gravatarDict.contents;
+                var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;
                 var inMemoryStoreRows = Js_dict.values(inMemoryStore);
                 return Jest.Expect.toEqual(Jest.Expect.expect(inMemoryStoreRows), [
                             {

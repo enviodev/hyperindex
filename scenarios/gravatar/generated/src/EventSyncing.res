@@ -53,22 +53,27 @@ let convertLogs = (
         | Some(interface) => {
             let logDescription = interface->Ethers.Interface.parseLog(~log)
 
-            switch logDescription.name->Converters.eventStringToEvent {
-            | UpdatedGravatar =>
-              let convertedNewGravatarEvent =
+            switch Converters.eventStringToEvent(
+              logDescription.name,
+              Converters.getContractNameFromAddress(
+                log.address,
+                Ethers.JsonRpcProvider.getNetwork(provider).chainId,
+              ),
+            ) {
+            | GravatarContract_NewGravatarEvent =>
+              let convertedEvent =
                 logDescription
-                ->Converters.convertUpdatedGravatarLogDescription
-                ->Converters.convertUpdatedGravatarLog(~log, ~blockPromise)
+                ->Converters.Gravatar.convertNewGravatarLogDescription
+                ->Converters.Gravatar.convertNewGravatarLog(~log, ~blockPromise)
 
-              Some(convertedNewGravatarEvent)
-
-            | NewGravatar =>
-              let convertedNewGravatarEvent =
+              Some(convertedEvent)
+            | GravatarContract_UpdatedGravatarEvent =>
+              let convertedEvent =
                 logDescription
-                ->Converters.convertNewGravatarLogDescription
-                ->Converters.convertNewGravatarLog(~log, ~blockPromise)
+                ->Converters.Gravatar.convertUpdatedGravatarLogDescription
+                ->Converters.Gravatar.convertUpdatedGravatarLog(~log, ~blockPromise)
 
-              Some(convertedNewGravatarEvent)
+              Some(convertedEvent)
             }
           }
         }
@@ -152,7 +157,10 @@ let getAllEventFilters = (
     )
 
     contract.events->Belt.Array.forEach(eventName => {
-      let eventFilter = contractEthers->Ethers.Contract.getEventFilter(~eventName)
+      let eventFilter =
+        contractEthers->Ethers.Contract.getEventFilter(
+          ~eventName=Types.eventNameToString(eventName),
+        )
       let _ = eventFilters->Js.Array2.push(eventFilter)
     })
   })

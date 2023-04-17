@@ -15,7 +15,7 @@ describe("E2E Mock Event Batch", () => {
           name: "GravatarRegistry",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
           address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
-          events: ["NewGravatar, UpdateGravatar"],
+          events: [GravatarContract_NewGravatarEvent, GravatarContract_UpdatedGravatarEvent],
         },
       ],
     }

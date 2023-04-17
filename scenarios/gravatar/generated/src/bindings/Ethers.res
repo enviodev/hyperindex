@@ -1,10 +1,5 @@
 type t
 @module("ethers") external ethersCheck: t = "ethers"
-// // type x
-// // @get @new external check2: t => x = "check"
-
-// let ethers = ethersCheck
-// let check3 = ethers->check2
 
 module Misc = {
   let unsafeToOption: (unit => 'a) => option<'a> = unsafeFunc => {
@@ -157,7 +152,6 @@ type log = {
 }
 
 type logDescription<'a> = {
-  // eventFragment: EventFragment.t, TODO: EventFragment needs to be typed
   args: 'a,
   name: string,
   signature: string,
@@ -165,7 +159,7 @@ type logDescription<'a> = {
 }
 
 module PreparedTopicFilter = {
-  /** The type returend by conract.filters.\<Event>() */
+  /** The type returend by contract.filters.\<Event>() */
   type t
 
   @get @scope("fragment") external getTopicHash: t => EventFilter.topic = "topicHash"
@@ -184,15 +178,15 @@ module JsonRpcProvider = {
 
   let onBlock = (t, callback: int => unit) => t->onWithBlockNoReturn(#block, callback)
 
-  @send
-  external getBlockNumber: t => promise<int> = "getBlockNumber"
-
   type networkInfo = {
     chainId: int,
-    name: string
+    name: string,
   }
   @send
   external getNetwork: t => networkInfo = "getNetwork"
+
+  @send
+  external getBlockNumber: t => promise<int> = "getBlockNumber"
 
   type block = {
     _difficulty: BigInt.t,

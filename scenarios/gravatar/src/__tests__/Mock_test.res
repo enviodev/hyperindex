@@ -17,25 +17,25 @@ describe("E2E Mock Event Batch", () => {
   test("3 newgravatar event insert calls in order", () => {
     let insertCalls = ContextMock.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
-      MockEvents.newGravatar1.id,
-      MockEvents.newGravatar2.id,
-      MockEvents.newGravatar3.id,
+      MockEvents.newGravatar1.id->Ethers.BigInt.toString,
+      MockEvents.newGravatar2.id->Ethers.BigInt.toString,
+      MockEvents.newGravatar3.id->Ethers.BigInt.toString,
     ])
   })
 
   test("3 updategravatar event insert calls in order", () => {
     let insertCalls = ContextMock.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
-      MockEvents.updatedGravatar1.id,
-      MockEvents.updatedGravatar2.id,
-      MockEvents.updatedGravatar3.id,
+      MockEvents.updatedGravatar1.id->Ethers.BigInt.toString,
+      MockEvents.updatedGravatar2.id->Ethers.BigInt.toString,
+      MockEvents.updatedGravatar3.id->Ethers.BigInt.toString,
     ])
   })
 })
 
 describe("E2E Db check", () => {
   beforeAllPromise(async () => {
-    let _ = await DbFunctions.batchSetGravatar([
+    let _ = await DbFunctions.Gravatar.batchSetGravatar([
       MockEntities.gravatarEntity1,
       MockEntities.gravatarEntity2,
     ])
@@ -47,7 +47,7 @@ describe("E2E Db check", () => {
   })
 
   test("Validate inmemory store state", () => {
-    let inMemoryStore = IO.InMemoryStore.gravatarDict.contents
+    let inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents
     let inMemoryStoreRows = inMemoryStore->Js.Dict.values
     expect(inMemoryStoreRows)->toEqual([
       {

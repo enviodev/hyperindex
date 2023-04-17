@@ -1,21 +1,23 @@
-@module("../../src/EventHandlers.bs.js")
-external gravatarNewGravatarLoadEntities: Types.eventLog<Types.newGravatarEvent> => array<
-  Types.entityRead,
-> = "gravatarNewGravatarLoadEntities"
+module GravatarContract = {
+  @module("../../src/EventHandlers.bs.js")
+  external newGravatarLoadEntities: Types.eventLog<
+    Types.GravatarContract.newGravatarEvent,
+  > => array<Types.entityRead> = "NewGravatarLoadEntities"
 
-@module("../../src/EventHandlers.bs.js")
-external gravatarNewGravatarEventHandler: (
-  Types.eventLog<Types.newGravatarEvent>,
-  Types.context,
-) => unit = "gravatarNewGravatarEventHandler"
+  @module("../../src/EventHandlers.bs.js")
+  external newGravatarHandler: (
+    Types.eventLog<Types.GravatarContract.newGravatarEvent>,
+    Types.context,
+  ) => unit = "NewGravatarHandler"
 
-@module("../../src/EventHandlers.bs.js")
-external gravatarUpdatedGravatarLoadEntities: Types.eventLog<Types.updatedGravatarEvent> => array<
-  Types.entityRead,
-> = "gravatarUpdatedGravatarLoadEntities"
+  @module("../../src/EventHandlers.bs.js")
+  external updatedGravatarLoadEntities: Types.eventLog<
+    Types.GravatarContract.updatedGravatarEvent,
+  > => array<Types.entityRead> = "UpdatedGravatarLoadEntities"
 
-@module("../../src/EventHandlers.bs.js")
-external gravatarUpdatedGravatarEventHandler: (
-  Types.eventLog<Types.updatedGravatarEvent>,
-  Types.context,
-) => unit = "gravatarUpdatedGravatarEventHandler"
+  @module("../../src/EventHandlers.bs.js")
+  external updatedGravatarHandler: (
+    Types.eventLog<Types.GravatarContract.updatedGravatarEvent>,
+    Types.context,
+  ) => unit = "UpdatedGravatarHandler"
+}

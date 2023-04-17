@@ -3,7 +3,6 @@ open DrizzleOrm.Schema
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   type {{entity.name.uncapitalized}}Tablefields = {
-    idExample: field, // todo
     {{#each entity.params as |param|}}
     {{param.key}}: field,
     {{/each}}
@@ -11,22 +10,19 @@ module {{entity.name.capitalized}} = {
 
   %%private(
     let {{entity.name.uncapitalized}}Tablefields = {
-      idExample: text("idExample")->primaryKey, // todo
       {{#each entity.params as |param|}}
-      {{param.key}}: text("{{param.key}}"), // todo param.drizzleType eg. text integer etc // todo snake case
+      {{param.key}}: text("{{param.key}}"){{#if (eq param.key "id")}}->primaryKey{{/if}}, // todo param.drizzleType eg. text integer etc // todo snake case
       {{/each}}
     }
   )
 
   type {{entity.name.uncapitalized}}TableRow = {
-    exampleId: DrizzleOrm.Schema.fieldSelector, //todo
     {{#each entity.params as |param|}}
     {{param.key}}: DrizzleOrm.Schema.fieldSelector,    
     {{/each}}
   }
 
   type {{entity.name.uncapitalized}}TableRowOptionalFields = {
-    exampleId?: string, // todo
     {{#each entity.params as |param|}}
     {{param.key}}?: {{param.type_}},
     {{/each}}    

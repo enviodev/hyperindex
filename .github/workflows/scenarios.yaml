@@ -48,10 +48,8 @@ jobs:
 
       - name: Build code
         run: |
-          cd generated
           pnpm build
 
       - name: Run tests
         run: |
-          cd generated
           PG_HOST="postgres" pnpm test
