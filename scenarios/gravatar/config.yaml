@@ -16,6 +16,5 @@ networks:
           - name: "UpdatedGravatar"
             requiredEntities: # if this field isn't specified it should default to include all entities
               - name: "Gravatar"
-                allowArbitrary: false # this defauls to false
                 labels:
                   - "gravatarWithChanges"

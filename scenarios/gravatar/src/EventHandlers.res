@@ -25,7 +25,9 @@ let gravatarNewGravatarEventHandler = (
 //user defined function that read entities based on the event log
 let gravatarUpdatedGravatarLoadEntities = (
   event: eventLog<GravatarContract.updatedGravatarEvent>,
+  contextUpdator: contextUpdator,
 ): array<entityRead> => {
+
   [GravatarRead(event.params.id->Ethers.BigInt.toString)]
 }
 
@@ -33,10 +35,14 @@ let gravatarUpdatedGravatarEventHandler = (
   event: eventLog<GravatarContract.updatedGravatarEvent>,
   context: context,
 ) => {
+  /*
   let updatesCount =
     context.gravatar.loadedEntities.getGravatarById(
       event.params.id->Ethers.BigInt.toString,
     )->Belt.Option.mapWithDefault(1, gravatar => gravatar.updatesCount + 1)
+    */
+  let updatesCount =
+    context.gravatar.loadedEntities.gravatarWithChanges()->Belt.Option.mapWithDefault(1, gravatar => gravatar.updatesCount + 1)
 
   let gravatar: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
