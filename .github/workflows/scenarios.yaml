@@ -6,7 +6,7 @@ on: pull_request
 # For now we just run this in the gravatar folder.
 defaults:
   run:
-    working-directory: scenarios/gravitar
+    working-directory: scenarios/gravatar
 
 jobs:
   # Label of the container job
