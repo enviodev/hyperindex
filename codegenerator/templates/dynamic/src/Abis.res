@@ -6,4 +6,3 @@ let {{contract.name.uncapitalized}}Abi = `
 
 {{/each}}
 {{/each}}
-
