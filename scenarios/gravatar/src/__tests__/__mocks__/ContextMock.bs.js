@@ -16,17 +16,17 @@ var updateMock = jest.fn(function (id) {
       return id;
     });
 
-function loadedEntitiesMock_getById(id) {
+function loadedEntitiesMock_getGravatarById(id) {
   Curry._1(getByIdMock, id);
 }
 
-function loadedEntitiesMock_getAllLoaded(param) {
+function loadedEntitiesMock_getAllLoadedGravatar(param) {
   return [MockEntities.gravatarEntity1];
 }
 
 var loadedEntitiesMock = {
-  getById: loadedEntitiesMock_getById,
-  getAllLoaded: loadedEntitiesMock_getAllLoaded
+  getGravatarById: loadedEntitiesMock_getGravatarById,
+  getAllLoadedGravatar: loadedEntitiesMock_getAllLoadedGravatar
 };
 
 var mockContext = {

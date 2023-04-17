@@ -3,7 +3,7 @@
 
 var Abis = require("generated/src/Abis.bs.js");
 var Jest = require("@glennsl/rescript-jest/src/jest.bs.js");
-var Ethers = require("generated/src/Bindings/Ethers.bs.js");
+var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Ethers$1 = require("ethers");
 var Hardhat = require("hardhat");
 var EventSyncing = require("generated/src/EventSyncing.bs.js");
@@ -19,7 +19,10 @@ Jest.describe("E2E Mock Event Batch", (function (param) {
                     name: "GravatarRegistry",
                     abi: Ethers.makeAbi(Abis.gravatarAbi),
                     address: Ethers$1.ethers.getAddress("0x5FbDB2315678afecb367f032d93F642f64180aa3"),
-                    events: ["NewGravatar, UpdateGravatar"]
+                    events: [
+                      /* GravatarContract_NewGravatarEvent */0,
+                      /* GravatarContract_UpdatedGravatarEvent */1
+                    ]
                   }];
                 var localChainConfig = {
                   provider: localChainConfig_provider,

@@ -2,6 +2,7 @@
 'use strict';
 
 var Curry = require("rescript/lib/js/curry.js");
+var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Belt_Option = require("rescript/lib/js/belt_Option.js");
 
 function gravatarNewGravatarLoadEntities(_event) {
@@ -10,8 +11,8 @@ function gravatarNewGravatarLoadEntities(_event) {
 
 function gravatarNewGravatarEventHandler($$event, context) {
   Curry._1(context.Gravatar.insert, {
-        id: $$event.params.id,
-        owner: $$event.params.owner,
+        id: $$event.params.id.toString(),
+        owner: Ethers.ethAddressToString($$event.params.owner),
         displayName: $$event.params.displayName,
         imageUrl: $$event.params.imageUrl,
         updatesCount: 1
@@ -20,17 +21,17 @@ function gravatarNewGravatarEventHandler($$event, context) {
 
 function gravatarUpdatedGravatarLoadEntities($$event) {
   return [/* GravatarRead */{
-            _0: $$event.params.id
+            _0: $$event.params.id.toString()
           }];
 }
 
 function gravatarUpdatedGravatarEventHandler($$event, context) {
-  var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.Gravatar.loadedEntities.getById, $$event.params.id), 1, (function (gravatar) {
+  var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.Gravatar.loadedEntities.getGravatarById, $$event.params.id.toString()), 1, (function (gravatar) {
           return gravatar.updatesCount + 1 | 0;
         }));
   Curry._1(context.Gravatar.update, {
-        id: $$event.params.id,
-        owner: $$event.params.owner,
+        id: $$event.params.id.toString(),
+        owner: Ethers.ethAddressToString($$event.params.owner),
         displayName: $$event.params.displayName,
         imageUrl: $$event.params.imageUrl,
         updatesCount: updatesCount
@@ -41,4 +42,4 @@ exports.gravatarNewGravatarLoadEntities = gravatarNewGravatarLoadEntities;
 exports.gravatarNewGravatarEventHandler = gravatarNewGravatarEventHandler;
 exports.gravatarUpdatedGravatarLoadEntities = gravatarUpdatedGravatarLoadEntities;
 exports.gravatarUpdatedGravatarEventHandler = gravatarUpdatedGravatarEventHandler;
-/* No side effect */
+/* Ethers Not a pure module */

@@ -2,22 +2,22 @@ module GravatarContract = {
   @module("../../src/EventHandlers.bs.js")
   external newGravatarLoadEntities: Types.eventLog<
     Types.GravatarContract.newGravatarEvent,
-  > => array<Types.entityRead> = "NewGravatarLoadEntities"
+  > => array<Types.entityRead> = "gravatarNewGravatarLoadEntities"
 
   @module("../../src/EventHandlers.bs.js")
   external newGravatarHandler: (
     Types.eventLog<Types.GravatarContract.newGravatarEvent>,
     Types.context,
-  ) => unit = "NewGravatarHandler"
+  ) => unit = "gravatarNewGravatarHandler"
 
   @module("../../src/EventHandlers.bs.js")
   external updatedGravatarLoadEntities: Types.eventLog<
     Types.GravatarContract.updatedGravatarEvent,
-  > => array<Types.entityRead> = "UpdatedGravatarLoadEntities"
+  > => array<Types.entityRead> = "gravatarUpdatedGravatarLoadEntities"
 
   @module("../../src/EventHandlers.bs.js")
   external updatedGravatarHandler: (
     Types.eventLog<Types.GravatarContract.updatedGravatarEvent>,
     Types.context,
-  ) => unit = "UpdatedGravatarHandler"
+  ) => unit = "gravatarUpdatedGravatarHandler"
 }

@@ -35,7 +35,8 @@ let convertLogs = (
   }
 
   let task = async () => {
-    let logs = await logsPromise
+    let (logs, networkInfo) = await Promise.all2((logsPromise,Ethers.JsonRpcProvider.getNetwork(provider)))
+
 
     Js.log2("Handling number of logs: ", logs->Array.length)
 
@@ -53,7 +54,7 @@ let convertLogs = (
         | Some(interface) => {
             let logDescription = interface->Ethers.Interface.parseLog(~log)
 
-            switch Converters.eventStringToEvent(logDescription.name, Converters.getContractNameFromAddress(log.address, Ethers.JsonRpcProvider.getNetwork(provider).chainId)) {
+            switch Converters.eventStringToEvent(logDescription.name, Converters.getContractNameFromAddress(log.address, networkInfo.chainId)) {
 {{#each contracts as |contract|}}
 {{#each contract.events as |event|}}
             | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>

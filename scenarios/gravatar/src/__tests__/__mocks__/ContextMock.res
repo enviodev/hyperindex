@@ -4,11 +4,11 @@ let insertMock = (id => id)->JestJs.fn
 let getByIdMock = (id => id)->JestJs.fn
 let updateMock = (id => id)->JestJs.fn
 let loadedEntitiesMock = {
-  getById: id => {
+  getGravatarById: id => {
     getByIdMock->MockJs.fn(id)->ignore
     None
   },
-  getAllLoaded: () => [MockEntities.gravatarEntity1], //Note this should call the read function in handlers and grab all the loaded entities related to this event,
+  getAllLoadedGravatar: () => [MockEntities.gravatarEntity1], //Note this should call the read function in handlers and grab all the loaded entities related to this event,
 }
 
 let mockContext: Types.context = {

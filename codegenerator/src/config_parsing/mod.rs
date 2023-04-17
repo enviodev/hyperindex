@@ -124,9 +124,12 @@ mod tests {
 
     use super::ChainConfigTemplate;
 
+    use std::fs;
+
     #[test]
     fn convert_to_chain_configs_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
+        let abi_file_path = String::from("test/abi/Contract1.json");
 
         let event1 = super::Event {
             name: String::from("NewGravatar"),
@@ -142,7 +145,7 @@ mod tests {
             handler: None,
             address: vec![address1.clone()],
             name: String::from("Contract1"),
-            abi_file_path: String::from("abi/Contract1.json"),
+            abi_file_path: abi_file_path.clone(),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -164,7 +167,7 @@ mod tests {
         };
 
         let chain_configs = super::convert_config_to_chain_configs(&config, "dummy path").unwrap();
-        let abi = String::from("[]");
+        let abi = fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi,
@@ -190,6 +193,8 @@ mod tests {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
+        let abi_file_path = String::from("test/abi/Contract1.json");
+
         let event1 = super::Event {
             name: String::from("NewGravatar"),
             read_entities: None,
@@ -204,7 +209,7 @@ mod tests {
             handler: None,
             address: vec![address1.clone()],
             name: String::from("Contract1"),
-            abi_file_path: String::from("abi/Contract1.json"),
+            abi_file_path: abi_file_path.clone(),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -220,7 +225,7 @@ mod tests {
             handler: None,
             address: vec![address2.clone()],
             name: String::from("Contract1"),
-            abi_file_path: String::from("abi/Contract1.json"),
+            abi_file_path: abi_file_path.clone(),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -242,14 +247,14 @@ mod tests {
             networks,
         };
 
-        let chain_configs = super::convert_config_to_chain_configs(&config, "dummy path").unwrap();
+        let chain_configs = super::convert_config_to_chain_configs(&config, ".").unwrap();
 
         let events = vec![
             event1.name.to_capitalized_options(),
             event2.name.to_capitalized_options(),
         ];
 
-        let abi = String::from("[]");
+        let abi = fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi.clone(),

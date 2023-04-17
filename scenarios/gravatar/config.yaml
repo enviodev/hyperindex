@@ -2,13 +2,13 @@ version: 0.0.0
 description: Gravatar for Ethereum
 repository: https://github.com/graphprotocol/example-subgraph
 networks:
-  - id: 137
+  - id: 31337
     rpc_url: https://polygon-rpc.com
-    start_block: 34316032
+    start_block: 0
     contracts:
       - name: Gravatar
         abi_file_path: abis/gravatar-abi.json
-        address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+        address: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"]
         handler: ./src/EventHandlers.bs.js
         events:
           - name: "NewGravatar"
