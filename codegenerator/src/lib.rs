@@ -48,40 +48,54 @@ pub fn generate_templates(
     handlebars.set_strict_mode(true);
     handlebars.register_escape_fn(handlebars::no_escape);
 
-    handlebars.register_template_file("Types.res", "templates/dynamic/src/Types.res")?;
-    handlebars.register_template_file("Handlers.res", "templates/dynamic/src/Handlers.res")?;
-    handlebars
-        .register_template_file("DbFunctions.res", "templates/dynamic/src/DbFunctions.res")?;
-    handlebars.register_template_file(
-        "EventProcessing.res",
-        "templates/dynamic/src/EventProcessing.res",
-    )?;
-    handlebars.register_template_file("Config.res", "templates/dynamic/src/Config.res")?;
-    handlebars.register_template_file("Abis.res", "templates/dynamic/src/Abis.res")?;
-    handlebars.register_template_file("IO.res", "templates/dynamic/src/IO.res")?;
-    handlebars.register_template_file("DbSchema.res", "templates/dynamic/src/DbSchema.res")?;
-    handlebars.register_template_file("Converters.res", "templates/dynamic/src/Converters.res")?;
-    handlebars
-        .register_template_file("EventSyncing.res", "templates/dynamic/src/EventSyncing.res")?;
-    handlebars.register_template_file("Context.res", "templates/dynamic/src/Context.res")?;
-
     let types_data = TypesTemplate {
         contracts,
         entities: entity_types,
         chain_configs,
     };
 
-    let rendered_string_types = handlebars.render("Types.res", &types_data)?;
-    let rendered_string_abi = handlebars.render("Abis.res", &types_data)?;
-    let rendered_string_handlers = handlebars.render("Handlers.res", &types_data)?;
-    let rendered_string_db_functions = handlebars.render("DbFunctions.res", &types_data)?;
-    let rendered_string_event_processing = handlebars.render("EventProcessing.res", &types_data)?;
-    let rendered_string_config = handlebars.render("Config.res", &types_data)?;
-    let rendered_string_io = handlebars.render("IO.res", &types_data)?;
-    let rendered_string_db_schema = handlebars.render("DbSchema.res", &types_data)?;
-    let rendered_string_converters = handlebars.render("Converters.res", &types_data)?;
-    let rendered_string_event_syncing = handlebars.render("EventSyncing.res", &types_data)?;
-    let rendered_string_context = handlebars.render("Context.res", &types_data)?;
+    let rendered_string_types = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Types.res"),
+        &types_data,
+    )?;
+    let rendered_string_abi = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Abis.res"),
+        &types_data,
+    )?;
+    let rendered_string_handlers = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Handlers.res"),
+        &types_data,
+    )?;
+    let rendered_string_db_functions = handlebars.render_template(
+        include_str!("../templates/dynamic/src/DbFunctions.res"),
+        &types_data,
+    )?;
+    let rendered_string_event_processing = handlebars.render_template(
+        include_str!("../templates/dynamic/src/EventProcessing.res"),
+        &types_data,
+    )?;
+    let rendered_string_config = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Config.res"),
+        &types_data,
+    )?;
+    let rendered_string_io =
+        handlebars.render_template(include_str!("../templates/dynamic/src/IO.res"), &types_data)?;
+    let rendered_string_db_schema = handlebars.render_template(
+        include_str!("../templates/dynamic/src/DbSchema.res"),
+        &types_data,
+    )?;
+    let rendered_string_converters = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Converters.res"),
+        &types_data,
+    )?;
+    let rendered_string_event_syncing = handlebars.render_template(
+        include_str!("../templates/dynamic/src/EventSyncing.res"),
+        &types_data,
+    )?;
+    let rendered_string_context = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Context.res"),
+        &types_data,
+    )?;
 
     write_to_file_in_generated("src/Types.res", &rendered_string_types, codegen_path)?;
     write_to_file_in_generated("src/Config.res", &rendered_string_config, codegen_path)?;

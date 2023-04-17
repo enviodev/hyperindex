@@ -35,7 +35,10 @@ let convertLogs = (
   }
 
   let task = async () => {
-    let logs = await logsPromise
+    let (logs, networkInfo) = await Promise.all2((
+      logsPromise,
+      Ethers.JsonRpcProvider.getNetwork(provider),
+    ))
 
     Js.log2("Handling number of logs: ", logs->Array.length)
 
@@ -55,10 +58,7 @@ let convertLogs = (
 
             switch Converters.eventStringToEvent(
               logDescription.name,
-              Converters.getContractNameFromAddress(
-                log.address,
-                Ethers.JsonRpcProvider.getNetwork(provider).chainId,
-              ),
+              Converters.getContractNameFromAddress(log.address, networkInfo.chainId),
             ) {
             | GravatarContract_NewGravatarEvent =>
               let convertedEvent =
