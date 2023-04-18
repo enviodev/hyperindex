@@ -31,6 +31,9 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+        ports:
+          # Maps tcp port 5432 on service container to the host
+          - 5432:5432
 
     steps:
       - name: Check out repository code
@@ -57,4 +60,4 @@ jobs:
 
       - name: Run tests
         run: |
-          PG_HOST="postgres" pnpm test
+          pnpm test
