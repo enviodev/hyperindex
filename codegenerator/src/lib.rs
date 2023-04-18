@@ -25,15 +25,32 @@ pub struct RecordType {
     name: CapitalizedOptions,
     params: Vec<ParamType>,
 }
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct RequiredEntityTemplate {
+    name: String,
+    labels: Vec<String>,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct EventTemplate {
+    name: CapitalizedOptions,
+    params: Vec<ParamType>,
+    required_entities: Vec<RequiredEntityTemplate>,
+}
+
 #[derive(Serialize)]
 pub struct Contract {
     name: CapitalizedOptions,
-    events: Vec<RecordType>,
+    events: Vec<EventTemplate>,
 }
+
+type EntityTemplate = RecordType;
+
 #[derive(Serialize)]
 struct TypesTemplate {
     contracts: Vec<Contract>,
-    entities: Vec<RecordType>,
+    entities: Vec<EntityTemplate>,
     chain_configs: Vec<ChainConfigTemplate>,
 }
 
