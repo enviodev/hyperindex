@@ -77,9 +77,9 @@ impl RescripRecordHirarchyLinkedHashMap {
 
     fn insert(&mut self, key: String, value: RecordType) -> bool {
         // let mut map = self.map;
-        match (self.head_key, self.tail_key) {
-            (None, None) => (),          // set both vals as the new node,
-            (Some(current_head),) => (), // set both vals as the new node,
+        match self.head_and_tail {
+            None => (),                                     // set both vals as the new node,
+            Some(HeadAndTail { head_key, tail_key }) => (), // set both vals as the new node,
         }
         let new_node = Node::new(value.clone());
 
