@@ -4,9 +4,7 @@ module {{contract.name.capitalized}}Contract = {
 @module("../../src/EventHandlers.bs.js")
 external {{event.name.uncapitalized}}LoadEntities: (Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
 Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
-) => array<
-  Types.entityRead,
-> = "{{contract.name.uncapitalized}}{{event.name.capitalized}}LoadEntities"
+) => unit = "{{contract.name.uncapitalized}}{{event.name.capitalized}}LoadEntities"
 
 @module("../../src/EventHandlers.bs.js")
 external {{event.name.uncapitalized}}Handler: (

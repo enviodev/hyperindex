@@ -21,9 +21,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
 
         let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator()
-        let readEntities = Handlers.{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}LoadEntities(event, contextHelper.getLoaderContext())
+        Handlers.{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}LoadEntities(event, contextHelper.getLoaderContext())
         let context = contextHelper.getContext()
-        (readEntities, Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context))
+        (contextHelper.getEntitiesToLoad(), Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context))
         }
 {{/each}}
 {{/each}}

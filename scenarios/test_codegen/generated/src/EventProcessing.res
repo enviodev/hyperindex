@@ -19,21 +19,24 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
     switch event {
     | GravatarContract_NewGravatar(event) => {
         let contextHelper = Context.GravatarContract.NewGravatarEvent.contextCreator()
-        let readEntities = Handlers.GravatarContract.newGravatarLoadEntities(
-          event,
-          contextHelper.getLoaderContext(),
-        )
+        Handlers.GravatarContract.newGravatarLoadEntities(event, contextHelper.getLoaderContext())
         let context = contextHelper.getContext()
-        (readEntities, Types.GravatarContract_NewGravatarWithContext(event, context))
+        (
+          contextHelper.getEntitiesToLoad(),
+          Types.GravatarContract_NewGravatarWithContext(event, context),
+        )
       }
     | GravatarContract_UpdatedGravatar(event) => {
         let contextHelper = Context.GravatarContract.UpdatedGravatarEvent.contextCreator()
-        let readEntities = Handlers.GravatarContract.updatedGravatarLoadEntities(
+        Handlers.GravatarContract.updatedGravatarLoadEntities(
           event,
           contextHelper.getLoaderContext(),
         )
         let context = contextHelper.getContext()
-        (readEntities, Types.GravatarContract_UpdatedGravatarWithContext(event, context))
+        (
+          contextHelper.getEntitiesToLoad(),
+          Types.GravatarContract_UpdatedGravatarWithContext(event, context),
+        )
       }
     }
   })

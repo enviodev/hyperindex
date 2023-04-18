@@ -9,6 +9,7 @@ type entityRead =
 | {{entity.name.capitalized}}Read(id)
 {{/each}}
 
+
 let entitySerialize = (entity: entityRead) => {
   switch entity {
   {{#each entities as | entity |}}

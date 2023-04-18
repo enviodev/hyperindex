@@ -7,23 +7,28 @@ module {{contract.name.capitalized}}Contract = {
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
       getContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
+      getEntitiesToLoad: unit => array<Types.entityRead>
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
       // TODO: loop through each of the named arguments.
       let optIdOf_gravatarWithChanges = ref(None)
+
+      let entitiesToLoad: array<Types.entityRead> = []
 
       let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext = {
         // TODO: loop through each of the named arguments.
         gravatar: {
           gravatarWithChangesLoad: (id: Types.id) => {
             optIdOf_gravatarWithChanges := Some(id)
+
+            let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id))
           }
         }
       }
       {
+        getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
         getContext: () => ({
-
         {{#each ../../entities as | entity |}}
           {{entity.name.uncapitalized}}: {
               insert: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}} = entity, ~crud = Types.Create)},
