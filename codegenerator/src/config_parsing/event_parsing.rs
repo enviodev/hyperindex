@@ -80,7 +80,7 @@ fn get_event_template_from_event(
         Some(required_entities_config) => required_entities_config
             .iter()
             .map(|required_entity| RequiredEntityTemplate {
-                name: required_entity.name.clone(),
+                name: required_entity.name.to_capitalized_options(),
                 labels: required_entity.labels.clone(),
             })
             .collect(),
@@ -247,7 +247,7 @@ mod tests {
                 },
             ],
             required_entities: vec![RequiredEntityTemplate {
-                name: String::from("Gravatar"),
+                name: String::from("Gravatar").to_capitalized_options(),
                 labels: vec![String::from("gravatarWithChanges")],
             }],
         };

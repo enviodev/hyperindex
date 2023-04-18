@@ -28,7 +28,7 @@ pub struct RecordType {
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct RequiredEntityTemplate {
-    name: String,
+    name: CapitalizedOptions,
     labels: Vec<String>,
 }
 
