@@ -2,7 +2,6 @@ open DrizzleOrm.Schema
 
 module Gravatar = {
   type gravatarTablefields = {
-    idExample: field, // todo
     id: field,
     owner: field,
     displayName: field,
@@ -12,8 +11,7 @@ module Gravatar = {
 
   %%private(
     let gravatarTablefields = {
-      idExample: text("idExample")->primaryKey, // todo
-      id: text("id"), // todo param.drizzleType eg. text integer etc // todo snake case
+      id: text("id")->primaryKey, // todo param.drizzleType eg. text integer etc // todo snake case
       owner: text("owner"), // todo param.drizzleType eg. text integer etc // todo snake case
       displayName: text("displayName"), // todo param.drizzleType eg. text integer etc // todo snake case
       imageUrl: text("imageUrl"), // todo param.drizzleType eg. text integer etc // todo snake case
@@ -22,7 +20,6 @@ module Gravatar = {
   )
 
   type gravatarTableRow = {
-    exampleId: DrizzleOrm.Schema.fieldSelector, //todo
     id: DrizzleOrm.Schema.fieldSelector,
     owner: DrizzleOrm.Schema.fieldSelector,
     displayName: DrizzleOrm.Schema.fieldSelector,
@@ -31,7 +28,6 @@ module Gravatar = {
   }
 
   type gravatarTableRowOptionalFields = {
-    exampleId?: string, // todo
     id?: string,
     owner?: string,
     displayName?: string,
@@ -41,3 +37,6 @@ module Gravatar = {
 
   let gravatar: table<gravatarTableRow> = pgTable(~name="gravatar", ~fields=gravatarTablefields)
 }
+
+// re-declaired here to create exports for db migrations
+let gravatar = Gravatar.gravatar

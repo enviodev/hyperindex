@@ -1,10 +1,13 @@
 exception UndefinedEvent(string)
-exception UndefinedContract(Ethers.ethAddress, int)
+exception UndefinedContract(Ethers.ethAddress, Ethers.BigInt.t)
 
-let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: int): string => {
-  switch (contractAddress->Ethers.ethAddressToString, chainId) {
+let getContractNameFromAddress = (
+  contractAddress: Ethers.ethAddress,
+  chainId: Ethers.BigInt.t,
+): string => {
+  switch (contractAddress->Ethers.ethAddressToString, chainId->Ethers.BigInt.toString) {
   // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-  | ("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC", 137) => "Gravatar"
+  | ("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC", "137") => "Gravatar"
   | _ => UndefinedContract(contractAddress, chainId)->raise
   }
 }

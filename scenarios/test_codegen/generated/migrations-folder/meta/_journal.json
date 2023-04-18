@@ -1,0 +1,13 @@
+{
+  "version": "5",
+  "dialect": "pg",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1681739167036,
+      "tag": "0000_spooky_menace",
+      "breakpoints": false
+    }
+  ]
+}

@@ -8,7 +8,7 @@ module GravatarContract = {
   external newGravatarHandler: (
     Types.eventLog<Types.GravatarContract.newGravatarEvent>,
     Types.context,
-  ) => unit = "gravatarNewGravatarHandler"
+  ) => unit = "gravatarNewGravatarEventHandler"
 
   @module("../../src/EventHandlers.bs.js")
   external updatedGravatarLoadEntities: Types.eventLog<
@@ -19,5 +19,5 @@ module GravatarContract = {
   external updatedGravatarHandler: (
     Types.eventLog<Types.GravatarContract.updatedGravatarEvent>,
     Types.context,
-  ) => unit = "gravatarUpdatedGravatarHandler"
+  ) => unit = "gravatarUpdatedGravatarEventHandler"
 }
