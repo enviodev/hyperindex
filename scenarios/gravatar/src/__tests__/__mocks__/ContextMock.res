@@ -1,24 +1,38 @@
 open Jest
 open Types
 let insertMock = (id => id)->JestJs.fn
-let getByIdMock = (id => id)->JestJs.fn
+// let getByIdMock = (id => id)->JestJs.fn
 let updateMock = (id => id)->JestJs.fn
-let loadedEntitiesMock = {
-  getGravatarById: id => {
-    getByIdMock->MockJs.fn(id)->ignore
-    None
-  },
-  getAllLoadedGravatar: () => [MockEntities.gravatarEntity1], //Note this should call the read function in handlers and grab all the loaded entities related to this event,
-}
+// let loadedEntitiesMock = {
+//       /// TODO: add named entities (this is hardcoded)
+//       gravatarWithChanges: () => MockEntities.gravatarEntity1,
+//       insert: gravatarEntity => (),
+//       update: gravatarEntity => (),
+//       delete: id => (),
+//     }
 
-let mockContext: Types.context = {
+let mockNewGravatarContext: Types.GravatarContract.NewGravatarEvent.context = {
   gravatar: {
+    gravatarWithChanges: () => None, // TODO remove this once codegen is fixed!
     insert: gravatarInsert => {
       insertMock->MockJs.fn(gravatarInsert.id)->ignore
     },
     update: gravatarUpdate => {
       updateMock->MockJs.fn(gravatarUpdate.id)->ignore
     },
-    loadedEntities: loadedEntitiesMock,
+    delete: id => (),
+  },
+}
+
+let mockUpdateGravatarContext: Types.GravatarContract.UpdatedGravatarEvent.context = {
+  gravatar: {
+    gravatarWithChanges: () => Some(MockEntities.gravatarEntity1),
+    insert: gravatarInsert => {
+      insertMock->MockJs.fn(gravatarInsert.id)->ignore
+    },
+    update: gravatarUpdate => {
+      updateMock->MockJs.fn(gravatarUpdate.id)->ignore
+    },
+    delete: id => (),
   },
 }

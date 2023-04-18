@@ -1,23 +1,83 @@
-open Types
+module GravatarContract = {
+  module NewGravatarEvent = {
+    type context = Types.GravatarContract.NewGravatarEvent.context
 
-let loadedEntities = {
-  getGravatarById: id => IO.InMemoryStore.Gravatar.getGravatar(~id),
-  //Note this should call the read function in handlers and grab all the loaded entities related to this event,
-  getAllLoadedGravatar: () => [], //TODO: likely will delete
+    %%private(
+      let context: context = {
+        gravatar: {
+          insert: entity => {
+            IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Create)
+          },
+          update: entity => {
+            IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
+          },
+          delete: id => (),
+          //TODO hardcoded - retrieve from config.yaml
+          gravatarWithChanges: () => Obj.magic(),
+        },
+      }
+    )
+    let getContext: unit => context = () => context
+    let getLoaderContext: unit => Types.GravatarContract.UpdatedGravatarEvent.loaderContext =
+      ()->Obj.magic
+  }
+  module UpdatedGravatarEvent = {
+    type context = Types.GravatarContract.UpdatedGravatarEvent.context
+
+    %%private(
+      let context: context = {
+        gravatar: {
+          insert: entity => {
+            IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Create)
+          },
+          update: entity => {
+            IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
+          },
+          delete: id => (),
+          //TODO hardcoded - retrieve from config.yaml
+          gravatarWithChanges: () => Obj.magic(),
+        },
+      }
+    )
+    let getContext: unit => context = () => context
+    let getLoaderContext: unit => Types.GravatarContract.UpdatedGravatarEvent.loaderContext =
+      ()->Obj.magic
+  }
 }
 
-%%private(
-  let context = {
-    gravatar: {
-      insert: gravatarInsert => {
-        IO.InMemoryStore.Gravatar.setGravatar(~gravatar=gravatarInsert, ~crud=Types.Create)
-      },
-      update: gravatarUpdate => {
-        IO.InMemoryStore.Gravatar.setGravatar(~gravatar=gravatarUpdate, ~crud=Types.Update)
-      },
-      loadedEntities,
-    },
-  }
-)
+/*
+open Types
 
-let getContext = () => context
+module GravatarContract = {
+  module NewGravatarEvent = {
+
+    %%private(
+      let context: context = {
+        gravatar: {
+          insert: entity => (),
+          update: entity => (),
+          delete: id => (),
+        },
+      }
+    )
+
+    let getContext: unit => context = () => context
+  }
+  module UpdatedGravatarEvent = {
+    type context = Types.GravatarContract.UpdatedGravatarTypes.context
+
+    %%private(
+      let context: context = {
+        gravatar: {
+          gravatarWithChanges: () => Obj.magic(), 
+          insert: entity => {IO.InMemoryStore.Gravatar.setGravatar(~gravatar = entity, ~crud = Types.Create)},
+          update: entity => {IO.InMemoryStore.Gravatar.setGravatar(~gravatar = entity, ~crud = Types.Update)},
+          delete: id => (),
+        },
+      }
+    )
+
+    let getContext: unit => context = () => context
+  }
+}
+ */

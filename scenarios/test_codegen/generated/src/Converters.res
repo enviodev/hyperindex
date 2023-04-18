@@ -21,17 +21,17 @@ let eventStringToEvent = (eventName: string, contractName: string): Types.eventN
 
 module Gravatar = {
   let convertNewGravatarLogDescription = (log: Ethers.logDescription<'a>): Ethers.logDescription<
-    Types.GravatarContract.newGravatarEvent,
+    Types.GravatarContract.NewGravatarEvent.eventArgs,
   > => {
     log->Obj.magic
   }
 
   let convertNewGravatarLog = async (
-    logDescription: Ethers.logDescription<Types.GravatarContract.newGravatarEvent>,
+    logDescription: Ethers.logDescription<Types.GravatarContract.NewGravatarEvent.eventArgs>,
     ~log: Ethers.log,
     ~blockPromise: promise<Ethers.JsonRpcProvider.block>,
   ) => {
-    let params: Types.GravatarContract.newGravatarEvent = {
+    let params: Types.GravatarContract.NewGravatarEvent.eventArgs = {
       id: logDescription.args.id,
       owner: logDescription.args.owner,
       imageUrl: logDescription.args.imageUrl,
@@ -39,7 +39,7 @@ module Gravatar = {
     }
     let block = await blockPromise
 
-    let newGravatarLog: Types.eventLog<Types.GravatarContract.newGravatarEvent> = {
+    let newGravatarLog: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs> = {
       params,
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
@@ -54,16 +54,16 @@ module Gravatar = {
 
   let convertUpdatedGravatarLogDescription = (
     log: Ethers.logDescription<'a>,
-  ): Ethers.logDescription<Types.GravatarContract.updatedGravatarEvent> => {
+  ): Ethers.logDescription<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> => {
     log->Obj.magic
   }
 
   let convertUpdatedGravatarLog = async (
-    logDescription: Ethers.logDescription<Types.GravatarContract.updatedGravatarEvent>,
+    logDescription: Ethers.logDescription<Types.GravatarContract.UpdatedGravatarEvent.eventArgs>,
     ~log: Ethers.log,
     ~blockPromise: promise<Ethers.JsonRpcProvider.block>,
   ) => {
-    let params: Types.GravatarContract.updatedGravatarEvent = {
+    let params: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
       id: logDescription.args.id,
       owner: logDescription.args.owner,
       imageUrl: logDescription.args.imageUrl,
@@ -71,7 +71,9 @@ module Gravatar = {
     }
     let block = await blockPromise
 
-    let updatedGravatarLog: Types.eventLog<Types.GravatarContract.updatedGravatarEvent> = {
+    let updatedGravatarLog: Types.eventLog<
+      Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
+    > = {
       params,
       blockNumber: block.number,
       blockTimestamp: block.timestamp,

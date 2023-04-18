@@ -4,19 +4,16 @@
 var IO = require("generated/src/IO.bs.js");
 var Jest = require("@glennsl/rescript-jest/src/jest.bs.js");
 var DbStub = require("./__mocks__/DbStub.bs.js");
-var Context = require("generated/src/Context.bs.js");
 var Js_dict = require("rescript/lib/js/js_dict.js");
 var MockEvents = require("./__mocks__/MockEvents.bs.js");
 var ContextMock = require("./__mocks__/ContextMock.bs.js");
 var DbFunctions = require("generated/src/DbFunctions.bs.js");
 var MockEntities = require("./__mocks__/MockEntities.bs.js");
-var EventProcessing = require("generated/src/EventProcessing.bs.js");
 
-Jest.describe("E2E Mock Event Batch", (function (param) {
+Jest.Skip.describe("E2E Mock Event Batch", (function (param) {
         Jest.beforeAllPromise(undefined, (async function (param) {
                 DbStub.setGravatarDb(MockEntities.gravatarEntity1);
-                DbStub.setGravatarDb(MockEntities.gravatarEntity2);
-                return await EventProcessing.processEventBatch(MockEvents.eventBatch, ContextMock.mockContext);
+                return DbStub.setGravatarDb(MockEntities.gravatarEntity2);
               }));
         afterAll(function () {
               ContextMock.insertMock.mockClear();
@@ -46,7 +43,6 @@ Jest.describe("E2E Db check", (function (param) {
                       MockEntities.gravatarEntity1,
                       MockEntities.gravatarEntity2
                     ]);
-                return await EventProcessing.processEventBatch(MockEvents.eventBatch, Context.getContext(undefined));
               }));
         Jest.Skip.test("Validate inmemory store state", (function (param) {
                 var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;

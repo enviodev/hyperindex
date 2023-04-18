@@ -1,9 +1,13 @@
-let eventRouter = (event: Types.event, context) => {
+let eventRouter = (event: Types.event) => {
   switch event {
-  | GravatarContract_NewGravatar(event) =>
-    event->Handlers.GravatarContract.newGravatarHandler(context)
-  | GravatarContract_UpdatedGravatar(event) =>
-    event->Handlers.GravatarContract.updatedGravatarHandler(context)
+  | GravatarContract_NewGravatar(event) => {
+      let context = Context.GravatarContract.NewGravatarEvent.getContext()
+      event->Handlers.GravatarContract.newGravatarHandler(context)
+    }
+  | GravatarContract_UpdatedGravatar(event) => {
+      let context = Context.GravatarContract.UpdatedGravatarEvent.getContext()
+      event->Handlers.GravatarContract.updatedGravatarHandler(context)
+    }
   }
 }
 
@@ -20,15 +24,15 @@ let loadReadEntities = async (eventBatch: array<Types.event>) => {
     })
     ->Belt.Array.concatMany
 
-  //await readEntities->IO.loadEntities
+  await readEntities->IO.loadEntities
 }
 
-let processEventBatch = async (eventBatch: array<Types.event>, ~context) => {
-  //et ioBatch = IO.createBatch()
+let processEventBatch = async (eventBatch: array<Types.event>) => {
+  let ioBatch = IO.createBatch()
 
   await eventBatch->loadReadEntities
 
-  eventBatch->Belt.Array.forEach(event => event->eventRouter(context))
+  eventBatch->Belt.Array.forEach(event => event->eventRouter)
 
-  //await ioBatch->IO.executeBatch
+  await ioBatch->IO.executeBatch
 }

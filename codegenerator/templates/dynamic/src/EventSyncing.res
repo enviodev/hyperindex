@@ -127,7 +127,7 @@ let queryEventsWithCombinedFilterAndExecuteHandlers = async (
       ~toBlockForLogging=toBlock,
     )
 
-  events->EventProcessing.processEventBatch(~context=Context.getContext())
+  events->EventProcessing.processEventBatch
 }
 
 let getAllEventFilters = (
