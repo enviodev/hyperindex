@@ -1,5 +1,5 @@
 
-open TypesWIP
+open Types
 
 //user defined function that read entities based on the event log
 let gravatarNewGravatarLoadEntities = (_event: eventLog<GravatarContract.NewGravatarTypes.newGravatarEvent>): array<

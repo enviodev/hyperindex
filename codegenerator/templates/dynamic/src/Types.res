@@ -1,55 +1,3 @@
-//************
-//** EVENTS **
-//************
-
-type eventLog<'a> = {
-  params: 'a,
-  blockNumber: int,
-  blockTimestamp: int,
-  blockHash: string,
-  srcAddress: string,
-  transactionHash: string,
-  transactionIndex: int,
-  logIndex: int,
-}
-
-{{#each contracts as | contract |}}
-module {{contract.name.capitalized}}Contract = {
-{{#each contract.events as | event |}}
-type {{event.name.uncapitalized}}Event = {
-  {{#each event.params as | param |}}
-  {{param.key}} : {{param.type_}},
-  {{/each}}
-}
-
-{{/each}}
-}
-
-{{/each}}
-
-type event =
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}Event>)
-{{/each}}
-{{/each}}
-
-type eventName =
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
-{{/each}}
-{{/each}}
-
-let eventNameToString = (eventName: eventName) => switch eventName {
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event => "{{event.name.capitalized}}"
-{{/each}}
-{{/each}}
-}
-
-
 //*************
 //***ENTITIES**
 //*************
@@ -83,6 +31,7 @@ type entity =
 {{/each}}
 
 
+
 type crud = Create | Read | Update | Delete
 
 type inMemoryStoreRow<'a> = {
@@ -91,29 +40,71 @@ type inMemoryStoreRow<'a> = {
 }
 
 //*************
-//** CONTEXT **
+//**CONTRACTS**
 //*************
 
-type loadedEntitiesReader = {
-  {{#each entities as |entity|}}
-  get{{entity.name.capitalized}}ById: id => option<{{entity.name.uncapitalized}}Entity>,
-  getAllLoaded{{entity.name.capitalized}}: unit => array<{{entity.name.uncapitalized}}Entity>,
-  {{/each}}
+type eventLog<'a> = {
+  params: 'a,
+  blockNumber: int,
+  blockTimestamp: int,
+  blockHash: string,
+  srcAddress: string,
+  transactionHash: string,
+  transactionIndex: int,
+  logIndex: int,
 }
 
-type entityController<'a> = {
-  insert: 'a => unit,
-  update: 'a => unit,
-  loadedEntities: loadedEntitiesReader,
-}
+{{#each contracts as | contract |}}
+module {{contract.name.capitalized}}Contract = {
+{{#each contract.events as | event |}}
+module {{event.name.capitalized}}Event = {
+  type eventArgs = {
+    {{#each event.params as | param |}}
+    {{param.key}} : {{param.type_}},
+    {{/each}}
+  }
+    {{#each ../../entities as | entity |}}
+    type {{entity.name.uncapitalized}}EntityHandlerContext = {
+      /// TODO: add named entities (this is hardcoded)
+      gravatarWithChanges: unit => option<gravatarEntity>,
+      insert: {{entity.name.uncapitalized}}Entity => unit,
+      update: {{entity.name.uncapitalized}}Entity => unit,
+      delete: id => unit,
+    }
+    {{/each}}
+    type context = {
+      {{#each ../../entities as | entity |}}
+        {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
+      {{/each}}
+    }
 
-{{#each entities as | entity |}}
-type {{entity.name.uncapitalized}}Controller = entityController<{{entity.name.uncapitalized}}Entity>
+    // TODO: these are hardcoded on all events, but should be generated based on the read config
+    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
+    type loaderContext = {gravatar: gravatarEntityLoaderContext}
+  
+}
+{{/each}}
+}
 {{/each}}
 
+type event =
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>)
+{{/each}}
+{{/each}}
 
-type context = {
-  {{#each entities as | entity |}}
-  @as("{{entity.name.capitalized}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}Controller
+type eventName =
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+{{/each}}
+{{/each}}
+
+let eventNameToString = (eventName: eventName) => switch eventName {
+  {{#each contracts as | contract |}}
+  {{#each contract.events as | event |}}
+    | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event => "{{event.name.capitalized}}"
   {{/each}}
 }
+{{/each}}
