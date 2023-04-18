@@ -3,7 +3,7 @@ description: Gravatar for Ethereum
 repository: https://github.com/graphprotocol/example-subgraph
 networks:
   - id: 31337
-    rpc_url: https://polygon-rpc.com
+    rpc_url: http://localhost:8545
     start_block: 0
     contracts:
       - name: Gravatar

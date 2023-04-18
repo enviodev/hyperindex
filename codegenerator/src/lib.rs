@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fs;
+use std::os::unix::fs::PermissionsExt; // NOTE: This probably won't be the same on Windows.
 use std::path::{Path, PathBuf};
 
 use handlebars::Handlebars;
@@ -113,6 +114,10 @@ pub fn generate_templates(
         include_str!("../templates/dynamic/src/Context.res"),
         &types_data,
     )?;
+    let rendered_string_register_tables_with_hasura = handlebars.render_template(
+        include_str!("../templates/dynamic/register_tables_with_hasura.sh"),
+        &types_data,
+    )?;
 
     write_to_file_in_generated("src/Types.res", &rendered_string_types, codegen_path)?;
     write_to_file_in_generated("src/Config.res", &rendered_string_config, codegen_path)?;
@@ -141,6 +146,12 @@ pub fn generate_templates(
         codegen_path,
     )?;
     write_to_file_in_generated("src/Context.res", &rendered_string_context, codegen_path)?;
+    write_to_file_in_generated(
+        "register_tables_with_hasura.sh",
+        &rendered_string_register_tables_with_hasura,
+        codegen_path,
+    )?;
+    make_file_executable("register_tables_with_hasura.sh", codegen_path)?;
     Ok(())
 }
 
@@ -151,6 +162,17 @@ fn write_to_file_in_generated(
 ) -> std::io::Result<()> {
     fs::create_dir_all(codegen_path)?;
     fs::write(format! {"{}/{}", codegen_path, filename}, content)
+}
+
+/// This function allows files to be executed as
+fn make_file_executable(filename: &str, codegen_path: &str) -> std::io::Result<()> {
+    let file_path = format!("{}/{}", codegen_path, filename);
+
+    let mut permissions = fs::metadata(&file_path)?.permissions();
+    permissions.set_mode(0o755); // Set the file permissions to -rwxr-xr-x
+    fs::set_permissions(&file_path, permissions)?;
+
+    Ok(())
 }
 
 pub fn copy_directory<U: AsRef<Path>, V: AsRef<Path>>(

@@ -17,7 +17,7 @@
     "ethers": "^5.5.1",
     "hardhat": "^2.13.0",
     "hardhat-abi-exporter": "^2.3.0",
-    "hardhat-deploy": "^0.9.4",
+    "hardhat-deploy": "^0.9.29",
     "hardhat-docgen": "^1.1.2",
     "hardhat-gas-reporter": "^1.0.4",
     "hardhat-spdx-license-identifier": "^2.0.3",

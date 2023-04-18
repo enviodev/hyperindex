@@ -1,0 +1,35 @@
+{
+  "language": "Solidity",
+  "sources": {
+    "contracts/GravatarRegistry.sol": {
+      "content": "pragma solidity ^0.8.0;\n\ncontract GravatarRegistry {\n    event NewGravatar(\n        uint id,\n        address owner,\n        string displayName,\n        string imageUrl\n    );\n    event UpdatedGravatar(\n        uint id,\n        address owner,\n        string displayName,\n        string imageUrl\n    );\n\n    struct Gravatar {\n        address owner;\n        string displayName;\n        string imageUrl;\n    }\n\n    Gravatar[] public gravatars;\n\n    mapping(uint => address) public gravatarToOwner;\n    mapping(address => uint) public ownerToGravatar;\n\n    constructor() {\n        gravatars.push(Gravatar(msg.sender, \"\", \"\"));\n    }\n\n    function createGravatar(\n        string memory _displayName,\n        string memory _imageUrl\n    ) public {\n        require(ownerToGravatar[msg.sender] == 0);\n\n        gravatars.push(Gravatar(msg.sender, _displayName, _imageUrl));\n\n        uint id = gravatars.length - 1;\n\n        gravatarToOwner[id] = msg.sender;\n        ownerToGravatar[msg.sender] = id;\n\n        emit NewGravatar(id, msg.sender, _displayName, _imageUrl);\n    }\n\n    function getGravatar(\n        address owner\n    ) public view returns (uint, string memory, string memory) {\n        uint id = ownerToGravatar[owner];\n        return (id, gravatars[id].displayName, gravatars[id].imageUrl);\n    }\n\n    function updateGravatarName(string memory _displayName) public {\n        require(ownerToGravatar[msg.sender] != 0);\n        require(msg.sender == gravatars[ownerToGravatar[msg.sender]].owner);\n\n        uint id = ownerToGravatar[msg.sender];\n\n        gravatars[id].displayName = _displayName;\n        emit UpdatedGravatar(\n            id,\n            msg.sender,\n            _displayName,\n            gravatars[id].imageUrl\n        );\n    }\n\n    function updateGravatarImage(string memory _imageUrl) public {\n        require(ownerToGravatar[msg.sender] != 0);\n        require(msg.sender == gravatars[ownerToGravatar[msg.sender]].owner);\n\n        uint id = ownerToGravatar[msg.sender];\n\n        gravatars[id].imageUrl = _imageUrl;\n        emit UpdatedGravatar(\n            id,\n            msg.sender,\n            gravatars[id].displayName,\n            _imageUrl\n        );\n    }\n}\n"
+    }
+  },
+  "settings": {
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode",
+          "evm.methodIdentifiers",
+          "metadata",
+          "devdoc",
+          "userdoc",
+          "storageLayout",
+          "evm.gasEstimates"
+        ],
+        "": [
+          "ast"
+        ]
+      }
+    },
+    "metadata": {
+      "useLiteralContent": true
+    }
+  }
+}
