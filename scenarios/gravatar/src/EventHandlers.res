@@ -1,15 +1,16 @@
+
 open Types
 
 //user defined function that read entities based on the event log
-let gravatarNewGravatarLoadEntities = (_event: eventLog<GravatarContract.newGravatarEvent>): array<
+let gravatarNewGravatarLoadEntities = (_event: eventLog<GravatarContract.NewGravatarEvent.eventArgs>): array<
   entityRead,
 > => {
   []
 }
 
 let gravatarNewGravatarEventHandler = (
-  event: eventLog<GravatarContract.newGravatarEvent>,
-  context: context,
+  event: eventLog<GravatarContract.NewGravatarEvent.eventArgs>,
+  context: Types.GravatarContract.NewGravatarEvent.context,
 ) => {
   let gravatarObject: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
@@ -24,25 +25,20 @@ let gravatarNewGravatarEventHandler = (
 
 //user defined function that read entities based on the event log
 let gravatarUpdatedGravatarLoadEntities = (
-  event: eventLog<GravatarContract.updatedGravatarEvent>,
-  contextUpdator: contextUpdator,
-): array<entityRead> => {
-
-  [GravatarRead(event.params.id->Ethers.BigInt.toString)]
+  event: eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>,
+  contextUpdator: GravatarContract.UpdatedGravatarEvent.loaderContext,
+) => {
+  contextUpdator.gravatar.gravatarWithChangesLoad(event.params.id->Ethers.BigInt.toString)
 }
 
 let gravatarUpdatedGravatarEventHandler = (
-  event: eventLog<GravatarContract.updatedGravatarEvent>,
-  context: context,
+  event: eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>,
+  context: GravatarContract.UpdatedGravatarEvent.context,
 ) => {
-  /*
   let updatesCount =
-    context.gravatar.loadedEntities.getGravatarById(
-      event.params.id->Ethers.BigInt.toString,
-    )->Belt.Option.mapWithDefault(1, gravatar => gravatar.updatesCount + 1)
-    */
-  let updatesCount =
-    context.gravatar.loadedEntities.gravatarWithChanges()->Belt.Option.mapWithDefault(1, gravatar => gravatar.updatesCount + 1)
+    context.gravatar.gravatarWithChanges()->Belt.Option.mapWithDefault(1, gravatar =>
+      gravatar.updatesCount + 1
+    )
 
   let gravatar: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,

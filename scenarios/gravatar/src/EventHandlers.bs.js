@@ -10,7 +10,7 @@ function gravatarNewGravatarLoadEntities(_event) {
 }
 
 function gravatarNewGravatarEventHandler($$event, context) {
-  Curry._1(context.Gravatar.insert, {
+  Curry._1(context.gravatar.insert, {
         id: $$event.params.id.toString(),
         owner: Ethers.ethAddressToString($$event.params.owner),
         displayName: $$event.params.displayName,
@@ -19,17 +19,15 @@ function gravatarNewGravatarEventHandler($$event, context) {
       });
 }
 
-function gravatarUpdatedGravatarLoadEntities($$event) {
-  return [/* GravatarRead */{
-            _0: $$event.params.id.toString()
-          }];
+function gravatarUpdatedGravatarLoadEntities($$event, contextUpdator) {
+  Curry._1(contextUpdator.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
 }
 
 function gravatarUpdatedGravatarEventHandler($$event, context) {
-  var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.Gravatar.loadedEntities.getGravatarById, $$event.params.id.toString()), 1, (function (gravatar) {
+  var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.gravatar.gravatarWithChanges, undefined), 1, (function (gravatar) {
           return gravatar.updatesCount + 1 | 0;
         }));
-  Curry._1(context.Gravatar.update, {
+  Curry._1(context.gravatar.update, {
         id: $$event.params.id.toString(),
         owner: Ethers.ethAddressToString($$event.params.owner),
         displayName: $$event.params.displayName,
