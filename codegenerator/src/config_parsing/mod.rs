@@ -12,14 +12,16 @@ use crate::capitalization::{Capitalize, CapitalizedOptions};
 type NetworkId = i32;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct ReadEntity {
+struct RequiredEntity {
     name: String,
     labels: Vec<String>,
 }
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 struct Event {
     name: String,
-    read_entities: Option<Vec<ReadEntity>>,
+    required_entities: Option<Vec<RequiredEntity>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -133,12 +135,12 @@ mod tests {
 
         let event1 = super::Event {
             name: String::from("NewGravatar"),
-            read_entities: None,
+            required_entities: None,
         };
 
         let event2 = super::Event {
             name: String::from("UpdateGravatar"),
-            read_entities: None,
+            required_entities: None,
         };
 
         let contract1 = super::ConfigContract {
@@ -197,12 +199,12 @@ mod tests {
 
         let event1 = super::Event {
             name: String::from("NewGravatar"),
-            read_entities: None,
+            required_entities: None,
         };
 
         let event2 = super::Event {
             name: String::from("UpdateGravatar"),
-            read_entities: None,
+            required_entities: None,
         };
 
         let contract1 = super::ConfigContract {
