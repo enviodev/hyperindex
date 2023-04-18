@@ -2,7 +2,9 @@
 module {{contract.name.capitalized}}Contract = {
 {{#each contract.events as | event |}}
 @module("../../src/EventHandlers.bs.js")
-external {{event.name.uncapitalized}}LoadEntities: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> => array<
+external {{event.name.uncapitalized}}LoadEntities: (Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
+Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
+) => array<
   Types.entityRead,
 > = "{{contract.name.uncapitalized}}{{event.name.capitalized}}LoadEntities"
 

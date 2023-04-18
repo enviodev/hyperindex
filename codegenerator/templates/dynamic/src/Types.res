@@ -94,6 +94,13 @@ type event =
 {{/each}}
 {{/each}}
 
+type eventAndContext =
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>, {{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context)
+{{/each}}
+{{/each}}
+
 type eventName =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
