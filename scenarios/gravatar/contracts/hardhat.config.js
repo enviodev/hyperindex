@@ -35,7 +35,7 @@ module.exports = {
       },
     },
   },
-  defaultNetwork: "hardhat",
+  defaultNetwork: "ganache",
   networks: {
     localhost: {
       url: "http://localhost:8545",

@@ -31,7 +31,7 @@ services:
     image: trufflesuite/ganache:latest
     ports:
       - "8545:8545"
-    command: --mnemonic "boom test test test test test test test test test test test" --db /ganache-data --chain.chainId 31337 --chain.networkId 31337 --time 2023-02-02T08:24:37+00:00 --gasLimit 10000000
+    command: --mnemonic "test test test test test test test test test test test test" --db /ganache-data --chain.chainId 31337 --chain.networkId 31337 --time 2023-02-02T08:24:37+00:00 --gasLimit 10000000
     container_name: ganache
     volumes:
       - ganache-data:/ganache-data
