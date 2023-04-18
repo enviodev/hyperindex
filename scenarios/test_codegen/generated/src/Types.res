@@ -49,23 +49,34 @@ let eventNameToString = (eventName: eventName) =>
 
 type id = string
 
-type entityRead = GravatarRead(id)
+type entityRead =
+  | UserRead(id)
+  | GravatarRead(id)
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
+  | UserRead(id) => `user${id}`
   | GravatarRead(id) => `gravatar${id}`
   }
 }
 
+type userEntity = {
+  id: string,
+  address: string,
+  gravatar: option<id>,
+}
+
 type gravatarEntity = {
   id: string,
-  owner: string,
+  owner: id,
   displayName: string,
   imageUrl: string,
   updatesCount: int,
 }
 
-type entity = GravatarEntity(gravatarEntity)
+type entity =
+  | UserEntity(userEntity)
+  | GravatarEntity(gravatarEntity)
 
 type crud = Create | Read | Update | Delete
 
@@ -79,6 +90,8 @@ type inMemoryStoreRow<'a> = {
 //*************
 
 type loadedEntitiesReader = {
+  getUserById: id => option<userEntity>,
+  getAllLoadedUser: unit => array<userEntity>,
   getGravatarById: id => option<gravatarEntity>,
   getAllLoadedGravatar: unit => array<gravatarEntity>,
 }
@@ -89,6 +102,10 @@ type entityController<'a> = {
   loadedEntities: loadedEntitiesReader,
 }
 
+type userController = entityController<userEntity>
 type gravatarController = entityController<gravatarEntity>
 
-type context = {@as("Gravatar") gravatar: gravatarController}
+type context = {
+  @as("User") user: userController,
+  @as("Gravatar") gravatar: gravatarController,
+}

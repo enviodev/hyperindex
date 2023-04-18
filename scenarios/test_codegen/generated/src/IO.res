@@ -23,6 +23,27 @@ module InMemoryStore = {
     }
   }
 
+  module User = {
+    let userDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.userEntity>>> = ref(Js.Dict.empty())
+
+    let getUser = (~id: string) => {
+      let row = Js.Dict.get(userDict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
+
+    let setUser = (~user: Types.userEntity, ~crud: Types.crud) => {
+      let userCurrentCrud = Js.Dict.get(userDict.contents, user.id)->Belt.Option.map(row => {
+        row.crud
+      })
+
+      Js.Dict.set(
+        userDict.contents,
+        user.id,
+        {entity: user, crud: entityCurrentCrud(userCurrentCrud, crud)},
+      )
+    }
+  }
+
   module Gravatar = {
     let gravatarDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.gravatarEntity>>> = ref(
       Js.Dict.empty(),
@@ -49,6 +70,7 @@ module InMemoryStore = {
     }
   }
   let resetStore = () => {
+    User.userDict := Js.Dict.empty()
     Gravatar.gravatarDict := Js.Dict.empty()
   }
 }
@@ -57,14 +79,22 @@ type uniqueEntityReadIds = Js.Dict.t<Types.id>
 type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
 let loadEntities = async (entityBatch: array<Types.entityRead>) => {
+  let uniqueUserDict = Js.Dict.empty()
+
   let uniqueGravatarDict = Js.Dict.empty()
 
   entityBatch->Belt.Array.forEach(readEntity => {
     switch readEntity {
+    | UserRead(entity) =>
+      let _ = Js.Dict.set(uniqueUserDict, readEntity->Types.entitySerialize, entity)
     | GravatarRead(entity) =>
       let _ = Js.Dict.set(uniqueGravatarDict, readEntity->Types.entitySerialize, entity)
     }
   })
+
+  let userEntitiesArray = await DbFunctions.User.readUserEntities(Js.Dict.values(uniqueUserDict))
+
+  userEntitiesArray->Belt.Array.forEach(user => InMemoryStore.User.setUser(~user, ~crud=Types.Read))
 
   let gravatarEntitiesArray = await DbFunctions.Gravatar.readGravatarEntities(
     Js.Dict.values(uniqueGravatarDict),
@@ -80,6 +110,18 @@ let createBatch = () => {
 }
 
 let executeBatch = async () => {
+  let userRows = InMemoryStore.User.userDict.contents->Js.Dict.values
+
+  let deleteUserIds =
+    userRows
+    ->Belt.Array.keepMap(userRow => userRow.crud == Types.Delete ? Some(userRow.entity) : None)
+    ->Belt.Array.map(user => user.id)
+
+  let setUser =
+    userRows->Belt.Array.keepMap(userRow =>
+      userRow.crud == Types.Create || userRow.crud == Update ? Some(userRow.entity) : None
+    )
+
   let gravatarRows = InMemoryStore.Gravatar.gravatarDict.contents->Js.Dict.values
 
   let deleteGravatarIds =
@@ -97,6 +139,8 @@ let executeBatch = async () => {
     )
 
   await [
+    DbFunctions.User.batchDeleteUser(deleteUserIds),
+    DbFunctions.User.batchSetUser(setUser),
     DbFunctions.Gravatar.batchDeleteGravatar(deleteGravatarIds),
     DbFunctions.Gravatar.batchSetGravatar(setGravatar),
   ]->Promise.all

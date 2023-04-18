@@ -20,15 +20,15 @@ let loadReadEntities = async (eventBatch: array<Types.event>) => {
     })
     ->Belt.Array.concatMany
 
-  //await readEntities->IO.loadEntities
+  await readEntities->IO.loadEntities
 }
 
 let processEventBatch = async (eventBatch: array<Types.event>, ~context) => {
-  //et ioBatch = IO.createBatch()
+  let ioBatch = IO.createBatch()
 
   await eventBatch->loadReadEntities
 
   eventBatch->Belt.Array.forEach(event => event->eventRouter(context))
 
-  //await ioBatch->IO.executeBatch
+  await ioBatch->IO.executeBatch
 }

@@ -1,15 +1,17 @@
 open DrizzleOrm.Schema
 
+type id = string
+
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
-  type {{entity.name.uncapitalized}}Tablefields = {
+  type {{entity.name.uncapitalized}}TableFields = {
     {{#each entity.params as |param|}}
     {{param.key}}: field,
     {{/each}}
   }
 
   %%private(
-    let {{entity.name.uncapitalized}}Tablefields = {
+    let {{entity.name.uncapitalized}}TableFields = {
       {{#each entity.params as |param|}}
       {{param.key}}: text("{{param.key}}"){{#if (eq param.key "id")}}->primaryKey{{/if}}, // todo param.drizzleType eg. text integer etc // todo snake case
       {{/each}}
@@ -28,7 +30,7 @@ module {{entity.name.capitalized}} = {
     {{/each}}    
   }
 
-  let {{entity.name.uncapitalized}}: table<{{entity.name.uncapitalized}}TableRow> = pgTable(~name="{{entity.name.uncapitalized}}", ~fields={{entity.name.uncapitalized}}Tablefields)
+  let {{entity.name.uncapitalized}}: table<{{entity.name.uncapitalized}}TableRow> = pgTable(~name="{{entity.name.uncapitalized}}", ~fields={{entity.name.uncapitalized}}TableFields)
 }
 
 // re-declaired here to create exports for db migrations

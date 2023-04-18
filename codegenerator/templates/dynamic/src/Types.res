@@ -82,7 +82,6 @@ type entity =
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
 {{/each}}
 
-
 type crud = Create | Read | Update | Delete
 
 type inMemoryStoreRow<'a> = {
@@ -114,6 +113,6 @@ type {{entity.name.uncapitalized}}Controller = entityController<{{entity.name.un
 
 type context = {
   {{#each entities as | entity |}}
-  @as("{{entity.name.capitalized}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}Controller
+  @as("{{entity.name.capitalized}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}Controller,
   {{/each}}
 }
