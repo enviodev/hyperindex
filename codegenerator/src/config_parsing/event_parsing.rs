@@ -1,10 +1,10 @@
 use crate::{
     capitalization::Capitalize,
-    config_parsing::{Config, ConfigContract, Event as ConfigEvent},
-    Contract, Error, EventTemplate, ParamType, RequiredEntityTemplate,
+    config_parsing::{Config, ConfigContract},
+    Contract, Error, ParamType, RecordType,
 };
 
-use ethereum_abi::{Abi, Event as EthereumAbiEvent};
+use ethereum_abi::{Abi, Event};
 
 pub fn parse_abi(abi: &str) -> Result<Abi, Box<dyn Error>> {
     let abi: Abi = serde_json::from_str(abi)?;
@@ -62,37 +62,18 @@ fn abi_type_to_rescript_string(abi_type: &ethereum_abi::Type) -> String {
     }
 }
 
-fn get_event_template_from_event(
-    config_event: &ConfigEvent,
-    abi_event: &EthereumAbiEvent,
-) -> EventTemplate {
-    let name = abi_event.name.to_owned().to_capitalized_options();
-    let params = abi_event
-        .inputs
-        .iter()
-        .map(|input| ParamType {
-            key: input.name.to_owned(),
-            type_: abi_type_to_rescript_string(&input.type_),
-        })
-        .collect();
-
-    let required_entities = match &config_event.required_entities {
-        Some(required_entities_config) => required_entities_config
+fn get_record_type_from_event(event: &Event) -> RecordType {
+    let event_type = RecordType {
+        name: event.name.to_owned().to_capitalized_options(),
+        params: event
+            .inputs
             .iter()
-            .map(|required_entity| RequiredEntityTemplate {
-                name: required_entity.name.clone(),
-                labels: required_entity.labels.clone(),
+            .map(|input| ParamType {
+                key: input.name.to_owned(),
+                type_: abi_type_to_rescript_string(&input.type_),
             })
             .collect(),
-        None => Vec::new(),
     };
-
-    let event_type = EventTemplate {
-        name,
-        params,
-        required_entities,
-    };
-
     event_type
 }
 
@@ -100,17 +81,18 @@ fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     contract_abi: Abi,
 ) -> Contract {
-    let mut event_types: Vec<EventTemplate> = Vec::new();
+    let mut event_types: Vec<RecordType> = Vec::new();
 
-    let abi_events: Vec<ethereum_abi::Event> = contract_abi.events;
-    for config_event in config_contract.events.iter() {
-        let abi_event = abi_events
+    let events: Vec<ethereum_abi::Event> = contract_abi.events;
+    for event in config_contract.events.iter() {
+        println!("{}", event.name);
+        let event = events
             .iter()
-            .find(|&abi_event| abi_event.name == config_event.name);
+            .find(|&abi_event| abi_event.name == event.name);
 
-        match abi_event {
-            Some(abi_event) => {
-                let event_type = get_event_template_from_event(config_event, abi_event);
+        match event {
+            Some(event) => {
+                let event_type = get_record_type_from_event(event);
                 event_types.push(event_type);
             }
             None => (),
@@ -142,14 +124,10 @@ pub fn get_contract_types_from_config(
 #[cfg(test)]
 mod tests {
 
-    use crate::{
-        capitalization::Capitalize,
-        config_parsing::{self, RequiredEntity},
-        EventTemplate, ParamType, RequiredEntityTemplate,
-    };
-    use ethereum_abi::{Event as AbiEvent, Param, Type};
+    use crate::{capitalization::Capitalize, ParamType, RecordType};
+    use ethereum_abi::{Event, Param, Type};
 
-    use super::{abi_type_to_rescript_string, get_event_template_from_event};
+    use super::{abi_type_to_rescript_string, get_record_type_from_event};
     #[test]
     fn abi_event_to_record_1() {
         let input1_name = String::from("id");
@@ -169,20 +147,15 @@ mod tests {
 
         let inputs = vec![input1, input2];
         let event_name = String::from("NewGravatar");
-
-        let abi_event = AbiEvent {
+        let event = Event {
             name: event_name.clone(),
             anonymous: false,
             inputs,
         };
-        let config_event = config_parsing::Event {
-            name: event_name.clone(),
-            required_entities: None,
-        };
 
-        let parsed_event_template = get_event_template_from_event(&config_event, &abi_event);
+        let parsed_record = get_record_type_from_event(&event);
 
-        let expected_event_template = EventTemplate {
+        let expected_record = RecordType {
             name: event_name.to_capitalized_options(),
             params: vec![
                 ParamType {
@@ -194,64 +167,8 @@ mod tests {
                     type_: String::from("Ethers.ethAddress"),
                 },
             ],
-            required_entities: vec![],
         };
-        assert_eq!(parsed_event_template, expected_event_template)
-    }
-
-    #[test]
-    fn abi_event_to_record_2() {
-        let input1_name = String::from("id");
-
-        let input1 = Param {
-            name: input1_name.clone(),
-            indexed: Some(false),
-            type_: Type::Uint(256),
-        };
-
-        let input2_name = String::from("owner");
-        let input2 = Param {
-            name: input2_name.clone(),
-            indexed: Some(false),
-            type_: Type::Address,
-        };
-
-        let inputs = vec![input1, input2];
-        let event_name = String::from("NewGravatar");
-
-        let abi_event = AbiEvent {
-            name: event_name.clone(),
-            anonymous: false,
-            inputs,
-        };
-        let config_event = config_parsing::Event {
-            name: event_name.clone(),
-            required_entities: Some(vec![RequiredEntity {
-                name: String::from("Gravatar"),
-                labels: vec![String::from("gravatarWithChanges")],
-            }]),
-        };
-
-        let parsed_event_template = get_event_template_from_event(&config_event, &abi_event);
-
-        let expected_event_template = EventTemplate {
-            name: event_name.to_capitalized_options(),
-            params: vec![
-                ParamType {
-                    key: input1_name,
-                    type_: String::from("Ethers.BigInt.t"),
-                },
-                ParamType {
-                    key: input2_name,
-                    type_: String::from("Ethers.ethAddress"),
-                },
-            ],
-            required_entities: vec![RequiredEntityTemplate {
-                name: String::from("Gravatar"),
-                labels: vec![String::from("gravatarWithChanges")],
-            }],
-        };
-        assert_eq!(parsed_event_template, expected_event_template)
+        assert_eq!(parsed_record, expected_record)
     }
 
     #[test]
