@@ -53,17 +53,13 @@ module GravatarContract = {
       imageUrl: string,
     }
     type gravatarEntityHandlerContext = {
-      /// TODO: add named entities (this is hardcoded)
-      gravatarWithChanges: unit => option<gravatarEntity>,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
       delete: id => unit,
     }
     type context = {gravatar: gravatarEntityHandlerContext}
 
-    // TODO: these are hardcoded on all events, but should be generated based on the read config
-    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
-    type loaderContext = {gravatar: gravatarEntityLoaderContext}
+    type loaderContext = {}
   }
   module UpdatedGravatarEvent = {
     type eventArgs = {
@@ -73,7 +69,6 @@ module GravatarContract = {
       imageUrl: string,
     }
     type gravatarEntityHandlerContext = {
-      /// TODO: add named entities (this is hardcoded)
       gravatarWithChanges: unit => option<gravatarEntity>,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
@@ -81,8 +76,8 @@ module GravatarContract = {
     }
     type context = {gravatar: gravatarEntityHandlerContext}
 
-    // TODO: these are hardcoded on all events, but should be generated based on the read config
     type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
+
     type loaderContext = {gravatar: gravatarEntityLoaderContext}
   }
 }

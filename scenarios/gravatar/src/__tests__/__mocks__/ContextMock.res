@@ -13,7 +13,6 @@ let updateMock = (id => id)->JestJs.fn
 
 let mockNewGravatarContext: Types.GravatarContract.NewGravatarEvent.context = {
   gravatar: {
-    gravatarWithChanges: () => None, // TODO remove this once codegen is fixed!
     insert: gravatarInsert => {
       insertMock->MockJs.fn(gravatarInsert.id)->ignore
     },
