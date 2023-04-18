@@ -1,10 +1,11 @@
+use std::path::PathBuf;
+
 use crate::{capitalization::Capitalize, Error, ParamType, RecordType};
 use graphql_parser::schema::{Definition, Type, TypeDefinition};
 
 pub fn get_entity_record_types_from_schema(
-    project_root_path: &str,
+    schema_path: &PathBuf,
 ) -> Result<Vec<RecordType>, Box<dyn Error>> {
-    let schema_path = format!("{}/{}", project_root_path, "schema.graphql");
     let schema_string = std::fs::read_to_string(schema_path).expect("failed to read schema file");
     let schema_doc =
         graphql_parser::parse_schema::<String>(&schema_string).expect("failed to parse");
