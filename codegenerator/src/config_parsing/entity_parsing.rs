@@ -13,6 +13,7 @@ pub fn get_entity_record_types_from_schema(
             err.to_string()
         )
     })?;
+
     let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
         .map_err(|err| format!("Failed to parse schema with Error: {}", err.to_string()))?;
     let mut schema_object_types = Vec::new();

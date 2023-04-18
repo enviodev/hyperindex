@@ -101,7 +101,7 @@ pub fn convert_config_to_chain_configs(
             for contract_address in contract.address.iter() {
                 let config_parent_path = config_path
                     .parent()
-                    .expect("config path should have a parent directory");
+                    .ok_or("invalid config parent directory")?;
                 let abi_relative_path = Path::new(&contract.abi_file_path);
                 let abi_path = config_parent_path
                     .join(abi_relative_path)
