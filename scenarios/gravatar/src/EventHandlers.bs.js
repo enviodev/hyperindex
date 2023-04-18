@@ -3,41 +3,38 @@
 
 var Curry = require("rescript/lib/js/curry.js");
 var Ethers = require("generated/src/bindings/Ethers.bs.js");
+var Handlers = require("generated/src/Handlers.bs.js");
 var Belt_Option = require("rescript/lib/js/belt_Option.js");
 
-function gravatarNewGravatarLoadEntities(_event) {
-  return [];
-}
+Handlers.GravatarContract.registerNewGravatarLoadEntities(function (_event, _context) {
+      
+    });
 
-function gravatarNewGravatarEventHandler($$event, context) {
-  Curry._1(context.gravatar.insert, {
-        id: $$event.params.id.toString(),
-        owner: Ethers.ethAddressToString($$event.params.owner),
-        displayName: $$event.params.displayName,
-        imageUrl: $$event.params.imageUrl,
-        updatesCount: 1
-      });
-}
+Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context) {
+      Curry._1(context.gravatar.insert, {
+            id: $$event.params.id.toString(),
+            owner: Ethers.ethAddressToString($$event.params.owner),
+            displayName: $$event.params.displayName,
+            imageUrl: $$event.params.imageUrl,
+            updatesCount: 1
+          });
+    });
 
-function gravatarUpdatedGravatarLoadEntities($$event, contextUpdator) {
-  Curry._1(contextUpdator.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
-}
+Handlers.GravatarContract.registerUpdatedGravatarLoadEntities(function ($$event, contextUpdator) {
+      Curry._1(contextUpdator.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
+    });
 
-function gravatarUpdatedGravatarEventHandler($$event, context) {
-  var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.gravatar.gravatarWithChanges, undefined), 1, (function (gravatar) {
-          return gravatar.updatesCount + 1 | 0;
-        }));
-  Curry._1(context.gravatar.update, {
-        id: $$event.params.id.toString(),
-        owner: Ethers.ethAddressToString($$event.params.owner),
-        displayName: $$event.params.displayName,
-        imageUrl: $$event.params.imageUrl,
-        updatesCount: updatesCount
-      });
-}
+Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, context) {
+      var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.gravatar.gravatarWithChanges, undefined), 1, (function (gravatar) {
+              return gravatar.updatesCount + 1 | 0;
+            }));
+      Curry._1(context.gravatar.update, {
+            id: $$event.params.id.toString(),
+            owner: Ethers.ethAddressToString($$event.params.owner),
+            displayName: $$event.params.displayName,
+            imageUrl: $$event.params.imageUrl,
+            updatesCount: updatesCount
+          });
+    });
 
-exports.gravatarNewGravatarLoadEntities = gravatarNewGravatarLoadEntities;
-exports.gravatarNewGravatarEventHandler = gravatarNewGravatarEventHandler;
-exports.gravatarUpdatedGravatarLoadEntities = gravatarUpdatedGravatarLoadEntities;
-exports.gravatarUpdatedGravatarEventHandler = gravatarUpdatedGravatarEventHandler;
-/* Ethers Not a pure module */
+/*  Not a pure module */
