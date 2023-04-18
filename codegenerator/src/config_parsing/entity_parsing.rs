@@ -6,8 +6,13 @@ use graphql_parser::schema::{Definition, Type, TypeDefinition};
 pub fn get_entity_record_types_from_schema(
     schema_path: &PathBuf,
 ) -> Result<Vec<RecordType>, Box<dyn Error>> {
-    let schema_string = std::fs::read_to_string(schema_path)
-        .map_err(|err| format!("Failed to read schema file with Error: {}", err.to_string()))?;
+    let schema_string = std::fs::read_to_string(schema_path).map_err(|err| {
+        format!(
+            "Failed to read schema file at {} with Error: {}",
+            schema_path.to_str().unwrap_or("unknown file"),
+            err.to_string()
+        )
+    })?;
     let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
         .map_err(|err| format!("Failed to parse schema with Error: {}", err.to_string()))?;
     let mut schema_object_types = Vec::new();
