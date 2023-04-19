@@ -13,7 +13,7 @@ PG_PORT=5433 pnpm start
 
 To view the data in the database, run `./generated/register_tables_with_hasura.sh` and open http://localhost:8080/console.
 
-Alternatively you can open the file `index.html` for a cleaner experience (no hasura stuff). Unfortunately, hasura currently isn't configured to make the data public.
+Alternatively you can open the file `index.html` for a cleaner experience (no hasura stuff).
 
 ### To make example events:
 
