@@ -28,5 +28,3 @@ lib/*
 benchmarks/
 artifacts
 cache
-
-generated
