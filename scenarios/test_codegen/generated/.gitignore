@@ -1,3 +1,4 @@
+
 *.exe
 *.obj
 *.out
@@ -18,13 +19,12 @@
 *.annot
 *.cmj
 *.bak
-lib/*
+/lib/
 *.mlast
 *.mliast
 .vscode
 .merlin
 .bsb.lock
 /node_modules/
-benchmarks/
-artifacts
-cache
+/benchmarks/
+*.bs.js
