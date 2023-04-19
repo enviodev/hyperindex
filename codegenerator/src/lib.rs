@@ -59,7 +59,7 @@ pub fn generate_templates(
     contracts: Vec<Contract>,
     chain_configs: Vec<ChainConfigTemplate>,
     entity_types: Vec<RecordType>,
-    codegen_path: &str,
+    codegen_path: &PathBuf,
 ) -> Result<(), Box<dyn Error>> {
     let mut handlebars = Handlebars::new();
 
@@ -158,13 +158,14 @@ pub fn generate_templates(
 fn write_to_file_in_generated(
     filename: &str,
     content: &str,
-    codegen_path: &str,
+    codegen_path: &PathBuf,
 ) -> std::io::Result<()> {
     fs::create_dir_all(codegen_path)?;
-    fs::write(format! {"{}/{}", codegen_path, filename}, content)
+    let file_path = codegen_path.join(filename);
+    fs::write(file_path, content)
 }
 
-/// This function allows files to be executed as
+/// This function allows files to be executed as a script
 fn make_file_executable(filename: &str, codegen_path: &str) -> std::io::Result<()> {
     let file_path = format!("{}/{}", codegen_path, filename);
 

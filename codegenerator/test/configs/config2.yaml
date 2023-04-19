@@ -1,0 +1,24 @@
+version: 0.0.0
+description: Gravatar for Ethereum
+repository: https://github.com/graphprotocol/example-subgraph
+networks:
+  - id: 1
+    rpc_url: https://eth.com
+    start_block: 0
+    contracts:
+      - name: Contract1
+        abi_file_path: ../abis/Contract1.json
+        address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+        events:
+          - name: "NewGravatar"
+          - name: "UpdatedGravatar"
+  - id: 2
+    rpc_url: https://eth.com
+    start_block: 0
+    contracts:
+      - name: Contract1
+        abi_file_path: ../abis/Contract1.json
+        address: ["0x1E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+        events:
+          - name: "NewGravatar"
+          - name: "UpdatedGravatar"
