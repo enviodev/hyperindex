@@ -2,6 +2,9 @@ open Jest
 open Expect
 open Types
 
+// Required to make sure the handlers are loaded.
+%%raw(`require("../EventHandlers.bs.js")`)
+
 // TODO: unskip this function.
 describe("E2E Mock Event Batch", () => {
   beforeAll(() => {

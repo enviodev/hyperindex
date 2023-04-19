@@ -12,6 +12,9 @@ var DbFunctions = require("generated/src/DbFunctions.bs.js");
 var MockEntities = require("./__mocks__/MockEntities.bs.js");
 var EventProcessing = require("generated/src/EventProcessing.bs.js");
 
+require("../EventHandlers.bs.js")
+;
+
 Jest.describe("E2E Mock Event Batch", (function (param) {
         beforeAll(function () {
               DbStub.setGravatarDb(MockEntities.gravatarEntity1);
