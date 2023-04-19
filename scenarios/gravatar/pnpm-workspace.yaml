@@ -1,3 +1,4 @@
 packages:
   - ./*
   - ./generated/*
+  - "!./contracts" # can't be in the same workspace since it has a clashing ethers version :( [ethers v5]

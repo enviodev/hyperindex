@@ -10,7 +10,6 @@ module {{contract.name.capitalized}}Contract = {
       getEntitiesToLoad: unit => array<Types.entityRead>
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
-      // TODO: loop through each of the named arguments.
       {{#each event.required_entities as | required_entity |}}
       {{#each required_entity.labels as |label| }}
       let optIdOf_{{label}} = ref(None)
