@@ -15,6 +15,11 @@ module GravatarContract = {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
         getContext: () => {
+          user: {
+            insert: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Create)},
+            update: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Update)},
+            delete: id => (),
+          },
           gravatar: {
             insert: entity => {
               IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Create)
@@ -54,6 +59,11 @@ module GravatarContract = {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
         getContext: () => {
+          user: {
+            insert: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Create)},
+            update: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Update)},
+            delete: id => (),
+          },
           gravatar: {
             insert: entity => {
               IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Create)

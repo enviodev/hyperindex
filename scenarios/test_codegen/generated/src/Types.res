@@ -63,12 +63,20 @@ module GravatarContract = {
       displayName: string,
       imageUrl: string,
     }
+    type userEntityHandlerContext = {
+      insert: userEntity => unit,
+      update: userEntity => unit,
+      delete: id => unit,
+    }
     type gravatarEntityHandlerContext = {
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
       delete: id => unit,
     }
-    type context = {gravatar: gravatarEntityHandlerContext}
+    type context = {
+      user: userEntityHandlerContext,
+      gravatar: gravatarEntityHandlerContext,
+    }
 
     type loaderContext = {}
   }
@@ -79,13 +87,21 @@ module GravatarContract = {
       displayName: string,
       imageUrl: string,
     }
+    type userEntityHandlerContext = {
+      insert: userEntity => unit,
+      update: userEntity => unit,
+      delete: id => unit,
+    }
     type gravatarEntityHandlerContext = {
       gravatarWithChanges: unit => option<gravatarEntity>,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
       delete: id => unit,
     }
-    type context = {gravatar: gravatarEntityHandlerContext}
+    type context = {
+      user: userEntityHandlerContext,
+      gravatar: gravatarEntityHandlerContext,
+    }
 
     type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
 
