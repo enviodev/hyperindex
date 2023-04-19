@@ -9,6 +9,7 @@ type entityRead =
 | {{entity.name.capitalized}}Read(id)
 {{/each}}
 
+
 let entitySerialize = (entity: entityRead) => {
   switch entity {
   {{#each entities as | entity |}}
@@ -91,6 +92,13 @@ type event =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>)
+{{/each}}
+{{/each}}
+
+type eventAndContext =
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>, {{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context)
 {{/each}}
 {{/each}}
 
