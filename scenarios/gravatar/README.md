@@ -15,6 +15,17 @@ To view the data in the database, run `./generated/register_tables_with_hasura.s
 
 Alternatively you can open the file `index.html` for a cleaner experience (no hasura stuff). Unfortunately, hasura currently isn't configured to make the data public.
 
+### To make example events:
+
+```
+# Create gravatar
+pnpm task:new-gravatar --name "Jason Smythe" --image "https://jason.smythe.com/man-with-amazing-mustache.jpg" --user-index 8
+# Update gravatar image
+pnpm task:update-gravatar-image --image "https://jono.prest.com/what-a-shiny-trumpet.jpg" --user-index 8
+# Update gravatar name
+pnpm task:update-gravatar-name --name "Jono Prest" --user-index 8
+```
+
 ## Build
 
 ```
@@ -28,6 +39,10 @@ pnpm run build
 ```
 
 pnpm run watch
+
+```
+
+```
 
 ```
 
