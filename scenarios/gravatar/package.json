@@ -7,7 +7,7 @@
     "start": "node generated/src/Index.bs.js",
     "watch": "rescript build -w -with-deps",
     "test-demo": "node --watch ./src/tests/Test.bs.js",
-    "test": "jest",
+    "test": "jest --forceExit",
     "bench": "jest --projects ./jest-bench.config.json"
   },
   "keywords": [

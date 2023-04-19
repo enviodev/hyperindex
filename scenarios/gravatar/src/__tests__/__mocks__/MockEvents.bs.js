@@ -2,6 +2,7 @@
 'use strict';
 
 var Ethers = require("ethers");
+var ContextMock = require("./ContextMock.bs.js");
 
 var newGravatar1_id = BigInt(1001);
 
@@ -162,6 +163,39 @@ var eventBatch = [
   }
 ];
 
+var eventBatchWithContext = [
+  {
+    TAG: /* GravatarContract_NewGravatarWithContext */0,
+    _0: newGravatarEventLog1,
+    _1: ContextMock.mockNewGravatarContext
+  },
+  {
+    TAG: /* GravatarContract_NewGravatarWithContext */0,
+    _0: newGravatarEventLog2,
+    _1: ContextMock.mockNewGravatarContext
+  },
+  {
+    TAG: /* GravatarContract_NewGravatarWithContext */0,
+    _0: newGravatarEventLog3,
+    _1: ContextMock.mockNewGravatarContext
+  },
+  {
+    TAG: /* GravatarContract_UpdatedGravatarWithContext */1,
+    _0: updatedGravatarEventLog1,
+    _1: ContextMock.mockUpdateGravatarContext
+  },
+  {
+    TAG: /* GravatarContract_UpdatedGravatarWithContext */1,
+    _0: updatedGravatarEventLog2,
+    _1: ContextMock.mockUpdateGravatarContext
+  },
+  {
+    TAG: /* GravatarContract_UpdatedGravatarWithContext */1,
+    _0: updatedGravatarEventLog3,
+    _1: ContextMock.mockUpdateGravatarContext
+  }
+];
+
 exports.newGravatar1 = newGravatar1;
 exports.newGravatar2 = newGravatar2;
 exports.newGravatar3 = newGravatar3;
@@ -175,4 +209,5 @@ exports.updatedGravatarEventLog1 = updatedGravatarEventLog1;
 exports.updatedGravatarEventLog2 = updatedGravatarEventLog2;
 exports.updatedGravatarEventLog3 = updatedGravatarEventLog3;
 exports.eventBatch = eventBatch;
+exports.eventBatchWithContext = eventBatchWithContext;
 /* newGravatar1 Not a pure module */
