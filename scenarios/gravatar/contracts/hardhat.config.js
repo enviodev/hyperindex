@@ -1,6 +1,6 @@
 require("hardhat-deploy");
 require("@nomiclabs/hardhat-ethers");
-// require("hardhat-abi-exporter");
+require("hardhat-abi-exporter");
 
 require("./tasks");
 
@@ -13,14 +13,6 @@ module.exports = {
     ganache: {
       url: "http://localhost:8545",
     },
-  },
-  namedAccounts: {
-    deployer: 0,
-    admin: 1,
-    user1: 2,
-    user2: 3,
-    user3: 4,
-    user4: 5,
   },
   abiExporter: {
     path: "./abis",

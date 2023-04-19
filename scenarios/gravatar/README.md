@@ -41,11 +41,3 @@ pnpm run build
 pnpm run watch
 
 ```
-
-```
-
-```
-
-```
-
-```
