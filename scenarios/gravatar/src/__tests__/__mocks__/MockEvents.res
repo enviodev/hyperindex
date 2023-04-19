@@ -115,3 +115,12 @@ let eventBatch: array<Types.event> = [
   GravatarContract_UpdatedGravatar(updatedGravatarEventLog2),
   GravatarContract_UpdatedGravatar(updatedGravatarEventLog3),
 ]
+
+let eventBatchWithContext: array<Types.eventAndContext> = [
+  GravatarContract_NewGravatarWithContext(newGravatarEventLog1, ContextMock.mockNewGravatarContext),
+  GravatarContract_NewGravatarWithContext(newGravatarEventLog2, ContextMock.mockNewGravatarContext),
+  GravatarContract_NewGravatarWithContext(newGravatarEventLog3, ContextMock.mockNewGravatarContext),
+  GravatarContract_UpdatedGravatarWithContext(updatedGravatarEventLog1, ContextMock.mockUpdateGravatarContext),
+  GravatarContract_UpdatedGravatarWithContext(updatedGravatarEventLog2, ContextMock.mockUpdateGravatarContext),
+  GravatarContract_UpdatedGravatarWithContext(updatedGravatarEventLog3, ContextMock.mockUpdateGravatarContext),
+]
