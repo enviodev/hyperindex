@@ -165,7 +165,7 @@ fn write_to_file_in_generated(
     fs::write(file_path, content)
 }
 
-/// This function allows files to be executed as
+/// This function allows files to be executed as a script
 fn make_file_executable(filename: &str, codegen_path: &str) -> std::io::Result<()> {
     let file_path = format!("{}/{}", codegen_path, filename);
 
