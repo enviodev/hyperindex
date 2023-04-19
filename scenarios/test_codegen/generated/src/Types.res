@@ -91,6 +91,16 @@ type event =
   | GravatarContract_NewGravatar(eventLog<GravatarContract.NewGravatarEvent.eventArgs>)
   | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>)
 
+type eventAndContext =
+  | GravatarContract_NewGravatarWithContext(
+      eventLog<GravatarContract.NewGravatarEvent.eventArgs>,
+      GravatarContract.NewGravatarEvent.context,
+    )
+  | GravatarContract_UpdatedGravatarWithContext(
+      eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>,
+      GravatarContract.UpdatedGravatarEvent.context,
+    )
+
 type eventName =
   | GravatarContract_NewGravatarEvent
   | GravatarContract_UpdatedGravatarEvent
