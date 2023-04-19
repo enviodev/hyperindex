@@ -14,9 +14,6 @@ var updateMock = jest.fn(function (id) {
 
 var mockNewGravatarContext = {
   gravatar: {
-    gravatarWithChanges: (function (param) {
-        
-      }),
     insert: (function (gravatarInsert) {
         Curry._1(insertMock, gravatarInsert.id);
       }),

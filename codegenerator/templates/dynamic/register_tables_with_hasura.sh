@@ -3,6 +3,8 @@
 
 # NOTE: This is very brittle code, it will break if the password, hasura url or database changes.
 
+# Source: https://hasura.io/docs/latest/api-reference/metadata-api/table-view/#metadata-pg-track-table
+
 {{#each entities as |entity|}}
 curl -X POST localhost:8080/v1/metadata \
   -H "Content-Type: application/json" \

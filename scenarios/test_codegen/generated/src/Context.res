@@ -9,20 +9,10 @@ module GravatarContract = {
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
       // TODO: loop through each of the named arguments.
-      let optIdOf_gravatarWithChanges = ref(None)
 
       let entitiesToLoad: array<Types.entityRead> = []
 
-      let loaderContext: Types.GravatarContract.NewGravatarEvent.loaderContext = {
-        // TODO: loop through each of the named arguments.
-        gravatar: {
-          gravatarWithChangesLoad: (id: Types.id) => {
-            optIdOf_gravatarWithChanges := Some(id)
-
-            let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id))
-          },
-        },
-      }
+      let loaderContext: Types.GravatarContract.NewGravatarEvent.loaderContext = {}
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
@@ -35,11 +25,6 @@ module GravatarContract = {
               IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
             },
             delete: id => (),
-            //TODO hardcoded - retrieve from config.yaml
-            gravatarWithChanges: () =>
-              optIdOf_gravatarWithChanges.contents->Belt.Option.flatMap(id =>
-                IO.InMemoryStore.Gravatar.getGravatar(~id)
-              ),
           },
         },
       }
@@ -60,7 +45,6 @@ module GravatarContract = {
       let entitiesToLoad: array<Types.entityRead> = []
 
       let loaderContext: Types.GravatarContract.UpdatedGravatarEvent.loaderContext = {
-        // TODO: loop through each of the named arguments.
         gravatar: {
           gravatarWithChangesLoad: (id: Types.id) => {
             optIdOf_gravatarWithChanges := Some(id)
@@ -81,7 +65,6 @@ module GravatarContract = {
               IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
             },
             delete: id => (),
-            //TODO hardcoded - retrieve from config.yaml
             gravatarWithChanges: () =>
               optIdOf_gravatarWithChanges.contents->Belt.Option.flatMap(id =>
                 IO.InMemoryStore.Gravatar.getGravatar(~id)

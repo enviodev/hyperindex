@@ -66,8 +66,13 @@ module {{event.name.capitalized}}Event = {
   }
     {{#each ../../entities as | entity |}}
     type {{entity.name.uncapitalized}}EntityHandlerContext = {
-      /// TODO: add named entities (this is hardcoded)
-      gravatarWithChanges: unit => option<gravatarEntity>,
+    {{#each event.required_entities as | required_entity |}}
+      {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+        {{#each required_entity.labels as |label| }}
+        {{label}}: unit => option<{{required_entity.name.uncapitalized}}Entity>,
+        {{/each}}
+      {{/if}}
+    {{/each}}
       insert: {{entity.name.uncapitalized}}Entity => unit,
       update: {{entity.name.uncapitalized}}Entity => unit,
       delete: id => unit,
@@ -79,9 +84,20 @@ module {{event.name.capitalized}}Event = {
       {{/each}}
     }
 
-    // TODO: these are hardcoded on all events, but should be generated based on the read config
-    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
-    type loaderContext = {gravatar: gravatarEntityLoaderContext}
+    {{#each event.required_entities as | required_entity |}}
+    type {{required_entity.name.uncapitalized}}EntityLoaderContext = {
+      {{#each required_entity.labels as | label |}}
+      {{label}}Load: id => unit,
+      {{/each}}
+    }
+    {{/each}}
+
+    type loaderContext = {
+    {{#each event.required_entities as | required_entity |}}
+    {{required_entity.name.uncapitalized}} : {{required_entity.name.uncapitalized}}EntityLoaderContext,
+    {{/each}}
+    }
+
   
 }
 {{/each}}
