@@ -1,17 +1,21 @@
+use std::path::PathBuf;
+
 use crate::{
     capitalization::Capitalize,
-    config_parsing::{Config, ConfigContract, Event as ConfigEvent},
+    config_parsing::{ConfigContract, Event as ConfigEvent},
     Contract, Error, EventTemplate, ParamType, RequiredEntityTemplate,
 };
 
 use ethereum_abi::{Abi, Event as EthereumAbiEvent};
+
+use super::deserialize_config_from_yaml;
 
 pub fn parse_abi(abi: &str) -> Result<Abi, Box<dyn Error>> {
     let abi: Abi = serde_json::from_str(abi)?;
     Ok(abi)
 }
 
-pub fn get_abi_from_file_path(file_path: &str) -> Result<Abi, Box<dyn Error>> {
+pub fn get_abi_from_file_path(file_path: &PathBuf) -> Result<Abi, Box<dyn Error>> {
     let abi_file = std::fs::read_to_string(file_path)?;
     parse_abi(&abi_file)
 }
@@ -124,15 +128,19 @@ fn get_contract_type_from_config_contract(
 }
 
 pub fn get_contract_types_from_config(
-    project_root_path: &str,
-    config: &Config,
+    config_path: &PathBuf,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
+    let config = deserialize_config_from_yaml(config_path)?;
     let mut contracts: Vec<Contract> = Vec::new();
     for network in config.networks.iter() {
         for config_contract in network.contracts.iter() {
-            let abi_path = format!("{}/{}", project_root_path, config_contract.abi_file_path);
-            let contract_abi = get_abi_from_file_path(&abi_path)?;
-            let contract = get_contract_type_from_config_contract(config_contract, contract_abi);
+            let config_parent_path = config_path
+                .parent()
+                .expect("config path should have a parent directory");
+            let parsed_abi: Abi =
+                get_abi_from_file_path(&config_parent_path.join(&config_contract.abi_file_path))?;
+
+            let contract = get_contract_type_from_config_contract(config_contract, parsed_abi);
             contracts.push(contract);
         }
     }
