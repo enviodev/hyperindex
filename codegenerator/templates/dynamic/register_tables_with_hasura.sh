@@ -20,6 +20,7 @@ curl -X POST localhost:8080/v1/metadata \
   }
 }'
 {{/each}}
+# reference: https://hasura.io/docs/latest/api-reference/metadata-api/permission/#metadata-pg-create-select-permission
 
 {{#each entities as |entity|}}
 curl -X POST localhost:8080/v1/metadata \
