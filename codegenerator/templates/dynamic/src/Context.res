@@ -1,27 +1,48 @@
-open Types
+{{#each contracts as | contract |}}
+module {{contract.name.capitalized}}Contract = {
+{{#each contract.events as | event |}}
+  module {{event.name.capitalized}}Event = {
+    type context = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context
 
-let loadedEntities = {
-{{#each entities as |entity|}}
-  get{{entity.name.capitalized}}ById: id => IO.InMemoryStore.{{entity.name.capitalized}}.get{{entity.name.capitalized}}(~id),
-  //Note this should call the read function in handlers and grab all the loaded entities related to this event,
-  getAllLoaded{{entity.name.capitalized}}: () => [], //TODO: likely will delete
+    type contextCreatorFunctions = {
+      getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
+      getContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
+      getEntitiesToLoad: unit => array<Types.entityRead>
+    }
+    let contextCreator: unit => contextCreatorFunctions = () => {
+      // TODO: loop through each of the named arguments.
+      let optIdOf_gravatarWithChanges = ref(None)
+
+      let entitiesToLoad: array<Types.entityRead> = []
+
+      let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext = {
+        // TODO: loop through each of the named arguments.
+        gravatar: {
+          gravatarWithChangesLoad: (id: Types.id) => {
+            optIdOf_gravatarWithChanges := Some(id)
+
+            let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id))
+          }
+        }
+      }
+      {
+        getEntitiesToLoad: () => entitiesToLoad,
+        getLoaderContext: () => loaderContext,
+        getContext: () => ({
+        {{#each ../../entities as | entity |}}
+          {{entity.name.uncapitalized}}: {
+              insert: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}} = entity, ~crud = Types.Create)},
+              update: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}} = entity, ~crud = Types.Update)},
+              delete: id => (),
+              //TODO hardcoded - retrieve from config.yaml
+              gravatarWithChanges: () => optIdOf_gravatarWithChanges.contents->Belt.Option.flatMap(id => IO.InMemoryStore.Gravatar.getGravatar(~id)),
+            },
+        {{/each}}
+        })
+      }
+    }
+
+  }
 {{/each}}
 }
-
-%%private(
-  let context = {
-{{#each entities as |entity|}}
-    {{entity.name.uncapitalized}}: {
-      insert: {{entity.name.uncapitalized}}Insert => {
-        IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}}={{entity.name.uncapitalized}}Insert, ~crud=Types.Create)
-      },
-      update: {{entity.name.uncapitalized}}Update => {
-        IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}}={{entity.name.uncapitalized}}Update, ~crud=Types.Update)
-      },
-      loadedEntities,
-    },
 {{/each}}
-  }
-)
-
-let getContext = () => context
