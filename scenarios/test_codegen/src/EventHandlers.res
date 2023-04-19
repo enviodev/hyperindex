@@ -1,17 +1,10 @@
-
 open Types
 
-//user defined function that read entities based on the event log
-let gravatarNewGravatarLoadEntities = (_event: eventLog<GravatarContract.NewGravatarEvent.eventArgs>): array<
-  entityRead,
-> => {
-  []
-}
+Handlers.GravatarContract.registerNewGravatarLoadEntities((_event, _context) => {
+  ()
+})
 
-let gravatarNewGravatarEventHandler = (
-  event: eventLog<GravatarContract.NewGravatarEvent.eventArgs>,
-  context: Types.GravatarContract.NewGravatarEvent.context,
-) => {
+Handlers.GravatarContract.registerNewGravatarHandler((event, context) => {
   let gravatarObject: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
     owner: event.params.owner->Ethers.ethAddressToString,
@@ -21,20 +14,13 @@ let gravatarNewGravatarEventHandler = (
   }
 
   context.gravatar.insert(gravatarObject)
-}
+})
 
-//user defined function that read entities based on the event log
-let gravatarUpdatedGravatarLoadEntities = (
-  event: eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>,
-  contextUpdator: GravatarContract.UpdatedGravatarEvent.loaderContext,
-) => {
+Handlers.GravatarContract.registerUpdatedGravatarLoadEntities((event, contextUpdator) => {
   contextUpdator.gravatar.gravatarWithChangesLoad(event.params.id->Ethers.BigInt.toString)
-}
+})
 
-let gravatarUpdatedGravatarEventHandler = (
-  event: eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>,
-  context: GravatarContract.UpdatedGravatarEvent.context,
-) => {
+Handlers.GravatarContract.registerUpdatedGravatarHandler((event, context) => {
   let updatesCount =
     context.gravatar.gravatarWithChanges()->Belt.Option.mapWithDefault(1, gravatar =>
       gravatar.updatesCount + 1
@@ -49,4 +35,4 @@ let gravatarUpdatedGravatarEventHandler = (
   }
 
   context.gravatar.update(gravatar)
-}
+})
