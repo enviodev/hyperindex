@@ -1,4 +1,7 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+use pathdiff::diff_paths;
+use relative_path::RelativePath;
 
 use crate::{
     capitalization::Capitalize,
@@ -100,9 +103,39 @@ fn get_event_template_from_event(
     event_type
 }
 
+fn relative_path(from: &Path, to: &Path) -> PathBuf {
+    let mut from_iter = from.components();
+    let mut to_iter = to.components();
+
+    let mut result = PathBuf::new();
+
+    // Remove the common prefix between the two paths
+    while let (Some(a), Some(b)) = (from_iter.next(), to_iter.next()) {
+        if a != b {
+            result.push("..");
+            result.push(b);
+            break;
+        }
+    }
+
+    // Add the remaining components of the "from" path as ".."
+    for _ in from_iter {
+        result.push("..");
+    }
+
+    // Add the remaining components of the "to" path
+    for component in to_iter {
+        result.push(component);
+    }
+
+    result
+}
+
 fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     contract_abi: Abi,
+    project_root_path: &PathBuf,
+    get_contract_type_from_config_contract: &PathBuf,
 ) -> Contract {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -120,15 +153,77 @@ fn get_contract_type_from_config_contract(
             None => (),
         };
     }
+    let handler_path_joined = project_root_path.join(
+        config_contract
+            .handler
+            .clone()
+            .unwrap_or(String::from("./src/handlers.js")),
+    );
+    let handler_path_absolute = handler_path_joined.canonicalize().unwrap();
+
+    println!(
+        "Paths are: {:?} {:?}",
+        handler_path_joined, handler_path_absolute
+    );
+    let get_contract_type_from_config_contract_canonicalized =
+        get_contract_type_from_config_contract
+            .canonicalize()
+            .unwrap();
+
+    println!(
+        "Paths are: {:?} {:?}",
+        get_contract_type_from_config_contract,
+        get_contract_type_from_config_contract_canonicalized
+    );
+    // let contract_type_path = Path::new("./some/contract/type/path"); // Replace with your actual contract type path
+    // let contract_type_path_absolute = contract_type_path.canonicalize().unwrap();
+
+    let handler_path_relative = relative_path(
+        &handler_path_absolute,
+        &get_contract_type_from_config_contract_canonicalized,
+    );
+
+    println!("Relative path: {:?}", handler_path_relative);
     let contract = Contract {
         name: config_contract.name.to_capitalized_options(),
         events: event_types,
+        handler: handler_path_relative.to_str().unwrap().to_owned(),
     };
+
+    println!("Contract handler: {}", contract.handler);
+    // // This will be something like `../scenarios/gravatar/./src/handlers.js` (notice the dot in the middle). Join doesn't handle that.
+    // let handler_path_joined = project_root_path.join(
+    //     config_contract
+    //         .handler
+    //         .clone()
+    //         .unwrap_or(String::from("./src/handlers.js")),
+    // );
+    // // TODO: is this unsafe? What would the default be?
+    // // Canonicalize the path, ie turn `../scenarios/gravatar/./src/handlers.js` into ``../scenarios/gravatar/src/handlers.js`
+    // let handler_path_canonicalized = handler_path_joined.canonicalize().unwrap();
+    // let handler_path_relative = diff_paths(
+    //     handler_path_canonicalized.as_path(),
+    //     get_contract_type_from_config_contract.as_path(),
+    // )
+    // .unwrap();
+    // println!(
+    //     "Path 1 {}, Path 2 {}, restult {}",
+    //     get_contract_type_from_config_contract.display(),
+    //     handler_path_joined.display(),
+    //     handler_path_relative.display()
+    // );
+    // let contract = Contract {
+    //     name: config_contract.name.to_capitalized_options(),
+    //     events: event_types,
+    //     handler: handler_path_relative.as_path().to_str().unwrap().to_owned(),
+    // };
     contract
 }
 
 pub fn get_contract_types_from_config(
     config_path: &PathBuf,
+    project_root_path: &PathBuf,
+    code_gen_path: &PathBuf,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(config_path)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -140,7 +235,12 @@ pub fn get_contract_types_from_config(
             let parsed_abi: Abi =
                 get_abi_from_file_path(&config_parent_path.join(&config_contract.abi_file_path))?;
 
-            let contract = get_contract_type_from_config_contract(config_contract, parsed_abi);
+            let contract = get_contract_type_from_config_contract(
+                config_contract,
+                parsed_abi,
+                project_root_path,
+                code_gen_path,
+            );
             contracts.push(contract);
         }
     }

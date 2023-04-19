@@ -45,6 +45,7 @@ pub struct EventTemplate {
 pub struct Contract {
     name: CapitalizedOptions,
     events: Vec<EventTemplate>,
+    handler: String,
 }
 
 type EntityTemplate = RecordType;
