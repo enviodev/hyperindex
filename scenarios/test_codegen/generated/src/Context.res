@@ -8,8 +8,6 @@ module GravatarContract = {
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
-      // TODO: loop through each of the named arguments.
-
       let entitiesToLoad: array<Types.entityRead> = []
 
       let loaderContext: Types.GravatarContract.NewGravatarEvent.loaderContext = {}
@@ -39,7 +37,6 @@ module GravatarContract = {
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
-      // TODO: loop through each of the named arguments.
       let optIdOf_gravatarWithChanges = ref(None)
 
       let entitiesToLoad: array<Types.entityRead> = []
