@@ -1,9 +1,11 @@
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::PermissionsExt; // NOTE: This probably won't be the same on Windows.
+use std::path::PathBuf;
 
 use handlebars::Handlebars;
 
+use include_dir::{Dir, DirEntry};
 use serde::Serialize;
 
 pub mod config_parsing;
@@ -25,15 +27,32 @@ pub struct RecordType {
     name: CapitalizedOptions,
     params: Vec<ParamType>,
 }
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct RequiredEntityTemplate {
+    name: CapitalizedOptions,
+    labels: Vec<String>,
+}
+
+#[derive(Serialize, Debug, PartialEq)]
+pub struct EventTemplate {
+    name: CapitalizedOptions,
+    params: Vec<ParamType>,
+    required_entities: Vec<RequiredEntityTemplate>,
+}
+
 #[derive(Serialize)]
 pub struct Contract {
     name: CapitalizedOptions,
-    events: Vec<RecordType>,
+    events: Vec<EventTemplate>,
 }
+
+type EntityTemplate = RecordType;
+
 #[derive(Serialize)]
 struct TypesTemplate {
     contracts: Vec<Contract>,
-    entities: Vec<RecordType>,
+    entities: Vec<EntityTemplate>,
     chain_configs: Vec<ChainConfigTemplate>,
 }
 
@@ -41,7 +60,7 @@ pub fn generate_templates(
     contracts: Vec<Contract>,
     chain_configs: Vec<ChainConfigTemplate>,
     entity_types: Vec<RecordType>,
-    codegen_path: &str,
+    codegen_path: &PathBuf,
 ) -> Result<(), Box<dyn Error>> {
     let mut handlebars = Handlebars::new();
 
@@ -96,6 +115,10 @@ pub fn generate_templates(
         include_str!("../templates/dynamic/src/Context.res"),
         &types_data,
     )?;
+    let rendered_string_register_tables_with_hasura = handlebars.render_template(
+        include_str!("../templates/dynamic/register_tables_with_hasura.sh"),
+        &types_data,
+    )?;
 
     write_to_file_in_generated("src/Types.res", &rendered_string_types, codegen_path)?;
     write_to_file_in_generated("src/Config.res", &rendered_string_config, codegen_path)?;
@@ -124,61 +147,53 @@ pub fn generate_templates(
         codegen_path,
     )?;
     write_to_file_in_generated("src/Context.res", &rendered_string_context, codegen_path)?;
+    write_to_file_in_generated(
+        "register_tables_with_hasura.sh",
+        &rendered_string_register_tables_with_hasura,
+        codegen_path,
+    )?;
+    make_file_executable("register_tables_with_hasura.sh", codegen_path)?;
     Ok(())
 }
 
 fn write_to_file_in_generated(
     filename: &str,
     content: &str,
-    codegen_path: &str,
+    codegen_path: &PathBuf,
 ) -> std::io::Result<()> {
     fs::create_dir_all(codegen_path)?;
-    fs::write(format! {"{}/{}", codegen_path, filename}, content)
+    let file_path = codegen_path.join(filename);
+    fs::write(file_path, content)
 }
 
-pub fn copy_directory<U: AsRef<Path>, V: AsRef<Path>>(
-    from: U,
-    to: V,
-) -> Result<(), std::io::Error> {
-    let mut stack = Vec::new();
-    stack.push(PathBuf::from(from.as_ref()));
+/// This function allows files to be executed as a script
+fn make_file_executable(filename: &str, codegen_path: &PathBuf) -> std::io::Result<()> {
+    let file_path = codegen_path.join(filename);
 
-    let output_root = PathBuf::from(to.as_ref());
-    let input_root = PathBuf::from(from.as_ref()).components().count();
+    let mut permissions = fs::metadata(&file_path)?.permissions();
+    permissions.set_mode(0o755); // Set the file permissions to -rwxr-xr-x
+    fs::set_permissions(&file_path, permissions)?;
 
-    while let Some(working_path) = stack.pop() {
-        println!("process: {:?}", &working_path);
+    Ok(())
+}
 
-        // Generate a relative path
-        let src: PathBuf = working_path.components().skip(input_root).collect();
+pub fn copy_dir(from: &Dir, to_root: &PathBuf) -> Result<(), std::io::Error> {
+    for entry in from.entries().iter() {
+        match entry {
+            DirEntry::Dir(dir) => {
+                let path = dir.path();
+                let to_path = to_root.join(path);
+                println!("to_path {}", to_path.to_str().unwrap());
 
-        // Create a destination if missing
-        let dest = if src.components().count() == 0 {
-            output_root.clone()
-        } else {
-            output_root.join(&src)
-        };
-        if fs::metadata(&dest).is_err() {
-            println!(" mkdir: {:?}", dest);
-            fs::create_dir_all(&dest)?;
-        }
-
-        for entry in fs::read_dir(working_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else {
-                match path.file_name() {
-                    Some(filename) => {
-                        let dest_path = dest.join(filename);
-                        println!("  copy: {:?} -> {:?}", &path, &dest_path);
-                        fs::copy(&path, &dest_path)?;
-                    }
-                    None => {
-                        println!("failed: {:?}", path);
-                    }
-                }
+                fs::create_dir_all(&to_path)?;
+                copy_dir(&dir, &to_root)?;
+            }
+            DirEntry::File(file) => {
+                let path = file.path();
+                let to_path = to_root.join(path);
+                println!("to_path file {}", to_path.to_str().unwrap());
+                let file_content = file.contents();
+                fs::write(&to_path, file_content)?;
             }
         }
     }

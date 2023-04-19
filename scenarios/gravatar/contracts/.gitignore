@@ -9,3 +9,4 @@ cache
 artifacts
 
 deployments/localhost
+deployments/ganache

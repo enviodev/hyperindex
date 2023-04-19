@@ -8,42 +8,43 @@ var insertMock = jest.fn(function (id) {
       return id;
     });
 
-var getByIdMock = jest.fn(function (id) {
-      return id;
-    });
-
 var updateMock = jest.fn(function (id) {
       return id;
     });
 
-function loadedEntitiesMock_getGravatarById(id) {
-  Curry._1(getByIdMock, id);
-}
-
-function loadedEntitiesMock_getAllLoadedGravatar(param) {
-  return [MockEntities.gravatarEntity1];
-}
-
-var loadedEntitiesMock = {
-  getGravatarById: loadedEntitiesMock_getGravatarById,
-  getAllLoadedGravatar: loadedEntitiesMock_getAllLoadedGravatar
-};
-
-var mockContext = {
-  Gravatar: {
+var mockNewGravatarContext = {
+  gravatar: {
     insert: (function (gravatarInsert) {
         Curry._1(insertMock, gravatarInsert.id);
       }),
     update: (function (gravatarUpdate) {
         Curry._1(updateMock, gravatarUpdate.id);
       }),
-    loadedEntities: loadedEntitiesMock
+    delete: (function (id) {
+        
+      })
+  }
+};
+
+var mockUpdateGravatarContext = {
+  gravatar: {
+    gravatarWithChanges: (function (param) {
+        return MockEntities.gravatarEntity1;
+      }),
+    insert: (function (gravatarInsert) {
+        Curry._1(insertMock, gravatarInsert.id);
+      }),
+    update: (function (gravatarUpdate) {
+        Curry._1(updateMock, gravatarUpdate.id);
+      }),
+    delete: (function (id) {
+        
+      })
   }
 };
 
 exports.insertMock = insertMock;
-exports.getByIdMock = getByIdMock;
 exports.updateMock = updateMock;
-exports.loadedEntitiesMock = loadedEntitiesMock;
-exports.mockContext = mockContext;
+exports.mockNewGravatarContext = mockNewGravatarContext;
+exports.mockUpdateGravatarContext = mockUpdateGravatarContext;
 /* insertMock Not a pure module */

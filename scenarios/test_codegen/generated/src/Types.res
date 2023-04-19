@@ -1,48 +1,3 @@
-//************
-//** EVENTS **
-//************
-
-type eventLog<'a> = {
-  params: 'a,
-  blockNumber: int,
-  blockTimestamp: int,
-  blockHash: string,
-  srcAddress: string,
-  transactionHash: string,
-  transactionIndex: int,
-  logIndex: int,
-}
-
-module GravatarContract = {
-  type newGravatarEvent = {
-    id: Ethers.BigInt.t,
-    owner: Ethers.ethAddress,
-    displayName: string,
-    imageUrl: string,
-  }
-
-  type updatedGravatarEvent = {
-    id: Ethers.BigInt.t,
-    owner: Ethers.ethAddress,
-    displayName: string,
-    imageUrl: string,
-  }
-}
-
-type event =
-  | GravatarContract_NewGravatar(eventLog<GravatarContract.newGravatarEvent>)
-  | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.updatedGravatarEvent>)
-
-type eventName =
-  | GravatarContract_NewGravatarEvent
-  | GravatarContract_UpdatedGravatarEvent
-
-let eventNameToString = (eventName: eventName) =>
-  switch eventName {
-  | GravatarContract_NewGravatarEvent => "NewGravatar"
-  | GravatarContract_UpdatedGravatarEvent => "UpdatedGravatar"
-  }
-
 //*************
 //***ENTITIES**
 //*************
@@ -86,26 +41,78 @@ type inMemoryStoreRow<'a> = {
 }
 
 //*************
-//** CONTEXT **
+//**CONTRACTS**
 //*************
 
-type loadedEntitiesReader = {
-  getUserById: id => option<userEntity>,
-  getAllLoadedUser: unit => array<userEntity>,
-  getGravatarById: id => option<gravatarEntity>,
-  getAllLoadedGravatar: unit => array<gravatarEntity>,
+type eventLog<'a> = {
+  params: 'a,
+  blockNumber: int,
+  blockTimestamp: int,
+  blockHash: string,
+  srcAddress: string,
+  transactionHash: string,
+  transactionIndex: int,
+  logIndex: int,
 }
 
-type entityController<'a> = {
-  insert: 'a => unit,
-  update: 'a => unit,
-  loadedEntities: loadedEntitiesReader,
+module GravatarContract = {
+  module NewGravatarEvent = {
+    type eventArgs = {
+      id: Ethers.BigInt.t,
+      owner: Ethers.ethAddress,
+      displayName: string,
+      imageUrl: string,
+    }
+    type gravatarEntityHandlerContext = {
+      insert: gravatarEntity => unit,
+      update: gravatarEntity => unit,
+      delete: id => unit,
+    }
+    type context = {gravatar: gravatarEntityHandlerContext}
+
+    type loaderContext = {}
+  }
+  module UpdatedGravatarEvent = {
+    type eventArgs = {
+      id: Ethers.BigInt.t,
+      owner: Ethers.ethAddress,
+      displayName: string,
+      imageUrl: string,
+    }
+    type gravatarEntityHandlerContext = {
+      gravatarWithChanges: unit => option<gravatarEntity>,
+      insert: gravatarEntity => unit,
+      update: gravatarEntity => unit,
+      delete: id => unit,
+    }
+    type context = {gravatar: gravatarEntityHandlerContext}
+
+    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
+
+    type loaderContext = {gravatar: gravatarEntityLoaderContext}
+  }
 }
 
-type userController = entityController<userEntity>
-type gravatarController = entityController<gravatarEntity>
+type event =
+  | GravatarContract_NewGravatar(eventLog<GravatarContract.NewGravatarEvent.eventArgs>)
+  | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>)
 
-type context = {
-  @as("User") user: userController,
-  @as("Gravatar") gravatar: gravatarController,
-}
+type eventAndContext =
+  | GravatarContract_NewGravatarWithContext(
+      eventLog<GravatarContract.NewGravatarEvent.eventArgs>,
+      GravatarContract.NewGravatarEvent.context,
+    )
+  | GravatarContract_UpdatedGravatarWithContext(
+      eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>,
+      GravatarContract.UpdatedGravatarEvent.context,
+    )
+
+type eventName =
+  | GravatarContract_NewGravatarEvent
+  | GravatarContract_UpdatedGravatarEvent
+
+let eventNameToString = (eventName: eventName) =>
+  switch eventName {
+  | GravatarContract_NewGravatarEvent => "NewGravatar"
+  | GravatarContract_UpdatedGravatarEvent => "UpdatedGravatar"
+  }
