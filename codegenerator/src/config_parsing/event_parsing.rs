@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use pathdiff::diff_paths;
 
@@ -7,7 +7,7 @@ use pathdiff::diff_paths;
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
-    Contract, Error, EventTemplate, ParamType, RequiredEntityTemplate,
+    Contract, Error, EventTemplate, HandlerPaths, ParamType, RequiredEntityTemplate,
 };
 
 use ethereum_abi::{Abi, Event as EthereumAbiEvent};
@@ -142,19 +142,27 @@ fn get_contract_type_from_config_contract(
     get_contract_type_from_config_contract_canonicalized.push("src");
 
     let handler_path_diff = diff_paths(
-        handler_path_absolute,
+        handler_path_absolute.clone(), // Clone the value here
         &get_contract_type_from_config_contract_canonicalized,
     )
     .unwrap();
 
-    let handler_path_relative_return = handler_path_diff;
+    let handler_path_relative = handler_path_diff
+        .to_str()
+        .unwrap_or("../../src/handlers.js");
 
-    let handler_path_relative = handler_path_relative_return.to_str().unwrap_or("no diff");
+    let handler_paths = HandlerPaths {
+        absolute: handler_path_absolute
+            .to_str()
+            .unwrap_or("<Error generating path. Please file an issue at https://github.com/Float-Capital/indexer/issues/new>")
+            .to_owned(),
+        relative_to_generated_src: handler_path_relative.to_owned(),
+    };
 
     let contract = Contract {
         name: config_contract.name.to_capitalized_options(),
         events: event_types,
-        handler: handler_path_relative.to_owned(),
+        handler: handler_paths,
     };
 
     contract

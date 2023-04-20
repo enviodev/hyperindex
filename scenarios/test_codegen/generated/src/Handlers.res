@@ -5,10 +5,6 @@ let getDefaultHandler: (string, 'a, 'b) => unit = (handlerName, _, _) => {
   )
 }
 
-// TODO: this code will create duplicates :/ (no native way to do this in handlebars [stumped chatgpt at least])
-//       - need to change the rust structure.
-%%raw(`require("../../src/EventHandlers.bs.js")`)
-
 module GravatarContract = {
   %%private(
     let newGravatarLoadEntities = ref(None)
