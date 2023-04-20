@@ -26,7 +26,6 @@ pub fn get_entity_record_types_from_schema(
             Definition::TypeDefinition(def) => match def {
                 TypeDefinition::Scalar(_) => (),
                 TypeDefinition::Object(object) => {
-                    println!("{:?}", object.name);
                     entities_set.insert(object.name.clone());
                     schema_object_types.push(object);
                 }
