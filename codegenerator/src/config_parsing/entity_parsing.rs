@@ -79,7 +79,6 @@ fn gql_named_types_to_rescript_types(
             if entities_set.contains(custom_type) {
                 Ok("id".to_owned())
             } else {
-                println!("{}", custom_type);
                 let error_message = format!("Failed to parse undefined type: {}", custom_type);
                 Err(error_message.to_owned())
             }
