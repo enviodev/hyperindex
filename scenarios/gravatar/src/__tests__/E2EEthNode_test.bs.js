@@ -27,6 +27,7 @@ Jest.describe("E2E Mock Event Batch", (function (param) {
                 var localChainConfig = {
                   provider: localChainConfig_provider,
                   startBlock: 0,
+                  chainId: 1337,
                   contracts: localChainConfig_contracts
                 };
                 await EventSyncing.processAllEvents(localChainConfig);

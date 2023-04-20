@@ -9,6 +9,7 @@ describe("E2E Mock Event Batch", () => {
     let localChainConfig: Config.chainConfig = {
       provider: Hardhat.hardhatProvider,
       startBlock: 0,
+      chainId: 1337,
       contracts: [
         {
           name: "GravatarRegistry",
