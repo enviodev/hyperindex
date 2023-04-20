@@ -1,3 +1,4 @@
+use pathdiff::diff_paths;
 use std::path::PathBuf;
 
 use crate::{
@@ -100,12 +101,51 @@ fn get_event_template_from_event(
     event_type
 }
 
+fn get_contract_handler_paths(
+    config_contract: &ConfigContract,
+    project_root_path: &PathBuf,
+    code_gen_path: &PathBuf,
+) -> Result<HandlerPaths, Box<dyn Error>> {
+    let handler_path_joined = project_root_path.join(
+        config_contract
+            .handler
+            .clone()
+            .unwrap_or(String::from("./src/handlers.js")), // TODO make a better default (based on contract name or something.)
+    );
+
+    let handler_path_absolute = handler_path_joined.canonicalize()?;
+
+    let mut get_contract_type_from_config_contract_canonicalized = code_gen_path.canonicalize()?;
+
+    get_contract_type_from_config_contract_canonicalized.push("src");
+
+    let handler_path_diff = diff_paths(
+        handler_path_absolute.clone(),
+        &get_contract_type_from_config_contract_canonicalized,
+    )
+    .ok_or("diff paths failed")?;
+
+    let handler_path_relative = handler_path_diff
+        .to_str()
+        .unwrap_or("../../src/handlers.js");
+
+    let handler_paths = HandlerPaths {
+        absolute: handler_path_absolute
+            .to_str()
+            .ok_or("<Error generating path. Please file an issue at https://github.com/Float-Capital/indexer/issues/new>")?
+            .to_owned(),
+        relative_to_generated_src: handler_path_relative.to_owned(),
+    };
+
+    Ok(handler_paths)
+}
+
 fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     contract_abi: Abi,
     project_root_path: &PathBuf,
-    get_contract_type_from_config_contract: &PathBuf,
-) -> Contract {
+    code_gen_path: &PathBuf,
+) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
     let abi_events: Vec<ethereum_abi::Event> = contract_abi.events;
@@ -122,46 +162,16 @@ fn get_contract_type_from_config_contract(
             None => (),
         };
     }
-    let handler_path_joined = project_root_path.join(
-        config_contract
-            .handler
-            .clone()
-            .unwrap_or(String::from("./src/handlers.js")), // TODO make a better default (based on contract name or something.)
-    );
-    let handler_path_absolute = handler_path_joined.canonicalize().unwrap();
 
-    let mut get_contract_type_from_config_contract_canonicalized =
-        get_contract_type_from_config_contract
-            .canonicalize()
-            .unwrap();
-
-    get_contract_type_from_config_contract_canonicalized.push("src");
-
-    let handler_path_diff = diff_paths(
-        handler_path_absolute.clone(),
-        &get_contract_type_from_config_contract_canonicalized,
-    )
-    .unwrap();
-
-    let handler_path_relative = handler_path_diff
-        .to_str()
-        .unwrap_or("../../src/handlers.js");
-
-    let handler_paths = HandlerPaths {
-        absolute: handler_path_absolute
-            .to_str()
-            .unwrap_or("<Error generating path. Please file an issue at https://github.com/Float-Capital/indexer/issues/new>")
-            .to_owned(),
-        relative_to_generated_src: handler_path_relative.to_owned(),
-    };
+    let handler = get_contract_handler_paths(config_contract, project_root_path, code_gen_path)?;
 
     let contract = Contract {
         name: config_contract.name.to_capitalized_options(),
         events: event_types,
-        handler: handler_paths,
+        handler,
     };
 
-    contract
+    Ok(contract)
 }
 
 pub fn get_contract_types_from_config(
@@ -184,7 +194,7 @@ pub fn get_contract_types_from_config(
                 parsed_abi,
                 project_root_path,
                 code_gen_path,
-            );
+            )?;
             contracts.push(contract);
         }
     }
