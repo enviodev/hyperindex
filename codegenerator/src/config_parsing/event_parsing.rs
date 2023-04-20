@@ -1,3 +1,4 @@
+use pathdiff::diff_paths;
 use std::path::PathBuf;
 
 use crate::{
