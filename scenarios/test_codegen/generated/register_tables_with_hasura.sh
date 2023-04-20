@@ -15,6 +15,18 @@ curl -X POST localhost:8080/v1/metadata \
   "args": {
     "source": "public",
     "schema": "public",
+    "name": "user"
+  }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+  "type": "pg_track_table",
+  "args": {
+    "source": "public",
+    "schema": "public",
     "name": "gravatar"
   }
 }'

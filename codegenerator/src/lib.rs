@@ -61,6 +61,7 @@ struct TypesTemplate {
     contracts: Vec<Contract>,
     entities: Vec<EntityTemplate>,
     chain_configs: Vec<ChainConfigTemplate>,
+    codegen_out_path: String,
 }
 
 pub fn generate_templates(
@@ -74,10 +75,14 @@ pub fn generate_templates(
     handlebars.set_strict_mode(true);
     handlebars.register_escape_fn(handlebars::no_escape);
 
+    let codegen_path_str = codegen_path.to_str().ok_or("invalid codegen path")?;
+    let codegen_out_path = format!("{}/*", codegen_path_str);
+
     let types_data = TypesTemplate {
         contracts,
         entities: entity_types,
         chain_configs,
+        codegen_out_path,
     };
 
     let rendered_string_types = handlebars.render_template(
@@ -126,11 +131,14 @@ pub fn generate_templates(
         include_str!("../templates/dynamic/register_tables_with_hasura.sh"),
         &types_data,
     )?;
+    let rendered_string_gitignore =
+        handlebars.render_template(include_str!("../templates/dynamic/.gitignore"), &types_data)?;
     let rendered_string_index = handlebars.render_template(
         include_str!("../templates/dynamic/src/Index.res"),
         &types_data,
     )?;
 
+    write_to_file_in_generated(".gitignore", &rendered_string_gitignore, codegen_path)?;
     write_to_file_in_generated("src/Types.res", &rendered_string_types, codegen_path)?;
     write_to_file_in_generated("src/Config.res", &rendered_string_config, codegen_path)?;
     write_to_file_in_generated("src/Abis.res", &rendered_string_abi, codegen_path)?;
@@ -197,7 +205,6 @@ pub fn copy_dir(from: &Dir, to_root: &PathBuf) -> Result<(), std::io::Error> {
             DirEntry::Dir(dir) => {
                 let path = dir.path();
                 let to_path = to_root.join(path);
-                println!("to_path {}", to_path.to_str().unwrap());
 
                 fs::create_dir_all(&to_path)?;
                 copy_dir(&dir, &to_root)?;
@@ -205,7 +212,7 @@ pub fn copy_dir(from: &Dir, to_root: &PathBuf) -> Result<(), std::io::Error> {
             DirEntry::File(file) => {
                 let path = file.path();
                 let to_path = to_root.join(path);
-                println!("to_path file {}", to_path.to_str().unwrap());
+
                 let file_content = file.contents();
                 fs::write(&to_path, file_content)?;
             }

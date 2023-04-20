@@ -9,16 +9,25 @@ use indexly::{
     cli_args, config_parsing, copy_dir, entity_parsing, event_parsing, generate_templates,
 };
 
-use cli_args::{CommandLineArgs, CommandType};
+use cli_args::{CommandLineArgs, CommandType, Template};
 use include_dir::{include_dir, Dir};
 
 static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
+static GRAVATAR_TEMPLATE_STATIC_DIR: Dir<'_> = include_dir!("templates/static/gravatar_template");
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
 
     match command_line_args.command {
-        CommandType::Init => Ok(()),
+        CommandType::Init(args) => {
+            let project_root_path = PathBuf::from(&args.directory);
+            fs::create_dir_all(&project_root_path)?;
+            match args.template {
+                Template::Gravatar => copy_dir(&GRAVATAR_TEMPLATE_STATIC_DIR, &project_root_path)?,
+            }
+
+            Ok(())
+        }
         CommandType::Codegen(args) => {
             // TODO: could make a "path manager" module that holds all of this with some nice helper functions/api.
             //       Then just pass around that object whenever path related stuff is needed.
