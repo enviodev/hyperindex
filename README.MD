@@ -1,16 +1,18 @@
-Getting Started
+### Getting Started
 
-`npm install --global float-indexer`
+Install the following tools:
 
-`float-indexer init`
+1. nodejs (install v18) https://nodejs.org/en
+   (Recommended to use a node manager like fnm or nvm)
+   2.then install pnpm:
+   `npm install --global pnpm`
+2. Cargo https://doc.rust-lang.org/cargo/getting-started/installation.html
+   `curl https://sh.rustup.rs -sSf | sh`
+3. Docker Desktop https://www.docker.com/products/docker-desktop/
 
-options pass in etherscan api and generate abis/config.yaml
+Using "indexly"
 
-1. abi
-2. define events and schema
-3. How do handlers look
-
-Notes/Considerations:
-
-How many contracts and events could the combined query filter take before breaking?
-How do we handle common function signatures between contracts?
+1. `cargo install --path codegenerator`
+2. run `indexly --help` to see available commands
+3. cd into folder of your choice and run: `indexly init` to get a Gravatar template
+4. then run: `indexly codegen`

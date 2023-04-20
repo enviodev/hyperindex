@@ -1,6 +1,12 @@
+type User @entity {
+  id: ID!
+  address: Bytes!
+  gravatar: Gravatar
+}
+
 type Gravatar @entity {
   id: ID!
-  owner: Bytes!
+  owner: User!
   displayName: String!
   imageUrl: String!
   updatesCount: Int!

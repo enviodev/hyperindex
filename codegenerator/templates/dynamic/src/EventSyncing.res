@@ -6,6 +6,7 @@ let convertLogs = (
   ~addressInterfaceMapping,
   ~fromBlockForLogging,
   ~toBlockForLogging,
+  ~chainId,
 ) => {
   let blockRequestMapping: Js.Dict.t<
     Promise.t<Js.Nullable.t<Ethers.JsonRpcProvider.block>>,
@@ -37,6 +38,7 @@ let convertLogs = (
   let task = async () => {
     let logs = await logsPromise
 
+
     Js.log2("Handling number of logs: ", logs->Array.length)
 
     let events =
@@ -53,7 +55,7 @@ let convertLogs = (
         | Some(interface) => {
             let logDescription = interface->Ethers.Interface.parseLog(~log)
 
-            switch Converters.eventStringToEvent(logDescription.name, Converters.getContractNameFromAddress(log.address, Ethers.JsonRpcProvider.getNetwork(provider).chainId)) {
+            switch Converters.eventStringToEvent(logDescription.name, Converters.getContractNameFromAddress(log.address, chainId)) {
 {{#each contracts as |contract|}}
 {{#each contract.events as |event|}}
             | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
@@ -116,6 +118,7 @@ let queryEventsWithCombinedFilterAndExecuteHandlers = async (
   ~fromBlock,
   ~toBlock,
   ~provider,
+  ~chainId,
 ) => {
   let combinedFilter = makeCombinedEventFilterQuery(~provider, ~eventFilters, ~fromBlock, ~toBlock)
   let events =
@@ -124,9 +127,10 @@ let queryEventsWithCombinedFilterAndExecuteHandlers = async (
       ~addressInterfaceMapping,
       ~fromBlockForLogging=fromBlock,
       ~toBlockForLogging=toBlock,
+      ~chainId,
     )
 
-  events->EventProcessing.processEventBatch(~context=Context.getContext())
+  events->EventProcessing.processEventBatch
 }
 
 let getAllEventFilters = (
@@ -187,6 +191,7 @@ let processAllEventsFromBlockNumber = async (
           ~fromBlock=fromBlock.contents,
           ~toBlock=fromBlock.contents + blockInterval - 1,
           ~provider,
+          ~chainId=chainConfig.chainId,
         )->Promise.thenResolve(_ => blockInterval)
 
       [queryTimoutPromise, queryPromise]

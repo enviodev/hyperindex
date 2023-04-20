@@ -2,11 +2,11 @@ exception UndefinedEvent(string)
 exception UndefinedContract(Ethers.ethAddress, int)
 
 let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: int): string => {
-  switch (contractAddress->Ethers.ethAddressToString, chainId) {
+  switch (contractAddress->Ethers.ethAddressToString, chainId->Belt.Int.toString) {
     {{#each chain_configs as |chain_config|}}
     {{#each chain_config.contracts as |contract|}}
     // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-    | ("{{contract.address}}", {{chain_config.network_config.id}}) => "{{contract.name.capitalized}}"
+    | ("{{contract.address}}", "{{chain_config.network_config.id}}") => "{{contract.name.capitalized}}"
     {{/each}}
     {{/each}}
     | _ => UndefinedContract(contractAddress, chainId)->raise
@@ -27,17 +27,17 @@ let eventStringToEvent = (eventName: string, contractName: string): Types.eventN
 module {{contract.name.capitalized}} = {
 {{#each contract.events as |event|}}
   let convert{{event.name.capitalized}}LogDescription = (log: Ethers.logDescription<'a>): Ethers.logDescription<
-    Types.{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}Event,
+    Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
   > => {
     log->Obj.magic
   }
 
   let convert{{event.name.capitalized}}Log = async (
-    logDescription: Ethers.logDescription<Types.{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}Event>,
+    logDescription: Ethers.logDescription<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
     ~log: Ethers.log,
     ~blockPromise: promise<Ethers.JsonRpcProvider.block>,
   ) => {
-    let params: Types.{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}Event = {
+    let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
       id: logDescription.args.id,
       owner: logDescription.args.owner,
       imageUrl: logDescription.args.imageUrl,
@@ -45,7 +45,7 @@ module {{contract.name.capitalized}} = {
     }
     let block = await blockPromise
 
-    let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.uncapitalized}}Event> = {
+    let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
       params,
       blockNumber: block.number,
       blockTimestamp: block.timestamp,

@@ -28,3 +28,4 @@
 /node_modules/
 /benchmarks/
 *.bs.js
+../scenarios/test_codegen/generated//*
