@@ -1,8 +1,8 @@
 ## Indexer Config
 
-The following files are required for the Indexer
+The following files are required for the Indexer:
 
-- config file (yaml file defaults to config.yaml)
+- config file (defaults to config.yaml)
 - graphql schema (defaults to schema.graphql)
 - handler files (files that process event data into entities defined in the schema)
 
