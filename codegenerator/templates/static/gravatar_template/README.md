@@ -74,7 +74,7 @@ type Gravatar @entity {
 Once the above configuration files are in place, run:
 `indexly codegen`
 
-The entity and event types will then be available to the handler files.
+The entity and event types will then be available in the handler files.
 
 A user can specifiy a specific handler file per contract that processes events emitted by that contract.
 Each event handler requires two functions to be registered in order to enable full functionality within the indexer.
