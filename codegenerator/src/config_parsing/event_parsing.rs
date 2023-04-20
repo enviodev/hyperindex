@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
-    Contract, Error, EventTemplate, ParamType, RequiredEntityTemplate,
+    Contract, Error, EventTemplate, HandlerPaths, ParamType, RequiredEntityTemplate,
 };
 
 use ethereum_abi::{Abi, Event as EthereumAbiEvent};
@@ -103,6 +103,8 @@ fn get_event_template_from_event(
 fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     contract_abi: Abi,
+    project_root_path: &PathBuf,
+    get_contract_type_from_config_contract: &PathBuf,
 ) -> Contract {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -120,15 +122,52 @@ fn get_contract_type_from_config_contract(
             None => (),
         };
     }
+    let handler_path_joined = project_root_path.join(
+        config_contract
+            .handler
+            .clone()
+            .unwrap_or(String::from("./src/handlers.js")), // TODO make a better default (based on contract name or something.)
+    );
+    let handler_path_absolute = handler_path_joined.canonicalize().unwrap();
+
+    let mut get_contract_type_from_config_contract_canonicalized =
+        get_contract_type_from_config_contract
+            .canonicalize()
+            .unwrap();
+
+    get_contract_type_from_config_contract_canonicalized.push("src");
+
+    let handler_path_diff = diff_paths(
+        handler_path_absolute.clone(),
+        &get_contract_type_from_config_contract_canonicalized,
+    )
+    .unwrap();
+
+    let handler_path_relative = handler_path_diff
+        .to_str()
+        .unwrap_or("../../src/handlers.js");
+
+    let handler_paths = HandlerPaths {
+        absolute: handler_path_absolute
+            .to_str()
+            .unwrap_or("<Error generating path. Please file an issue at https://github.com/Float-Capital/indexer/issues/new>")
+            .to_owned(),
+        relative_to_generated_src: handler_path_relative.to_owned(),
+    };
+
     let contract = Contract {
         name: config_contract.name.to_capitalized_options(),
         events: event_types,
+        handler: handler_paths,
     };
+
     contract
 }
 
 pub fn get_contract_types_from_config(
     config_path: &PathBuf,
+    project_root_path: &PathBuf,
+    code_gen_path: &PathBuf,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(config_path)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -140,7 +179,12 @@ pub fn get_contract_types_from_config(
             let parsed_abi: Abi =
                 get_abi_from_file_path(&config_parent_path.join(&config_contract.abi_file_path))?;
 
-            let contract = get_contract_type_from_config_contract(config_contract, parsed_abi);
+            let contract = get_contract_type_from_config_contract(
+                config_contract,
+                parsed_abi,
+                project_root_path,
+                code_gen_path,
+            );
             contracts.push(contract);
         }
     }

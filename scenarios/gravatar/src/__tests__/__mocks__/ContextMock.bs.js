@@ -20,8 +20,8 @@ var mockNewGravatarContext = {
     update: (function (gravatarUpdate) {
         Curry._1(updateMock, gravatarUpdate.id);
       }),
-    delete: (function (id) {
-        
+    delete: (function (_id) {
+        console.log("inimplemented delete");
       })
   }
 };
@@ -37,8 +37,8 @@ var mockUpdateGravatarContext = {
     update: (function (gravatarUpdate) {
         Curry._1(updateMock, gravatarUpdate.id);
       }),
-    delete: (function (id) {
-        
+    delete: (function (_id) {
+        console.log("inimplemented delete");
       })
   }
 };

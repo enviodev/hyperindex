@@ -41,10 +41,17 @@ pub struct EventTemplate {
     required_entities: Vec<RequiredEntityTemplate>,
 }
 
+#[derive(Serialize, Debug)]
+pub struct HandlerPaths {
+    absolute: String,
+    relative_to_generated_src: String,
+}
+
 #[derive(Serialize)]
 pub struct Contract {
     name: CapitalizedOptions,
     events: Vec<EventTemplate>,
+    handler: HandlerPaths,
 }
 
 type EntityTemplate = RecordType;
@@ -126,6 +133,10 @@ pub fn generate_templates(
     )?;
     let rendered_string_gitignore =
         handlebars.render_template(include_str!("../templates/dynamic/.gitignore"), &types_data)?;
+    let rendered_string_index = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Index.res"),
+        &types_data,
+    )?;
 
     write_to_file_in_generated(".gitignore", &rendered_string_gitignore, codegen_path)?;
     write_to_file_in_generated("src/Types.res", &rendered_string_types, codegen_path)?;
@@ -160,7 +171,10 @@ pub fn generate_templates(
         &rendered_string_register_tables_with_hasura,
         codegen_path,
     )?;
+    write_to_file_in_generated("src/Index.res", &rendered_string_index, codegen_path)?;
+
     make_file_executable("register_tables_with_hasura.sh", codegen_path)?;
+
     Ok(())
 }
 

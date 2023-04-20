@@ -39,7 +39,7 @@ module {{contract.name.capitalized}}Contract = {
             {{entity.name.uncapitalized}}: {
               insert: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}} = entity, ~crud = Types.Create)},
               update: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}} = entity, ~crud = Types.Update)},
-              delete: id => (),
+              delete: id => Js.Console.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
                 {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
                   {{#each required_entity.labels as |label| }}

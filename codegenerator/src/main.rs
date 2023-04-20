@@ -29,6 +29,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         CommandType::Codegen(args) => {
+            // TODO: could make a "path manager" module that holds all of this with some nice helper functions/api.
+            //       Then just pass around that object whenever path related stuff is needed.
             let project_root_path = PathBuf::from(&args.directory);
             let code_gen_path: PathBuf = project_root_path.join(&args.output_directory);
             let config_path: PathBuf = project_root_path.join(&args.config);
@@ -37,7 +39,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(&code_gen_path)?;
             copy_dir(&CODEGEN_STATIC_DIR, &code_gen_path)?;
 
-            let contract_types = event_parsing::get_contract_types_from_config(&config_path)?;
+            let contract_types = event_parsing::get_contract_types_from_config(
+                &config_path,
+                &project_root_path,
+                &code_gen_path,
+            )?;
             let entity_types = entity_parsing::get_entity_record_types_from_schema(&schema_path)?;
             let chain_config_templates =
                 config_parsing::convert_config_to_chain_configs(&config_path)?;
