@@ -55,7 +55,7 @@ networks:
 
 ### Schema Definition
 
-The schema.grapql file contains the definitions of all user defined entities. These entities types are then created/modified within the handler files.
+The schema.grapql file contains the definitions of all user defined entities. These entity types are then created/modified within the handler files.
 
 example schema definition for Gravatar scenario:
 
@@ -128,7 +128,7 @@ Handlers.GravatarContract.registerUpdatedGravatarHandler((event, context) => {
 ```
 
 The handler functions also follow a naming convention for all events in the form of: `register<EventName>Handler`.
-Once the user has defined their `loadEntities` function they are then able to retrieve the loaded entity information via the labels defined in the config.yaml file. In the above example, if a `Gravatar` entity is found matching the load criteria in the `loadEntities` function, it will be available via `gravatarWithChanges`. This is made available to the user through the handler context defined simply defined as `context`. This context is the gateway by which the user can interact with the indexer and the underlying database.
+Once the user has defined their `loadEntities` function they are then able to retrieve the loaded entity information via the labels defined in the config.yaml file. In the above example, if a `Gravatar` entity is found matching the load criteria in the `loadEntities` function, it will be available via `gravatarWithChanges`. This is made available to the user through the handler context defined simply as `context`. This context is the gateway by which the user can interact with the indexer and the underlying database.
 The user can then modify this retrieved entity and subsequently update the `Gravatar` entity in the database. This is done via the context using the update function (`context.gravatar.update(gravatar)`).
 The user has access to a `gravatarEntity` type that has all the fields defined in the schema.
 
