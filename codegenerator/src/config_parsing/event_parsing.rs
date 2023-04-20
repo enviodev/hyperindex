@@ -1,9 +1,5 @@
 use std::path::PathBuf;
 
-use pathdiff::diff_paths;
-
-/*TESTING */
-
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
@@ -142,7 +138,7 @@ fn get_contract_type_from_config_contract(
     get_contract_type_from_config_contract_canonicalized.push("src");
 
     let handler_path_diff = diff_paths(
-        handler_path_absolute.clone(), // Clone the value here
+        handler_path_absolute.clone(),
         &get_contract_type_from_config_contract_canonicalized,
     )
     .unwrap();
