@@ -11,7 +11,6 @@ pub mod config_parsing;
 pub use config_parsing::{entity_parsing, event_parsing, ChainConfigTemplate};
 
 pub mod capitalization;
-pub mod linked_hashtable;
 
 use capitalization::CapitalizedOptions;
 #[derive(Serialize, Debug, PartialEq, Clone)]
