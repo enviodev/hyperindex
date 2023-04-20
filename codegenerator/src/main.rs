@@ -7,6 +7,7 @@ use clap::Parser;
 
 use indexly::{
     cli_args, config_parsing, copy_dir, entity_parsing, event_parsing, generate_templates,
+    linked_hashtable::RescripRecordHirarchyLinkedHashMap, RecordType,
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template};
@@ -39,16 +40,22 @@ fn main() -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(&code_gen_path)?;
             copy_dir(&CODEGEN_STATIC_DIR, &code_gen_path)?;
 
+            let rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
             let contract_types = event_parsing::get_contract_types_from_config(
                 &config_path,
                 &project_root_path,
                 &code_gen_path,
+                &rescript_subrecord_dependencies,
             )?;
             let entity_types = entity_parsing::get_entity_record_types_from_schema(&schema_path)?;
             let chain_config_templates =
                 config_parsing::convert_config_to_chain_configs(&config_path)?;
+            let sub_record_dependencies = rescript_subrecord_dependencies
+                .iter()
+                .collect::<Vec<RecordType>>();
 
             generate_templates(
+                sub_record_dependencies,
                 contract_types,
                 chain_config_templates,
                 entity_types,

@@ -22,7 +22,7 @@ struct HeadAndTail<K> {
     tail_key: K,
 }
 
-struct LinkedHashMap<K, T> {
+pub struct LinkedHashMap<K, T> {
     head_and_tail: Option<HeadAndTail<K>>,
     map: HashMap<K, Node<K, T>>,
 }
@@ -30,7 +30,7 @@ struct LinkedHashMap<K, T> {
 type RescriptTypeName = String;
 
 #[derive(Eq, Hash, PartialEq, Clone)]
-struct RescriptRecordKey {
+pub struct RescriptRecordKey {
     key: RescriptTypeName,
     number_of_matching_keys: i32,
 }
@@ -52,9 +52,9 @@ impl RescriptRecordKey {
     }
 }
 
-type RescripRecordHirarchyLinkedHashMap = LinkedHashMap<RescriptRecordKey, RecordType>;
+pub type RescripRecordHirarchyLinkedHashMap = LinkedHashMap<RescriptRecordKey, RecordType>;
 
-struct RescripRecordHirarchyLinkedHashMapIterator<'a> {
+pub struct RescripRecordHirarchyLinkedHashMapIterator<'a> {
     linked_hash_map: &'a RescripRecordHirarchyLinkedHashMap,
     next_key: Option<RescriptRecordKey>,
 }

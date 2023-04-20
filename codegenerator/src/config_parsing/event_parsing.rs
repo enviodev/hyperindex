@@ -1,10 +1,11 @@
 use pathdiff::diff_paths;
-use std::path::PathBuf;
+use std::{any::type_name, path::PathBuf};
 
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
-    Contract, Error, EventTemplate, HandlerPaths, ParamType, RequiredEntityTemplate,
+    linked_hashtable::RescripRecordHirarchyLinkedHashMap,
+    Contract, Error, EventTemplate, HandlerPaths, ParamType, RecordType, RequiredEntityTemplate,
 };
 
 use ethereum_abi::{Abi, Event as EthereumAbiEvent};
@@ -21,8 +22,12 @@ pub fn get_abi_from_file_path(file_path: &PathBuf) -> Result<Abi, Box<dyn Error>
     parse_abi(&abi_file)
 }
 
-fn abi_type_to_rescript_string(abi_type: &ethereum_abi::Type) -> String {
-    match abi_type {
+fn abi_type_to_rescript_string(
+    param: &ethereum_abi::Param,
+    // abi_type: &ethereum_abi::Type,
+    rescript_subrecord_dependencies: &RescripRecordHirarchyLinkedHashMap,
+) -> String {
+    match param.type_ {
         ethereum_abi::Type::Uint(_size) => String::from("Ethers.BigInt.t"),
         ethereum_abi::Type::Int(_size) => String::from("Ethers.BigInt.t"),
         ethereum_abi::Type::Bool => String::from("bool"),
@@ -31,38 +36,53 @@ fn abi_type_to_rescript_string(abi_type: &ethereum_abi::Type) -> String {
         ethereum_abi::Type::String => String::from("string"),
         ethereum_abi::Type::FixedBytes(_) => String::from("type_not_handled"),
         ethereum_abi::Type::Array(abi_type) => {
-            format!("array<{}>", abi_type_to_rescript_string(abi_type))
+            format!(
+                "array<{}>",
+                abi_type_to_rescript_string(param, rescript_subrecord_dependencies)
+            )
         }
         ethereum_abi::Type::FixedArray(abi_type, _) => {
-            format!("array<{}>", abi_type_to_rescript_string(abi_type))
+            format!(
+                "array<{}>",
+                abi_type_to_rescript_string(param, rescript_subrecord_dependencies)
+            )
         }
         ethereum_abi::Type::Tuple(abi_types) => {
-            //TODO:
-            //Not sure if we should inline tuples like this. Maybe we should rather make
-            //a record type above and reference it here.
-            //In which case this function should return an enum of literal type and reference type.
-            //Reference type means it should reference a type anoted above
-            let rescript_abi_types: Vec<String> = abi_types
+            let record_name = match param.name.as_str() {
+                "" => String::from("unnamed"),
+                name => name.to_string(),
+            };
+
+            let rescript_params: Vec<ParamType> = abi_types
                 .iter()
-                .map(|(_field_name, abi_type)| abi_type_to_rescript_string(abi_type))
+                .enumerate()
+                .map(|(i, (field_name, abi_type))| {
+                    let key = match field_name.as_str() {
+                        "" => format!("@as({}) {})", i.to_string(), i.to_string()),
+                        name => name.to_string(),
+                    };
+
+                    let ethereum_param = ethereum_abi::Param {
+                        name: key,
+                        type_: abi_type.clone(),
+                        indexed: None,
+                    };
+                    let type_ = abi_type_to_rescript_string(
+                        &ethereum_param,
+                        rescript_subrecord_dependencies,
+                    );
+
+                    ParamType { key, type_ }
+                })
                 .collect();
 
-            format!("({})", rescript_abi_types.join(", "))
-            //when this comes in we actually want to make a new record, simply define the name of the record in
-            //here and then push the append the record to the head of an array of records that need to be
-            //defined before this.
-            //We need to ensure that there is no duplication of these "sub record" types
-            //
-            //need a function that takes an event type makes the record but takes a  second argument of an
-            //array of sub records that can be appended.
-            //these sub records should be tested for their uniqueness in both naming and shape
-            //all sub records of all records need to be tested for uniqueness and naming
-            //
-            //rescript type should be an enum
-            //
-            //an initial implementation could avoid aliases but should still check for double names and either
-            //remove the second if they have the same record type or add an incrementor to the the name of the
-            //second (the name should then be changed where it gets referenced)
+            let record = RecordType {
+                name: record_name.to_capitalized_options(),
+                params: rescript_params,
+            };
+            let type_name = rescript_subrecord_dependencies.insert(record_name, record);
+
+            type_name
         }
     }
 }
@@ -70,6 +90,7 @@ fn abi_type_to_rescript_string(abi_type: &ethereum_abi::Type) -> String {
 fn get_event_template_from_event(
     config_event: &ConfigEvent,
     abi_event: &EthereumAbiEvent,
+    rescript_subrecord_dependencies: &RescripRecordHirarchyLinkedHashMap,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
@@ -77,7 +98,7 @@ fn get_event_template_from_event(
         .iter()
         .map(|input| ParamType {
             key: input.name.to_owned(),
-            type_: abi_type_to_rescript_string(&input.type_),
+            type_: abi_type_to_rescript_string(&input.type_, rescript_subrecord_dependencies),
         })
         .collect();
 
@@ -145,6 +166,7 @@ fn get_contract_type_from_config_contract(
     contract_abi: Abi,
     project_root_path: &PathBuf,
     code_gen_path: &PathBuf,
+    rescript_subrecord_dependencies: &RescripRecordHirarchyLinkedHashMap,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -156,7 +178,11 @@ fn get_contract_type_from_config_contract(
 
         match abi_event {
             Some(abi_event) => {
-                let event_type = get_event_template_from_event(config_event, abi_event);
+                let event_type = get_event_template_from_event(
+                    config_event,
+                    abi_event,
+                    rescript_subrecord_dependencies,
+                );
                 event_types.push(event_type);
             }
             None => (),
@@ -178,6 +204,7 @@ pub fn get_contract_types_from_config(
     config_path: &PathBuf,
     project_root_path: &PathBuf,
     code_gen_path: &PathBuf,
+    rescript_subrecord_dependencies: &RescripRecordHirarchyLinkedHashMap,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(config_path)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -194,6 +221,7 @@ pub fn get_contract_types_from_config(
                 parsed_abi,
                 project_root_path,
                 code_gen_path,
+                rescript_subrecord_dependencies,
             )?;
             contracts.push(contract);
         }
@@ -207,6 +235,7 @@ mod tests {
     use crate::{
         capitalization::Capitalize,
         config_parsing::{self, RequiredEntity},
+        linked_hashtable::RescripRecordHirarchyLinkedHashMap,
         EventTemplate, ParamType, RequiredEntityTemplate,
     };
     use ethereum_abi::{Event as AbiEvent, Param, Type};
@@ -241,8 +270,12 @@ mod tests {
             name: event_name.clone(),
             required_entities: None,
         };
-
-        let parsed_event_template = get_event_template_from_event(&config_event, &abi_event);
+        let rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+        let parsed_event_template = get_event_template_from_event(
+            &config_event,
+            &abi_event,
+            &rescript_subrecord_dependencies,
+        );
 
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
@@ -294,7 +327,12 @@ mod tests {
             }]),
         };
 
-        let parsed_event_template = get_event_template_from_event(&config_event, &abi_event);
+        let rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+        let parsed_event_template = get_event_template_from_event(
+            &config_event,
+            &abi_event,
+            &rescript_subrecord_dependencies,
+        );
 
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
@@ -319,14 +357,19 @@ mod tests {
     #[test]
     fn test_record_type_array() {
         let array_string_type = Type::Array(Box::new(Type::String));
-        let parsed_rescript_string = abi_type_to_rescript_string(&array_string_type);
+
+        let rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+        let parsed_rescript_string =
+            abi_type_to_rescript_string(&array_string_type, &rescript_subrecord_dependencies);
 
         assert_eq!(parsed_rescript_string, String::from("array<string>"))
     }
     #[test]
     fn test_record_type_fixed_array() {
         let array_string_type = Type::FixedArray(Box::new(Type::String), 1);
-        let parsed_rescript_string = abi_type_to_rescript_string(&array_string_type);
+        let rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+        let parsed_rescript_string =
+            abi_type_to_rescript_string(&array_string_type, &rescript_subrecord_dependencies);
 
         assert_eq!(parsed_rescript_string, String::from("array<string>"))
     }
@@ -337,7 +380,9 @@ mod tests {
             (String::from("unused_name"), Type::String),
             (String::from("unused_name2"), Type::Uint(256)),
         ]);
-        let parsed_rescript_string = abi_type_to_rescript_string(&tuple_type);
+        let rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+        let parsed_rescript_string =
+            abi_type_to_rescript_string(&tuple_type, &rescript_subrecord_dependencies);
 
         assert_eq!(
             parsed_rescript_string,

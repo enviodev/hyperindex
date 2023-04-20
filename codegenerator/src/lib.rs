@@ -9,6 +9,7 @@ use include_dir::{Dir, DirEntry};
 use serde::Serialize;
 
 pub mod config_parsing;
+pub mod linked_hashtable;
 
 pub use config_parsing::{entity_parsing, event_parsing, ChainConfigTemplate};
 
@@ -58,6 +59,7 @@ type EntityTemplate = RecordType;
 
 #[derive(Serialize)]
 struct TypesTemplate {
+    sub_record_dependencies: Vec<RecordType>,
     contracts: Vec<Contract>,
     entities: Vec<EntityTemplate>,
     chain_configs: Vec<ChainConfigTemplate>,
@@ -65,6 +67,7 @@ struct TypesTemplate {
 }
 
 pub fn generate_templates(
+    sub_record_dependencies: Vec<RecordType>,
     contracts: Vec<Contract>,
     chain_configs: Vec<ChainConfigTemplate>,
     entity_types: Vec<RecordType>,
@@ -79,6 +82,7 @@ pub fn generate_templates(
     let codegen_out_path = format!("{}/*", codegen_path_str);
 
     let types_data = TypesTemplate {
+        sub_record_dependencies,
         contracts,
         entities: entity_types,
         chain_configs,
