@@ -8,6 +8,7 @@ type contract = {
 type chainConfig = {
   provider: Ethers.JsonRpcProvider.t,
   startBlock: int,
+  chainId: int,
   contracts: array<contract>,
 }
 
@@ -40,6 +41,7 @@ let config: chainConfigs = [
   {
     provider: Ethers.JsonRpcProvider.make(~rpcUrl="{{chain_config.network_config.rpc_url}}", ~chainId={{chain_config.network_config.id}}),
     startBlock: {{chain_config.network_config.start_block}},
+    chainId: {{chain_config.network_config.id}},
     contracts: [
       {{#each chain_config.contracts as | contract |}}
       {

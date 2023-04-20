@@ -1,8 +1,8 @@
 exception UndefinedEvent(string)
-exception UndefinedContract(Ethers.ethAddress, Ethers.BigInt.t)
+exception UndefinedContract(Ethers.ethAddress, int)
 
-let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: Ethers.BigInt.t): string => {
-  switch (contractAddress->Ethers.ethAddressToString, chainId->Ethers.BigInt.toString) {
+let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: int): string => {
+  switch (contractAddress->Ethers.ethAddressToString, chainId->Belt.Int.toString) {
     {{#each chain_configs as |chain_config|}}
     {{#each chain_config.contracts as |contract|}}
     // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
