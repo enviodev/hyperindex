@@ -1,0 +1,4 @@
+DROP TABLE balance;
+DROP TABLE profile;
+ALTER TABLE "user" DROP COLUMN IF EXISTS "balance";
+ALTER TABLE "gravatar" DROP COLUMN IF EXISTS "balance";
