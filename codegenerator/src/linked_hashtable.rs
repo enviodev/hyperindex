@@ -16,14 +16,8 @@ impl<K, T> Node<K, T> {
     }
 }
 
-#[derive(Clone)]
-struct HeadAndTail<K> {
-    head_key: K,
-    tail_key: K,
-}
-
 pub struct LinkedHashMap<K, T> {
-    head_and_tail: Option<HeadAndTail<K>>,
+    head_key: Option<K>,
     map: HashMap<K, Node<K, T>>,
 }
 
@@ -85,7 +79,7 @@ enum HashMapKeyInsert<K> {
 impl RescripRecordHirarchyLinkedHashMap {
     pub fn new() -> RescripRecordHirarchyLinkedHashMap {
         LinkedHashMap {
-            head_and_tail: None,
+            head_key: None,
             map: HashMap::new(),
         }
     }
@@ -136,20 +130,17 @@ impl RescripRecordHirarchyLinkedHashMap {
         let node_key_insert =
             self.insert_into_map_or_increment_key(RescriptRecordKey::new(key), &mut node);
 
-        //match on whether there is an existing head/tail
+        //match on whether there is an existing head
         //ie whether this is the first item in the map
-        match &self.head_and_tail {
+        match &self.head_key {
             None => match node_key_insert {
-                //This case should never happen since a None head_and_tail would indicate
+                //This case should never happen since a None  would indicate
                 //the map is empty
                 HashMapKeyInsert::ExistingKeyAndEntry(key) => key.concat_key_and_count(),
-                //If it is an updated or new entry set the head and tail
+                //If it is an updated or new entry set the head
                 HashMapKeyInsert::UpdatedKeyNewEntry(key)
                 | HashMapKeyInsert::NewKeyAndEntry(key) => {
-                    self.head_and_tail = Some(HeadAndTail {
-                        head_key: key.clone(),
-                        tail_key: key.clone(),
-                    });
+                    self.head_key = Some(key.clone());
                     //return a string version of the updated key
                     //eg {key: "myType", number_of_matching_keys: 0} becomes myType
                     //and {key: "myType", number_of_matching_keys: 1} becomes myType_1
@@ -157,8 +148,8 @@ impl RescripRecordHirarchyLinkedHashMap {
                 }
             },
             //A Some case would mean there is an item in the map
-            Some(HeadAndTail { head_key, tail_key }) => match node_key_insert {
-                //If the type exists do not update head or tail
+            Some(head_key) => match node_key_insert {
+                //If the type exists do not update head
                 //the existing type should exist higher up the hirarcheacle list and will
                 //be available to anything needed below
                 HashMapKeyInsert::ExistingKeyAndEntry(key) => key.concat_key_and_count(),
@@ -171,20 +162,14 @@ impl RescripRecordHirarchyLinkedHashMap {
                         new_node_entry.next_key = Some(head_key.clone());
                     }
                     //update the current head_key to the new node key
-                    self.head_and_tail = Some(HeadAndTail {
-                        head_key: key.clone(),
-                        tail_key: tail_key.clone(),
-                    });
+                    self.head_key = Some(key.clone());
                     key.concat_key_and_count()
                 }
             },
         }
     }
     pub fn iter(&self) -> RescripRecordHirarchyLinkedHashMapIterator {
-        let next_key = self
-            .head_and_tail
-            .clone()
-            .map(|head_and_tail| head_and_tail.head_key);
+        let next_key = self.head_key.clone();
 
         RescripRecordHirarchyLinkedHashMapIterator {
             linked_hash_map: &self,
