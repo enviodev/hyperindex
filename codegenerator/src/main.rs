@@ -7,7 +7,7 @@ use clap::Parser;
 
 use indexly::{
     cli_args, config_parsing, copy_dir, entity_parsing, event_parsing, generate_templates,
-    linked_hashtable::RescripRecordHirarchyLinkedHashMap, RecordType,
+    linked_hashmap::RescriptRecordHierarchyLinkedHashMap, RecordType,
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template};
@@ -39,7 +39,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                                                         //config.yaml
             fs::create_dir_all(&code_gen_path)?;
 
-            let mut rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+            let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
             let contract_types = event_parsing::get_contract_types_from_config(
                 &config_path,
                 &project_root_path,

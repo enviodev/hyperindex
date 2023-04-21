@@ -1,5 +1,5 @@
 use crate::{capitalization::Capitalize, RecordType};
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::Hash};
 
 #[derive(PartialEq, Clone)]
 struct Node<K, T> {
@@ -19,6 +19,31 @@ impl<K, T> Node<K, T> {
 pub struct LinkedHashMap<K, T> {
     head_key: Option<K>,
     map: HashMap<K, Node<K, T>>,
+}
+pub struct LinkedHashMapIterator<'a, K, T> {
+    linked_hash_map: &'a LinkedHashMap<K, T>,
+    next_key: Option<K>,
+}
+
+impl<'a, K, T> Iterator for LinkedHashMapIterator<'a, K, T>
+where
+    K: PartialEq + Eq + Hash + Clone,
+    T: Clone,
+{
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        match &self.next_key {
+            None => None,
+            Some(next_key) => {
+                let next_node = self.linked_hash_map.map.get(next_key);
+
+                next_node.map(|node| {
+                    self.next_key = node.next_key.clone();
+                    node.data.clone()
+                })
+            }
+        }
+    }
 }
 
 type RescriptTypeName = String;
@@ -46,29 +71,7 @@ impl RescriptRecordKey {
     }
 }
 
-pub type RescripRecordHirarchyLinkedHashMap = LinkedHashMap<RescriptRecordKey, RecordType>;
-
-pub struct RescripRecordHirarchyLinkedHashMapIterator<'a> {
-    linked_hash_map: &'a RescripRecordHirarchyLinkedHashMap,
-    next_key: Option<RescriptRecordKey>,
-}
-
-impl<'a> Iterator for RescripRecordHirarchyLinkedHashMapIterator<'a> {
-    type Item = RecordType;
-    fn next(&mut self) -> Option<Self::Item> {
-        match &self.next_key {
-            None => None,
-            Some(next_key) => {
-                let next_node = self.linked_hash_map.map.get(&next_key);
-                //the
-                next_node.map(|node| {
-                    self.next_key = node.next_key.to_owned();
-                    node.data.to_owned()
-                })
-            }
-        }
-    }
-}
+pub type RescriptRecordHierarchyLinkedHashMap = LinkedHashMap<RescriptRecordKey, RecordType>;
 
 enum HashMapKeyInsert<K> {
     ExistingKeyAndEntry(K),
@@ -76,8 +79,8 @@ enum HashMapKeyInsert<K> {
     NewKeyAndEntry(K),
 }
 
-impl RescripRecordHirarchyLinkedHashMap {
-    pub fn new() -> RescripRecordHirarchyLinkedHashMap {
+impl RescriptRecordHierarchyLinkedHashMap {
+    pub fn new() -> RescriptRecordHierarchyLinkedHashMap {
         LinkedHashMap {
             head_key: None,
             map: HashMap::new(),
@@ -168,11 +171,11 @@ impl RescripRecordHirarchyLinkedHashMap {
             },
         }
     }
-    pub fn iter(&self) -> RescripRecordHirarchyLinkedHashMapIterator {
+    pub fn iter(&self) -> LinkedHashMapIterator<RescriptRecordKey, RecordType> {
         let next_key = self.head_key.clone();
 
-        RescripRecordHirarchyLinkedHashMapIterator {
-            linked_hash_map: &self,
+        LinkedHashMapIterator {
+            linked_hash_map: self,
             next_key,
         }
     }
@@ -182,7 +185,7 @@ impl RescripRecordHirarchyLinkedHashMap {
 mod tests {
     use crate::{capitalization::Capitalize, ParamType, RecordType};
 
-    use super::RescripRecordHirarchyLinkedHashMap;
+    use super::RescriptRecordHierarchyLinkedHashMap;
 
     #[test]
     fn different_rescript_records() {
@@ -204,7 +207,7 @@ mod tests {
             params: Vec::new(),
         };
 
-        let mut linked_table = RescripRecordHirarchyLinkedHashMap::new();
+        let mut linked_table = RescriptRecordHierarchyLinkedHashMap::new();
         linked_table.insert(name_1, record_1.clone());
         linked_table.insert(name_2, record_2.clone());
         linked_table.insert(name_3, record_3.clone());
@@ -237,7 +240,7 @@ mod tests {
             params: Vec::new(),
         };
 
-        let mut linked_table = RescripRecordHirarchyLinkedHashMap::new();
+        let mut linked_table = RescriptRecordHierarchyLinkedHashMap::new();
         linked_table.insert(name_1, record_1.clone());
         linked_table.insert(name_2, record_2.clone());
         linked_table.insert(name_3, record_3.clone());
@@ -277,7 +280,7 @@ mod tests {
             params: Vec::new(),
         };
 
-        let mut linked_table = RescripRecordHirarchyLinkedHashMap::new();
+        let mut linked_table = RescriptRecordHierarchyLinkedHashMap::new();
         linked_table.insert(name_1, record_1.clone());
         linked_table.insert(name_2, record_2.clone());
         linked_table.insert(name_3, record_3.clone());

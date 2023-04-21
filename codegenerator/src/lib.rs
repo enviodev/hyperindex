@@ -9,7 +9,7 @@ use include_dir::{Dir, DirEntry};
 use serde::Serialize;
 
 pub mod config_parsing;
-pub mod linked_hashtable;
+pub mod linked_hashmap;
 
 pub use config_parsing::{entity_parsing, event_parsing, ChainConfigTemplate};
 

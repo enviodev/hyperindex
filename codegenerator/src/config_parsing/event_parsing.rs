@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
-    linked_hashtable::RescripRecordHirarchyLinkedHashMap,
+    linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
     Contract, Error, EventTemplate, HandlerPaths, ParamType, RecordType, RequiredEntityTemplate,
 };
 
@@ -22,14 +22,14 @@ pub fn get_abi_from_file_path(file_path: &PathBuf) -> Result<Abi, Box<dyn Error>
     parse_abi(&abi_file)
 }
 
-struct CustomParam<'a> {
+struct EthereumEventParam<'a> {
     name: &'a str,
     abi_type: &'a ethereum_abi::Type,
 }
 
-impl<'a> CustomParam<'a> {
-    fn from_ethereum_abi_param(abi_type: &'a ethereum_abi::Param) -> CustomParam<'a> {
-        CustomParam {
+impl<'a> EthereumEventParam<'a> {
+    fn from_ethereum_abi_param(abi_type: &'a ethereum_abi::Param) -> EthereumEventParam<'a> {
+        EthereumEventParam {
             name: &abi_type.name,
             abi_type: &abi_type.type_,
         }
@@ -37,9 +37,8 @@ impl<'a> CustomParam<'a> {
 }
 
 fn abi_type_to_rescript_string(
-    param: &CustomParam,
-    // abi_type: &ethereum_abi::Type,
-    rescript_subrecord_dependencies: &mut RescripRecordHirarchyLinkedHashMap,
+    param: &EthereumEventParam,
+    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> String {
     match &param.abi_type {
         ethereum_abi::Type::Uint(_size) => String::from("Ethers.BigInt.t"),
@@ -50,7 +49,7 @@ fn abi_type_to_rescript_string(
         ethereum_abi::Type::String => String::from("string"),
         ethereum_abi::Type::FixedBytes(_) => String::from("type_not_handled"),
         ethereum_abi::Type::Array(abi_type) => {
-            let sub_param = CustomParam {
+            let sub_param = EthereumEventParam {
                 abi_type: &abi_type,
                 name: param.name,
             };
@@ -60,7 +59,7 @@ fn abi_type_to_rescript_string(
             )
         }
         ethereum_abi::Type::FixedArray(abi_type, _) => {
-            let sub_param = CustomParam {
+            let sub_param = EthereumEventParam {
                 abi_type: &abi_type,
                 name: param.name,
             };
@@ -81,11 +80,11 @@ fn abi_type_to_rescript_string(
                 .enumerate()
                 .map(|(i, (field_name, abi_type))| {
                     let key = match field_name.as_str() {
-                        "" => format!("@as({}) {})", i.to_string(), i.to_string()),
+                        "" => format!("@as({}) _{})", i, i),
                         name => name.to_string(),
                     };
 
-                    let ethereum_param = CustomParam {
+                    let ethereum_param = EthereumEventParam {
                         name: &key,
                         abi_type: &abi_type,
                     };
@@ -109,10 +108,10 @@ fn abi_type_to_rescript_string(
     }
 }
 
-fn get_event_template_from_event(
+fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthereumAbiEvent,
-    rescript_subrecord_dependencies: &mut RescripRecordHirarchyLinkedHashMap,
+    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
@@ -121,7 +120,7 @@ fn get_event_template_from_event(
         .map(|input| ParamType {
             key: input.name.to_owned(),
             type_: abi_type_to_rescript_string(
-                &CustomParam::from_ethereum_abi_param(input),
+                &EthereumEventParam::from_ethereum_abi_param(input),
                 rescript_subrecord_dependencies,
             ),
         })
@@ -191,7 +190,7 @@ fn get_contract_type_from_config_contract(
     contract_abi: Abi,
     project_root_path: &PathBuf,
     code_gen_path: &PathBuf,
-    rescript_subrecord_dependencies: &mut RescripRecordHirarchyLinkedHashMap,
+    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -203,7 +202,7 @@ fn get_contract_type_from_config_contract(
 
         match abi_event {
             Some(abi_event) => {
-                let event_type = get_event_template_from_event(
+                let event_type = get_event_template_from_ethereum_abi_event(
                     config_event,
                     abi_event,
                     rescript_subrecord_dependencies,
@@ -229,7 +228,7 @@ pub fn get_contract_types_from_config(
     config_path: &PathBuf,
     project_root_path: &PathBuf,
     code_gen_path: &PathBuf,
-    rescript_subrecord_dependencies: &mut RescripRecordHirarchyLinkedHashMap,
+    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(config_path)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -260,12 +259,12 @@ mod tests {
     use crate::{
         capitalization::Capitalize,
         config_parsing::{self, RequiredEntity},
-        linked_hashtable::RescripRecordHirarchyLinkedHashMap,
+        linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
         EventTemplate, ParamType, RecordType, RequiredEntityTemplate,
     };
     use ethereum_abi::{Event as AbiEvent, Param, Type};
 
-    use super::{abi_type_to_rescript_string, get_event_template_from_event};
+    use super::{abi_type_to_rescript_string, get_event_template_from_ethereum_abi_event};
     #[test]
     fn abi_event_to_record_1() {
         let input1_name = String::from("id");
@@ -295,8 +294,8 @@ mod tests {
             name: event_name.clone(),
             required_entities: None,
         };
-        let mut rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
-        let parsed_event_template = get_event_template_from_event(
+        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
+        let parsed_event_template = get_event_template_from_ethereum_abi_event(
             &config_event,
             &abi_event,
             &mut rescript_subrecord_dependencies,
@@ -352,8 +351,8 @@ mod tests {
             }]),
         };
 
-        let mut rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
-        let parsed_event_template = get_event_template_from_event(
+        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
+        let parsed_event_template = get_event_template_from_ethereum_abi_event(
             &config_event,
             &abi_event,
             &mut rescript_subrecord_dependencies,
@@ -382,12 +381,12 @@ mod tests {
     #[test]
     fn test_record_type_array() {
         let array_string_type = Type::Array(Box::new(Type::String));
-        let param = super::CustomParam {
+        let param = super::EthereumEventParam {
             abi_type: &array_string_type,
             name: "myArray",
         };
 
-        let mut rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
         let parsed_rescript_string =
             abi_type_to_rescript_string(&param, &mut rescript_subrecord_dependencies);
 
@@ -396,11 +395,11 @@ mod tests {
     #[test]
     fn test_record_type_fixed_array() {
         let array_fixed_arr_type = Type::FixedArray(Box::new(Type::String), 1);
-        let param = super::CustomParam {
+        let param = super::EthereumEventParam {
             abi_type: &array_fixed_arr_type,
             name: "myArrayFixed",
         };
-        let mut rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
         let parsed_rescript_string =
             abi_type_to_rescript_string(&param, &mut rescript_subrecord_dependencies);
 
@@ -413,11 +412,11 @@ mod tests {
             (String::from("myString"), Type::String),
             (String::from("myUint256"), Type::Uint(256)),
         ]);
-        let param = super::CustomParam {
+        let param = super::EthereumEventParam {
             abi_type: &tuple_type,
             name: "myStruct",
         };
-        let mut rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
         let parsed_rescript_string =
             abi_type_to_rescript_string(&param, &mut rescript_subrecord_dependencies);
 
