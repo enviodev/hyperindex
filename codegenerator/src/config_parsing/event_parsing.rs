@@ -134,7 +134,10 @@ fn get_contract_type_from_config_contract(
     let mut get_contract_type_from_config_contract_canonicalized =
         get_contract_type_from_config_contract
             .canonicalize()
-            .unwrap();
+            .expect(&format!(
+                "event handler file {} not found",
+                handler_path_joined.display()
+            ));
 
     get_contract_type_from_config_contract_canonicalized.push("src");
 
