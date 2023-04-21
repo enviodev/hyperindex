@@ -102,5 +102,37 @@
     ],
     "name": "UpdatedGravatar",
     "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": false, "name": "id", "type": "uint256" },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "email",
+            "type": "string"
+          }
+        ],
+        "indexed": false,
+        "internalType": "struct TestContract.ContactDetails",
+        "name": "contactDetails",
+        "type": "tuple"
+      }
+    ],
+    "name": "TestEvent",
+    "type": "event"
   }
 ]

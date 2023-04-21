@@ -7,12 +7,22 @@ let getDefaultHandler: (string, 'a, 'b) => unit = (handlerName, _, _) => {
 
 module GravatarContract = {
   %%private(
+    let testEventLoadEntities = ref(None)
+    let testEventHandler = ref(None)
     let newGravatarLoadEntities = ref(None)
     let newGravatarHandler = ref(None)
     let updatedGravatarLoadEntities = ref(None)
     let updatedGravatarHandler = ref(None)
   )
 
+  let registerTestEventLoadEntities = (
+    handler: (
+      Types.eventLog<Types.GravatarContract.TestEventEvent.eventArgs>,
+      Types.GravatarContract.TestEventEvent.loaderContext,
+    ) => unit,
+  ) => {
+    testEventLoadEntities := Some(handler)
+  }
   let registerNewGravatarLoadEntities = (
     handler: (
       Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs>,
@@ -30,6 +40,14 @@ module GravatarContract = {
     updatedGravatarLoadEntities := Some(handler)
   }
 
+  let registerTestEventHandler = (
+    handler: (
+      Types.eventLog<Types.GravatarContract.TestEventEvent.eventArgs>,
+      Types.GravatarContract.TestEventEvent.context,
+    ) => unit,
+  ) => {
+    testEventHandler := Some(handler)
+  }
   let registerNewGravatarHandler = (
     handler: (
       Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs>,
@@ -47,6 +65,10 @@ module GravatarContract = {
     updatedGravatarHandler := Some(handler)
   }
 
+  let getTestEventLoadEntities = () =>
+    testEventLoadEntities.contents->Belt.Option.getWithDefault(
+      getDefaultHandler("testEventLoadEntities"),
+    )
   let getNewGravatarLoadEntities = () =>
     newGravatarLoadEntities.contents->Belt.Option.getWithDefault(
       getDefaultHandler("newGravatarLoadEntities"),
@@ -56,6 +78,8 @@ module GravatarContract = {
       getDefaultHandler("updatedGravatarLoadEntities"),
     )
 
+  let getTestEventHandler = () =>
+    testEventHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("testEventHandler"))
   let getNewGravatarHandler = () =>
     newGravatarHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("newGravatarHandler"))
   let getUpdatedGravatarHandler = () =>

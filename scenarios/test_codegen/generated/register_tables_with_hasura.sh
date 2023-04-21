@@ -39,6 +39,22 @@ curl -X POST localhost:8080/v1/metadata \
   -d '{
     "type": "pg_create_select_permission",
     "args": {
+        "table": "user",
+        "role": "public",
+        "source": "default",
+        "permission": {
+            "columns": "*",
+            "filter": {}
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_select_permission",
+    "args": {
         "table": "gravatar",
         "role": "public",
         "source": "default",

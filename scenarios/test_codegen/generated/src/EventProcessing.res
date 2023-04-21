@@ -1,5 +1,9 @@
 let eventRouter = (event: Types.eventAndContext) => {
   switch event {
+  | GravatarContract_TestEventWithContext(
+      event,
+      context,
+    ) => event->Handlers.GravatarContract.getTestEventHandler()(context)
   | GravatarContract_NewGravatarWithContext(
       event,
       context,
@@ -17,6 +21,18 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
     Types.eventAndContext,
   )> = eventBatch->Belt.Array.map(event => {
     switch event {
+    | GravatarContract_TestEvent(event) => {
+        let contextHelper = Context.GravatarContract.TestEventEvent.contextCreator()
+        Handlers.GravatarContract.getTestEventLoadEntities()(
+          event,
+          contextHelper.getLoaderContext(),
+        )
+        let context = contextHelper.getContext()
+        (
+          contextHelper.getEntitiesToLoad(),
+          Types.GravatarContract_TestEventWithContext(event, context),
+        )
+      }
     | GravatarContract_NewGravatar(event) => {
         let contextHelper = Context.GravatarContract.NewGravatarEvent.contextCreator()
         Handlers.GravatarContract.getNewGravatarLoadEntities()(

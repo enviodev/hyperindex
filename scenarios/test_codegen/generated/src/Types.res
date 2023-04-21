@@ -4,6 +4,13 @@
 
 type id = string
 
+//nested subrecord types
+
+type contactDetails = {
+  name: string,
+  email: string,
+}
+
 type entityRead =
   | UserRead(id)
   | GravatarRead(id)
@@ -56,6 +63,29 @@ type eventLog<'a> = {
 }
 
 module GravatarContract = {
+  module TestEventEvent = {
+    type eventArgs = {
+      id: Ethers.BigInt.t,
+      user: Ethers.ethAddress,
+      contactDetails: contactDetails,
+    }
+    type userEntityHandlerContext = {
+      insert: userEntity => unit,
+      update: userEntity => unit,
+      delete: id => unit,
+    }
+    type gravatarEntityHandlerContext = {
+      insert: gravatarEntity => unit,
+      update: gravatarEntity => unit,
+      delete: id => unit,
+    }
+    type context = {
+      user: userEntityHandlerContext,
+      gravatar: gravatarEntityHandlerContext,
+    }
+
+    type loaderContext = {}
+  }
   module NewGravatarEvent = {
     type eventArgs = {
       id: Ethers.BigInt.t,
@@ -110,10 +140,15 @@ module GravatarContract = {
 }
 
 type event =
+  | GravatarContract_TestEvent(eventLog<GravatarContract.TestEventEvent.eventArgs>)
   | GravatarContract_NewGravatar(eventLog<GravatarContract.NewGravatarEvent.eventArgs>)
   | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>)
 
 type eventAndContext =
+  | GravatarContract_TestEventWithContext(
+      eventLog<GravatarContract.TestEventEvent.eventArgs>,
+      GravatarContract.TestEventEvent.context,
+    )
   | GravatarContract_NewGravatarWithContext(
       eventLog<GravatarContract.NewGravatarEvent.eventArgs>,
       GravatarContract.NewGravatarEvent.context,
@@ -124,11 +159,13 @@ type eventAndContext =
     )
 
 type eventName =
+  | GravatarContract_TestEventEvent
   | GravatarContract_NewGravatarEvent
   | GravatarContract_UpdatedGravatarEvent
 
 let eventNameToString = (eventName: eventName) =>
   switch eventName {
+  | GravatarContract_TestEventEvent => "TestEvent"
   | GravatarContract_NewGravatarEvent => "NewGravatar"
   | GravatarContract_UpdatedGravatarEvent => "UpdatedGravatar"
   }
