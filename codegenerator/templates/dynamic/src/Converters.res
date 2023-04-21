@@ -38,10 +38,9 @@ module {{contract.name.capitalized}} = {
     ~blockPromise: promise<Ethers.JsonRpcProvider.block>,
   ) => {
     let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
-      id: logDescription.args.id,
-      owner: logDescription.args.owner,
-      imageUrl: logDescription.args.imageUrl,
-      displayName: logDescription.args.displayName,
+      {{#each event.params as | param |}}
+        {{param.key}}: logDescription.args.{{param.key}},
+      {{/each}}
     }
     let block = await blockPromise
 

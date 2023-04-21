@@ -40,12 +40,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(&code_gen_path)?;
             copy_dir(&CODEGEN_STATIC_DIR, &code_gen_path)?;
 
-            let rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
+            let mut rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
             let contract_types = event_parsing::get_contract_types_from_config(
                 &config_path,
                 &project_root_path,
                 &code_gen_path,
-                &rescript_subrecord_dependencies,
+                &mut rescript_subrecord_dependencies,
             )?;
             let entity_types = entity_parsing::get_entity_record_types_from_schema(&schema_path)?;
             let chain_config_templates =

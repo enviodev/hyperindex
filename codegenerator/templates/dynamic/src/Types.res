@@ -4,6 +4,17 @@
 
 type id = string
 
+//nested subrecord types
+
+{{#each sub_record_dependencies as | subrecord |}}
+   type {{subrecord.name.uncapitalized}} = {
+    {{#each subrecord.params as | param |}}
+      {{param.key}}: {{param.type_}},
+    {{/each}}
+   }
+
+{{/each}}
+
 type entityRead = 
 {{#each entities as | entity |}}
 | {{entity.name.capitalized}}Read(id)
