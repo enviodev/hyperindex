@@ -5,6 +5,7 @@ use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
     linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
+    project_paths::ProjectPaths,
     Contract, Error, EventTemplate, HandlerPaths, ParamType, RecordType, RequiredEntityTemplate,
 };
 
@@ -148,10 +149,9 @@ fn get_event_template_from_ethereum_abi_event(
 
 fn get_contract_handler_paths(
     config_contract: &ConfigContract,
-    project_root_path: &PathBuf,
-    code_gen_path: &PathBuf,
+    project_paths: &ProjectPaths,
 ) -> Result<HandlerPaths, Box<dyn Error>> {
-    let handler_path_joined = project_root_path.join(
+    let handler_path_joined = project_paths.project_root.join(
         config_contract
             .handler
             .clone()
@@ -160,15 +160,12 @@ fn get_contract_handler_paths(
 
     let handler_path_absolute = handler_path_joined.canonicalize()?;
 
-    let mut get_contract_type_from_config_contract_canonicalized = code_gen_path.canonicalize()?;
+    let mut generated_canonicalized = project_paths.generated.canonicalize()?;
 
-    get_contract_type_from_config_contract_canonicalized.push("src");
+    generated_canonicalized.push("src");
 
-    let handler_path_diff = diff_paths(
-        handler_path_absolute.clone(),
-        &get_contract_type_from_config_contract_canonicalized,
-    )
-    .ok_or("diff paths failed")?;
+    let handler_path_diff = diff_paths(handler_path_absolute.clone(), &generated_canonicalized)
+        .ok_or("diff paths failed")?;
 
     let handler_path_relative = handler_path_diff
         .to_str()
@@ -188,8 +185,7 @@ fn get_contract_handler_paths(
 fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     contract_abi: Abi,
-    project_root_path: &PathBuf,
-    code_gen_path: &PathBuf,
+    project_paths: &ProjectPaths,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
@@ -213,7 +209,7 @@ fn get_contract_type_from_config_contract(
         };
     }
 
-    let handler = get_contract_handler_paths(config_contract, project_root_path, code_gen_path)?;
+    let handler = get_contract_handler_paths(config_contract, &project_paths)?;
 
     let contract = Contract {
         name: config_contract.name.to_capitalized_options(),
@@ -225,16 +221,15 @@ fn get_contract_type_from_config_contract(
 }
 
 pub fn get_contract_types_from_config(
-    config_path: &PathBuf,
-    project_root_path: &PathBuf,
-    code_gen_path: &PathBuf,
+    project_paths: &ProjectPaths,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
-    let config = deserialize_config_from_yaml(config_path)?;
+    let config = deserialize_config_from_yaml(&project_paths.config)?;
     let mut contracts: Vec<Contract> = Vec::new();
     for network in config.networks.iter() {
         for config_contract in network.contracts.iter() {
-            let config_parent_path = config_path
+            let config_parent_path = &project_paths
+                .config
                 .parent()
                 .expect("config path should have a parent directory");
             let parsed_abi: Abi =
@@ -243,8 +238,7 @@ pub fn get_contract_types_from_config(
             let contract = get_contract_type_from_config_contract(
                 config_contract,
                 parsed_abi,
-                project_root_path,
-                code_gen_path,
+                project_paths,
                 rescript_subrecord_dependencies,
             )?;
             contracts.push(contract);
