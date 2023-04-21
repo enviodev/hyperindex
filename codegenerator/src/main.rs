@@ -38,7 +38,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             let schema_path = project_root_path.join("schema.graphql"); //TODO: get this from the
                                                                         //config.yaml
             fs::create_dir_all(&code_gen_path)?;
-            copy_dir(&CODEGEN_STATIC_DIR, &code_gen_path)?;
 
             let mut rescript_subrecord_dependencies = RescripRecordHirarchyLinkedHashMap::new();
             let contract_types = event_parsing::get_contract_types_from_config(
@@ -53,6 +52,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let sub_record_dependencies = rescript_subrecord_dependencies
                 .iter()
                 .collect::<Vec<RecordType>>();
+
+            copy_dir(&CODEGEN_STATIC_DIR, &code_gen_path)?;
 
             generate_templates(
                 sub_record_dependencies,

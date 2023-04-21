@@ -164,13 +164,14 @@ mod tests {
         assert_eq!(result, "option<int>".to_owned());
     }
 
-    // #[test]
-    // fn gql_type_to_rescript_type_non_null_int() {
-    //     let gql_int_type = Type::NonNullType::(Box::new(Type::NamedType(String::from("Int")::<String>)));
-    //     let result = gql_type_to_rescript_type(&gql_int_type).unwrap();
-    //
-    //     assert_eq!(result, "int".to_owned());
-    // }
+    #[test]
+    fn gql_type_to_rescript_type_non_null_int() {
+        let empty_set = HashSet::new();
+        let gql_int_type = Type::NonNullType(Box::new(Type::NamedType("Int".to_owned())));
+        let result = gql_type_to_rescript_type(&gql_int_type, &empty_set).unwrap();
+
+        assert_eq!(result, "int".to_owned());
+    }
 
     #[test]
     fn gql_type_to_rescript_type_non_null_array() {
