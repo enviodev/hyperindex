@@ -1,3 +1,4 @@
+use pathdiff::diff_paths;
 use std::path::PathBuf;
 
 use crate::{
@@ -128,7 +129,10 @@ fn get_contract_type_from_config_contract(
             .clone()
             .unwrap_or(String::from("./src/handlers.js")), // TODO make a better default (based on contract name or something.)
     );
-    let handler_path_absolute = handler_path_joined.canonicalize().unwrap();
+    let handler_path_absolute = handler_path_joined.canonicalize().expect(&format!(
+        "event handler file {} not found",
+        handler_path_joined.display()
+    ));
 
     let mut get_contract_type_from_config_contract_canonicalized =
         get_contract_type_from_config_contract

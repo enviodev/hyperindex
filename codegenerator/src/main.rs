@@ -37,8 +37,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             let schema_path = project_root_path.join("schema.graphql"); //TODO: get this from the
                                                                         //config.yaml
             fs::create_dir_all(&code_gen_path)?;
-            copy_dir(&CODEGEN_STATIC_DIR, &code_gen_path)?;
-
             let contract_types = event_parsing::get_contract_types_from_config(
                 &config_path,
                 &project_root_path,
@@ -47,6 +45,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let entity_types = entity_parsing::get_entity_record_types_from_schema(&schema_path)?;
             let chain_config_templates =
                 config_parsing::convert_config_to_chain_configs(&config_path)?;
+
+            copy_dir(&CODEGEN_STATIC_DIR, &code_gen_path)?;
 
             generate_templates(
                 contract_types,
