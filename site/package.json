@@ -1,0 +1,36 @@
+{
+  "name": "landing-site",
+  "version": "0.0.1",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "next:dev": "NEXT_PUBLIC_DEVMODE=true next",
+    "debug": "NODE_OPTIONS='--inspect' next",
+    "now-build": "pnpm res:build && next build",
+    "next:export": "next export",
+    "next:start": "next start -p $PORT",
+    "res:build": "rescript build -with-deps",
+    "res:clean": "rescript clean -with-deps",
+    "res:start": "rescript build -w -with-deps",
+    "res:format": "rescript format -all",
+    "dev": "npm-run-all --parallel res:start next:dev"
+  },
+  "keywords": [
+    "rescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@apollo/client": "^3.7.12",
+    "@reasonml-community/graphql-ppx": "^1.2.3",
+    "@rescript/react": "^0.11.0",
+    "next": "^13.3.1",
+    "next-transpile-modules": "^10.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "rescript": "*",
+    "rescript-apollo-client": "^3.2.0"
+  },
+  "devDependencies": {
+    "npm-run-all2": "^6.0.5"
+  }
+}

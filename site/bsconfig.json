@@ -1,0 +1,52 @@
+{
+  "name": "landing-site",
+  "namespace": false,
+  "reason": {
+    "react-jsx": 3
+  },
+  "graphql": {
+    "apolloMode": true,
+    "extendMutation": "ApolloClient.GraphQL_PPX.ExtendMutation",
+    "extendQuery": "ApolloClient.GraphQL_PPX.ExtendQuery",
+    "extendSubscription": "ApolloClient.GraphQL_PPX.ExtendSubscription",
+    "templateTagReturnType": "ApolloClient.GraphQL_PPX.templateTagReturnType",
+    "templateTagImport": "gql",
+    "templateTagLocation": "@apollo/client",
+    "custom-fields": {
+      "BigInt": "BigInt",
+      "Bytes": "Address"
+    }
+  },
+  "bs-dependencies": [
+    "@reasonml-community/graphql-ppx",        
+    "@rescript/react",
+    "rescript-apollo-client" 
+  ],
+  "ppx-flags": [
+    "@reasonml-community/graphql-ppx/ppx"
+  ],
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
+    }    
+  ],
+  "package-specs": {
+    "module": "es6",
+    "in-source": true
+  },
+  "suffix": ".bs.js",
+  "warnings": {
+    "WARNING NUMBERS: (not part of the config - nextjs doesn't like it if I leave these as comments)": {
+      "WARNING 4": "  - this pattern-matching is fragile. It will remain exhaustive when constructors are added to switch statement",
+      "WARNING 9": "  - When destructuring a record : Either bind these labels explicitly or add '; _' to the pattern.",
+      "WARNING 102": "- Polymorphic comparison introduced (maybe unsafe)"
+    },
+    "number": "+A-4-9-102",
+    "error": "+A-4-9-102"
+  },
+  "bsc-flags": [
+    "-open Belt",
+    "-bs-g"
+  ]
+}
