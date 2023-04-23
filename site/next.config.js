@@ -6,7 +6,7 @@ const withTM = require("next-transpile-modules")(transpileModules);
 
 const config = {
   images: {
-    domains: ["somedomain.com"],
+    domains: ["media-float-capital.fra1.cdn.digitaloceanspaces.com"],
   },
   swcMinify: true,
   pageExtensions: ["jsx", "js"],

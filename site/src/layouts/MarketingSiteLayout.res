@@ -1,4 +1,4 @@
 @react.component
 let make = (~children) => {
-  <div> children </div>
+  <div className="bg-black"> children </div> //todo remove black bg
 }
