@@ -23,6 +23,7 @@
     "@apollo/client": "^3.7.12",
     "@reasonml-community/graphql-ppx": "^1.2.3",
     "@rescript/react": "^0.11.0",
+    "@ryyppy/rescript-promise": "^2.1.0",
     "next": "^13.3.1",
     "next-transpile-modules": "^10.0.0",
     "react": "^18.2.0",

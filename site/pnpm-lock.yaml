@@ -4,6 +4,7 @@ specifiers:
   '@apollo/client': ^3.7.12
   '@reasonml-community/graphql-ppx': ^1.2.3
   '@rescript/react': ^0.11.0
+  '@ryyppy/rescript-promise': ^2.1.0
   next: ^13.3.1
   next-transpile-modules: ^10.0.0
   npm-run-all2: ^6.0.5
@@ -16,6 +17,7 @@ dependencies:
   '@apollo/client': 3.7.12_biqbaboplfbrettd7655fr4n2y
   '@reasonml-community/graphql-ppx': 1.2.3_rescript@10.1.4
   '@rescript/react': 0.11.0_biqbaboplfbrettd7655fr4n2y
+  '@ryyppy/rescript-promise': 2.1.0
   next: 13.3.1_biqbaboplfbrettd7655fr4n2y
   next-transpile-modules: 10.0.0
   react: 18.2.0
@@ -192,6 +194,10 @@ packages:
     dependencies:
       react: 18.2.0
       react-dom: 18.2.0_react@18.2.0
+    dev: false
+
+  /@ryyppy/rescript-promise/2.1.0:
+    resolution: {integrity: sha512-+dW6msBrj2Lr2hbEMX+HoWCvN89qVjl94RwbYWJgHQuj8jm/izdPC0YzxgpGoEFdeAEW2sOozoLcYHxT6o5WXQ==}
     dev: false
 
   /@swc/helpers/0.5.0:
