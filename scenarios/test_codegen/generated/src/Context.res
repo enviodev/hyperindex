@@ -27,7 +27,10 @@ module GravatarContract = {
             update: entity => {
               IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
             },
-            delete: id => (),
+            delete: id =>
+              Js.Console.warn(
+                `[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`,
+              ),
           },
         },
       }
@@ -71,7 +74,10 @@ module GravatarContract = {
             update: entity => {
               IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
             },
-            delete: id => (),
+            delete: id =>
+              Js.Console.warn(
+                `[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`,
+              ),
             gravatarWithChanges: () =>
               optIdOf_gravatarWithChanges.contents->Belt.Option.flatMap(id =>
                 IO.InMemoryStore.Gravatar.getGravatar(~id)

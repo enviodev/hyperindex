@@ -4,7 +4,7 @@
 var JestBench = require("jest-bench");
 
 JestBench.benchmarkSuite("benchmark E2E demo", {
-      "3 newgravatar & 3 updategravatar": (function (defer) {
+      "3 newgravatar & 3 updategravatar": (function (_defer) {
           
         })
     });

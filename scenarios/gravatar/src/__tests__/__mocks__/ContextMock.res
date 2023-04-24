@@ -19,7 +19,7 @@ let mockNewGravatarContext: Types.GravatarContract.NewGravatarEvent.context = {
     update: gravatarUpdate => {
       updateMock->MockJs.fn(gravatarUpdate.id)->ignore
     },
-    delete: id => (),
+    delete: _id => Js.log("inimplemented delete"),
   },
 }
 
@@ -32,6 +32,6 @@ let mockUpdateGravatarContext: Types.GravatarContract.UpdatedGravatarEvent.conte
     update: gravatarUpdate => {
       updateMock->MockJs.fn(gravatarUpdate.id)->ignore
     },
-    delete: id => (),
+    delete: _id => Js.log("inimplemented delete"),
   },
 }
