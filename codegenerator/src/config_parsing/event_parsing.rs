@@ -1,12 +1,11 @@
-use pathdiff::diff_paths;
 use std::path::PathBuf;
 
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
     linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
-    project_paths::ProjectPaths,
-    Contract, Error, EventTemplate, HandlerPaths, ParamType, RecordType, RequiredEntityTemplate,
+    project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
+    Contract, Error, EventTemplate, ParamType, RecordType, RequiredEntityTemplate,
 };
 
 use ethereum_abi::{Abi, Event as EthereumAbiEvent};
@@ -147,45 +146,11 @@ fn get_event_template_from_ethereum_abi_event(
     event_type
 }
 
-fn get_contract_handler_paths(
-    config_contract: &ConfigContract,
-    project_paths: &ProjectPaths,
-) -> Result<HandlerPaths, Box<dyn Error>> {
-    let handler_path_joined = project_paths.project_root.join(
-        config_contract
-            .handler
-            .clone()
-            .unwrap_or(String::from("./src/handlers.js")), // TODO make a better default (based on contract name or something.)
-    );
-
-    let handler_path_absolute = handler_path_joined.canonicalize()?;
-
-    let mut generated_canonicalized = project_paths.generated.canonicalize()?;
-
-    generated_canonicalized.push("src");
-
-    let handler_path_diff = diff_paths(handler_path_absolute.clone(), &generated_canonicalized)
-        .ok_or("diff paths failed")?;
-
-    let handler_path_relative = handler_path_diff
-        .to_str()
-        .unwrap_or("../../src/handlers.js");
-
-    let handler_paths = HandlerPaths {
-        absolute: handler_path_absolute
-            .to_str()
-            .ok_or("<Error generating path. Please file an issue at https://github.com/Float-Capital/indexer/issues/new>")?
-            .to_owned(),
-        relative_to_generated_src: handler_path_relative.to_owned(),
-    };
-
-    Ok(handler_paths)
-}
-
 fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     contract_abi: Abi,
-    project_paths: &ProjectPaths,
+    parsed_paths: &ParsedPaths,
+    network_id: i32,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
@@ -208,27 +173,32 @@ fn get_contract_type_from_config_contract(
             None => (),
         };
     }
+    let contract_id = ContractUniqueId {
+        network_id,
+        name: config_contract.name.clone(),
+    };
 
-    let handler = get_contract_handler_paths(config_contract, &project_paths)?;
+    let handler_template = parsed_paths.get_contract_handler_paths_template(contract_id)?;
 
     let contract = Contract {
         name: config_contract.name.to_capitalized_options(),
         events: event_types,
-        handler,
+        handler: handler_template,
     };
 
     Ok(contract)
 }
 
 pub fn get_contract_types_from_config(
-    project_paths: &ProjectPaths,
+    parsed_paths: &ParsedPaths,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
-    let config = deserialize_config_from_yaml(&project_paths.config)?;
+    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     let mut contracts: Vec<Contract> = Vec::new();
     for network in config.networks.iter() {
         for config_contract in network.contracts.iter() {
-            let config_parent_path = &project_paths
+            let config_parent_path = &parsed_paths
+                .project_paths
                 .config
                 .parent()
                 .ok_or_else(|| "Config path should have a parent directory")?;
@@ -236,10 +206,12 @@ pub fn get_contract_types_from_config(
             let parsed_abi: Abi =
                 get_abi_from_file_path(&config_parent_path.join(&config_contract.abi_file_path))?;
 
+            let network_id = network.id;
             let contract = get_contract_type_from_config_contract(
                 config_contract,
                 parsed_abi,
-                project_paths,
+                parsed_paths,
+                network_id,
                 rescript_subrecord_dependencies,
             )?;
             contracts.push(contract);

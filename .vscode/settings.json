@@ -4,5 +4,6 @@
       "fileMatch": ["config.yaml"],
       "url": "./config-schema/config-scheama.json"
     }
-  ]
+  ],
+  "rust-analyzer.showUnlinkedFileNotification": false
 }

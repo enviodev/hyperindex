@@ -7,7 +7,7 @@ use clap::Parser;
 
 use envio::{
     cli_args, config_parsing, copy_dir, entity_parsing, event_parsing, generate_templates,
-    linked_hashmap::RescriptRecordHierarchyLinkedHashMap, project_paths::ProjectPaths, RecordType,
+    linked_hashmap::RescriptRecordHierarchyLinkedHashMap, project_paths::ParsedPaths, RecordType,
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
@@ -29,19 +29,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             Ok(())
         }
+
         CommandType::Codegen(args) => {
-            let project_paths = ProjectPaths::new(args.to_project_paths_args())?;
+            let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
+            let project_paths = &parsed_paths.project_paths;
 
             fs::create_dir_all(&project_paths.generated)?;
 
             let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
             let contract_types = event_parsing::get_contract_types_from_config(
-                &project_paths,
+                &parsed_paths,
                 &mut rescript_subrecord_dependencies,
             )?;
-            let entity_types = entity_parsing::get_entity_record_types_from_schema(&project_paths)?;
+
+            let entity_types = entity_parsing::get_entity_record_types_from_schema(&parsed_paths)?;
             let chain_config_templates =
-                config_parsing::convert_config_to_chain_configs(&project_paths)?;
+                config_parsing::convert_config_to_chain_configs(project_paths)?;
             let sub_record_dependencies = rescript_subrecord_dependencies
                 .iter()
                 .collect::<Vec<RecordType>>();
