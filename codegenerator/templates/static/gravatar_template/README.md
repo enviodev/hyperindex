@@ -72,7 +72,7 @@ type Gravatar @entity {
 ## Writing Handlers
 
 Once the above configuration files are in place, run:
-`indexly codegen`
+`envio codegen`
 
 The entity and event types will then be available in the handler files.
 
