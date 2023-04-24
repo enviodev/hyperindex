@@ -32,6 +32,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         CommandType::Codegen(args) => {
             let project_paths = ProjectPaths::new(args.to_project_paths_args())?;
 
+            fs::create_dir_all(&project_paths.generated)?;
+
             let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
             let contract_types = event_parsing::get_contract_types_from_config(
                 &project_paths,
