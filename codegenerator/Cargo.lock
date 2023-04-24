@@ -229,6 +229,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7fcaabb2fef8c910e7f4c7ce9f67a1283a1715879a7c230ca9d6d1ae31f16d91"
 
 [[package]]
+name = "envio"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ethereum_abi",
+ "graphql-parser",
+ "handlebars",
+ "include_dir",
+ "pathdiff",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -412,21 +427,6 @@ checksum = "b139284b5cf57ecfa712bcc66950bb635b31aff41c188e8a4cfc758eca374a3f"
 dependencies = [
  "proc-macro2",
  "quote",
-]
-
-[[package]]
-name = "indexly"
-version = "0.1.0"
-dependencies = [
- "clap",
- "ethereum_abi",
- "graphql-parser",
- "handlebars",
- "include_dir",
- "pathdiff",
- "serde",
- "serde_json",
- "serde_yaml",
 ]
 
 [[package]]

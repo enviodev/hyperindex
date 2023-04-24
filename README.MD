@@ -10,9 +10,9 @@ Install the following tools:
    `curl https://sh.rustup.rs -sSf | sh`
 3. Docker Desktop https://www.docker.com/products/docker-desktop/
 
-Using "indexly"
+Using "envio"
 
 1. `cargo install --path codegenerator`
-2. run `indexly --help` to see available commands
-3. cd into folder of your choice and run: `indexly init` to get a Gravatar template
-4. then run: `indexly codegen`
+2. run `envio --help` to see available commands
+3. cd into folder of your choice and run: `envio init` to get a Gravatar template
+4. then run: `envio codegen`

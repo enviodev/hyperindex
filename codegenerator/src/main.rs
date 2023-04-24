@@ -5,7 +5,7 @@ use std::process::Command;
 
 use clap::Parser;
 
-use indexly::{
+use envio::{
     cli_args, config_parsing, copy_dir, entity_parsing, event_parsing, generate_templates,
     linked_hashmap::RescriptRecordHierarchyLinkedHashMap, project_paths::ProjectPaths, RecordType,
 };
