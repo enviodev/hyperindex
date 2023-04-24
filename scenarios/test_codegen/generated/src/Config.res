@@ -29,7 +29,7 @@ let db: DrizzleOrm.Pool.poolConfig = {
   database: envSafe->EnvSafe.get(
     ~name="PG_DATABASE",
     ~struct=S.string(),
-    ~devFallback="indexly-dev",
+    ~devFallback="envio-dev",
     (),
   ),
 }

@@ -4,7 +4,7 @@ Run from this directory:
 
 ```bash
 
-indexly codegen
+envio codegen
 docker compose up -d # NOTE: if you have some stale data, run "docker compose down -v" first.
 PG_PORT=5433 pnpm start
 ```
