@@ -231,7 +231,8 @@ pub fn get_contract_types_from_config(
             let config_parent_path = &project_paths
                 .config
                 .parent()
-                .expect("config path should have a parent directory");
+                .ok_or_else(|| "Config path should have a parent directory")?;
+
             let parsed_abi: Abi =
                 get_abi_from_file_path(&config_parent_path.join(&config_contract.abi_file_path))?;
 
