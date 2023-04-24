@@ -1,4 +1,5 @@
-const primaryColor = "#0d4184";
+const primaryColor = "#A1C4FD";
+const secondaryColor = "#C2E9FB";
 
 module.exports = {
   content: ["./src/**/*.res"],
@@ -25,6 +26,7 @@ module.exports = {
       },
       colors: {
         primary: primaryColor,
+        secondary: secondaryColor,
       },
       borderColor: {
         DEFAULT: primaryColor,

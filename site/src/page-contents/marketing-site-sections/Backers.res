@@ -85,6 +85,7 @@ let make = () => {
   let borderRadius = "rounded-xl"
 
   <div className="w-full min-h-screen flex flex-col justify-center items-center">
+    <Typography.Heading2> {"Backed by the best"->React.string} </Typography.Heading2>
     <div className="max-w-6xl w-full grid grid-cols-2 md:grid-cols-5 gap-8 p-24">
       {investors
       ->Array.mapWithIndex((i, investor) =>
