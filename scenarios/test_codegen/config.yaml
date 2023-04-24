@@ -11,6 +11,8 @@ networks:
         address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         handler: ./src/EventHandlers.bs.js
         events:
+          - name: "TestEvent"
+            requiredEntities: [] # empty signifies no requirements
           - name: "NewGravatar"
             requiredEntities: [] # empty signifies no requirements
           - name: "UpdatedGravatar"

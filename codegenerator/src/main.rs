@@ -7,9 +7,10 @@ use clap::Parser;
 
 use indexly::{
     cli_args, config_parsing, copy_dir, entity_parsing, event_parsing, generate_templates,
+    linked_hashmap::RescriptRecordHierarchyLinkedHashMap, project_paths::ProjectPaths, RecordType,
 };
 
-use cli_args::{CommandLineArgs, CommandType, Template};
+use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
 use include_dir::{include_dir, Dir};
 
 static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
@@ -29,37 +30,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         CommandType::Codegen(args) => {
-            // TODO: could make a "path manager" module that holds all of this with some nice helper functions/api.
-            //       Then just pass around that object whenever path related stuff is needed.
-            let project_root_path = PathBuf::from(&args.directory);
-            let code_gen_path: PathBuf = project_root_path.join(&args.output_directory);
-            let config_path: PathBuf = project_root_path.join(&args.config);
-            let schema_path = project_root_path.join("schema.graphql"); //TODO: get this from the
-                                                                        //config.yaml
-            fs::create_dir_all(&code_gen_path)?;
-            let contract_types = event_parsing::get_contract_types_from_config(
-                &config_path,
-                &project_root_path,
-                &code_gen_path,
-            )?;
-            let entity_types = entity_parsing::get_entity_record_types_from_schema(&schema_path)?;
-            let chain_config_templates =
-                config_parsing::convert_config_to_chain_configs(&config_path)?;
+            let project_paths = ProjectPaths::new(args.to_project_paths_args())?;
 
-            copy_dir(&CODEGEN_STATIC_DIR, &code_gen_path)?;
+            fs::create_dir_all(&project_paths.generated)?;
+
+            let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
+            let contract_types = event_parsing::get_contract_types_from_config(
+                &project_paths,
+                &mut rescript_subrecord_dependencies,
+            )?;
+            let entity_types = entity_parsing::get_entity_record_types_from_schema(&project_paths)?;
+            let chain_config_templates =
+                config_parsing::convert_config_to_chain_configs(&project_paths)?;
+            let sub_record_dependencies = rescript_subrecord_dependencies
+                .iter()
+                .collect::<Vec<RecordType>>();
+
+            copy_dir(&CODEGEN_STATIC_DIR, &project_paths.generated)?;
 
             generate_templates(
+                sub_record_dependencies,
                 contract_types,
                 chain_config_templates,
                 entity_types,
-                &code_gen_path,
+                &project_paths,
             )?;
 
             println!("installing packages... ");
 
             Command::new("pnpm")
                 .arg("install")
-                .current_dir(&code_gen_path)
+                .current_dir(&project_paths.generated)
                 .spawn()?
                 .wait()?;
 
@@ -67,7 +68,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             Command::new("pnpm")
                 .arg("clean")
-                .current_dir(&code_gen_path)
+                .current_dir(&project_paths.generated)
                 .spawn()?
                 .wait()?;
 
@@ -77,7 +78,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .arg("rescript")
                 .arg("format")
                 .arg("-all")
-                .current_dir(&code_gen_path)
+                .current_dir(&project_paths.generated)
                 .spawn()?
                 .wait()?;
 
@@ -85,7 +86,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             Command::new("pnpm")
                 .arg("build")
-                .current_dir(&code_gen_path)
+                .current_dir(&project_paths.generated)
                 .spawn()?
                 .wait()?;
 
@@ -93,7 +94,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             Command::new("pnpm")
                 .arg("db-migrate")
-                .current_dir(&code_gen_path)
+                .current_dir(&project_paths.generated)
                 .spawn()?
                 .wait()?;
 

@@ -46,7 +46,11 @@ let config: chainConfigs = [
           name: "Gravatar",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
           address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"->Ethers.getAddressFromStringUnsafe,
-          events: [GravatarContract_NewGravatarEvent, GravatarContract_UpdatedGravatarEvent],
+          events: [
+            GravatarContract_TestEventEvent,
+            GravatarContract_NewGravatarEvent,
+            GravatarContract_UpdatedGravatarEvent,
+          ],
         },
       ],
     },
