@@ -81,19 +81,19 @@ pub fn generate_templates(
     handlebars.set_strict_mode(true);
     handlebars.register_escape_fn(handlebars::no_escape);
 
-    let codegen_path_str = &project_paths
-        .generated
+    //TODO: make this a method in path handlers
+    let gitignore_generated_path = project_paths.generated.join("*");
+    let gitignoer_path_str = gitignore_generated_path
         .to_str()
-        .ok_or("invalid codegen path")?;
-
-    let codegen_out_path = format!("{}/*", codegen_path_str);
+        .ok_or("invalid codegen path")?
+        .to_string();
 
     let types_data = TypesTemplate {
         sub_record_dependencies,
         contracts,
         entities: entity_types,
         chain_configs,
-        codegen_out_path,
+        codegen_out_path: gitignoer_path_str,
     };
 
     let rendered_string_types = handlebars.render_template(
@@ -235,4 +235,20 @@ pub fn copy_dir(from: &Dir, to_root: &PathBuf) -> Result<(), std::io::Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    #[test]
+    fn wildcard_path_join() {
+        let expected_string = "my_dir/*";
+        let parent_path = PathBuf::from("my_dir");
+        let wild_card_path = PathBuf::from("*");
+        let joined = parent_path.join(wild_card_path);
+        let joined_str = joined.to_str().unwrap();
+
+        assert_eq!(expected_string, joined_str);
+    }
 }
