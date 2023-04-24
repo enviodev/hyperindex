@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use ethereum_abi::Abi;
 
-use crate::capitalization::{Capitalize, CapitalizedOptions};
+use crate::{
+    capitalization::{Capitalize, CapitalizedOptions},
+    project_paths::ProjectPaths,
+};
 
 type NetworkId = i32;
 
@@ -57,7 +60,7 @@ pub struct Config {
 //     D: Deserializer<'de>,
 // {
 //     let abi_file_path: &str = Deserialize::deserialize(deserializer)?;
-//     // ... convert to abi herer
+//     // ... convert to abi here
 // }
 
 type StringifiedAbi = String;
@@ -89,9 +92,9 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
 }
 
 pub fn convert_config_to_chain_configs(
-    config_path: &PathBuf,
+    project_paths: &ProjectPaths,
 ) -> Result<Vec<ChainConfigTemplate>, Box<dyn Error>> {
-    let config = deserialize_config_from_yaml(config_path)?;
+    let config = deserialize_config_from_yaml(&project_paths.config)?;
 
     let mut chain_configs = Vec::new();
     for network in config.networks.iter() {
@@ -99,7 +102,8 @@ pub fn convert_config_to_chain_configs(
 
         for contract in network.contracts.iter() {
             for contract_address in contract.address.iter() {
-                let config_parent_path = config_path
+                let config_parent_path = &project_paths
+                    .config
                     .parent()
                     .ok_or("invalid config parent directory")?;
                 let abi_relative_path = Path::new(&contract.abi_file_path);
@@ -141,7 +145,7 @@ pub fn convert_config_to_chain_configs(
 
 #[cfg(test)]
 mod tests {
-    use crate::capitalization::Capitalize;
+    use crate::{capitalization::Capitalize, project_paths::ProjectPaths};
 
     use super::ChainConfigTemplate;
 
@@ -181,7 +185,9 @@ mod tests {
         };
 
         let config_path = PathBuf::from("test/configs/config1.yaml");
-        let chain_configs = super::convert_config_to_chain_configs(&config_path).unwrap();
+        let mut project_paths = ProjectPaths::default();
+        project_paths.config = config_path;
+        let chain_configs = super::convert_config_to_chain_configs(&project_paths).unwrap();
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
@@ -261,7 +267,9 @@ mod tests {
         };
 
         let config_path = PathBuf::from("test/configs/config2.yaml");
-        let chain_configs = super::convert_config_to_chain_configs(&config_path).unwrap();
+        let mut project_paths = ProjectPaths::default();
+        project_paths.config = config_path;
+        let chain_configs = super::convert_config_to_chain_configs(&project_paths).unwrap();
 
         let events = vec![
             event1.name.to_capitalized_options(),

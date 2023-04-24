@@ -1,16 +1,14 @@
-use std::path::PathBuf;
-
-use crate::{capitalization::Capitalize, Error, ParamType, RecordType};
+use crate::{capitalization::Capitalize, project_paths::ProjectPaths, ParamType, RecordType};
 use graphql_parser::schema::{Definition, Type, TypeDefinition};
 use std::collections::HashSet;
 
 pub fn get_entity_record_types_from_schema(
-    schema_path: &PathBuf,
-) -> Result<Vec<RecordType>, Box<dyn Error>> {
-    let schema_string = std::fs::read_to_string(schema_path).map_err(|err| {
+    project_paths: &ProjectPaths,
+) -> Result<Vec<RecordType>, String> {
+    let schema_string = std::fs::read_to_string(&project_paths.schema).map_err(|err| {
         format!(
             "Failed to read schema file at {} with Error: {}",
-            schema_path.to_str().unwrap_or("unknown file"),
+            &project_paths.schema.to_str().unwrap_or("unknown file"),
             err.to_string()
         )
     })?;
