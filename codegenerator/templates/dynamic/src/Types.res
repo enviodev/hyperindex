@@ -31,7 +31,7 @@ let entitySerialize = (entity: entityRead) => {
 }
 
 {{#each entities as | entity |}}
-@genType.as("{{entity.name.capitalized}}Entity")
+@genType
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
   {{param.key}} : {{param.type_}},
@@ -57,7 +57,6 @@ type inMemoryStoreRow<'a> = {
 //**CONTRACTS**
 //*************
 
-@genType.as("EventLog")
 type eventLog<'a> = {
   params: 'a,
   blockNumber: int,
