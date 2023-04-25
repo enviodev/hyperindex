@@ -80,32 +80,6 @@ impl ParsedPaths {
         })
     }
 
-    fn get_all_contract_handler_paths_template(&self) -> Vec<HandlerPathsTemplate> {
-        let generated_src = self.project_paths.generated.join("src");
-        let absolute_paths: Vec<&PathBuf> = self.handler_paths.values().collect();
-
-        let handler_paths_templates = absolute_paths
-            .iter()
-            .map(|absolute_path| {
-                let relative_to_generated_src = diff_paths(absolute_path, &generated_src)
-                    .expect("could not find handler path relative to generated")
-                    .to_str()
-                    .expect("Handler path should be unicode")
-                    .to_string();
-                let absolute = absolute_path
-                    .to_str()
-                    .expect("Handler path should be unicode")
-                    .to_string();
-                HandlerPathsTemplate {
-                    absolute,
-                    relative_to_generated_src,
-                }
-            })
-            .collect();
-
-        handler_paths_templates
-    }
-
     pub fn get_contract_handler_paths_template(
         &self,
         contract_unique_id: ContractUniqueId,
@@ -188,12 +162,19 @@ mod tests {
         })
         .unwrap();
 
-        let contract_handler_paths = parsed_paths.get_all_contract_handler_paths_template();
-        let expected_handler_paths = vec![HandlerPathsTemplate {
+        let contract_unique_id = ContractUniqueId {
+            network_id: 1,
+            name: String::from("Contract1"),
+        };
+
+        let contract_handler_paths = parsed_paths
+            .get_contract_handler_paths_template(contract_unique_id)
+            .unwrap();
+        let expected_handler_paths = HandlerPathsTemplate {
             absolute: "test/configs/src/EventHandler.js".to_string(),
 
             relative_to_generated_src: "../../configs/src/EventHandler.js".to_string(),
-        }];
+        };
 
         assert_eq!(expected_handler_paths, contract_handler_paths);
     }
