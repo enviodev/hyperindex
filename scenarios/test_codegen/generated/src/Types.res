@@ -2,6 +2,7 @@
 //***ENTITIES**
 //*************
 
+@genType.as("Id")
 type id = string
 
 //nested subrecord types
@@ -22,12 +23,14 @@ let entitySerialize = (entity: entityRead) => {
   }
 }
 
+@genType.as("UserEntity")
 type userEntity = {
   id: string,
   address: string,
   gravatar: option<id>,
 }
 
+@genType.as("GravatarEntity")
 type gravatarEntity = {
   id: string,
   owner: id,
@@ -51,6 +54,7 @@ type inMemoryStoreRow<'a> = {
 //**CONTRACTS**
 //*************
 
+@genType.as("EventLog")
 type eventLog<'a> = {
   params: 'a,
   blockNumber: int,
@@ -64,6 +68,7 @@ type eventLog<'a> = {
 
 module GravatarContract = {
   module TestEventEvent = {
+    @genType
     type eventArgs = {
       id: Ethers.BigInt.t,
       user: Ethers.ethAddress,
@@ -79,14 +84,17 @@ module GravatarContract = {
       update: gravatarEntity => unit,
       delete: id => unit,
     }
+    @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
     }
 
+    @genType
     type loaderContext = {}
   }
   module NewGravatarEvent = {
+    @genType
     type eventArgs = {
       id: Ethers.BigInt.t,
       owner: Ethers.ethAddress,
@@ -103,14 +111,17 @@ module GravatarContract = {
       update: gravatarEntity => unit,
       delete: id => unit,
     }
+    @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
     }
 
+    @genType
     type loaderContext = {}
   }
   module UpdatedGravatarEvent = {
+    @genType
     type eventArgs = {
       id: Ethers.BigInt.t,
       owner: Ethers.ethAddress,
@@ -128,6 +139,7 @@ module GravatarContract = {
       update: gravatarEntity => unit,
       delete: id => unit,
     }
+    @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
@@ -135,6 +147,7 @@ module GravatarContract = {
 
     type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
 
+    @genType
     type loaderContext = {gravatar: gravatarEntityLoaderContext}
   }
 }

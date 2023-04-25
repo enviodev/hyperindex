@@ -1,4 +1,8 @@
-let getDefaultHandler: (string, 'a, 'b) => unit = (handlerName, _, _) => {
+let getDefaultHandler: (string, ~event: 'a, ~context: 'b) => unit = (
+  handlerName,
+  ~event as _,
+  ~context as _,
+) => {
   Js.Console.warn(
     // TODO: link to our docs.
     `${handlerName} was not registered, ignoring event. Please register a handler for this event using the register${handlerName}.`,
@@ -17,49 +21,52 @@ module GravatarContract = {
 
   let registerTestEventLoadEntities = (
     handler: (
-      Types.eventLog<Types.GravatarContract.TestEventEvent.eventArgs>,
-      Types.GravatarContract.TestEventEvent.loaderContext,
+      ~event: Types.eventLog<Types.GravatarContract.TestEventEvent.eventArgs>,
+      ~context: Types.GravatarContract.TestEventEvent.loaderContext,
     ) => unit,
   ) => {
     testEventLoadEntities := Some(handler)
   }
   let registerNewGravatarLoadEntities = (
     handler: (
-      Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs>,
-      Types.GravatarContract.NewGravatarEvent.loaderContext,
+      ~event: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs>,
+      ~context: Types.GravatarContract.NewGravatarEvent.loaderContext,
     ) => unit,
   ) => {
     newGravatarLoadEntities := Some(handler)
   }
   let registerUpdatedGravatarLoadEntities = (
     handler: (
-      Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs>,
-      Types.GravatarContract.UpdatedGravatarEvent.loaderContext,
+      ~event: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs>,
+      ~context: Types.GravatarContract.UpdatedGravatarEvent.loaderContext,
     ) => unit,
   ) => {
     updatedGravatarLoadEntities := Some(handler)
   }
 
+  @genType
   let registerTestEventHandler = (
     handler: (
-      Types.eventLog<Types.GravatarContract.TestEventEvent.eventArgs>,
-      Types.GravatarContract.TestEventEvent.context,
+      ~event: Types.eventLog<Types.GravatarContract.TestEventEvent.eventArgs>,
+      ~context: Types.GravatarContract.TestEventEvent.context,
     ) => unit,
   ) => {
     testEventHandler := Some(handler)
   }
+  @genType
   let registerNewGravatarHandler = (
     handler: (
-      Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs>,
-      Types.GravatarContract.NewGravatarEvent.context,
+      ~event: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs>,
+      ~context: Types.GravatarContract.NewGravatarEvent.context,
     ) => unit,
   ) => {
     newGravatarHandler := Some(handler)
   }
+  @genType
   let registerUpdatedGravatarHandler = (
     handler: (
-      Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs>,
-      Types.GravatarContract.UpdatedGravatarEvent.context,
+      ~event: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs>,
+      ~context: Types.GravatarContract.UpdatedGravatarEvent.context,
     ) => unit,
   ) => {
     updatedGravatarHandler := Some(handler)

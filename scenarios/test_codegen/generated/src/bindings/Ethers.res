@@ -12,6 +12,7 @@ module Misc = {
 }
 
 module BigInt = {
+  @genType.import(("./OpaqueTypes", "GenericBigInt"))
   type t
 
   // constructors and methods
@@ -45,6 +46,7 @@ let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Obj.magic
 
 let makeAbi = (abi: Js.Json.t): abi => abi->Obj.magic
 
+@genType.import(("./OpaqueTypes", "EthersAddress"))
 type ethAddress
 
 @module("ethers") @scope("ethers")

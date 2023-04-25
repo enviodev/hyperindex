@@ -3,7 +3,7 @@ let eventRouter = (event: Types.eventAndContext) => {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context) => {
-  event->Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}Handler()(context)
+  Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}Handler()(~event, ~context)
   }
 {{/each}}
 {{/each}}
@@ -21,7 +21,7 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
 
         let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator()
-        Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}LoadEntities()(event, contextHelper.getLoaderContext())
+        Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}LoadEntities()(~event, ~context=contextHelper.getLoaderContext())
         let context = contextHelper.getContext()
         (contextHelper.getEntitiesToLoad(), Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context))
         }
