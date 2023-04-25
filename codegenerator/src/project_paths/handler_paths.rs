@@ -133,38 +133,6 @@ impl ParsedPaths {
     }
 }
 
-// fn get_contract_handler_paths(
-//     config_contract: &ConfigContract,
-//     project_paths: &ProjectPaths,
-// ) -> Result<HandlerPaths, Box<dyn Error>> {
-//     let handler_path_joined = project_paths
-//         .project_root
-//         .join(config_contract.handler.clone());
-//
-//     let handler_path_absolute = handler_path_joined.canonicalize()?;
-//
-//     let mut generated_canonicalized = project_paths.generated.canonicalize()?;
-//
-//     generated_canonicalized.push("src");
-//
-//     let handler_path_diff = diff_paths(handler_path_absolute.clone(), &generated_canonicalized)
-//         .ok_or("diff paths failed")?;
-//
-//     let handler_path_relative = handler_path_diff
-//         .to_str()
-//         .unwrap_or("../../src/handlers.js");
-//
-//     let handler_paths = HandlerPaths {
-//         absolute: handler_path_absolute
-//             .to_str()
-//             .ok_or("<Error generating path. Please file an issue at https://github.com/Float-Capital/indexer/issues/new>")?
-//             .to_owned(),
-//         relative_to_generated_src: handler_path_relative.to_owned(),
-//     };
-//
-//     Ok(handler_paths)
-// }
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
