@@ -12,7 +12,7 @@ pub mod config_parsing;
 pub mod linked_hashmap;
 pub mod project_paths;
 
-use project_paths::ProjectPaths;
+use project_paths::{handler_paths::HandlerPathsTemplate, ProjectPaths};
 
 pub use config_parsing::{entity_parsing, event_parsing, ChainConfigTemplate};
 
@@ -55,7 +55,7 @@ pub struct HandlerPaths {
 pub struct Contract {
     name: CapitalizedOptions,
     events: Vec<EventTemplate>,
-    handler: HandlerPaths,
+    handler: HandlerPathsTemplate,
 }
 
 type EntityTemplate = RecordType;

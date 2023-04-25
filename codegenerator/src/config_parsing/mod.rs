@@ -29,20 +29,20 @@ struct Event {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct Network {
-    id: NetworkId,
+pub struct Network {
+    pub id: NetworkId,
     rpc_url: String,
     start_block: i32,
-    contracts: Vec<ConfigContract>,
+    pub contracts: Vec<ConfigContract>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ConfigContract {
-    name: String,
+    pub name: String,
     // Eg for implementing a custom deserializer
     //  #[serde(deserialize_with = "abi_path_to_abi")]
-    abi_file_path: String,
-    handler: Option<String>,
+    pub abi_file_path: String,
+    pub handler: String,
     address: Vec<String>,
     events: Vec<Event>,
 }
@@ -52,7 +52,8 @@ pub struct Config {
     version: String,
     description: String,
     repository: String,
-    networks: Vec<Network>,
+    pub schema: Option<String>,
+    pub networks: Vec<Network>,
 }
 
 // fn abi_path_to_abi<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -168,7 +169,7 @@ mod tests {
         };
 
         let contract1 = super::ConfigContract {
-            handler: None,
+            handler: "./src/EventHandler.js".to_string(),
             address: vec![address1.clone()],
             name: String::from("Contract1"),
             //needed to have relative path in order to match config1.yaml
@@ -210,10 +211,10 @@ mod tests {
         let expected_chain_configs = vec![chain_config_1];
 
         assert_eq!(
-            chain_configs[0].network_config,
-            expected_chain_configs[0].network_config
+            expected_chain_configs[0].network_config,
+            chain_configs[0].network_config
         );
-        assert_eq!(chain_configs, expected_chain_configs);
+        assert_eq!(expected_chain_configs, chain_configs,);
     }
 
     #[test]
@@ -234,7 +235,7 @@ mod tests {
         };
 
         let contract1 = super::ConfigContract {
-            handler: None,
+            handler: "./src/EventHandler.js".to_string(),
             address: vec![address1.clone()],
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
@@ -250,7 +251,7 @@ mod tests {
             contracts: contracts1,
         };
         let contract2 = super::ConfigContract {
-            handler: None,
+            handler: "./src/EventHandler.js".to_string(),
             address: vec![address2.clone()],
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
