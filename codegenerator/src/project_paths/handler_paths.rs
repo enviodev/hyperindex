@@ -82,7 +82,7 @@ impl ParsedPaths {
 
     pub fn get_contract_handler_paths_template(
         &self,
-        contract_unique_id: ContractUniqueId,
+        contract_unique_id: &ContractUniqueId,
     ) -> Result<HandlerPathsTemplate, Box<dyn Error>> {
         let generated_src = self.project_paths.generated.join("src");
 
@@ -104,6 +104,20 @@ impl ParsedPaths {
             absolute,
             relative_to_generated_src,
         })
+    }
+
+    pub fn get_contract_abi(
+        &self,
+        contract_unique_id: &ContractUniqueId,
+    ) -> Result<ethereum_abi::Abi, Box<dyn Error>> {
+        let abi_path = self
+            .abi_paths
+            .get(&contract_unique_id)
+            .ok_or_else(|| "invalid abi path configuration".to_string())?;
+
+        let abi_file = std::fs::read_to_string(abi_path)?;
+        let abi: ethereum_abi::Abi = serde_json::from_str(&abi_file)?;
+        Ok(abi)
     }
 }
 

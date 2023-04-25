@@ -148,12 +148,13 @@ fn get_event_template_from_ethereum_abi_event(
 
 fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
-    contract_abi: Abi,
     parsed_paths: &ParsedPaths,
-    network_id: i32,
+    contract_unique_id: ContractUniqueId,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
+
+    let contract_abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
     let abi_events: Vec<ethereum_abi::Event> = contract_abi.events;
     for config_event in config_contract.events.iter() {
@@ -173,12 +174,8 @@ fn get_contract_type_from_config_contract(
             None => (),
         };
     }
-    let contract_id = ContractUniqueId {
-        network_id,
-        name: config_contract.name.clone(),
-    };
 
-    let handler_template = parsed_paths.get_contract_handler_paths_template(contract_id)?;
+    let handler_template = parsed_paths.get_contract_handler_paths_template(&contract_unique_id)?;
 
     let contract = Contract {
         name: config_contract.name.to_capitalized_options(),
@@ -197,21 +194,15 @@ pub fn get_contract_types_from_config(
     let mut contracts: Vec<Contract> = Vec::new();
     for network in config.networks.iter() {
         for config_contract in network.contracts.iter() {
-            let config_parent_path = &parsed_paths
-                .project_paths
-                .config
-                .parent()
-                .ok_or_else(|| "Config path should have a parent directory")?;
+            let contract_unique_id = ContractUniqueId {
+                network_id: network.id,
+                name: config_contract.name.clone(),
+            };
 
-            let parsed_abi: Abi =
-                get_abi_from_file_path(&config_parent_path.join(&config_contract.abi_file_path))?;
-
-            let network_id = network.id;
             let contract = get_contract_type_from_config_contract(
                 config_contract,
-                parsed_abi,
                 parsed_paths,
-                network_id,
+                contract_unique_id,
                 rescript_subrecord_dependencies,
             )?;
             contracts.push(contract);
