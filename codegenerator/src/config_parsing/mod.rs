@@ -1,5 +1,5 @@
+use std::error::Error;
 use std::path::PathBuf;
-use std::{error::Error, path::Path};
 
 pub mod entity_parsing;
 pub mod event_parsing;
@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use ethereum_abi::Abi;
 
+use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
-    project_paths::ProjectPaths,
+    project_paths::ParsedPaths,
 };
 
 type NetworkId = i32;
@@ -93,9 +94,9 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
 }
 
 pub fn convert_config_to_chain_configs(
-    project_paths: &ProjectPaths,
+    parsed_paths: &ParsedPaths,
 ) -> Result<Vec<ChainConfigTemplate>, Box<dyn Error>> {
-    let config = deserialize_config_from_yaml(&project_paths.config)?;
+    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
 
     let mut chain_configs = Vec::new();
     for network in config.networks.iter() {
@@ -103,23 +104,11 @@ pub fn convert_config_to_chain_configs(
 
         for contract in network.contracts.iter() {
             for contract_address in contract.address.iter() {
-                let config_parent_path = &project_paths
-                    .config
-                    .parent()
-                    .ok_or("invalid config parent directory")?;
-                let abi_relative_path = Path::new(&contract.abi_file_path);
-                let abi_path = config_parent_path
-                    .join(abi_relative_path)
-                    .canonicalize()
-                    .map_err(|err| {
-                        format!(
-                            "Failed to resolve abi path {} with Error {}",
-                            &contract.abi_file_path,
-                            err.to_string()
-                        )
-                    })?;
-                let parsed_abi: Abi =
-                    event_parsing::get_abi_from_file_path(&config_parent_path.join(&abi_path))?;
+                let contract_unique_id = ContractUniqueId {
+                    network_id: network.id,
+                    name: contract.name.clone(),
+                };
+                let parsed_abi: Abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
                 let stringified_abi = serde_json::to_string(&parsed_abi)?;
                 let single_contract = SingleContractTemplate {
@@ -146,7 +135,8 @@ pub fn convert_config_to_chain_configs(
 
 #[cfg(test)]
 mod tests {
-    use crate::{capitalization::Capitalize, project_paths::ProjectPaths};
+    use crate::capitalization::Capitalize;
+    use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
 
@@ -185,10 +175,16 @@ mod tests {
             contracts,
         };
 
-        let config_path = PathBuf::from("test/configs/config1.yaml");
-        let mut project_paths = ProjectPaths::default();
-        project_paths.config = config_path;
-        let chain_configs = super::convert_config_to_chain_configs(&project_paths).unwrap();
+        let project_root = String::from("test");
+        let config = String::from("configs/config1.yaml");
+        let generated = String::from("generated/");
+        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
+            project_root,
+            config,
+            generated,
+        })
+        .unwrap();
+        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
@@ -267,10 +263,17 @@ mod tests {
             contracts: contracts2,
         };
 
-        let config_path = PathBuf::from("test/configs/config2.yaml");
-        let mut project_paths = ProjectPaths::default();
-        project_paths.config = config_path;
-        let chain_configs = super::convert_config_to_chain_configs(&project_paths).unwrap();
+        let project_root = String::from("test");
+        let config = String::from("configs/config2.yaml");
+        let generated = String::from("generated/");
+        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
+            project_root,
+            config,
+            generated,
+        })
+        .unwrap();
+
+        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
 
         let events = vec![
             event1.name.to_capitalized_options(),

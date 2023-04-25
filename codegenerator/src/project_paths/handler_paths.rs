@@ -123,6 +123,7 @@ impl ParsedPaths {
 
 #[cfg(test)]
 mod tests {
+    use serde_json;
     use std::collections::HashMap;
     use std::path::PathBuf;
 
@@ -165,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn all_contract_handler_paths() {
+    fn test_get_contract_handler_path_template() {
         let project_root = String::from("test");
         let config = String::from("configs/config1.yaml");
         let generated = String::from("generated/");
@@ -182,7 +183,7 @@ mod tests {
         };
 
         let contract_handler_paths = parsed_paths
-            .get_contract_handler_paths_template(contract_unique_id)
+            .get_contract_handler_paths_template(&contract_unique_id)
             .unwrap();
         let expected_handler_paths = HandlerPathsTemplate {
             absolute: "test/configs/src/EventHandler.js".to_string(),
@@ -191,5 +192,87 @@ mod tests {
         };
 
         assert_eq!(expected_handler_paths, contract_handler_paths);
+    }
+
+    #[test]
+    fn test_get_contract_abi() {
+        let project_root = String::from("test");
+        let config = String::from("configs/config1.yaml");
+        let generated = String::from("generated/");
+        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
+            project_root,
+            config,
+            generated,
+        })
+        .unwrap();
+
+        let contract_unique_id = ContractUniqueId {
+            network_id: 1,
+            name: String::from("Contract1"),
+        };
+
+        let contract_abi = parsed_paths.get_contract_abi(&contract_unique_id).unwrap();
+        let expected_abi_string = r#"
+            [
+            {
+                "anonymous": false,
+                "inputs": [
+                {
+                    "indexed": false,
+                    "name": "id",
+                    "type": "uint256"
+                },
+                {
+                    "indexed": false,
+                    "name": "owner",
+                    "type": "address"
+                },
+                {
+                    "indexed": false,
+                    "name": "displayName",
+                    "type": "string"
+                },
+                {
+                    "indexed": false,
+                    "name": "imageUrl",
+                    "type": "string"
+                }
+                ],
+                "name": "NewGravatar",
+                "type": "event"
+            },
+            {
+                "anonymous": false,
+                "inputs": [
+                {
+                    "indexed": false,
+                    "name": "id",
+                    "type": "uint256"
+                },
+                {
+                    "indexed": false,
+                    "name": "owner",
+                    "type": "address"
+                },
+                {
+                    "indexed": false,
+                    "name": "displayName",
+                    "type": "string"
+                },
+                {
+                    "indexed": false,
+                    "name": "imageUrl",
+                    "type": "string"
+                }
+                ],
+                "name": "UpdatedGravatar",
+                "type": "event"
+            }
+            ]
+"#;
+
+        let expected_abi: ethereum_abi::Abi = serde_json::from_str(expected_abi_string).unwrap();
+
+        assert_eq!(expected_abi, contract_abi);
     }
 }
