@@ -1,6 +1,6 @@
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
-pub fn normalize_path(path: &PathBuf) -> PathBuf {
+pub fn normalize_path(path: &Path) -> PathBuf {
     let mut components = path.components().peekable();
 
     let mut normalized_path_buf = match components.clone().peek() {

@@ -3,10 +3,7 @@ use pathdiff::diff_paths;
 use serde::Serialize;
 use std::{collections::HashMap, error::Error, path::PathBuf};
 
-use crate::{
-    cli_args::ProjectPathsArgs,
-    config_parsing::{deserialize_config_from_yaml, ConfigContract},
-};
+use crate::{cli_args::ProjectPathsArgs, config_parsing::deserialize_config_from_yaml};
 
 const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 
