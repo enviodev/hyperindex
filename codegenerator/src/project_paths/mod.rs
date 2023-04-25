@@ -17,7 +17,6 @@ pub struct ProjectPaths {
     pub project_root: PathBuf,
     pub config: PathBuf,
     pub generated: PathBuf,
-    // handler_paths: HashMap<String, PathBuf>,
 }
 
 impl ProjectPaths {
