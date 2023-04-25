@@ -52,6 +52,7 @@ module.exports = {
         "mint-width": "40rem",
         xxs: "15rem",
         big: "28rem",
+        "50p": "50%",
       },
       margin: {
         "minus-12": "-3.4rem",
@@ -97,10 +98,11 @@ module.exports = {
         500: "500px",
         56: "56px",
         6: "1.5rem",
-        "mint-width": "38rem",
+        md: "768px",
       },
       minHeight: {
         "half-screen": "50vh",
+        "eighty-percent-screen": "80vh",
       },
       letterSpacing: {
         "btn-text": "0.2em",
