@@ -38,13 +38,13 @@ pub struct CodegenArgs {
 #[derive(Args, Debug)]
 pub struct InitArgs {
     ///The directory of the project
-    #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
-    pub directory: String,
+    #[arg(short, long)]
+    pub directory: Option<String>,
 
     ///The file in the project containing config.
-    #[arg(short, long, default_value_t=Template::Gravatar)]
+    #[arg(short, long)]
     #[clap(value_enum)]
-    pub template: Template,
+    pub template: Option<Template>,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -76,7 +76,10 @@ impl ToProjectPathsArgs for CodegenArgs {
 impl ToProjectPathsArgs for InitArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
-            project_root: self.directory.clone(),
+            project_root: self
+                .directory
+                .clone()
+                .unwrap_or(DEFAULT_PROJECT_ROOT_PATH.to_string()),
             generated: DEFAULT_GENERATED_PATH.to_string(),
             config: DEFAULT_CONFIG_PATH.to_string(),
         }
