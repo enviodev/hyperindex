@@ -72,3 +72,13 @@ impl ToProjectPathsArgs for CodegenArgs {
         }
     }
 }
+
+impl ToProjectPathsArgs for InitArgs {
+    fn to_project_paths_args(&self) -> ProjectPathsArgs {
+        ProjectPathsArgs {
+            project_root: self.directory.clone(),
+            generated: DEFAULT_GENERATED_PATH.to_string(),
+            config: DEFAULT_CONFIG_PATH.to_string(),
+        }
+    }
+}

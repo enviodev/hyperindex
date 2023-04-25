@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let entity_types = entity_parsing::get_entity_record_types_from_schema(&parsed_paths)?;
             let chain_config_templates =
-                config_parsing::convert_config_to_chain_configs(project_paths)?;
+                config_parsing::convert_config_to_chain_configs(&parsed_paths)?;
             let sub_record_dependencies = rescript_subrecord_dependencies
                 .iter()
                 .collect::<Vec<RecordType>>();
