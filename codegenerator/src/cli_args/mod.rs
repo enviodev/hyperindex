@@ -1,4 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
+pub mod interactive_init;
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
@@ -38,19 +40,30 @@ pub struct CodegenArgs {
 #[derive(Args, Debug)]
 pub struct InitArgs {
     ///The directory of the project
-    #[arg(short, long)]
-    pub directory: Option<String>,
+    #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
+    pub directory: String,
 
     ///The file in the project containing config.
     #[arg(short, long)]
     #[clap(value_enum)]
     pub template: Option<Template>,
+    #[arg(short = 'f', long = "js-flavor")]
+    #[clap(value_enum)]
+    pub js_flavor: Option<JsFlavor>,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
 ///Template to work off
 pub enum Template {
     Gravatar,
+    OtherPlaceHolder,
+}
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
+///Which js flavor do you want to write in?
+pub enum JsFlavor {
+    Javascript,
+    Typescript,
+    Rescript,
 }
 
 pub struct ProjectPathsArgs {
@@ -76,10 +89,7 @@ impl ToProjectPathsArgs for CodegenArgs {
 impl ToProjectPathsArgs for InitArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
-            project_root: self
-                .directory
-                .clone()
-                .unwrap_or(DEFAULT_PROJECT_ROOT_PATH.to_string()),
+            project_root: self.directory.clone(),
             generated: DEFAULT_GENERATED_PATH.to_string(),
             config: DEFAULT_CONFIG_PATH.to_string(),
         }

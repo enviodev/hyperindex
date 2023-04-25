@@ -20,11 +20,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
 
     match command_line_args.command {
-        CommandType::Init(args) => {
+        CommandType::Init(init_args) => {
+            let args = init_args.get_init_args_interactive()?;
             let project_root_path = PathBuf::from(&args.directory);
             fs::create_dir_all(&project_root_path)?;
             match args.template {
                 Template::Gravatar => copy_dir(&GRAVATAR_TEMPLATE_STATIC_DIR, &project_root_path)?,
+                Template::OtherPlaceHolder => (),
             }
 
             Ok(())
