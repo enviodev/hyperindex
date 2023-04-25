@@ -19,7 +19,6 @@ export type userEntity = {
   readonly address: string; 
   readonly gravatar: (undefined | id)
 };
-export type UserEntity = userEntity;
 
 // tslint:disable-next-line:interface-over-type-literal
 export type gravatarEntity = {
@@ -29,20 +28,6 @@ export type gravatarEntity = {
   readonly imageUrl: string; 
   readonly updatesCount: number
 };
-export type GravatarEntity = gravatarEntity;
-
-// tslint:disable-next-line:interface-over-type-literal
-export type eventLog<a> = {
-  readonly params: a; 
-  readonly blockNumber: number; 
-  readonly blockTimestamp: number; 
-  readonly blockHash: string; 
-  readonly srcAddress: string; 
-  readonly transactionHash: string; 
-  readonly transactionIndex: number; 
-  readonly logIndex: number
-};
-export type EventLog<a> = eventLog<a>;
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_TestEventEvent_eventArgs = {

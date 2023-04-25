@@ -23,14 +23,14 @@ let entitySerialize = (entity: entityRead) => {
   }
 }
 
-@genType.as("UserEntity")
+@genType
 type userEntity = {
   id: string,
   address: string,
   gravatar: option<id>,
 }
 
-@genType.as("GravatarEntity")
+@genType
 type gravatarEntity = {
   id: string,
   owner: id,
@@ -54,7 +54,6 @@ type inMemoryStoreRow<'a> = {
 //**CONTRACTS**
 //*************
 
-@genType.as("EventLog")
 type eventLog<'a> = {
   params: 'a,
   blockNumber: int,
