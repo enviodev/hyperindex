@@ -17,9 +17,9 @@ impl InitArgs {
         let template = match &self.template {
             Some(args_template) => args_template.clone(),
             None => {
-                use Template::{Gravatar, OtherPlaceHolder};
+                use Template::Gravatar;
 
-                let options = vec![Gravatar, OtherPlaceHolder]
+                let options = vec![Gravatar]
                     .iter()
                     .map(|template| {
                         serde_json::to_string(template).expect("Enum should be serializable")

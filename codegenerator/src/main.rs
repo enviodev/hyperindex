@@ -23,20 +23,23 @@ static GRAVATAR_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/gravatar_template/rescript");
 static GRAVATAR_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/gravatar_template/typescript");
-// static GRAVATAR_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-//     include_dir!("templates/static/gravatar_template/javascript");
+static GRAVATAR_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/gravatar_template/javascript");
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
 
     match command_line_args.command {
         CommandType::Init(init_args) => {
+            //get_init_args_interactive opens an interactive cli for required args to be selected
+            //if they haven't already been
             let args = init_args.get_init_args_interactive()?;
             let project_root_path = PathBuf::from(&args.directory);
+            //Ensure that the root path exists
             fs::create_dir_all(&project_root_path)?;
             match args.template {
                 Template::Gravatar => {
-                    GRAVATAR_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                    //Copy in the relevant js flavor specific gravatar files
                     match &args.js_flavor {
                         JsFlavor::Rescript => {
                             GRAVATAR_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
@@ -44,12 +47,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                         JsFlavor::Typescript => {
                             GRAVATAR_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Javascript => return Err("Js not yet handled".into()),
+                        JsFlavor::Javascript => {
+                            GRAVATAR_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                        }
                     }
+                    //Copy in the rest of the shared gravatar files
+                    GRAVATAR_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
-                Template::OtherPlaceHolder => (),
             }
 
+            println!("Project template ready");
             Ok(())
         }
 

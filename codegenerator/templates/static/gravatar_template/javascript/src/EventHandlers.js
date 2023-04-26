@@ -1,17 +1,15 @@
-import {
+let {
   GravatarContract_registerNewGravatarHandler,
   GravatarContract_registerNewGravatarLoadEntities,
   GravatarContract_registerUpdatedGravatarHandler,
   GravatarContract_registerUpdatedGravatarLoadEntities,
-} from "../generated/src/Handlers.gen";
-
-import { gravatarEntity } from "../generated/src/Types.gen";
+} = require("../generated/src/Handlers.bs.js");
 
 GravatarContract_registerNewGravatarLoadEntities(({ event, context }) => { });
 
 GravatarContract_registerNewGravatarHandler(({ event, context }) => {
   let { id, displayName, owner, imageUrl } = event.params;
-  let gravatar: gravatarEntity = {
+  let gravatar = {
     id: id.toString(),
     displayName,
     owner,
@@ -32,7 +30,7 @@ GravatarContract_registerUpdatedGravatarHandler(({ event, context }) => {
 
   let updatesCount = currentUpdatesCount + 1;
 
-  let gravatar: gravatarEntity = {
+  let gravatar = {
     id: id.toString(),
     displayName,
     owner,

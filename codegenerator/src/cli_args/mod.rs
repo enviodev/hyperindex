@@ -56,8 +56,8 @@ pub struct InitArgs {
 ///Template to work off
 pub enum Template {
     Gravatar,
-    OtherPlaceHolder,
 }
+
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
 ///Which js flavor do you want to write in?
 pub enum JsFlavor {
