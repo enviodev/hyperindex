@@ -115,7 +115,13 @@ impl ParsedPaths {
             .get(&contract_unique_id)
             .ok_or_else(|| "invalid abi path configuration".to_string())?;
 
-        let abi_file = std::fs::read_to_string(abi_path)?;
+        let abi_file = std::fs::read_to_string(abi_path).map_err(|e| {
+            format!(
+                "Failed to read abi at {}, with the following error {}",
+                abi_path.to_str().unwrap_or("no_path"),
+                e.to_string()
+            )
+        })?;
         let abi: ethereum_abi::Abi = serde_json::from_str(&abi_file)?;
         Ok(abi)
     }

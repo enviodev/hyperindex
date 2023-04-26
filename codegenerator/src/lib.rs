@@ -1,11 +1,9 @@
 use std::error::Error;
 use std::fs;
 use std::os::unix::fs::PermissionsExt; // NOTE: This probably won't be the same on Windows.
-use std::path::PathBuf;
 
 use handlebars::Handlebars;
 
-use include_dir::{Dir, DirEntry};
 use serde::Serialize;
 
 pub mod config_parsing;
@@ -210,33 +208,6 @@ fn make_file_executable(filename: &str, project_paths: &ProjectPaths) -> std::io
     let mut permissions = fs::metadata(&file_path)?.permissions();
     permissions.set_mode(0o755); // Set the file permissions to -rwxr-xr-x
     fs::set_permissions(&file_path, permissions)?;
-
-    Ok(())
-}
-
-pub fn copy_dir(from: &Dir, to_root: &PathBuf) -> Result<(), Box<dyn Error>> {
-    //If from is a subdirectory then all the paths include an absolute from
-    //it's parent. The top level path is stripped from each file and sub dir path
-    //so that we are only copying the contents of the dir.
-    let top_level_path = from.path();
-
-    for entry in from.entries().iter() {
-        match entry {
-            DirEntry::Dir(dir) => {
-                let path = dir.path().strip_prefix(top_level_path)?;
-                let to_path = to_root.join(path);
-
-                fs::create_dir_all(&to_path)?;
-                copy_dir(&dir, &to_root)?;
-            }
-            DirEntry::File(file) => {
-                let path = file.path().strip_prefix(top_level_path)?;
-                let to_path = to_root.join(path);
-                let file_content = file.contents();
-                fs::write(&to_path, file_content)?;
-            }
-        }
-    }
 
     Ok(())
 }

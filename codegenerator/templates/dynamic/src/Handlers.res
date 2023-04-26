@@ -15,6 +15,7 @@ module {{contract.name.capitalized}}Contract = {
   )
 
   {{#each contract.events as | event |}}
+  @genType
   let register{{event.name.capitalized}}LoadEntities = (handler: (
     ~event: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
     ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
