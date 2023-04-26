@@ -6,8 +6,11 @@ use std::process::Command;
 use clap::Parser;
 
 use envio::{
-    cli_args, config_parsing, copy_dir, entity_parsing, event_parsing, generate_templates,
-    linked_hashmap::RescriptRecordHierarchyLinkedHashMap, project_paths::ParsedPaths, RecordType,
+    cli_args::{self, JsFlavor},
+    config_parsing, copy_dir, entity_parsing, event_parsing, generate_templates,
+    linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
+    project_paths::ParsedPaths,
+    RecordType,
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
@@ -25,7 +28,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             let project_root_path = PathBuf::from(&args.directory);
             fs::create_dir_all(&project_root_path)?;
             match args.template {
-                Template::Gravatar => copy_dir(&GRAVATAR_TEMPLATE_STATIC_DIR, &project_root_path)?,
+                Template::Gravatar => {
+                    let shared_dir = GRAVATAR_TEMPLATE_STATIC_DIR
+                        .get_dir("shared")
+                        .ok_or_else(|| "shared dir does not exist in gravatar template")?;
+                    copy_dir(&shared_dir, &project_root_path)?;
+                    match &args.js_flavor {
+                        JsFlavor::Rescript => {
+                            let rescript_dir = GRAVATAR_TEMPLATE_STATIC_DIR
+                                .get_dir("rescript")
+                                .ok_or_else(|| {
+                                    "rescript dir does not exist in gravatar template"
+                                })?;
+                            copy_dir(&rescript_dir, &project_root_path)?;
+                        }
+                        JsFlavor::Typescript => return Err("Typescript not yet handled".into()),
+                        JsFlavor::Javascript => return Err("Js not yet handled".into()),
+                    }
+                }
                 Template::OtherPlaceHolder => (),
             }
 
