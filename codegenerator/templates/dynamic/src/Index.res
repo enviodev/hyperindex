@@ -3,7 +3,7 @@
 {{#each contracts as | contract |}}
 %%raw(`
 try {
-  require("{{contract.handler}}")
+  require("{{contract.handler.relative_to_generated_src}}")
 } catch (e) {
   console.error(
     "Unable to find the handler file for {{contract.name.capitalized}}. Please place a file at "
