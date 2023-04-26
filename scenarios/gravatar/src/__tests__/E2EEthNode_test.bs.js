@@ -8,6 +8,8 @@ var Ethers$1 = require("ethers");
 var Hardhat = require("hardhat");
 var EventSyncing = require("generated/src/EventSyncing.bs.js");
 var SetupRpcNode = require("./helpers/SetupRpcNode.bs.js");
+var LiveGravatarTask = require("./helpers/LiveGravatarTask.bs.js");
+var EventSubscription = require("generated/src/EventSubscription.bs.js");
 
 Jest.describe("E2E Mock Event Batch", (function (param) {
         Jest.beforeAllPromise(60000, (function (param) {
@@ -31,6 +33,8 @@ Jest.describe("E2E Mock Event Batch", (function (param) {
                   contracts: localChainConfig_contracts
                 };
                 await EventSyncing.processAllEvents(localChainConfig);
+                await LiveGravatarTask.liveGravatarTxs(undefined);
+                await EventSubscription.startWatchingEventsOnRpc(localChainConfig, localChainConfig_provider);
                 return Jest.pass;
               }));
       }));
