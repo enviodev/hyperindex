@@ -17,12 +17,23 @@ jobs:
         uses: actions/setup-node@v2.4.0
         with:
           node-version: 14
+        
+      - name: generate code
+        run: |
+          cd ../../codegenerator
+          cargo run -- codegen -d ../scenarios/gravatar
 
+      # TODO: add pnpm caching
       - name: Install dependencies
-        run: npm i -D jest-bench
+        run: |
+          pnpm install
+          npm i -D jest-bench
+          npm install jest-environment-node --save-dev
 
-      - name: Install jest-environment-node
-        run: npm install jest-environment-node --save-dev
+      - name: Build code
+        run: |
+          pnpm clean # probably not needed, but getting different results in pipeline to locally.
+          pnpm build
 
       - name: Run benchmarks
         run: npx jest --projects jest-bench.config.json  
