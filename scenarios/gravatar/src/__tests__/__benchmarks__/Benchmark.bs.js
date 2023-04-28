@@ -2,7 +2,7 @@
 "use strict";
 
 const { benchmarkSuite } = require("jest-bench");
-var IO = require("generated/src/IO.bs.js");
+var IO = require("../../../generated/src/IO.bs.js");
 var Jest = require("@glennsl/rescript-jest/src/jest.bs.js");
 var Js_dict = require("rescript/lib/js/js_dict.js");
 var MockEvents = require("./../__mocks__/MockEvents.bs.js");
