@@ -57,6 +57,7 @@ type inMemoryStoreRow<'a> = {
 //**CONTRACTS**
 //*************
 
+@genType
 type eventLog<'a> = {
   params: 'a,
   blockNumber: int,

@@ -1,2 +1,2 @@
 export type GenericBigInt = BigInt;
-export type EthersAddress = String;
+export type EthersAddress = string;

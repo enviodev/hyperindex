@@ -1,4 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde::{Deserialize, Serialize};
+pub mod interactive_init;
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
@@ -42,15 +44,26 @@ pub struct InitArgs {
     pub directory: String,
 
     ///The file in the project containing config.
-    #[arg(short, long, default_value_t=Template::Gravatar)]
+    #[arg(short, long)]
     #[clap(value_enum)]
-    pub template: Template,
+    pub template: Option<Template>,
+    #[arg(short = 'f', long = "js-flavor")]
+    #[clap(value_enum)]
+    pub js_flavor: Option<JsFlavor>,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
 ///Template to work off
 pub enum Template {
     Gravatar,
+}
+
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
+///Which js flavor do you want to write in?
+pub enum JsFlavor {
+    Javascript,
+    Typescript,
+    Rescript,
 }
 
 pub struct ProjectPathsArgs {
