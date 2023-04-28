@@ -30,6 +30,18 @@ export type gravatarEntity = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type eventLog<a> = {
+  readonly params: a; 
+  readonly blockNumber: number; 
+  readonly blockTimestamp: number; 
+  readonly blockHash: string; 
+  readonly srcAddress: string; 
+  readonly transactionHash: string; 
+  readonly transactionIndex: number; 
+  readonly logIndex: number
+};
+
+// tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_TestEventEvent_eventArgs = {
   readonly id: Ethers_BigInt_t; 
   readonly user: Ethers_ethAddress; 

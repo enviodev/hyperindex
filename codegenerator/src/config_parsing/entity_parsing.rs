@@ -69,7 +69,7 @@ fn gql_named_types_to_rescript_types(
         "ID" => Ok("string".to_owned()),
         "String" => Ok("string".to_owned()),
         "Int" => Ok("int".to_owned()),
-        "BigInt" => Ok("BigInt.t".to_owned()),
+        "BigInt" => Ok("Ethers.BigInt.t".to_owned()),
         "Float" => Ok("float".to_owned()),
         "Bytes" => Ok("string".to_owned()),
         "Boolean" => Ok("bool".to_owned()),
