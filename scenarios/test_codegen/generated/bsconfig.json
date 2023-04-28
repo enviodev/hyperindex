@@ -7,6 +7,16 @@
       "subdirs": true
     }
   ],
+  "gentypeconfig": {
+    "language": "typescript",
+    "shims": {},
+    "generatedFileExtension": ".gen.ts",
+    "module": "commonjs",
+    "debug": {
+      "all": false,
+      "basic": false
+    }
+  },
   "package-specs": {
     "module": "commonjs",
     "in-source": true
@@ -17,7 +27,5 @@
     "rescript-envsafe",
     "rescript-struct"
   ],
-  "bsc-flags": [
-    "-open RescriptStruct"
-  ]
+  "bsc-flags": ["-open RescriptStruct"]
 }
