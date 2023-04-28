@@ -2,56 +2,58 @@
 "use strict";
 
 const { benchmarkSuite } = require("jest-bench");
+var IO = require("generated/src/IO.bs.js");
+var Jest = require("@glennsl/rescript-jest/src/jest.bs.js");
+var Js_dict = require("rescript/lib/js/js_dict.js");
+var MockEvents = require("./../__mocks__/MockEvents.bs.js");
+var ContextMock = require("./../__mocks__/ContextMock.bs.js");
 
-let a;
+require("../../EventHandlers.bs.js");
 
-benchmarkSuite("sample", {
-  // setup will not run just once, it will run for each loop
-  setup() {
-    a = [...Array(10e6).keys()];
+benchmarkSuite("Sample suite 1", {
+  ["3 new gravatar event insert calls in order"]: () => {
+    var insertCalls = Jest.MockJs.calls(ContextMock.insertMock);
+    return Jest.Expect.toEqual(Jest.Expect.expect(insertCalls), [
+      MockEvents.newGravatar1.id.toString(),
+      MockEvents.newGravatar2.id.toString(),
+      MockEvents.newGravatar3.id.toString(),
+    ]);
   },
 
-  // same thing with teardown
-  teardown() {
-    if (a.length < 10e6) a.unshift(0);
-  },
-
-  ["Array.indexOf"]: () => {
-    a.indexOf(555599);
-  },
-
-  ["delete Array[i]"]: () => {
-    expect(a.length).toEqual(10e6);
-    delete a[0];
-  },
-
-  ["Array.unshift"]: () => {
-    a.unshift(-1);
-  },
-
-  ["Array.push"]: () => {
-    a.push(1000000);
-  },
-
-  ["Fibonacci"]: () => {
-    fibonacci(10);
-  },
-
-  ["Async test"]: (deferred) => {
-    // Call deferred.resolve() at the end of the test.
-    new Promise((resolve) => setTimeout(resolve, 10)).then(() => deferred.resolve());
+  ["Validate in memory store state"]: () => {
+    var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;
+    var inMemoryStoreRows = Js_dict.values(inMemoryStore);
+    return Jest.Expect.toEqual(Jest.Expect.expect(inMemoryStoreRows), [
+      {
+        crud: /* Update */ 2,
+        entity: {
+          id: "1001",
+          owner: "0x1230000000000000000000000000000000000000",
+          displayName: "update1",
+          imageUrl: "https://gravatar1.com",
+          updatesCount: 2,
+        },
+      },
+      {
+        crud: /* Update */ 2,
+        entity: {
+          id: "1002",
+          owner: "0x4560000000000000000000000000000000000000",
+          displayName: "update2",
+          imageUrl: "https://gravatar2.com",
+          updatesCount: 2,
+        },
+      },
+      {
+        crud: /* Create */ 0,
+        entity: {
+          id: "1003",
+          owner: "0x7890000000000000000000000000000000000000",
+          displayName: "update3",
+          imageUrl: "https://gravatar3.com",
+          updatesCount: 2,
+        },
+      },
+    ]);
   },
 });
-
-/*  Not a pure module */
-
-function fibonacci(n) {
-  if (n === 0) {
-    return 0;
-  } else if (n === 1) {
-    return 1;
-  } else {
-    return fibonacci(n - 1) + fibonacci(n - 2);
-  }
-}
-
