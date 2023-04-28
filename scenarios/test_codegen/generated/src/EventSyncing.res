@@ -249,3 +249,13 @@ let processAllEvents = (chainConfig: Config.chainConfig) => {
     ~provider=chainConfig.provider,
   )
 }
+
+let startSyncingAllEvents = () => {
+  Config.config
+  ->Js.Dict.values
+  ->Belt.Array.map(chainConfig => {
+    chainConfig->processAllEvents
+  })
+  ->Promise.all
+  ->Promise.thenResolve(_ => ())
+}
