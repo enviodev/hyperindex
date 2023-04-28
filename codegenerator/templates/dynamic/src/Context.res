@@ -28,7 +28,7 @@ module {{contract.name.capitalized}}Contract = {
             let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id))
           }
       {{/each}}
-        }
+        },
       {{/each}}
       }
       {
