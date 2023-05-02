@@ -23,7 +23,7 @@ jobs:
         # Provide the password for postgres
         env:
           POSTGRES_PASSWORD: testing
-          POSTGRES_DB: indexly-dev
+          POSTGRES_DB: envio-dev
           POSTGRES_USER: postgres
         # Set health checks to wait until postgres has started
         options: >-
@@ -42,7 +42,6 @@ jobs:
       - uses: pnpm/action-setup@v2
         with:
           version: 7
-      
 
       - name: generate code
         run: |

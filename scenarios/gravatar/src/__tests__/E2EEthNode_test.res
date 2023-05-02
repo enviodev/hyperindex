@@ -21,6 +21,14 @@ describe("E2E Mock Event Batch", () => {
     }
 
     await localChainConfig->EventSyncing.processAllEvents
+
+    await LiveGravatarTask.liveGravatarTxs()
+
+    await EventSubscription.startWatchingEventsOnRpc(
+      ~chainConfig=localChainConfig,
+      ~provider=localChainConfig.provider,
+    )
+
     pass
   })
 })

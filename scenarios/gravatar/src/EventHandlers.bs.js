@@ -6,7 +6,7 @@ var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Handlers = require("generated/src/Handlers.bs.js");
 var Belt_Option = require("rescript/lib/js/belt_Option.js");
 
-Handlers.GravatarContract.registerNewGravatarLoadEntities(function (_event, _context) {
+Handlers.GravatarContract.registerNewGravatarLoadEntities(function (param, param$1) {
       
     });
 
@@ -20,8 +20,8 @@ Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context)
           });
     });
 
-Handlers.GravatarContract.registerUpdatedGravatarLoadEntities(function ($$event, contextUpdator) {
-      Curry._1(contextUpdator.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
+Handlers.GravatarContract.registerUpdatedGravatarLoadEntities(function ($$event, context) {
+      Curry._1(context.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, context) {
