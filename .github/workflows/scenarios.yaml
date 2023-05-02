@@ -60,3 +60,6 @@ jobs:
       - name: Run tests
         run: |
           pnpm test
+      
+      - name: Run benchmarks
+        run: npx jest --projects jest-bench.config.json  
