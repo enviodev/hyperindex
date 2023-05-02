@@ -19,6 +19,7 @@ module GravatarContract = {
     let updatedGravatarHandler = ref(None)
   )
 
+  @genType
   let registerTestEventLoadEntities = (
     handler: (
       ~event: Types.eventLog<Types.GravatarContract.TestEventEvent.eventArgs>,
@@ -27,6 +28,7 @@ module GravatarContract = {
   ) => {
     testEventLoadEntities := Some(handler)
   }
+  @genType
   let registerNewGravatarLoadEntities = (
     handler: (
       ~event: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs>,
@@ -35,6 +37,7 @@ module GravatarContract = {
   ) => {
     newGravatarLoadEntities := Some(handler)
   }
+  @genType
   let registerUpdatedGravatarLoadEntities = (
     handler: (
       ~event: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs>,
