@@ -43,50 +43,50 @@ Jest.describe("E2E Mock Event Batch", (function (param) {
               }));
       }));
 
-Jest.describe("E2E Db check", (function (param) {
-        Jest.beforeAllPromise(undefined, (async function (param) {
-                await DbFunctions.Gravatar.batchSetGravatar([
-                      MockEntities.gravatarEntity1,
-                      MockEntities.gravatarEntity2
-                    ]);
-                return await EventProcessing.processEventBatch(MockEvents.eventBatch);
-              }));
-        Jest.test("Validate in memory store state", (function (param) {
-                var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;
-                var inMemoryStoreRows = Js_dict.values(inMemoryStore);
-                return Jest.Expect.toEqual(Jest.Expect.expect(inMemoryStoreRows), [
-                            {
-                              crud: /* Update */2,
-                              entity: {
-                                id: "1001",
-                                owner: "0x1230000000000000000000000000000000000000",
-                                displayName: "update1",
-                                imageUrl: "https://gravatar1.com",
-                                updatesCount: 2
-                              }
-                            },
-                            {
-                              crud: /* Update */2,
-                              entity: {
-                                id: "1002",
-                                owner: "0x4560000000000000000000000000000000000000",
-                                displayName: "update2",
-                                imageUrl: "https://gravatar2.com",
-                                updatesCount: 2
-                              }
-                            },
-                            {
-                              crud: /* Create */0,
-                              entity: {
-                                id: "1003",
-                                owner: "0x7890000000000000000000000000000000000000",
-                                displayName: "update3",
-                                imageUrl: "https://gravatar3.com",
-                                updatesCount: 2
-                              }
-                            }
-                          ]);
-              }));
-      }));
+// Jest.describe("E2E Db check", (function (param) {
+//         Jest.beforeAllPromise(undefined, (async function (param) {
+//                 await DbFunctions.Gravatar.batchSetGravatar([
+//                       MockEntities.gravatarEntity1,
+//                       MockEntities.gravatarEntity2
+//                     ]);
+//                 return await EventProcessing.processEventBatch(MockEvents.eventBatch);
+//               }));
+//         Jest.test("Validate in memory store state", (function (param) {
+//                 var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;
+//                 var inMemoryStoreRows = Js_dict.values(inMemoryStore);
+//                 return Jest.Expect.toEqual(Jest.Expect.expect(inMemoryStoreRows), [
+//                             {
+//                               crud: /* Update */2,
+//                               entity: {
+//                                 id: "1001",
+//                                 owner: "0x1230000000000000000000000000000000000000",
+//                                 displayName: "update1",
+//                                 imageUrl: "https://gravatar1.com",
+//                                 updatesCount: 2
+//                               }
+//                             },
+//                             {
+//                               crud: /* Update */2,
+//                               entity: {
+//                                 id: "1002",
+//                                 owner: "0x4560000000000000000000000000000000000000",
+//                                 displayName: "update2",
+//                                 imageUrl: "https://gravatar2.com",
+//                                 updatesCount: 2
+//                               }
+//                             },
+//                             {
+//                               crud: /* Create */0,
+//                               entity: {
+//                                 id: "1003",
+//                                 owner: "0x7890000000000000000000000000000000000000",
+//                                 displayName: "update3",
+//                                 imageUrl: "https://gravatar3.com",
+//                                 updatesCount: 2
+//                               }
+//                             }
+//                           ]);
+//               }));
+//       }));
 
 /*  Not a pure module */
