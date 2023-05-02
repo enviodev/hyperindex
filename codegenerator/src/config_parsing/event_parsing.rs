@@ -93,7 +93,11 @@ fn abi_type_to_rescript_string(
                         rescript_subrecord_dependencies,
                     );
 
-                    ParamType { key, type_ }
+                    ParamType {
+                        key,
+                        type_,
+                        type_pg: String::from("test_pg_type1"),
+                    }
                 })
                 .collect();
 
@@ -123,6 +127,7 @@ fn get_event_template_from_ethereum_abi_event(
                 &EthereumEventParam::from_ethereum_abi_param(input),
                 rescript_subrecord_dependencies,
             ),
+            type_pg: String::from("test_pg_type1"),
         })
         .collect();
 
@@ -265,10 +270,12 @@ mod tests {
                 ParamType {
                     key: input1_name,
                     type_: String::from("Ethers.BigInt.t"),
+                    type_pg: String::from("test_pg_type1"),
                 },
                 ParamType {
                     key: input2_name,
                     type_: String::from("Ethers.ethAddress"),
+                    type_pg: String::from("test_pg_type1"),
                 },
             ],
             required_entities: vec![],
@@ -322,10 +329,12 @@ mod tests {
                 ParamType {
                     key: input1_name,
                     type_: String::from("Ethers.BigInt.t"),
+                    type_pg: String::from("test_pg_type1"),
                 },
                 ParamType {
                     key: input2_name,
                     type_: String::from("Ethers.ethAddress"),
+                    type_pg: String::from("test_pg_type1"),
                 },
             ],
             required_entities: vec![RequiredEntityTemplate {
@@ -387,10 +396,12 @@ mod tests {
                 ParamType {
                     key: "myString".to_string(),
                     type_: "string".to_string(),
+                    type_pg: String::from("test_pg_type1"),
                 },
                 ParamType {
                     key: "myUint256".to_string(),
                     type_: "Ethers.BigInt.t".to_string(),
+                    type_pg: String::from("test_pg_type1"),
                 },
             ],
         }];

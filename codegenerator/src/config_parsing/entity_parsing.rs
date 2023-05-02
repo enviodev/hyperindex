@@ -41,10 +41,12 @@ pub fn get_entity_record_types_from_schema(
         let mut params = Vec::new();
         for field in object.fields.iter() {
             let param_type = gql_type_to_rescript_type(&field.field_type, &entities_set)?;
+            let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
 
             params.push(ParamType {
                 key: field.name.to_owned(),
                 type_: param_type,
+                type_pg: param_pg_type,
             })
         }
 
@@ -59,6 +61,47 @@ pub fn get_entity_record_types_from_schema(
 enum NullableContainer {
     NotNullable,
     Nullable,
+}
+
+fn gql_named_types_to_postgres_types(
+    named_type: &str,
+    entities_set: &HashSet<String>,
+) -> Result<String, String> {
+    match named_type {
+        "ID" => Ok("text".to_owned()),
+        "String" => Ok("text".to_owned()),
+        "Int" => Ok("integer".to_owned()),
+        "BigInt" => Ok("numeric".to_owned()), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+        "Float" => Ok("numeric".to_owned()), // Should we allow this type? Rounding issues will abound.
+        "Bytes" => Ok("text".to_owned()),
+        "Boolean" => Ok("boolean".to_owned()),
+        custom_type => {
+            if entities_set.contains(custom_type) {
+                Ok("text".to_owned())
+            } else {
+                let error_message = format!("Failed to parse undefined type: {}", custom_type);
+                Err(error_message.to_owned())
+            }
+        }
+    }
+}
+
+fn gql_type_to_postgres_type(
+    gql_type: &Type<String>,
+    entities_set: &HashSet<String>,
+) -> Result<String, String> {
+    let composed_type_name = match gql_type {
+        Type::NamedType(named) => gql_named_types_to_postgres_types(named, entities_set)?,
+        Type::ListType(gql_type) => format!(
+            "ArrayNotImplemented<{}>",
+            gql_type_to_postgres_type(&gql_type, entities_set)?
+        ),
+        Type::NonNullType(gql_type) => format!(
+            "{}  NOT NULL",
+            gql_type_to_postgres_type(&gql_type, entities_set)?
+        ),
+    };
+    Ok(composed_type_name)
 }
 
 fn gql_named_types_to_rescript_types(

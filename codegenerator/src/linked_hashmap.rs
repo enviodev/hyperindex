@@ -231,6 +231,7 @@ mod tests {
             params: vec![ParamType {
                 key: String::from("test_key1"),
                 type_: String::from("test_type1"),
+                type_pg: String::from("test_pg_type1"),
             }],
         };
 
@@ -271,6 +272,7 @@ mod tests {
             params: vec![ParamType {
                 key: String::from("test_key1"),
                 type_: String::from("test_type1"),
+                type_pg: String::from("test_pg_type1"),
             }],
         };
 

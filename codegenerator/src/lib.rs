@@ -18,10 +18,13 @@ pub mod capitalization;
 pub mod cli_args;
 
 use capitalization::CapitalizedOptions;
+
+// TOḒO: we should have a different type for entity parameter types and event parameter types
 #[derive(Serialize, Debug, PartialEq, Clone)]
 struct ParamType {
     key: String,
     type_: String,
+    type_pg: String,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -146,6 +149,10 @@ pub fn generate_templates(
         include_str!("../templates/dynamic/src/Index.res"),
         &types_data,
     )?;
+    let rendered_string_migrations = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Migrations.res"),
+        &types_data,
+    )?;
 
     write_to_file_in_generated(".gitignore", &rendered_string_gitignore, project_paths)?;
     write_to_file_in_generated("src/Types.res", &rendered_string_types, project_paths)?;
@@ -185,6 +192,11 @@ pub fn generate_templates(
         project_paths,
     )?;
     write_to_file_in_generated("src/Index.res", &rendered_string_index, project_paths)?;
+    write_to_file_in_generated(
+        "src/Migrations.res",
+        &rendered_string_migrations,
+        project_paths,
+    )?;
 
     make_file_executable("register_tables_with_hasura.sh", project_paths)?;
 
