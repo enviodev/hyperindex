@@ -2,7 +2,7 @@ module Heading1 = {
   @react.component
   let make = (~children, ~className=?) => {
     <h1
-      className={"m-4 font-bold text-5xl bg-gradient-to-r from-primary to-secondary inline-block text-transparent bg-clip-text " ++
+      className={"my-4 font-bold text-5xl bg-gradient-to-r from-primary to-secondary inline-block text-transparent bg-clip-text " ++
       className->Option.getWithDefault("")}>
       {children}
     </h1>
