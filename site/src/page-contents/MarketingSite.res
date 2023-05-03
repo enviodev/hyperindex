@@ -3,6 +3,7 @@
 @react.component
 let make = () => {
   <div>
+    <LightDarkModeToggle />
     <Hero />
     <SubHero />
     <Backers />

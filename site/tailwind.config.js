@@ -9,6 +9,7 @@ module.exports = {
       variants: ["md"],
     },
   ],
+  darkMode: "class",
   theme: {
     extend: {
       keyframes: {

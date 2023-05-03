@@ -1,0 +1,77 @@
+.custom-cursor {
+  cursor: url("https://media-float-capital.fra1.cdn.digitaloceanspaces.com/public/cursors/pointer-colorful-edit.png")
+      9 1,
+    pointer;
+}
+
+.logo-container {
+  @apply flex flex-row justify-between text-center;
+}
+
+.screen-centered-container {
+  width: 100%;
+  height: 100%;
+}
+
+.v-align-in-responsive-height {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.loader {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 250px;
+  height: 171px;
+}
+
+.tooltip {
+  @apply invisible absolute;
+}
+
+.has-tooltip:hover .tooltip {
+  @apply visible z-50;
+}
+
+.toggle__dot {
+  top: -0.25rem;
+  left: -0.25rem;
+  transition: all 0.3s ease-in-out;
+}
+
+input:checked ~ .toggle__dot {
+  transform: translateX(100%);
+  /* background-color: #0d4184; */
+}
+
+.pixel {
+  image-rendering: crisp-edges !important;
+  image-rendering: optimizeSpeed;
+  /*                     */
+  image-rendering: -moz-crisp-edges;
+  /* Firefox             */
+  image-rendering: -o-crisp-edges;
+  /* Opera               */
+  image-rendering: -webkit-optimize-contrast;
+  /* Chrome (and Safari) */
+  image-rendering: pixelated;
+  /* Chrome as of 2019   */
+  image-rendering: optimize-contrast;
+  /* CSS3 Proposed       */
+  -ms-interpolation-mode: nearest-neighbor;
+  /* IE8+                */
+}
+
+.blurry-text-black {
+  text-shadow: 0 0 7px black;
+  color: transparent;
+}
+
+.blurry-text-white {
+  text-shadow: 0 0 7px white;
+  color: transparent;
+}
