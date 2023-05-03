@@ -23,12 +23,12 @@ let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have 
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
-    await %raw("sql`CREATE TABLE public.{{entity.name.uncapitalized}} ({{#each entity.params as |param|}}{{param.key}} {{param.type_pg}},{{/each}}UNIQUE (id));`")
+    await %raw("sql`CREATE TABLE \"public\".\"{{entity.name.uncapitalized}}\" ({{#each entity.params as |param|}}\"{{param.key}}\" {{param.type_pg}},{{/each}}UNIQUE (\"id\"));`")
   }
 
   let delete{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
     // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
-    await %raw("sql`DROP TABLE IF EXISTS public.{{entity.name.uncapitalized}};`")
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"{{entity.name.uncapitalized}}\";`")
   }
 }
 

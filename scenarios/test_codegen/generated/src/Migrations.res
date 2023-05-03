@@ -23,26 +23,26 @@ let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have 
 module User = {
   let createUserTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE public.user (id text  NOT NULL,address text  NOT NULL,gravatar text,UNIQUE (id));`"
+      "sql`CREATE TABLE \"public\".\"user\" (\"id\" text  NOT NULL,\"address\" text  NOT NULL,\"gravatar\" text,UNIQUE (\"id\"));`"
     )
   }
 
   let deleteUserTable: unit => promise<unit> = async () => {
     // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
-    await %raw("sql`DROP TABLE IF EXISTS public.user;`")
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"user\";`")
   }
 }
 
 module Gravatar = {
   let createGravatarTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE public.gravatar (id text  NOT NULL,owner text  NOT NULL,displayName text  NOT NULL,imageUrl text  NOT NULL,updatesCount integer  NOT NULL,UNIQUE (id));`"
+      "sql`CREATE TABLE \"public\".\"gravatar\" (\"id\" text  NOT NULL,\"owner\" text  NOT NULL,\"displayName\" text  NOT NULL,\"imageUrl\" text  NOT NULL,\"updatesCount\" integer  NOT NULL,UNIQUE (\"id\"));`"
     )
   }
 
   let deleteGravatarTable: unit => promise<unit> = async () => {
     // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
-    await %raw("sql`DROP TABLE IF EXISTS public.gravatar;`")
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"gravatar\";`")
   }
 }
 
