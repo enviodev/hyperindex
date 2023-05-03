@@ -9,6 +9,7 @@ let make = () => {
     <USPs />
     <PerformanceMetrics />
     <MinimalMaintenance />
+    <ByBuilders />
     <ApeHeroImage />
     <Backers />
     <ShipWithUs />
