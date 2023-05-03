@@ -5,15 +5,18 @@ let make = () => {
   <div>
     <LightDarkModeToggle />
     <Hero />
-    <SubHero />
-    <USPs />
+    <Blurbs.Shipping />
+    <HeroImages.CreatureHeroImage />
+    <Blurbs.OneCommand />
     <PerformanceMetrics />
+    <Blurbs.Customisable />
+    <USPs />
     <IntegrateInMinutes />
     <ByBuilders />
-    <ApeHeroImage />
+    <HeroImages.ApeHeroImage />
     <Backers />
     <ShipWithUs />
-    <FooterHeroImage />
+    <HeroImages.FooterHeroImage />
     <Footer />
   </div>
 }
