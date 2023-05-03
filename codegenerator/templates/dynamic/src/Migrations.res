@@ -33,7 +33,17 @@ module {{entity.name.capitalized}} = {
 }
 
 
+  let deleteAllTables:unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP SCHEMA public CASCADE;`")
+    await %raw("sql`CREATE SCHEMA public;`")
+    await %raw("sql`GRANT ALL ON SCHEMA public TO postgres;`")
+    await %raw("sql`GRANT ALL ON SCHEMA public TO public;`")
+  }
+
 {{/each}}
+
+
 
 type t
 @module external process: t = "process"
@@ -51,9 +61,12 @@ let runUpMigrations = async () => {
 
 
 let runDownMigrations = async () => {
-  {{#each entities as |entity|}}
-  await {{entity.name.capitalized}}.delete{{entity.name.capitalized}}Table()
-  {{/each}}
+  // {{#each entities as |entity|}}
+  // await {{entity.name.capitalized}}.delete{{entity.name.capitalized}}Table()
+  // {{/each}}
+
+  // NOTE: For now delete any remaining tables.
+  await deleteAllTables()
 }
 
 let setupDb = async () => {

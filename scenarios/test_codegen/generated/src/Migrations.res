@@ -33,6 +33,14 @@ module User = {
   }
 }
 
+let deleteAllTables: unit => promise<unit> = async () => {
+  // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+  await %raw("sql`DROP SCHEMA public CASCADE;`")
+  await %raw("sql`CREATE SCHEMA public;`")
+  await %raw("sql`GRANT ALL ON SCHEMA public TO postgres;`")
+  await %raw("sql`GRANT ALL ON SCHEMA public TO public;`")
+}
+
 module Gravatar = {
   let createGravatarTable: unit => promise<unit> = async () => {
     await %raw(
@@ -44,6 +52,14 @@ module Gravatar = {
     // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
     await %raw("sql`DROP TABLE IF EXISTS \"public\".\"gravatar\";`")
   }
+}
+
+let deleteAllTables: unit => promise<unit> = async () => {
+  // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+  await %raw("sql`DROP SCHEMA public CASCADE;`")
+  await %raw("sql`CREATE SCHEMA public;`")
+  await %raw("sql`GRANT ALL ON SCHEMA public TO postgres;`")
+  await %raw("sql`GRANT ALL ON SCHEMA public TO public;`")
 }
 
 type t
@@ -61,6 +77,8 @@ let runUpMigrations = async () => {
 let runDownMigrations = async () => {
   await User.deleteUserTable()
   await Gravatar.deleteGravatarTable()
+  // For now delete any remaining tables.
+  await deleteAllTables()
 }
 
 let setupDb = async () => {

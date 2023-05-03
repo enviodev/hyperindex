@@ -55,13 +55,16 @@ importers:
         version: 2.1.0
       drizzle-orm:
         specifier: ^0.23.2
-        version: 0.23.11(pg@8.10.0)
+        version: 0.23.11(pg@8.10.0)(postgres@3.3.4)
       ethers:
         specifier: ^6
         version: 6.3.0
       pg:
         specifier: ^8.10.0
         version: 8.10.0
+      postgres:
+        specifier: ^3.3.4
+        version: 3.3.4
       rescript-envsafe:
         specifier: ^1.3.0
         version: 1.3.0(rescript-struct@4.0.0)(rescript@10.1.4)
@@ -2648,7 +2651,7 @@ packages:
       - supports-color
     dev: true
 
-  /drizzle-orm@0.23.11(pg@8.10.0):
+  /drizzle-orm@0.23.11(pg@8.10.0)(postgres@3.3.4):
     resolution: {integrity: sha512-uqebUff9QeDo0ZI+s5XurmHjFNDuQMbnNObWIClzotU+iI0RfA1RSEXbK3lSp1FNp/HeUy23yIv8lkYzU9278A==}
     peerDependencies:
       '@aws-sdk/client-rds-data': '>=3'
@@ -2705,6 +2708,7 @@ packages:
         optional: true
     dependencies:
       pg: 8.10.0
+      postgres: 3.3.4
     dev: false
 
   /electron-to-chromium@1.4.363:
@@ -5446,6 +5450,10 @@ packages:
     engines: {node: '>=0.10.0'}
     dependencies:
       xtend: 4.0.2
+    dev: false
+
+  /postgres@3.3.4:
+    resolution: {integrity: sha512-XVu0+d/Y56pl2lSaf0c7V19AhAEfpVrhID1IENWN8nf0xch6hFq6dAov5dtUX6ZD46wfr1TxvLhxLtV8WnNsOg==}
     dev: false
 
   /prelude-ls@1.1.2:
