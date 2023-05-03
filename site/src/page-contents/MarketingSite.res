@@ -8,7 +8,7 @@ let make = () => {
     <SubHero />
     <USPs />
     <PerformanceMetrics />
-    <MinimalMaintenance />
+    <IntegrateInMinutes />
     <ByBuilders />
     <ApeHeroImage />
     <Backers />

@@ -44,9 +44,7 @@ module Heading4 = {
 module BigParagraph = {
   @react.component
   let make = (~children, ~className=?) => {
-    <p className={"font-bold text-2xl text-white " ++ className->Option.getWithDefault("")}>
-      {children}
-    </p>
+    <p className={"font-bold text-2xl " ++ className->Option.getWithDefault("")}> {children} </p>
   }
 }
 
