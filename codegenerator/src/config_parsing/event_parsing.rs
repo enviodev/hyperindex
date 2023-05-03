@@ -5,7 +5,7 @@ use crate::{
     config_parsing::{ConfigContract, Event as ConfigEvent},
     linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
-    Contract, Error, EventTemplate, ParamType, RecordType, RequiredEntityTemplate,
+    Contract, Error, EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
 };
 
 use ethereum_abi::{Abi, Event as EthereumAbiEvent};
@@ -38,7 +38,7 @@ impl<'a> EthereumEventParam<'a> {
 
 fn abi_type_to_rescript_string(
     param: &EthereumEventParam,
-    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
+    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
 ) -> String {
     match &param.abi_type {
         ethereum_abi::Type::Uint(_size) => String::from("Ethers.BigInt.t"),
@@ -75,7 +75,7 @@ fn abi_type_to_rescript_string(
                 name => name.to_string(),
             };
 
-            let rescript_params: Vec<ParamType> = abi_types
+            let rescript_params: Vec<EventParamType> = abi_types
                 .iter()
                 .enumerate()
                 .map(|(i, (field_name, abi_type))| {
@@ -88,16 +88,16 @@ fn abi_type_to_rescript_string(
                         name: &key,
                         abi_type: &abi_type,
                     };
-                    let type_ = abi_type_to_rescript_string(
+                    let type_rescript = abi_type_to_rescript_string(
                         &ethereum_param,
                         rescript_subrecord_dependencies,
                     );
 
-                    ParamType { key, type_ }
+                    EventParamType { key, type_rescript }
                 })
                 .collect();
 
-            let record = RecordType {
+            let record = EventRecordType {
                 name: record_name.to_capitalized_options(),
                 params: rescript_params,
             };
@@ -111,15 +111,15 @@ fn abi_type_to_rescript_string(
 fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthereumAbiEvent,
-    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
+    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
         .inputs
         .iter()
-        .map(|input| ParamType {
+        .map(|input| EventParamType {
             key: input.name.to_owned(),
-            type_: abi_type_to_rescript_string(
+            type_rescript: abi_type_to_rescript_string(
                 &EthereumEventParam::from_ethereum_abi_param(input),
                 rescript_subrecord_dependencies,
             ),
@@ -150,7 +150,7 @@ fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     parsed_paths: &ParsedPaths,
     contract_unique_id: ContractUniqueId,
-    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
+    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -188,7 +188,7 @@ fn get_contract_type_from_config_contract(
 
 pub fn get_contract_types_from_config(
     parsed_paths: &ParsedPaths,
-    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap,
+    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -218,7 +218,7 @@ mod tests {
         capitalization::Capitalize,
         config_parsing::{self, RequiredEntity},
         linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
-        EventTemplate, ParamType, RecordType, RequiredEntityTemplate,
+        EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
     };
     use ethereum_abi::{Event as AbiEvent, Param, Type};
 
@@ -262,13 +262,13 @@ mod tests {
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
             params: vec![
-                ParamType {
+                EventParamType {
                     key: input1_name,
-                    type_: String::from("Ethers.BigInt.t"),
+                    type_rescript: String::from("Ethers.BigInt.t"),
                 },
-                ParamType {
+                EventParamType {
                     key: input2_name,
-                    type_: String::from("Ethers.ethAddress"),
+                    type_rescript: String::from("Ethers.ethAddress"),
                 },
             ],
             required_entities: vec![],
@@ -319,13 +319,13 @@ mod tests {
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
             params: vec![
-                ParamType {
+                EventParamType {
                     key: input1_name,
-                    type_: String::from("Ethers.BigInt.t"),
+                    type_rescript: String::from("Ethers.BigInt.t"),
                 },
-                ParamType {
+                EventParamType {
                     key: input2_name,
-                    type_: String::from("Ethers.ethAddress"),
+                    type_rescript: String::from("Ethers.ethAddress"),
                 },
             ],
             required_entities: vec![RequiredEntityTemplate {
@@ -380,17 +380,17 @@ mod tests {
 
         let parsed_sub_records = rescript_subrecord_dependencies
             .iter()
-            .collect::<Vec<RecordType>>();
-        let expected_sub_records = vec![RecordType {
+            .collect::<Vec<EventRecordType>>();
+        let expected_sub_records = vec![EventRecordType {
             name: String::from("myStruct").to_capitalized_options(),
             params: vec![
-                ParamType {
+                EventParamType {
                     key: "myString".to_string(),
-                    type_: "string".to_string(),
+                    type_rescript: "string".to_string(),
                 },
-                ParamType {
+                EventParamType {
                     key: "myUint256".to_string(),
-                    type_: "Ethers.BigInt.t".to_string(),
+                    type_rescript: "Ethers.BigInt.t".to_string(),
                 },
             ],
         }];

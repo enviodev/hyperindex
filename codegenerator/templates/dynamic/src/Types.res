@@ -10,7 +10,7 @@ type id = string
 {{#each sub_record_dependencies as | subrecord |}}
    type {{subrecord.name.uncapitalized}} = {
     {{#each subrecord.params as | param |}}
-      {{param.key}}: {{param.type_}},
+      {{param.key}}: {{param.type_rescript}},
     {{/each}}
    }
 
@@ -34,7 +34,7 @@ let entitySerialize = (entity: entityRead) => {
 @genType
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{param.key}} : {{param.type_}},
+  {{param.key}} : {{param.type_rescript}},
   {{/each}}
 }
 
@@ -76,7 +76,7 @@ module {{event.name.capitalized}}Event = {
   @genType
   type eventArgs = {
     {{#each event.params as | param |}}
-    {{param.key}} : {{param.type_}},
+    {{param.key}} : {{param.type_rescript}},
     {{/each}}
   }
     {{#each ../../entities as | entity |}}

@@ -5,7 +5,7 @@
     "clean": "rescript clean -with-deps",
     "build": "rescript build -with-deps",
     "watch": "rescript build -with-deps -w",
-    "db-migrate": "drizzle-kit generate:pg --out migrations-folder --schema src/DbSchema.bs.js"
+    "db-migrate": "node -e 'require(`./src/Migrations.bs.js`).setupDb()'"
   },
   "keywords": [
     "ReScript"
@@ -22,6 +22,7 @@
     "drizzle-orm": "^0.23.2",
     "ethers": "^6",
     "pg": "^8.10.0",
+    "postgres": "^3.3.4",
     "rescript-envsafe": "^1.3.0",
     "rescript-struct": "^4.0.0"
   }

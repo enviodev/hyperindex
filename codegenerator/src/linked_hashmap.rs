@@ -1,4 +1,4 @@
-use crate::{capitalization::Capitalize, RecordType};
+use crate::{capitalization::Capitalize, HasName};
 use std::{collections::HashMap, hash::Hash};
 
 #[derive(PartialEq, Clone)]
@@ -20,6 +20,7 @@ pub struct LinkedHashMap<K, T> {
     head_key: Option<K>,
     map: HashMap<K, Node<K, T>>,
 }
+
 pub struct LinkedHashMapIterator<'a, K, T> {
     linked_hash_map: &'a LinkedHashMap<K, T>,
     next_key: Option<K>,
@@ -71,7 +72,7 @@ impl RescriptRecordKey {
     }
 }
 
-pub type RescriptRecordHierarchyLinkedHashMap = LinkedHashMap<RescriptRecordKey, RecordType>;
+pub type RescriptRecordHierarchyLinkedHashMap<T> = LinkedHashMap<RescriptRecordKey, T>;
 
 enum HashMapKeyInsert<K> {
     ExistingKeyAndEntry(K),
@@ -79,9 +80,9 @@ enum HashMapKeyInsert<K> {
     NewKeyAndEntry(K),
 }
 
-impl RescriptRecordHierarchyLinkedHashMap {
-    pub fn new() -> RescriptRecordHierarchyLinkedHashMap {
-        LinkedHashMap {
+impl<T: Clone + PartialEq + HasName> RescriptRecordHierarchyLinkedHashMap<T> {
+    pub fn new() -> RescriptRecordHierarchyLinkedHashMap<T> {
+        RescriptRecordHierarchyLinkedHashMap {
             head_key: None,
             map: HashMap::new(),
         }
@@ -90,7 +91,7 @@ impl RescriptRecordHierarchyLinkedHashMap {
     fn insert_into_map_or_increment_key(
         &mut self,
         key: RescriptRecordKey,
-        node: &mut Node<RescriptRecordKey, RecordType>,
+        node: &mut Node<RescriptRecordKey, T>,
     ) -> HashMapKeyInsert<RescriptRecordKey> {
         //check for existing values (need to actually look up the value for equality comparison)
         match self.map.get(&key) {
@@ -98,7 +99,7 @@ impl RescriptRecordHierarchyLinkedHashMap {
                 //if the existing value matches the current node exactly
                 //do not update it or do anything simply return since this type
                 //can be reused
-                if existing_value == node {
+                if existing_value.data == node.data {
                     return HashMapKeyInsert::ExistingKeyAndEntry(key);
                 }
 
@@ -109,7 +110,8 @@ impl RescriptRecordHierarchyLinkedHashMap {
                 };
 
                 //Change the name in the record as well
-                node.data.name = new_key.concat_key_and_count().to_capitalized_options();
+                node.data
+                    .set_name(new_key.concat_key_and_count().to_capitalized_options());
 
                 self.insert_into_map_or_increment_key(new_key, node)
             }
@@ -125,7 +127,7 @@ impl RescriptRecordHierarchyLinkedHashMap {
         }
     }
 
-    pub fn insert(&mut self, key: String, value: RecordType) -> RescriptTypeName {
+    pub fn insert(&mut self, key: String, value: T) -> RescriptTypeName {
         //Instantiate a node with the given value
         let mut node = Node::new(value);
         //Try insert it to the map (it will either already exist, create a new name/key or insert
@@ -171,7 +173,7 @@ impl RescriptRecordHierarchyLinkedHashMap {
             },
         }
     }
-    pub fn iter(&self) -> LinkedHashMapIterator<RescriptRecordKey, RecordType> {
+    pub fn iter(&self) -> LinkedHashMapIterator<RescriptRecordKey, T> {
         let next_key = self.head_key.clone();
 
         LinkedHashMapIterator {
@@ -183,26 +185,26 @@ impl RescriptRecordHierarchyLinkedHashMap {
 
 #[cfg(test)]
 mod tests {
-    use crate::{capitalization::Capitalize, ParamType, RecordType};
+    use crate::{capitalization::Capitalize, EventParamType, EventRecordType};
 
     use super::RescriptRecordHierarchyLinkedHashMap;
 
     #[test]
     fn different_rescript_records() {
         let name_1 = String::from("test1");
-        let record_1 = RecordType {
+        let record_1 = EventRecordType {
             name: name_1.to_capitalized_options(),
             params: Vec::new(),
         };
 
         let name_2 = String::from("test2");
-        let record_2 = RecordType {
+        let record_2 = EventRecordType {
             name: name_2.to_capitalized_options(),
             params: Vec::new(),
         };
 
         let name_3 = String::from("test3");
-        let record_3 = RecordType {
+        let record_3 = EventRecordType {
             name: name_3.to_capitalized_options(),
             params: Vec::new(),
         };
@@ -213,29 +215,29 @@ mod tests {
         linked_table.insert(name_3, record_3.clone());
 
         let expected_records_arr = vec![record_3, record_2, record_1];
-        let records_arr = linked_table.iter().collect::<Vec<RecordType>>();
+        let records_arr = linked_table.iter().collect::<Vec<EventRecordType>>();
         assert_eq!(expected_records_arr, records_arr);
     }
 
     #[test]
     fn different_rescript_records_same_name() {
         let name_1 = String::from("test1");
-        let record_1 = RecordType {
+        let record_1 = EventRecordType {
             name: name_1.to_capitalized_options(),
             params: Vec::new(),
         };
 
         let name_2 = String::from("test1");
-        let record_2 = RecordType {
+        let record_2 = EventRecordType {
             name: name_2.to_capitalized_options(),
-            params: vec![ParamType {
+            params: vec![EventParamType {
                 key: String::from("test_key1"),
-                type_: String::from("test_type1"),
+                type_rescript: String::from("test_type1"),
             }],
         };
 
         let name_3 = String::from("test3");
-        let record_3 = RecordType {
+        let record_3 = EventRecordType {
             name: name_3.to_capitalized_options(),
             params: Vec::new(),
         };
@@ -247,35 +249,35 @@ mod tests {
 
         let expected_records_arr = vec![
             record_3,
-            RecordType {
+            EventRecordType {
                 name: String::from("test1_1").to_capitalized_options(),
                 ..record_2
             },
             record_1,
         ];
-        let records_arr = linked_table.iter().collect::<Vec<RecordType>>();
+        let records_arr = linked_table.iter().collect::<Vec<EventRecordType>>();
         assert_eq!(expected_records_arr, records_arr);
     }
 
     #[test]
     fn different_rescript_records_same_name_and_val() {
         let name_1 = String::from("test1");
-        let record_1 = RecordType {
+        let record_1 = EventRecordType {
             name: name_1.to_capitalized_options(),
             params: Vec::new(),
         };
 
         let name_2 = String::from("test1");
-        let record_2 = RecordType {
+        let record_2 = EventRecordType {
             name: name_2.to_capitalized_options(),
-            params: vec![ParamType {
+            params: vec![EventParamType {
                 key: String::from("test_key1"),
-                type_: String::from("test_type1"),
+                type_rescript: String::from("test_type1"),
             }],
         };
 
         let name_3 = String::from("test1");
-        let record_3 = RecordType {
+        let record_3 = EventRecordType {
             name: name_3.to_capitalized_options(),
             params: Vec::new(),
         };
@@ -286,14 +288,14 @@ mod tests {
         linked_table.insert(name_3, record_3.clone());
 
         let expected_records_arr = vec![
-            RecordType {
+            EventRecordType {
                 name: String::from("test1_1").to_capitalized_options(),
                 ..record_2
             },
             record_1,
         ];
 
-        let records_arr = linked_table.iter().collect::<Vec<RecordType>>();
+        let records_arr = linked_table.iter().collect::<Vec<EventRecordType>>();
         assert_eq!(expected_records_arr, records_arr);
     }
 }

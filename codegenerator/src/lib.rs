@@ -18,16 +18,43 @@ pub mod capitalization;
 pub mod cli_args;
 
 use capitalization::CapitalizedOptions;
-#[derive(Serialize, Debug, PartialEq, Clone)]
-struct ParamType {
-    key: String,
-    type_: String,
+
+pub trait HasName {
+    fn set_name(&mut self, name: CapitalizedOptions);
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct RecordType {
+struct EventParamType {
+    key: String,
+    type_rescript: String,
+}
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct EventRecordType {
     name: CapitalizedOptions,
-    params: Vec<ParamType>,
+    params: Vec<EventParamType>,
+}
+impl HasName for EventRecordType {
+    fn set_name(&mut self, name: CapitalizedOptions) {
+        self.name = name;
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
+struct EntityParamType {
+    key: String,
+    type_rescript: String,
+    type_pg: String,
+}
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct EntityRecordType {
+    name: CapitalizedOptions,
+    params: Vec<EntityParamType>,
+}
+
+impl HasName for EntityRecordType {
+    fn set_name(&mut self, name: CapitalizedOptions) {
+        self.name = name;
+    }
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -39,7 +66,7 @@ pub struct RequiredEntityTemplate {
 #[derive(Serialize, Debug, PartialEq)]
 pub struct EventTemplate {
     name: CapitalizedOptions,
-    params: Vec<ParamType>,
+    params: Vec<EventParamType>,
     required_entities: Vec<RequiredEntityTemplate>,
 }
 
@@ -56,22 +83,20 @@ pub struct Contract {
     handler: HandlerPathsTemplate,
 }
 
-type EntityTemplate = RecordType;
-
 #[derive(Serialize)]
 struct TypesTemplate {
-    sub_record_dependencies: Vec<RecordType>,
+    sub_record_dependencies: Vec<EventRecordType>,
     contracts: Vec<Contract>,
-    entities: Vec<EntityTemplate>,
+    entities: Vec<EntityRecordType>,
     chain_configs: Vec<ChainConfigTemplate>,
     codegen_out_path: String,
 }
 
 pub fn generate_templates(
-    sub_record_dependencies: Vec<RecordType>,
+    sub_record_dependencies: Vec<EventRecordType>,
     contracts: Vec<Contract>,
     chain_configs: Vec<ChainConfigTemplate>,
-    entity_types: Vec<RecordType>,
+    entity_types: Vec<EntityRecordType>,
     project_paths: &ProjectPaths,
 ) -> Result<(), Box<dyn Error>> {
     let mut handlebars = Handlebars::new();
@@ -146,6 +171,10 @@ pub fn generate_templates(
         include_str!("../templates/dynamic/src/Index.res"),
         &types_data,
     )?;
+    let rendered_string_migrations = handlebars.render_template(
+        include_str!("../templates/dynamic/src/Migrations.res"),
+        &types_data,
+    )?;
 
     write_to_file_in_generated(".gitignore", &rendered_string_gitignore, project_paths)?;
     write_to_file_in_generated("src/Types.res", &rendered_string_types, project_paths)?;
@@ -185,6 +214,11 @@ pub fn generate_templates(
         project_paths,
     )?;
     write_to_file_in_generated("src/Index.res", &rendered_string_index, project_paths)?;
+    write_to_file_in_generated(
+        "src/Migrations.res",
+        &rendered_string_migrations,
+        project_paths,
+    )?;
 
     make_file_executable("register_tables_with_hasura.sh", project_paths)?;
 

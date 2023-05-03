@@ -1,4 +1,0 @@
-ALTER TABLE "user" DROP COLUMN IF EXISTS "idExample";
-ALTER TABLE "balance" DROP COLUMN IF EXISTS "idExample";
-ALTER TABLE "gravatar" DROP COLUMN IF EXISTS "idExample";
-ALTER TABLE "profile" DROP COLUMN IF EXISTS "idExample";

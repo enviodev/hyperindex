@@ -26,7 +26,7 @@ module {{entity.name.capitalized}} = {
 
   type {{entity.name.uncapitalized}}TableRowOptionalFields = {
     {{#each entity.params as |param|}}
-    {{param.key}}?: {{param.type_}},
+    {{param.key}}?: {{param.type_rescript}},
     {{/each}}    
   }
 
