@@ -1,5 +1,5 @@
-const primaryColor = "#A1C4FD";
-const secondaryColor = "#C2E9FB";
+const primaryColor = "#2575FC";
+const secondaryColor = "#A223CF";
 
 module.exports = {
   content: ["./src/**/*.res"],

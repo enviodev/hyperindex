@@ -21,6 +21,7 @@ external floatingMenuZoomStyle: {
   "should-display-zoom-in-effect": string,
 } = "../../../styles/floating-menu-zoom-style.module.css"
 
+@module
 external imageStyles: {"disable-anti-aliasing": string} = "../../../styles/image.module.css"
 
 @module
