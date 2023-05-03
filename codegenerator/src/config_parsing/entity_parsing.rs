@@ -1,10 +1,12 @@
-use crate::{capitalization::Capitalize, project_paths::ParsedPaths, ParamType, RecordType};
+use crate::{
+    capitalization::Capitalize, project_paths::ParsedPaths, EntityParamType, EntityRecordType,
+};
 use graphql_parser::schema::{Definition, Type, TypeDefinition};
 use std::collections::HashSet;
 
 pub fn get_entity_record_types_from_schema(
     parsed_paths: &ParsedPaths,
-) -> Result<Vec<RecordType>, String> {
+) -> Result<Vec<EntityRecordType>, String> {
     let schema_string = std::fs::read_to_string(&parsed_paths.schema_path).map_err(|err| {
         format!(
             "Failed to read schema file at {} with Error: {}",
@@ -43,14 +45,14 @@ pub fn get_entity_record_types_from_schema(
             let param_type = gql_type_to_rescript_type(&field.field_type, &entities_set)?;
             let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
 
-            params.push(ParamType {
+            params.push(EntityParamType {
                 key: field.name.to_owned(),
-                type_: param_type,
+                type_rescript: param_type,
                 type_pg: param_pg_type,
             })
         }
 
-        entity_records.push(RecordType {
+        entity_records.push(EntityRecordType {
             name: object.name.to_owned().to_capitalized_options(),
             params,
         })
@@ -92,10 +94,10 @@ fn gql_type_to_postgres_type(
 ) -> Result<String, String> {
     let composed_type_name = match gql_type {
         Type::NamedType(named) => gql_named_types_to_postgres_types(named, entities_set)?,
-        Type::ListType(gql_type) => format!(
-            "ArrayNotImplemented<{}>",
-            gql_type_to_postgres_type(&gql_type, entities_set)?
-        ),
+        Type::ListType(_gql_type) => {
+            // NOTE: arrays are currently stored as text in the database, this is a temporary hack.
+            String::from("text")
+        }
         Type::NonNullType(gql_type) => format!(
             "{}  NOT NULL",
             gql_type_to_postgres_type(&gql_type, entities_set)?
