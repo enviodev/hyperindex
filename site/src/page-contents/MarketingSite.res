@@ -6,11 +6,13 @@ let make = () => {
     <LightDarkModeToggle />
     <Hero />
     <SubHero />
-    <Backers />
     <USPs />
     <PerformanceMetrics />
     <MinimalMaintenance />
+    <ApeHeroImage />
+    <Backers />
     <ShipWithUs />
+    <FooterHeroImage />
     <Footer />
   </div>
 }

@@ -76,6 +76,11 @@ module LightDarkModeToggleProvider = {
   }
 }
 
+let useModeUrlVariant = () => {
+  let mode = React.useContext(LightDarkModeToggleProvider.LightDarkModeToggleContext.context)
+  mode->modeToString
+}
+
 @react.component
 let make = () => {
   let mode = React.useContext(LightDarkModeToggleProvider.LightDarkModeToggleContext.context)
