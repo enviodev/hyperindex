@@ -5,7 +5,7 @@
     "clean": "rescript clean -with-deps",
     "build": "rescript build -with-deps",
     "watch": "rescript build -with-deps -w",
-    "db-migrate": "node src/Migrations.bs.js"
+    "db-migrate": "node -e 'require(`./src/Migrations.bs.js`).setupDb()'"
   },
   "keywords": [
     "ReScript"
