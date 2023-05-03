@@ -3,7 +3,7 @@
 @react.component
 let make = () => {
   <div>
-    <LightDarkModeToggle />
+    <MarketingNav />
     <Hero />
     <Blurbs.Shipping />
     <HeroImages.CreatureHeroImage />

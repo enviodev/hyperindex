@@ -1,0 +1,33 @@
+.floating-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  transition: all 200ms ease;
+  visibility: hidden;
+  background-color: rgba(255, 255, 255, 0.5);
+  z-index: 40;
+}
+
+.should-display.floating-menu {
+  visibility: visible;
+}
+
+ .floating-menu > .zoom-in-effect {
+  background-color: rgba(59, 130, 250, 0.6);
+  width: 100vw;
+  height: 100vh;
+  border: 1px solid grey;
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  transition: all 200ms ease !important;
+  transform: scale(0, 0);
+  }
+
+  .floating-menu.should-display > .zoom-in-effect {
+    transform: scale(1, 1);
+  }
+

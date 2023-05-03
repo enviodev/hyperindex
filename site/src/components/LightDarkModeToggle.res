@@ -111,11 +111,6 @@ let make = () => {
             />
           }}
         </div>
-        <div>
-          <label className="text-sm text-gray-800 ml-2">
-            {(mode->modeToString ++ " mode")->React.string}
-          </label>
-        </div>
       </div>}
     />
   </div>
