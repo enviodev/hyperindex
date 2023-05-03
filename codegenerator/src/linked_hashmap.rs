@@ -185,26 +185,26 @@ impl<T: Clone + PartialEq + HasName> RescriptRecordHierarchyLinkedHashMap<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{capitalization::Capitalize, EntityParamType, EntityRecordType};
+    use crate::{capitalization::Capitalize, EventParamType, EventRecordType};
 
     use super::RescriptRecordHierarchyLinkedHashMap;
 
     #[test]
     fn different_rescript_records() {
         let name_1 = String::from("test1");
-        let record_1 = EntityRecordType {
+        let record_1 = EventRecordType {
             name: name_1.to_capitalized_options(),
             params: Vec::new(),
         };
 
         let name_2 = String::from("test2");
-        let record_2 = EntityRecordType {
+        let record_2 = EventRecordType {
             name: name_2.to_capitalized_options(),
             params: Vec::new(),
         };
 
         let name_3 = String::from("test3");
-        let record_3 = EntityRecordType {
+        let record_3 = EventRecordType {
             name: name_3.to_capitalized_options(),
             params: Vec::new(),
         };
@@ -215,30 +215,29 @@ mod tests {
         linked_table.insert(name_3, record_3.clone());
 
         let expected_records_arr = vec![record_3, record_2, record_1];
-        let records_arr = linked_table.iter().collect::<Vec<EntityRecordType>>();
+        let records_arr = linked_table.iter().collect::<Vec<EventRecordType>>();
         assert_eq!(expected_records_arr, records_arr);
     }
 
     #[test]
     fn different_rescript_records_same_name() {
         let name_1 = String::from("test1");
-        let record_1 = EntityRecordType {
+        let record_1 = EventRecordType {
             name: name_1.to_capitalized_options(),
             params: Vec::new(),
         };
 
         let name_2 = String::from("test1");
-        let record_2 = EntityRecordType {
+        let record_2 = EventRecordType {
             name: name_2.to_capitalized_options(),
-            params: vec![EntityParamType {
+            params: vec![EventParamType {
                 key: String::from("test_key1"),
                 type_rescript: String::from("test_type1"),
-                type_pg: String::from("test_pg_type1"),
             }],
         };
 
         let name_3 = String::from("test3");
-        let record_3 = EntityRecordType {
+        let record_3 = EventRecordType {
             name: name_3.to_capitalized_options(),
             params: Vec::new(),
         };
@@ -250,36 +249,35 @@ mod tests {
 
         let expected_records_arr = vec![
             record_3,
-            EntityRecordType {
+            EventRecordType {
                 name: String::from("test1_1").to_capitalized_options(),
                 ..record_2
             },
             record_1,
         ];
-        let records_arr = linked_table.iter().collect::<Vec<EntityRecordType>>();
+        let records_arr = linked_table.iter().collect::<Vec<EventRecordType>>();
         assert_eq!(expected_records_arr, records_arr);
     }
 
     #[test]
     fn different_rescript_records_same_name_and_val() {
         let name_1 = String::from("test1");
-        let record_1 = EntityRecordType {
+        let record_1 = EventRecordType {
             name: name_1.to_capitalized_options(),
             params: Vec::new(),
         };
 
         let name_2 = String::from("test1");
-        let record_2 = EntityRecordType {
+        let record_2 = EventRecordType {
             name: name_2.to_capitalized_options(),
-            params: vec![EntityParamType {
+            params: vec![EventParamType {
                 key: String::from("test_key1"),
                 type_rescript: String::from("test_type1"),
-                type_pg: String::from("test_pg_type1"),
             }],
         };
 
         let name_3 = String::from("test1");
-        let record_3 = EntityRecordType {
+        let record_3 = EventRecordType {
             name: name_3.to_capitalized_options(),
             params: Vec::new(),
         };
@@ -290,14 +288,14 @@ mod tests {
         linked_table.insert(name_3, record_3.clone());
 
         let expected_records_arr = vec![
-            EntityRecordType {
+            EventRecordType {
                 name: String::from("test1_1").to_capitalized_options(),
                 ..record_2
             },
             record_1,
         ];
 
-        let records_arr = linked_table.iter().collect::<Vec<EntityRecordType>>();
+        let records_arr = linked_table.iter().collect::<Vec<EventRecordType>>();
         assert_eq!(expected_records_arr, records_arr);
     }
 }
