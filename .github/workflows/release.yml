@@ -12,7 +12,7 @@ jobs:
   prepare:
     name: Prepare release
     runs-on: ubuntu-20.04
-    defualts:
+    defaults:
       run:
         working-directory: ./codegenerator
 
