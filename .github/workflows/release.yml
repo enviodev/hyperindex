@@ -12,9 +12,6 @@ jobs:
   prepare:
     name: Prepare release
     runs-on: ubuntu-20.04
-    defaults:
-      run:
-        working-directory: ./codegenerator
 
     outputs:
       tag_name: ${{ steps.release_info.outputs.tag_name }}
@@ -37,7 +34,7 @@ jobs:
         id: build_changelog
         uses: mikepenz/release-changelog-builder-action@v2
         with:
-          configuration: "../.github/changelog.json"
+          configuration: "./.github/changelog.json"
           fromTag: ${{ '' }}
           toTag: ${{ steps.release_info.outputs.tag_name }}
         env:
@@ -46,6 +43,9 @@ jobs:
   release:
     name: ${{ matrix.job.target }} (${{ matrix.job.os }})
     runs-on: ${{ matrix.job.os }}
+    defaults:
+      run:
+        working-directory: ./codegenerator
     needs: prepare
     strategy:
       matrix:
