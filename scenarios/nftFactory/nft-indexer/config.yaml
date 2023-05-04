@@ -1,6 +1,6 @@
 version: 0.0.0
-description: Gravatar for Ethereum
-repository: https://github.com/graphprotocol/example-subgraph
+description: NFT Factory
+repository: https://github.com/nft-factory
 networks:
   - id: 31337
     rpc_url: http://localhost:8545
