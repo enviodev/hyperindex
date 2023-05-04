@@ -245,12 +245,14 @@ fn set_executable_permissions(path: &Path) -> std::io::Result<()> {
 }
 
 #[cfg(windows)]
+///Impossible to set an executable mode on windows
+///This function is simply for the hasura script for now
+///So we can add some manual wsl steps for windows users
 fn set_executable_permissions(path: &Path) -> std::io::Result<()> {
-    use std::os::windows::fs::PermissionsExt;
     let mut permissions = fs::metadata(&path)?.permissions();
     permissions.set_readonly(false);
-    permissions.set_executable(true);
     fs::set_permissions(&path, permissions)?;
+
     Ok(())
 }
 
