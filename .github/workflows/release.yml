@@ -45,7 +45,7 @@ jobs:
     runs-on: ${{ matrix.job.os }}
     defaults:
       run:
-        working-directory: ./codegenerator
+        working-directory: codegenerator
     needs: prepare
     strategy:
       matrix:
