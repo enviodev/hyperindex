@@ -46,7 +46,6 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
     let existingToken = context.token.existingTransferredToken();
     if (!existingToken) {
       let currentSupply = Number(nftCollectionUpdated.currentSupply) + 1;
-      console.log(currentSupply.toString());
 
       let nftCollection: nftCollectionEntity = {
         ...nftCollectionUpdated,
@@ -86,8 +85,6 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
 
     let userToTokensOpt: Array<string> = loadedUserTo?.tokens ?? [];
     let userToTokens: Array<string> = [token.id];
-
-    console.log(typeof userToTokensOpt);
 
     if (typeof userToTokensOpt !== "string") {
       userToTokens.concat(userToTokensOpt);
