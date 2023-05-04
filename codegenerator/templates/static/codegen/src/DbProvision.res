@@ -5,7 +5,5 @@ let pool = DrizzleOrm.Pool.make(~config=Config.db)
 let migrateDb = () => DrizzleOrm.Drizzle.migrate(db, {migrationsFolder: "./generated/migrations-folder"})
 
 let getDb = async () => {
-  // TODO: make this only migrate once, rather than every time.
-  await migrateDb()
   db
 }
