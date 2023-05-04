@@ -1,7 +1,26 @@
-type Gravatar @entity {
+type User {
   id: ID!
-  owner: Bytes!
-  displayName: String!
-  imageUrl: String!
-  updatesCount: Int!
+  balance: Float!
+}
+
+type Bank {
+  totalBalance: Float!
+  users: [User!]!
+}
+
+type Treasury {
+  totalBalance: Float!
+  lastInterestCalculationTime: Float!
+  interestRate: Float!
+}
+
+type Query {
+  bank: Bank!
+  treasury: Treasury!
+}
+
+type Mutation {
+  deposit(amount: Float!): User!
+  withdraw(amount: Float!): User!
+  setInterestRate(interestRate: Float!): Treasury!
 }

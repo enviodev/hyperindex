@@ -1,23 +1,6 @@
-require("hardhat-deploy");
-require("@nomiclabs/hardhat-ethers");
-require("hardhat-abi-exporter");
+require("@nomicfoundation/hardhat-toolbox");
 
-// require("./tasks");
-
+/** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
-  solidity: {
-    version: "0.8.19",
-  },
-  defaultNetwork: "ganache",
-  networks: {
-    ganache: {
-      url: "http://localhost:8545",
-    },
-  },
-  abiExporter: {
-    path: "./abis",
-    clear: true,
-    flat: true,
-    spacing: 2,
-  }
+  solidity: "0.8.18",
 };

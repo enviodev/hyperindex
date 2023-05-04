@@ -1,0 +1,202 @@
+{
+  "address": "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_treasuryAddress",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "DepositMade",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "totalBalance",
+          "type": "uint256"
+        }
+      ],
+      "name": "TotalBalanceChanged",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "WithdrawalMade",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "deposit",
+      "outputs": [],
+      "stateMutability": "payable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getBalance",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getTotalBalance",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "withdraw",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "transactionHash": "0xe1015afdd88c2825f991df996c8ed130439c99052acbf9535837da204ff46850",
+  "receipt": {
+    "to": null,
+    "from": "0x72e37d393c70823113a7176aC1F7C579d2C5623E",
+    "contractAddress": "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC",
+    "transactionIndex": 0,
+    "gasUsed": "683837",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "blockHash": "0x5e869da33135b82bdb9e50c96efac864b5ebcb78539c4f4af0e14d398a84b6b5",
+    "transactionHash": "0xe1015afdd88c2825f991df996c8ed130439c99052acbf9535837da204ff46850",
+    "logs": [],
+    "blockNumber": 2,
+    "cumulativeGasUsed": "683837",
+    "status": 1,
+    "byzantium": true
+  },
+  "args": [
+    "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+  ],
+  "numDeployments": 1,
+  "solcInputHash": "655ac0fa964e2fdcc36a7869a1e5580e",
+  "metadata": "{\"compiler\":{\"version\":\"0.8.19+commit.7dd6d404\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_treasuryAddress\",\"type\":\"address\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"account\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"DepositMade\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"totalBalance\",\"type\":\"uint256\"}],\"name\":\"TotalBalanceChanged\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"account\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"amount\",\"type\":\"uint256\"}],\"name\":\"WithdrawalMade\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"deposit\",\"outputs\":[],\"stateMutability\":\"payable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getBalance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getTotalBalance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_amount\",\"type\":\"uint256\"}],\"name\":\"withdraw\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}],\"devdoc\":{\"kind\":\"dev\",\"methods\":{},\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"version\":1}},\"settings\":{\"compilationTarget\":{\"contracts/SimpleBank.sol\":\"SimpleBank\"},\"evmVersion\":\"paris\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\",\"useLiteralContent\":true},\"optimizer\":{\"enabled\":false,\"runs\":200},\"remappings\":[]},\"sources\":{\"contracts/SimpleBank.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity ^0.8.0;\\n\\n// SimpleBank contract\\ncontract SimpleBank {\\n    mapping(address => uint256) private balances;\\n    uint256 private totalBalance;\\n    address private treasuryAddress;\\n    uint256 private lastInterestCalculationTime;\\n\\n    event DepositMade(address indexed account, uint256 amount);\\n    event WithdrawalMade(address indexed account, uint256 amount);\\n    event TotalBalanceChanged(uint256 totalBalance);\\n\\n    constructor(address _treasuryAddress) {\\n        treasuryAddress = _treasuryAddress;\\n    }\\n\\n    // Deposit funds into the account\\n    function deposit() external payable {\\n        uint256 depositAmount = msg.value;\\n        require(depositAmount > 0, \\\"Deposit amount should be greater than 0\\\");\\n\\n        // Calculate interest since last interest calculation time\\n        uint256 interest = _calculateInterest();\\n\\n        // Update balance and total balance\\n        balances[msg.sender] += depositAmount + interest;\\n        totalBalance += depositAmount + interest;\\n\\n        // Emit event\\n        emit DepositMade(msg.sender, depositAmount);\\n\\n        // Update last interest calculation time\\n        lastInterestCalculationTime = block.timestamp;\\n\\n        // Update total balance event\\n        emit TotalBalanceChanged(totalBalance);\\n    }\\n\\n    // Withdraw funds from the account\\n    function withdraw(uint256 _amount) external {\\n        require(_amount > 0, \\\"Withdrawal amount should be greater than 0\\\");\\n        require(_amount <= balances[msg.sender], \\\"Insufficient balance\\\");\\n\\n        // Calculate interest since last interest calculation time\\n        uint256 interest = _calculateInterest();\\n\\n        // Update balance and total balance\\n        balances[msg.sender] -= _amount;\\n        totalBalance -= _amount;\\n\\n        // Emit event\\n        emit WithdrawalMade(msg.sender, _amount);\\n\\n        // Update last interest calculation time\\n        lastInterestCalculationTime = block.timestamp;\\n\\n        // Update total balance event\\n        emit TotalBalanceChanged(totalBalance);\\n\\n        // Transfer funds to the user's account\\n        (bool success, ) = msg.sender.call{value: _amount + interest}(\\\"\\\");\\n        require(success, \\\"Transfer failed\\\");\\n    }\\n\\n    // Calculate interest earned by the user since the last calculation time\\n    function _calculateInterest() private returns (uint256) {\\n        Treasury treasuryContract = Treasury(treasuryAddress);\\n        uint256 interest = treasuryContract.calculateInterest();\\n\\n        // Calculate interest earned by the user and update their balance\\n        uint256 userInterest = (interest * balances[msg.sender]) / totalBalance;\\n        balances[msg.sender] += userInterest;\\n\\n        // Emit event for interest calculation\\n        // emit Treasury.InterestCalculated(interest);\\n\\n        return userInterest;\\n    }\\n\\n    // Get the balance of the user\\n    function getBalance() external view returns (uint256) {\\n        return balances[msg.sender];\\n    }\\n\\n    // Get the total balance of the bank\\n    function getTotalBalance() external view returns (uint256) {\\n        return totalBalance;\\n    }\\n}\\n\\ncontract Treasury {\\n    uint256 private totalBalance;\\n    uint256 private lastInterestCalculationTime;\\n    uint256 private interestRate;\\n\\n    event InterestCalculated(uint256 interest);\\n\\n    constructor(uint256 _interestRate) {\\n        interestRate = _interestRate;\\n    }\\n\\n    // Calculate interest earned since the last calculation time\\n    function calculateInterest() external returns (uint256) {\\n        uint256 timeElapsed = block.timestamp - lastInterestCalculationTime;\\n        uint256 interest = (totalBalance * interestRate * timeElapsed) / (365 * 24 * 60 * 60);\\n\\n        // Update last interest calculation time and total balance\\n        lastInterestCalculationTime = block.timestamp;\\n        totalBalance += interest;\\n\\n        // Emit event for interest calculation\\n        emit InterestCalculated(interest);\\n\\n        return interest;\\n    }\\n\\n    // Get the current interest rate\\n    function getInterestRate() external view returns (uint256) {\\n        return interestRate;\\n    }\\n\\n    // Set the interest rate\\n    function setInterestRate(uint256 _interestRate) external {\\n        interestRate = _interestRate;\\n    }\\n\\n    // Get the total balance in the treasury\\n    function getTotalBalance() external view returns (uint256) {\\n        return totalBalance;\\n    }\\n}\\n\\n\",\"keccak256\":\"0xc746e0c0dff765b0a84fdc150cd8b9b76b680b54ae503be2c9105d64d0cccbe6\",\"license\":\"MIT\"}},\"version\":1}",
+  "bytecode": "0x608060405234801561001057600080fd5b50604051610c13380380610c13833981810160405281019061003291906100dc565b80600260006101000a81548173ffffffffffffffffffffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffffffffffffff16021790555050610109565b600080fd5b600073ffffffffffffffffffffffffffffffffffffffff82169050919050565b60006100a98261007e565b9050919050565b6100b98161009e565b81146100c457600080fd5b50565b6000815190506100d6816100b0565b92915050565b6000602082840312156100f2576100f1610079565b5b6000610100848285016100c7565b91505092915050565b610afb806101186000396000f3fe60806040526004361061003f5760003560e01c806312065fe01461004457806312b583491461006f5780632e1a7d4d1461009a578063d0e30db0146100c3575b600080fd5b34801561005057600080fd5b506100596100cd565b604051610066919061067e565b60405180910390f35b34801561007b57600080fd5b50610084610113565b604051610091919061067e565b60405180910390f35b3480156100a657600080fd5b506100c160048036038101906100bc91906106ca565b61011d565b005b6100cb6103a5565b005b60008060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002054905090565b6000600154905090565b60008111610160576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016101579061077a565b60405180910390fd5b6000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020548111156101e1576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016101d8906107e6565b60405180910390fd5b60006101eb61050f565b9050816000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020600082825461023b9190610835565b9250508190555081600160008282546102549190610835565b925050819055503373ffffffffffffffffffffffffffffffffffffffff167fbc158bb64f05d6383aea69bbb0b20c1bbf4b7a18f63359c5649b7c39e29d3884836040516102a1919061067e565b60405180910390a2426003819055507f3ef0a461e69a46a1c2286862cd271536d024c707fc668065620f81f8d778d8e66001546040516102e1919061067e565b60405180910390a160003373ffffffffffffffffffffffffffffffffffffffff16828461030e9190610869565b60405161031a906108ce565b60006040518083038185875af1925050503d8060008114610357576040519150601f19603f3d011682016040523d82523d6000602084013e61035c565b606091505b50509050806103a0576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016103979061092f565b60405180910390fd5b505050565b6000349050600081116103ed576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016103e4906109c1565b60405180910390fd5b60006103f761050f565b905080826104059190610869565b6000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008282546104529190610869565b9250508190555080826104659190610869565b600160008282546104769190610869565b925050819055503373ffffffffffffffffffffffffffffffffffffffff167fd15c9547ea5c06670c0010ce19bc32d54682a4b3801ece7f3ab0c3f17106b4bb836040516104c3919061067e565b60405180910390a2426003819055507f3ef0a461e69a46a1c2286862cd271536d024c707fc668065620f81f8d778d8e6600154604051610503919061067e565b60405180910390a15050565b600080600260009054906101000a900473ffffffffffffffffffffffffffffffffffffffff16905060008173ffffffffffffffffffffffffffffffffffffffff1663eb0c49556040518163ffffffff1660e01b81526004016020604051808303816000875af1158015610586573d6000803e3d6000fd5b505050506040513d601f19601f820116820180604052508101906105aa91906109f6565b905060006001546000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002054836105fb9190610a23565b6106059190610a94565b9050806000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008282546106559190610869565b9250508190555080935050505090565b6000819050919050565b61067881610665565b82525050565b6000602082019050610693600083018461066f565b92915050565b600080fd5b6106a781610665565b81146106b257600080fd5b50565b6000813590506106c48161069e565b92915050565b6000602082840312156106e0576106df610699565b5b60006106ee848285016106b5565b91505092915050565b600082825260208201905092915050565b7f5769746864726177616c20616d6f756e742073686f756c64206265206772656160008201527f746572207468616e203000000000000000000000000000000000000000000000602082015250565b6000610764602a836106f7565b915061076f82610708565b604082019050919050565b6000602082019050818103600083015261079381610757565b9050919050565b7f496e73756666696369656e742062616c616e6365000000000000000000000000600082015250565b60006107d06014836106f7565b91506107db8261079a565b602082019050919050565b600060208201905081810360008301526107ff816107c3565b9050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b600061084082610665565b915061084b83610665565b925082820390508181111561086357610862610806565b5b92915050565b600061087482610665565b915061087f83610665565b925082820190508082111561089757610896610806565b5b92915050565b600081905092915050565b50565b60006108b860008361089d565b91506108c3826108a8565b600082019050919050565b60006108d9826108ab565b9150819050919050565b7f5472616e73666572206661696c65640000000000000000000000000000000000600082015250565b6000610919600f836106f7565b9150610924826108e3565b602082019050919050565b600060208201905081810360008301526109488161090c565b9050919050565b7f4465706f73697420616d6f756e742073686f756c64206265206772656174657260008201527f207468616e203000000000000000000000000000000000000000000000000000602082015250565b60006109ab6027836106f7565b91506109b68261094f565b604082019050919050565b600060208201905081810360008301526109da8161099e565b9050919050565b6000815190506109f08161069e565b92915050565b600060208284031215610a0c57610a0b610699565b5b6000610a1a848285016109e1565b91505092915050565b6000610a2e82610665565b9150610a3983610665565b9250828202610a4781610665565b91508282048414831517610a5e57610a5d610806565b5b5092915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601260045260246000fd5b6000610a9f82610665565b9150610aaa83610665565b925082610aba57610ab9610a65565b5b82820490509291505056fea26469706673582212204bd952a24c440713009220340acc2ed52d9cf0bb79c94ceb0295e08a50d36c4364736f6c63430008130033",
+  "deployedBytecode": "0x60806040526004361061003f5760003560e01c806312065fe01461004457806312b583491461006f5780632e1a7d4d1461009a578063d0e30db0146100c3575b600080fd5b34801561005057600080fd5b506100596100cd565b604051610066919061067e565b60405180910390f35b34801561007b57600080fd5b50610084610113565b604051610091919061067e565b60405180910390f35b3480156100a657600080fd5b506100c160048036038101906100bc91906106ca565b61011d565b005b6100cb6103a5565b005b60008060003373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002054905090565b6000600154905090565b60008111610160576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016101579061077a565b60405180910390fd5b6000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020548111156101e1576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016101d8906107e6565b60405180910390fd5b60006101eb61050f565b9050816000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff168152602001908152602001600020600082825461023b9190610835565b9250508190555081600160008282546102549190610835565b925050819055503373ffffffffffffffffffffffffffffffffffffffff167fbc158bb64f05d6383aea69bbb0b20c1bbf4b7a18f63359c5649b7c39e29d3884836040516102a1919061067e565b60405180910390a2426003819055507f3ef0a461e69a46a1c2286862cd271536d024c707fc668065620f81f8d778d8e66001546040516102e1919061067e565b60405180910390a160003373ffffffffffffffffffffffffffffffffffffffff16828461030e9190610869565b60405161031a906108ce565b60006040518083038185875af1925050503d8060008114610357576040519150601f19603f3d011682016040523d82523d6000602084013e61035c565b606091505b50509050806103a0576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016103979061092f565b60405180910390fd5b505050565b6000349050600081116103ed576040517f08c379a00000000000000000000000000000000000000000000000000000000081526004016103e4906109c1565b60405180910390fd5b60006103f761050f565b905080826104059190610869565b6000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008282546104529190610869565b9250508190555080826104659190610869565b600160008282546104769190610869565b925050819055503373ffffffffffffffffffffffffffffffffffffffff167fd15c9547ea5c06670c0010ce19bc32d54682a4b3801ece7f3ab0c3f17106b4bb836040516104c3919061067e565b60405180910390a2426003819055507f3ef0a461e69a46a1c2286862cd271536d024c707fc668065620f81f8d778d8e6600154604051610503919061067e565b60405180910390a15050565b600080600260009054906101000a900473ffffffffffffffffffffffffffffffffffffffff16905060008173ffffffffffffffffffffffffffffffffffffffff1663eb0c49556040518163ffffffff1660e01b81526004016020604051808303816000875af1158015610586573d6000803e3d6000fd5b505050506040513d601f19601f820116820180604052508101906105aa91906109f6565b905060006001546000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002054836105fb9190610a23565b6106059190610a94565b9050806000803373ffffffffffffffffffffffffffffffffffffffff1673ffffffffffffffffffffffffffffffffffffffff16815260200190815260200160002060008282546106559190610869565b9250508190555080935050505090565b6000819050919050565b61067881610665565b82525050565b6000602082019050610693600083018461066f565b92915050565b600080fd5b6106a781610665565b81146106b257600080fd5b50565b6000813590506106c48161069e565b92915050565b6000602082840312156106e0576106df610699565b5b60006106ee848285016106b5565b91505092915050565b600082825260208201905092915050565b7f5769746864726177616c20616d6f756e742073686f756c64206265206772656160008201527f746572207468616e203000000000000000000000000000000000000000000000602082015250565b6000610764602a836106f7565b915061076f82610708565b604082019050919050565b6000602082019050818103600083015261079381610757565b9050919050565b7f496e73756666696369656e742062616c616e6365000000000000000000000000600082015250565b60006107d06014836106f7565b91506107db8261079a565b602082019050919050565b600060208201905081810360008301526107ff816107c3565b9050919050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b600061084082610665565b915061084b83610665565b925082820390508181111561086357610862610806565b5b92915050565b600061087482610665565b915061087f83610665565b925082820190508082111561089757610896610806565b5b92915050565b600081905092915050565b50565b60006108b860008361089d565b91506108c3826108a8565b600082019050919050565b60006108d9826108ab565b9150819050919050565b7f5472616e73666572206661696c65640000000000000000000000000000000000600082015250565b6000610919600f836106f7565b9150610924826108e3565b602082019050919050565b600060208201905081810360008301526109488161090c565b9050919050565b7f4465706f73697420616d6f756e742073686f756c64206265206772656174657260008201527f207468616e203000000000000000000000000000000000000000000000000000602082015250565b60006109ab6027836106f7565b91506109b68261094f565b604082019050919050565b600060208201905081810360008301526109da8161099e565b9050919050565b6000815190506109f08161069e565b92915050565b600060208284031215610a0c57610a0b610699565b5b6000610a1a848285016109e1565b91505092915050565b6000610a2e82610665565b9150610a3983610665565b9250828202610a4781610665565b91508282048414831517610a5e57610a5d610806565b5b5092915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601260045260246000fd5b6000610a9f82610665565b9150610aaa83610665565b925082610aba57610ab9610a65565b5b82820490509291505056fea26469706673582212204bd952a24c440713009220340acc2ed52d9cf0bb79c94ceb0295e08a50d36c4364736f6c63430008130033",
+  "devdoc": {
+    "kind": "dev",
+    "methods": {},
+    "version": 1
+  },
+  "userdoc": {
+    "kind": "user",
+    "methods": {},
+    "version": 1
+  },
+  "storageLayout": {
+    "storage": [
+      {
+        "astId": 5,
+        "contract": "contracts/SimpleBank.sol:SimpleBank",
+        "label": "balances",
+        "offset": 0,
+        "slot": "0",
+        "type": "t_mapping(t_address,t_uint256)"
+      },
+      {
+        "astId": 7,
+        "contract": "contracts/SimpleBank.sol:SimpleBank",
+        "label": "totalBalance",
+        "offset": 0,
+        "slot": "1",
+        "type": "t_uint256"
+      },
+      {
+        "astId": 9,
+        "contract": "contracts/SimpleBank.sol:SimpleBank",
+        "label": "treasuryAddress",
+        "offset": 0,
+        "slot": "2",
+        "type": "t_address"
+      },
+      {
+        "astId": 11,
+        "contract": "contracts/SimpleBank.sol:SimpleBank",
+        "label": "lastInterestCalculationTime",
+        "offset": 0,
+        "slot": "3",
+        "type": "t_uint256"
+      }
+    ],
+    "types": {
+      "t_address": {
+        "encoding": "inplace",
+        "label": "address",
+        "numberOfBytes": "20"
+      },
+      "t_mapping(t_address,t_uint256)": {
+        "encoding": "mapping",
+        "key": "t_address",
+        "label": "mapping(address => uint256)",
+        "numberOfBytes": "32",
+        "value": "t_uint256"
+      },
+      "t_uint256": {
+        "encoding": "inplace",
+        "label": "uint256",
+        "numberOfBytes": "32"
+      }
+    }
+  }
+}

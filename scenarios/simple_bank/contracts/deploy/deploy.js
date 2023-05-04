@@ -14,8 +14,11 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
 
   console.log("deployer");
   console.log(deployer.address);
+  
+  const interestRate = 10;
 
   let TreasuryContract = await deploy("Treasury", {
+    args: [interestRate],
     from: deployer.address,
     log: false,
   });
@@ -37,6 +40,6 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
     `npx hardhat verify --network ${networkToUse} --contract contracts/SimpleBank.sol:SimpleBank ${SimpleBankContract.address}  `
   );
   console.log("");
-};
+}
 
 module.exports.tags = ["deploy"];

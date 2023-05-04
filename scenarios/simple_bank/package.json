@@ -5,7 +5,10 @@
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
-    "start": "tsc --build && node build/generated/src/Index.bs.js"
+    "start": "tsc --build && node build/generated/src/Index.bs.js",
+    "deploy": "hardhat deploy",
+    "compile": "hardhat compile"
+
   },
   "devDependencies": {
     "typescript": "^5.0.4",

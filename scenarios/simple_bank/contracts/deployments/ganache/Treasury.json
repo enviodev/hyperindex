@@ -1,0 +1,150 @@
+{
+  "address": "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_interestRate",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "interest",
+          "type": "uint256"
+        }
+      ],
+      "name": "InterestCalculated",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "calculateInterest",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getInterestRate",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getTotalBalance",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_interestRate",
+          "type": "uint256"
+        }
+      ],
+      "name": "setInterestRate",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "transactionHash": "0x553a0671424b68a445abfb653eaf214f18517aebe529b525cd31ad0c6ddfdc7f",
+  "receipt": {
+    "to": null,
+    "from": "0x72e37d393c70823113a7176aC1F7C579d2C5623E",
+    "contractAddress": "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3",
+    "transactionIndex": 0,
+    "gasUsed": "271633",
+    "logsBloom": "0x00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "blockHash": "0x6f8fad7512b4364fbeac46c2c4965f08a19e4f7d3acfc55ef297173eb7bd87c1",
+    "transactionHash": "0x553a0671424b68a445abfb653eaf214f18517aebe529b525cd31ad0c6ddfdc7f",
+    "logs": [],
+    "blockNumber": 1,
+    "cumulativeGasUsed": "271633",
+    "status": 1,
+    "byzantium": true
+  },
+  "args": [
+    10
+  ],
+  "numDeployments": 1,
+  "solcInputHash": "655ac0fa964e2fdcc36a7869a1e5580e",
+  "metadata": "{\"compiler\":{\"version\":\"0.8.19+commit.7dd6d404\"},\"language\":\"Solidity\",\"output\":{\"abi\":[{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_interestRate\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"interest\",\"type\":\"uint256\"}],\"name\":\"InterestCalculated\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"calculateInterest\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getInterestRate\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"getTotalBalance\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_interestRate\",\"type\":\"uint256\"}],\"name\":\"setInterestRate\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}],\"devdoc\":{\"kind\":\"dev\",\"methods\":{},\"version\":1},\"userdoc\":{\"kind\":\"user\",\"methods\":{},\"version\":1}},\"settings\":{\"compilationTarget\":{\"contracts/SimpleBank.sol\":\"Treasury\"},\"evmVersion\":\"paris\",\"libraries\":{},\"metadata\":{\"bytecodeHash\":\"ipfs\",\"useLiteralContent\":true},\"optimizer\":{\"enabled\":false,\"runs\":200},\"remappings\":[]},\"sources\":{\"contracts/SimpleBank.sol\":{\"content\":\"// SPDX-License-Identifier: MIT\\npragma solidity ^0.8.0;\\n\\n// SimpleBank contract\\ncontract SimpleBank {\\n    mapping(address => uint256) private balances;\\n    uint256 private totalBalance;\\n    address private treasuryAddress;\\n    uint256 private lastInterestCalculationTime;\\n\\n    event DepositMade(address indexed account, uint256 amount);\\n    event WithdrawalMade(address indexed account, uint256 amount);\\n    event TotalBalanceChanged(uint256 totalBalance);\\n\\n    constructor(address _treasuryAddress) {\\n        treasuryAddress = _treasuryAddress;\\n    }\\n\\n    // Deposit funds into the account\\n    function deposit() external payable {\\n        uint256 depositAmount = msg.value;\\n        require(depositAmount > 0, \\\"Deposit amount should be greater than 0\\\");\\n\\n        // Calculate interest since last interest calculation time\\n        uint256 interest = _calculateInterest();\\n\\n        // Update balance and total balance\\n        balances[msg.sender] += depositAmount + interest;\\n        totalBalance += depositAmount + interest;\\n\\n        // Emit event\\n        emit DepositMade(msg.sender, depositAmount);\\n\\n        // Update last interest calculation time\\n        lastInterestCalculationTime = block.timestamp;\\n\\n        // Update total balance event\\n        emit TotalBalanceChanged(totalBalance);\\n    }\\n\\n    // Withdraw funds from the account\\n    function withdraw(uint256 _amount) external {\\n        require(_amount > 0, \\\"Withdrawal amount should be greater than 0\\\");\\n        require(_amount <= balances[msg.sender], \\\"Insufficient balance\\\");\\n\\n        // Calculate interest since last interest calculation time\\n        uint256 interest = _calculateInterest();\\n\\n        // Update balance and total balance\\n        balances[msg.sender] -= _amount;\\n        totalBalance -= _amount;\\n\\n        // Emit event\\n        emit WithdrawalMade(msg.sender, _amount);\\n\\n        // Update last interest calculation time\\n        lastInterestCalculationTime = block.timestamp;\\n\\n        // Update total balance event\\n        emit TotalBalanceChanged(totalBalance);\\n\\n        // Transfer funds to the user's account\\n        (bool success, ) = msg.sender.call{value: _amount + interest}(\\\"\\\");\\n        require(success, \\\"Transfer failed\\\");\\n    }\\n\\n    // Calculate interest earned by the user since the last calculation time\\n    function _calculateInterest() private returns (uint256) {\\n        Treasury treasuryContract = Treasury(treasuryAddress);\\n        uint256 interest = treasuryContract.calculateInterest();\\n\\n        // Calculate interest earned by the user and update their balance\\n        uint256 userInterest = (interest * balances[msg.sender]) / totalBalance;\\n        balances[msg.sender] += userInterest;\\n\\n        // Emit event for interest calculation\\n        // emit Treasury.InterestCalculated(interest);\\n\\n        return userInterest;\\n    }\\n\\n    // Get the balance of the user\\n    function getBalance() external view returns (uint256) {\\n        return balances[msg.sender];\\n    }\\n\\n    // Get the total balance of the bank\\n    function getTotalBalance() external view returns (uint256) {\\n        return totalBalance;\\n    }\\n}\\n\\ncontract Treasury {\\n    uint256 private totalBalance;\\n    uint256 private lastInterestCalculationTime;\\n    uint256 private interestRate;\\n\\n    event InterestCalculated(uint256 interest);\\n\\n    constructor(uint256 _interestRate) {\\n        interestRate = _interestRate;\\n    }\\n\\n    // Calculate interest earned since the last calculation time\\n    function calculateInterest() external returns (uint256) {\\n        uint256 timeElapsed = block.timestamp - lastInterestCalculationTime;\\n        uint256 interest = (totalBalance * interestRate * timeElapsed) / (365 * 24 * 60 * 60);\\n\\n        // Update last interest calculation time and total balance\\n        lastInterestCalculationTime = block.timestamp;\\n        totalBalance += interest;\\n\\n        // Emit event for interest calculation\\n        emit InterestCalculated(interest);\\n\\n        return interest;\\n    }\\n\\n    // Get the current interest rate\\n    function getInterestRate() external view returns (uint256) {\\n        return interestRate;\\n    }\\n\\n    // Set the interest rate\\n    function setInterestRate(uint256 _interestRate) external {\\n        interestRate = _interestRate;\\n    }\\n\\n    // Get the total balance in the treasury\\n    function getTotalBalance() external view returns (uint256) {\\n        return totalBalance;\\n    }\\n}\\n\\n\",\"keccak256\":\"0xc746e0c0dff765b0a84fdc150cd8b9b76b680b54ae503be2c9105d64d0cccbe6\",\"license\":\"MIT\"}},\"version\":1}",
+  "bytecode": "0x608060405234801561001057600080fd5b5060405161043a38038061043a8339818101604052810190610032919061007a565b80600281905550506100a7565b600080fd5b6000819050919050565b61005781610044565b811461006257600080fd5b50565b6000815190506100748161004e565b92915050565b6000602082840312156100905761008f61003f565b5b600061009e84828501610065565b91505092915050565b610384806100b66000396000f3fe608060405234801561001057600080fd5b506004361061004c5760003560e01c806312b58349146100515780635257b5661461006f5780635f84f3021461008d578063eb0c4955146100a9575b600080fd5b6100596100c7565b604051610066919061019c565b60405180910390f35b6100776100d0565b604051610084919061019c565b60405180910390f35b6100a760048036038101906100a291906101e8565b6100da565b005b6100b16100e4565b6040516100be919061019c565b60405180910390f35b60008054905090565b6000600254905090565b8060028190555050565b600080600154426100f59190610244565b905060006301e133808260025460005461010f9190610278565b6101199190610278565b61012391906102e9565b9050426001819055508060008082825461013d919061031a565b925050819055507fc4f4a463e90f0c4b77e80da0bd41d2915beeed53b5b9bd1427325e93699451ff81604051610173919061019c565b60405180910390a1809250505090565b6000819050919050565b61019681610183565b82525050565b60006020820190506101b1600083018461018d565b92915050565b600080fd5b6101c581610183565b81146101d057600080fd5b50565b6000813590506101e2816101bc565b92915050565b6000602082840312156101fe576101fd6101b7565b5b600061020c848285016101d3565b91505092915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b600061024f82610183565b915061025a83610183565b925082820390508181111561027257610271610215565b5b92915050565b600061028382610183565b915061028e83610183565b925082820261029c81610183565b915082820484148315176102b3576102b2610215565b5b5092915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601260045260246000fd5b60006102f482610183565b91506102ff83610183565b92508261030f5761030e6102ba565b5b828204905092915050565b600061032582610183565b915061033083610183565b925082820190508082111561034857610347610215565b5b9291505056fea264697066735822122093ee0debc31bf29a1901ac17c40715041648000e24ee6eb3aee3629b6a8823be64736f6c63430008130033",
+  "deployedBytecode": "0x608060405234801561001057600080fd5b506004361061004c5760003560e01c806312b58349146100515780635257b5661461006f5780635f84f3021461008d578063eb0c4955146100a9575b600080fd5b6100596100c7565b604051610066919061019c565b60405180910390f35b6100776100d0565b604051610084919061019c565b60405180910390f35b6100a760048036038101906100a291906101e8565b6100da565b005b6100b16100e4565b6040516100be919061019c565b60405180910390f35b60008054905090565b6000600254905090565b8060028190555050565b600080600154426100f59190610244565b905060006301e133808260025460005461010f9190610278565b6101199190610278565b61012391906102e9565b9050426001819055508060008082825461013d919061031a565b925050819055507fc4f4a463e90f0c4b77e80da0bd41d2915beeed53b5b9bd1427325e93699451ff81604051610173919061019c565b60405180910390a1809250505090565b6000819050919050565b61019681610183565b82525050565b60006020820190506101b1600083018461018d565b92915050565b600080fd5b6101c581610183565b81146101d057600080fd5b50565b6000813590506101e2816101bc565b92915050565b6000602082840312156101fe576101fd6101b7565b5b600061020c848285016101d3565b91505092915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601160045260246000fd5b600061024f82610183565b915061025a83610183565b925082820390508181111561027257610271610215565b5b92915050565b600061028382610183565b915061028e83610183565b925082820261029c81610183565b915082820484148315176102b3576102b2610215565b5b5092915050565b7f4e487b7100000000000000000000000000000000000000000000000000000000600052601260045260246000fd5b60006102f482610183565b91506102ff83610183565b92508261030f5761030e6102ba565b5b828204905092915050565b600061032582610183565b915061033083610183565b925082820190508082111561034857610347610215565b5b9291505056fea264697066735822122093ee0debc31bf29a1901ac17c40715041648000e24ee6eb3aee3629b6a8823be64736f6c63430008130033",
+  "devdoc": {
+    "kind": "dev",
+    "methods": {},
+    "version": 1
+  },
+  "userdoc": {
+    "kind": "user",
+    "methods": {},
+    "version": 1
+  },
+  "storageLayout": {
+    "storage": [
+      {
+        "astId": 221,
+        "contract": "contracts/SimpleBank.sol:Treasury",
+        "label": "totalBalance",
+        "offset": 0,
+        "slot": "0",
+        "type": "t_uint256"
+      },
+      {
+        "astId": 223,
+        "contract": "contracts/SimpleBank.sol:Treasury",
+        "label": "lastInterestCalculationTime",
+        "offset": 0,
+        "slot": "1",
+        "type": "t_uint256"
+      },
+      {
+        "astId": 225,
+        "contract": "contracts/SimpleBank.sol:Treasury",
+        "label": "interestRate",
+        "offset": 0,
+        "slot": "2",
+        "type": "t_uint256"
+      }
+    ],
+    "types": {
+      "t_uint256": {
+        "encoding": "inplace",
+        "label": "uint256",
+        "numberOfBytes": "32"
+      }
+    }
+  }
+}
