@@ -82,12 +82,12 @@ jobs:
             svm_target_platform: windows-amd64
 
     steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
       - name: pwd
         run: |
           echo pwd
-
-      - name: Checkout sources
-        uses: actions/checkout@v2
 
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
