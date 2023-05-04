@@ -4,9 +4,9 @@ open Typography
 let make = () => {
   <section className="w-full flex flex-col justify-center items-center">
     <Heading2> {"By builders. For builders"->React.string} </Heading2>
-    <BigParagraph className="text-center max-w-50p">
+    <BigParagraph className="text-center max-w-50p px-10">
       {"Envio is built by Float Shipping. We’ve worked on indexers since DeFi began.
-Our tech has indexed data for"->React.string}
+Our tech has indexed data for:"->React.string}
     </BigParagraph>
     <div className="max-w-6xl w-full grid grid-cols-2 md:grid-cols-5 gap-8 p-24">
       <div style={ReactDOM.Style.make(~paddingTop="100%", ())} className={"relative"}>

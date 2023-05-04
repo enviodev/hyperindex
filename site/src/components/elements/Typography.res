@@ -35,7 +35,7 @@ module Heading3 = {
 module Heading4 = {
   @react.component
   let make = (~children, ~className=?) => {
-    <h2 className={"font-bold text-xl uppercase " ++ className->Option.getWithDefault("")}>
+    <h2 className={"font-bold text-lg uppercase " ++ className->Option.getWithDefault("")}>
       {children}
     </h2>
   }
