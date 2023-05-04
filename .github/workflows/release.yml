@@ -82,6 +82,10 @@ jobs:
             svm_target_platform: windows-amd64
 
     steps:
+      - name: pwd
+        run: |
+          echo pwd
+
       - name: Checkout sources
         uses: actions/checkout@v2
 
