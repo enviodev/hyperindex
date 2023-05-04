@@ -1,0 +1,19 @@
+{
+  "name": "gravatar",
+  "version": "0.1.0",
+  "scripts": {
+    "clean": "tsc --clean",
+    "build": "tsc --build",
+    "watch": "tsc --watch",
+    "start": "tsc --build && node build/generated/src/Index.bs.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.4",
+    "@types/node": "^18.16.1",
+    "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
+    "hardhat": "^2.13.1"
+  },
+  "dependencies": {
+    "generated": "workspace:*"
+  }
+}
