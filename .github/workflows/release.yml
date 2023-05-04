@@ -85,10 +85,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v2
 
-      - name: pwd
-        run: |
-          echo pwd
-
       - name: Install toolchain
         uses: actions-rs/toolchain@v1
         with:
@@ -115,6 +111,7 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build binaries
+        working-directory: codegenerator
         uses: actions-rs/cargo@v1
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
@@ -172,19 +169,3 @@ jobs:
           files: |
             ${{ steps.artifacts.outputs.file_name }}
             ${{ steps.man.outputs.envio_man }}
-
-  cleanup:
-    name: Release cleanup
-    runs-on: ubuntu-20.04
-    needs: release
-
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v2
-
-      - name: Delete old nightlies
-        uses: actions/github-script@v5
-        with:
-          script: |
-            const prunePrereleases = require('./.github/scripts/prune-prereleases.js')
-            await prunePrereleases({github, context})
