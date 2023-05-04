@@ -6,7 +6,7 @@ type supportedLanguage = Javascript | Typescript | Rescript
 let make = () => {
   let (selectedLanguage, setSelectedLanguage) = React.useState(_ => Javascript)
 
-  <div className="w-code-block h-code-block bg-gray-800 rounded text-white">
+  <div className="md:w-code-block h-code-block bg-gray-800 rounded text-white">
     <div className="flex flex-row">
       <div
         className="p-2 m-2 border border-white" onClick={_ => setSelectedLanguage(_ => Javascript)}>

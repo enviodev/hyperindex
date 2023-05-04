@@ -103,7 +103,7 @@ let make = () => {
       //   mobile nav
       <div className="flex w-2/3 text-base items-center justify-end visible nav:hidden">
         <div
-          className="z-50 absolute top-0 right-0 p-3" onClick={_ => setIsOpen(isOpen => !isOpen)}>
+          className="z-50 absolute top-0 right-0 m-6" onClick={_ => setIsOpen(isOpen => !isOpen)}>
           {isOpen ? <> {closeSvg()} </> : hamburgerSvg()}
         </div>
         <div className={floatingMenuZoomStyle(isOpen)}>
@@ -116,10 +116,11 @@ let make = () => {
             ->Array.map(navItem =>
               navItem.isDifferentDomain
                 ? <div
+                    className="p-2 bg-black"
                     onClick={_ => {
                       setIsOpen(_ => false)
                     }}>
-                    <Hyperlink className="px-3 bg-black" href=navItem.link openInNewTab=true>
+                    <Hyperlink href=navItem.link openInNewTab=true>
                       {navItem.label->React.string}
                     </Hyperlink>
                   </div>
@@ -128,7 +129,7 @@ let make = () => {
                       router->Next.Router.push(navItem.link)
                       setIsOpen(_ => false)
                     }}
-                    className={`px-3 bg-black m-2 ${navItem.link->activeHighlight}`}>
+                    className={`p-2 bg-black m-2 ${navItem.link->activeHighlight}`}>
                     {navItem.label->React.string}
                   </div>
             )
