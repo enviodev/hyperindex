@@ -1,0 +1,37 @@
+const postgres = require("postgres")
+
+const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
+
+{{#each entities as |entity|}}
+  module.exports.read{{entity.name.capitalized
+  }}Entities = (entityIdArray) => sql`
+  SELECT *
+  FROM public.{{entity.name.uncapitalized
+  }}
+  WHERE id IN ${sql(entityIdArray)}`
+
+  module.exports.batchSet{{entity.name.capitalized
+  }} = (entityDataArray) => sql`
+    INSERT INTO public.{{entity.name.uncapitalized
+  }}
+  ${sql(entityDataArray,
+  {{#each entity.params as |param|}}
+    "{{param.key}}",
+  {{/each}}
+  )}
+    ON CONFLICT(id) DO UPDATE
+    SET
+  {{#each entity.params as |param|}}
+    "{{param.key}}" = EXCLUDED."{{param.key}}"
+    {{#unless @last}}
+      ,
+    {{/unless}}
+  {{/each}}
+  ;`
+  module.exports.batchDelete{{entity.name.capitalized
+  }} = (entityIdArray) => sql`
+  DELETE
+  FROM public.{{entity.name.uncapitalized
+  }}
+  WHERE id IN ${sql(entityIdArray)};`
+{{/each}}

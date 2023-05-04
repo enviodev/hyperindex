@@ -139,9 +139,9 @@ let executeBatch = async () => {
     )
 
   await [
-    DbFunctions.User.batchDeleteUser(deleteUserIds),
+    DbFunctions.User.batchDeleteUser(deleteUserIds)->Obj.magic,
     DbFunctions.User.batchSetUser(setUser),
-    DbFunctions.Gravatar.batchDeleteGravatar(deleteGravatarIds),
+    DbFunctions.Gravatar.batchDeleteGravatar(deleteGravatarIds)->Obj.magic,
     DbFunctions.Gravatar.batchSetGravatar(setGravatar),
   ]->Promise.all
 }
