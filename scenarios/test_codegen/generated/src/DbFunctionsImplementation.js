@@ -2,6 +2,8 @@ const postgres = require("postgres")
 
 const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
 
+  // db operations for User:
+
   module.exports.readUserEntities = (entityIdArray) => sql`
   SELECT *
   FROM public.user
@@ -22,10 +24,14 @@ const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
       ,
     "gravatar" = EXCLUDED."gravatar"
   ;`
+
   module.exports.batchDeleteUser = (entityIdArray) => sql`
   DELETE
   FROM public.user
   WHERE id IN ${sql(entityIdArray)};`
+  // end db operations for User
+  // db operations for Gravatar:
+
   module.exports.readGravatarEntities = (entityIdArray) => sql`
   SELECT *
   FROM public.gravatar
@@ -52,7 +58,9 @@ const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
       ,
     "updatesCount" = EXCLUDED."updatesCount"
   ;`
+
   module.exports.batchDeleteGravatar = (entityIdArray) => sql`
   DELETE
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)};`
+  // end db operations for Gravatar

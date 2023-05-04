@@ -112,7 +112,7 @@ let executeBatch = async () => {
   {{/each}}
   await [
     {{#each entities as | entity |}}
-    DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}}(delete{{entity.name.capitalized}}Ids)->Obj.magic,
+    DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}}(delete{{entity.name.capitalized}}Ids),
     DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}}(set{{entity.name.capitalized}}),
     {{/each}}
   ]->Promise.all

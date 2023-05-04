@@ -3,6 +3,9 @@ const postgres = require("postgres")
 const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
 
 {{#each entities as |entity|}}
+  // db operations for {{entity.name.capitalized
+  }}:
+
   module.exports.read{{entity.name.capitalized
   }}Entities = (entityIdArray) => sql`
   SELECT *
@@ -28,10 +31,13 @@ const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
     {{/unless}}
   {{/each}}
   ;`
+
   module.exports.batchDelete{{entity.name.capitalized
   }} = (entityIdArray) => sql`
   DELETE
   FROM public.{{entity.name.uncapitalized
   }}
   WHERE id IN ${sql(entityIdArray)};`
+  // end db operations for {{entity.name.capitalized
+  }}
 {{/each}}
