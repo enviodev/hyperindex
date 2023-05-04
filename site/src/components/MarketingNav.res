@@ -70,11 +70,11 @@ let make = () => {
     router.pathname == path ? "underline" : ""
   }
 
-  <div className="w-full py-1">
-    <nav className="mx-auto w-full max-w-5xl p-2 h-12 flex justify-between items-center text-sm">
+  <div className={"w-full py-1 flex items-center" ++ Styles.generalStyles["logo-container"]}>
+    <nav className="mx-auto w-full max-w-7xl py-2 h-12 flex justify-between items-center text-sm">
       <Link href="/">
         <div className={Styles.generalStyles["logo-container"]}>
-          <div className="relative h-8 md:h-7 w-36">
+          <div className="relative h-8 md:h-7">
             <Logo />
           </div>
         </div>

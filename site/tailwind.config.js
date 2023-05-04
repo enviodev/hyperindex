@@ -1,5 +1,8 @@
-const primaryColor = "#2575FC";
-const secondaryColor = "#A223CF";
+const primaryColor = "#FF8267";
+const secondaryColor = "#FDD700";
+
+// const primaryColor = "#2575FC";
+// const secondaryColor = "#A223CF";
 
 module.exports = {
   content: ["./src/**/*.res"],
@@ -41,6 +44,7 @@ module.exports = {
         "slightly-less-than-half": "45%",
         "30-percent": "30%",
         half: "50%",
+        "70-percent": "70%",
         "9/10": "90%",
         "15/10": "150%",
         "price-width": "12rem",
@@ -70,6 +74,7 @@ module.exports = {
         "70-percent-screen": "70vh",
         "60-percent-screen": "60vh",
         "50-percent-screen": "50vh",
+        oversized: "120%",
       },
       boxShadow: {
         "inner-card": "inset 1px 1px 2px 0 rgba(0, 0, 0, 0.3)",

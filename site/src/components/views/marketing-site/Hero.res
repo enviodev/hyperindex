@@ -7,7 +7,8 @@ let make = () => {
     className="max-w-7xl mx-auto h-80-percent-screen flex flex-row justify-center items-center my-10">
     <div>
       <Heading1 className="uppercase leading-normal">
-        {"Build bigger."->React.string}
+        {"Build"->React.string}
+        <span className="text-7xl"> {` bigger.`->React.string} </span>
         <br />
         {"Ship faster."->React.string}
       </Heading1>
