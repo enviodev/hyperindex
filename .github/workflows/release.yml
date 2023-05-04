@@ -111,13 +111,12 @@ jobs:
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Build binaries
-        working-directory: codegenerator
         uses: actions-rs/cargo@v1
         env:
           SVM_TARGET_PLATFORM: ${{ matrix.job.svm_target_platform }}
         with:
           command: build
-          args: --release --bins --target ${{ matrix.job.target }}
+          args: --release --bins --target ${{ matrix.job.target }} --manifest-path codegenerator/Cargo.toml
 
       - name: Archive binaries
         id: artifacts
