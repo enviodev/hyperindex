@@ -166,5 +166,5 @@ jobs:
           prerelease: true #always true for now
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
-            ${{ steps.artifacts.outputs.file_name }}
-            ${{ steps.man.outputs.envio_man }}
+            codegenerator/${{ steps.artifacts.outputs.file_name }}
+            codegenerator/${{ steps.man.outputs.envio_man }}
