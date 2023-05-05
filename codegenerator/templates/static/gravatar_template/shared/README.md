@@ -148,7 +148,7 @@ Run from this directory:
 
 envio codegen
 docker compose up -d # NOTE: if you have some stale data, run "docker compose down -v" first.
-PG_PORT=5433 pnpm start
+pnpm start
 ```
 
 To view the data in the database, run `./generated/register_tables_with_hasura.sh` and open http://localhost:8080/console.
