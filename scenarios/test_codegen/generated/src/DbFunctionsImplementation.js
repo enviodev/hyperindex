@@ -1,21 +1,23 @@
 const postgres = require("postgres")
 
-const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
+const postgresConfig = require("./Config.bs.js").db
 
-  // db operations for User:
+const sql = postgres(postgresConfig)
 
-  module.exports.readUserEntities = (entityIdArray) => sql`
+// db operations for User:
+
+module.exports.readUserEntities = (entityIdArray) => sql`
   SELECT *
   FROM public.user
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetUser = (entityDataArray) => sql`
+module.exports.batchSetUser = (entityDataArray) => sql`
     INSERT INTO public.user
   ${sql(entityDataArray,
-    "id",
-    "address",
-    "gravatar",
-  )}
+  "id",
+  "address",
+  "gravatar",
+)}
     ON CONFLICT(id) DO UPDATE
     SET
     "id" = EXCLUDED."id"
@@ -25,27 +27,27 @@ const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
     "gravatar" = EXCLUDED."gravatar"
   ;`
 
-  module.exports.batchDeleteUser = (entityIdArray) => sql`
+module.exports.batchDeleteUser = (entityIdArray) => sql`
   DELETE
   FROM public.user
   WHERE id IN ${sql(entityIdArray)};`
-  // end db operations for User
-  // db operations for Gravatar:
+// end db operations for User
+// db operations for Gravatar:
 
-  module.exports.readGravatarEntities = (entityIdArray) => sql`
+module.exports.readGravatarEntities = (entityIdArray) => sql`
   SELECT *
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetGravatar = (entityDataArray) => sql`
+module.exports.batchSetGravatar = (entityDataArray) => sql`
     INSERT INTO public.gravatar
   ${sql(entityDataArray,
-    "id",
-    "owner",
-    "displayName",
-    "imageUrl",
-    "updatesCount",
-  )}
+  "id",
+  "owner",
+  "displayName",
+  "imageUrl",
+  "updatesCount",
+)}
     ON CONFLICT(id) DO UPDATE
     SET
     "id" = EXCLUDED."id"
@@ -59,7 +61,7 @@ const sql = postgres("postgres://postgres:testing@localhost:5433/envio-dev")
     "updatesCount" = EXCLUDED."updatesCount"
   ;`
 
-  module.exports.batchDeleteGravatar = (entityIdArray) => sql`
+module.exports.batchDeleteGravatar = (entityIdArray) => sql`
   DELETE
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)};`
