@@ -27,3 +27,6 @@ external imageStyles: {"disable-anti-aliasing": string} = "../../../styles/image
 @module
 external overrides: {"zero-padding-important": string, "zero-margin-important": string} =
   "../../../styles/overrides.module.css"
+
+@module
+external bgAnimate: {"background-animate": string} = "../../../styles/animated-gradient.module.css"

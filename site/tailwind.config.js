@@ -70,7 +70,7 @@ module.exports = {
       },
       height: {
         "80-percent-screen": "80vh",
-        "price-height": "6rem",
+        "picture-height": "6rem",
         big: "28rem",
         "70-percent-screen": "70vh",
         "60-percent-screen": "60vh",
