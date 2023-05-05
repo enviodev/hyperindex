@@ -146,8 +146,8 @@ Run from this directory:
 
 ```bash
 pnpm codegen
-docker compose -f ../../docker-compose.yaml up -d # NOTE: if you have some stale data, run "docker compose down -v" first.
-pnpm deploy-local-contracts
+docker compose -f ../../../docker-compose.yaml up -d # NOTE: if you have some stale data, run "docker compose down -v" first. Run this in the scenarios/ploffen/indexer
+pnpm deploy-default # run this from the contracts folder
 pnpm start
 ```
 
