@@ -4,7 +4,7 @@ name: Indexer test
 on:
   workflow_run:
     workflows:
-      - "Rust Build & Test"
+      - "rust"
     types:
       - "completed"
 
