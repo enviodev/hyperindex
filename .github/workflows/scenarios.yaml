@@ -4,9 +4,9 @@ name: Indexer test
 on:
   workflow_run:
     workflows:
-      - "rust"
+      - rust
     types:
-      - "completed"
+      - completed
 
 jobs:
   # Label of the container job
