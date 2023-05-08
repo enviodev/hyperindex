@@ -43,7 +43,7 @@ describe("E2E Mock Event Batch", () => {
 })
 
 describe("E2E Db check", () => {
-  test("False test! Replace with real db test once drizzle is removed", () => pass)
+  test("False test! Replace with real db test once drizzle is removed...", () => pass)
 })
 // describe("E2E Db check", () => {
 //   beforeAllPromise(async () => {
