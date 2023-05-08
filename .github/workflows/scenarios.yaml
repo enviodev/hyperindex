@@ -1,16 +1,17 @@
 # Starting pipeline - all in one for now
 
 name: Indexer test
-on: pull_request
-
-# For now we just run this in the gravatar folder.
-defaults:
-  run:
-    working-directory: scenarios/gravatar
+on:
+  workflow_run:
+    workflows:
+      - "Rust Build & Test"
+    types:
+      - "completed"
 
 jobs:
   # Label of the container job
   container-job:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     # Containers must run in Linux based operating systems
     runs-on: ubuntu-latest
 
@@ -39,27 +40,25 @@ jobs:
       - name: Check out repository code
         uses: actions/checkout@v3
 
+      - name: Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.pnpm-store
+            ~/.cargo/registry
+            ~/.cargo/git
+            codegenerator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - uses: pnpm/action-setup@v2
         with:
           version: 7
 
-      - name: generate code
+      - name: gravatar build, test & bench
         run: |
-          cd ../../codegenerator
-          cargo run -- codegen -d ../scenarios/gravatar
-
-      # TODO: add pnpm caching
-      - name: Install dependencies
-        run: pnpm install
-
-      - name: Build code
-        run: |
-          pnpm clean # probably not needed, but getting different results in pipeline to locally.
+          cd scenarios/gravatar
+          pnpm codegen
+          pnpm install
           pnpm build
-
-      - name: Run tests
-        run: |
           pnpm test
-      
-      - name: Run benchmarks
-        run: npx jest --projects jest-bench.config.json  
+          pnpm bench
