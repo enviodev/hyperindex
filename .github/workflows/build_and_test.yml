@@ -32,15 +32,6 @@ jobs:
         ports:
           # Maps tcp port 5432 on service container to the host
           - 5432:5432
-      ganache:
-        image: trufflesuite/ganache:latest
-        ports:
-          - "8545:8545"
-        command:
-          --mnemonic "test test test test test test test test test test test test"
-          --db /ganache-data --chain.chainId 31337 --chain.networkId 31337 --time 2023-02-02T08:24:37+00:00
-          --gasLimit 10000000
-        container_name: ganache
 
     steps:
       - uses: actions/checkout@v3
