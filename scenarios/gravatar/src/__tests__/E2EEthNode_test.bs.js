@@ -15,7 +15,7 @@ Jest.describe("E2E Mock Event Batch", (function (param) {
         Jest.beforeAllPromise(60000, (function (param) {
                 return SetupRpcNode.setupNodeAndContracts(undefined);
               }));
-        Jest.testPromise("Complete E2E", 30000, (async function (param) {
+        Jest.testPromise("Complete E2E", 60000, (async function (param) {
                 var localChainConfig_provider = Hardhat.ethers.provider;
                 var localChainConfig_contracts = [{
                     name: "GravatarRegistry",

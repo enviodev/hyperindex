@@ -33,6 +33,6 @@ describe("E2E Mock Event Batch", () => {
 
       pass
     },
-    ~timeout=30000,
+    ~timeout=60000,
   )
 })

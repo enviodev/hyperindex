@@ -50,22 +50,34 @@ jobs:
         with:
           version: 8
 
-      - name: Build
+      - name: Cargo Build
         run: cargo build --verbose
 
-      - name: Run tests
+      - name: Cargo Tests
         run: cargo test --verbose
 
-      - name: gravatar build, test & bench
+      - name: gravatar codegen
         working-directory: scenarios/gravatar
         run: |
           pnpm codegen
+
+      - name: gravatar build
+        working-directory: scenarios/gravatar
+        run: |
           pnpm install
           pnpm build
+
+      - name: gravatar test
+        working-directory: scenarios/gravatar
+        run: |
           pnpm test
+
+      - name: gravatar benchmark
+        working-directory: scenarios/gravatar
+        run: |
           pnpm bench
 
-      - name: gravatar build, test & bench
+      - name: test_codegen build
         working-directory: scenarios/test_codegen
         run: |
           pnpm codegen
