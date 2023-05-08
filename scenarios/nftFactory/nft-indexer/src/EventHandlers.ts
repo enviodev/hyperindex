@@ -5,7 +5,7 @@ import {
   SimpleNftContract_registerTransferLoadEntities,
 } from "../generated/src/Handlers.gen";
 
-import { nftCollectionEntity, tokenEntity } from "../generated/src/Types.gen";
+import { nftcollectionEntity, tokenEntity } from "../generated/src/Types.gen";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
@@ -14,7 +14,7 @@ NftFactoryContract_registerSimpleNftCreatedLoadEntities(
 );
 
 NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
-  let nftCollection: nftCollectionEntity = {
+  let nftCollection: nftcollectionEntity = {
     id: event.params.contractAddress,
     contractAddress: event.params.contractAddress,
     name: event.params.name,
@@ -22,20 +22,20 @@ NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
     maxSupply: event.params.maxSupply,
     currentSupply: 0,
   };
-  context.nftCollection.insert(nftCollection);
+  context.nftcollection.insert(nftCollection);
 });
 
 SimpleNftContract_registerTransferLoadEntities(({ event, context }) => {
   context.user.userFromLoad(event.params.from);
   context.user.userToLoad(event.params.to);
-  context.nftCollection.nftCollectionUpdatedLoad(event.srcAddress);
+  context.nftcollection.nftCollectionUpdatedLoad(event.srcAddress);
   context.token.existingTransferredTokenLoad(
     event.srcAddress.concat("-").concat(event.params.tokenId.toString())
   );
 });
 
 SimpleNftContract_registerTransferHandler(({ event, context }) => {
-  let nftCollectionUpdated = context.nftCollection.nftCollectionUpdated();
+  let nftCollectionUpdated = context.nftcollection.nftCollectionUpdated();
   let token = {
     id: event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
     tokenId: event.params.tokenId,
@@ -47,11 +47,11 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
     if (!existingToken) {
       let currentSupply = Number(nftCollectionUpdated.currentSupply) + 1;
 
-      let nftCollection: nftCollectionEntity = {
+      let nftCollection: nftcollectionEntity = {
         ...nftCollectionUpdated,
         currentSupply,
       };
-      context.nftCollection.update(nftCollection);
+      context.nftcollection.update(nftCollection);
     }
   } else {
     console.log(

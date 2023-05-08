@@ -1,4 +1,4 @@
-type NftCollection @entity {
+type Nftcollection @entity {
   id: ID!
   contractAddress: Bytes!
   name: String!
@@ -16,6 +16,6 @@ type User @entity {
 type Token @entity {
   id: ID!
   tokenId: BigInt!
-  collection: NftCollection!
+  collection: Nftcollection!
   owner: User!
 }

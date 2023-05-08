@@ -24,7 +24,7 @@ networks:
                 labels:
                   - "userFrom"
                   - "userTo"
-              - name: NftCollection
+              - name: Nftcollection
                 labels: 
                   - "nftCollectionUpdated"
               - name: Token
