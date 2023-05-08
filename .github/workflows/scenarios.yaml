@@ -1,11 +1,16 @@
 # Starting pipeline - all in one for now
 
-name: Indexer test
+name: Scenarios Testing
 on:
   workflow_run:
-    worklows: [rust]
+    worklows:
+      - Rust Build & Test
     types:
       - completed
+    branches:
+      - jp/rust-cache
+      - main
+      - dev
 
 jobs:
   # Label of the container job
@@ -64,6 +69,6 @@ jobs:
 
   on-failure:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    if: ${{ github.event.workflow_run .conclusion == 'failure' }}
     steps:
       - run: echo 'The triggering workflow failed'
