@@ -3,8 +3,7 @@
 name: Indexer test
 on:
   workflow_run:
-    worklows:
-      - rust
+    worklows: [rust]
     types:
       - completed
 
@@ -62,6 +61,7 @@ jobs:
           pnpm build
           pnpm test
           pnpm bench
+
   on-failure:
     runs-on: ubuntu-latest
     if: ${{ github.event.workflow_run.conclusion == 'failure' }}
