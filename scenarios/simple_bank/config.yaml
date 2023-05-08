@@ -1,20 +1,31 @@
 version: 0.0.0
-description: Gravatar for Ethereum
-repository: https://github.com/graphprotocol/example-subgraph
+description: Simple Bank contract
+repository: 
 networks:
   - id: 31337
     rpc_url: http://localhost:8545
     start_block: 0
     contracts:
-      - name: Gravatar
-        abi_file_path: abis/gravatar-abi.json
+      - name: SimpleBank
+        abi_file_path: abis/SimpleBank.json
         address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
-        handler: build/src/EventHandlers.js
+        handler: build/src/EventHandlers.ts
         events:
-          - name: "NewGravatar"
-            requiredEntities: [] # empty signifies no requirements
-          - name: "UpdatedGravatar"
-            requiredEntities: # if this field isn't specified it should default to include all entities
-              - name: "Gravatar"
+          - name: "DepositMade"
+            requiredEntities: # empty signifies no requirements
+              - name: "User"
                 labels:
-                  - "gravatarWithChanges"
+                  - "userBalanceChanges"
+          - name: "WithdrawalMade"
+            requiredEntities: # if this field isn't specified it should default to include all entities
+              - name: "User"
+                labels:
+                  - "userBalanceChanges"
+          - name: "TotalBalanceChanged"
+            requiredEntities: # if this field isn't specified it should default to include all entities
+              - name: "User"
+                labels:
+                  - "userBalanceChanges"
+              - name: "Bank"
+                labels:
+                  - "totalBalanceChanges"
