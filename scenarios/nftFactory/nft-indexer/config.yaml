@@ -1,0 +1,33 @@
+version: 0.0.0
+description: NFT Factory
+repository: https://github.com/nft-factory
+networks:
+  - id: 31337
+    rpc_url: http://localhost:8545
+    start_block: 0
+    contracts:
+      - name: NftFactory
+        abi_file_path: abis/NftFactory.json
+        address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
+        handler: src/EventHandlers.js
+        events:
+          - name: "SimpleNftCreated"
+            requiredEntities: [] 
+      - name: SimpleNft
+        abi_file_path: abis/SimpleNft.json
+        address: ["0x756418B817E934f73Aa434DFaD4a686f836AA71d"]
+        handler: src/EventHandlers.js
+        events:
+          - name: "Transfer"
+            requiredEntities: 
+              - name: "User"
+                labels:
+                  - "userFrom"
+                  - "userTo"
+              - name: NftCollection
+                labels: 
+                  - "nftCollectionUpdated"
+              - name: Token
+                labels: 
+                  - "existingTransferredToken"
+
