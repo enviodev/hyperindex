@@ -1,5 +1,5 @@
 {
-  "name": "gravatar",
+  "name": "nftFactory",
   "version": "0.1.0",
   "scripts": {
     "clean": "tsc --clean",
