@@ -1,4 +1,4 @@
-name: Rust Build & Test
+name: Build & Test
 
 on: pull_request
 
@@ -36,7 +36,18 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
-      - name: Run generate
+      - name: gravatar build, test & bench
+        working-directory: scenarios/gravatar
         run: |
-          cargo run --verbose -- codegen -d ../scenarios/gravatar
-          cargo run --verbose -- codegen -d ../scenarios/test_codegen
+          pnpm codegen
+          pnpm install
+          pnpm build
+          pnpm test
+          pnpm bench
+
+      - name: gravatar build, test & bench
+        working-directory: scenarios/test_codegen
+        run: |
+          pnpm codegen
+          pnpm install
+          pnpm build
