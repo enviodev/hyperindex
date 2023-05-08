@@ -20,6 +20,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: |
+            ~/.pnpm-store
             ~/.cargo/registry
             ~/.cargo/git
             codegenerator/target
