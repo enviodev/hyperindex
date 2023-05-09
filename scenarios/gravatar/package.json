@@ -17,13 +17,15 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "rescript": "^10.1.2",
-    "@ryyppy/rescript-promise": "^2.1.0",
-    "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
-    "hardhat": "^2.13.1",
     "@glennsl/rescript-jest": "^0.9.2",
+    "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
+    "@ryyppy/rescript-promise": "^2.1.0",
+    "hardhat": "^2.13.1",
     "jest": "^29.5.0",
-    "jest-bench": "^29.4.1"
+    "jest-bench": "^29.4.1",
+    "mocha": "^10.2.0",
+    "rescript": "^10.1.2",
+    "rescript-mocha": "^0.9.0"
   },
   "dependencies": {
     "generated": "workspace:*"
