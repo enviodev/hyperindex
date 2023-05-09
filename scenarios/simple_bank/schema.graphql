@@ -1,26 +1,17 @@
-type User {
+type User @entity {
   id: ID!
   balance: Float!
 }
 
-type Bank {
+type Bank @entity {
+  id: ID!
   totalBalance: Float!
   users: [User!]!
 }
 
-type Treasury {
+type Treasury @entity {
+  id: ID!
   totalBalance: Float!
   lastInterestCalculationTime: Float!
   interestRate: Float!
-}
-
-type Query {
-  bank: Bank!
-  treasury: Treasury!
-}
-
-type Mutation {
-  deposit(amount: Float!): User!
-  withdraw(amount: Float!): User!
-  setInterestRate(interestRate: Float!): Treasury!
 }
