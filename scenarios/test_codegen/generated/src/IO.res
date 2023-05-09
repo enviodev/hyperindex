@@ -112,36 +112,66 @@ let createBatch = () => {
 let executeBatch = async () => {
   let userRows = InMemoryStore.User.userDict.contents->Js.Dict.values
 
-  let deleteUserIds =
-    userRows
-    ->Belt.Array.keepMap(userRow => userRow.crud == Types.Delete ? Some(userRow.entity) : None)
-    ->Belt.Array.map(user => user.id)
+  let deleteUserIdsPromise = () => {
+    let deleteUserIds =
+      userRows
+      ->Belt.Array.keepMap(userRow => userRow.crud == Types.Delete ? Some(userRow.entity) : None)
+      ->Belt.Array.map(user => user.id)
 
-  let setUser =
-    userRows->Belt.Array.keepMap(userRow =>
-      userRow.crud == Types.Create || userRow.crud == Update ? Some(userRow.entity) : None
-    )
+    if deleteUserIds->Belt.Array.length > 0 {
+      DbFunctions.User.batchDeleteUser(deleteUserIds)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+  let setUserPromise = () => {
+    let setUser =
+      userRows->Belt.Array.keepMap(userRow =>
+        userRow.crud == Types.Create || userRow.crud == Update ? Some(userRow.entity) : None
+      )
+
+    if setUser->Belt.Array.length > 0 {
+      DbFunctions.User.batchSetUser(setUser)
+    } else {
+      ()->Promise.resolve
+    }
+  }
 
   let gravatarRows = InMemoryStore.Gravatar.gravatarDict.contents->Js.Dict.values
 
-  let deleteGravatarIds =
-    gravatarRows
-    ->Belt.Array.keepMap(gravatarRow =>
-      gravatarRow.crud == Types.Delete ? Some(gravatarRow.entity) : None
-    )
-    ->Belt.Array.map(gravatar => gravatar.id)
+  let deleteGravatarIdsPromise = () => {
+    let deleteGravatarIds =
+      gravatarRows
+      ->Belt.Array.keepMap(gravatarRow =>
+        gravatarRow.crud == Types.Delete ? Some(gravatarRow.entity) : None
+      )
+      ->Belt.Array.map(gravatar => gravatar.id)
 
-  let setGravatar =
-    gravatarRows->Belt.Array.keepMap(gravatarRow =>
-      gravatarRow.crud == Types.Create || gravatarRow.crud == Update
-        ? Some(gravatarRow.entity)
-        : None
-    )
+    if deleteGravatarIds->Belt.Array.length > 0 {
+      DbFunctions.Gravatar.batchDeleteGravatar(deleteGravatarIds)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+  let setGravatarPromise = () => {
+    let setGravatar =
+      gravatarRows->Belt.Array.keepMap(gravatarRow =>
+        gravatarRow.crud == Types.Create || gravatarRow.crud == Update
+          ? Some(gravatarRow.entity)
+          : None
+      )
+
+    if setGravatar->Belt.Array.length > 0 {
+      DbFunctions.Gravatar.batchSetGravatar(setGravatar)
+    } else {
+      ()->Promise.resolve
+    }
+  }
 
   await [
-    DbFunctions.User.batchDeleteUser(deleteUserIds),
-    DbFunctions.User.batchSetUser(setUser),
-    DbFunctions.Gravatar.batchDeleteGravatar(deleteGravatarIds),
-    DbFunctions.Gravatar.batchSetGravatar(setGravatar),
+    deleteUserIdsPromise(),
+    setUserPromise(),
+    deleteGravatarIdsPromise(),
+    setGravatarPromise(),
   ]->Promise.all
 }

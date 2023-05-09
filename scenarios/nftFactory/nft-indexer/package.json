@@ -5,7 +5,8 @@
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
-    "start": "tsc --build && node build/generated/src/Index.bs.js"
+    "start": "tsc --build && node build/generated/src/Index.bs.js",
+    "codegen": "cargo run --manifest-path ../../../codegenerator/Cargo.toml -- codegen"
   },
   "devDependencies": {
     "typescript": "^5.0.4",
