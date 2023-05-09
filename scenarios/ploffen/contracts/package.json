@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "deploy-default": "hardhat run scripts/deploy.js"
+    "deploy-default": " rm -rf deployments/ganache && hardhat deploy"
   },
   "devDependencies": {
     "@ethersproject/abi": "^5.4.7",
