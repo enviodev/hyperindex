@@ -4,7 +4,7 @@ services:
     image: postgres:13
     restart: always
     ports:
-      - "${PG_PORT:-5433}:5432"
+      - "${PG_PORT:-5432}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     environment:
@@ -41,7 +41,8 @@ services:
       # HASURA_GRAPHQL_METADATA_DIR: /hasura-metadata
       HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-testing}@envio-postgres:5432/envio-dev
       HASURA_GRAPHQL_ENABLE_CONSOLE: ${HASURA_GRAPHQL_ENABLE_CONSOLE:-true} # can make this default to false once we are further in our development.
-      HASURA_GRAPHQL_ENABLED_LOG_TYPES: startup, http-log, webhook-log, websocket-log,
+      HASURA_GRAPHQL_ENABLED_LOG_TYPES:
+        startup, http-log, webhook-log, websocket-log,
         query-log
       HASURA_GRAPHQL_NO_OF_RETRIES: 10
       HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET:-testing}

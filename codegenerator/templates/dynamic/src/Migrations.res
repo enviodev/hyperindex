@@ -1,23 +1,3 @@
-// TODO - put common bindings into bindings folder:
-module Postgres = {
-  type sql
-
-  type poolConfig = {
-    host: string,
-    port: int,
-    user: string,
-    password: string,
-    database: string,
-  }
-
-  @module
-  external makeSql: (~config: poolConfig) => sql= "postgres"
-
-  // TODO: can explore this approach (https://forum.rescript-lang.org/t/rfc-support-for-tagged-template-literals/3744)
-  // @send @variadic
-  // external sql:  array<string>  => (sql, array<string>) => int = "sql"
-}
-
 let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have the correct type */)
 
 {{#each entities as |entity|}}
