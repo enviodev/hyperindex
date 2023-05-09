@@ -127,10 +127,17 @@ pub fn generate_templates(
         include_str!("../templates/dynamic/src/Abis.res"),
         &types_data,
     )?;
+
     let rendered_string_handlers = handlebars.render_template(
         include_str!("../templates/dynamic/src/Handlers.res"),
         &types_data,
     )?;
+
+    let rendered_string_register_handlers = handlebars.render_template(
+        include_str!("../templates/dynamic/src/RegisterHandlers.res"),
+        &types_data,
+    )?;
+
     let rendered_string_db_functions = handlebars.render_template(
         include_str!("../templates/dynamic/src/DbFunctions.res"),
         &types_data,
@@ -163,10 +170,6 @@ pub fn generate_templates(
     )?;
     let rendered_string_gitignore =
         handlebars.render_template(include_str!("../templates/dynamic/.gitignore"), &types_data)?;
-    let rendered_string_index = handlebars.render_template(
-        include_str!("../templates/dynamic/src/Index.res"),
-        &types_data,
-    )?;
     let rendered_string_migrations = handlebars.render_template(
         include_str!("../templates/dynamic/src/Migrations.res"),
         &types_data,
@@ -181,6 +184,12 @@ pub fn generate_templates(
     write_to_file_in_generated("src/Config.res", &rendered_string_config, project_paths)?;
     write_to_file_in_generated("src/Abis.res", &rendered_string_abi, project_paths)?;
     write_to_file_in_generated("src/Handlers.res", &rendered_string_handlers, project_paths)?;
+    write_to_file_in_generated(
+        "src/RegisterHandlers.res",
+        &rendered_string_register_handlers,
+        project_paths,
+    )?;
+
     write_to_file_in_generated(
         "src/DbFunctions.res",
         &rendered_string_db_functions,
@@ -208,7 +217,6 @@ pub fn generate_templates(
         &rendered_string_register_tables_with_hasura,
         project_paths,
     )?;
-    write_to_file_in_generated("src/Index.res", &rendered_string_index, project_paths)?;
     write_to_file_in_generated(
         "src/Migrations.res",
         &rendered_string_migrations,

@@ -1,14 +1,14 @@
 const hre = require("hardhat");
+
 const ethers = hre.ethers;
 
-module.exports.default = liveGravatarTxs = async () => {
+module.exports.default = liveGravatarTxs = async (gravatar) => {
   await hre.run("compile");
   let accounts = await hre.ethers.getSigners();
 
-  const GravatarRegistry = await hre.ethers.getContractFactory(
-    "GravatarRegistry"
-  );
-  const gravatar = await GravatarRegistry.deploy();
+  console.log("live gravatar task");
+
+  console.log(gravatar);
 
   const user2 = accounts[2];
 

@@ -1,25 +1,22 @@
-open Jest
-open Expect
 open Types
+open RescriptMocha
+open Mocha
 
 // Required to make sure the handlers are loaded.
 %%raw(`require("../EventHandlers.bs.js")`)
 
 // TODO: unskip this function.
 describe("E2E Mock Event Batch", () => {
-  beforeAll(() => {
+  before(() => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
-    MockEvents.eventBatchWithContext->Belt.Array.forEach(event => event->EventProcessing.eventRouter)
+    MockEvents.eventBatchWithContext->Belt.Array.forEach(
+      event => event->EventProcessing.eventRouter,
+    )
   })
 
-  afterAll(() => {
-    ContextMock.insertMock->MockJs.mockClear
-    ContextMock.updateMock->MockJs.mockClear
-  })
-
-  test("3 newgravatar event insert calls in order", () => {
+  it("3 newgravatar event insert calls in order", () => {
     let insertCalls = ContextMock.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
       MockEvents.newGravatar1.id->Ethers.BigInt.toString,
@@ -27,9 +24,9 @@ describe("E2E Mock Event Batch", () => {
       MockEvents.newGravatar3.id->Ethers.BigInt.toString,
     ])
   })
-  
+
   /* TODO: Make this update different entities
-           this test tests the exact same thing as above since events have the same IDs. */
+   this test tests the exact same thing as above since events have the same IDs. */
   test("3 updategravatar event insert calls in order", () => {
     let insertCalls = ContextMock.insertMock->MockJs.calls
     expect(insertCalls)->toEqual([
@@ -38,7 +35,6 @@ describe("E2E Mock Event Batch", () => {
       MockEvents.updatedGravatar3.id->Ethers.BigInt.toString,
     ])
   })
-
 })
 
 describe("E2E Db check", () => {
