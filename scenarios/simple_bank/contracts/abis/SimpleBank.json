@@ -16,7 +16,20 @@
       {
         "indexed": true,
         "internalType": "address",
-        "name": "account",
+        "name": "userAddress",
+        "type": "address"
+      }
+    ],
+    "name": "AccountCreated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "userAddress",
         "type": "address"
       },
       {
@@ -48,7 +61,7 @@
       {
         "indexed": true,
         "internalType": "address",
-        "name": "account",
+        "name": "userAddress",
         "type": "address"
       },
       {
@@ -63,6 +76,24 @@
   },
   {
     "inputs": [],
+    "name": "createAccount",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "userAddress",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "depositAmount",
+        "type": "uint256"
+      }
+    ],
     "name": "deposit",
     "outputs": [],
     "stateMutability": "payable",
@@ -96,6 +127,11 @@
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "userAddress",
+        "type": "address"
+      },
       {
         "internalType": "uint256",
         "name": "_amount",

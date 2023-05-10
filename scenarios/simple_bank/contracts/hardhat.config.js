@@ -1,8 +1,7 @@
 require("hardhat-deploy");
 require("@nomiclabs/hardhat-ethers");
 require("hardhat-abi-exporter");
-
-// require("./tasks");
+require("./tasks");
 
 module.exports = {
   solidity: {

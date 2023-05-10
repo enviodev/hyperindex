@@ -8,28 +8,43 @@ contract SimpleBank {
     address private treasuryAddress;
     uint256 private lastInterestCalculationTime;
 
-    event DepositMade(address indexed account, uint256 amount);
-    event WithdrawalMade(address indexed account, uint256 amount);
+    event AccountCreated(address indexed userAddress);
+    event DepositMade(address indexed userAddress, uint256 amount);
+    event WithdrawalMade(address indexed userAddress, uint256 amount);
     event TotalBalanceChanged(uint256 totalBalance);
 
     constructor(address _treasuryAddress) {
         treasuryAddress = _treasuryAddress;
     }
 
+    // Create a new account
+    function createAccount(address userAddress) external {
+        require(balances[userAddress] == 0, "Account already exists");
+
+        // Update balance and total balance
+        balances[userAddress] = 0;
+        totalBalance += 0;
+
+        // Emit event
+        emit AccountCreated(userAddress);
+
+        // Update total balance event
+        emit TotalBalanceChanged(totalBalance);
+    }
+
     // Deposit funds into the account
-    function deposit() external payable {
-        uint256 depositAmount = msg.value;
+    function deposit(address userAddress, uint256 depositAmount) external payable {
         require(depositAmount > 0, "Deposit amount should be greater than 0");
 
         // Calculate interest since last interest calculation time
-        uint256 interest = _calculateInterest();
+        uint256 interest = _calculateInterest(userAddress);
 
         // Update balance and total balance
-        balances[msg.sender] += depositAmount + interest;
+        balances[userAddress] += depositAmount + interest;
         totalBalance += depositAmount + interest;
 
         // Emit event
-        emit DepositMade(msg.sender, depositAmount);
+        emit DepositMade(userAddress, depositAmount);
 
         // Update last interest calculation time
         lastInterestCalculationTime = block.timestamp;
@@ -39,19 +54,19 @@ contract SimpleBank {
     }
 
     // Withdraw funds from the account
-    function withdraw(uint256 _amount) external {
+    function withdraw(address userAddress, uint256 _amount) external {
         require(_amount > 0, "Withdrawal amount should be greater than 0");
-        require(_amount <= balances[msg.sender], "Insufficient balance");
+        require(_amount <= balances[userAddress], "Insufficient balance");
 
         // Calculate interest since last interest calculation time
-        uint256 interest = _calculateInterest();
+        uint256 interest = _calculateInterest(userAddress);
 
         // Update balance and total balance
-        balances[msg.sender] -= _amount;
+        balances[userAddress] -= _amount;
         totalBalance -= _amount;
 
         // Emit event
-        emit WithdrawalMade(msg.sender, _amount);
+        emit WithdrawalMade(userAddress, _amount);
 
         // Update last interest calculation time
         lastInterestCalculationTime = block.timestamp;
@@ -60,28 +75,28 @@ contract SimpleBank {
         emit TotalBalanceChanged(totalBalance);
 
         // Transfer funds to the user's account
-        (bool success, ) = msg.sender.call{value: _amount + interest}("");
+        (bool success, ) = userAddress.call{value: _amount + interest}("");
         require(success, "Transfer failed");
     }
 
     // Calculate interest earned by the user since the last calculation time
-    function _calculateInterest() private returns (uint256) {
+    function _calculateInterest(address userAddress) private returns (uint256) {
         Treasury treasuryContract = Treasury(treasuryAddress);
         uint256 interest = treasuryContract.calculateInterest();
 
         // Calculate interest earned by the user and update their balance
-        uint256 userInterest = (interest * balances[msg.sender]) / totalBalance;
-        balances[msg.sender] += userInterest;
+        uint256 accountInterest = (interest * balances[userAddress]) / totalBalance;
+        balances[msg.sender] += accountInterest;
 
         // Emit event for interest calculation
         // emit Treasury.InterestCalculated(interest);
 
-        return userInterest;
+        return accountInterest;
     }
 
     // Get the balance of the user
-    function getBalance() external view returns (uint256) {
-        return balances[msg.sender];
+    function getBalance(address userAddress) external view returns (uint256) {
+        return balances[userAddress];
     }
 
     // Get the total balance of the bank

@@ -1,5 +1,5 @@
 {
-  "name": "gravatar",
+  "name": "simple_bank",
   "version": "0.1.0",
   "scripts": {
     "clean": "tsc --clean",
@@ -7,8 +7,8 @@
     "watch": "tsc --watch",
     "start": "tsc --build && node build/generated/src/Index.bs.js",
     "deploy": "hardhat deploy",
-    "compile": "hardhat compile"
-
+    "compile": "hardhat compile",
+    "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen"
   },
   "devDependencies": {
     "typescript": "^5.0.4",

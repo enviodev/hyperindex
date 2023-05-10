@@ -1,44 +1,53 @@
 import {
-  GravatarContract_registerNewGravatarHandler,
-  GravatarContract_registerNewGravatarLoadEntities,
-  GravatarContract_registerUpdatedGravatarHandler,
-  GravatarContract_registerUpdatedGravatarLoadEntities,
+  SimpleBankContract_registerAccountCreatedLoadEntities,
+  SimpleBankContract_registerAccountCreatedHandler,
+  SimpleBankContract_registerDepositMadeLoadEntities,
+  SimpleBankContract_registerDepositMadeHandler,
+  SimpleBankContract_registerWithdrawalMadeLoadEntities,
+  SimpleBankContract_registerWithdrawalMadeHandler,
+  SimpleBankContract_registerTotalBalanceChangedLoadEntities,
+  SimpleBankContract_registerTotalBalanceChangedHandler
 } from "../generated/src/Handlers.gen";
 
-import { gravatarEntity } from "../generated/src/Types.gen";
+import { bankEntity, treasuryEntity, accountEntity } from "../generated/src/Types.gen";
 
-GravatarContract_registerNewGravatarLoadEntities(({ event, context }) => { });
-
-GravatarContract_registerNewGravatarHandler(({ event, context }) => {
-  let { id, displayName, owner, imageUrl } = event.params;
-  let gravatar: gravatarEntity = {
-    id: id.toString(),
-    displayName,
-    owner,
-    imageUrl,
-    updatesCount: 0,
-  };
-  context.gravatar.insert(gravatar);
+SimpleBankContract_registerAccountCreatedLoadEntities(({ event, context }) => {
 });
 
-GravatarContract_registerUpdatedGravatarLoadEntities(({ event, context }) => {
-  context.gravatar.gravatarWithChangesLoad(event.params.id.toString());
+SimpleBankContract_registerAccountCreatedHandler(({ event, context }) => {
+  let { userAddress} = event.params;
+  let account: accountEntity = {
+    id: userAddress.toString(),
+    address: userAddress.toString(),
+    balance: 0,
+    depositCount: 0,
+    withdrawalCount: 0
+  };
+  context.account.insert(account);
 });
 
-GravatarContract_registerUpdatedGravatarHandler(({ event, context }) => {
-  let { id, displayName, owner, imageUrl } = event.params;
-  let currentUpdatesCount =
-    context.gravatar.gravatarWithChanges()?.updatesCount ?? 0;
+SimpleBankContract_registerDepositMadeLoadEntities(({ event, context }) => {
+  context.account.accountBalanceChangesLoad(event.params.userAddress.toString());
+ });
 
-  let updatesCount = currentUpdatesCount + 1;
+SimpleBankContract_registerDepositMadeHandler(({ event, context }) => {
+  let {userAddress, amount} = event.params;
 
-  let gravatar: gravatarEntity = {
-    id: id.toString(),
-    displayName,
-    owner,
-    imageUrl,
-    updatesCount,
+  let previousAccountBalance = context.account.accountBalanceChanges()?.balance ?? 0;
+  let nextAccountBalance = previousAccountBalance + Number(amount);
+  
+  let previousAccountDepositCount = context.account.accountBalanceChanges()?.depositCount ?? 0;
+  let nextAccountDepositCount = previousAccountDepositCount + 1;
+
+  let previousAccountWithdrawalCount = context.account.accountBalanceChanges()?.withdrawalCount ?? 0;
+
+  let account: accountEntity = {
+    id: userAddress.toString(),
+    address: userAddress.toString(),
+    balance: nextAccountBalance,
+    depositCount: nextAccountDepositCount,
+    withdrawalCount: previousAccountWithdrawalCount,
   };
 
-  context.gravatar.update(gravatar);
+  context.account.update(account);
 });

@@ -1,16 +1,21 @@
-type User @entity {
+type Account @entity {
   id: ID!
+  address: Bytes!
   balance: Float!
+  depositCount: Int!
+  withdrawalCount: Int!
 }
 
 type Bank @entity {
   id: ID!
+  address: Bytes!
   totalBalance: Float!
-  users: [User!]!
+  account: [Account!]!
 }
 
 type Treasury @entity {
   id: ID!
+  address: Bytes!
   totalBalance: Float!
   lastInterestCalculationTime: Float!
   interestRate: Float!

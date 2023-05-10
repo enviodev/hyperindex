@@ -7,25 +7,27 @@ networks:
     start_block: 0
     contracts:
       - name: SimpleBank
-        abi_file_path: abis/SimpleBank.json
+        abi_file_path: contracts/abis/SimpleBank.json
         address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
         handler: build/src/EventHandlers.ts
         events:
+          - name: "AccountCreated"
+            requiredEntities: [] # empty signifies no requirements
           - name: "DepositMade"
-            requiredEntities: # empty signifies no requirements
-              - name: "User"
+            requiredEntities: 
+              - name: "Account"
                 labels:
-                  - "userBalanceChanges"
+                  - "accountBalanceChanges"
           - name: "WithdrawalMade"
             requiredEntities: # if this field isn't specified it should default to include all entities
-              - name: "User"
+              - name: "Account"
                 labels:
-                  - "userBalanceChanges"
+                  - "accountBalanceChanges"
           - name: "TotalBalanceChanged"
             requiredEntities: # if this field isn't specified it should default to include all entities
-              - name: "User"
+              - name: "Account"
                 labels:
-                  - "userBalanceChanges"
+                  - "accountBalanceChanges"
               - name: "Bank"
                 labels:
                   - "totalBalanceChanges"
