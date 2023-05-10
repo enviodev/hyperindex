@@ -8,6 +8,7 @@ let make = () => {
     <Blurbs.Shipping />
     <HeroImages.CreatureHeroImage />
     <Blurbs.OneCommand />
+    <TerminalDemo />
     <PerformanceMetrics />
     <Blurbs.Customisable />
     <USPs />

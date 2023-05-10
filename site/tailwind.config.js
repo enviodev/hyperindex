@@ -1,8 +1,18 @@
 const primaryColor = "#FF8267";
 const secondaryColor = "#FDD700";
 
+// Original colour scheme
+// todo: delete once committed to sunrise
 // const primaryColor = "#2575FC";
 // const secondaryColor = "#A223CF";
+
+// terminal colour schemes - inspired by robby russel
+const terminalRed = "#A5574C";
+const terminalLightBlue = "#6DA39E";
+const terminalDarkBlue = "#72899C";
+const terminalGreen = "#BCBD86";
+const terminalYellow = "#F1C875";
+const terminalBg = "#28292E";
 
 module.exports = {
   content: ["./src/**/*.res"],
@@ -31,6 +41,12 @@ module.exports = {
       colors: {
         primary: primaryColor,
         secondary: secondaryColor,
+        terminalRed: terminalRed,
+        terminalLightBlue: terminalLightBlue,
+        terminalDarkBlue: terminalDarkBlue,
+        terminalGreen: terminalGreen,
+        terminalYellow: terminalYellow,
+        terminalBg: terminalBg,
       },
       borderColor: {
         DEFAULT: primaryColor,
@@ -50,7 +66,7 @@ module.exports = {
         "9/10": "90%",
         "15/10": "150%",
         "price-width": "12rem",
-        "code-block": "500px", //todo
+        "code-block": "700px", //todo
         "frame-width": "10rem",
         big: "28rem",
       },
