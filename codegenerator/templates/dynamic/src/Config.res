@@ -53,7 +53,7 @@ let config: chainConfigs = [
             {{contract.name.capitalized}}Contract_{{event.capitalized}}Event,
             {{/each}}
             ],
-      }
+      },
       {{/each}}
     ]
 

@@ -26,7 +26,7 @@ module {{contract.name.capitalized}}Contract = {
             optIdOf_{{label}} := Some(id)
 
             let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id))
-          }
+          },
       {{/each}}
         },
       {{/each}}
