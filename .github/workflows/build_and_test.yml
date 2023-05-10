@@ -44,6 +44,9 @@ jobs:
             ~/.cargo/git
             codegenerator/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
 
       - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
         id: pnpm-cache
