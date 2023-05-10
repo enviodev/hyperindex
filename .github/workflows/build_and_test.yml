@@ -40,11 +40,24 @@ jobs:
         uses: actions/cache@v3
         with:
           path: |
-            ~/.pnpm-store
             ~/.cargo/registry
             ~/.cargo/git
             codegenerator/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-10-may-2023 # We can refresh the pnpm cache periodically by updating this value
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - uses: pnpm/action-setup@v2
         with:
