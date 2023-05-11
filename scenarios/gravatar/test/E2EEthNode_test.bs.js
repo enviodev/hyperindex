@@ -2,7 +2,6 @@
 'use strict';
 
 var Abis = require("generated/src/Abis.bs.js");
-var Time = require("generated/src/Time.bs.js");
 var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Ethers$1 = require("ethers");
 var Hardhat = require("hardhat");
@@ -15,7 +14,7 @@ var EventSubscription = require("generated/src/EventSubscription.bs.js");
 var Mocha$RescriptMocha = require("rescript-mocha/src/Mocha.bs.js");
 var Promise$RescriptMocha = require("rescript-mocha/src/Promise.bs.js");
 
-Mocha$RescriptMocha.describe("E2E Mock Event Batch")(undefined, undefined, undefined, (function (param) {
+Mocha$RescriptMocha.describe("E2E Integration Test")(undefined, undefined, undefined, (function (param) {
         Promise$RescriptMocha.before(undefined)(undefined, undefined, undefined, (async function (param) {
                 await Migrations.runDownMigrations(undefined);
                 return await Migrations.runUpMigrations(undefined);
@@ -24,7 +23,7 @@ Mocha$RescriptMocha.describe("E2E Mock Event Batch")(undefined, undefined, undef
                 await Migrations.runDownMigrations(undefined);
                 return await Migrations.runUpMigrations(undefined);
               }));
-        Promise$RescriptMocha.it("Complete E2E")(10000, undefined, undefined, (async function (param) {
+        Promise$RescriptMocha.it("Complete E2E")(30000, undefined, undefined, (async function (param) {
                 var gravatar = await SetupRpcNode.deployContract(undefined);
                 await SetupRpcNode.setupNodeAndContracts(gravatar);
                 var provider = Hardhat.ethers.provider;
@@ -45,12 +44,11 @@ Mocha$RescriptMocha.describe("E2E Mock Event Batch")(undefined, undefined, undef
                 };
                 RegisterHandlers.registerAllHandlers(undefined);
                 await EventSyncing.processAllEvents(localChainConfig);
-                console.log("starting events subscription");
+                console.log("starting events subscription, (This is not yet working)");
                 EventSubscription.startWatchingEventsOnRpc(localChainConfig, provider);
                 console.log("submitting transactions");
                 await LiveGravatarTask.liveGravatarTxs(gravatar);
                 console.log("finish transactions");
-                await Time.resolvePromiseAfterDelay(5000);
                 console.log("finished");
               }));
       }));

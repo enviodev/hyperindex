@@ -2,7 +2,7 @@ open RescriptMocha
 module MochaPromise = RescriptMocha.Promise
 open Mocha
 
-describe("E2E Mock Event Batch", () => {
+describe("E2E Integration Test", () => {
   MochaPromise.before(async () => {
     await Migrations.runDownMigrations()
     await Migrations.runUpMigrations()
