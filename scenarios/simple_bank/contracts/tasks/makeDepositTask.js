@@ -8,6 +8,7 @@ task("make-deposit", "Making a deposit")
   )
   .setAction(async ({ amount, userIndex }) => {
     const accounts = await ethers.getSigners();
+    const provider = ethers.provider;
     const user = accounts[userIndex % accounts.length];
     if (userIndex >= accounts.length) {
       console.warn(
@@ -19,6 +20,8 @@ task("make-deposit", "Making a deposit")
       );
     }
 
+    await increaseTime(provider, 1800);
+
     console.log(`Using account ${user.address} to make a deposit.`);
 
     const SimpleBank = await deployments.get("SimpleBank");
@@ -29,17 +32,19 @@ task("make-deposit", "Making a deposit")
       SimpleBank.address
     );
 
-    // const usersCurrentGravatarId = await gravatar.ownerToGravatar(user.address)
-    // const userDoesntHaveGravatar = (usersCurrentGravatarId == 0);
-    // if (userDoesntHaveGravatar) {
-    //   console.log(`You need to create a gravatar firt before you can update it.`);
-    //   return;
-    // }
     const newDeposit1Tx = await simpleBank
       .connect(user)
-      .deposit(user.address, amount);
+      .deposit(user.address, Number(amount));
+    console.log("New deposit made.");
     await newDeposit1Tx.wait();
 
     let accountCheck = await simpleBank.getBalance(user.address);
-    console.log("account created", accountCheck);
+    console.log("deposit made", accountCheck);
+
+    await increaseTime(provider, 1800);
   });
+
+async function increaseTime(provider, seconds) {
+  await provider.send("evm_increaseTime", [seconds]);
+  await provider.send("evm_mine");
+}

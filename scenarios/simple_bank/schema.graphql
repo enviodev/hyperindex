@@ -8,15 +8,5 @@ type Account @entity {
 
 type Bank @entity {
   id: ID!
-  address: Bytes!
   totalBalance: Float!
-  account: [Account!]!
-}
-
-type Treasury @entity {
-  id: ID!
-  address: Bytes!
-  totalBalance: Float!
-  lastInterestCalculationTime: Float!
-  interestRate: Float!
 }

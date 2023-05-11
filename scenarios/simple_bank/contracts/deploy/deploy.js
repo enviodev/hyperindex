@@ -18,19 +18,11 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
   console.log("user1");
   console.log(user1.address);
   
-  const interestRate = 10;
+  const interestRate = 0;
   console.log("interest Rate set");
-  
-  let TreasuryContract = await deploy("Treasury", {
-    args: [interestRate],
-    from: deployer.address,
-    log: false,
-  });
-
-  console.log(`TreasuryContract deployed to ${TreasuryContract.address}`);
 
   let SimpleBankContract = await deploy("SimpleBank", {
-    args: [deployer.address],
+    args: [interestRate],
     from: deployer.address,
     log: false,
   });

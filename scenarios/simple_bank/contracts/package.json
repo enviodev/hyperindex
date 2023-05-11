@@ -12,6 +12,8 @@
     "task:newAccount": "npx hardhat new-account",
     "task:makeDeposit": "npx hardhat make-deposit",
     "task:makeWithdrawal": "npx hardhat make-withdrawal",
+    "task:user-1": "npx hardhat new-account --user-index 1 && npx hardhat make-deposit --user-index 1 --amount 30000 && npx hardhat make-deposit --user-index 1 --amount 2000",
+    "task:user-2": "npx hardhat new-account --user-index 2 && npx hardhat make-deposit --user-index 2 --amount 100000 && npx hardhat make-withdrawal --user-index 2 --amount 40000",
     "hardhat-node": "npx hardhat node"
   },
   "dependencies": {

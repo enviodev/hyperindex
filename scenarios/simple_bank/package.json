@@ -8,7 +8,10 @@
     "start": "tsc --build && node build/generated/src/Index.bs.js",
     "deploy": "hardhat deploy",
     "compile": "hardhat compile",
-    "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen"
+    "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen",
+    "prepare": "cd ../.. && docker-compose down -v && docker-compose up -d && cd scenarios/simple_bank && cd contracts && rm -r deployments && pnpm hardhat compile && pnpm hardhat deploy && pnpm hardhat export-abi",
+    "test-user-1": "cd contracts && pnpm task:user-1",
+    "test-user-2": "cd contracts && pnpm task:user-2"
   },
   "devDependencies": {
     "typescript": "^5.0.4",

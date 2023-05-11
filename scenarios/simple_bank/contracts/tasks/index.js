@@ -1,3 +1,3 @@
 require("./newAccountTask");
-// require("./makeWithdrawalTask");
+require("./makeWithdrawalTask");
 require("./makeDepositTask");

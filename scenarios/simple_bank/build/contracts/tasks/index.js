@@ -1,4 +1,4 @@
 "use strict";
 require("./newAccountTask");
-// require("./makeWithdrawalTask");
+require("./makeWithdrawalTask");
 require("./makeDepositTask");

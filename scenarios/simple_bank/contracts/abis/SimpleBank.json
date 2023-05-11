@@ -2,9 +2,9 @@
   {
     "inputs": [
       {
-        "internalType": "address",
-        "name": "_treasuryAddress",
-        "type": "address"
+        "internalType": "uint256",
+        "name": "_interestRate",
+        "type": "uint256"
       }
     ],
     "stateMutability": "nonpayable",
@@ -48,6 +48,19 @@
       {
         "indexed": false,
         "internalType": "uint256",
+        "name": "interest",
+        "type": "uint256"
+      }
+    ],
+    "name": "InterestCalculated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
         "name": "totalBalance",
         "type": "uint256"
       }
@@ -75,7 +88,13 @@
     "type": "event"
   },
   {
-    "inputs": [],
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "userAddress",
+        "type": "address"
+      }
+    ],
     "name": "createAccount",
     "outputs": [],
     "stateMutability": "nonpayable",
@@ -96,11 +115,17 @@
     ],
     "name": "deposit",
     "outputs": [],
-    "stateMutability": "payable",
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
-    "inputs": [],
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "userAddress",
+        "type": "address"
+      }
+    ],
     "name": "getBalance",
     "outputs": [
       {
@@ -134,7 +159,7 @@
       },
       {
         "internalType": "uint256",
-        "name": "_amount",
+        "name": "withdrawalAmount",
         "type": "uint256"
       }
     ],

@@ -14,24 +14,28 @@ task("make-deposit", "Making a deposit")
 "user to create new account from accounts", undefined, types.int)
     .setAction(({ amount, userIndex }) => __awaiter(void 0, void 0, void 0, function* () {
     const accounts = yield ethers.getSigners();
+    const provider = ethers.provider;
     const user = accounts[userIndex % accounts.length];
     if (userIndex >= accounts.length) {
         console.warn(`There are only ${accounts.length} accounts in the network, you are actually using account index ${userIndex % accounts.length}`);
     }
+    yield increaseTime(provider, 1800);
     console.log(`Using account ${user.address} to make a deposit.`);
     const SimpleBank = yield deployments.get("SimpleBank");
     console.log("SimpleBank deployment retrieved.");
     const simpleBank = yield ethers.getContractAt("SimpleBank", SimpleBank.address);
-    // const usersCurrentGravatarId = await gravatar.ownerToGravatar(user.address)
-    // const userDoesntHaveGravatar = (usersCurrentGravatarId == 0);
-    // if (userDoesntHaveGravatar) {
-    //   console.log(`You need to create a gravatar firt before you can update it.`);
-    //   return;
-    // }
     const newDeposit1Tx = yield simpleBank
         .connect(user)
-        .deposit(user.address, amount);
+        .deposit(user.address, Number(amount));
+    console.log("New deposit made.");
     yield newDeposit1Tx.wait();
     let accountCheck = yield simpleBank.getBalance(user.address);
-    console.log("account created", accountCheck);
+    console.log("deposit made", accountCheck);
+    yield increaseTime(provider, 1800);
 }));
+function increaseTime(provider, seconds) {
+    return __awaiter(this, void 0, void 0, function* () {
+        yield provider.send("evm_increaseTime", [seconds]);
+        yield provider.send("evm_mine");
+    });
+}
