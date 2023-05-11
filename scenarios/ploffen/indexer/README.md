@@ -5,7 +5,7 @@ Quickstart: run from this directory:
 ```bash
 docker compose -f ../../../docker-compose.yaml up -d # NOTE: if you have some stale data, run "docker compose down -v" first. Run this in the scenarios/ploffen/indexer
 pnpm codegen
-pnpm deploy-default
+pnpm deploy-local-contracts
 pnpm start
 ```
 
