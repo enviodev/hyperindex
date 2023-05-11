@@ -2,7 +2,6 @@
 'use strict';
 
 var IO = require("generated/src/IO.bs.js");
-var Jest = require("@glennsl/rescript-jest/src/jest.bs.js");
 var DbStub = require("./__mocks__/DbStub.bs.js");
 var Js_dict = require("rescript/lib/js/js_dict.js");
 var Belt_Array = require("rescript/lib/js/belt_Array.js");
@@ -11,82 +10,97 @@ var ContextMock = require("./__mocks__/ContextMock.bs.js");
 var DbFunctions = require("generated/src/DbFunctions.bs.js");
 var MockEntities = require("./__mocks__/MockEntities.bs.js");
 var EventProcessing = require("generated/src/EventProcessing.bs.js");
+var RegisterHandlers = require("generated/src/RegisterHandlers.bs.js");
+var Mocha$RescriptMocha = require("rescript-mocha/src/Mocha.bs.js");
+var Assert$RescriptMocha = require("rescript-mocha/src/Assert.bs.js");
+var Promise$RescriptMocha = require("rescript-mocha/src/Promise.bs.js");
 
-require("../EventHandlers.bs.js")
-;
-
-Jest.describe("E2E Mock Event Batch", (function (param) {
-        beforeAll(function () {
-              DbStub.setGravatarDb(MockEntities.gravatarEntity1);
-              DbStub.setGravatarDb(MockEntities.gravatarEntity2);
-              return Belt_Array.forEach(MockEvents.eventBatchWithContext, EventProcessing.eventRouter);
-            });
-        afterAll(function () {
-              ContextMock.insertMock.mockClear();
-              ContextMock.updateMock.mockClear();
-            });
-        Jest.test("3 newgravatar event insert calls in order", (function (param) {
-                var insertCalls = Jest.MockJs.calls(ContextMock.insertMock);
-                return Jest.Expect.toEqual(Jest.Expect.expect(insertCalls), [
-                            MockEvents.newGravatar1.id.toString(),
-                            MockEvents.newGravatar2.id.toString(),
-                            MockEvents.newGravatar3.id.toString()
-                          ]);
+Mocha$RescriptMocha.describe("E2E Mock Event Batch")(undefined, undefined, undefined, (function (param) {
+        Mocha$RescriptMocha.before(undefined)(undefined, undefined, undefined, (function (param) {
+                RegisterHandlers.registerAllHandlers(undefined);
+                DbStub.setGravatarDb(MockEntities.gravatarEntity1);
+                DbStub.setGravatarDb(MockEntities.gravatarEntity2);
+                Belt_Array.forEach(MockEvents.eventBatchWithContext, EventProcessing.eventRouter);
               }));
-        Jest.test("3 updategravatar event insert calls in order", (function (param) {
-                var insertCalls = Jest.MockJs.calls(ContextMock.insertMock);
-                return Jest.Expect.toEqual(Jest.Expect.expect(insertCalls), [
-                            MockEvents.updatedGravatar1.id.toString(),
-                            MockEvents.updatedGravatar2.id.toString(),
-                            MockEvents.updatedGravatar3.id.toString()
-                          ]);
+        Mocha$RescriptMocha.after(undefined)(undefined, undefined, undefined, (function (param) {
+                ContextMock.insertMock.reset();
+                ContextMock.updateMock.reset();
+              }));
+        Mocha$RescriptMocha.it("3 newgravatar event insert calls in order")(undefined, undefined, undefined, (function (param) {
+                var insertCallFirstArgs = Belt_Array.map(ContextMock.insertMock.getCalls(), (function (call) {
+                        return call.firstArg;
+                      }));
+                Assert$RescriptMocha.deep_equal(undefined, [
+                      MockEvents.newGravatar1.id.toString(),
+                      MockEvents.newGravatar2.id.toString(),
+                      MockEvents.newGravatar3.id.toString()
+                    ], insertCallFirstArgs);
+              }));
+        Mocha$RescriptMocha.it("3 updategravatar event insert calls in order")(undefined, undefined, undefined, (function (param) {
+                var insertCallFirstArgs = Belt_Array.map(ContextMock.insertMock.getCalls(), (function (call) {
+                        return call.firstArg;
+                      }));
+                Assert$RescriptMocha.deep_equal(undefined, insertCallFirstArgs, [
+                      MockEvents.updatedGravatar1.id.toString(),
+                      MockEvents.updatedGravatar2.id.toString(),
+                      MockEvents.updatedGravatar3.id.toString()
+                    ]);
               }));
       }));
 
-Jest.describe("E2E Db check", (function (param) {
-        Jest.beforeAllPromise(undefined, (async function (param) {
+Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (function (param) {
+        Promise$RescriptMocha.before(undefined)(undefined, undefined, undefined, (async function (param) {
                 await DbFunctions.Gravatar.batchSetGravatar([
                       MockEntities.gravatarEntity1,
                       MockEntities.gravatarEntity2
                     ]);
                 return await EventProcessing.processEventBatch(MockEvents.eventBatch);
               }));
-        Jest.test("Validate inmemory store state", (function (param) {
+        Mocha$RescriptMocha.it("Validate inmemory store state")(undefined, undefined, undefined, (function (param) {
                 var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;
                 var inMemoryStoreRows = Js_dict.values(inMemoryStore);
-                return Jest.Expect.toEqual(Jest.Expect.expect(inMemoryStoreRows), [
-                            {
-                              crud: /* Update */2,
-                              entity: {
-                                id: "1001",
-                                owner: "0x1230000000000000000000000000000000000000",
-                                displayName: "update1",
-                                imageUrl: "https://gravatar1.com",
-                                updatesCount: 2
-                              }
-                            },
-                            {
-                              crud: /* Update */2,
-                              entity: {
-                                id: "1002",
-                                owner: "0x4560000000000000000000000000000000000000",
-                                displayName: "update2",
-                                imageUrl: "https://gravatar2.com",
-                                updatesCount: 2
-                              }
-                            },
-                            {
-                              crud: /* Create */0,
-                              entity: {
-                                id: "1003",
-                                owner: "0x7890000000000000000000000000000000000000",
-                                displayName: "update3",
-                                imageUrl: "https://gravatar3.com",
-                                updatesCount: 2
-                              }
-                            }
-                          ]);
+                Assert$RescriptMocha.deep_equal(undefined, inMemoryStoreRows, [
+                      {
+                        crud: /* Update */2,
+                        entity: {
+                          id: "1001",
+                          owner: "0x1230000000000000000000000000000000000000",
+                          displayName: "update1",
+                          imageUrl: "https://gravatar1.com",
+                          updatesCount: 2
+                        }
+                      },
+                      {
+                        crud: /* Update */2,
+                        entity: {
+                          id: "1002",
+                          owner: "0x4560000000000000000000000000000000000000",
+                          displayName: "update2",
+                          imageUrl: "https://gravatar2.com",
+                          updatesCount: 2
+                        }
+                      },
+                      {
+                        crud: /* Create */0,
+                        entity: {
+                          id: "1003",
+                          owner: "0x7890000000000000000000000000000000000000",
+                          displayName: "update3",
+                          imageUrl: "https://gravatar3.com",
+                          updatesCount: 2
+                        }
+                      }
+                    ]);
               }));
       }));
 
+var it_promise = Promise$RescriptMocha.it;
+
+var it_skip_promise = Promise$RescriptMocha.it_skip;
+
+var before_promise = Promise$RescriptMocha.before;
+
+exports.it_promise = it_promise;
+exports.it_skip_promise = it_skip_promise;
+exports.before_promise = before_promise;
 /*  Not a pure module */

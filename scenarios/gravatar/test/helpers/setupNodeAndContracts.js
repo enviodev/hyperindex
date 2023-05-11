@@ -1,14 +1,15 @@
 const hre = require("hardhat");
-const ethers = hre.ethers;
 
 module.exports.deployContract = deployContract = async () => {
   await hre.run("compile");
   let accounts = await hre.ethers.getSigners();
 
-  const GravatarRegistry = await hre.ethers.getContractFactory("GravatarRegistry");
+  const GravatarRegistry = await hre.ethers.getContractFactory(
+    "GravatarRegistry"
+  );
   const gravatar = await GravatarRegistry.deploy();
-  return gravatar
-}
+  return gravatar;
+};
 
 module.exports.default = setupNodeAndContracts = async (gravatar) => {
   await hre.run("compile");
@@ -17,14 +18,14 @@ module.exports.default = setupNodeAndContracts = async (gravatar) => {
   const deployer = accounts[0];
   const user1 = accounts[1];
 
-  console.log("using account, ", user1)
+  console.log("using account, ", user1);
 
   const newGravatar1Tx = await gravatar.createGravatar(
     "First Gravatar",
     "https://something.com"
   );
 
-  console.log("gravatar address", gravatar)
+  console.log("gravatar address", gravatar);
 
   const newGravatar2Tx = await gravatar
     .connect(user1)
@@ -34,7 +35,7 @@ module.exports.default = setupNodeAndContracts = async (gravatar) => {
     "First Update Gravatar"
   );
 
-  console.log("update gravatar")
+  console.log("update gravatar");
   const updateGravatarUrl1Tx = await gravatar.updateGravatarImage(
     "https://something1Update.com"
   );

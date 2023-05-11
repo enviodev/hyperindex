@@ -3,7 +3,7 @@ require("@nomiclabs/hardhat-ethers");
 module.exports = {
   solidity: "0.8.18",
   paths: {
-    sources: "./src/__tests__/helpers/contracts"
+    sources: "./test/helpers/contracts",
   },
   networks: {
     localhost: {

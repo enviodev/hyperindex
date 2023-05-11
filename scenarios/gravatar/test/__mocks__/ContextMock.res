@@ -1,14 +1,13 @@
-open Types
-let insertMock = id => id
-let updateMock = id => id
+let insertMock = Sinon.stub()
+let updateMock = Sinon.stub()
 
 let mockNewGravatarContext: Types.GravatarContract.NewGravatarEvent.context = {
   gravatar: {
     insert: gravatarInsert => {
-      insertMock(gravatarInsert.id)->ignore
+      insertMock->Sinon.callStub1(gravatarInsert.id)
     },
     update: gravatarUpdate => {
-      updateMock(gravatarUpdate.id)->ignore
+      updateMock->Sinon.callStub1(gravatarUpdate.id)
     },
     delete: _id => Js.log("inimplemented delete"),
   },
@@ -18,10 +17,10 @@ let mockUpdateGravatarContext: Types.GravatarContract.UpdatedGravatarEvent.conte
   gravatar: {
     gravatarWithChanges: () => Some(MockEntities.gravatarEntity1),
     insert: gravatarInsert => {
-      insertMock(gravatarInsert.id)->ignore
+      insertMock->Sinon.callStub1(gravatarInsert.id)
     },
     update: gravatarUpdate => {
-      updateMock(gravatarUpdate.id)->ignore
+      updateMock->Sinon.callStub1(gravatarUpdate.id)
     },
     delete: _id => Js.log("inimplemented delete"),
   },
