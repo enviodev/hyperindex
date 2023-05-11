@@ -15,7 +15,7 @@ SimpleBankContract_registerAccountCreatedLoadEntities(({ event, context }) => {
 });
 
 SimpleBankContract_registerAccountCreatedHandler(({ event, context }) => {
-  let { userAddress} = event.params;
+  let {userAddress} = event.params;
   let account: accountEntity = {
     id: userAddress.toString(),
     address: userAddress.toString(),

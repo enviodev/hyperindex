@@ -21,6 +21,8 @@ module.exports = ({ getNamedAccounts, deployments }) => __awaiter(void 0, void 0
     const user4 = accounts[4];
     console.log("deployer");
     console.log(deployer.address);
+    console.log("user1");
+    console.log(user1.address);
     const interestRate = 10;
     console.log("interest Rate set");
     let TreasuryContract = yield deploy("Treasury", {

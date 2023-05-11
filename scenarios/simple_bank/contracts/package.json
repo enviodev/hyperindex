@@ -6,12 +6,12 @@
   "license": "MIT",
   "scripts": {
     "compile": "hardhat compile",
-    "deploy-gravatar": "hardhat deploy",
+    "deploy-simple-bank": "hardhat deploy",
     "test": "npx hardhat test",
     "hardhat": "hardhat",
-    "task:new-gravatar": "npx hardhat new-gravatar",
-    "task:update-gravatar-name": "npx hardhat update-gravatar-name",
-    "task:update-gravatar-image": "npx hardhat update-gravatar-image",
+    "task:newAccount": "npx hardhat new-account",
+    "task:makeDeposit": "npx hardhat make-deposit",
+    "task:makeWithdrawal": "npx hardhat make-withdrawal",
     "hardhat-node": "npx hardhat node"
   },
   "dependencies": {

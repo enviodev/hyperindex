@@ -44,7 +44,10 @@ task("new-account", "Create new account")
     console.log("New account created.");
 
     await newAccount1Tx.wait();
-
+    
+    console.log(user);
+    console.log(user.address);
+    
     let accountCheck = await simpleBank.getBalance(user.address);
     console.log("account created", accountCheck);
   });
