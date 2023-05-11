@@ -2,7 +2,11 @@ const postgres = require("postgres")
 
 const postgresConfig = require("./Config.bs.js").db
 
-const sql = postgres(postgresConfig)
+const sql = postgres({...postgresConfig, 
+  transform: {
+    undefined: null
+  }
+})
 
 {{#each entities as |entity|}}
   // db operations for {{entity.name.capitalized
