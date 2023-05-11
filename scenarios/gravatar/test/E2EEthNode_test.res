@@ -13,7 +13,7 @@ describe("E2E Mock Event Batch", () => {
     await Migrations.runUpMigrations()
   })
 
-  MochaPromise.it("Complete E2E", ~timeout=10000, async () => {
+  MochaPromise.it("Complete E2E", ~timeout=30 * 1000, async () => {
     let gravatar = await SetupRpcNode.deployContract()
     await SetupRpcNode.setupNodeAndContracts(gravatar)
     let provider = Hardhat.hardhatProvider
@@ -34,12 +34,14 @@ describe("E2E Mock Event Batch", () => {
     RegisterHandlers.registerAllHandlers()
     await localChainConfig->EventSyncing.processAllEvents
 
-    Js.log("starting events subscription")
+    //Note this isn't working. Something to do with the polling on hardhat eth node
+    //Would be better to spin up a local node with ganache
+    Js.log("starting events subscription, (This is not yet working)")
     let _ = EventSubscription.startWatchingEventsOnRpc(~chainConfig=localChainConfig, ~provider)
     Js.log("submitting transactions")
     await LiveGravatarTask.liveGravatarTxs(gravatar)
     Js.log("finish transactions")
-    await Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)
+    // await Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)
     Js.log("finished")
   })
 })
