@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .spawn()?
                 .wait()?;
 
-            println!("generate db bigrations");
+            println!("generate db migrations");
 
             Command::new("pnpm")
                 .arg("db-migrate")

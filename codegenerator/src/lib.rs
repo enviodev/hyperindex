@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs;
-use std::os::unix::fs::PermissionsExt; // NOTE: This probably won't be the same on Windows.
+use std::path::Path;
 
 use handlebars::Handlebars;
 
@@ -235,15 +235,31 @@ fn write_to_file_in_generated(
     fs::write(file_path, content)
 }
 
-/// This function allows files to be executed as a script
+#[cfg(unix)]
+fn set_executable_permissions(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(&path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+///Impossible to set an executable mode on windows
+///This function is simply for the hasura script for now
+///So we can add some manual wsl steps for windows users
+fn set_executable_permissions(path: &Path) -> std::io::Result<()> {
+    let mut permissions = fs::metadata(&path)?.permissions();
+    permissions.set_readonly(false);
+    fs::set_permissions(&path, permissions)?;
+
+    Ok(())
+}
+
 fn make_file_executable(filename: &str, project_paths: &ProjectPaths) -> std::io::Result<()> {
     let file_path = &project_paths.generated.join(filename);
 
-    let mut permissions = fs::metadata(&file_path)?.permissions();
-    permissions.set_mode(0o755); // Set the file permissions to -rwxr-xr-x
-    fs::set_permissions(&file_path, permissions)?;
-
-    Ok(())
+    set_executable_permissions(&file_path)
 }
 
 #[cfg(test)]

@@ -1,0 +1,85 @@
+name: Build & Test
+
+on: pull_request
+
+defaults:
+  run:
+    working-directory: codegenerator
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+    # Service containers to run with `container-job`
+    services:
+      # Label used to access the service container
+      postgres:
+        # Docker Hub image
+        image: postgres:13
+        # Provide the password for postgres
+        env:
+          POSTGRES_PASSWORD: testing
+          POSTGRES_DB: envio-dev
+          POSTGRES_USER: postgres
+        # Set health checks to wait until postgres has started
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          # Maps tcp port 5432 on service container to the host
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.pnpm-store
+            ~/.cargo/registry
+            ~/.cargo/git
+            codegenerator/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Cargo Build
+        run: cargo build --verbose
+
+      - name: Cargo Tests
+        run: cargo test --verbose
+
+      - name: gravatar codegen
+        working-directory: scenarios/gravatar
+        run: |
+          pnpm codegen
+
+      - name: gravatar build
+        working-directory: scenarios/gravatar
+        run: |
+          pnpm install
+          pnpm build
+
+      - name: gravatar test
+        working-directory: scenarios/gravatar
+        run: |
+          pnpm test
+
+      - name: gravatar benchmark
+        working-directory: scenarios/gravatar
+        run: |
+          pnpm bench
+
+      - name: test_codegen build
+        working-directory: scenarios/test_codegen
+        run: |
+          pnpm codegen
+          pnpm install
+          pnpm build

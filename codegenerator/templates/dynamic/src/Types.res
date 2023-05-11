@@ -147,5 +147,6 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{#each contract.events as | event |}}
     | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event => "{{event.name.capitalized}}"
   {{/each}}
+  {{/each}}
 }
-{{/each}}
+
