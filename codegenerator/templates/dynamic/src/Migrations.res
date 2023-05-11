@@ -1,5 +1,44 @@
 let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have the correct type */)
 
+module RawEventsTable = {
+  type rawEventsTableRow = {
+    @as("chain_id") chainId: int,
+    @as("event_id") eventId: Ethers.BigInt.t,
+    @as("block_number") blockNumber: int,
+    @as("log_index") logIndex: int,
+    @as("transaction_index") transactionIndex: int,
+    @as("transaction_hash") transactionHash: string,
+    @as("src_address") srcAddress: string,
+    @as("block_hash") blockHash: string,
+    @as("block_timestamp") blockTimestamp: int,
+    params: Js.Json.t,
+  }
+
+  let createRawEventsTable = async () => {
+    await %raw("sql`
+      CREATE TABLE public.raw_events (
+        chain_id INTEGER NOT NULL,
+        event_id NUMERIC NOT NULL,
+        block_number INTEGER NOT NULL,
+        log_index INTEGER NOT NULL,
+        transaction_index INTEGER NOT NULL,
+        transaction_hash TEXT NOT NULL,
+        src_address TEXT NOT NULL,
+        block_hash TEXT NOT NULL,
+        block_timestamp INTEGER NOT NULL,
+        params JSON NOT NULL,
+        PRIMARY KEY (chain_id, event_id)
+      );
+  `")
+  }
+
+  let dropRawEventsTable = async () => {
+    await %raw("sql`
+    DROP TABLE public.raw_events;
+  `")
+  }
+}
+
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
@@ -12,6 +51,7 @@ module {{entity.name.capitalized}} = {
   }
 }
 
+{{/each}}
 
   let deleteAllTables:unit => promise<unit> = async () => {
     // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
@@ -21,9 +61,6 @@ module {{entity.name.capitalized}} = {
     await %raw("sql`GRANT ALL ON SCHEMA public TO public;`")
   }
 
-{{/each}}
-
-
 
 type t
 @module external process: t = "process"
@@ -32,6 +69,7 @@ type t
 
 // TODO: all the migration steps should run as a single transaction
 let runUpMigrations = async () => {
+  await RawEventsTable.createRawEventsTable()
 // TODO: catch and handle query errors
 {{#each entities as |entity|}}
   await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()
