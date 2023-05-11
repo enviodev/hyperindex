@@ -16,7 +16,7 @@ type chainConfigs = Js.Dict.t<chainConfig>
 
 %%private(let envSafe = EnvSafe.make())
 
-let db: DrizzleOrm.Pool.poolConfig = {
+let db: Postgres.poolConfig = {
   host: envSafe->EnvSafe.get(~name="PG_HOST", ~struct=S.string(), ~devFallback="localhost", ()),
   port: envSafe->EnvSafe.get(~name="PG_PORT", ~struct=S.int()->S.Int.port(), ~devFallback=5432, ()),
   user: envSafe->EnvSafe.get(~name="PG_USER", ~struct=S.string(), ~devFallback="postgres", ()),
@@ -53,7 +53,7 @@ let config: chainConfigs = [
             {{contract.name.capitalized}}Contract_{{event.capitalized}}Event,
             {{/each}}
             ],
-      }
+      },
       {{/each}}
     ]
 

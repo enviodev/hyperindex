@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fs;
-use std::os::unix::fs::PermissionsExt; // NOTE: This probably won't be the same on Windows.
+use std::path::Path;
 
 use handlebars::Handlebars;
 
@@ -145,10 +145,6 @@ pub fn generate_templates(
     )?;
     let rendered_string_io =
         handlebars.render_template(include_str!("../templates/dynamic/src/IO.res"), &types_data)?;
-    let rendered_string_db_schema = handlebars.render_template(
-        include_str!("../templates/dynamic/src/DbSchema.res"),
-        &types_data,
-    )?;
     let rendered_string_converters = handlebars.render_template(
         include_str!("../templates/dynamic/src/Converters.res"),
         &types_data,
@@ -175,6 +171,10 @@ pub fn generate_templates(
         include_str!("../templates/dynamic/src/Migrations.res"),
         &types_data,
     )?;
+    let rendered_string_db_funcitons_implementation = handlebars.render_template(
+        include_str!("../templates/dynamic/src/DbFunctionsImplementation.js.hbs"),
+        &types_data,
+    )?;
 
     write_to_file_in_generated(".gitignore", &rendered_string_gitignore, project_paths)?;
     write_to_file_in_generated("src/Types.res", &rendered_string_types, project_paths)?;
@@ -192,11 +192,6 @@ pub fn generate_templates(
         project_paths,
     )?;
     write_to_file_in_generated("src/IO.res", &rendered_string_io, project_paths)?;
-    write_to_file_in_generated(
-        "src/DbSchema.res",
-        &rendered_string_db_schema,
-        project_paths,
-    )?;
     write_to_file_in_generated(
         "src/Converters.res",
         &rendered_string_converters,
@@ -219,6 +214,11 @@ pub fn generate_templates(
         &rendered_string_migrations,
         project_paths,
     )?;
+    write_to_file_in_generated(
+        "src/DbFunctionsImplementation.js",
+        &rendered_string_db_funcitons_implementation,
+        project_paths,
+    )?;
 
     make_file_executable("register_tables_with_hasura.sh", project_paths)?;
 
@@ -235,15 +235,31 @@ fn write_to_file_in_generated(
     fs::write(file_path, content)
 }
 
-/// This function allows files to be executed as a script
+#[cfg(unix)]
+fn set_executable_permissions(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(&path)?.permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&path, permissions)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+///Impossible to set an executable mode on windows
+///This function is simply for the hasura script for now
+///So we can add some manual wsl steps for windows users
+fn set_executable_permissions(path: &Path) -> std::io::Result<()> {
+    let mut permissions = fs::metadata(&path)?.permissions();
+    permissions.set_readonly(false);
+    fs::set_permissions(&path, permissions)?;
+
+    Ok(())
+}
+
 fn make_file_executable(filename: &str, project_paths: &ProjectPaths) -> std::io::Result<()> {
     let file_path = &project_paths.generated.join(filename);
 
-    let mut permissions = fs::metadata(&file_path)?.permissions();
-    permissions.set_mode(0o755); // Set the file permissions to -rwxr-xr-x
-    fs::set_permissions(&file_path, permissions)?;
-
-    Ok(())
+    set_executable_permissions(&file_path)
 }
 
 #[cfg(test)]
