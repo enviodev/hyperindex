@@ -1,7 +1,6 @@
 name: Rust
 
-on:
-  pull_request
+on: pull_request
 
 defaults:
   run:
@@ -12,20 +11,19 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
-    - uses: pnpm/action-setup@v2
-      with:
-        version: 8
+      - uses: actions/checkout@v3
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
 
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
-    - name: Run generate
-      run: |
-        cargo run --verbose -- codegen -d ../scenarios/gravatar
-        cargo run --verbose -- codegen -d ../scenarios/test_codegen
+      - name: Build
+        run: cargo build --verbose
+      - name: Run tests
+        run: cargo test --verbose
+      - name: Run generate
+        run: |
+          cargo run --verbose -- codegen -d ../scenarios/gravatar
+          cargo run --verbose -- codegen -d ../scenarios/test_codegen
