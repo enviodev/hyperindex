@@ -20,10 +20,12 @@ const sql = postgres({...postgresConfig,
   WHERE id IN ${sql(entityIdArray)}`
 
   module.exports.batchSet{{entity.name.capitalized
-  }} = (entityDataArray) => sql`
+  }} = (entityDataArray) => {
+  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  sql`
     INSERT INTO public.{{entity.name.uncapitalized
   }}
-  ${sql(entityDataArray,
+  ${sql(valueCopyToFixBigIntType,
   {{#each entity.params as |param|}}
     "{{param.key}}",
   {{/each}}
@@ -37,6 +39,7 @@ const sql = postgres({...postgresConfig,
     {{/unless}}
   {{/each}}
   ;`
+  }
 
   module.exports.batchDelete{{entity.name.capitalized
   }} = (entityIdArray) => sql`
