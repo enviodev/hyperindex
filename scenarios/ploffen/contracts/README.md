@@ -11,3 +11,9 @@ REPORT_GAS=true npx hardhat test
 npx hardhat node
 npx hardhat deploy
 ```
+
+To play the ploffen game you can run the following task:
+
+```shell
+pnpm hardhat play-ploffen --user-index <user-index>
+```

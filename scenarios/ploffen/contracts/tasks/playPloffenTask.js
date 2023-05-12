@@ -29,7 +29,7 @@ task("play-ploffen", "Plays a new game of ploffen")
 async function mintAndApprove(users, mintAmount, gameToken, ploffen) {
   for (const user of users) {
     await gameToken.connect(user).mint(user.address, mintAmount);
-    await gameToken.connect(user).approve(ploffen.address, mintAmount);
+    await gameToken.connect(user).approve(ploffen.target, mintAmount);
   }
 }
 
