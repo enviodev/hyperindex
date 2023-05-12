@@ -19,7 +19,7 @@ task("play-ploffen", "Plays a new game of ploffen")
       GameToken.address
     );
 
-    const playAmount = ethers.utils.parseEther("1");
+    const playAmount = ethers.parseEther("1");
     await mintAndApprove([user], playAmount, gameToken, ploffen);
     await ploffen.connect(user).playPloffen(playAmount);
     await increaseTime(provider, 1800);
