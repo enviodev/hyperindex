@@ -16,6 +16,7 @@ module {{entity.name.capitalized}} = {
 
 let deleteAllTables:unit => promise<unit> = async () => {
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+  @warning("-21")
   await %raw("sql.unsafe`DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;`")
 }
 
