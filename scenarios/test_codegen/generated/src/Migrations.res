@@ -13,14 +13,6 @@ module User = {
   }
 }
 
-let deleteAllTables: unit => promise<unit> = async () => {
-  // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
-  await %raw("sql`DROP SCHEMA public CASCADE;`")
-  await %raw("sql`CREATE SCHEMA public;`")
-  await %raw("sql`GRANT ALL ON SCHEMA public TO postgres;`")
-  await %raw("sql`GRANT ALL ON SCHEMA public TO public;`")
-}
-
 module Gravatar = {
   let createGravatarTable: unit => promise<unit> = async () => {
     await %raw(
@@ -36,10 +28,13 @@ module Gravatar = {
 
 let deleteAllTables: unit => promise<unit> = async () => {
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
-  await %raw("sql`DROP SCHEMA public CASCADE;`")
-  await %raw("sql`CREATE SCHEMA public;`")
-  await %raw("sql`GRANT ALL ON SCHEMA public TO postgres;`")
-  await %raw("sql`GRANT ALL ON SCHEMA public TO public;`")
+
+  @warning("-21")
+  await (
+    %raw(
+      "sql.unsafe`DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;`"
+    )
+  )
 }
 
 type t
