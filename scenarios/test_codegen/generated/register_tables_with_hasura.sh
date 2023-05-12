@@ -32,6 +32,20 @@ curl -X POST localhost:8080/v1/metadata \
 }'
 # reference: https://hasura.io/docs/latest/api-reference/metadata-api/permission/#metadata-pg-create-select-permission
 
+#Do this for the raw events table as well
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+  "type": "pg_track_table",
+  "args": {
+    "source": "public",
+    "schema": "public",
+    "name": "raw_events"
+  }
+}'
+
 curl -X POST localhost:8080/v1/metadata \
   -H "Content-Type: application/json" \
   -H "X-Hasura-Role: admin" \
@@ -56,6 +70,24 @@ curl -X POST localhost:8080/v1/metadata \
     "type": "pg_create_select_permission",
     "args": {
         "table": "gravatar",
+        "role": "public",
+        "source": "default",
+        "permission": {
+            "columns": "*",
+            "filter": {}
+        }
+    }
+}'
+
+#Do this for the raw events table as well
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_select_permission",
+    "args": {
+        "table": "raw_events",
         "role": "public",
         "source": "default",
         "permission": {
