@@ -7,10 +7,10 @@ const secondaryColor = "#FDD700";
 // const secondaryColor = "#A223CF";
 
 // terminal colour schemes - inspired by robby russel
-const terminalRed = "#A5574C";
+const terminalRed = "#D7625D";
 const terminalLightBlue = "#6DA39E";
 const terminalDarkBlue = "#72899C";
-const terminalGreen = "#BCBD86";
+const terminalGreen = "#AFB26F";
 const terminalYellow = "#F1C875";
 const terminalBg = "#28292E";
 
