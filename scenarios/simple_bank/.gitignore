@@ -26,6 +26,7 @@ lib/*
 .bsb.lock
 /node_modules/
 benchmarks/
+build/
 artifacts
 cache
 
@@ -41,4 +42,5 @@ typechain-types
 # Hardhat files
 cache
 artifacts
+deployments
 
