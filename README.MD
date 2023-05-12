@@ -3,6 +3,12 @@
 Envio is an indexing solution that allows web3 projects to create custom APIs to access data on any EVM-compatible chain.
 
 Aim of Envio is to optimize developer experience of using an indexer, whilst providing fast, secure and reliable indexing service.
+# CLI tool
+
+This repo uses `clap` CLI library.
+
+Help file for CLI commands can be found [here](codegenerator/CommandLineHelp.md)
+
 # Getting Started
 ## Installation
 
