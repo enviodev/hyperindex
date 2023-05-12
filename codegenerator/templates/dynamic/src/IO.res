@@ -95,25 +95,40 @@ let executeBatch = async () => {
   {{#each entities as | entity |}}
   let {{entity.name.uncapitalized}}Rows = InMemoryStore.{{entity.name.capitalized}}.{{entity.name.uncapitalized}}Dict.contents->Js.Dict.values
 
-  let delete{{entity.name.capitalized}}Ids =
-    {{entity.name.uncapitalized}}Rows
-    ->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
-      {{entity.name.uncapitalized}}Row.crud == Types.Delete ? Some({{entity.name.uncapitalized}}Row.entity) : None
-    )
-    ->Belt.Array.map({{entity.name.uncapitalized}} => {{entity.name.uncapitalized}}.id)
+  let delete{{entity.name.capitalized}}IdsPromise = () => {
+    let delete{{entity.name.capitalized}}Ids =
+      {{entity.name.uncapitalized}}Rows
+      ->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
+        {{entity.name.uncapitalized}}Row.crud == Types.Delete ? Some({{entity.name.uncapitalized}}Row.entity) : None
+      )
+      ->Belt.Array.map({{entity.name.uncapitalized}} => {{entity.name.uncapitalized}}.id)
 
-  let set{{entity.name.capitalized}} =
-    {{entity.name.uncapitalized}}Rows->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
-      {{entity.name.uncapitalized}}Row.crud == Types.Create || {{entity.name.uncapitalized}}Row.crud == Update
-        ? Some({{entity.name.uncapitalized}}Row.entity)
-        : None
-    )
+      if delete{{entity.name.capitalized}}Ids->Belt.Array.length > 0 {
+        DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}}(delete{{entity.name.capitalized}}Ids)
+      } else {
+        ()->Promise.resolve
+      }
+  }
+  let set{{entity.name.capitalized}}Promise = () => {
+    let set{{entity.name.capitalized}} =
+      {{entity.name.uncapitalized}}Rows->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
+        {{entity.name.uncapitalized}}Row.crud == Types.Create || {{entity.name.uncapitalized}}Row.crud == Update
+          ? Some({{entity.name.uncapitalized}}Row.entity)
+          : None
+      )
+
+      if set{{entity.name.capitalized}}->Belt.Array.length > 0 {
+         DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}}(set{{entity.name.capitalized}})
+      } else {
+        ()->Promise.resolve
+      }
+  }
 
   {{/each}}
   await [
     {{#each entities as | entity |}}
-    DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}}(delete{{entity.name.capitalized}}Ids),
-    DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}}(set{{entity.name.capitalized}}),
+    delete{{entity.name.capitalized}}IdsPromise(),
+    set{{entity.name.capitalized}}Promise(),
     {{/each}}
   ]->Promise.all
 }

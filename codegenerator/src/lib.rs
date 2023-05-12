@@ -145,10 +145,6 @@ pub fn generate_templates(
     )?;
     let rendered_string_io =
         handlebars.render_template(include_str!("../templates/dynamic/src/IO.res"), &types_data)?;
-    let rendered_string_db_schema = handlebars.render_template(
-        include_str!("../templates/dynamic/src/DbSchema.res"),
-        &types_data,
-    )?;
     let rendered_string_converters = handlebars.render_template(
         include_str!("../templates/dynamic/src/Converters.res"),
         &types_data,
@@ -175,6 +171,10 @@ pub fn generate_templates(
         include_str!("../templates/dynamic/src/Migrations.res"),
         &types_data,
     )?;
+    let rendered_string_db_funcitons_implementation = handlebars.render_template(
+        include_str!("../templates/dynamic/src/DbFunctionsImplementation.js.hbs"),
+        &types_data,
+    )?;
 
     write_to_file_in_generated(".gitignore", &rendered_string_gitignore, project_paths)?;
     write_to_file_in_generated("src/Types.res", &rendered_string_types, project_paths)?;
@@ -192,11 +192,6 @@ pub fn generate_templates(
         project_paths,
     )?;
     write_to_file_in_generated("src/IO.res", &rendered_string_io, project_paths)?;
-    write_to_file_in_generated(
-        "src/DbSchema.res",
-        &rendered_string_db_schema,
-        project_paths,
-    )?;
     write_to_file_in_generated(
         "src/Converters.res",
         &rendered_string_converters,
@@ -217,6 +212,11 @@ pub fn generate_templates(
     write_to_file_in_generated(
         "src/Migrations.res",
         &rendered_string_migrations,
+        project_paths,
+    )?;
+    write_to_file_in_generated(
+        "src/DbFunctionsImplementation.js",
+        &rendered_string_db_funcitons_implementation,
         project_paths,
     )?;
 
