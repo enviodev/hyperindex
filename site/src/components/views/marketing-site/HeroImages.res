@@ -1,11 +1,7 @@
 module ApeHeroImage = {
   @react.component
   let make = () => {
-    <FullWidthImage
-      src={Routes.cdnFolderRoute(
-        ~asset=`/envio/landing/sailer-ape-${LightDarkModeToggle.useModeUrlVariant()}.png`,
-      )}
-    />
+    <FullWidthImage src={Routes.cdnFolderRoute(~asset=`/envio/landing/sailer-ape.png`)} />
   }
 }
 

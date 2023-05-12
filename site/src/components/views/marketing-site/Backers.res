@@ -15,7 +15,7 @@ let investors = [
   },
   {
     name: "Meta Cartel",
-    imgName: "meta_cartel_greyscale.png",
+    imgName: "meta_cartel.png",
     objectFit: "contain",
     extraClassNames: "mx-2",
   },
@@ -58,7 +58,7 @@ let investors = [
   },
   {
     name: "Contango Digital Assets",
-    imgName: "contango_digital_assets_white.png",
+    imgName: "contango_digital_assets.png",
     objectFit: "contain",
     extraClassNames: "",
   },
