@@ -24,7 +24,6 @@ contract SimpleBank {
 
         // Update balance and total balance
         balances[userAddress] = 0;
-        totalBalance += 0;
 
         // Emit event
         emit AccountCreated(userAddress);
@@ -37,39 +36,38 @@ contract SimpleBank {
 
     // Deposit funds into the account
     function deposit(
-        address userAddress,
         uint256 depositAmount
     ) external {
         require(depositAmount > 0, "Deposit amount should be greater than 0");
 
         // Calculate interest since last interest calculation time
-        _calculateAndApplyInterest(userAddress);
+        _calculateAndApplyInterest(msg.sender);
 
         // Update balance and total balance
-        balances[userAddress] += depositAmount;
+        balances[msg.sender] += depositAmount;
         totalBalance += depositAmount;
 
         // Emit event
-        emit DepositMade(userAddress, depositAmount);
+        emit DepositMade(msg.sender, depositAmount);
 
         // Update total balance event
         emit TotalBalanceChanged(totalBalance);
     }
 
     // Withdraw funds from the account
-    function withdraw(address userAddress, uint256 withdrawalAmount) external {
+    function withdraw(uint256 withdrawalAmount) external {
         require(withdrawalAmount > 0, "Withdrawal amount should be greater than 0");
-        require(withdrawalAmount <= balances[userAddress], "Insufficient balance");
+        require(withdrawalAmount <= balances[msg.sender], "Insufficient balance");
 
         // Calculate interest since last interest calculation time
-        _calculateAndApplyInterest(userAddress);
+        _calculateAndApplyInterest(msg.sender);
 
         // Update balance and total balance
-        balances[userAddress] -= withdrawalAmount;
+        balances[msg.sender] -= withdrawalAmount;
         totalBalance -= withdrawalAmount;
 
         // Emit event
-        emit WithdrawalMade(userAddress, withdrawalAmount);
+        emit WithdrawalMade(msg.sender, withdrawalAmount);
 
         // Update total balance event
         emit TotalBalanceChanged(totalBalance);
@@ -92,7 +90,7 @@ contract SimpleBank {
             // Calculate interest earned by the user and update their balance
             accountInterest = (interest * balances[userAddress]) /
                 totalBalance;
-            balances[msg.sender] += accountInterest;
+            balances[userAddress] += accountInterest;
 
             // Emit event for interest calculation
             emit InterestCalculated(interest);
