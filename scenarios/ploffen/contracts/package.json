@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "deploy-default": " rm -rf deployments/ganache && hardhat deploy"
+    "deploy-default": "rm -rf deployments/ganache && hardhat deploy"
   },
   "dependencies": {
     "@ethersproject/hash": "^5.7.0",
