@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "deploy-default": "rm -rf deployments/ganache && hardhat deploy"
+  },
+  "dependencies": {
+    "@ethersproject/hash": "^5.7.0",
+    "@ethersproject/web": "^5.7.1",
+    "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
+    "@openzeppelin/contracts": "^4.8.3",
+    "ethers": "^6.3.0",
+    "hardhat": "^2.14.0",
+    "hardhat-abi-exporter": "^2.10.1",
+    "hardhat-deploy": "^0.11.26"
+  }
+}
