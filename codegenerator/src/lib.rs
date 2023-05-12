@@ -168,8 +168,8 @@ pub fn generate_templates(
             include_str!("../templates/dynamic/.gitignore"),
         ),
         (
-            "src/Index.res",
-            include_str!("../templates/dynamic/src/Index.res"),
+            "src/RegisterHandlers.res",
+            include_str!("../templates/dynamic/src/RegisterHandlers.res"),
         ),
         (
             "src/Migrations.res",

@@ -98,3 +98,15 @@ jobs:
           pnpm codegen
           pnpm install
           pnpm build
+
+      - name: nftFactory codegen
+        working-directory: scenarios/nftFactory/nft-indexer
+        run: |
+          pnpm codegen
+          pnpm install
+          pnpm build
+
+      - name: nftFactory test
+        working-directory: scenarios/nftFactory/nft-indexer
+        run: |
+          pnpm test
