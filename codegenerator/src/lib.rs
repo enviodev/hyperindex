@@ -117,6 +117,7 @@ pub fn generate_templates(
         chain_configs,
         codegen_out_path: gitignoer_path_str,
     };
+
     let templates = [
         (
             "src/Types.res",
