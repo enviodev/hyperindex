@@ -51,19 +51,17 @@ jobs:
         with:
           version: 8
 
-      # NOTE, the cache key is of format month-year (ie may-2023), so the pnpm cache will be cleared once a month to prevent it getting too cluttered.
-      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) and cache key # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
         id: pnpm-cache
         shell: bash
         run: |
-          echo "PNPM_CACHE_KEY=$(date +'%B-%Y')" >> $GITHUB_OUTPUT 
           echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
 
       - uses: actions/cache@v3
         name: Setup pnpm cache
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ steps.pnpm-cache.outputs.PNPM_CACHE_KEY }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
