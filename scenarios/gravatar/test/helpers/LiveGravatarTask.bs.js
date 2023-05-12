@@ -4,7 +4,7 @@
 var TaskLiveGravatarTxsJs = require("./taskLiveGravatarTxs.js").default;
 
 function liveGravatarTxs(prim) {
-  return TaskLiveGravatarTxsJs();
+  return TaskLiveGravatarTxsJs(prim);
 }
 
 exports.liveGravatarTxs = liveGravatarTxs;

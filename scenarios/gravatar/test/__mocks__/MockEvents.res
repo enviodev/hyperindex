@@ -74,7 +74,9 @@ let newGravatarEventLog3: Types.eventLog<Types.GravatarContract.NewGravatarEvent
   logIndex: 1,
 }
 
-let updatedGravatarEventLog1: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
+let updatedGravatarEventLog1: Types.eventLog<
+  Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
+> = {
   params: updatedGravatar1,
   blockNumber: 1,
   blockTimestamp: 1,
@@ -85,7 +87,9 @@ let updatedGravatarEventLog1: Types.eventLog<Types.GravatarContract.UpdatedGrava
   logIndex: 1,
 }
 
-let updatedGravatarEventLog2: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
+let updatedGravatarEventLog2: Types.eventLog<
+  Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
+> = {
   params: updatedGravatar2,
   blockNumber: 1,
   blockTimestamp: 1,
@@ -96,7 +100,9 @@ let updatedGravatarEventLog2: Types.eventLog<Types.GravatarContract.UpdatedGrava
   logIndex: 1,
 }
 
-let updatedGravatarEventLog3: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
+let updatedGravatarEventLog3: Types.eventLog<
+  Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
+> = {
   params: updatedGravatar3,
   blockNumber: 1,
   blockTimestamp: 1,
@@ -120,7 +126,16 @@ let eventBatchWithContext: array<Types.eventAndContext> = [
   GravatarContract_NewGravatarWithContext(newGravatarEventLog1, ContextMock.mockNewGravatarContext),
   GravatarContract_NewGravatarWithContext(newGravatarEventLog2, ContextMock.mockNewGravatarContext),
   GravatarContract_NewGravatarWithContext(newGravatarEventLog3, ContextMock.mockNewGravatarContext),
-  GravatarContract_UpdatedGravatarWithContext(updatedGravatarEventLog1, ContextMock.mockUpdateGravatarContext),
-  GravatarContract_UpdatedGravatarWithContext(updatedGravatarEventLog2, ContextMock.mockUpdateGravatarContext),
-  GravatarContract_UpdatedGravatarWithContext(updatedGravatarEventLog3, ContextMock.mockUpdateGravatarContext),
+  GravatarContract_UpdatedGravatarWithContext(
+    updatedGravatarEventLog1,
+    ContextMock.mockUpdateGravatarContext,
+  ),
+  GravatarContract_UpdatedGravatarWithContext(
+    updatedGravatarEventLog2,
+    ContextMock.mockUpdateGravatarContext,
+  ),
+  GravatarContract_UpdatedGravatarWithContext(
+    updatedGravatarEventLog3,
+    ContextMock.mockUpdateGravatarContext,
+  ),
 ]
