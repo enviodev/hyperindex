@@ -189,7 +189,7 @@ module Image = {
     naturalWidth: string,
     naturalHeight: string,
   }
-  @module("next/image") @react.component
+  @module("next/legacy/image") @react.component
   external make: (
     ~src: string,
     ~width: string=?,

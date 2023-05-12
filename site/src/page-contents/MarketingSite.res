@@ -4,20 +4,20 @@
 let make = () => {
   <div>
     <MarketingNav />
-    <Hero />
+    <HeroSection />
     <Blurbs.Shipping />
     <HeroImages.CreatureHeroImage />
     <Blurbs.OneCommand />
-    <TerminalDemo />
-    <PerformanceMetrics />
+    <TerminalDemoSection />
+    <PerformanceMetricsSection />
     <Blurbs.Customisable />
-    <USPs />
-    <IntegrateInMinutes />
-    <ByBuilders />
+    <USPsSection />
+    <IntegrateInMinutesSection />
+    <ByBuildersSection />
     <HeroImages.ApeHeroImage />
-    <Backers />
-    <ShipWithUs />
+    <BackersSection />
+    <ShipWithUsSection />
     <HeroImages.FooterHeroImage />
-    <Footer />
+    <FooterSection />
   </div>
 }

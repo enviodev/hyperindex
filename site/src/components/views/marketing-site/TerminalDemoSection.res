@@ -45,7 +45,7 @@ module NextCommand = {
 
 @react.component
 let make = () => {
-  <div
+  <section
     className="md:w-code-block h-code-block bg-terminalBg rounded rounded-lg text-gray-200 mx-auto my-6">
     <div className="bg-white opacity-10 h-5 w-full" />
     <div className="px-4 py-2">
@@ -80,5 +80,5 @@ let make = () => {
         <NextCommand command="" />
       </Time.DelayedDisplay>
     </div>
-  </div>
+  </section>
 }
