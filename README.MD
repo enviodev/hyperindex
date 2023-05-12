@@ -1,6 +1,6 @@
 # Envio
 
-Envio is an indexing solution that allows web3 projects to access data on any EVM-compatible chain.
+Envio is an indexing solution that allows web3 projects to create custom APIs to access data on any EVM-compatible chain.
 
 Aim of Envio is to optimize developer experience of using an indexer, whilst providing fast, secure and reliable indexing service.
 # Getting Started
@@ -9,22 +9,24 @@ Aim of Envio is to optimize developer experience of using an indexer, whilst pro
 Install prerequisite tools:
 1. Node.js (install v18) https://nodejs.org/en
    (Recommended to use a node manager like fnm or nvm)
-2. pnpm:
-   Run `npm install --global pnpm`
+2. pnpm
+   ```
+   npm install --global pnpm
+   ```
 3. Cargo https://doc.rust-lang.org/cargo/getting-started/installation.html
    Run `curl https://sh.rustup.rs -sSf | sh`
 4. Docker Desktop https://www.docker.com/products/docker-desktop/
 
 Install Envio:
-1. Run 
 ```
 cargo install --path codegenerator`
 ```
-2. Run 
+
+
+Command to see available CLI commands
 ```
 envio --help
 ```
-   to see available CLI commands
 
 ## Create templates
 
@@ -73,3 +75,47 @@ pnpm run build
 ```
 pnpm run watch
 ```
+
+# Local testing using Hardhat and Docker
+Below are steps to be followed when testing the indexer locally using Hardhat and Docker.
+
+NB: All the files must be configured as per guideline above.
+
+1. Removing stale data
+   ```
+   docker-compose down -v
+   ```
+
+2. Restarting docker
+   ```
+   docker-compose up -d
+   ```
+
+3. Deploying contract
+   ```
+   cd contracts
+   rm -r deployments
+   pnpm hardhat deploy
+   ```
+
+4. Generating code
+   ```
+   cd ..
+   envio codegen
+   ```
+
+5. Running the indexer
+   ```
+   pnpm start
+   ```
+
+6. Running some tasks
+   ```
+   pnpm hardhat task:1 --parameter-1 value-1
+   ```
+
+7. Checking the results on local Hasura
+   ```
+   ./generated/register_tables_with_hasura.sh
+   ```
+   and open http://localhost:8080/console.
