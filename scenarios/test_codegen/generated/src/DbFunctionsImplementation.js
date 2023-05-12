@@ -2,7 +2,11 @@ const postgres = require("postgres")
 
 const postgresConfig = require("./Config.bs.js").db
 
-const sql = postgres(postgresConfig)
+const sql = postgres({...postgresConfig, 
+  transform: {
+    undefined: null
+  }
+})
 
   // db operations for User:
 
@@ -11,9 +15,11 @@ const sql = postgres(postgresConfig)
   FROM public.user
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetUser = (entityDataArray) => sql`
+  module.exports.batchSetUser = (entityDataArray) => {
+  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  sql`
     INSERT INTO public.user
-  ${sql(entityDataArray,
+  ${sql(valueCopyToFixBigIntType,
     "id",
     "address",
     "gravatar",
@@ -26,6 +32,7 @@ const sql = postgres(postgresConfig)
       ,
     "gravatar" = EXCLUDED."gravatar"
   ;`
+  }
 
   module.exports.batchDeleteUser = (entityIdArray) => sql`
   DELETE
@@ -39,9 +46,11 @@ const sql = postgres(postgresConfig)
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetGravatar = (entityDataArray) => sql`
+  module.exports.batchSetGravatar = (entityDataArray) => {
+  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  sql`
     INSERT INTO public.gravatar
-  ${sql(entityDataArray,
+  ${sql(valueCopyToFixBigIntType,
     "id",
     "owner",
     "displayName",
@@ -60,6 +69,7 @@ const sql = postgres(postgresConfig)
       ,
     "updatesCount" = EXCLUDED."updatesCount"
   ;`
+  }
 
   module.exports.batchDeleteGravatar = (entityIdArray) => sql`
   DELETE
