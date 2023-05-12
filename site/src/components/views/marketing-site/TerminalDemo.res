@@ -33,7 +33,7 @@ module TerminalComment = {
 module NextCommand = {
   @react.component
   let make = (~command) => {
-    let typedCommand = Misc.useTypedCharactersString(~delay=80, command)
+    let typedCommand = Time.useTypedCharactersString(~delay=80, command)
     <p>
       <TerminalLocationPlace />
       {typedCommand->React.string}
@@ -51,34 +51,34 @@ let make = () => {
     <div className="px-4 py-2">
       <TerminalComment comment="Initialise a template indexer with 'envio init'" />
       <NextCommand command="envio init" />
-      <Misc.DelayedDisplay delay=1000>
+      <Time.DelayedDisplay delay=1000>
         <p className="font-bold"> {"ENVIO v0.0.1"->React.string} </p>
-      </Misc.DelayedDisplay>
-      <Misc.DelayedDisplay delay=2000>
+      </Time.DelayedDisplay>
+      <Time.DelayedDisplay delay=2000>
         <p> {"Initiating indexer boilerplate"->React.string} </p>
-      </Misc.DelayedDisplay>
-      <Misc.DelayedDisplay delay=3000>
+      </Time.DelayedDisplay>
+      <Time.DelayedDisplay delay=3000>
         <TerminalComment comment={`Generate indexer with 'envio codegen'`} />
-      </Misc.DelayedDisplay>
-      <Misc.DelayedDisplay delay=4000>
+      </Time.DelayedDisplay>
+      <Time.DelayedDisplay delay=4000>
         <NextCommand command="envio codegen" />
-      </Misc.DelayedDisplay>
-      <Misc.DelayedDisplay delay=5500>
+      </Time.DelayedDisplay>
+      <Time.DelayedDisplay delay=5500>
         <p> {"Generating complete"->React.string} </p>
-      </Misc.DelayedDisplay>
-      <Misc.DelayedDisplay delay=6500>
+      </Time.DelayedDisplay>
+      <Time.DelayedDisplay delay=6500>
         <TerminalComment comment={`Finally, deploy indexer with 'envio deploy'`} />
-      </Misc.DelayedDisplay>
-      <Misc.DelayedDisplay delay=7500>
+      </Time.DelayedDisplay>
+      <Time.DelayedDisplay delay=7500>
         <NextCommand command="envio deploy" />
-      </Misc.DelayedDisplay>
-      <Misc.DelayedDisplay delay=9000>
+      </Time.DelayedDisplay>
+      <Time.DelayedDisplay delay=9000>
         <p> {"Indexer deployed to:"->React.string} </p>
         <p> {"https://hosting.envio.dev/shipooor/my-indexer"->React.string} </p>
-      </Misc.DelayedDisplay>
-      <Misc.DelayedDisplay delay=10000>
+      </Time.DelayedDisplay>
+      <Time.DelayedDisplay delay=10000>
         <NextCommand command="" />
-      </Misc.DelayedDisplay>
+      </Time.DelayedDisplay>
     </div>
   </div>
 }
