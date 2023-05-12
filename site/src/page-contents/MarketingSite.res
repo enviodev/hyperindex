@@ -3,13 +3,21 @@
 @react.component
 let make = () => {
   <div>
-    <Hero />
-    <SubHero />
-    <Backers />
-    <USPs />
-    <PerformanceMetrics />
-    <MinimalMaintenance />
-    <ShipWithUs />
-    <Footer />
+    <MarketingNav />
+    <HeroSection />
+    <Blurbs.Shipping />
+    <HeroImages.CreatureHeroImage />
+    <Blurbs.OneCommand />
+    <TerminalDemoSection />
+    <PerformanceMetricsSection />
+    <Blurbs.Customisable />
+    <USPsSection />
+    <IntegrateInMinutesSection />
+    <ByBuildersSection />
+    <HeroImages.ApeHeroImage />
+    <BackersSection />
+    <ShipWithUsSection />
+    <HeroImages.FooterHeroImage />
+    <FooterSection />
   </div>
 }

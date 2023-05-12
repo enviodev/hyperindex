@@ -21,7 +21,7 @@
     "@reasonml-community/graphql-ppx",        
     "@ryyppy/rescript-promise",
     "@rescript/react",
-    "rescript-apollo-client" 
+    "rescript-apollo-client"    
   ],
   "ppx-flags": [
     "@reasonml-community/graphql-ppx/ppx"

@@ -24,6 +24,8 @@ let default = (props: props): React.element => {
   // let _ = InjectedEthereum.useReloadOnMetamaskChainChanged() // todo - tag: boilerplate copy pasta
 
   <MiscProvider>
-    <RootLayout> content </RootLayout>
+    <LightDarkModeToggle.LightDarkModeToggleProvider>
+      <RootLayout> content </RootLayout>
+    </LightDarkModeToggle.LightDarkModeToggleProvider>
   </MiscProvider>
 }
