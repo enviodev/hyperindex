@@ -16,7 +16,7 @@ let stringToMode = str => {
 
 let useLightDarkModeLocalStorageState = () => {
   let (localStorageMode, setLocalStorageMode) = LocalStorageHooks.useLocalStorageStateAtKey(
-    ~key="theme",
+    ~key=LocalStorageHooks.Theme,
   )
 
   let mode =
