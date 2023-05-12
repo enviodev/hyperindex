@@ -135,6 +135,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .wait()?;
 
             Ok(())
-        }
+        },
+        CommandType::PrintAllHelp { markdown } => {
+			assert!(markdown);
+
+			clap_markdown::print_help_markdown::<CommandLineArgs>();
+            Ok(())
+		},
     }
 }
