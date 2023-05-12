@@ -34,7 +34,23 @@ envio --help
 ```
 envio init
 ```
-to get a Gravatar template for configuration, schema and EventHandlers files.
+
+Then choose a template out of the possible options
+```
+? Which template would you like to use?  
+> "Gravatar"
+[↑↓ to move, enter to select, type to filter]
+```
+Then choose a language from Javascript, Typescript or Rescript to write the event handlers file.
+```
+? Which javascript flavor would you like to use?  
+> "Javascript"
+  "Typescript"
+  "Rescript"
+[↑↓ to move, enter to select, type to filter
+```
+
+This will generate the config, schema and event handlers files according to the template and flavour chosen.
 
 ## Configure the files according to your project
 
@@ -97,6 +113,9 @@ NB: All the files must be configured as per guideline above.
    rm -r deployments
    pnpm hardhat deploy
    ```
+   Note that this will delete the previous deployment of the smart contract and re-deploy to prevent `node synced status` errors.
+
+   More information on how to deploy contracts using Hardhat can be found [here](https://hardhat.org/hardhat-runner/docs/guides/deploying).
 
 4. Generating code
    ```
@@ -113,9 +132,23 @@ NB: All the files must be configured as per guideline above.
    ```
    pnpm hardhat task:1 --parameter-1 value-1
    ```
+   More information on how to create and run tasks using Hardhat can be found [here](https://hardhat.org/hardhat-runner/docs/advanced/create-task).
 
 7. Checking the results on local Hasura
    ```
    ./generated/register_tables_with_hasura.sh
    ```
    and open http://localhost:8080/console.
+
+# Troubleshooting
+
+## Exporting smart contract ABI
+If you have updated your smart contract after the initial codegen, then you will have to recreate the ABI for your smart contract.
+
+Run
+```
+cd contracts
+pnpm hardhat export-abi
+```
+Ensure that the directory for ABI in config.yaml is pointing to the correct folder where ABIs have been freshly generated.
+
