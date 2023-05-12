@@ -2,6 +2,7 @@
   "name": "nftFactory",
   "version": "0.1.0",
   "scripts": {
+    "test": "tsc --build && mocha build/test --exit",
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
@@ -9,8 +10,14 @@
     "codegen": "cargo run --manifest-path ../../../codegenerator/Cargo.toml -- codegen"
   },
   "devDependencies": {
-    "typescript": "^5.0.4",
-    "@types/node": "^18.16.1"
+    "@types/chai": "^4.3.5",
+    "@types/chai-as-promised": "^7.1.5",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "^18.16.1",
+    "chai": "^4.3.7",
+    "chai-as-promised": "^7.1.1",
+    "mocha": "^10.2.0",
+    "typescript": "^5.0.4"
   },
   "dependencies": {
     "generated": "workspace:*"
