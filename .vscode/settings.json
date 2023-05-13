@@ -1,8 +1,5 @@
 {
-  "json.schemas": [
-    {
-      "fileMatch": ["config.yaml"],
-      "url": "./config-schema/config-scheama.json"
-    }
-  ]
+  "yaml.schemas": {
+    "./config-schema/config.schema.json": "**/config.yaml"
+  }
 }

@@ -26,30 +26,8 @@
           },
           "start_block": {
             "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "rpc_url",
-          "start_block"
-        ]
-      }
-    },
-    "contracts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
           },
-          "abi": {
-            "type": "string"
-          },
-          "address": {
-            "type": "string"
-          },
-          "events": {
+          "contracts": {
             "type": "array",
             "items": {
               "type": "object",
@@ -57,7 +35,16 @@
                 "name": {
                   "type": "string"
                 },
-                "read_entities": {
+                "abi": {
+                  "type": "string"
+                },
+                "address": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "events": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -65,39 +52,54 @@
                       "name": {
                         "type": "string"
                       },
-                      "labels": {
+                      "read_entities": {
                         "type": "array",
                         "items": {
-                          "type": "string"
+                          "type": "object",
+                          "properties": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "labels": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ]
                         }
                       }
-                    },
-                    "required": [
-                      "name"
-                    ]
-                  }
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ]
                 }
               }
             },
             "required": [
-              "name"
+              "name",
+              "abi",
+              "address",
+              "events"
             ]
           }
-        }
-      },
-      "required": [
-        "name",
-        "abi",
-        "address",
-        "events"
-      ]
+        },
+        "required": [
+          "id",
+          "rpc_url",
+          "start_block",
+          "contracts"
+        ]
+      }
     }
   },
   "required": [
     "version",
     "description",
-    "repository",
-    "networks",
-    "contracts"
+    "networks"
   ]
 }
