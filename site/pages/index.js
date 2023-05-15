@@ -5,9 +5,9 @@ import Head from "next/head";
 export default function Index(props) {
   return (
     <div>
-      <HtmlHeader page="Landing site"></HtmlHeader>
+      <HtmlHeader page="Build bigger, ship faster"></HtmlHeader>
       <Head>
-        <meta name="description" content="" />
+        <meta name="description" content="Build bigger, ship faster" />
       </Head>
       <Home {...props} />
     </div>
