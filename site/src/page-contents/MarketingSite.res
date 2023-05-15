@@ -7,9 +7,10 @@ let make = () => {
     <HeroSection />
     <Blurbs.Shipping />
     <HeroImages.CreatureHeroImage />
-    <Blurbs.OneCommand />
-    <TerminalDemoSection />
-    <PerformanceMetricsSection />
+    // todo: bring back when ready
+    // <Blurbs.OneCommand />
+    // <TerminalDemoSection />
+    // <PerformanceMetricsSection />
     <Blurbs.Customisable />
     <USPsSection />
     <IntegrateInMinutesSection />
