@@ -74,6 +74,7 @@ module {{contract.name.capitalized}}Contract = {
 {{#each contract.events as | event |}}
 module {{event.name.capitalized}}Event = {
   @genType
+  @spice @genType
   type eventArgs = {
     {{#each event.params as | param |}}
     {{param.key}} : {{param.type_rescript}},
