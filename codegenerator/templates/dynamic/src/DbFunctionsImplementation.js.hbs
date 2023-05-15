@@ -22,7 +22,7 @@ const sql = postgres({...postgresConfig,
   module.exports.batchSet{{entity.name.capitalized
   }} = (entityDataArray) => {
   const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
-  sql`
+  return sql`
     INSERT INTO public.{{entity.name.uncapitalized
   }}
   ${sql(valueCopyToFixBigIntType,

@@ -17,7 +17,7 @@ const sql = postgres({...postgresConfig,
 
   module.exports.batchSetUser = (entityDataArray) => {
   const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
-  sql`
+  return sql`
     INSERT INTO public.user
   ${sql(valueCopyToFixBigIntType,
     "id",
@@ -48,7 +48,7 @@ const sql = postgres({...postgresConfig,
 
   module.exports.batchSetGravatar = (entityDataArray) => {
   const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
-  sql`
+  return sql`
     INSERT INTO public.gravatar
   ${sql(valueCopyToFixBigIntType,
     "id",

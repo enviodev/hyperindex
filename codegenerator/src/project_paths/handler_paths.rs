@@ -13,7 +13,7 @@ pub struct ContractUniqueId {
     pub name: String,
 }
 
-#[derive(Serialize, Debug, Eq, PartialEq)]
+#[derive(Serialize, Debug, Eq, PartialEq, Clone)]
 pub struct HandlerPathsTemplate {
     absolute: String,
     relative_to_generated_src: String,

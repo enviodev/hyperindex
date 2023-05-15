@@ -1,6 +1,6 @@
 # Envio
 
-Envio is an indexing solution that allows web3 projects to create custom APIs to access data on any EVM-compatible chain.
+Envio is a reliable real-time indexing solution that makes it easy to ingest events from EVM-compatible chains and process that data into to custom APIs. These APIs are perfect for unlocking slick user-experiences in blockchain application frontends.
 
 Aim of Envio is to optimize developer experience of using an indexer, whilst providing fast, secure and reliable indexing service.
 # CLI tool
@@ -64,7 +64,7 @@ This will generate the config, schema and event handlers files according to the 
 
 ## Generate code according to configuration
 
-Once you have configured the above files, the following can be used generate all the code that is required for indexing your project:
+Once you have configured the above files and deployed the contracts, the following can be used generate all the code that is required for indexing your project:
 
 ```
 envio codegen
@@ -86,17 +86,7 @@ and open http://localhost:8080/console.
 Admin-secret for local Hasura is `testing` 
 
 Alternatively you can open the file `index.html` for a cleaner experience (no Hasura stuff). Unfortunately, Hasura is currently not configured to make the data public.
-## Build
 
-```
-pnpm run build
-```
-
-## Watch
-
-```
-pnpm run watch
-```
 
 # Local testing using Hardhat and Docker
 Below are steps to be followed when testing the indexer locally using Hardhat and Docker.
@@ -124,8 +114,8 @@ NB: All the files must be configured as per guideline above.
    More information on how to deploy contracts using Hardhat can be found [here](https://hardhat.org/hardhat-runner/docs/guides/deploying).
 
 4. Generating code
+   Once you are in your project directory, run:
    ```
-   cd ..
    envio codegen
    ```
 

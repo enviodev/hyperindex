@@ -37,7 +37,7 @@ networks:
 
 **Field Descriptions**
 
-- `version` - Version of the indexer
+- `version` - Version of the config schema used by the indexer
 - `description` - Description of the project
 - `repository` - Repository of the project
 - `networks` - Configuration of the blockchain networks that the project is deployed on
@@ -74,7 +74,7 @@ type Gravatar @entity {
 ## Writing Event Handlers
 
 Once the configuration and graphQL schema files are in place, run
-```
+```bash
 envio codegen
 ``` 
 in the project directory.
