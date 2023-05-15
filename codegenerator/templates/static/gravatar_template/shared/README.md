@@ -74,7 +74,7 @@ type Gravatar @entity {
 ## Writing Event Handlers
 
 Once the configuration and graphQL schema files are in place, run
-```
+```bash
 envio codegen
 ``` 
 in the project directory.
