@@ -38,6 +38,13 @@ module BigInt = {
   let gte = (a: t, b: t): bool => %raw("a >= b")
   let lt = (a: t, b: t): bool => %raw("a < b")
   let lte = (a: t, b: t): bool => %raw("a <= b")
+  module Bitwise = {
+    let shift_left = (a: t, b: t): t => %raw("a << b")
+    let shift_right = (a: t, b: t): t => %raw("a >> b")
+    let logor = (a: t, b: t): t => %raw("a | b")
+    let logand = (a: t, b: t): t => %raw("a & b")
+  }
+
 }
 
 type abi
