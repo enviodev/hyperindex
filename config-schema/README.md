@@ -1,6 +1,6 @@
 # Schema validation and specification
 
-All json is valid yaml/yml, and json schema's are typically used for yaml too. It also means that our users can define their schemas in json too potenitally.
+All json is valid yaml/yml, and json schema's are typically used for yaml too. It also means that our users can define their schemas in json too potentially.
 
 The config schema is in the `config.schema.json` file.
 
