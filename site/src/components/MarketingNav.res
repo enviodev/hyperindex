@@ -43,20 +43,20 @@ let navItems: array<navItem> = [
     link: Routes.docs,
     isDifferentDomain: true,
   },
-  {
-    label: "Use cases",
-    link: Routes.useCases,
-    isDifferentDomain: false,
-  },
-  {
-    label: "Careers",
-    link: Routes.careers,
-    isDifferentDomain: false,
-  },
+  // {
+  //   label: "Use cases",
+  //   link: Routes.useCases,
+  //   isDifferentDomain: false,
+  // },
+  // {
+  //   label: "Careers",
+  //   link: Routes.careers,
+  //   isDifferentDomain: false,
+  // },
   {
     label: "Support",
-    link: Routes.support,
-    isDifferentDomain: false,
+    link: Routes.discord,
+    isDifferentDomain: true,
   },
 ]
 

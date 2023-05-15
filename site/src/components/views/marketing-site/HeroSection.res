@@ -3,6 +3,8 @@ open Buttons
 
 @react.component
 let make = () => {
+  let router = Next.Router.useRouter()
+
   <section
     className="max-w-7xl mx-auto h-80-percent-screen flex flex-col md:flex-row justify-center items-center my-10">
     <div className="text-center md:text-left">
@@ -17,7 +19,13 @@ let make = () => {
 front end to any EVM blockchain. "->React.string}
       </BigParagraph>
       <div className="my-4">
-        <PrimaryButton className=" md:ml-0"> {"Start shipping"->React.string} </PrimaryButton>
+        <PrimaryButton
+          className=" md:ml-0"
+          onClick={_ => {
+            router->Next.Router.push(Routes.gettingStarted)
+          }}>
+          {"Start shipping"->React.string}
+        </PrimaryButton>
       </div>
     </div>
     <div className="hidden md:block h-full w-full relative flex justify-right items-center">

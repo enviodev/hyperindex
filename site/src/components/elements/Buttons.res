@@ -1,7 +1,9 @@
 module PrimaryButton = {
   @react.component
-  let make = (~children, ~className=?) => {
+  let make = (~children, ~className=?, ~disabled=false, ~onClick=_ => ()) => {
     <button
+      onClick
+      disabled
       className={`${Styles.bgAnimate["background-animate"]} rounded m-2 px-6 py-4 text-xl font-bold bg-gradient-to-r from-primary to-secondary ` ++
       className->Option.getWithDefault("")}>
       {children}
