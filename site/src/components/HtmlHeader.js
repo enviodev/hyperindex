@@ -3,8 +3,9 @@ import Head from "next/head";
 const HtmlHeader = ({ page, children }) => (
   <>
     <Head>
-      <title>TODO | {page}</title>
-      {/* todo */}
+      <title>Envio | {page}</title>
+      {/* todo NB need to delete this line when we go out of stealth */}
+      <meta name="robots" content="noindex" />
       <link rel="shortcut icon" href="/favicons/favicon.ico" />
       <meta property="og:title" content={`${page}`} key="title" />
       <meta property="og:image" content="#todo" />
