@@ -1,21 +1,10 @@
 let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have the correct type */)
 
 module RawEventsTable = {
-  type rawEventsTableRow = {
-    @as("chain_id") chainId: int,
-    @as("event_id") eventId: Ethers.BigInt.t,
-    @as("block_number") blockNumber: int,
-    @as("log_index") logIndex: int,
-    @as("transaction_index") transactionIndex: int,
-    @as("transaction_hash") transactionHash: string,
-    @as("src_address") srcAddress: string,
-    @as("block_hash") blockHash: string,
-    @as("block_timestamp") blockTimestamp: int,
-    params: Js.Json.t,
-  }
-
-  let createRawEventsTable = async () => {
-    await %raw("sql`
+  let createRawEventsTable: unit => promise<unit> = async () => {
+    @warning("-21")
+    await (
+      %raw("sql`
       CREATE TABLE public.raw_events (
         chain_id INTEGER NOT NULL,
         event_id NUMERIC NOT NULL,
@@ -30,6 +19,7 @@ module RawEventsTable = {
         PRIMARY KEY (chain_id, event_id)
       );
   `")
+    )
   }
 
   let dropRawEventsTable = async () => {

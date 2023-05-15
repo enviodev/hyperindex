@@ -8,6 +8,52 @@ const sql = postgres({...postgresConfig,
   }
 })
 
+
+// db operations for raw_events:
+
+module.exports.readRawEventsEntities = (entityIdArray) => sql`
+  SELECT *
+  FROM public.raw_events
+  WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
+
+module.exports.batchSetRawEvents = (entityDataArray) => {
+  const valueCopyToFixBigIntType = entityDataArray; // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  return sql`
+    INSERT INTO public.raw_events
+  ${sql(
+    valueCopyToFixBigIntType,
+    "chain_id",
+    "event_id",
+    "block_number",
+    "log_index",
+    "transaction_index",
+    "transaction_hash",
+    "src_address",
+    "block_hash",
+    "block_timestamp",
+    "params"
+  )}
+    ON CONFLICT(chain_id, event_id) DO UPDATE
+    SET
+    "chain_id" = EXCLUDED."chain_id",
+    "event_id" = EXCLUDED."event_id",
+    "block_number" = EXCLUDED."block_number",
+    "log_index" = EXCLUDED."log_index",
+    "transaction_index" = EXCLUDED."transaction_index",
+    "transaction_hash" = EXCLUDED."transaction_hash",
+    "src_address" = EXCLUDED."src_address",
+    "block_hash" = EXCLUDED."block_hash",
+    "block_timestamp" = EXCLUDED."block_timestamp",
+    "params" = EXCLUDED."params"
+  ;`;
+};
+
+module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
+  DELETE
+  FROM public.raw_events
+  WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
+// end db operations for raw_events
+
 {{#each entities as |entity|}}
   // db operations for {{entity.name.capitalized
   }}:
@@ -33,10 +79,7 @@ const sql = postgres({...postgresConfig,
     ON CONFLICT(id) DO UPDATE
     SET
   {{#each entity.params as |param|}}
-    "{{param.key}}" = EXCLUDED."{{param.key}}"
-    {{#unless @last}}
-      ,
-    {{/unless}}
+    "{{param.key}}" = EXCLUDED."{{param.key}}"{{#unless @last}},{{/unless}}
   {{/each}}
   ;`
   }
@@ -49,4 +92,5 @@ const sql = postgres({...postgresConfig,
   WHERE id IN ${sql(entityIdArray)};`
   // end db operations for {{entity.name.capitalized
   }}
+
 {{/each}}
