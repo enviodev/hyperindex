@@ -37,7 +37,7 @@ networks:
 
 **Field Descriptions**
 
-- `version` - Version of the indexer
+- `version` - Version of the config schema used by the indexer
 - `description` - Description of the project
 - `repository` - Repository of the project
 - `networks` - Configuration of the blockchain networks that the project is deployed on
