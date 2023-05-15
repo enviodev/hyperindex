@@ -18,12 +18,9 @@ pub enum CommandType {
     Init(InitArgs),
 
     ///Print help into a markdown file
-    ///Command to run: cargo run -- print-all-help --markdown > CommandLineHelp.md
+    ///Command to run: cargo run -- print-all-help > CommandLineHelp.md
     #[clap(hide = true)]
-	PrintAllHelp {
-		#[clap(long, required = true)]
-		markdown: bool,
-	},
+	PrintAllHelp
 }
 
 pub const DEFAULT_PROJECT_ROOT_PATH: &str = "./";

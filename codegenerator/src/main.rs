@@ -136,9 +136,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             Ok(())
         },
-        CommandType::PrintAllHelp { markdown } => {
-			assert!(markdown);
-
+        CommandType::PrintAllHelp {  } => {
 			clap_markdown::print_help_markdown::<CommandLineArgs>();
             Ok(())
 		},
