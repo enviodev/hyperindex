@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
@@ -7,6 +5,12 @@ use crate::{
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
     Contract, Error, EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
 };
+
+use std::collections::HashMap;
+
+use crate::capitalization::CapitalizedOptions;
+
+use std::path::PathBuf;
 
 use ethereum_abi::{Abi, Event as EthereumAbiEvent};
 
@@ -112,6 +116,7 @@ fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthereumAbiEvent,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
+    required_entity_entity_fields_map: &HashMap<String, Vec<CapitalizedOptions>>,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
@@ -132,10 +137,16 @@ fn get_event_template_from_ethereum_abi_event(
             .map(|required_entity| RequiredEntityTemplate {
                 name: required_entity.name.to_capitalized_options(),
                 labels: required_entity.labels.clone(),
+                required_entity_entity_fields: required_entity_entity_fields_map
+                    .get(&required_entity.name)
+                    .cloned()
+                    .unwrap_or_else(Vec::new),
             })
             .collect(),
         None => Vec::new(),
     };
+
+    println!("required_entities: {:?}", required_entities);
 
     let event_type = EventTemplate {
         name,
@@ -151,6 +162,7 @@ fn get_contract_type_from_config_contract(
     parsed_paths: &ParsedPaths,
     contract_unique_id: ContractUniqueId,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
+    required_entity_entity_fields_map: &HashMap<String, Vec<CapitalizedOptions>>,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -168,6 +180,10 @@ fn get_contract_type_from_config_contract(
                     config_event,
                     abi_event,
                     rescript_subrecord_dependencies,
+                    required_entity_entity_fields_map,
+                    // &(required_entity_entity_fields_map
+                    //     .get(&config_event.name)
+                    //     .map(|vec| *vec)),
                 );
                 event_types.push(event_type);
             }
@@ -189,6 +205,7 @@ fn get_contract_type_from_config_contract(
 pub fn get_contract_types_from_config(
     parsed_paths: &ParsedPaths,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
+    required_entity_entity_fields_map: &HashMap<String, Vec<CapitalizedOptions>>,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -204,6 +221,7 @@ pub fn get_contract_types_from_config(
                 parsed_paths,
                 contract_unique_id,
                 rescript_subrecord_dependencies,
+                required_entity_entity_fields_map,
             )?;
             contracts.push(contract);
         }
@@ -213,6 +231,8 @@ pub fn get_contract_types_from_config(
 
 #[cfg(test)]
 mod tests {
+
+    use std::collections::HashMap;
 
     use crate::{
         capitalization::Capitalize,
@@ -257,6 +277,7 @@ mod tests {
             &config_event,
             &abi_event,
             &mut rescript_subrecord_dependencies,
+            &HashMap::new(),
         );
 
         let expected_event_template = EventTemplate {
@@ -314,6 +335,7 @@ mod tests {
             &config_event,
             &abi_event,
             &mut rescript_subrecord_dependencies,
+            &HashMap::new(),
         );
 
         let expected_event_template = EventTemplate {
@@ -331,6 +353,7 @@ mod tests {
             required_entities: vec![RequiredEntityTemplate {
                 name: String::from("Gravatar").to_capitalized_options(),
                 labels: vec![String::from("gravatarWithChanges")],
+                required_entity_entity_fields: Vec::new(),
             }],
         };
         assert_eq!(parsed_event_template, expected_event_template)

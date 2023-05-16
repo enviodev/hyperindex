@@ -111,6 +111,8 @@ module GravatarContract = {
       gravatar: gravatarEntityHandlerContext,
     }
 
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+
     @genType
     type loaderContext = {}
   }
@@ -137,6 +139,8 @@ module GravatarContract = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
     }
+
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
 
     @genType
     type loaderContext = {}
@@ -167,7 +171,13 @@ module GravatarContract = {
     }
 
     // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
-    type gravatarSubEntityLoader = {ownerLoad: unit => unit}
+    type gravatarSubEntityLoaderREFERENC = {
+      //// required_entity_entity_fields is defined!
+      userLoad: unit => unit,
+    }
+    type gravatarSubEntityLoader = {
+      // Gravatar
+    }
 
     type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => gravatarSubEntityLoader}
 

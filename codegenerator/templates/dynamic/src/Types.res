@@ -123,10 +123,11 @@ module {{event.name.capitalized}}Event = {
       {{/each}}
     }
 
-
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     {{#each event.required_entities as | required_entity |}}
     type {{required_entity.name.uncapitalized}}SubEntityLoader = {
-      {{#each required_entity.labels as | label |}}
+      {{#each required_entity.required_entity_entity_fields as | entityField |}}
+      {{entityField.uncapitalized}}Load: unit => unit,
       {{/each}}
     }
     {{/each}}

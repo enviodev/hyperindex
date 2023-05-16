@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::Path;
@@ -71,6 +72,7 @@ impl HasName for EntityRecordType {
 pub struct RequiredEntityTemplate {
     name: CapitalizedOptions,
     labels: Vec<String>,
+    required_entity_entity_fields: Vec<CapitalizedOptions>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -102,6 +104,27 @@ struct TypesTemplate {
     codegen_out_path: String,
 }
 
+pub fn entities_to_map(
+    entities: Vec<EntityRecordType>,
+) -> HashMap<String, Vec<CapitalizedOptions>> {
+    let mut map: HashMap<String, Vec<CapitalizedOptions>> = HashMap::new();
+
+    for entity in entities {
+        let entity_name = entity.name.get_capitalized();
+
+        let mut related_entities = vec![];
+        for param in entity.params {
+            if let Some(entity_name) = param.maybe_entity_name {
+                related_entities.push(entity_name);
+            }
+        }
+
+        map.insert(entity_name, related_entities);
+    }
+
+    map
+}
+
 pub fn generate_templates(
     sub_record_dependencies: Vec<EventRecordType>,
     contracts: Vec<Contract>,
@@ -123,7 +146,7 @@ pub fn generate_templates(
     let types_data = TypesTemplate {
         sub_record_dependencies,
         contracts,
-        entities: entity_types,
+        entities: entity_types.clone(),
         chain_configs,
         codegen_out_path: gitignoer_path_str,
     };

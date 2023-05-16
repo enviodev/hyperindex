@@ -7,7 +7,7 @@ use clap::Parser;
 
 use envio::{
     cli_args::{self, JsFlavor},
-    config_parsing, entity_parsing, event_parsing, generate_templates,
+    config_parsing, entities_to_map, entity_parsing, event_parsing, generate_templates,
     linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
     project_paths::ParsedPaths,
     EventRecordType,
@@ -66,6 +66,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             fs::create_dir_all(&project_paths.generated)?;
 
+            let entity_types = entity_parsing::get_entity_record_types_from_schema(&parsed_paths)?;
+
             let mut rescript_subrecord_dependencies: LinkedHashMap<
                 RescriptRecordKey,
                 EventRecordType,
@@ -73,9 +75,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let contract_types = event_parsing::get_contract_types_from_config(
                 &parsed_paths,
                 &mut rescript_subrecord_dependencies,
+                &entities_to_map(entity_types.clone()),
             )?;
 
-            let entity_types = entity_parsing::get_entity_record_types_from_schema(&parsed_paths)?;
             let chain_config_templates =
                 config_parsing::convert_config_to_chain_configs(&parsed_paths)?;
             let sub_record_dependencies: Vec<EventRecordType> = rescript_subrecord_dependencies

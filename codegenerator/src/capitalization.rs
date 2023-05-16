@@ -6,6 +6,12 @@ pub struct CapitalizedOptions {
     uncapitalized: String,
 }
 
+impl CapitalizedOptions {
+    pub fn get_capitalized(&self) -> String {
+        self.capitalized.clone()
+    }
+}
+
 pub trait Capitalize {
     fn capitalize(&self) -> String;
 
