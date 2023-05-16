@@ -4,17 +4,18 @@ repository: https://github.com/example/example
 networks: 
 - id: 137
   rpc_url: https://polygon-rpc.com
-
-contracts:
-- name: LensProtocolProfiles
-  abi: abis/example-abi.json
-  address: "0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"
-  events:
-  - name: "Transfer"
-  - name: "UpdatedGravatar"
-    read_entities:
-    - name: Gravatar
-      labels: 
-      - "gravatarWithChanges"
-  - name: "NewGravatar"
-    read_entities: []
+  start_block: 0
+  contracts:
+  - name: LensProtocolProfiles
+    handler: ./src/EventHandlers.bs.js
+    abi_file_path: abis/example-abi.json
+    address: ["0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"]
+    events:
+    - name: "Transfer"
+    - name: "UpdatedGravatar"
+      requiredEntities:
+      - name: Gravatar
+        labels: 
+        - "gravatarWithChanges"
+    - name: "NewGravatar"
+      requiredEntities: []
