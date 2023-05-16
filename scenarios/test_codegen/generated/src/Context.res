@@ -104,6 +104,8 @@ module GravatarContract = {
             optIdOf_gravatarWithChanges := Some(id)
 
             let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id))
+
+            ()->Obj.magic()
           },
         },
       }

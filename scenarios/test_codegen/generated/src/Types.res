@@ -39,16 +39,17 @@ type rawEventsEntity = {
 }
 
 @genType
-type userEntity = {
+type rec userEntity = {
   id: string,
   address: string,
   gravatar: option<id>,
+  gravatarData: option<gravatarEntity>,
+  updatesCountOnUserForTesting: int,
 }
-
-@genType
-type gravatarEntity = {
+and gravatarEntity = {
   id: string,
   owner: id,
+  ownerData: option<userEntity>,
   displayName: string,
   imageUrl: string,
   updatesCount: int,
@@ -166,7 +167,10 @@ module GravatarContract = {
       gravatar: gravatarEntityHandlerContext,
     }
 
-    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+    type gravatarSubEntityLoader = {ownerLoad: unit => unit}
+
+    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => gravatarSubEntityLoader}
 
     @genType
     type loaderContext = {gravatar: gravatarEntityLoaderContext}
