@@ -52,6 +52,7 @@ struct EntityParamType {
     key: String,
     type_rescript: String,
     type_pg: String,
+    maybe_entity_name: Option<CapitalizedOptions>,
 }
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordType {

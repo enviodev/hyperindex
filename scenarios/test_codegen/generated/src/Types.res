@@ -54,7 +54,6 @@ and gravatarEntity = {
   imageUrl: string,
   updatesCount: int,
 }
-
 type entity =
   | UserEntity(userEntity)
   | GravatarEntity(gravatarEntity)

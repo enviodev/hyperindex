@@ -47,12 +47,14 @@ type rawEventsEntity = {
 
 {{#each entities as | entity |}}
 @genType
-type {{entity.name.uncapitalized}}Entity = {
-  {{#each entity.params as | param |}}
-  {{param.key}} : {{param.type_rescript}},
-  {{/each}}
-}
-
+type rec
+{{#each entities as | entity |}}
+  {{#unless @first}}and {{/unless}}{{entity.name.uncapitalized}}Entity = {
+    {{#each entity.params as | param |}}
+    {{param.key}} : {{param.type_rescript}},
+    {{#if param.maybe_entity_name}}{{param.key}}Data : option<{{param.maybe_entity_name.uncapitalized}}Entity>, {{/if}}
+    {{/each}}
+  }
 {{/each}}
 type entity = 
 {{#each entities as | entity |}}
@@ -121,10 +123,18 @@ module {{event.name.capitalized}}Event = {
       {{/each}}
     }
 
+
+    {{#each event.required_entities as | required_entity |}}
+    type {{required_entity.name.uncapitalized}}SubEntityLoader = {
+      {{#each required_entity.labels as | label |}}
+      {{/each}}
+    }
+    {{/each}}
+
     {{#each event.required_entities as | required_entity |}}
     type {{required_entity.name.uncapitalized}}EntityLoaderContext = {
       {{#each required_entity.labels as | label |}}
-      {{label}}Load: id => unit,
+      {{label}}Load: id => {{required_entity.name.uncapitalized}}SubEntityLoader,
       {{/each}}
     }
     {{/each}}
