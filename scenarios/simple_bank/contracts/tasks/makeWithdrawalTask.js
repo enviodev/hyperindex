@@ -34,7 +34,7 @@ task("make-withdrawal", "Making a withdrawal")
 
     const newWithdrawal1Tx = await simpleBank
       .connect(user)
-      .withdraw(user.address, Number(amount));
+      .withdraw(Number(amount));
     console.log("New withdrawal made.");
     await newWithdrawal1Tx.wait();
 

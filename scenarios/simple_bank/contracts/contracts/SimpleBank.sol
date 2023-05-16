@@ -11,8 +11,6 @@ contract SimpleBank {
     event AccountCreated(address indexed userAddress);
     event DepositMade(address indexed userAddress, uint256 amount);
     event WithdrawalMade(address indexed userAddress, uint256 amount);
-    event TotalBalanceChanged(uint256 totalBalance);
-    event InterestCalculated(uint256 interest);
 
     constructor(uint256 _interestRate) {
         interestRate = _interestRate;
@@ -27,10 +25,6 @@ contract SimpleBank {
 
         // Emit event
         emit AccountCreated(userAddress);
-
-        // Update total balance event
-        emit TotalBalanceChanged(totalBalance);
-
         
     }
 
@@ -49,9 +43,6 @@ contract SimpleBank {
 
         // Emit event
         emit DepositMade(msg.sender, depositAmount);
-
-        // Update total balance event
-        emit TotalBalanceChanged(totalBalance);
     }
 
     // Withdraw funds from the account
@@ -60,7 +51,7 @@ contract SimpleBank {
         require(withdrawalAmount <= balances[msg.sender], "Insufficient balance");
 
         // Calculate interest since last interest calculation time
-        _calculateAndApplyInterest(msg.sender);
+        // _calculateAndApplyInterest(msg.sender);
 
         // Update balance and total balance
         balances[msg.sender] -= withdrawalAmount;
@@ -68,9 +59,6 @@ contract SimpleBank {
 
         // Emit event
         emit WithdrawalMade(msg.sender, withdrawalAmount);
-
-        // Update total balance event
-        emit TotalBalanceChanged(totalBalance);
 
     }
 
@@ -91,9 +79,6 @@ contract SimpleBank {
             accountInterest = (interest * balances[userAddress]) /
                 totalBalance;
             balances[userAddress] += accountInterest;
-
-            // Emit event for interest calculation
-            emit InterestCalculated(interest);
             
         } else {
             accountInterest = 0;

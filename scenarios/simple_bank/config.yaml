@@ -29,11 +29,3 @@ networks:
               - name: "Bank"
                 labels:
                   - "totalBalanceChanges"
-          - name: "TotalBalanceChanged"
-            requiredEntities: # if this field isn't specified it should default to include all entities
-              - name: "Account"
-                labels:
-                  - "accountBalanceChanges"
-              - name: "Bank"
-                labels:
-                  - "totalBalanceChanges"
