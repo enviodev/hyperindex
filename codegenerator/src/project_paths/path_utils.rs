@@ -26,7 +26,10 @@ pub fn normalize_path(path: &Path) -> PathBuf {
                 // Running through the components like this involves some
                 // allocations, but this is not a performance sensitive part of
                 // the code generator.
-                if normalized_path_buf.components().all(|c| c == Component::ParentDir) {
+                if normalized_path_buf
+                    .components()
+                    .all(|c| c == Component::ParentDir)
+                {
                     // Step further up parent directories
                     normalized_path_buf.push(PathBuf::from("../"));
                 } else {
