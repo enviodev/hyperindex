@@ -1,0 +1,6 @@
+{
+  // Specify "require" for CommonJS
+  "require": "ts-node/register",
+  "extensions": ["ts", "tsx"],
+  "spec": ["test/integration-raw-events-test.ts"]
+}

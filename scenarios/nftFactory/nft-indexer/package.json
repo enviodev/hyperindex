@@ -2,7 +2,7 @@
   "name": "nftFactory",
   "version": "0.1.0",
   "scripts": {
-    "test": "tsc --build && mocha build/test --exit",
+    "test": "mocha",
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
@@ -13,13 +13,17 @@
     "codegen": "cargo run --manifest-path ../../../codegenerator/Cargo.toml -- codegen"
   },
   "devDependencies": {
+    "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
+    "@typechain/hardhat": "^6.1.6",
     "@types/chai": "^4.3.5",
     "@types/chai-as-promised": "^7.1.5",
     "@types/mocha": "^10.0.1",
     "@types/node": "^18.16.1",
     "chai": "^4.3.7",
     "chai-as-promised": "^7.1.1",
+    "hardhat": "^2.14.0",
     "mocha": "^10.2.0",
+    "ts-node": "^10.9.1",
     "typescript": "^5.0.4"
   },
   "dependencies": {
