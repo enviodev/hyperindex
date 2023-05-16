@@ -1,2 +1,0 @@
-require("./newSimpleNftTask");
-require("./mintSimpleNftTask");
