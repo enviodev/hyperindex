@@ -160,27 +160,27 @@ Once the user has defined the above config and handler files, the following can 
 Run from this directory:
 
 ```bash
+pnpm all
+```
+This command will stop and start the docker images and re-generate all the files required for indexing.
 
-envio codegen
-docker compose up -d # NOTE: if you have some stale data, run "docker compose down -v" first.
-pnpm start
+## Running tasks
+
+To run tasks for sample users, run the following
+```bash
+pnpm test-user-1
+pnpm test-user-2
 ```
 
-To view the data in the database, run `./generated/register_tables_with_hasura.sh` and open http://localhost:8080/console.
+This will create sample users 1 and 2 to perform several deposit and withdraw actions.
+
+## Viewing the results
+
+To view the data in the database, run
+```bash
+pnpm view-results
+```
 
 Admin-secret for Hasura is `testing` 
 
 Alternatively you can open the file `index.html` for a cleaner experience (no Hasura stuff). Unfortunately, Hasura is currently not configured to make the data public.
-
-## Build
-
-```
-pnpm run build
-```
-
-## Watch
-
-```
-pnpm run watch
-```
-

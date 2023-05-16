@@ -46,32 +46,6 @@
     "anonymous": false,
     "inputs": [
       {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "interest",
-        "type": "uint256"
-      }
-    ],
-    "name": "InterestCalculated",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": false,
-        "internalType": "uint256",
-        "name": "totalBalance",
-        "type": "uint256"
-      }
-    ],
-    "name": "TotalBalanceChanged",
-    "type": "event"
-  },
-  {
-    "anonymous": false,
-    "inputs": [
-      {
         "indexed": true,
         "internalType": "address",
         "name": "userAddress",
@@ -102,11 +76,6 @@
   },
   {
     "inputs": [
-      {
-        "internalType": "address",
-        "name": "userAddress",
-        "type": "address"
-      },
       {
         "internalType": "uint256",
         "name": "depositAmount",
@@ -152,11 +121,6 @@
   },
   {
     "inputs": [
-      {
-        "internalType": "address",
-        "name": "userAddress",
-        "type": "address"
-      },
       {
         "internalType": "uint256",
         "name": "withdrawalAmount",

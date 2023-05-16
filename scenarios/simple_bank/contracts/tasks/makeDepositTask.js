@@ -34,7 +34,7 @@ task("make-deposit", "Making a deposit")
 
     const newDeposit1Tx = await simpleBank
       .connect(user)
-      .deposit(user.address, Number(amount));
+      .deposit(Number(amount));
     console.log("New deposit made.");
     await newDeposit1Tx.wait();
 
