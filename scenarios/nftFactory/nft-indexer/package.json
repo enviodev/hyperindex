@@ -27,6 +27,8 @@
     "typescript": "^5.0.4"
   },
   "dependencies": {
+    "@typechain/ethers-v6": "^0.3.2",
+    "ethers": "^6.1.0",
     "generated": "workspace:*"
   }
 }

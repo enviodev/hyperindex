@@ -1,14 +1,25 @@
 import hre from "hardhat";
+import {
+  NftFactory,
+  NftFactory__factory,
+  SimpleNft__factory,
+} from "../../contracts/typechain";
+import { ContractTransactionResponse } from "ethers";
 
-export const deployContract = async () => {
-  await hre.run("compile");
+export enum Users {
+  Deployer,
+  User1,
+  User2,
+  User3,
+}
 
-  const NftFactory = await hre.ethers.getContractFactory("NftFactory", {
-    libraries: {
-      open: "",
-    },
-  });
+export const deployNftFactory = async () => {
+  const accounts = await hre.ethers.getSigners();
+  const deployerAccount = accounts[Users.Deployer];
+  let NftFactory = new NftFactory__factory().connect(deployerAccount);
   const deployedNftFactory = await NftFactory.deploy();
+
+  await deployedNftFactory.waitForDeployment();
 
   return deployedNftFactory;
 };
@@ -19,23 +30,20 @@ type NftArgs = {
   supply: number;
 };
 
-export const createNft = async (
-  nftFactory: any,
+export const createNftFromFactory = async (
+  nftFactory: NftFactory & {
+    deploymentTransaction(): ContractTransactionResponse;
+  },
   nftArgs: NftArgs
-): Promise<void> => {
+) => {
   let { name, symbol, supply } = nftArgs;
+
   return await nftFactory.createNft(name, symbol, supply);
 };
 
-enum User {
-  FirstUser,
-  SecondUser,
-  ThirdUser,
-}
-
 export const mintSimpleNft = async (
-  userIndex: User,
-  nftContractAddress: string,
+  userIndex: Users,
+  simpleNftContractAddress: string,
   quantity: number
 ) => {
   const ethers = hre.ethers;
@@ -44,16 +52,19 @@ export const mintSimpleNft = async (
 
   console.log(`Using account ${user.address} to mint NFT.`);
 
-  let contractAddress = ethers.getAddress(nftContractAddress);
-
-  const SimpleNft = (await ethers.getContractAt(
-    "SimpleNft",
-    contractAddress
-  )) as any;
-
-  const mintNftTx = await SimpleNft.connect(user).mint(quantity);
+  const contractAddress = ethers.getAddress(simpleNftContractAddress);
+  const simpleNftContract = SimpleNft__factory.connect(contractAddress, user);
+  const mintNftTx = await simpleNftContract.mint(quantity);
 
   await mintNftTx.wait();
-  const totalSupply = await SimpleNft.totalSupply();
-  console.log(totalSupply);
+  return mintNftTx;
+};
+
+export const getSimpleNftTotalSupply = async (
+  simpleNftContractAddress: string
+) => {
+  const contractAddress = hre.ethers.getAddress(simpleNftContractAddress);
+  const simpleNftContract = SimpleNft__factory.connect(contractAddress);
+
+  return await simpleNftContract.totalSupply();
 };
