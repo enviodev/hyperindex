@@ -5,8 +5,8 @@ This document contains the help content for the `envio` command-line program.
 **Command Overview:**
 
 * [`envio`↴](#envio)
-* [`envio codegen`↴](#envio-codegen)
 * [`envio init`↴](#envio-init)
+* [`envio codegen`↴](#envio-codegen)
 
 ## `envio`
 
@@ -14,28 +14,8 @@ This document contains the help content for the `envio` command-line program.
 
 ###### **Subcommands:**
 
-* `codegen` — Generate code from a config.yaml file
 * `init` — Initialize a project with a template
-
-
-
-## `envio codegen`
-
-Generate code from a config.yaml file
-
-**Usage:** `envio codegen [OPTIONS]`
-
-###### **Options:**
-
-* `-d`, `--directory <DIRECTORY>` — The directory of the project
-
-  Default value: `./`
-* `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory within the project that generated code should output to
-
-  Default value: `generated/`
-* `-c`, `--config <CONFIG>` — The file in the project containing config
-
-  Default value: `config.yaml`
+* `codegen` — Generate code from a config.yaml file
 
 
 
@@ -58,6 +38,26 @@ Initialize a project with a template
 
   Possible values: `javascript`, `typescript`, `rescript`
 
+
+
+
+## `envio codegen`
+
+Generate code from a config.yaml file
+
+**Usage:** `envio codegen [OPTIONS]`
+
+###### **Options:**
+
+* `-d`, `--directory <DIRECTORY>` — The directory of the project
+
+  Default value: `./`
+* `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory within the project that generated code should output to
+
+  Default value: `generated/`
+* `-c`, `--config <CONFIG>` — The file in the project containing config
+
+  Default value: `config.yaml`
 
 
 
