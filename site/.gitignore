@@ -1,0 +1,16 @@
+.DS_Store
+/node_modules/
+/lib/
+.bsb.lock
+.merlin
+
+out
+
+*.swp
+*.swo
+
+*.bs.js
+
+node_modules/
+.next/
+.swc/
