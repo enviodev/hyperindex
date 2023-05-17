@@ -13,5 +13,6 @@
     "resolveJsonModule": true,
     "skipLibCheck": true
   },
+  "include": ["src"],
   "files": ["./hardhat.config.ts"]
 }

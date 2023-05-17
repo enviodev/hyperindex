@@ -1,39 +1,67 @@
+import { nftFactoryAbi, simpleNftAbi } from "../generated/src/Abis.bs";
+import { registerAllHandlers } from "../generated/src/RegisterHandlers.bs";
+import { processAllEvents } from "../generated/src/EventSyncing.bs";
+import postgres from "postgres";
+
 import {
   Users,
   createNftFromFactory,
   deployNftFactory,
   mintSimpleNft,
 } from "./helpers/node-and-contracts";
+import { runMigrationsNoLogs } from "./helpers/utils";
 
-describe("integration", () => {
-  it("says hi", async () => {
+import hre from "hardhat";
+import { sql } from "./helpers/utils";
+import { expect } from "chai";
+
+require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
+
+enum EventVariants {
+  NftFactoryContract_SimpleNftCreatedEvent,
+  SimpleNftContract_TransferEvent,
+}
+
+describe("Raw Events Integration", () => {
+  before(async () => {
+    await runMigrationsNoLogs();
+  });
+  after(async () => {
+    await runMigrationsNoLogs();
+  });
+
+  it("RawEvents table contains rows after indexer runs", async () => {
     console.log("deploying Nft Factory");
     const deployedNftFactory = await deployNftFactory();
-    console.log("Successfully deployed");
+    const nftFactoryContractAddress = await deployedNftFactory.getAddress();
+    console.log(
+      "Successfully deployed nftFactory at",
+      nftFactoryContractAddress
+    );
 
     console.log("Creating Nft");
-    let createNftTx = await createNftFromFactory(deployedNftFactory, {
+    const createNftTx = await createNftFromFactory(deployedNftFactory, {
       name: "test_name",
       symbol: "t_sym",
       supply: 200,
     });
 
-    let simpleNftCreatedEventFilter =
+    const simpleNftCreatedEventFilter =
       deployedNftFactory.getEvent("SimpleNftCreated");
-    let eventQuery = await deployedNftFactory.queryFilter(
+    const eventQuery = await deployedNftFactory.queryFilter(
       simpleNftCreatedEventFilter,
       createNftTx.hash
     );
-    let simplNftCreatedEvent = eventQuery[0];
-    let simpleNftContractAddress = simplNftCreatedEvent.args.contractAddress;
+    const simplNftCreatedEvent = eventQuery[0];
+    const simpleNftContractAddress = simplNftCreatedEvent.args.contractAddress;
     console.log("Created NFT at: ", simpleNftContractAddress);
 
     console.log("Minting Nft from user 1, 2 and 3");
 
-    let mintTxs = [
+    const mintTxs = [
       { user: Users.User1, quantity: 1 },
       { user: Users.User2, quantity: 3 },
-      { user: Users.User2, quantity: 5 },
+      { user: Users.User3, quantity: 5 },
     ].map((params) =>
       mintSimpleNft(params.user, simpleNftContractAddress, params.quantity)
     );
@@ -41,5 +69,35 @@ describe("integration", () => {
     await Promise.all(mintTxs);
 
     console.log("Successfully minted");
+
+    const { provider } = hre.ethers;
+    const localChainConfig = {
+      provider,
+      startBlock: 0,
+      chainId: 31337,
+      contracts: [
+        {
+          name: "NftFactory",
+          abi: nftFactoryAbi,
+          address: nftFactoryContractAddress,
+          events: [EventVariants.NftFactoryContract_SimpleNftCreatedEvent],
+        },
+        {
+          name: "SimpleNft",
+          abi: simpleNftAbi,
+          address: simpleNftContractAddress,
+          events: [EventVariants.SimpleNftContract_TransferEvent],
+        },
+      ],
+    };
+
+    registerAllHandlers();
+    console.log("processing events");
+    await processAllEvents(localChainConfig);
+    console.log("Successfully processed events");
+
+    let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
+
+    expect(rawEventsRows.count).to.be.gt(0);
   });
 });

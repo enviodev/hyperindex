@@ -2,5 +2,7 @@
   // Specify "require" for CommonJS
   "require": "ts-node/register",
   "extensions": ["ts", "tsx"],
-  "spec": ["test/**/*.ts"]
+  "spec": ["test/**/*.ts"],
+  "reporter": "mocha-reporter",
+  "exit": true
 }

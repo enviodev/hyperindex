@@ -2,17 +2,14 @@ import {
   runDownMigrations,
   runUpMigrations,
 } from "../generated/src/Migrations.bs";
-import { runMigrationsNoLogs } from "./helpers/utils";
-import Postgres from "postgres";
-import { db } from "../generated/src/Config.bs";
+import { runMigrationsNoLogs, sql } from "./helpers/utils";
 import chai, { expect } from "chai";
 import chaiAsPromised from "chai-as-promised";
 
+require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 chai.use(chaiAsPromised);
 
-let sql = Postgres(db);
-
-describe("Raw Events Table", () => {
+describe("Raw Events Table Migrations", () => {
   before(async () => {
     await runMigrationsNoLogs();
   });

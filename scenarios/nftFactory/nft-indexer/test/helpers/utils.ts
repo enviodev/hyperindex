@@ -2,6 +2,9 @@ import {
   runDownMigrations,
   runUpMigrations,
 } from "../../generated/src/Migrations.bs";
+import Postgres from "postgres";
+import { db } from "../../generated/src/Config.bs";
+export const sql = Postgres(db);
 
 const originalConsoleLog = console.log;
 
