@@ -2,7 +2,19 @@
 //***ENTITIES**
 //*************
 
+@genType.as("Id")
 type id = string
+
+//nested subrecord types
+
+{{#each sub_record_dependencies as | subrecord |}}
+   type {{subrecord.name.uncapitalized}} = {
+    {{#each subrecord.params as | param |}}
+      {{param.key}}: {{param.type_rescript}},
+    {{/each}}
+   }
+
+{{/each}}
 
 type entityRead = 
 {{#each entities as | entity |}}
@@ -19,9 +31,10 @@ let entitySerialize = (entity: entityRead) => {
 }
 
 {{#each entities as | entity |}}
+@genType
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{param.key}} : {{param.type_}},
+  {{param.key}} : {{param.type_rescript}},
   {{/each}}
 }
 
@@ -44,6 +57,7 @@ type inMemoryStoreRow<'a> = {
 //**CONTRACTS**
 //*************
 
+@genType
 type eventLog<'a> = {
   params: 'a,
   blockNumber: int,
@@ -59,9 +73,10 @@ type eventLog<'a> = {
 module {{contract.name.capitalized}}Contract = {
 {{#each contract.events as | event |}}
 module {{event.name.capitalized}}Event = {
+  @genType
   type eventArgs = {
     {{#each event.params as | param |}}
-    {{param.key}} : {{param.type_}},
+    {{param.key}} : {{param.type_rescript}},
     {{/each}}
   }
     {{#each ../../entities as | entity |}}
@@ -78,6 +93,7 @@ module {{event.name.capitalized}}Event = {
       delete: id => unit,
     }
     {{/each}}
+    @genType
     type context = {
       {{#each ../../entities as | entity |}}
         {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
@@ -92,6 +108,7 @@ module {{event.name.capitalized}}Event = {
     }
     {{/each}}
 
+    @genType
     type loaderContext = {
     {{#each event.required_entities as | required_entity |}}
     {{required_entity.name.uncapitalized}} : {{required_entity.name.uncapitalized}}EntityLoaderContext,
@@ -130,5 +147,6 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{#each contract.events as | event |}}
     | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event => "{{event.name.capitalized}}"
   {{/each}}
+  {{/each}}
 }
-{{/each}}
+

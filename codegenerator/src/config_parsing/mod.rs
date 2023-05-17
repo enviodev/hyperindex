@@ -1,5 +1,5 @@
+use std::error::Error;
 use std::path::PathBuf;
-use std::{error::Error, path::Path};
 
 pub mod entity_parsing;
 pub mod event_parsing;
@@ -8,7 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use ethereum_abi::Abi;
 
-use crate::capitalization::{Capitalize, CapitalizedOptions};
+use crate::project_paths::handler_paths::ContractUniqueId;
+use crate::{
+    capitalization::{Capitalize, CapitalizedOptions},
+    project_paths::ParsedPaths,
+};
 
 type NetworkId = i32;
 
@@ -26,20 +30,20 @@ struct Event {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct Network {
-    id: NetworkId,
+pub struct Network {
+    pub id: NetworkId,
     rpc_url: String,
     start_block: i32,
-    contracts: Vec<ConfigContract>,
+    pub contracts: Vec<ConfigContract>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct ConfigContract {
-    name: String,
+    pub name: String,
     // Eg for implementing a custom deserializer
     //  #[serde(deserialize_with = "abi_path_to_abi")]
-    abi_file_path: String,
-    handler: Option<String>,
+    pub abi_file_path: String,
+    pub handler: String,
     address: Vec<String>,
     events: Vec<Event>,
 }
@@ -49,7 +53,8 @@ pub struct Config {
     version: String,
     description: String,
     repository: String,
-    networks: Vec<Network>,
+    pub schema: Option<String>,
+    pub networks: Vec<Network>,
 }
 
 // fn abi_path_to_abi<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -57,7 +62,7 @@ pub struct Config {
 //     D: Deserializer<'de>,
 // {
 //     let abi_file_path: &str = Deserialize::deserialize(deserializer)?;
-//     // ... convert to abi herer
+//     // ... convert to abi here
 // }
 
 type StringifiedAbi = String;
@@ -89,9 +94,9 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
 }
 
 pub fn convert_config_to_chain_configs(
-    config_path: &PathBuf,
+    parsed_paths: &ParsedPaths,
 ) -> Result<Vec<ChainConfigTemplate>, Box<dyn Error>> {
-    let config = deserialize_config_from_yaml(config_path)?;
+    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
 
     let mut chain_configs = Vec::new();
     for network in config.networks.iter() {
@@ -99,22 +104,11 @@ pub fn convert_config_to_chain_configs(
 
         for contract in network.contracts.iter() {
             for contract_address in contract.address.iter() {
-                let config_parent_path = config_path
-                    .parent()
-                    .ok_or("invalid config parent directory")?;
-                let abi_relative_path = Path::new(&contract.abi_file_path);
-                let abi_path = config_parent_path
-                    .join(abi_relative_path)
-                    .canonicalize()
-                    .map_err(|err| {
-                        format!(
-                            "Failed to resolve abi path {} with Error {}",
-                            &contract.abi_file_path,
-                            err.to_string()
-                        )
-                    })?;
-                let parsed_abi: Abi =
-                    event_parsing::get_abi_from_file_path(&config_parent_path.join(&abi_path))?;
+                let contract_unique_id = ContractUniqueId {
+                    network_id: network.id,
+                    name: contract.name.clone(),
+                };
+                let parsed_abi: Abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
                 let stringified_abi = serde_json::to_string(&parsed_abi)?;
                 let single_contract = SingleContractTemplate {
@@ -142,6 +136,7 @@ pub fn convert_config_to_chain_configs(
 #[cfg(test)]
 mod tests {
     use crate::capitalization::Capitalize;
+    use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
 
@@ -164,7 +159,7 @@ mod tests {
         };
 
         let contract1 = super::ConfigContract {
-            handler: None,
+            handler: "./src/EventHandler.js".to_string(),
             address: vec![address1.clone()],
             name: String::from("Contract1"),
             //needed to have relative path in order to match config1.yaml
@@ -180,8 +175,16 @@ mod tests {
             contracts,
         };
 
-        let config_path = PathBuf::from("test/configs/config1.yaml");
-        let chain_configs = super::convert_config_to_chain_configs(&config_path).unwrap();
+        let project_root = String::from("test");
+        let config = String::from("configs/config1.yaml");
+        let generated = String::from("generated/");
+        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
+            project_root,
+            config,
+            generated,
+        })
+        .unwrap();
+        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
@@ -204,10 +207,10 @@ mod tests {
         let expected_chain_configs = vec![chain_config_1];
 
         assert_eq!(
-            chain_configs[0].network_config,
-            expected_chain_configs[0].network_config
+            expected_chain_configs[0].network_config,
+            chain_configs[0].network_config
         );
-        assert_eq!(chain_configs, expected_chain_configs);
+        assert_eq!(expected_chain_configs, chain_configs,);
     }
 
     #[test]
@@ -228,7 +231,7 @@ mod tests {
         };
 
         let contract1 = super::ConfigContract {
-            handler: None,
+            handler: "./src/EventHandler.js".to_string(),
             address: vec![address1.clone()],
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
@@ -244,7 +247,7 @@ mod tests {
             contracts: contracts1,
         };
         let contract2 = super::ConfigContract {
-            handler: None,
+            handler: "./src/EventHandler.js".to_string(),
             address: vec![address2.clone()],
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
@@ -260,8 +263,17 @@ mod tests {
             contracts: contracts2,
         };
 
-        let config_path = PathBuf::from("test/configs/config2.yaml");
-        let chain_configs = super::convert_config_to_chain_configs(&config_path).unwrap();
+        let project_root = String::from("test");
+        let config = String::from("configs/config2.yaml");
+        let generated = String::from("generated/");
+        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
+            project_root,
+            config,
+            generated,
+        })
+        .unwrap();
+
+        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
 
         let events = vec![
             event1.name.to_capitalized_options(),
