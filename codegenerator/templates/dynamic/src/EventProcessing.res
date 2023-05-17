@@ -1,4 +1,4 @@
-let addEventToRawEvents = (event: Types.eventLog<'a>, ~jsonSerializedParams: Js.Json.t) => {
+let addEventToRawEvents = (event: Types.eventLog<'a>, ~jsonSerializedParams: Js.Json.t, ~eventName: Types.eventName) => {
   let chainId = 137 //TODO: add this to eventLog type
 
   let {
@@ -22,6 +22,7 @@ let addEventToRawEvents = (event: Types.eventLog<'a>, ~jsonSerializedParams: Js.
     srcAddress,
     blockHash,
     blockTimestamp,
+    eventName: eventName->Types.eventName_encode,
     params: jsonSerializedParams,
   }
 
@@ -33,7 +34,8 @@ let eventRouter = (event: Types.eventAndContext) => {
 {{#each contract.events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context) => {
   let jsonSerializedParams = event.params->Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode
-  event->addEventToRawEvents(~jsonSerializedParams)
+  event->addEventToRawEvents(~jsonSerializedParams, ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+)
 
   Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}Handler()(~event, ~context)
   }

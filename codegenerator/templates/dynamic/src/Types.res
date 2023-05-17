@@ -40,6 +40,7 @@ type rawEventsEntity = {
   @as("src_address") srcAddress: string,
   @as("block_hash") blockHash: string,
   @as("block_timestamp") blockTimestamp: int,
+  @as("event_name") eventName: Js.Json.t,
   params: Js.Json.t,
 }
 
@@ -148,10 +149,11 @@ type eventAndContext =
 {{/each}}
 {{/each}}
 
+@spice
 type eventName =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+  | @spice.as("{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event") {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
 {{/each}}
 {{/each}}
 

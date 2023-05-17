@@ -31,6 +31,7 @@ module.exports.batchSetRawEvents = (entityDataArray) => {
     "src_address",
     "block_hash",
     "block_timestamp",
+    "event_name",
     "params"
   )}
     ON CONFLICT(chain_id, event_id) DO UPDATE
@@ -44,6 +45,7 @@ module.exports.batchSetRawEvents = (entityDataArray) => {
     "src_address" = EXCLUDED."src_address",
     "block_hash" = EXCLUDED."block_hash",
     "block_timestamp" = EXCLUDED."block_timestamp",
+    "event_name" = EXCLUDED."event_name",
     "params" = EXCLUDED."params"
   ;`;
 };
