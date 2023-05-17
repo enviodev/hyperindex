@@ -6,7 +6,7 @@
     "allowJs": true,
     "checkJs": false,
     "outDir": "build",
-    "rootDirs": ["src", "generated", "test", "contracts/typechain"],
+    "rootDirs": ["src", "generated", "test", "contracts/typechain-types"],
     "strict": true,
     "noImplicitAny": true,
     "esModuleInterop": true,

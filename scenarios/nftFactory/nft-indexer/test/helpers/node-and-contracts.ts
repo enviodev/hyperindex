@@ -3,7 +3,7 @@ import {
   NftFactory,
   NftFactory__factory,
   SimpleNft__factory,
-} from "../../contracts/typechain";
+} from "../../contracts/typechain-types";
 import { ContractTransactionResponse } from "ethers";
 
 export enum Users {

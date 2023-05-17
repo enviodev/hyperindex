@@ -5,7 +5,6 @@ import "@typechain/hardhat";
 import { TypechainUserConfig } from "@typechain/hardhat/dist/types";
 
 let typeChainConfig: TypechainUserConfig = {
-  outDir: "typechain",
   target: "ethers-v6",
 };
 

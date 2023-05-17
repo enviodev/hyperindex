@@ -3,7 +3,6 @@ node_modules
 coverage
 coverage.json
 typechain
-@openzeppelin
 
 #Hardhat files
 cache
@@ -11,3 +10,5 @@ artifacts
 
 deployments/localhost
 deployments/ganache
+
+typechain-types
