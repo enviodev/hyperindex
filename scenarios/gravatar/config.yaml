@@ -3,7 +3,6 @@ description: Gravatar for Ethereum
 repository: https://github.com/graphprotocol/example-subgraph
 networks:
   - id: 1337
-  # - id: 31337 - local ganache
     rpc_url: http://localhost:8545
     start_block: 0
     contracts:
