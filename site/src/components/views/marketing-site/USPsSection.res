@@ -6,7 +6,16 @@ let make = () => {
     <div className="my-4 relative flex flex-row justify-center items-center">
       <div
         className="h-60-percent-screen w-full mx-auto text-center md:text-left max-w-6xl flex flex-col md:flex-row justify-between items-center">
-        <TabbedCodeBlock />
+        // <TabbedCodeBlock />
+        <div
+          className="hidden md:block h-40 md:h-undersized w-full md:w-half relative flex justify-left items-center">
+          <Next.Image
+            src={Routes.cdnFolderRoute(~asset=`/envio/landing/languages.svg`)}
+            layout=#fill
+            objectPosition="left"
+            objectFit="contain"
+          />
+        </div>
         <div className="justify-right w-full md:w-40-percent text-center md:text-right">
           <BigParagraph className="text-3xl my-4">
             {"Write code you know"->React.string}

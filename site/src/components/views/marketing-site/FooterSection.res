@@ -8,65 +8,76 @@ let make = () => {
       <Logo />
       <div className="flex flex-col m-4">
         <Heading4> {"Shipper resources"->React.string} </Heading4>
-        <Hyperlink href="#" openInNewTab=true> {"Quick Start Guide"->React.string} </Hyperlink>
-        <Hyperlink href="#" openInNewTab=true> {"Developer Docs"->React.string} </Hyperlink>
-        <Hyperlink href="#" openInNewTab=true> {"Use Cases"->React.string} </Hyperlink>
+        <Hyperlink href=Routes.gettingStarted openInNewTab=true>
+          {"Quick Start Guide"->React.string}
+        </Hyperlink>
+        <Hyperlink href=Routes.docs openInNewTab=true> {"Developer Docs"->React.string} </Hyperlink>
+        // <Hyperlink href="#" openInNewTab=true> {"Use Cases"->React.string} </Hyperlink>
       </div>
       <div className="flex flex-col m-4">
         <Heading4> {"Community"->React.string} </Heading4>
-        <Hyperlink href="#" openInNewTab=true> {"Discord"->React.string} </Hyperlink>
-        <Hyperlink href="#" openInNewTab=true>
-          {"A.P. Morgan Sailing Club"->React.string}
-        </Hyperlink>
-        <Hyperlink href="#" openInNewTab=true> {"Upcoming Events"->React.string} </Hyperlink>
+        <Hyperlink href=Routes.discord openInNewTab=true> {"Discord"->React.string} </Hyperlink>
+        <Hyperlink href=Routes.twitter openInNewTab=true> {"Twitter"->React.string} </Hyperlink>
+        // <Hyperlink href="#" openInNewTab=true>
+        //   {"A.P. Morgan Sailing Club"->React.string}
+        // </Hyperlink>
+        // <Hyperlink href="#" openInNewTab=true> {"Upcoming Events"->React.string} </Hyperlink>
       </div>
-      <div className="flex flex-col m-4">
-        <Heading4> {"About"->React.string} </Heading4>
-        <Hyperlink href="#" openInNewTab=true> {"Careers"->React.string} </Hyperlink>
-        <Hyperlink href="#" openInNewTab=true> {"Press & Brand"->React.string} </Hyperlink>
-        <Hyperlink href="#" openInNewTab=true> {"Terms of Service"->React.string} </Hyperlink>
-      </div>
+      // <div className="flex flex-col m-4">
+      //   <Heading4> {"About"->React.string} </Heading4>
+      //   <Hyperlink href="#" openInNewTab=true> {"Careers"->React.string} </Hyperlink>
+      //   <Hyperlink href="#" openInNewTab=true> {"Press & Brand"->React.string} </Hyperlink>
+      //   <Hyperlink href="#" openInNewTab=true> {"Terms of Service"->React.string} </Hyperlink>
+      // </div>
       <div className="flex flex-row m-4">
         <div className={"relative m-2"}>
-          <Next.Image
-            src={Routes.cdnFolderRoute(
-              ~asset=`/envio/socials/github-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
-            )}
-            layout=#fixed
-            width="28"
-            height="28"
-          />
+          <Hyperlink openInNewTab=true href=Routes.github>
+            <Next.Image
+              src={Routes.cdnFolderRoute(
+                ~asset=`/envio/socials/github-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
+              )}
+              layout=#fixed
+              width="28"
+              height="28"
+            />
+          </Hyperlink>
         </div>
         <div className={"relative m-2"}>
-          <Next.Image
-            src={Routes.cdnFolderRoute(
-              ~asset=`/envio/socials/lens-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
-            )}
-            layout=#fixed
-            width="28"
-            height="28"
-          />
+          <Hyperlink openInNewTab=true href=Routes.lens>
+            <Next.Image
+              src={Routes.cdnFolderRoute(
+                ~asset=`/envio/socials/lens-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
+              )}
+              layout=#fixed
+              width="28"
+              height="28"
+            />
+          </Hyperlink>
         </div>
         <div className={"relative m-2"}>
-          <Next.Image
-            src={Routes.cdnFolderRoute(
-              ~asset=`/envio/socials/twitter-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
-            )}
-            layout=#fixed
-            width="28"
-            height="28"
-          />
+          <Hyperlink openInNewTab=true href=Routes.twitter>
+            <Next.Image
+              src={Routes.cdnFolderRoute(
+                ~asset=`/envio/socials/twitter-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
+              )}
+              layout=#fixed
+              width="28"
+              height="28"
+            />
+          </Hyperlink>
         </div>
-        <div className={"relative m-2"}>
-          <Next.Image
-            src={Routes.cdnFolderRoute(
-              ~asset=`/envio/socials/linkedin-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
-            )}
-            layout=#fixed
-            width="28"
-            height="28"
-          />
-        </div>
+        // <div className={"relative m-2"}>
+        //   <Hyperlink openInNewTab=true href=Routes.linkedIn>
+        //     <Next.Image
+        //       src={Routes.cdnFolderRoute(
+        //         ~asset=`/envio/socials/linkedin-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
+        //       )}
+        //       layout=#fixed
+        //       width="28"
+        //       height="28"
+        //     />
+        //   </Hyperlink>
+        // </div>
       </div>
     </div>
     <div className="flex flex-row justify-end md:min-w-full">

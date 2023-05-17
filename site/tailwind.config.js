@@ -112,6 +112,7 @@ module.exports = {
         "1/2": "50%",
         "3/4": "75%",
         "9/10": "90%",
+        "40-percent-screen": "40vh",
         "50-percent-screen": "50vh",
         "60-percent-screen": "60vh",
       },

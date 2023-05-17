@@ -2,7 +2,15 @@
 //***ENTITIES**
 //*************
 
+@genType.as("Id")
 type id = string
+
+//nested subrecord types
+
+type contactDetails = {
+  name: string,
+  email: string,
+}
 
 type entityRead =
   | UserRead(id)
@@ -15,12 +23,14 @@ let entitySerialize = (entity: entityRead) => {
   }
 }
 
+@genType
 type userEntity = {
   id: string,
   address: string,
   gravatar: option<id>,
 }
 
+@genType
 type gravatarEntity = {
   id: string,
   owner: id,
@@ -44,6 +54,7 @@ type inMemoryStoreRow<'a> = {
 //**CONTRACTS**
 //*************
 
+@genType
 type eventLog<'a> = {
   params: 'a,
   blockNumber: int,
@@ -56,7 +67,34 @@ type eventLog<'a> = {
 }
 
 module GravatarContract = {
+  module TestEventEvent = {
+    @genType
+    type eventArgs = {
+      id: Ethers.BigInt.t,
+      user: Ethers.ethAddress,
+      contactDetails: contactDetails,
+    }
+    type userEntityHandlerContext = {
+      insert: userEntity => unit,
+      update: userEntity => unit,
+      delete: id => unit,
+    }
+    type gravatarEntityHandlerContext = {
+      insert: gravatarEntity => unit,
+      update: gravatarEntity => unit,
+      delete: id => unit,
+    }
+    @genType
+    type context = {
+      user: userEntityHandlerContext,
+      gravatar: gravatarEntityHandlerContext,
+    }
+
+    @genType
+    type loaderContext = {}
+  }
   module NewGravatarEvent = {
+    @genType
     type eventArgs = {
       id: Ethers.BigInt.t,
       owner: Ethers.ethAddress,
@@ -73,14 +111,17 @@ module GravatarContract = {
       update: gravatarEntity => unit,
       delete: id => unit,
     }
+    @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
     }
 
+    @genType
     type loaderContext = {}
   }
   module UpdatedGravatarEvent = {
+    @genType
     type eventArgs = {
       id: Ethers.BigInt.t,
       owner: Ethers.ethAddress,
@@ -98,6 +139,7 @@ module GravatarContract = {
       update: gravatarEntity => unit,
       delete: id => unit,
     }
+    @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
@@ -105,15 +147,21 @@ module GravatarContract = {
 
     type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
 
+    @genType
     type loaderContext = {gravatar: gravatarEntityLoaderContext}
   }
 }
 
 type event =
+  | GravatarContract_TestEvent(eventLog<GravatarContract.TestEventEvent.eventArgs>)
   | GravatarContract_NewGravatar(eventLog<GravatarContract.NewGravatarEvent.eventArgs>)
   | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>)
 
 type eventAndContext =
+  | GravatarContract_TestEventWithContext(
+      eventLog<GravatarContract.TestEventEvent.eventArgs>,
+      GravatarContract.TestEventEvent.context,
+    )
   | GravatarContract_NewGravatarWithContext(
       eventLog<GravatarContract.NewGravatarEvent.eventArgs>,
       GravatarContract.NewGravatarEvent.context,
@@ -124,11 +172,13 @@ type eventAndContext =
     )
 
 type eventName =
+  | GravatarContract_TestEventEvent
   | GravatarContract_NewGravatarEvent
   | GravatarContract_UpdatedGravatarEvent
 
 let eventNameToString = (eventName: eventName) =>
   switch eventName {
+  | GravatarContract_TestEventEvent => "TestEvent"
   | GravatarContract_NewGravatarEvent => "NewGravatar"
   | GravatarContract_UpdatedGravatarEvent => "UpdatedGravatar"
   }
