@@ -2,7 +2,7 @@ version: 0.0.0
 description: Simple Bank contract
 repository: 
 networks:
-  - id: 31337
+  - id: 1337
     rpc_url: http://localhost:8545
     start_block: 0
     contracts:
