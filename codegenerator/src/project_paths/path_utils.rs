@@ -59,7 +59,7 @@ mod tests {
             $(
                 paste::item! {
                 #[test]
-                fn [< test_ $name >]() {
+                fn [< test_path_ $name >]() {
                     let unnormalized_path = PathBuf::from($input);
                     let normalized_path = normalize_path(&unnormalized_path);
                     let expected_normalized_path = PathBuf::from($expected);
@@ -71,12 +71,12 @@ mod tests {
     }
 
     test_normalization! {
-        path_backtrack:                     "my_dir/another_dir/../my_file.js",             "my_dir/my_file.js",
-        path_backtrack_twice:               "my_dir/another_dir/../../my_file.js",          "my_file.js",
-        path_backtrack_to_parent:           "my_dir/another_dir/../../../my_file.js",       "../my_file.js",
-        path_backtrack_to_parents_parent:   "my_dir/../another_dir/../../../my_file.js",    "../../my_file.js",
-        path_root:                          "/my_dir/another_dir/../../my_file.js",         "/my_file.js",
-        path_start_with_parent:             "../my_dir/another_dir/../my_file.js",          "../my_dir/my_file.js",
+        backtrack:                     "my_dir/another_dir/../my_file.js",             "my_dir/my_file.js",
+        backtrack_twice:               "my_dir/another_dir/../../my_file.js",          "my_file.js",
+        backtrack_to_parent:           "my_dir/another_dir/../../../my_file.js",       "../my_file.js",
+        backtrack_to_parents_parent:   "my_dir/../another_dir/../../../my_file.js",    "../../my_file.js",
+        root:                          "/my_dir/another_dir/../../my_file.js",         "/my_file.js",
+        start_with_parent:             "../my_dir/another_dir/../my_file.js",          "../my_dir/my_file.js",
     }
 
     #[test]
