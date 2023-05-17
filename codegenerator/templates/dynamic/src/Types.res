@@ -40,7 +40,7 @@ type rawEventsEntity = {
   @as("src_address") srcAddress: string,
   @as("block_hash") blockHash: string,
   @as("block_timestamp") blockTimestamp: int,
-  @as("event_name") eventName: Js.Json.t,
+  @as("event_type") eventType: Js.Json.t,
   params: Js.Json.t,
 }
 

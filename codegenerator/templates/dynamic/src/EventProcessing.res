@@ -22,7 +22,7 @@ let addEventToRawEvents = (event: Types.eventLog<'a>, ~jsonSerializedParams: Js.
     srcAddress,
     blockHash,
     blockTimestamp,
-    eventName: eventName->Types.eventName_encode,
+    eventType: eventName->Types.eventName_encode,
     params: jsonSerializedParams,
   }
 

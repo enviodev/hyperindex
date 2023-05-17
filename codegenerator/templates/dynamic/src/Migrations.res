@@ -5,7 +5,7 @@ module RawEventsTable = {
     @warning("-21")
     let _ = await (
       %raw("sql`
-      CREATE TYPE EVENT_NAME AS ENUM (
+      CREATE TYPE EVENT_TYPE AS ENUM (
       {{#each contracts as | contract |}}
       {{#each contract.events as | event |}}
       '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'
@@ -28,7 +28,7 @@ module RawEventsTable = {
         src_address TEXT NOT NULL,
         block_hash TEXT NOT NULL,
         block_timestamp INTEGER NOT NULL,
-        event_name EVENT_NAME NOT NULL,
+        event_type EVENT_TYPE NOT NULL,
         params JSON NOT NULL,
         PRIMARY KEY (chain_id, event_id)
       );

@@ -36,7 +36,7 @@ describe("Raw Events Table Migrations", () => {
       { column_name: "block_hash", data_type: "text" },
       { column_name: "transaction_hash", data_type: "text" },
       { column_name: "src_address", data_type: "text" },
-      { column_name: "event_name", data_type: "USER-DEFINED" }, //enum of types
+      { column_name: "event_type", data_type: "USER-DEFINED" }, //enum of types
     ];
 
     expect(rawEventsColumnsRes).to.deep.include.members(expectedColumns);
@@ -52,7 +52,7 @@ describe("Raw Events Table Migrations", () => {
       transaction_hash: "0x1234567890abcdef",
       src_address: "0x0123456789abcdef0123456789abcdef0123456",
       block_hash: "0x9876543210fedcba9876543210fedcba987654321",
-      event_name: eventName_encode(
+      event_type: eventName_encode(
         EventVariants.NftFactoryContract_SimpleNftCreatedEvent
       ),
       block_timestamp: 1620720000,
