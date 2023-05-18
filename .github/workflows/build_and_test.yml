@@ -99,6 +99,6 @@ jobs:
           pnpm build
 
       - name: nftFactory test
-        working-directory: scenarios/nftFactory/nft-indexer
+        working-directory: scenarios/nft-factory
         run: |
           pnpm test
