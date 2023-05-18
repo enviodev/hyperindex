@@ -26,7 +26,8 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async () => {
+  it("RawEvents table contains rows after indexer runs", async function() {
+    this.timeout(30 * 1000);
     console.log("deploying Nft Factory");
     const deployedNftFactory = await deployNftFactory();
     const nftFactoryContractAddress = await deployedNftFactory.getAddress();
@@ -97,5 +98,5 @@ describe("Raw Events Integration", () => {
     expect(rawEventsRows.count).to.be.gt(0);
 
     console.log(rawEventsRows);
-  }).timeout(30 * 1000);
+  });
 });
