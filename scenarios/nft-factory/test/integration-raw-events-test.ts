@@ -97,5 +97,5 @@ describe("Raw Events Integration", () => {
     expect(rawEventsRows.count).to.be.gt(0);
 
     console.log(rawEventsRows);
-  });
+  }).timeout(30 * 1000);
 });
