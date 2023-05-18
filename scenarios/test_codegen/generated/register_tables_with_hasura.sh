@@ -96,3 +96,44 @@ curl -X POST localhost:8080/v1/metadata \
         }
     }
 }'
+
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "user",
+        "name": "gravatarMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "gravatar",
+                "column_mapping" : {
+                    "gravatar" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "gravatar",
+        "name": "ownerMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "user",
+                "column_mapping" : {
+                    "owner" : "id"
+                }
+            }
+        }
+    }
+}'

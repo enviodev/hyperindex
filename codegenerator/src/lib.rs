@@ -40,6 +40,14 @@ impl HasName for EventRecordType {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+struct EntityRelationalTypes {
+    is_entity_relationship: bool,
+    relational_key: String,
+    mapped_entity: CapitalizedOptions,
+    relationship_type: String,
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 struct EntityParamType {
     key: String,
     type_rescript: String,
@@ -49,6 +57,7 @@ struct EntityParamType {
 pub struct EntityRecordType {
     name: CapitalizedOptions,
     params: Vec<EntityParamType>,
+    relational_params: Vec<EntityRelationalTypes>,
 }
 
 impl HasName for EntityRecordType {
