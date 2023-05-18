@@ -8,6 +8,7 @@ type id = string
 //nested subrecord types
 
 {{#each sub_record_dependencies as | subrecord |}}
+  @spice
    type {{subrecord.name.uncapitalized}} = {
     {{#each subrecord.params as | param |}}
       {{param.key}}: {{param.type_rescript}},
