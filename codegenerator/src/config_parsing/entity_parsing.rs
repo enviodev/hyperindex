@@ -117,35 +117,30 @@ fn gql_type_to_postgres_relational_type(
     gql_type: &Type<String>,
     entities_set: &HashSet<String>,
 ) -> EntityRelationalTypes {
-    let entity_relation = match gql_type {
-        Type::NamedType(named) => {
-            let (is_entity_relationship, field_type) = if entities_set.contains(named) {
-                (true, named.clone())
-            } else {
-                (false, "scalar".to_owned())
-            };
-            EntityRelationalTypes {
-                is_entity_relationship,
-                relational_key: field_name.to_owned(),
-                mapped_entity: field_type.to_owned().to_capitalized_options(),
-                relationship_type: "object".to_owned(),
-            }
-        }
-        Type::ListType(_gql_type) => {
-            // NOTE: arrays are currently stored as text in the database, this is a temporary hack.
+    match gql_type {
+        Type::NamedType(named) if entities_set.contains(named) => EntityRelationalTypes {
+            is_entity_relationship: true,
+            relational_key: field_name.clone(),
+            mapped_entity: named.to_capitalized_options(),
+            relationship_type: "object".to_owned(),
+        },
+        Type::NamedType(_) => EntityRelationalTypes {
+            is_entity_relationship: false,
+            relational_key: field_name.clone(),
+            mapped_entity: "scalar".to_owned().to_capitalized_options(),
+            relationship_type: "object".to_owned(),
+        },
+        Type::ListType(gql_type) => {
             let mut relational_type =
-                gql_type_to_postgres_relational_type(&field_name, &_gql_type, &entities_set);
-
+                gql_type_to_postgres_relational_type(&field_name, &gql_type, &entities_set);
             relational_type.relationship_type = "array".to_owned();
             relational_type
         }
         Type::NonNullType(gql_type) => {
-            gql_type_to_postgres_relational_type(&field_name, &gql_type, entities_set)
+            gql_type_to_postgres_relational_type(&field_name, &gql_type, &entities_set)
         }
-    };
-    entity_relation
+    }
 }
-
 fn gql_named_types_to_rescript_types(
     named_type: &str,
     entities_set: &HashSet<String>,
