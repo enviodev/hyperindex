@@ -50,6 +50,12 @@ jobs:
         with:
           version: 8
 
+      - name: gravatar hardhat compile
+        working-directory: scenarios/gravatar
+        run: |
+          pnpm install
+          pnpm hardhat compile --verbose
+
       - name: Cargo Build
         run: cargo build --verbose
 
