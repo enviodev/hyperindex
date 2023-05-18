@@ -72,3 +72,30 @@ curl -X POST localhost:8080/v1/metadata \
         }
     }
 }'
+
+{{#each entities as |entity|}}
+{{#each entity.relational_params as | relational_param | }}
+{{#if relational_param.is_entity_relationship}}
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_{{relational_param.relationship_type}}_relationship",
+    "args": {
+        "table": "{{entity.name.uncapitalized}}",
+        "name": "{{relational_param.relational_key}}Map",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "{{relational_param.mapped_entity.uncapitalized}}",
+                "column_mapping" : {
+                    "{{relational_param.relational_key}}" : "id"
+                }
+            }
+        }
+    }
+}'
+{{/if}}
+{{/each}}
+{{/each}}
