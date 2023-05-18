@@ -12,7 +12,7 @@ module Misc = {
 }
 
 module BigInt = {
-  @genType.import(("./OpaqueTypes","GenericBigInt"))
+  @genType.import(("./OpaqueTypes", "GenericBigInt"))
   type t
 
   // constructors and methods
@@ -38,6 +38,36 @@ module BigInt = {
   let gte = (a: t, b: t): bool => %raw("a >= b")
   let lt = (a: t, b: t): bool => %raw("a < b")
   let lte = (a: t, b: t): bool => %raw("a <= b")
+
+  module Bitwise = {
+    let shift_left = (a: t, b: t): t => %raw("a << b")
+    let shift_right = (a: t, b: t): t => %raw("a >> b")
+    let logor = (a: t, b: t): t => %raw("a | b")
+    let logand = (a: t, b: t): t => %raw("a & b")
+  }
+
+  let t_encode = (bigint: t) => bigint->toString->Js.Json.string
+  let t_decode: Js.Json.t => result<t, Spice.decodeError> = json =>
+    switch json->Js.Json.decodeString {
+    | Some(stringBigInt) =>
+      switch stringBigInt->fromString {
+      | Some(bigInt) => Ok(bigInt)
+      | None =>
+        let spiceErr: Spice.decodeError = {
+          path: "BigInt.t",
+          message: "String not deserializeable to BigInt.t",
+          value: json,
+        }
+        Error(spiceErr)
+      }
+    | None =>
+      let spiceErr: Spice.decodeError = {
+        path: "BigInt.t",
+        message: "Json not deserializeable to string of BigInt.t",
+        value: json,
+      }
+      Error(spiceErr)
+    }
 }
 
 type abi
@@ -46,8 +76,21 @@ let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Obj.magic
 
 let makeAbi = (abi: Js.Json.t): abi => abi->Obj.magic
 
-@genType.import(("./OpaqueTypes","EthersAddress"))
+@genType.import(("./OpaqueTypes", "EthersAddress"))
 type ethAddress
+
+let ethAddress_encode = ethAdress => ethAdress->Obj.magic->Js.Json.string
+let ethAddress_decode: Js.Json.t => result<ethAddress, Spice.decodeError> = json =>
+  switch json->Js.Json.decodeString {
+  | Some(stringAddress) => Ok(stringAddress->Obj.magic)
+  | None =>
+    let spiceErr: Spice.decodeError = {
+      path: "ethAddress",
+      message: "Json not deserializeable to string of ethAddress",
+      value: json,
+    }
+    Error(spiceErr)
+  }
 
 @module("ethers") @scope("ethers")
 external getAddressFromStringUnsafe: string => ethAddress = "getAddress"

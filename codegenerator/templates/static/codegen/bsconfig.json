@@ -25,7 +25,9 @@
   "bs-dependencies": [
     "@ryyppy/rescript-promise",
     "rescript-envsafe",
-    "rescript-struct"
+    "rescript-struct",
+    "@greenlabs/ppx-spice"
   ],
+  "ppx-flags": ["@greenlabs/ppx-spice/ppx"],
   "bsc-flags": ["-open RescriptStruct"]
 }
