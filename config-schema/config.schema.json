@@ -1,74 +1,100 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "YAML Config with Contract and Events",
-  "description": "Schema for a YAML config with a contract and events",
+  "title": "Envio Config Schema",
+  "description": "Schema for a YAML config for an envio indexer",
   "type": "object",
+  "additionalProperties": false,
   "properties": {
     "version": {
+      "description": "Version of the config schema used by the indexer",
       "type": "string"
     },
     "description": {
+      "description": "Description of the project",
       "type": "string"
     },
     "repository": {
+      "description": "Repository of the project",
       "type": "string"
     },
     "networks": {
+      "description": "Configuration of the blockchain networks that the project is deployed on",
       "type": "array",
       "items": {
         "type": "object",
+        "additionalProperties": false,
         "properties": {
           "id": {
+            "description": "Chain identifier of the network",
             "type": "integer"
           },
           "rpc_url": {
+            "description": "RPC URL that will be used to subscribe to blockchain data on this network",
             "type": "string"
           },
           "start_block": {
+            "description": "Initial block from which the indexer will start listening for events",
             "type": "integer"
-          }
-        },
-        "required": [
-          "id",
-          "rpc_url",
-          "start_block"
-        ]
-      }
-    },
-    "contracts": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
           },
-          "abi": {
-            "type": "string"
-          },
-          "address": {
-            "type": "string"
-          },
-          "events": {
+          "contracts": {
+            "description": "Configuration for each contract deployed on the network",
             "type": "array",
             "items": {
               "type": "object",
+              "additionalProperties": false,
               "properties": {
                 "name": {
+                  "description": "User-defined contract name",
                   "type": "string"
                 },
-                "read_entities": {
+                "abi_file_path": {
+                  "description": "File location of the contract ABI",
+                  "type": "string"
+                },
+                "address": {
+                  "description": "An array of addresses that the contract is deployed to on the network",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "handler": {
+                  "description": "Location of the file that handles the events emitted by this contract",
+                  "type": "string"
+                },
+                "events": {
+                  "description": "Configuration for each event emitted by this contract that the indexer will listen for",
                   "type": "array",
                   "items": {
                     "type": "object",
+                    "additionalProperties": false,
                     "properties": {
                       "name": {
+                        "description": "Name of the event (must match the name in the ABI)",
                         "type": "string"
                       },
-                      "labels": {
+                      "requiredEntities": {
+                        "description": "An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)",
                         "type": "array",
                         "items": {
-                          "type": "string"
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "name": {
+                              "description": "The name of the required entity (must match an entity defined in `schema.graphql`)",
+                              "type": "string"
+                            },
+                            "labels": {
+                              "description": "A user defined label that corresponds to this entity load",
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            }
+                          },
+                          "required": [
+                            "name"
+                          ]
                         }
                       }
                     },
@@ -77,27 +103,30 @@
                     ]
                   }
                 }
-              }
-            },
-            "required": [
-              "name"
-            ]
+              },
+              "required": [
+                "name",
+                "abi_file_path",
+                "address",
+                "handler",
+                "events"
+              ]
+            }
           }
-        }
-      },
-      "required": [
-        "name",
-        "abi",
-        "address",
-        "events"
-      ]
+        },
+        "required": [
+          "id",
+          "rpc_url",
+          "start_block",
+          "contracts"
+        ]
+      }
     }
   },
   "required": [
     "version",
     "description",
     "repository",
-    "networks",
-    "contracts"
+    "networks"
   ]
 }
