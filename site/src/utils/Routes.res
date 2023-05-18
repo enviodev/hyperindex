@@ -1,9 +1,13 @@
 // pages
-let docs = "https://docs.envio.dev/docs"
-let gettingStarted = "https://docs.envio.dev/docs/getting-started"
-let useCases = "/use-cases"
-let careers = "/careers"
-let support = "/support"
+let docs = "https://docs.envio.dev/docs/overview"
+let gettingStarted = "https://docs.envio.dev/docs/quickstart"
+
+// let useCases = "/use-cases"
+// let careers = "/careers"
+// let support = "/support"
+
+// misc
+let floatTestnet = "https://testnet.float.capital"
 
 // socials
 let discord = "https://discord.gg/bJM2PCbgtY"
