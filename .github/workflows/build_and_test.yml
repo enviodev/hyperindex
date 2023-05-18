@@ -65,8 +65,8 @@ jobs:
         working-directory: scenarios/gravatar
         run: |
           pnpm install
+          pnpm hardhat compile --verbose
           pnpm build
-          pnpm hardhat compile
 
       - name: gravatar test
         working-directory: scenarios/gravatar
