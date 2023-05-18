@@ -14,11 +14,15 @@
     "hardhat-node": "npx hardhat node"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^4.5.0",
     "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
+    "@openzeppelin/contracts": "^4.5.0",
     "ethers": "^6.3.0",
     "hardhat": "^2.14.0",
     "hardhat-abi-exporter": "^2.10.1",
     "hardhat-deploy": "^0.11.26"
+  },
+  "devDependencies": {
+    "@ethersproject/hash": "^5.7.0",
+    "@ethersproject/web": "^5.7.1"
   }
 }
