@@ -21,6 +21,12 @@ sleep 5 # ie wait for docker to finish setting things up
 cd contracts; rm -rf deployments/ganache; pnpm deploy-factory
 ```
 
+**If you deploy the contracts to a production network run the following to verify the contracts. The below example is for the Fuji testnet:**
+
+```bash
+hardhat "--network" "fuji" "etherscan-verify" "--api-key" "<Put your etherscan key>" "--force-license" "--license" "UNLICENSED"
+```
+
 ### To make example events:
 
 ```
