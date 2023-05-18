@@ -78,6 +78,9 @@ importers:
         specifier: ^4.0.0
         version: 4.0.0(rescript@10.1.4)
     devDependencies:
+      '@greenlabs/ppx-spice':
+        specifier: ^0.1.14
+        version: 0.1.14
       gentype:
         specifier: ^4.5.0
         version: 4.5.0
@@ -754,6 +757,11 @@ packages:
       - supports-color
       - ts-node
       - utf-8-validate
+    dev: true
+
+  /@greenlabs/ppx-spice@0.1.14:
+    resolution: {integrity: sha512-2zP5E3+yWCRwYkvOl1A/VoRC1ixHdIa4CujsGD3uwbAzfJkrGc7KH83Zbc+Yw858+RNw2GKrNC35f0CNVMusHw==}
+    requiresBuild: true
     dev: true
 
   /@istanbuljs/load-nyc-config@1.1.0:
