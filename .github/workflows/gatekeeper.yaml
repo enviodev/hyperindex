@@ -6,6 +6,10 @@ on:
     branches:
       - main
       - master
+    paths:
+      - "!site" # Don't run gatekeeper on changes to the site directory.
+      - "codegenerator"
+      - "scenarios"
 
 jobs:
   merge-gatekeeper:
@@ -18,3 +22,4 @@ jobs:
         uses: upsidr/merge-gatekeeper@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ignored: "Vercel"
