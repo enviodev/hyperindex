@@ -26,7 +26,7 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async function() {
+  it("RawEvents table contains rows after indexer runs", async function () {
     this.timeout(30 * 1000);
     console.log("deploying Nft Factory");
     const deployedNftFactory = await deployNftFactory();
@@ -71,7 +71,7 @@ describe("Raw Events Integration", () => {
     const localChainConfig = {
       provider,
       startBlock: 0,
-      chainId: 31337,
+      chainId: 1337,
       contracts: [
         {
           name: "NftFactory",
