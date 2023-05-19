@@ -1,6 +1,10 @@
 name: Build & Test
 
-on: pull_request
+on: 
+  pull_request:
+    paths:
+      - 'codegenerator'
+      - 'scenarios'
 
 defaults:
   run:
@@ -36,19 +40,34 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Cache
+      - name: Setup rust cache
         uses: actions/cache@v3
         with:
           path: |
-            ~/.pnpm-store
             ~/.cargo/registry
             ~/.cargo/git
             codegenerator/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - uses: pnpm/action-setup@v2
         with:
           version: 8
+
+      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
 
       - name: Cargo Build
         run: cargo build --verbose
