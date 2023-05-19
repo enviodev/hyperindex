@@ -127,8 +127,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .spawn()?
                 .wait()?;
 
+            println!("generate db migrations");
             if !args.skip_db_provision {
-                println!("generate db migrations");
                 Command::new("pnpm")
                     .arg("db-migrate")
                     .current_dir(&project_paths.generated)
