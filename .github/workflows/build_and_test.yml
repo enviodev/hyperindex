@@ -93,6 +93,8 @@ jobs:
         working-directory: scenarios/gravatar
         run: |
           pnpm install
+          node --version
+          pnpm hardhat compile
           pnpm hardhat compile --verbose
           pnpm build
 
