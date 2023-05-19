@@ -89,12 +89,15 @@ jobs:
         run: |
           pnpm codegen
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.15.0
+
       - name: gravatar build
         working-directory: scenarios/gravatar
         run: |
           pnpm install
-          node --version
-          pnpm hardhat compile
           pnpm hardhat compile --verbose
           pnpm build
 
