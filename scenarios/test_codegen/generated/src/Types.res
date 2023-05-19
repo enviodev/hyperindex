@@ -7,6 +7,7 @@ type id = string
 
 //nested subrecord types
 
+@spice
 type contactDetails = {
   name: string,
   email: string,
@@ -21,6 +22,20 @@ let entitySerialize = (entity: entityRead) => {
   | UserRead(id) => `user${id}`
   | GravatarRead(id) => `gravatar${id}`
   }
+}
+
+type rawEventsEntity = {
+  @as("chain_id") chainId: int,
+  @as("event_id") eventId: Ethers.BigInt.t,
+  @as("block_number") blockNumber: int,
+  @as("log_index") logIndex: int,
+  @as("transaction_index") transactionIndex: int,
+  @as("transaction_hash") transactionHash: string,
+  @as("src_address") srcAddress: string,
+  @as("block_hash") blockHash: string,
+  @as("block_timestamp") blockTimestamp: int,
+  @as("event_type") eventType: Js.Json.t,
+  params: Js.Json.t,
 }
 
 @genType
@@ -68,7 +83,7 @@ type eventLog<'a> = {
 
 module GravatarContract = {
   module TestEventEvent = {
-    @genType
+    @spice @genType
     type eventArgs = {
       id: Ethers.BigInt.t,
       user: Ethers.ethAddress,
@@ -94,7 +109,7 @@ module GravatarContract = {
     type loaderContext = {}
   }
   module NewGravatarEvent = {
-    @genType
+    @spice @genType
     type eventArgs = {
       id: Ethers.BigInt.t,
       owner: Ethers.ethAddress,
@@ -121,7 +136,7 @@ module GravatarContract = {
     type loaderContext = {}
   }
   module UpdatedGravatarEvent = {
-    @genType
+    @spice @genType
     type eventArgs = {
       id: Ethers.BigInt.t,
       owner: Ethers.ethAddress,
@@ -171,10 +186,11 @@ type eventAndContext =
       GravatarContract.UpdatedGravatarEvent.context,
     )
 
+@spice
 type eventName =
-  | GravatarContract_TestEventEvent
-  | GravatarContract_NewGravatarEvent
-  | GravatarContract_UpdatedGravatarEvent
+  | @spice.as("GravatarContract_TestEventEvent") GravatarContract_TestEventEvent
+  | @spice.as("GravatarContract_NewGravatarEvent") GravatarContract_NewGravatarEvent
+  | @spice.as("GravatarContract_UpdatedGravatarEvent") GravatarContract_UpdatedGravatarEvent
 
 let eventNameToString = (eventName: eventName) =>
   switch eventName {

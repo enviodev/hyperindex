@@ -23,6 +23,35 @@ module InMemoryStore = {
     }
   }
 
+  module RawEvents = {
+    let rawEventsDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.rawEventsEntity>>> = ref(
+      Js.Dict.empty(),
+    )
+
+    let getRawEvents = (~id: string) => {
+      let row = Js.Dict.get(rawEventsDict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
+
+    let setRawEvents = (~rawEvents: Types.rawEventsEntity, ~crud: Types.crud) => {
+      let key = EventUtils.getEventIdKeyString(
+        ~chainId=rawEvents.chainId,
+        ~eventId=rawEvents.eventId,
+      )
+      let rawEventsCurrentCrud =
+        rawEventsDict.contents
+        ->Js.Dict.get(key)
+        ->Belt.Option.map(row => {
+          row.crud
+        })
+
+      rawEventsDict.contents->Js.Dict.set(
+        key,
+        {entity: rawEvents, crud: entityCurrentCrud(rawEventsCurrentCrud, crud)},
+      )
+    }
+  }
+
   module User = {
     let userDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.userEntity>>> = ref(Js.Dict.empty())
 
@@ -110,6 +139,38 @@ let createBatch = () => {
 }
 
 let executeBatch = async () => {
+  let rawEventsRows = InMemoryStore.RawEvents.rawEventsDict.contents->Js.Dict.values
+
+  let deleteRawEventsIdsPromise = () => {
+    let deleteRawEventsIds =
+      rawEventsRows
+      ->Belt.Array.keepMap(rawEventsRow =>
+        rawEventsRow.crud == Types.Delete ? Some(rawEventsRow.entity) : None
+      )
+      ->Belt.Array.map(rawEvents => (rawEvents.chainId, rawEvents.eventId))
+
+    if deleteRawEventsIds->Belt.Array.length > 0 {
+      DbFunctions.RawEvents.batchDeleteRawEvents(deleteRawEventsIds)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
+  let setRawEventsPromise = () => {
+    let setRawEvents =
+      rawEventsRows->Belt.Array.keepMap(rawEventsRow =>
+        rawEventsRow.crud == Types.Create || rawEventsRow.crud == Update
+          ? Some(rawEventsRow.entity)
+          : None
+      )
+
+    if setRawEvents->Belt.Array.length > 0 {
+      DbFunctions.RawEvents.batchSetRawEvents(setRawEvents)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
   let userRows = InMemoryStore.User.userDict.contents->Js.Dict.values
 
   let deleteUserIdsPromise = () => {
@@ -169,6 +230,8 @@ let executeBatch = async () => {
   }
 
   await [
+    deleteRawEventsIdsPromise(),
+    setRawEventsPromise(),
     deleteUserIdsPromise(),
     setUserPromise(),
     deleteGravatarIdsPromise(),

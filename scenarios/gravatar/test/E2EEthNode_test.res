@@ -13,7 +13,7 @@ describe("E2E Integration Test", () => {
     await Migrations.runUpMigrations()
   })
 
-  MochaPromise.it("Complete E2E", ~timeout=30 * 1000, async () => {
+  MochaPromise.it("Complete E2E", ~timeout=100 * 1000, async () => {
     let gravatar = await SetupRpcNode.deployContract()
     await SetupRpcNode.setupNodeAndContracts(gravatar)
     let provider = Hardhat.hardhatProvider

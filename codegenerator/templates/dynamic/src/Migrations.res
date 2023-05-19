@@ -8,7 +8,7 @@ module RawEventsTable = {
       CREATE TYPE EVENT_TYPE AS ENUM (
       {{#each contracts as | contract |}}
       {{#each contract.events as | event |}}
-      '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'
+      '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'{{#unless @last}},{{/unless}}
       {{/each}}
       {{#unless @last}},{{/unless}}
       {{/each}}
