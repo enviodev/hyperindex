@@ -62,27 +62,39 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
 
   module.exports.read{{entity.name.capitalized
   }}Entities = (entityIdArray) => sql`
-  SELECT *
+  SELECT ROW(
+  {{#each entity.params as |param|}}
+    "{{param.key}}"{{#unless @last}},{{/unless}}  
+    {{/each}}
+  ) AS entity,
+  ROW(event_chain_id, event_id) AS event_data
   FROM public.{{entity.name.uncapitalized
   }}
   WHERE id IN ${sql(entityIdArray)}`
 
   module.exports.batchSet{{entity.name.capitalized
   }} = (entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
   return sql`
     INSERT INTO public.{{entity.name.uncapitalized
   }}
-  ${sql(valueCopyToFixBigIntType,
+  ${sql(combinedEntityAndEventData,
   {{#each entity.params as |param|}}
     "{{param.key}}",
   {{/each}}
+    "event_chain_id",
+    "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
   {{#each entity.params as |param|}}
-    "{{param.key}}" = EXCLUDED."{{param.key}}"{{#unless @last}},{{/unless}}
+    "{{param.key}}" = EXCLUDED."{{param.key}}",
   {{/each}}
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
   ;`
   }
 

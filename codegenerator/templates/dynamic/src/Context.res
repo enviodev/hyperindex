@@ -6,7 +6,7 @@ module {{contract.name.capitalized}}Contract = {
 
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
-      getContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
+      getContext: (~eventData: Types.eventData) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
       getEntitiesToLoad: unit => array<Types.entityRead>
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
@@ -34,11 +34,11 @@ module {{contract.name.capitalized}}Contract = {
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
-        getContext: () => ({
+        getContext: (~eventData) => ({
           {{#each ../../entities as | entity |}}
             {{entity.name.uncapitalized}}: {
-              insert: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}} = entity, ~crud = Types.Create)},
-              update: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}} = entity, ~crud = Types.Update)},
+              insert: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity = entity, ~crud = Types.Create, ~eventData)},
+              update: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity = entity, ~crud = Types.Update, ~eventData)},
               delete: id => Js.Console.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
                 {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}

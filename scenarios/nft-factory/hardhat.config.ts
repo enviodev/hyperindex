@@ -18,7 +18,7 @@ const config: HardhatUserConfig = {
     localhost: {
       url: "http://127.0.0.1:8545",
       accounts: {
-        mnemonic: "test test test test test test test test test test test junk",
+        mnemonic: "test test test test test test test test test test test test",
       },
     },
   },

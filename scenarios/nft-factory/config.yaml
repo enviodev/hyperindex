@@ -2,7 +2,7 @@ version: 0.0.0
 description: NFT Factory
 repository: https://github.com/nft-factory
 networks:
-  - id: 1337
+  - id: 31337
     rpc_url: http://localhost:8545
     start_block: 0
     contracts:
