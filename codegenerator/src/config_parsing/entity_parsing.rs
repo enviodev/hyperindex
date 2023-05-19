@@ -1,5 +1,6 @@
 use crate::{
     capitalization::Capitalize, project_paths::ParsedPaths, EntityParamType, EntityRecordType,
+    EntityRelationalTypes,
 };
 use graphql_parser::schema::{Definition, Type, TypeDefinition};
 use std::collections::HashSet;
@@ -41,20 +42,25 @@ pub fn get_entity_record_types_from_schema(
     let mut entity_records = Vec::new();
     for object in schema_object_types.iter() {
         let mut params = Vec::new();
+        let mut relational_params = Vec::new();
         for field in object.fields.iter() {
             let param_type = gql_type_to_rescript_type(&field.field_type, &entities_set)?;
             let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
+            let relationship_type =
+                gql_type_to_postgres_relational_type(&field.name, &field.field_type, &entities_set);
 
             params.push(EntityParamType {
                 key: field.name.to_owned(),
                 type_rescript: param_type,
                 type_pg: param_pg_type,
-            })
+            });
+            relational_params.push(relationship_type);
         }
 
         entity_records.push(EntityRecordType {
             name: object.name.to_owned().to_capitalized_options(),
             params,
+            relational_params,
         })
     }
     Ok(entity_records)
@@ -104,6 +110,40 @@ fn gql_type_to_postgres_type(
         ),
     };
     Ok(composed_type_name)
+}
+
+fn gql_type_to_postgres_relational_type(
+    field_name: &String,
+    gql_type: &Type<String>,
+    entities_set: &HashSet<String>,
+) -> EntityRelationalTypes {
+    let entity_relation = match gql_type {
+        Type::NamedType(named) => {
+            let (is_entity_relationship, field_type) = if entities_set.contains(named) {
+                (true, named.clone())
+            } else {
+                (false, "scalar".to_owned())
+            };
+            EntityRelationalTypes {
+                is_entity_relationship,
+                relational_key: field_name.to_owned(),
+                mapped_entity: field_type.to_owned().to_capitalized_options(),
+                relationship_type: "object".to_owned(),
+            }
+        }
+        Type::ListType(_gql_type) => {
+            // NOTE: arrays are currently stored as text in the database, this is a temporary hack.
+            let mut relational_type =
+                gql_type_to_postgres_relational_type(&field_name, &_gql_type, &entities_set);
+
+            relational_type.relationship_type = "array".to_owned();
+            relational_type
+        }
+        Type::NonNullType(gql_type) => {
+            gql_type_to_postgres_relational_type(&field_name, &gql_type, entities_set)
+        }
+    };
+    entity_relation
 }
 
 fn gql_named_types_to_rescript_types(
@@ -185,7 +225,11 @@ fn gql_type_to_rescript_type(
 
 #[cfg(test)]
 mod tests {
-    use crate::entity_parsing::gql_type_to_rescript_type;
+    use crate::{
+        capitalization::Capitalize,
+        entity_parsing::{gql_type_to_postgres_relational_type, gql_type_to_rescript_type},
+        EntityRelationalTypes,
+    };
     use graphql_parser::schema::Type;
     use std::collections::HashSet;
 
@@ -245,5 +289,99 @@ mod tests {
         let result = gql_type_to_rescript_type(&gql_string_type, &entity_set).unwrap();
 
         assert_eq!(result, "option<id>".to_owned());
+    }
+
+    #[test]
+    fn gql_type_to_relational_type_scalar() {
+        let entity_set = HashSet::new();
+
+        let gql_object_type = Type::NamedType("Int".to_owned());
+        let field_name = String::from("testField1");
+        let result =
+            gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
+        let expect_output = EntityRelationalTypes {
+            is_entity_relationship: false,
+            relational_key: field_name,
+            mapped_entity: "scalar".to_owned().to_capitalized_options(),
+            relationship_type: "object".to_owned(),
+        };
+        assert_eq!(result, expect_output);
+    }
+
+    #[test]
+    fn gql_type_to_relational_type_entity() {
+        let mut entity_set = HashSet::new();
+        let test_entity_string = String::from("TestEntity");
+        entity_set.insert(test_entity_string.clone());
+        let gql_object_type = Type::NamedType(test_entity_string.clone());
+        let field_name = String::from("testField1");
+        let result =
+            gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
+        let expect_output = EntityRelationalTypes {
+            is_entity_relationship: true,
+            relational_key: field_name,
+            mapped_entity: test_entity_string.to_capitalized_options(),
+            relationship_type: "object".to_owned(),
+        };
+        assert_eq!(result, expect_output);
+    }
+
+    #[test]
+    fn gql_type_to_non_null_relational_type_entity() {
+        let mut entity_set = HashSet::new();
+        let test_entity_string = String::from("TestEntity");
+        entity_set.insert(test_entity_string.clone());
+        let gql_object_type =
+            Type::NonNullType(Box::new(Type::NamedType(test_entity_string.clone())));
+        let field_name = String::from("testField1");
+        let result =
+            gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
+        let expect_output = EntityRelationalTypes {
+            is_entity_relationship: true,
+            relational_key: field_name,
+            mapped_entity: test_entity_string.to_capitalized_options(),
+            relationship_type: "object".to_owned(),
+        };
+        assert_eq!(result, expect_output);
+    }
+
+    #[test]
+    fn gql_type_to_relational_type_array_entity() {
+        let mut entity_set = HashSet::new();
+        let test_entity_string = String::from("TestEntity");
+        entity_set.insert(test_entity_string.clone());
+        let gql_array_object_type =
+            Type::ListType(Box::new(Type::NamedType(test_entity_string.clone())));
+
+        let field_name = String::from("testField1");
+        let result =
+            gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
+        let expect_output = EntityRelationalTypes {
+            is_entity_relationship: true,
+            relational_key: field_name,
+            mapped_entity: test_entity_string.to_capitalized_options(),
+            relationship_type: "array".to_owned(),
+        };
+        assert_eq!(result, expect_output);
+    }
+    #[test]
+    fn gql_type_to_non_null_relational_type_array_entity() {
+        let mut entity_set = HashSet::new();
+        let test_entity_string = String::from("TestEntity");
+        entity_set.insert(test_entity_string.clone());
+        let gql_array_object_type = Type::NonNullType(Box::new(Type::ListType(Box::new(
+            Type::NonNullType(Box::new(Type::NamedType(test_entity_string.clone()))),
+        ))));
+
+        let field_name = String::from("testField1");
+        let result =
+            gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
+        let expect_output = EntityRelationalTypes {
+            is_entity_relationship: true,
+            relational_key: field_name,
+            mapped_entity: test_entity_string.to_capitalized_options(),
+            relationship_type: "array".to_owned(),
+        };
+        assert_eq!(result, expect_output);
     }
 }

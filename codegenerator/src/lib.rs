@@ -40,6 +40,14 @@ impl HasName for EventRecordType {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+struct EntityRelationalTypes {
+    is_entity_relationship: bool,
+    relational_key: String,
+    mapped_entity: CapitalizedOptions,
+    relationship_type: String,
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 struct EntityParamType {
     key: String,
     type_rescript: String,
@@ -49,6 +57,7 @@ struct EntityParamType {
 pub struct EntityRecordType {
     name: CapitalizedOptions,
     params: Vec<EntityParamType>,
+    relational_params: Vec<EntityRelationalTypes>,
 }
 
 impl HasName for EntityRecordType {
@@ -100,7 +109,6 @@ pub fn generate_templates(
     project_paths: &ProjectPaths,
 ) -> Result<(), Box<dyn Error>> {
     let mut handlebars = Handlebars::new();
-
     handlebars.set_strict_mode(true);
     handlebars.register_escape_fn(handlebars::no_escape);
 
@@ -119,114 +127,73 @@ pub fn generate_templates(
         codegen_out_path: gitignoer_path_str,
     };
 
-    let rendered_string_types = handlebars.render_template(
-        include_str!("../templates/dynamic/src/Types.res"),
-        &types_data,
-    )?;
-    let rendered_string_abi = handlebars.render_template(
-        include_str!("../templates/dynamic/src/Abis.res"),
-        &types_data,
-    )?;
+    let templates = [
+        (
+            "src/Types.res",
+            include_str!("../templates/dynamic/src/Types.res"),
+        ),
+        (
+            "src/Abis.res",
+            include_str!("../templates/dynamic/src/Abis.res"),
+        ),
+        (
+            "src/Handlers.res",
+            include_str!("../templates/dynamic/src/Handlers.res"),
+        ),
+        (
+            "src/DbFunctions.res",
+            include_str!("../templates/dynamic/src/DbFunctions.res"),
+        ),
+        (
+            "src/EventProcessing.res",
+            include_str!("../templates/dynamic/src/EventProcessing.res"),
+        ),
+        (
+            "src/Config.res",
+            include_str!("../templates/dynamic/src/Config.res"),
+        ),
+        (
+            "src/IO.res",
+            include_str!("../templates/dynamic/src/IO.res"),
+        ),
+        (
+            "src/Converters.res",
+            include_str!("../templates/dynamic/src/Converters.res"),
+        ),
+        (
+            "src/EventSyncing.res",
+            include_str!("../templates/dynamic/src/EventSyncing.res"),
+        ),
+        (
+            "src/Context.res",
+            include_str!("../templates/dynamic/src/Context.res"),
+        ),
+        (
+            "register_tables_with_hasura.sh",
+            include_str!("../templates/dynamic/register_tables_with_hasura.sh"),
+        ),
+        (
+            ".gitignore",
+            include_str!("../templates/dynamic/.gitignore"),
+        ),
+        (
+            "src/RegisterHandlers.res",
+            include_str!("../templates/dynamic/src/RegisterHandlers.res"),
+        ),
+        (
+            "src/Migrations.res",
+            include_str!("../templates/dynamic/src/Migrations.res"),
+        ),
+        (
+            "src/DbFunctionsImplementation.js",
+            include_str!("../templates/dynamic/src/DbFunctionsImplementation.js.hbs"),
+        ),
+    ];
 
-    let rendered_string_handlers = handlebars.render_template(
-        include_str!("../templates/dynamic/src/Handlers.res"),
-        &types_data,
-    )?;
-
-    let rendered_string_register_handlers = handlebars.render_template(
-        include_str!("../templates/dynamic/src/RegisterHandlers.res"),
-        &types_data,
-    )?;
-
-    let rendered_string_db_functions = handlebars.render_template(
-        include_str!("../templates/dynamic/src/DbFunctions.res"),
-        &types_data,
-    )?;
-    let rendered_string_event_processing = handlebars.render_template(
-        include_str!("../templates/dynamic/src/EventProcessing.res"),
-        &types_data,
-    )?;
-    let rendered_string_config = handlebars.render_template(
-        include_str!("../templates/dynamic/src/Config.res"),
-        &types_data,
-    )?;
-    let rendered_string_io =
-        handlebars.render_template(include_str!("../templates/dynamic/src/IO.res"), &types_data)?;
-    let rendered_string_converters = handlebars.render_template(
-        include_str!("../templates/dynamic/src/Converters.res"),
-        &types_data,
-    )?;
-    let rendered_string_event_syncing = handlebars.render_template(
-        include_str!("../templates/dynamic/src/EventSyncing.res"),
-        &types_data,
-    )?;
-    let rendered_string_context = handlebars.render_template(
-        include_str!("../templates/dynamic/src/Context.res"),
-        &types_data,
-    )?;
-    let rendered_string_register_tables_with_hasura = handlebars.render_template(
-        include_str!("../templates/dynamic/register_tables_with_hasura.sh"),
-        &types_data,
-    )?;
-    let rendered_string_gitignore =
-        handlebars.render_template(include_str!("../templates/dynamic/.gitignore"), &types_data)?;
-    let rendered_string_migrations = handlebars.render_template(
-        include_str!("../templates/dynamic/src/Migrations.res"),
-        &types_data,
-    )?;
-    let rendered_string_db_funcitons_implementation = handlebars.render_template(
-        include_str!("../templates/dynamic/src/DbFunctionsImplementation.js.hbs"),
-        &types_data,
-    )?;
-
-    write_to_file_in_generated(".gitignore", &rendered_string_gitignore, project_paths)?;
-    write_to_file_in_generated("src/Types.res", &rendered_string_types, project_paths)?;
-    write_to_file_in_generated("src/Config.res", &rendered_string_config, project_paths)?;
-    write_to_file_in_generated("src/Abis.res", &rendered_string_abi, project_paths)?;
-    write_to_file_in_generated("src/Handlers.res", &rendered_string_handlers, project_paths)?;
-    write_to_file_in_generated(
-        "src/RegisterHandlers.res",
-        &rendered_string_register_handlers,
-        project_paths,
-    )?;
-
-    write_to_file_in_generated(
-        "src/DbFunctions.res",
-        &rendered_string_db_functions,
-        project_paths,
-    )?;
-    write_to_file_in_generated(
-        "src/EventProcessing.res",
-        &rendered_string_event_processing,
-        project_paths,
-    )?;
-    write_to_file_in_generated("src/IO.res", &rendered_string_io, project_paths)?;
-    write_to_file_in_generated(
-        "src/Converters.res",
-        &rendered_string_converters,
-        project_paths,
-    )?;
-    write_to_file_in_generated(
-        "src/EventSyncing.res",
-        &rendered_string_event_syncing,
-        project_paths,
-    )?;
-    write_to_file_in_generated("src/Context.res", &rendered_string_context, project_paths)?;
-    write_to_file_in_generated(
-        "register_tables_with_hasura.sh",
-        &rendered_string_register_tables_with_hasura,
-        project_paths,
-    )?;
-    write_to_file_in_generated(
-        "src/Migrations.res",
-        &rendered_string_migrations,
-        project_paths,
-    )?;
-    write_to_file_in_generated(
-        "src/DbFunctionsImplementation.js",
-        &rendered_string_db_funcitons_implementation,
-        project_paths,
-    )?;
+    for (template_path, template_content) in &templates {
+        let rendered_string = handlebars.render_template(template_content, &types_data)?;
+        write_to_file_in_generated(template_path, &rendered_string, project_paths)?;
+    }
 
     make_file_executable("register_tables_with_hasura.sh", project_paths)?;
 

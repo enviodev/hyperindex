@@ -1,0 +1,12 @@
+type Account @entity {
+  id: ID!
+  address: Bytes!
+  balance: Float!
+  depositCount: Int!
+  withdrawalCount: Int!
+}
+
+type Bank @entity {
+  id: ID!
+  totalBalance: Float!
+}

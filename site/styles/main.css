@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import "./_fonts.css";
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* todo */
+@import url("https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;500;700&display=swap"); 
+
+body {}
+
+/* Stop firefox from putting this style on button when focused */
+button::-moz-focus-inner {
+  border: 0;
+}
