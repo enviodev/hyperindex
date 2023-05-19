@@ -18,6 +18,36 @@ var gravatarEntity2 = {
   updatesCount: 1
 };
 
+var mockEventData1_event_id = BigInt(456);
+
+var mockEventData1 = {
+  event_chain_id: 123,
+  event_id: mockEventData1_event_id
+};
+
+var mockEventData2_event_id = BigInt(789);
+
+var mockEventData2 = {
+  event_chain_id: 123,
+  event_id: mockEventData2_event_id
+};
+
+var mockInMemRow1 = {
+  crud: /* Create */0,
+  entity: gravatarEntity1,
+  eventData: mockEventData1
+};
+
+var mockInMemRow2 = {
+  crud: /* Create */0,
+  entity: gravatarEntity2,
+  eventData: mockEventData2
+};
+
 exports.gravatarEntity1 = gravatarEntity1;
 exports.gravatarEntity2 = gravatarEntity2;
-/* No side effect */
+exports.mockEventData1 = mockEventData1;
+exports.mockEventData2 = mockEventData2;
+exports.mockInMemRow1 = mockInMemRow1;
+exports.mockInMemRow2 = mockInMemRow2;
+/* mockEventData1 Not a pure module */
