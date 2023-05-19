@@ -130,7 +130,7 @@ let queryEventsWithCombinedFilterAndExecuteHandlers = async (
       ~chainId,
     )
 
-  events->EventProcessing.processEventBatch
+  events->EventProcessing.processEventBatch(~chainId)
 }
 
 let getAllEventFilters = (
