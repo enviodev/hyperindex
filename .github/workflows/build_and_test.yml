@@ -84,6 +84,7 @@ jobs:
         working-directory: scenarios/gravatar
         run: |
           pnpm install
+          pnpm hardhat compile --verbose
           pnpm build
 
       - name: gravatar test
@@ -103,14 +104,14 @@ jobs:
           pnpm install
           pnpm build
 
-      - name: nftFactory codegen
-        working-directory: scenarios/nftFactory/nft-indexer
+      - name: nft-factory codegen
+        working-directory: scenarios/nft-factory
         run: |
           pnpm codegen
           pnpm install
           pnpm build
 
       - name: nftFactory test
-        working-directory: scenarios/nftFactory/nft-indexer
+        working-directory: scenarios/nft-factory
         run: |
           pnpm test

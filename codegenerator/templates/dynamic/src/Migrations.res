@@ -3,7 +3,20 @@ let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have 
 module RawEventsTable = {
   let createRawEventsTable: unit => promise<unit> = async () => {
     @warning("-21")
-    await (
+    let _ = await (
+      %raw("sql`
+      CREATE TYPE EVENT_TYPE AS ENUM (
+      {{#each contracts as | contract |}}
+      {{#each contract.events as | event |}}
+      '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'{{#unless @last}},{{/unless}}
+      {{/each}}
+      {{#unless @last}},{{/unless}}
+      {{/each}}
+      );
+      `")
+    )
+    @warning("-21")
+    let _ = await (
       %raw("sql`
       CREATE TABLE public.raw_events (
         chain_id INTEGER NOT NULL,
@@ -15,10 +28,11 @@ module RawEventsTable = {
         src_address TEXT NOT NULL,
         block_hash TEXT NOT NULL,
         block_timestamp INTEGER NOT NULL,
+        event_type EVENT_TYPE NOT NULL,
         params JSON NOT NULL,
         PRIMARY KEY (chain_id, event_id)
       );
-  `")
+      `")
     )
   }
 

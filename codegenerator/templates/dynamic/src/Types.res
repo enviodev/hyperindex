@@ -8,6 +8,7 @@ type id = string
 //nested subrecord types
 
 {{#each sub_record_dependencies as | subrecord |}}
+  @spice
    type {{subrecord.name.uncapitalized}} = {
     {{#each subrecord.params as | param |}}
       {{param.key}}: {{param.type_rescript}},
@@ -40,6 +41,7 @@ type rawEventsEntity = {
   @as("src_address") srcAddress: string,
   @as("block_hash") blockHash: string,
   @as("block_timestamp") blockTimestamp: int,
+  @as("event_type") eventType: Js.Json.t,
   params: Js.Json.t,
 }
 
@@ -148,10 +150,11 @@ type eventAndContext =
 {{/each}}
 {{/each}}
 
+@spice
 type eventName =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+  | @spice.as("{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event") {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
 {{/each}}
 {{/each}}
 

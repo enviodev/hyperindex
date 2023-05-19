@@ -2,9 +2,11 @@
 'use strict';
 
 var IO = require("generated/src/IO.bs.js");
+var Config = require("generated/src/Config.bs.js");
 var DbStub = require("./__mocks__/DbStub.bs.js");
 var Js_dict = require("rescript/lib/js/js_dict.js");
 var Belt_Array = require("rescript/lib/js/belt_Array.js");
+var Caml_array = require("rescript/lib/js/caml_array.js");
 var MockEvents = require("./__mocks__/MockEvents.bs.js");
 var ContextMock = require("./__mocks__/ContextMock.bs.js");
 var DbFunctions = require("generated/src/DbFunctions.bs.js");
@@ -15,12 +17,16 @@ var Mocha$RescriptMocha = require("rescript-mocha/src/Mocha.bs.js");
 var Assert$RescriptMocha = require("rescript-mocha/src/Assert.bs.js");
 var Promise$RescriptMocha = require("rescript-mocha/src/Promise.bs.js");
 
+var chainId = Caml_array.get(Js_dict.values(Config.config), 0).chainId;
+
 Mocha$RescriptMocha.describe("E2E Mock Event Batch")(undefined, undefined, undefined, (function (param) {
         Mocha$RescriptMocha.before(undefined)(undefined, undefined, undefined, (function (param) {
                 RegisterHandlers.registerAllHandlers(undefined);
                 DbStub.setGravatarDb(MockEntities.gravatarEntity1);
                 DbStub.setGravatarDb(MockEntities.gravatarEntity2);
-                Belt_Array.forEach(MockEvents.eventBatchWithContext, EventProcessing.eventRouter);
+                Belt_Array.forEach(MockEvents.eventBatchWithContext, (function ($$event) {
+                        EventProcessing.eventRouter($$event, chainId);
+                      }));
               }));
         Mocha$RescriptMocha.after(undefined)(undefined, undefined, undefined, (function (param) {
                 ContextMock.insertMock.reset();
@@ -54,7 +60,7 @@ Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (f
                       MockEntities.gravatarEntity1,
                       MockEntities.gravatarEntity2
                     ]);
-                return await EventProcessing.processEventBatch(MockEvents.eventBatch);
+                return await EventProcessing.processEventBatch(MockEvents.eventBatch, chainId);
               }));
         Mocha$RescriptMocha.it("Validate inmemory store state")(undefined, undefined, undefined, (function (param) {
                 var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;
@@ -103,4 +109,5 @@ var before_promise = Promise$RescriptMocha.before;
 exports.it_promise = it_promise;
 exports.it_skip_promise = it_skip_promise;
 exports.before_promise = before_promise;
-/*  Not a pure module */
+exports.chainId = chainId;
+/* chainId Not a pure module */

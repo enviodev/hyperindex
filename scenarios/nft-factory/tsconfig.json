@@ -6,11 +6,13 @@
     "allowJs": true,
     "checkJs": false,
     "outDir": "build",
-    "rootDirs": ["src", "generated", "test"],
+    "rootDirs": ["src", "generated", "test", "contracts/typechain-types"],
     "strict": true,
     "noImplicitAny": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true
-  }
+  },
+  "include": ["src"],
+  "files": ["./hardhat.config.ts"]
 }
