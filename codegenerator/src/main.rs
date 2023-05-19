@@ -128,18 +128,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .wait()?;
 
             println!("generate db migrations");
-
-            Command::new("pnpm")
-                .arg("db-migrate")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
+            if !args.skip_db_provision {
+                Command::new("pnpm")
+                    .arg("db-migrate")
+                    .current_dir(&project_paths.generated)
+                    .spawn()?
+                    .wait()?;
+            } else {
+                println!("skipping db migration")
+            }
 
             Ok(())
-        },
-        CommandType::PrintAllHelp {  } => {
-			clap_markdown::print_help_markdown::<CommandLineArgs>();
+        }
+        CommandType::PrintAllHelp {} => {
+            clap_markdown::print_help_markdown::<CommandLineArgs>();
             Ok(())
-		},
+        }
     }
 }
