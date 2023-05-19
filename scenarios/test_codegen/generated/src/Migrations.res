@@ -1,21 +1,19 @@
 let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have the correct type */)
 
 module RawEventsTable = {
-  type rawEventsTableRow = {
-    @as("chain_id") chainId: int,
-    @as("event_id") eventId: Ethers.BigInt.t,
-    @as("block_number") blockNumber: int,
-    @as("log_index") logIndex: int,
-    @as("transaction_index") transactionIndex: int,
-    @as("transaction_hash") transactionHash: string,
-    @as("src_address") srcAddress: string,
-    @as("block_hash") blockHash: string,
-    @as("block_timestamp") blockTimestamp: int,
-    params: Js.Json.t,
-  }
+  let createRawEventsTable: unit => promise<unit> = async () => {
+    @warning("-21")
+    let _ = await %raw("sql`
+      CREATE TYPE EVENT_TYPE AS ENUM (
+      'GravatarContract_TestEventEvent',
+      'GravatarContract_NewGravatarEvent',
+      'GravatarContract_UpdatedGravatarEvent'
+      
+      );
+      `")
 
-  let createRawEventsTable = async () => {
-    await %raw("sql`
+    @warning("-21")
+    let _ = await %raw("sql`
       CREATE TABLE public.raw_events (
         chain_id INTEGER NOT NULL,
         event_id NUMERIC NOT NULL,
@@ -26,10 +24,11 @@ module RawEventsTable = {
         src_address TEXT NOT NULL,
         block_hash TEXT NOT NULL,
         block_timestamp INTEGER NOT NULL,
+        event_type EVENT_TYPE NOT NULL,
         params JSON NOT NULL,
         PRIMARY KEY (chain_id, event_id)
       );
-  `")
+      `")
   }
 
   let dropRawEventsTable = async () => {

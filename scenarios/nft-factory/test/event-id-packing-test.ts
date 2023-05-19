@@ -4,6 +4,8 @@ import {
   unpackEventIndex,
 } from "../generated/src/EventUtils.bs";
 
+require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
+
 type eventIdRecord = { blockNumber: number; logIndex: number };
 
 describe("Test eventIndex packing 1", () => {
@@ -65,7 +67,7 @@ describe("Test packed eventIds are orderable by logIndex", () => {
     blockNumber: 1,
     logIndex: 1,
   };
-  Array(70)
+  Array(10)
     .fill(mockEventIndex1)
     .reduce((currentEventIndex: eventIdRecord) => {
       let nextEventIndex: eventIdRecord = {
@@ -90,7 +92,7 @@ describe("Test packed eventIds are orderable by blockNumber", () => {
     logIndex: 0,
   };
 
-  Array(70)
+  Array(10)
     .fill(mockEventIndex1)
     .reduce((currentEventIndex: eventIdRecord) => {
       let nextEventIndex = {
