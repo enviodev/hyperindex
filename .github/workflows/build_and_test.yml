@@ -51,6 +51,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Cache (hardhat) Solidity
+        id: cache-hardhat-solidity
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/hardhat-nodejs
+          key: ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.js') }}
+          restore-keys: |
+            ${{ runner.os }}-solidity-hardhat-
+
       - uses: pnpm/action-setup@v2
         with:
           version: 8
