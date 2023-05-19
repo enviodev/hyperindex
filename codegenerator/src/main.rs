@@ -96,6 +96,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             Command::new("pnpm")
                 .arg("install")
+                .arg("--no-frozen-lockfile")
                 .current_dir(&project_paths.generated)
                 .spawn()?
                 .wait()?;

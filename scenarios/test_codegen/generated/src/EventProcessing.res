@@ -1,17 +1,71 @@
-let eventRouter = (event: Types.eventAndContext) => {
+let addEventToRawEvents = (
+  event: Types.eventLog<'a>,
+  ~chainId,
+  ~jsonSerializedParams: Js.Json.t,
+  ~eventName: Types.eventName,
+) => {
+  let {
+    blockNumber,
+    logIndex,
+    transactionIndex,
+    transactionHash,
+    srcAddress,
+    blockHash,
+    blockTimestamp,
+  } = event
+
+  let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+  let rawEvent: Types.rawEventsEntity = {
+    chainId,
+    eventId,
+    blockNumber,
+    logIndex,
+    transactionIndex,
+    transactionHash,
+    srcAddress,
+    blockHash,
+    blockTimestamp,
+    eventType: eventName->Types.eventName_encode,
+    params: jsonSerializedParams,
+  }
+
+  IO.InMemoryStore.RawEvents.setRawEvents(~rawEvents=rawEvent, ~crud=Create)
+}
+let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   switch event {
-  | GravatarContract_TestEventWithContext(
-      event,
-      context,
-    ) => Handlers.GravatarContract.getTestEventHandler()(~event, ~context)
-  | GravatarContract_NewGravatarWithContext(
-      event,
-      context,
-    ) => Handlers.GravatarContract.getNewGravatarHandler()(~event, ~context)
-  | GravatarContract_UpdatedGravatarWithContext(
-      event,
-      context,
-    ) => Handlers.GravatarContract.getUpdatedGravatarHandler()(~event, ~context)
+  | GravatarContract_TestEventWithContext(event, context) => {
+      let jsonSerializedParams =
+        event.params->Types.GravatarContract.TestEventEvent.eventArgs_encode
+      event->addEventToRawEvents(
+        ~chainId,
+        ~jsonSerializedParams,
+        ~eventName=GravatarContract_TestEventEvent,
+      )
+
+      Handlers.GravatarContract.getTestEventHandler()(~event, ~context)
+    }
+  | GravatarContract_NewGravatarWithContext(event, context) => {
+      let jsonSerializedParams =
+        event.params->Types.GravatarContract.NewGravatarEvent.eventArgs_encode
+      event->addEventToRawEvents(
+        ~chainId,
+        ~jsonSerializedParams,
+        ~eventName=GravatarContract_NewGravatarEvent,
+      )
+
+      Handlers.GravatarContract.getNewGravatarHandler()(~event, ~context)
+    }
+  | GravatarContract_UpdatedGravatarWithContext(event, context) => {
+      let jsonSerializedParams =
+        event.params->Types.GravatarContract.UpdatedGravatarEvent.eventArgs_encode
+      event->addEventToRawEvents(
+        ~chainId,
+        ~jsonSerializedParams,
+        ~eventName=GravatarContract_UpdatedGravatarEvent,
+      )
+
+      Handlers.GravatarContract.getUpdatedGravatarHandler()(~event, ~context)
+    }
   }
 }
 
@@ -73,12 +127,12 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
   contexts
 }
 
-let processEventBatch = async (eventBatch: array<Types.event>) => {
+let processEventBatch = async (eventBatch: array<Types.event>, ~chainId) => {
   let ioBatch = IO.createBatch()
 
   let eventBatchAndContext = await eventBatch->loadReadEntities
 
-  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter)
+  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter(~chainId))
 
   await ioBatch->IO.executeBatch
 }

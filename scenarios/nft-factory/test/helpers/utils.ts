@@ -28,3 +28,8 @@ export const runFunctionNoLogs = async (func: () => any) => {
 };
 
 export const runMigrationsNoLogs = () => runFunctionNoLogs(runMigrationsNoExit);
+
+export enum EventVariants {
+  NftFactoryContract_SimpleNftCreatedEvent,
+  SimpleNftContract_TransferEvent,
+}

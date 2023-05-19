@@ -1,26 +1,22 @@
+//LIBRARIES
+import hre from "hardhat";
+import { expect } from "chai";
+
+//CODEGEN
 import { nftFactoryAbi, simpleNftAbi } from "../generated/src/Abis.bs";
 import { registerAllHandlers } from "../generated/src/RegisterHandlers.bs";
 import { processAllEvents } from "../generated/src/EventSyncing.bs";
-import postgres from "postgres";
 
+//HELPERS
 import {
   Users,
   createNftFromFactory,
   deployNftFactory,
   mintSimpleNft,
 } from "./helpers/node-and-contracts";
-import { runMigrationsNoLogs } from "./helpers/utils";
-
-import hre from "hardhat";
-import { sql } from "./helpers/utils";
-import { expect } from "chai";
+import { runMigrationsNoLogs, sql, EventVariants } from "./helpers/utils";
 
 require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
-
-enum EventVariants {
-  NftFactoryContract_SimpleNftCreatedEvent,
-  SimpleNftContract_TransferEvent,
-}
 
 describe("Raw Events Integration", () => {
   before(async () => {
@@ -30,7 +26,8 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async () => {
+  it("RawEvents table contains rows after indexer runs", async function() {
+    this.timeout(30 * 1000);
     console.log("deploying Nft Factory");
     const deployedNftFactory = await deployNftFactory();
     const nftFactoryContractAddress = await deployedNftFactory.getAddress();
@@ -99,5 +96,7 @@ describe("Raw Events Integration", () => {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
 
     expect(rawEventsRows.count).to.be.gt(0);
+
+    console.log(rawEventsRows);
   });
 });

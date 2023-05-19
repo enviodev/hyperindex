@@ -1,6 +1,4 @@
-let addEventToRawEvents = (event: Types.eventLog<'a>, ~jsonSerializedParams: Js.Json.t) => {
-  let chainId = 137 //TODO: add this to eventLog type
-
+let addEventToRawEvents = (event: Types.eventLog<'a>, ~chainId, ~jsonSerializedParams: Js.Json.t, ~eventName: Types.eventName) => {
   let {
     blockNumber,
     logIndex,
@@ -22,18 +20,20 @@ let addEventToRawEvents = (event: Types.eventLog<'a>, ~jsonSerializedParams: Js.
     srcAddress,
     blockHash,
     blockTimestamp,
+    eventType: eventName->Types.eventName_encode,
     params: jsonSerializedParams,
   }
 
   IO.InMemoryStore.RawEvents.setRawEvents(~rawEvents=rawEvent, ~crud=Create)
 }
-let eventRouter = (event: Types.eventAndContext) => {
+let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   switch event {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context) => {
   let jsonSerializedParams = event.params->Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode
-  event->addEventToRawEvents(~jsonSerializedParams)
+  event->addEventToRawEvents(~chainId, ~jsonSerializedParams, ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+)
 
   Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}Handler()(~event, ~context)
   }
@@ -73,12 +73,12 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
   contexts
 }
 
-let processEventBatch = async (eventBatch: array<Types.event>) => {
+let processEventBatch = async (eventBatch: array<Types.event>, ~chainId) => {
   let ioBatch = IO.createBatch()
 
   let eventBatchAndContext = await eventBatch->loadReadEntities
 
-  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter)
+  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter(~chainId))
 
   await ioBatch->IO.executeBatch
 }
