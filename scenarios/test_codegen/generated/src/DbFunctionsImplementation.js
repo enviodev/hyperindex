@@ -59,24 +59,36 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
   // db operations for User:
 
   module.exports.readUserEntities = (entityIdArray) => sql`
-  SELECT *
+  SELECT ROW(
+    "id",  
+    "address",  
+    "gravatar"  
+  ) AS entity,
+  ROW(event_chain_id, event_id) AS event_data
   FROM public.user
   WHERE id IN ${sql(entityIdArray)}`
 
   module.exports.batchSetUser = (entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
   return sql`
     INSERT INTO public.user
-  ${sql(valueCopyToFixBigIntType,
+  ${sql(combinedEntityAndEventData,
     "id",
     "address",
     "gravatar",
+    "event_chain_id",
+    "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
     "id" = EXCLUDED."id",
     "address" = EXCLUDED."address",
-    "gravatar" = EXCLUDED."gravatar"
+    "gravatar" = EXCLUDED."gravatar",
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
   ;`
   }
 
@@ -89,20 +101,32 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
   // db operations for Gravatar:
 
   module.exports.readGravatarEntities = (entityIdArray) => sql`
-  SELECT *
+  SELECT ROW(
+    "id",  
+    "owner",  
+    "displayName",  
+    "imageUrl",  
+    "updatesCount"  
+  ) AS entity,
+  ROW(event_chain_id, event_id) AS event_data
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)}`
 
   module.exports.batchSetGravatar = (entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
   return sql`
     INSERT INTO public.gravatar
-  ${sql(valueCopyToFixBigIntType,
+  ${sql(combinedEntityAndEventData,
     "id",
     "owner",
     "displayName",
     "imageUrl",
     "updatesCount",
+    "event_chain_id",
+    "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
@@ -110,7 +134,9 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
     "owner" = EXCLUDED."owner",
     "displayName" = EXCLUDED."displayName",
     "imageUrl" = EXCLUDED."imageUrl",
-    "updatesCount" = EXCLUDED."updatesCount"
+    "updatesCount" = EXCLUDED."updatesCount",
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
   ;`
   }
 

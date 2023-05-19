@@ -60,9 +60,15 @@ type entity =
 
 type crud = Create | Read | Update | Delete
 
+type eventData = {
+  @as("event_chain_id") chainId: int,
+  @as("event_id") eventId: Ethers.BigInt.t,
+}
+
 type inMemoryStoreRow<'a> = {
   crud: crud,
   entity: 'a,
+  eventData: eventData,
 }
 
 //*************
