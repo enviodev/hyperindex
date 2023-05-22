@@ -65,7 +65,7 @@ describe("Raw Events Integration", () => {
     const localChainConfig = {
       provider,
       startBlock: 0,
-      chainId: 31337,
+      chainId: 1337,
       contracts: [
         {
           name: "NftFactory",

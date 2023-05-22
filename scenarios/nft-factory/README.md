@@ -21,7 +21,7 @@ networks:
     contracts:
       - name: Gravatar
         abi_file_path: abis/gravatar-abi.json
-        address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+        address: ["0x3E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         handler: ./src/EventHandlers.bs.js
         events:
           - name: "NewGravatar"

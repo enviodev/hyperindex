@@ -11,17 +11,16 @@ pub struct CommandLineArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandType {
-    
     ///Initialize a project with a template
     Init(InitArgs),
-    
+
     ///Generate code from a config.yaml file
     Codegen(CodegenArgs),
 
     ///Print help into a markdown file
     ///Command to run: cargo run -- print-all-help > CommandLineHelp.md
     #[clap(hide = true)]
-	PrintAllHelp
+    PrintAllHelp,
 }
 
 pub const DEFAULT_PROJECT_ROOT_PATH: &str = "./";
@@ -41,6 +40,9 @@ pub struct CodegenArgs {
     ///The file in the project containing config.
     #[arg(short, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
+    /// skip database provisioning [default: false]
+    #[arg(short, long, action, env)]
+    pub skip_db_provision: bool, //environment variable: SKIP_DB_PROVISION=
 }
 
 #[derive(Args, Debug)]
