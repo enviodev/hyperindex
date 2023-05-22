@@ -56,7 +56,7 @@ jobs:
         uses: actions/cache@v2
         with:
           path: ~/.cache/hardhat-nodejs
-          key: ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.js') }}
+          key: ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.config.*s') }}
           restore-keys: |
             ${{ runner.os }}-solidity-hardhat-
 
