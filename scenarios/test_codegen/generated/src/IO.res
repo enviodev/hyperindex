@@ -123,15 +123,19 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
 
   let userEntitiesArray = await DbFunctions.User.readUserEntities(Js.Dict.values(uniqueUserDict))
 
-  userEntitiesArray->Belt.Array.forEach(user => InMemoryStore.User.setUser(~user, ~crud=Types.Read))
+  userEntitiesArray->Belt.Array.forEach(userSerialized => {
+    let user = userSerialized->Types.deserializeUserEntity
+    InMemoryStore.User.setUser(~user, ~crud=Types.Read)
+  })
 
   let gravatarEntitiesArray = await DbFunctions.Gravatar.readGravatarEntities(
     Js.Dict.values(uniqueGravatarDict),
   )
 
-  gravatarEntitiesArray->Belt.Array.forEach(gravatar =>
+  gravatarEntitiesArray->Belt.Array.forEach(gravatarSerialized => {
+    let gravatar = gravatarSerialized->Types.deserializeGravatarEntity
     InMemoryStore.Gravatar.setGravatar(~gravatar, ~crud=Types.Read)
-  )
+  })
 }
 
 let createBatch = () => {
@@ -188,7 +192,9 @@ let executeBatch = async () => {
   let setUserPromise = () => {
     let setUser =
       userRows->Belt.Array.keepMap(userRow =>
-        userRow.crud == Types.Create || userRow.crud == Update ? Some(userRow.entity) : None
+        userRow.crud == Types.Create || userRow.crud == Update
+          ? Some(userRow.entity->Types.serializeUserEntity)
+          : None
       )
 
     if setUser->Belt.Array.length > 0 {
@@ -218,7 +224,7 @@ let executeBatch = async () => {
     let setGravatar =
       gravatarRows->Belt.Array.keepMap(gravatarRow =>
         gravatarRow.crud == Types.Create || gravatarRow.crud == Update
-          ? Some(gravatarRow.entity)
+          ? Some(gravatarRow.entity->Types.serializeGravatarEntity)
           : None
       )
 

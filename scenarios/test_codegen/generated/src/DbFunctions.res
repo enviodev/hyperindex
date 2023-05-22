@@ -15,23 +15,24 @@ module RawEvents = {
 
 module User = {
   @module("./DbFunctionsImplementation.js")
-  external batchSetUser: array<Types.userEntity> => promise<unit> = "batchSetUser"
+  external batchSetUser: array<Types.userEntitySerialized> => promise<unit> = "batchSetUser"
 
   @module("./DbFunctionsImplementation.js")
   external batchDeleteUser: array<Types.id> => promise<unit> = "batchDeleteUser"
 
   @module("./DbFunctionsImplementation.js")
-  external readUserEntities: array<Types.id> => promise<array<Types.userEntity>> =
+  external readUserEntities: array<Types.id> => promise<array<Types.userEntitySerialized>> =
     "readUserEntities"
 }
 module Gravatar = {
   @module("./DbFunctionsImplementation.js")
-  external batchSetGravatar: array<Types.gravatarEntity> => promise<unit> = "batchSetGravatar"
+  external batchSetGravatar: array<Types.gravatarEntitySerialized> => promise<unit> =
+    "batchSetGravatar"
 
   @module("./DbFunctionsImplementation.js")
   external batchDeleteGravatar: array<Types.id> => promise<unit> = "batchDeleteGravatar"
 
   @module("./DbFunctionsImplementation.js")
-  external readGravatarEntities: array<Types.id> => promise<array<Types.gravatarEntity>> =
+  external readGravatarEntities: array<Types.id> => promise<array<Types.gravatarEntitySerialized>> =
     "readGravatarEntities"
 }

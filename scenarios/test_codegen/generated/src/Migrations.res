@@ -54,7 +54,7 @@ module User = {
 module Gravatar = {
   let createGravatarTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"gravatar\" (\"id\" text  NOT NULL,\"owner\" text  NOT NULL,\"displayName\" text  NOT NULL,\"imageUrl\" text  NOT NULL,\"updatesCount\" integer  NOT NULL,UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"gravatar\" (\"id\" text  NOT NULL,\"owner\" text  NOT NULL,\"displayName\" text  NOT NULL,\"imageUrl\" text  NOT NULL,\"updatesCount\" integer  NOT NULL,\"bigIntTest\" numeric  NOT NULL,\"bigIntOption\" numeric,UNIQUE (\"id\"));`"
     )
   }
 

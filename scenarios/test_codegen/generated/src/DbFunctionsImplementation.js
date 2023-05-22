@@ -103,6 +103,8 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
     "displayName",
     "imageUrl",
     "updatesCount",
+    "bigIntTest",
+    "bigIntOption",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
@@ -110,7 +112,9 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
     "owner" = EXCLUDED."owner",
     "displayName" = EXCLUDED."displayName",
     "imageUrl" = EXCLUDED."imageUrl",
-    "updatesCount" = EXCLUDED."updatesCount"
+    "updatesCount" = EXCLUDED."updatesCount",
+    "bigIntTest" = EXCLUDED."bigIntTest",
+    "bigIntOption" = EXCLUDED."bigIntOption"
   ;`
   }
 

@@ -10,4 +10,6 @@ type Gravatar @entity {
   displayName: String!
   imageUrl: String!
   updatesCount: Int!
+  bigIntTest: BigInt!
+  bigIntOption: BigInt
 }

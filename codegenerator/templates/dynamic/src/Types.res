@@ -53,6 +53,30 @@ type {{entity.name.uncapitalized}}Entity = {
   {{/each}}
 }
 
+type {{entity.name.uncapitalized}}EntitySerialized = {
+  {{#each entity.params as | param |}}
+  {{param.key}} : {{#if (eq param.type_rescript "Ethers.BigInt.t")}} string{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}} option<string>{{else}}{{param.type_rescript}}{{/if}}{{/if}},
+  {{/each}}
+}
+
+let serialize{{entity.name.capitalized}}Entity = (entity: {{entity.name.uncapitalized}}Entity ): {{entity.name.uncapitalized}}EntitySerialized => {
+  {
+    {{#each entity.params as | param |}}
+    {{param.key}} : entity.{{param.key}}{{#if (eq param.type_rescript "Ethers.BigInt.t")}}->Ethers.BigInt.toString{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}}->Belt.Option.map(opt =>
+      opt->Ethers.BigInt.toString){{/if}}{{/if}},
+    {{/each}}
+  }
+}
+
+let deserialize{{entity.name.capitalized}}Entity  = (entitySerialized: {{entity.name.uncapitalized}}EntitySerialized): {{entity.name.uncapitalized}}Entity => {
+  {
+    {{#each entity.params as | param |}}
+    {{param.key}} : entitySerialized.{{param.key}}{{#if  (eq param.type_rescript "Ethers.BigInt.t")}}->Ethers.BigInt.fromStringUnsafe{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}}->Belt.Option.map(opt =>
+      opt->Ethers.BigInt.fromStringUnsafe){{/if}}{{/if}},
+    {{/each}}
+  }
+}
+
 {{/each}}
 type entity = 
 {{#each entities as | entity |}}

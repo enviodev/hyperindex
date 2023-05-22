@@ -5,6 +5,7 @@ var Curry = require("rescript/lib/js/curry.js");
 var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Handlers = require("generated/src/Handlers.bs.js");
 var Belt_Option = require("rescript/lib/js/belt_Option.js");
+var Caml_option = require("rescript/lib/js/caml_option.js");
 
 Handlers.GravatarContract.registerNewGravatarLoadEntities(function (param, param$1) {
       
@@ -16,7 +17,9 @@ Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context)
             owner: Ethers.ethAddressToString($$event.params.owner),
             displayName: $$event.params.displayName,
             imageUrl: $$event.params.imageUrl,
-            updatesCount: 1
+            updatesCount: 1,
+            bigIntTest: BigInt(1),
+            bigIntOption: Caml_option.some(BigInt(1))
           });
     });
 
@@ -33,7 +36,9 @@ Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, cont
             owner: Ethers.ethAddressToString($$event.params.owner),
             displayName: $$event.params.displayName,
             imageUrl: $$event.params.imageUrl,
-            updatesCount: updatesCount
+            updatesCount: updatesCount,
+            bigIntTest: BigInt(1),
+            bigIntOption: Caml_option.some(BigInt(1))
           });
     });
 
