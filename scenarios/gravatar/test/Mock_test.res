@@ -55,20 +55,26 @@ describe("E2E Mock Event Batch", () => {
 
 describe("E2E Db check", () => {
   before_promise(async () => {
+    let _ = await DbFunctions.Gravatar.batchSetGravatar([
+      MockEntities.mockInMemRow1,
+      MockEntities.mockInMemRow2,
+    ])
     await MockEvents.eventBatch->EventProcessing.processEventBatch(~chainId)
+    //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
+    // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
+    // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
+    // await EventProcessing.processEventBatch(MockEvents.eventBatch, ~context=Context.getContext())
   })
 
   // TODO: work out why this test works locally, but not in pipeline!
   it("Validate inmemory store state", () => {
     let inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents
     let inMemoryStoreRows = inMemoryStore->Js.Dict.values
-    Js.log2("Rows length", inMemoryStoreRows->Belt.Array.length)
-    Js.log2("Actual rows", inMemoryStoreRows)
     Assert.deep_equal(
       inMemoryStoreRows,
       [
         {
-          crud: Create, // TODO: fix these tests, it should be an 'Update' here.
+          crud: Update, // TODO: fix these tests, it should be an 'Update' here.
           eventData: {
             chainId: 1337,
             eventId: 65537->Ethers.BigInt.fromInt,
@@ -82,7 +88,7 @@ describe("E2E Db check", () => {
           },
         },
         {
-          crud: Create,
+          crud: Update,
           eventData: {
             chainId: 1337,
             eventId: 65537->Ethers.BigInt.fromInt,

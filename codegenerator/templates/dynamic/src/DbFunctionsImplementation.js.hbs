@@ -62,14 +62,13 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
 
   module.exports.read{{entity.name.capitalized
   }}Entities = (entityIdArray) => sql`
-  SELECT ROW(
+  SELECT 
   {{#each entity.params as |param|}}
-    "{{param.key}}"{{#unless @last}},{{/unless}}  
-    {{/each}}
-  ) AS entity,
-  ROW(event_chain_id, event_id) AS event_data
-  FROM public.{{entity.name.uncapitalized
-  }}
+  "{{param.key}}",
+  {{/each}}
+  event_chain_id, 
+  event_id
+  FROM public.{{entity.name.uncapitalized}}
   WHERE id IN ${sql(entityIdArray)}`
 
   module.exports.batchSet{{entity.name.capitalized

@@ -9,6 +9,7 @@ var Belt_Array = require("rescript/lib/js/belt_Array.js");
 var Caml_array = require("rescript/lib/js/caml_array.js");
 var MockEvents = require("./__mocks__/MockEvents.bs.js");
 var ContextMock = require("./__mocks__/ContextMock.bs.js");
+var DbFunctions = require("generated/src/DbFunctions.bs.js");
 var MockEntities = require("./__mocks__/MockEntities.bs.js");
 var EventProcessing = require("generated/src/EventProcessing.bs.js");
 var RegisterHandlers = require("generated/src/RegisterHandlers.bs.js");
@@ -55,16 +56,18 @@ Mocha$RescriptMocha.describe("E2E Mock Event Batch")(undefined, undefined, undef
 
 Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (function (param) {
         Promise$RescriptMocha.before(undefined)(undefined, undefined, undefined, (async function (param) {
+                await DbFunctions.Gravatar.batchSetGravatar([
+                      MockEntities.mockInMemRow1,
+                      MockEntities.mockInMemRow2
+                    ]);
                 return await EventProcessing.processEventBatch(MockEvents.eventBatch, chainId);
               }));
         Mocha$RescriptMocha.it("Validate inmemory store state")(undefined, undefined, undefined, (function (param) {
                 var inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents;
                 var inMemoryStoreRows = Js_dict.values(inMemoryStore);
-                console.log("Rows length", inMemoryStoreRows.length);
-                console.log("Actual rows", inMemoryStoreRows);
                 Assert$RescriptMocha.deep_equal(undefined, inMemoryStoreRows, [
                       {
-                        crud: /* Create */0,
+                        crud: /* Update */2,
                         entity: {
                           id: "1001",
                           owner: "0x1230000000000000000000000000000000000000",
@@ -78,7 +81,7 @@ Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (f
                         }
                       },
                       {
-                        crud: /* Create */0,
+                        crud: /* Update */2,
                         entity: {
                           id: "1002",
                           owner: "0x4560000000000000000000000000000000000000",

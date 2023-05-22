@@ -109,8 +109,11 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
     Js.Dict.values(unique{{entity.name.capitalized}}Dict),
   )
 
-  {{entity.name.uncapitalized}}EntitiesArray->Belt.Array.forEach(({entity, eventData}) =>
-    InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~crud=Types.Read)
+  {{entity.name.uncapitalized}}EntitiesArray->Belt.Array.forEach((readRow) =>
+    {
+      let {entity, eventData} = readRow->DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData
+      InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~crud=Types.Read)
+    }
   )
 
   {{/each}}
