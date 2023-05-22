@@ -61,9 +61,5 @@ module {{entity.name.capitalized}} = {
   @module("./DbFunctionsImplementation.js")
   external read{{entity.name.capitalized}}Entities: array<Types.id> => promise<array<{{entity.name.uncapitalized}}ReadRow>> = "read{{entity.name.capitalized}}Entities"
 
-  // let read{{entity.name.capitalized}}Entities: array<Types.id> => promise<array<readEntityEventData<Types.{{entity.name.uncapitalized}}Entity>>> = async (idArr) => {
-  // let res = await idArr->read{{entity.name.capitalized}}EntitiesUnclen
-  // res->Belt.Array.map(uncleanItem => uncleanItem->readEntityDataToInMemRow(~entityConverter=readTypeToInMemRow))
-  // }
 }
 {{/each}}
