@@ -1,8 +1,5 @@
-import {
-  runDownMigrations,
-  runUpMigrations,
-} from "../generated/src/Migrations.bs";
 import { eventName_encode } from "../generated/src/Types.bs";
+import { mockRawEventRow } from "./helpers/mocks";
 import { runMigrationsNoLogs, sql, EventVariants } from "./helpers/utils";
 import chai, { expect } from "chai";
 import chaiAsPromised from "chai-as-promised";
@@ -43,29 +40,15 @@ describe("Raw Events Table Migrations", () => {
   });
 
   it("Inserting 2 rows with the the same pk should fail", async () => {
-    const mockRow = {
-      chain_id: 1,
-      event_id: 1234567890,
-      block_number: 1000,
-      log_index: 10,
-      transaction_index: 20,
-      transaction_hash: "0x1234567890abcdef",
-      src_address: "0x0123456789abcdef0123456789abcdef0123456",
-      block_hash: "0x9876543210fedcba9876543210fedcba987654321",
-      event_type: eventName_encode(
-        EventVariants.NftFactoryContract_SimpleNftCreatedEvent
-      ),
-      block_timestamp: 1620720000,
-      params: {
-        foo: "bar",
-        baz: 42,
-      },
-    };
-    let first_valid_row_query = sql`INSERT INTO raw_events ${sql(mockRow)}`;
+    let first_valid_row_query = sql`INSERT INTO raw_events ${sql(
+      mockRawEventRow
+    )}`;
 
     await expect(first_valid_row_query).to.eventually.be.fulfilled;
 
-    let second_valid_row_query = sql`INSERT INTO raw_events ${sql(mockRow)}`;
+    let second_valid_row_query = sql`INSERT INTO raw_events ${sql(
+      mockRawEventRow
+    )}`;
 
     await expect(second_valid_row_query).to.eventually.be.rejected;
   });
