@@ -1,17 +1,27 @@
+let config: Postgres.poolConfig = {
+  ...Config.db,
+  transform: {undefined: Js.null},
+}
+let sql = Postgres.makeSql(~config)
+
 type chainId = int
 type eventId = Ethers.BigInt.t
 
 module RawEvents = {
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")
-  external batchSetRawEvents: array<Types.rawEventsEntity> => promise<unit> = "batchSetRawEvents"
+  external batchSetRawEvents: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> =
+    "batchSetRawEvents"
 
   @module("./DbFunctionsImplementation.js")
-  external batchDeleteRawEvents: array<rawEventRowId> => promise<unit> = "batchDeleteRawEvents"
+  external batchDeleteRawEvents: (Postgres.sql, array<rawEventRowId>) => promise<unit> =
+    "batchDeleteRawEvents"
 
   @module("./DbFunctionsImplementation.js")
-  external readRawEventsEntities: array<rawEventRowId> => promise<array<Types.rawEventsEntity>> =
-    "readRawEventsEntities"
+  external readRawEventsEntities: (
+    Postgres.sql,
+    array<rawEventRowId>,
+  ) => promise<array<Types.rawEventsEntity>> = "readRawEventsEntities"
 }
 
 type readEntityData<'a> = {
@@ -46,19 +56,17 @@ module User = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSetUser: array<Types.inMemoryStoreRow<Types.userEntity>> => promise<unit> =
-    "batchSetUser"
+  external batchSetUser: (
+    Postgres.sql,
+    array<Types.inMemoryStoreRow<Types.userEntity>>,
+  ) => promise<unit> = "batchSetUser"
 
   @module("./DbFunctionsImplementation.js")
-  external batchDeleteUser: array<Types.id> => promise<unit> = "batchDeleteUser"
+  external batchDeleteUser: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteUser"
 
   @module("./DbFunctionsImplementation.js")
-  external readUserEntities: array<Types.id> => promise<array<userReadRow>> = "readUserEntities"
-
-  // let readUserEntities: array<Types.id> => promise<array<readEntityEventData<Types.userEntity>>> = async (idArr) => {
-  // let res = await idArr->readUserEntitiesUnclen
-  // res->Belt.Array.map(uncleanItem => uncleanItem->readEntityDataToInMemRow(~entityConverter=readTypeToInMemRow))
-  // }
+  external readUserEntities: (Postgres.sql, array<Types.id>) => promise<array<userReadRow>> =
+    "readUserEntities"
 }
 module Gravatar = {
   open Types
@@ -93,18 +101,18 @@ module Gravatar = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSetGravatar: array<Types.inMemoryStoreRow<Types.gravatarEntity>> => promise<unit> =
-    "batchSetGravatar"
+  external batchSetGravatar: (
+    Postgres.sql,
+    array<Types.inMemoryStoreRow<Types.gravatarEntity>>,
+  ) => promise<unit> = "batchSetGravatar"
 
   @module("./DbFunctionsImplementation.js")
-  external batchDeleteGravatar: array<Types.id> => promise<unit> = "batchDeleteGravatar"
+  external batchDeleteGravatar: (Postgres.sql, array<Types.id>) => promise<unit> =
+    "batchDeleteGravatar"
 
   @module("./DbFunctionsImplementation.js")
-  external readGravatarEntities: array<Types.id> => promise<array<gravatarReadRow>> =
-    "readGravatarEntities"
-
-  // let readGravatarEntities: array<Types.id> => promise<array<readEntityEventData<Types.gravatarEntity>>> = async (idArr) => {
-  // let res = await idArr->readGravatarEntitiesUnclen
-  // res->Belt.Array.map(uncleanItem => uncleanItem->readEntityDataToInMemRow(~entityConverter=readTypeToInMemRow))
-  // }
+  external readGravatarEntities: (
+    Postgres.sql,
+    array<Types.id>,
+  ) => promise<array<gravatarReadRow>> = "readGravatarEntities"
 }
