@@ -126,17 +126,19 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
 
   let userEntitiesArray = await DbFunctions.User.readUserEntities(Js.Dict.values(uniqueUserDict))
 
-  userEntitiesArray->Belt.Array.forEach(({entity, eventData}) =>
+  userEntitiesArray->Belt.Array.forEach(readRow => {
+    let {entity, eventData} = readRow->DbFunctions.User.readRowToReadEntityData
     InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
-  )
+  })
 
   let gravatarEntitiesArray = await DbFunctions.Gravatar.readGravatarEntities(
     Js.Dict.values(uniqueGravatarDict),
   )
 
-  gravatarEntitiesArray->Belt.Array.forEach(({entity, eventData}) =>
+  gravatarEntitiesArray->Belt.Array.forEach(readRow => {
+    let {entity, eventData} = readRow->DbFunctions.Gravatar.readRowToReadEntityData
     InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
-  )
+  })
 }
 
 let createBatch = () => {

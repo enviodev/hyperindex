@@ -13,23 +13,6 @@ module RawEvents = {
   external readRawEventsEntities: array<rawEventRowId> => promise<array<Types.rawEventsEntity>> =
     "readRawEventsEntities"
 }
-  // {
-  //   crud: 0,
-  //   entity: {
-  //     id: '1003',
-  //     owner: '0x7890000000000000000000000000000000000000',
-  //     displayName: 'update3',
-  //     imageUrl: 'https://gravatar3.com',
-  //     updatesCount: 2
-  //   },
-  //   eventData: { event_chain_id: 1337, event_id: 65537n }
-  // },
-  // {
-  //   crud: 1,
-  //   entity: '(1002,0x678,gravatar2,https://gravatar2.com,1)',
-  //   eventData: undefined
-  // }
-
 
 type readEntityData<'a> = {
    entity: 'a,

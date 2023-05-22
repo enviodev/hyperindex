@@ -59,12 +59,12 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
   // db operations for User:
 
   module.exports.readUserEntities = (entityIdArray) => sql`
-  SELECT ROW(
-    "id",  
-    "address",  
-    "gravatar"  
-  ) AS entity,
-  ROW(event_chain_id, event_id) AS event_data
+  SELECT 
+  "id",
+  "address",
+  "gravatar",
+  event_chain_id, 
+  event_id
   FROM public.user
   WHERE id IN ${sql(entityIdArray)}`
 
@@ -101,14 +101,14 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
   // db operations for Gravatar:
 
   module.exports.readGravatarEntities = (entityIdArray) => sql`
-  SELECT ROW(
-    "id",  
-    "owner",  
-    "displayName",  
-    "imageUrl",  
-    "updatesCount"  
-  ) AS entity,
-  ROW(event_chain_id, event_id) AS event_data
+  SELECT 
+  "id",
+  "owner",
+  "displayName",
+  "imageUrl",
+  "updatesCount",
+  event_chain_id, 
+  event_id
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)}`
 
