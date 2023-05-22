@@ -40,9 +40,9 @@ pub struct CodegenArgs {
     ///The file in the project containing config.
     #[arg(short, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
-
-    #[arg(short, long, action)]
-    pub skip_db_provision: bool,
+    /// skip database provisioning [default: false]
+    #[arg(short, long, action, env)]
+    pub skip_db_provision: bool, //environment variable: SKIP_DB_PROVISION=
 }
 
 #[derive(Args, Debug)]
