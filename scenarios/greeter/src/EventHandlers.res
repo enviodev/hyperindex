@@ -1,10 +1,10 @@
 open Types
 
-Handlers.GreeterContract.registerGreetingLoadEntities((~event as _, ~context as _) => {
+Handlers.GreeterContract.registerNewGreetingLoadEntities((~event as _, ~context as _) => {
   ()
 })
 
-Handlers.GreeterContract.registerGreetingHandler((~event, ~context) => {
+Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
   let greetingObject: greetingEntity = {
     id: event.block.timestamp,
     message: event.params.greeting,    
@@ -12,3 +12,30 @@ Handlers.GreeterContract.registerGreetingHandler((~event, ~context) => {
 
   context.greeting.insert(greetingObject)
 })
+
+Handlers.GreeterContract.registerUpdateGreetingLoadEntities((~event as _, ~context as _) => {
+  ()
+})
+
+Handlers.GreeterContract.registerUpdateGreetingHandler((~event, ~context) => {
+  let greetingObject: greetingEntity = {
+    id: event.block.timestamp,
+    message: event.params.greeting,    
+  }
+
+  context.greeting.insert(greetingObject)
+})
+
+Handlers.GreeterContract.registerUpdateGreetingLoadEntities((~event, ~context) => {
+  ()
+})
+
+Handlers.GreeterContract.registerUpdateGreetingHandler((~event, ~context) => {
+  let greetingObject: greetingEntity = {
+    id: event.block.timestamp,
+    message: event.params.greeting,    
+  }
+
+  context.greeting.update(greetingObject)
+})
+

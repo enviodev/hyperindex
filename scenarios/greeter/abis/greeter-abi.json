@@ -20,7 +20,20 @@
         "type": "string"
       }
     ],
-    "name": "Greeting",
+    "name": "NewGreeting",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "greeting",
+        "type": "string"
+      }
+    ],
+    "name": "UpdateGreeting",
     "type": "event"
   },
   {

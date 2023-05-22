@@ -8,11 +8,13 @@ error GreeterError();
 contract Greeter {
     string public greeting;
 
-    event Greeting(string greeting);
+    event NewGreeting(string greeting);
+    event UpdateGreeting(string greeting);
 
     constructor(string memory _greeting) {
         console.log("Deploying a Greeter with greeting:", _greeting);
         greeting = _greeting;
+        emit NewGreeting(_greeting);
     }
 
     function greet() public view returns (string memory) {
@@ -22,7 +24,7 @@ contract Greeter {
     function setGreeting(string memory _greeting) public {
         console.log("Changing greeting from '%s' to '%s'", greeting, _greeting);
         greeting = _greeting;
-        emit Greeting(_greeting);
+        emit UpdateGreeting(greeting);
     }
 
     function throwError() external pure {

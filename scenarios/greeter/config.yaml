@@ -11,5 +11,10 @@ networks:
         address: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"]
         handler: ./src/EventHandlers.bs.js
         events:
-          - name: "Greeting"
-            requiredEntities: [] # empty signifies no requirements
+          - name: "NewGreeting"
+            requiredEntities: []
+          - name: "UpdateGreeting"
+            requiredEntities:
+              - name: "Greeting"
+                labels:
+                  - "greetingWithChanges"
