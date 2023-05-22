@@ -47,7 +47,7 @@ fn abi_type_to_rescript_string(
         ethereum_abi::Type::Address => String::from("Ethers.ethAddress"),
         ethereum_abi::Type::Bytes => String::from("string"),
         ethereum_abi::Type::String => String::from("string"),
-        ethereum_abi::Type::FixedBytes(_) => String::from("type_not_handled"),
+        ethereum_abi::Type::FixedBytes(_) => String::from("string"),
         ethereum_abi::Type::Array(abi_type) => {
             let sub_param = EthereumEventParam {
                 abi_type: &abi_type,
