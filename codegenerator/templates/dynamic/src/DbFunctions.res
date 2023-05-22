@@ -38,6 +38,7 @@ type readEntityData<'a> = {
 
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
+  open Types
   type {{entity.name.uncapitalized}}ReadRow = {
   {{#each entity.params as |param|}}
      {{param.key}}: {{param.type_rescript}}, 
