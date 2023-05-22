@@ -70,17 +70,15 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
 
   let readEntities = readEntitiesGrouped->Belt.Array.concatMany
 
-  await readEntities->IO.loadEntities
+  await DbFunctions.sql->IO.loadEntities(readEntities)
 
   contexts
 }
 
 let processEventBatch = async (eventBatch: array<Types.event>, ~chainId) => {
-  let ioBatch = IO.createBatch()
-
   let eventBatchAndContext = await eventBatch->loadReadEntities(~chainId)
 
   eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter(~chainId))
 
-  await ioBatch->IO.executeBatch
+  await DbFunctions.sql->IO.executeBatch
 }
