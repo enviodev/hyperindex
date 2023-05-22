@@ -4,7 +4,7 @@ module GravatarContract = {
 
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.GravatarContract.TestEventEvent.loaderContext,
-      getContext: unit => Types.GravatarContract.TestEventEvent.context,
+      getContext: (~eventData: Types.eventData) => Types.GravatarContract.TestEventEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
@@ -14,19 +14,23 @@ module GravatarContract = {
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
-        getContext: () => {
+        getContext: (~eventData) => {
           user: {
-            insert: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Create)},
-            update: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Update)},
+            insert: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Update, ~eventData)
+            },
             delete: id =>
               Js.Console.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
           },
           gravatar: {
             insert: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Create)
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Create, ~eventData)
             },
             update: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Update, ~eventData)
             },
             delete: id =>
               Js.Console.warn(
@@ -42,7 +46,7 @@ module GravatarContract = {
 
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.GravatarContract.NewGravatarEvent.loaderContext,
-      getContext: unit => Types.GravatarContract.NewGravatarEvent.context,
+      getContext: (~eventData: Types.eventData) => Types.GravatarContract.NewGravatarEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
@@ -52,19 +56,23 @@ module GravatarContract = {
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
-        getContext: () => {
+        getContext: (~eventData) => {
           user: {
-            insert: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Create)},
-            update: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Update)},
+            insert: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Update, ~eventData)
+            },
             delete: id =>
               Js.Console.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
           },
           gravatar: {
             insert: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Create)
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Create, ~eventData)
             },
             update: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Update, ~eventData)
             },
             delete: id =>
               Js.Console.warn(
@@ -80,7 +88,9 @@ module GravatarContract = {
 
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.GravatarContract.UpdatedGravatarEvent.loaderContext,
-      getContext: unit => Types.GravatarContract.UpdatedGravatarEvent.context,
+      getContext: (
+        ~eventData: Types.eventData,
+      ) => Types.GravatarContract.UpdatedGravatarEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
     let contextCreator: unit => contextCreatorFunctions = () => {
@@ -100,19 +110,23 @@ module GravatarContract = {
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
-        getContext: () => {
+        getContext: (~eventData) => {
           user: {
-            insert: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Create)},
-            update: entity => {IO.InMemoryStore.User.setUser(~user=entity, ~crud=Types.Update)},
+            insert: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Update, ~eventData)
+            },
             delete: id =>
               Js.Console.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
           },
           gravatar: {
             insert: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Create)
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Create, ~eventData)
             },
             update: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~gravatar=entity, ~crud=Types.Update)
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Update, ~eventData)
             },
             delete: id =>
               Js.Console.warn(
