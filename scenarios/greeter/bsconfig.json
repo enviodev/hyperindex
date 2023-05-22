@@ -1,0 +1,15 @@
+{
+  "name": "gravatar",
+  "version": "0.1.0",
+  "sources": {
+    "dir": "src",
+    "subdirs": true
+  },
+  "suffix": ".bs.js",
+  "package-specs": {
+    "module": "commonjs",
+    "in-source": true
+  },
+  "bs-dependencies": ["generated","@ryyppy/rescript-promise"],
+  "pinned-dependencies": ["generated"]
+}

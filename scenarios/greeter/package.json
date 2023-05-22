@@ -1,0 +1,22 @@
+{
+  "name": "gravatar",
+  "version": "0.1.0",
+  "scripts": {
+    "clean": "rescript clean -with-deps",
+    "build": "rescript build -with-deps",
+    "start": "node generated/src/Index.bs.js",
+    "watch": "rescript build -w -with-deps"
+  },
+  "keywords": [
+    "ReScript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "rescript": "^10.1.2",
+    "@ryyppy/rescript-promise": "^2.1.0"
+  },
+  "dependencies": {
+    "generated": "workspace:*"
+  }
+}
