@@ -60,7 +60,6 @@ module {{entity.name.capitalized}} = {
   external batchDelete{{entity.name.capitalized}}: array<Types.id> => promise<(unit)> = "batchDelete{{entity.name.capitalized}}"
 
   @module("./DbFunctionsImplementation.js")
-  //external read{{entity.name.capitalized}}Entities: array<Types.id> => promise<array<Types.{{entity.name.uncapitalized}}EntitySerialized>> = "read{{entity.name.capitalized}}Entities"
   external read{{entity.name.capitalized}}Entities: array<Types.id> => promise<array<{{entity.name.uncapitalized}}ReadRow>> = "read{{entity.name.capitalized}}Entities"
 
   // let read{{entity.name.capitalized}}Entities: array<Types.id> => promise<array<readEntityEventData<Types.{{entity.name.uncapitalized}}Entity>>> = async (idArr) => {

@@ -126,11 +126,6 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
 
   let userEntitiesArray = await DbFunctions.User.readUserEntities(Js.Dict.values(uniqueUserDict))
 
-  // userEntitiesArray->Belt.Array.forEach(userSerialized =>
-  // {
-  //   let user = userSerialized->Types.deserializeUserEntity
-  //   InMemoryStore.User.setUser(~user, ~crud=Types.Read)
-  // }
   userEntitiesArray->Belt.Array.forEach(readRow => {
     let {entity, eventData} = readRow->DbFunctions.User.readRowToReadEntityData
     InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
@@ -140,11 +135,6 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
     Js.Dict.values(uniqueGravatarDict),
   )
 
-  // gravatarEntitiesArray->Belt.Array.forEach(gravatarSerialized =>
-  // {
-  //   let gravatar = gravatarSerialized->Types.deserializeGravatarEntity
-  //   InMemoryStore.Gravatar.setGravatar(~gravatar, ~crud=Types.Read)
-  // }
   gravatarEntitiesArray->Belt.Array.forEach(readRow => {
     let {entity, eventData} = readRow->DbFunctions.Gravatar.readRowToReadEntityData
     InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)

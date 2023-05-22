@@ -54,8 +54,7 @@ module User = {
   external batchDeleteUser: array<Types.id> => promise<unit> = "batchDeleteUser"
 
   @module("./DbFunctionsImplementation.js")
-  external //external readUserEntities: array<Types.id> => promise<array<Types.userEntitySerialized>> = "readUserEntities"
-  readUserEntities: array<Types.id> => promise<array<userReadRow>> = "readUserEntities"
+  external readUserEntities: array<Types.id> => promise<array<userReadRow>> = "readUserEntities"
 
   // let readUserEntities: array<Types.id> => promise<array<readEntityEventData<Types.userEntity>>> = async (idArr) => {
   // let res = await idArr->readUserEntitiesUnclen
@@ -98,8 +97,8 @@ module Gravatar = {
         displayName,
         imageUrl,
         updatesCount,
-        bigIntTest: bigIntTest->Ethers.BigInt.toString,
-        bigIntOption: bigIntOption->Belt.Option.map(opt => opt->Ethers.BigInt.toString),
+        bigIntTest: bigIntTest->Ethers.BigInt.fromStringUnsafe,
+        bigIntOption: bigIntOption->Belt.Option.map(opt => opt->Ethers.BigInt.fromStringUnsafe),
       },
       eventData: {
         chainId,
@@ -117,8 +116,8 @@ module Gravatar = {
   external batchDeleteGravatar: array<Types.id> => promise<unit> = "batchDeleteGravatar"
 
   @module("./DbFunctionsImplementation.js")
-  external //external readGravatarEntities: array<Types.id> => promise<array<Types.gravatarEntitySerialized>> = "readGravatarEntities"
-  readGravatarEntities: array<Types.id> => promise<array<gravatarReadRow>> = "readGravatarEntities"
+  external readGravatarEntities: array<Types.id> => promise<array<gravatarReadRow>> =
+    "readGravatarEntities"
 
   // let readGravatarEntities: array<Types.id> => promise<array<readEntityEventData<Types.gravatarEntity>>> = async (idArr) => {
   // let res = await idArr->readGravatarEntitiesUnclen
