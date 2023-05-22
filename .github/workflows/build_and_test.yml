@@ -1,10 +1,10 @@
-name: Build & Test
+name: Build & Test Scenario
 
-on: 
+on:
   pull_request:
     paths:
-      - 'codegenerator'
-      - 'scenarios'
+      - "codegenerator/**"
+      - "scenarios/**"
 
 defaults:
   run:
@@ -51,6 +51,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
+      - name: Cache (hardhat) Solidity
+        id: cache-hardhat-solidity
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/hardhat-nodejs
+          key: ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.js') }}
+          restore-keys: |
+            ${{ runner.os }}-solidity-hardhat-
+
       - uses: pnpm/action-setup@v2
         with:
           version: 8
@@ -79,6 +88,11 @@ jobs:
         working-directory: scenarios/gravatar
         run: |
           pnpm codegen
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.15.0
 
       - name: gravatar build
         working-directory: scenarios/gravatar
@@ -111,7 +125,7 @@ jobs:
           pnpm install
           pnpm build
 
-      - name: nftFactory test
+      - name: nft-factory test
         working-directory: scenarios/nft-factory
         run: |
           pnpm test
