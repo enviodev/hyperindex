@@ -11,8 +11,8 @@
     "gen:build": "(cd generated && rescript build)",
     "gen:watch": "(cd generated && rescript build -w)",
     "start": "tsc --build && node build/generated/src/Index.bs.js",
-    "codegen-fuji": "cargo run --manifest-path ../../../codegenerator/Cargo.toml -- codegen -c config.fuji.yaml",
-    "codegen": "cargo run --manifest-path ../../../codegenerator/Cargo.toml -- codegen"
+    "codegen-fuji": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen -c config.fuji.yaml",
+    "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen"
   },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
@@ -30,7 +30,9 @@
     "mocha-reporter": "^0.1.1",
     "postgres": "^3.3.4",
     "ts-node": "^10.9.1",
-    "typescript": "^5.0.4"
+    "typescript": "^5.0.4",
+    "hardhat-abi-exporter": "^2.10.1",
+    "hardhat-deploy": "^0.11.26"
   },
   "dependencies": {
     "generated": "workspace:*"
