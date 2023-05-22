@@ -1,7 +1,4 @@
-type Gravatar @entity {
+type Greeting @entity {
   id: ID!
-  owner: Bytes!
-  displayName: String!
-  imageUrl: String!
-  updatesCount: Int!
+  message: String!
 }
