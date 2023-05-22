@@ -59,14 +59,6 @@ let serializeUserEntity = (entity: userEntity): userEntitySerialized => {
   }
 }
 
-let deserializeUserEntity = (entitySerialized: userEntitySerialized): userEntity => {
-  {
-    id: entitySerialized.id,
-    address: entitySerialized.address,
-    gravatar: entitySerialized.gravatar,
-  }
-}
-
 @genType
 type gravatarEntity = {
   id: string,
@@ -100,29 +92,21 @@ let serializeGravatarEntity = (entity: gravatarEntity): gravatarEntitySerialized
   }
 }
 
-let deserializeGravatarEntity = (entitySerialized: gravatarEntitySerialized): gravatarEntity => {
-  {
-    id: entitySerialized.id,
-    owner: entitySerialized.owner,
-    displayName: entitySerialized.displayName,
-    imageUrl: entitySerialized.imageUrl,
-    updatesCount: entitySerialized.updatesCount,
-    bigIntTest: entitySerialized.bigIntTest->Ethers.BigInt.fromStringUnsafe,
-    bigIntOption: entitySerialized.bigIntOption->Belt.Option.map(opt =>
-      opt->Ethers.BigInt.fromStringUnsafe
-    ),
-  }
-}
-
 type entity =
   | UserEntity(userEntity)
   | GravatarEntity(gravatarEntity)
 
 type crud = Create | Read | Update | Delete
 
+type eventData = {
+  @as("event_chain_id") chainId: int,
+  @as("event_id") eventId: Ethers.BigInt.t,
+}
+
 type inMemoryStoreRow<'a> = {
   crud: crud,
   entity: 'a,
+  eventData: eventData,
 }
 
 //*************

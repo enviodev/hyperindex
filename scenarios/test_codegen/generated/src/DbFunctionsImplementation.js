@@ -59,24 +59,36 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
   // db operations for User:
 
   module.exports.readUserEntities = (entityIdArray) => sql`
-  SELECT *
+  SELECT 
+  "id",
+  "address",
+  "gravatar",
+  event_chain_id, 
+  event_id
   FROM public.user
   WHERE id IN ${sql(entityIdArray)}`
 
   module.exports.batchSetUser = (entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
   return sql`
     INSERT INTO public.user
-  ${sql(valueCopyToFixBigIntType,
+  ${sql(combinedEntityAndEventData,
     "id",
     "address",
     "gravatar",
+    "event_chain_id",
+    "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
     "id" = EXCLUDED."id",
     "address" = EXCLUDED."address",
-    "gravatar" = EXCLUDED."gravatar"
+    "gravatar" = EXCLUDED."gravatar",
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
   ;`
   }
 
@@ -89,15 +101,27 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
   // db operations for Gravatar:
 
   module.exports.readGravatarEntities = (entityIdArray) => sql`
-  SELECT *
+  SELECT 
+  "id",
+  "owner",
+  "displayName",
+  "imageUrl",
+  "updatesCount",
+  "bigIntTest",
+  "bigIntOption",
+  event_chain_id, 
+  event_id
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)}`
 
   module.exports.batchSetGravatar = (entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
   return sql`
     INSERT INTO public.gravatar
-  ${sql(valueCopyToFixBigIntType,
+  ${sql(combinedEntityAndEventData,
     "id",
     "owner",
     "displayName",
@@ -105,6 +129,8 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
     "updatesCount",
     "bigIntTest",
     "bigIntOption",
+    "event_chain_id",
+    "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
@@ -114,7 +140,9 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
     "imageUrl" = EXCLUDED."imageUrl",
     "updatesCount" = EXCLUDED."updatesCount",
     "bigIntTest" = EXCLUDED."bigIntTest",
-    "bigIntOption" = EXCLUDED."bigIntOption"
+    "bigIntOption" = EXCLUDED."bigIntOption",
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
   ;`
   }
 

@@ -68,15 +68,6 @@ let serialize{{entity.name.capitalized}}Entity = (entity: {{entity.name.uncapita
   }
 }
 
-let deserialize{{entity.name.capitalized}}Entity  = (entitySerialized: {{entity.name.uncapitalized}}EntitySerialized): {{entity.name.uncapitalized}}Entity => {
-  {
-    {{#each entity.params as | param |}}
-    {{param.key}} : entitySerialized.{{param.key}}{{#if  (eq param.type_rescript "Ethers.BigInt.t")}}->Ethers.BigInt.fromStringUnsafe{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}}->Belt.Option.map(opt =>
-      opt->Ethers.BigInt.fromStringUnsafe){{/if}}{{/if}},
-    {{/each}}
-  }
-}
-
 {{/each}}
 type entity = 
 {{#each entities as | entity |}}
@@ -87,9 +78,15 @@ type entity =
 
 type crud = Create | Read | Update | Delete
 
+type eventData = {
+  @as("event_chain_id") chainId: int,
+  @as("event_id") eventId: Ethers.BigInt.t,
+}
+
 type inMemoryStoreRow<'a> = {
   crud: crud,
   entity: 'a,
+  eventData: eventData,
 }
 
 //*************
