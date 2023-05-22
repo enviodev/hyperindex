@@ -22,18 +22,19 @@ describe("Sql transaction tests", () => {
       ...mockRawEventRow,
       event_id: mockRawEventRow.event_id + 2,
     };
+
     const transaction = sql.begin((sql) => [
       sql`INSERT INTO raw_events ${sql(mockRawEventRow)}`,
       sql`INSERT INTO raw_events ${sql(mockRawEventRow2)}`,
       sql`INSERT INTO raw_events ${sql(mockRawEventRow3)}`,
     ]);
 
-    expect(transaction).to.be.fulfilled;
+    await expect(transaction).to.eventually.be.fulfilled;
 
-    await transaction;
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.eq(3);
   });
+
   it("3 raw events inserted with one invalid fails", async () => {
     const mockRawEventRow2 = {
       ...mockRawEventRow,
@@ -50,9 +51,7 @@ describe("Sql transaction tests", () => {
       sql`INSERT INTO raw_events ${sql(mockRawEventRow3)}`,
     ]);
 
-    expect(transaction).to.be.rejected;
-
-    await transaction.catch(() => null);
+    await expect(transaction).to.eventually.be.rejected;
 
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.eq(0);
