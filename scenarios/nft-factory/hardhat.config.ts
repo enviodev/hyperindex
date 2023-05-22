@@ -7,7 +7,21 @@ import "@typechain/hardhat";
 import "./contracts/tasks";
 import { TypechainUserConfig } from "@typechain/hardhat/dist/types";
 
-import { mnemonic } from "./secretsManager";
+
+let secertsConfig;
+try {
+  secertsConfig = require("./secretsManager.ts");
+} catch (e) {
+  console.error(
+    "You are using the example secrets manager, please copy this file if you want to use it"
+  );
+  secertsConfig = require("./secretsManager.example.ts");
+}
+
+const {
+  mnemonic,
+} = secertsConfig;
+;
 
 let typeChainConfig: TypechainUserConfig = {
   target: "ethers-v6",
