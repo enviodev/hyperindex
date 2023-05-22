@@ -34,6 +34,11 @@ const config: HardhatUserConfig = {
   },
   typechain: typeChainConfig,
   networks: {
+    hardhat: {
+      accounts: {
+        mnemonic: "test test test test test test test test test test test test",
+      },
+    },
     ganache: {
       url: "http://0.0.0.0:8545",
       chainId: 1337,
