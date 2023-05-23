@@ -14,11 +14,13 @@ import {
   deployNftFactory,
   mintSimpleNft,
 } from "./helpers/node-and-contracts";
-import { runMigrationsNoLogs, sql, EventVariants } from "./helpers/utils";
+import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 
 require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
 describe("Raw Events Integration", () => {
+  const sql = createSql();
+
   before(async function () {
     this.timeout(30 * 1000);
     await runMigrationsNoLogs();
