@@ -61,3 +61,28 @@ let config: chainConfigs = [
 )
 {{/each}}
 ]->Js.Dict.fromArray
+
+// Logging:
+type logLevel = [
+  | #TRACE
+  | #DEBUG
+  | #INFO
+  | #WARN
+  | #ERROR
+  | #FATAL
+]
+%%private(let envSafe = EnvSafe.make())
+
+let defaultLogLevel = envSafe->EnvSafe.get(
+  ~name="LOG_LEVEL",
+  ~struct=S.union([
+    S.literalVariant(String("TRACE"), #TRACE),
+    S.literalVariant(String("DEBUG"), #DEBUG),
+    S.literalVariant(String("INFO"), #INFO),
+    S.literalVariant(String("WARN"), #WARN),
+    S.literalVariant(String("ERROR"), #ERROR),
+    S.literalVariant(String("FATAL"), #FATAL),
+  ]),
+  ~devFallback=#INFO,
+  (),
+)
