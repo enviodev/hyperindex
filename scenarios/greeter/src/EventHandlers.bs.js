@@ -4,7 +4,6 @@
 var Curry = require("rescript/lib/js/curry.js");
 var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Handlers = require("generated/src/Handlers.bs.js");
-var Belt_Option = require("rescript/lib/js/belt_Option.js");
 
 Handlers.GreeterContract.registerNewGreetingLoadEntities(function ($$event, context) {
       Curry._1(context.greeting.greetingWithChangesLoad, Ethers.ethAddressToString($$event.params.user));
@@ -33,13 +32,11 @@ Handlers.GreeterContract.registerClearGreetingLoadEntities(function ($$event, co
 
 Handlers.GreeterContract.registerClearGreetingHandler(function ($$event, context) {
       var currentGreeterOpt = Curry._1(context.greeting.greetingWithChanges, undefined);
-      if (Belt_Option.isSome(currentGreeterOpt)) {
+      if (currentGreeterOpt !== undefined) {
         return Curry._1(context.greeting.update, {
                     id: Ethers.ethAddressToString($$event.params.user),
                     latestGreeting: "",
-                    numberOfGreetings: Belt_Option.mapWithDefault(currentGreeterOpt, 1, (function (greeting) {
-                            return greeting.numberOfGreetings;
-                          }))
+                    numberOfGreetings: currentGreeterOpt.numberOfGreetings
                   });
       }
       

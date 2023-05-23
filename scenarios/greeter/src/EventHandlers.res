@@ -35,19 +35,18 @@ Handlers.GreeterContract.registerClearGreetingLoadEntities((~event, ~context) =>
 })
 
 Handlers.GreeterContract.registerClearGreetingHandler((~event, ~context) => {
-  
-   let currentGreeterOpt = context.greeting.greetingWithChanges()
+  let currentGreeterOpt = context.greeting.greetingWithChanges()
 
-  if currentGreeterOpt->Belt.Option.isSome {
-    
-    let greetingObject: greetingEntity = {
-          id: event.params.user->Ethers.ethAddressToString,
-          latestGreeting: "",
-          numberOfGreetings: currentGreeterOpt->Belt.Option.mapWithDefault(1, greeting =>
-       greeting.numberOfGreetings
-     )   
-        }
+  switch currentGreeterOpt {
+  | Some(existingGreeter) => {
+      let greetingObject: greetingEntity = {
+        id: event.params.user->Ethers.ethAddressToString,
+        latestGreeting: "",
+        numberOfGreetings: existingGreeter.numberOfGreetings,
+      }
 
-  context.greeting.update(greetingObject)
-}
+      context.greeting.update(greetingObject)
+    }
+  | None => ()
+  }
 })
