@@ -7,7 +7,7 @@ import type { Greeter__factory } from "../../types/factories/Greeter__factory";
 
 task("task:setGreeting")
   .addParam("greeting", "Say hello, be nice")
-  .addParam("account", "Specity which account [0, 9]")
+  .addParam("account", "Specify which account [0, 9]")
   .setAction(async function (taskArguments: TaskArguments, hre) {
     let { ethers, deployments } = hre;
 
