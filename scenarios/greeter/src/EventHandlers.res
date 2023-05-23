@@ -2,7 +2,6 @@ open Types
 
 Handlers.GreeterContract.registerNewGreetingLoadEntities((~event, ~context) => {
   context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
-  ()
 })
 
 Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
