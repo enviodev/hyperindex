@@ -76,6 +76,8 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
 }
 
 let processEventBatch = async (eventBatch: array<Types.event>, ~chainId) => {
+  IO.InMemoryStore.resetStore()
+
   let eventBatchAndContext = await eventBatch->loadReadEntities(~chainId)
 
   eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter(~chainId))
