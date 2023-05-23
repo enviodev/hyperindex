@@ -6,6 +6,7 @@ type poolConfig = {
   user: string,
   password: string,
   database: string,
+  onnotice: option<unit => unit>,
 }
 
 @module
