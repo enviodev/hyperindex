@@ -199,7 +199,5 @@ let executeBatch = async (sql) => {
     ]
   })
 
-  InMemoryStore.resetStore()
-
   res
 }
