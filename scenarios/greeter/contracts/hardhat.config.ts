@@ -1,6 +1,6 @@
 import "@nomicfoundation/hardhat-toolbox";
-import "hardhat-abi-exporter";
 import { config as dotenvConfig } from "dotenv";
+import "hardhat-abi-exporter";
 import type { HardhatUserConfig } from "hardhat/config";
 import type { NetworkUserConfig } from "hardhat/types";
 import { resolve } from "path";
@@ -26,6 +26,7 @@ const chainIds = {
   "arbitrum-mainnet": 42161,
   avalanche: 43114,
   bsc: 56,
+  ganache: 1337,
   hardhat: 31337,
   mainnet: 1,
   "optimism-mainnet": 10,
@@ -83,6 +84,13 @@ const config: HardhatUserConfig = {
         mnemonic,
       },
       chainId: chainIds.hardhat,
+    },
+    ganache: {
+      accounts: {
+        mnemonic,
+      },
+      chainId: chainIds.ganache,
+      url: "http://localhost:8545",
     },
     arbitrum: getChainConfig("arbitrum-mainnet"),
     avalanche: getChainConfig("avalanche"),

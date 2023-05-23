@@ -12,61 +12,27 @@ task("deploy:Greeter")
     const greeterFactory: Greeter__factory = <Greeter__factory>await ethers.getContractFactory("Greeter");
     const greeter: Greeter = <Greeter>await greeterFactory.connect(signers[0]).deploy(taskArguments.greeting);
     await greeter.deployed();
-    await greeter.setGreeting("yeah boooi");
-    await greeter.setGreeting("yeah boooi again");
+    if ("0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" != greeter.address) {
+      throw new Error("Silly deployment script shouldnt be a task, find me in the code to edit");
+    }
     console.log("Greeter deployed to: ", greeter.address);
   });
 
-// task("task1")
-//   .addParam("greeting", "Hola, como estas?")
-//   .setAction(async function (taskArguments: TaskArguments, { ethers}, deployments) {
-//     const signers: SignerWithAddress[] = await ethers.getSigners();
-//     const greeterFactory: Greeter__factory = <Greeter__factory>await ethers.getContractFactory("Greeter");
-//     const greeter: Greeter = <Greeter>await greeterFactory.connect(signers[0]).deploy(taskArguments.greeting);
-//     await greeter.deployed();
-//     console.log("Greeter deployed to: ", greeter.address);
+// > warning: because the template uses a task to deploy the contracts the deployed greeter contract is not accessible in the hre.deployments
+task("task:setGreeting")
+  .addParam("greeting", "Say hello, be nice")
+  .setAction(async function (taskArguments: TaskArguments, hre) {
+    let { ethers, deployments } = hre;
 
-//     // const Greeter = await deployments.get("Greeter");
-// //     console.log("SimpleBank deployment retrieved.");
+    console.log(deployments);
 
-// //     const simpleBank = await ethers.getContractAt(
-// //       "SimpleBank",
-// //       SimpleBank.address
-// //     );
+    const signers: SignerWithAddress[] = await ethers.getSigners();
 
-// //     const newDeposit1Tx = await simpleBank
-// //       .connect(user)
-// //       .deposit(Number(amount));
-// //     console.log("New deposit made.");
-// //     await newDeposit1Tx.wait();
+    const greeterDeployed = <Greeter>(
+      await ethers.getContractAt("Greeter", "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3")
+    );
 
-//   });
+    await greeterDeployed.connect(signers[0]).setGreeting(taskArguments.greeting);
 
-//   const accounts = await ethers.getSigners();
-//     const provider = ethers.provider;
-//     const user = accounts[userIndex % accounts.length];
-//
-
-//     const SimpleBank = await deployments.get("SimpleBank");
-//     console.log("SimpleBank deployment retrieved.");
-
-//     const simpleBank = await ethers.getContractAt(
-//       "SimpleBank",
-//       SimpleBank.address
-//     );
-
-//     const newDeposit1Tx = await simpleBank
-//       .connect(user)
-//       .deposit(Number(amount));
-//     console.log("New deposit made.");
-//     await newDeposit1Tx.wait();
-
-//     let accountCheck = await simpleBank.getBalance(user.address);
-//     console.log("deposit made", accountCheck);
-
-//     await increaseTime(provider, 1800);
-//   });
-
-// async function increaseTime(provider, seconds) {
-//   await provider.send("evm_increaseTime", [seconds]);
-//   await provider.send("evm_mine");
+    console.log("Greeting set: ", taskArguments.greeting);
+  });
