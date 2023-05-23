@@ -1,12 +1,13 @@
 import "@nomicfoundation/hardhat-toolbox";
 import { config as dotenvConfig } from "dotenv";
 import "hardhat-abi-exporter";
+import "hardhat-deploy";
 import type { HardhatUserConfig } from "hardhat/config";
 import type { NetworkUserConfig } from "hardhat/types";
 import { resolve } from "path";
 
 import "./tasks/accounts";
-import "./tasks/deploy";
+import "./tasks/greet";
 
 const dotenvConfigPath: string = process.env.DOTENV_CONFIG_PATH || "./.env";
 dotenvConfig({ path: resolve(__dirname, dotenvConfigPath) });
@@ -59,7 +60,10 @@ function getChainConfig(chain: keyof typeof chainIds): NetworkUserConfig {
 }
 
 const config: HardhatUserConfig = {
-  defaultNetwork: "hardhat",
+  defaultNetwork: "ganache",
+  namedAccounts: {
+    deployer: 0,
+  },
   etherscan: {
     apiKey: {
       arbitrumOne: process.env.ARBISCAN_API_KEY || "",
@@ -87,7 +91,7 @@ const config: HardhatUserConfig = {
     },
     ganache: {
       accounts: {
-        mnemonic,
+        mnemonic, // this needs to match the mnenomic that has accounts with network tokens
       },
       chainId: chainIds.ganache,
       url: "http://localhost:8545",
