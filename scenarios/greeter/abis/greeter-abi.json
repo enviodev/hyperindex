@@ -15,6 +15,25 @@
     "inputs": [
       {
         "indexed": false,
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      }
+    ],
+    "name": "ClearGreeting",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      },
+      {
+        "indexed": false,
         "internalType": "string",
         "name": "greeting",
         "type": "string"
@@ -24,17 +43,11 @@
     "type": "event"
   },
   {
-    "anonymous": false,
-    "inputs": [
-      {
-        "indexed": false,
-        "internalType": "string",
-        "name": "greeting",
-        "type": "string"
-      }
-    ],
-    "name": "UpdateGreeting",
-    "type": "event"
+    "inputs": [],
+    "name": "clearGreeting",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
   },
   {
     "inputs": [],

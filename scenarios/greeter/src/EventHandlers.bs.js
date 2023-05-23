@@ -6,35 +6,43 @@ var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Handlers = require("generated/src/Handlers.bs.js");
 var Belt_Option = require("rescript/lib/js/belt_Option.js");
 
-Handlers.GravatarContract.registerNewGravatarLoadEntities(function (_event, _context) {
+Handlers.GreeterContract.registerNewGreetingLoadEntities(function ($$event, context) {
+      Curry._1(context.greeting.greetingWithChangesLoad, Ethers.ethAddressToString($$event.params.user));
+    });
+
+Handlers.GreeterContract.registerNewGreetingHandler(function ($$event, context) {
+      var currentGreeterOpt = Curry._1(context.greeting.greetingWithChanges, undefined);
+      if (currentGreeterOpt !== undefined) {
+        return Curry._1(context.greeting.update, {
+                    id: Ethers.ethAddressToString($$event.params.user),
+                    latestGreeting: $$event.params.greeting,
+                    numberOfGreetings: currentGreeterOpt.numberOfGreetings + 1 | 0
+                  });
+      } else {
+        return Curry._1(context.greeting.insert, {
+                    id: Ethers.ethAddressToString($$event.params.user),
+                    latestGreeting: $$event.params.greeting,
+                    numberOfGreetings: 1
+                  });
+      }
+    });
+
+Handlers.GreeterContract.registerClearGreetingLoadEntities(function ($$event, context) {
+      Curry._1(context.greeting.greetingWithChangesLoad, Ethers.ethAddressToString($$event.params.user));
+    });
+
+Handlers.GreeterContract.registerClearGreetingHandler(function ($$event, context) {
+      var currentGreeterOpt = Curry._1(context.greeting.greetingWithChanges, undefined);
+      if (Belt_Option.isSome(currentGreeterOpt)) {
+        return Curry._1(context.greeting.update, {
+                    id: Ethers.ethAddressToString($$event.params.user),
+                    latestGreeting: "",
+                    numberOfGreetings: Belt_Option.mapWithDefault(currentGreeterOpt, 1, (function (greeting) {
+                            return greeting.numberOfGreetings;
+                          }))
+                  });
+      }
       
-    });
-
-Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context) {
-      Curry._1(context.gravatar.insert, {
-            id: $$event.params.id.toString(),
-            owner: Ethers.ethAddressToString($$event.params.owner),
-            displayName: $$event.params.displayName,
-            imageUrl: $$event.params.imageUrl,
-            updatesCount: 1
-          });
-    });
-
-Handlers.GravatarContract.registerUpdatedGravatarLoadEntities(function ($$event, contextUpdator) {
-      Curry._1(contextUpdator.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
-    });
-
-Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, context) {
-      var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.gravatar.gravatarWithChanges, undefined), 1, (function (gravatar) {
-              return gravatar.updatesCount + 1 | 0;
-            }));
-      Curry._1(context.gravatar.update, {
-            id: $$event.params.id.toString(),
-            owner: Ethers.ethAddressToString($$event.params.owner),
-            displayName: $$event.params.displayName,
-            imageUrl: $$event.params.imageUrl,
-            updatesCount: updatesCount
-          });
     });
 
 /*  Not a pure module */

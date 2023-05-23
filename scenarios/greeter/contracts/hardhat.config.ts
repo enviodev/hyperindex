@@ -7,6 +7,7 @@ import type { NetworkUserConfig } from "hardhat/types";
 import { resolve } from "path";
 
 import "./tasks/accounts";
+import "./tasks/clear";
 import "./tasks/greet";
 
 const dotenvConfigPath: string = process.env.DOTENV_CONFIG_PATH || "./.env";
