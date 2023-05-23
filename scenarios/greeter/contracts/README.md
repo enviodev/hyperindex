@@ -1,8 +1,6 @@
 
-`pnpm task:setGreeting --network ganache --greeting "Blem hello monde"`
 `pnpm deploy:contracts --network ganache --greeting "hello contracts"`
-
-> warning: because the template uses a task to deploy the contracts the deployed greeter contract is not accessible in the hre.deployments
+`pnpm task:setGreeting --network ganache --greeting "Blem hello monde" --account 2`
 
 # Hardhat Template [![Open in Gitpod][gitpod-badge]][gitpod] [![Github Actions][gha-badge]][gha] [![Hardhat][hardhat-badge]][hardhat] [![License: MIT][license-badge]][license]
 

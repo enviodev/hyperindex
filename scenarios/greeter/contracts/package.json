@@ -46,7 +46,9 @@
     "ts-generator": "^0.1.1",
     "ts-node": "^10.9.1",
     "typechain": "^8.1.1",
-    "typescript": "^4.9.3"
+    "typescript": "^4.9.3",
+    "hardhat-abi-exporter": "^2.10.1",
+    "hardhat-deploy": "^0.11.29"
   },
   "files": [
     "contracts"
@@ -69,7 +71,7 @@
     "clean": "rimraf ./artifacts ./cache ./coverage ./types ./coverage.json && pnpm typechain",
     "compile": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat compile",
     "coverage": "hardhat coverage --solcoverjs ./.solcover.js --temp artifacts --testfiles \"test/**/*.ts\" && pnpm typechain",
-    "deploy:contracts": "hardhat deploy:Greeter",
+    "deploy:contracts": "hardhat deploy",    
     "task:setGreeting": "hardhat task:setGreeting",
     "lint": "pnpm lint:sol && pnpm lint:ts && pnpm prettier:check",
     "lint:sol": "solhint --max-warnings 0 \"contracts/**/*.sol\"",
@@ -80,8 +82,5 @@
     "test": "hardhat test",
     "hardhat": "hardhat",
     "typechain": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat typechain"
-  },
-  "dependencies": {
-    "hardhat-abi-exporter": "^2.10.1"
   }
 }
