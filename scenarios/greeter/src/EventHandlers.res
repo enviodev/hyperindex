@@ -6,34 +6,28 @@ Handlers.GreeterContract.registerNewGreetingLoadEntities((~event as _, ~context 
 
 Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
   let greetingObject: greetingEntity = {
-    id: event.block.timestamp,
-    message: event.params.greeting,    
-  }
+    id: event.srcAddress,
+    latestGreeting: event.params.greeting,  
+    numberOfGreetings: 1,
+    }
 
   context.greeting.insert(greetingObject)
 })
 
 Handlers.GreeterContract.registerUpdateGreetingLoadEntities((~event as _, ~context as _) => {
-  ()
+  context.greeting.greetingWithChangesLoad(event.srcAddress)
 })
 
 Handlers.GreeterContract.registerUpdateGreetingHandler((~event, ~context) => {
+   let greetingsCount =
+    context.greeting.greetingWithChanges()->Belt.Option.mapWithDefault(1, greeting =>
+      greeting.numberOfGreetings + 1
+    )
+
   let greetingObject: greetingEntity = {
-    id: event.block.timestamp,
-    message: event.params.greeting,    
-  }
-
-  context.greeting.insert(greetingObject)
-})
-
-Handlers.GreeterContract.registerUpdateGreetingLoadEntities((~event, ~context) => {
-  ()
-})
-
-Handlers.GreeterContract.registerUpdateGreetingHandler((~event, ~context) => {
-  let greetingObject: greetingEntity = {
-    id: event.block.timestamp,
-    message: event.params.greeting,    
+    id: event.srcAddress,
+    latestGreeting: event.params.greeting,
+    numberOfGreetings: updatesCount,    
   }
 
   context.greeting.update(greetingObject)
