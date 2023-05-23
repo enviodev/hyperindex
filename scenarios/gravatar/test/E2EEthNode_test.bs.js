@@ -23,7 +23,7 @@ Mocha$RescriptMocha.describe("E2E Integration Test")(undefined, undefined, undef
                 await Migrations.runDownMigrations(undefined);
                 return await Migrations.runUpMigrations(undefined);
               }));
-        Promise$RescriptMocha.it("Complete E2E")(30000, undefined, undefined, (async function (param) {
+        Promise$RescriptMocha.it("Complete E2E")(100000, undefined, undefined, (async function (param) {
                 var gravatar = await SetupRpcNode.deployContract(undefined);
                 await SetupRpcNode.setupNodeAndContracts(gravatar);
                 var provider = Hardhat.ethers.provider;

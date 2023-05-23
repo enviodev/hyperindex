@@ -33,12 +33,9 @@ module InMemoryStore = {
       row->Belt.Option.map(row => row.entity)
     }
 
-    let setRawEvents = (~rawEvents: Types.rawEventsEntity, ~crud: Types.crud) => {
-      let key = EventUtils.getEventIdKeyString(
-        ~chainId=rawEvents.chainId,
-        ~eventId=rawEvents.eventId,
-      )
-      let rawEventsCurrentCrud =
+    let setRawEvents = (~entity: Types.rawEventsEntity, ~crud: Types.crud) => {
+      let key = EventUtils.getEventIdKeyString(~chainId=entity.chainId, ~eventId=entity.eventId)
+      let rawEventCurrentCrud =
         rawEventsDict.contents
         ->Js.Dict.get(key)
         ->Belt.Option.map(row => {
@@ -47,7 +44,11 @@ module InMemoryStore = {
 
       rawEventsDict.contents->Js.Dict.set(
         key,
-        {entity: rawEvents, crud: entityCurrentCrud(rawEventsCurrentCrud, crud)},
+        {
+          eventData: {chainId: entity.chainId, eventId: entity.eventId},
+          entity,
+          crud: entityCurrentCrud(rawEventCurrentCrud, crud),
+        },
       )
     }
   }
@@ -60,15 +61,14 @@ module InMemoryStore = {
       row->Belt.Option.map(row => row.entity)
     }
 
-    let setUser = (~user: Types.userEntity, ~crud: Types.crud) => {
-      let userCurrentCrud = Js.Dict.get(userDict.contents, user.id)->Belt.Option.map(row => {
+    let setUser = (~entity: Types.userEntity, ~crud: Types.crud, ~eventData: Types.eventData) => {
+      let userCurrentCrud = Js.Dict.get(userDict.contents, entity.id)->Belt.Option.map(row => {
         row.crud
       })
 
-      Js.Dict.set(
-        userDict.contents,
-        user.id,
-        {entity: user, crud: entityCurrentCrud(userCurrentCrud, crud)},
+      userDict.contents->Js.Dict.set(
+        entity.id,
+        {eventData, entity, crud: entityCurrentCrud(userCurrentCrud, crud)},
       )
     }
   }
@@ -83,18 +83,21 @@ module InMemoryStore = {
       row->Belt.Option.map(row => row.entity)
     }
 
-    let setGravatar = (~gravatar: Types.gravatarEntity, ~crud: Types.crud) => {
+    let setGravatar = (
+      ~entity: Types.gravatarEntity,
+      ~crud: Types.crud,
+      ~eventData: Types.eventData,
+    ) => {
       let gravatarCurrentCrud = Js.Dict.get(
         gravatarDict.contents,
-        gravatar.id,
+        entity.id,
       )->Belt.Option.map(row => {
         row.crud
       })
 
-      Js.Dict.set(
-        gravatarDict.contents,
-        gravatar.id,
-        {entity: gravatar, crud: entityCurrentCrud(gravatarCurrentCrud, crud)},
+      gravatarDict.contents->Js.Dict.set(
+        entity.id,
+        {eventData, entity, crud: entityCurrentCrud(gravatarCurrentCrud, crud)},
       )
     }
   }
@@ -123,15 +126,19 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
 
   let userEntitiesArray = await DbFunctions.User.readUserEntities(Js.Dict.values(uniqueUserDict))
 
-  userEntitiesArray->Belt.Array.forEach(user => InMemoryStore.User.setUser(~user, ~crud=Types.Read))
+  userEntitiesArray->Belt.Array.forEach(readRow => {
+    let {entity, eventData} = readRow->DbFunctions.User.readRowToReadEntityData
+    InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
+  })
 
   let gravatarEntitiesArray = await DbFunctions.Gravatar.readGravatarEntities(
     Js.Dict.values(uniqueGravatarDict),
   )
 
-  gravatarEntitiesArray->Belt.Array.forEach(gravatar =>
-    InMemoryStore.Gravatar.setGravatar(~gravatar, ~crud=Types.Read)
-  )
+  gravatarEntitiesArray->Belt.Array.forEach(readRow => {
+    let {entity, eventData} = readRow->DbFunctions.Gravatar.readRowToReadEntityData
+    InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
+  })
 }
 
 let createBatch = () => {
@@ -188,11 +195,11 @@ let executeBatch = async () => {
   let setUserPromise = () => {
     let setUser =
       userRows->Belt.Array.keepMap(userRow =>
-        userRow.crud == Types.Create || userRow.crud == Update ? Some(userRow.entity) : None
+        userRow.crud == Types.Create || userRow.crud == Update ? Some(userRow) : None
       )
 
     if setUser->Belt.Array.length > 0 {
-      DbFunctions.User.batchSetUser(setUser)
+      setUser->DbFunctions.User.batchSetUser
     } else {
       ()->Promise.resolve
     }
@@ -217,13 +224,11 @@ let executeBatch = async () => {
   let setGravatarPromise = () => {
     let setGravatar =
       gravatarRows->Belt.Array.keepMap(gravatarRow =>
-        gravatarRow.crud == Types.Create || gravatarRow.crud == Update
-          ? Some(gravatarRow.entity)
-          : None
+        gravatarRow.crud == Types.Create || gravatarRow.crud == Update ? Some(gravatarRow) : None
       )
 
     if setGravatar->Belt.Array.length > 0 {
-      DbFunctions.Gravatar.batchSetGravatar(setGravatar)
+      setGravatar->DbFunctions.Gravatar.batchSetGravatar
     } else {
       ()->Promise.resolve
     }

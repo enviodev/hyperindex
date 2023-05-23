@@ -35,12 +35,12 @@ module InMemoryStore = {
       row->Belt.Option.map(row => row.entity)
     }
 
-    let setRawEvents = (~rawEvents: Types.rawEventsEntity, ~crud: Types.crud) => {
+    let setRawEvents = (~entity: Types.rawEventsEntity, ~crud: Types.crud) => {
       let key = EventUtils.getEventIdKeyString(
-        ~chainId=rawEvents.chainId,
-        ~eventId=rawEvents.eventId,
+        ~chainId=entity.chainId,
+        ~eventId=entity.eventId,
       )
-      let rawEventsCurrentCrud =
+      let rawEventCurrentCrud =
         rawEventsDict.contents
         ->Js.Dict.get(key)
         ->Belt.Option.map(row => {
@@ -49,7 +49,7 @@ module InMemoryStore = {
 
       rawEventsDict.contents->Js.Dict.set(
         key,
-        {entity: rawEvents, crud: entityCurrentCrud(rawEventsCurrentCrud, crud)},
+        {eventData: {chainId: entity.chainId, eventId: entity.eventId}, entity, crud: entityCurrentCrud(rawEventCurrentCrud, crud)},
       )
     }
 }
@@ -66,17 +66,17 @@ module {{entity.name.capitalized}} = {
     row->Belt.Option.map(row => row.entity)
   }
 
-  let set{{entity.name.capitalized}} = (~{{entity.name.uncapitalized}}: Types.{{entity.name.uncapitalized}}Entity, ~crud: Types.crud) => {
+  let set{{entity.name.capitalized}} = (~entity: Types.{{entity.name.uncapitalized}}Entity, ~crud: Types.crud, ~eventData: Types.eventData) => {
     let {{entity.name.uncapitalized}}CurrentCrud = Js.Dict.get(
       {{entity.name.uncapitalized}}Dict.contents,
-      {{entity.name.uncapitalized}}.id,
+      entity.id,
     )->Belt.Option.map(row => {
       row.crud
     })
 
 
 
-    Js.Dict.set({{entity.name.uncapitalized}}Dict.contents, {{entity.name.uncapitalized}}.id, {entity: {{entity.name.uncapitalized}}, crud: entityCurrentCrud({{entity.name.uncapitalized}}CurrentCrud, crud)})
+    {{entity.name.uncapitalized}}Dict.contents->Js.Dict.set(entity.id, {eventData, entity, crud: entityCurrentCrud({{entity.name.uncapitalized}}CurrentCrud, crud)})
   }
   }
   {{/each}}
@@ -109,8 +109,11 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
     Js.Dict.values(unique{{entity.name.capitalized}}Dict),
   )
 
-  {{entity.name.uncapitalized}}EntitiesArray->Belt.Array.forEach({{entity.name.uncapitalized}} =>
-    InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~{{entity.name.uncapitalized}}, ~crud=Types.Read)
+  {{entity.name.uncapitalized}}EntitiesArray->Belt.Array.forEach((readRow) =>
+    {
+      let {entity, eventData} = readRow->DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData
+      InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~crud=Types.Read)
+    }
   )
 
   {{/each}}
@@ -176,12 +179,12 @@ let executeBatch = async () => {
     let set{{entity.name.capitalized}} =
       {{entity.name.uncapitalized}}Rows->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
         {{entity.name.uncapitalized}}Row.crud == Types.Create || {{entity.name.uncapitalized}}Row.crud == Update
-          ? Some({{entity.name.uncapitalized}}Row.entity)
+          ? Some({{entity.name.uncapitalized}}Row)
           : None
       )
 
       if set{{entity.name.capitalized}}->Belt.Array.length > 0 {
-         DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}}(set{{entity.name.capitalized}})
+         set{{entity.name.capitalized}}->DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}}
       } else {
         ()->Promise.resolve
       }
