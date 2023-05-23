@@ -15,6 +15,7 @@ type chainConfig = {
 type chainConfigs = Js.Dict.t<chainConfig>
 
 // Logging:
+@genType
 type logLevel = [
   | #TRACE
   | #DEBUG
