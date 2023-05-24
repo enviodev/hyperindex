@@ -5,7 +5,7 @@
       "Group": "Server Group 1",
       "Port": 5432,
       "Username": "postgres",
-      "Host": "indexly-postgres",
+      "Host": "envio-postgres",
       "SSLMode": "prefer",
       "MaintenanceDB": "postgres"
     }
