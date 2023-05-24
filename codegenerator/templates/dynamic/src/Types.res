@@ -45,7 +45,6 @@ type rawEventsEntity = {
   params: Js.Json.t,
 }
 
-{{#each entities as | entity |}}
 @genType
 type rec
 {{#each entities as | entity |}}

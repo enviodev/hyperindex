@@ -78,6 +78,7 @@ module.exports.batchSetUser = (sql, entityDataArray) => {
     "gravatar" = EXCLUDED."gravatar",
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
+    "updatesCountOnUserForTesting" = EXCLUDED."updatesCountOnUserForTesting"
   ;`
 }
 

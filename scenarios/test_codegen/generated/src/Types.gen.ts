@@ -126,7 +126,7 @@ export type GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext =
 export type GravatarContract_UpdatedGravatarEvent_context = { readonly user: GravatarContract_UpdatedGravatarEvent_userEntityHandlerContext; readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_UpdatedGravatarEvent_gravatarSubEntityLoader = {};
+export type GravatarContract_UpdatedGravatarEvent_gravatarSubEntityLoader = { readonly userLoad: () => void };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext = { readonly gravatarWithChangesLoad: (_1:id) => GravatarContract_UpdatedGravatarEvent_gravatarSubEntityLoader };

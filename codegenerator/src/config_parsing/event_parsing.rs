@@ -146,8 +146,6 @@ fn get_event_template_from_ethereum_abi_event(
         None => Vec::new(),
     };
 
-    println!("required_entities: {:?}", required_entities);
-
     let event_type = EventTemplate {
         name,
         params,

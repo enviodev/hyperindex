@@ -171,13 +171,7 @@ module GravatarContract = {
     }
 
     // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
-    type gravatarSubEntityLoaderREFERENC = {
-      //// required_entity_entity_fields is defined!
-      userLoad: unit => unit,
-    }
-    type gravatarSubEntityLoader = {
-      // Gravatar
-    }
+    type gravatarSubEntityLoader = {userLoad: unit => unit}
 
     type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => gravatarSubEntityLoader}
 

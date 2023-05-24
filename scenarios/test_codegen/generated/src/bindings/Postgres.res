@@ -13,7 +13,7 @@ type poolConfig = {
 }
 
 @module
-external makeSql: (~config: poolConfig) => sql= "postgres"
+external makeSql: (~config: poolConfig) => sql = "postgres"
 
 @send external beginSql: (sql, sql => array<promise<unit>>) => promise<unit> = "begin"
 
