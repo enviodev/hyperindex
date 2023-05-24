@@ -1,3 +1,5 @@
+// todo
+
 let {
   GravatarContract_registerNewGravatarHandler,
   GravatarContract_registerNewGravatarLoadEntities,
@@ -5,7 +7,7 @@ let {
   GravatarContract_registerUpdatedGravatarLoadEntities,
 } = require("../generated/src/Handlers.bs.js");
 
-GravatarContract_registerNewGravatarLoadEntities(({ event, context }) => { });
+GravatarContract_registerNewGravatarLoadEntities(({ event, context }) => {});
 
 GravatarContract_registerNewGravatarHandler(({ event, context }) => {
   let { id, displayName, owner, imageUrl } = event.params;
