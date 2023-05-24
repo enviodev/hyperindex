@@ -108,7 +108,6 @@ describe("Raw Events Integration", () => {
 
   it("RawEvents table contains rows after indexer runs", async function() {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
-    console.log(rawEventsRows);
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
