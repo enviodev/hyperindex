@@ -15,6 +15,7 @@ type chainConfig = {
 type chainConfigs = Js.Dict.t<chainConfig>
 
 // Logging:
+@genType
 type logLevel = [
   | #TRACE
   | #DEBUG
@@ -57,6 +58,7 @@ let db: Postgres.poolConfig = {
     ~devFallback="envio-dev",
     (),
   ),
+  onnotice: defaultLogLevel == #WARN || defaultLogLevel == #ERROR ? None : Some(() => ()),
 }
 
 let config: chainConfigs = [
