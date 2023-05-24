@@ -45,19 +45,20 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
 
-// db operations for User:
+  // db operations for User:
 
-module.exports.readUserEntities = (sql, entityIdArray) => sql`
+  module.exports.readUserEntities = (sql, entityIdArray) => sql`
   SELECT 
   "id",
   "address",
   "gravatar",
+  "updatesCountOnUserForTesting",
   event_chain_id, 
   event_id
   FROM public.user
   WHERE id IN ${sql(entityIdArray)}`
 
-module.exports.batchSetUser = (sql, entityDataArray) => {
+  module.exports.batchSetUser = (sql, entityDataArray) => {
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
@@ -68,6 +69,7 @@ module.exports.batchSetUser = (sql, entityDataArray) => {
     "id",
     "address",
     "gravatar",
+    "updatesCountOnUserForTesting",
     "event_chain_id",
     "event_id",
   )}
@@ -76,21 +78,21 @@ module.exports.batchSetUser = (sql, entityDataArray) => {
     "id" = EXCLUDED."id",
     "address" = EXCLUDED."address",
     "gravatar" = EXCLUDED."gravatar",
+    "updatesCountOnUserForTesting" = EXCLUDED."updatesCountOnUserForTesting",
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
-    "updatesCountOnUserForTesting" = EXCLUDED."updatesCountOnUserForTesting"
   ;`
-}
+  }
 
-module.exports.batchDeleteUser = (sql, entityIdArray) => sql`
+  module.exports.batchDeleteUser = (sql, entityIdArray) => sql`
   DELETE
   FROM public.user
   WHERE id IN ${sql(entityIdArray)};`
-// end db operations for User
+  // end db operations for User
 
-// db operations for Gravatar:
+  // db operations for Gravatar:
 
-module.exports.readGravatarEntities = (sql, entityIdArray) => sql`
+  module.exports.readGravatarEntities = (sql, entityIdArray) => sql`
   SELECT 
   "id",
   "owner",
@@ -102,7 +104,7 @@ module.exports.readGravatarEntities = (sql, entityIdArray) => sql`
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)}`
 
-module.exports.batchSetGravatar = (sql, entityDataArray) => {
+  module.exports.batchSetGravatar = (sql, entityDataArray) => {
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
@@ -128,9 +130,9 @@ module.exports.batchSetGravatar = (sql, entityDataArray) => {
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
   ;`
-}
+  }
 
-module.exports.batchDeleteGravatar = (sql, entityIdArray) => sql`
+  module.exports.batchDeleteGravatar = (sql, entityIdArray) => sql`
   DELETE
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)};`

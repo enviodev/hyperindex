@@ -49,6 +49,7 @@ module {{entity.name.capitalized}} = {
       entity: {
         {{#each entity.params as | param |}}
         {{param.key}},
+        {{#if param.maybe_entity_name}}{{param.key}}Data : None, {{/if}}
         {{/each}}
       },
       eventData: {
