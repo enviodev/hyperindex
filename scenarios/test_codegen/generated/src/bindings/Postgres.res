@@ -8,7 +8,7 @@ type poolConfig = {
   user: string,
   password: string,
   database: string,
-  onnotice?: unit => unit,
+  onnotice: option<unit => unit>,
   transform?: transformConfig,
 }
 
