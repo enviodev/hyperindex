@@ -1,6 +1,6 @@
 import { eventName_encode } from "../generated/src/Types.bs";
 import { mockRawEventRow } from "./helpers/mocks";
-import { runMigrationsNoLogs, sql, EventVariants } from "./helpers/utils";
+import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 import chai, { expect } from "chai";
 import chaiAsPromised from "chai-as-promised";
 
@@ -8,6 +8,8 @@ require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-re
 chai.use(chaiAsPromised);
 
 describe("Raw Events Table Migrations", () => {
+  const sql = createSql();
+
   before(async () => {
     await runMigrationsNoLogs();
   });
@@ -39,18 +41,17 @@ describe("Raw Events Table Migrations", () => {
     expect(rawEventsColumnsRes).to.deep.include.members(expectedColumns);
   });
 
-  // // TODO: fix this test, currently commented out due to an obsure error that occurs as a rusult of this test in another test.
-  // it("Inserting 2 rows with the the same pk should fail", async () => {
-  //   let first_valid_row_query = sql`INSERT INTO raw_events ${sql(
-  //     mockRawEventRow
-  //   )}`;
+  it("Inserting 2 rows with the the same pk should fail", async () => {
+    let first_valid_row_query = sql`INSERT INTO raw_events ${sql(
+      mockRawEventRow
+    )}`;
 
-  //   await expect(first_valid_row_query).to.eventually.be.fulfilled;
+    await expect(first_valid_row_query).to.eventually.be.fulfilled;
 
-  //   let second_valid_row_query = sql`INSERT INTO raw_events ${sql(
-  //     mockRawEventRow
-  //   )}`;
+    let second_valid_row_query = sql`INSERT INTO raw_events ${sql(
+      mockRawEventRow
+    )}`;
 
-  //   await expect(second_valid_row_query).to.eventually.be.rejected;
-  // });
+    await expect(second_valid_row_query).to.eventually.be.rejected;
+  });
 });
