@@ -55,9 +55,9 @@ describe("E2E Mock Event Batch", () => {
 
 describe("E2E Db check", () => {
   before_promise(async () => {
-    let _ = await DbFunctions.Gravatar.batchSetGravatar([
-      MockEntities.gravatarEntity1,
-      MockEntities.gravatarEntity2,
+    let _ = await DbFunctions.Gravatar.batchSetGravatar(Migrations.sql, [
+      MockEntities.mockInMemRow1,
+      MockEntities.mockInMemRow2,
     ])
     await MockEvents.eventBatch->EventProcessing.processEventBatch(~chainId)
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
@@ -70,11 +70,16 @@ describe("E2E Db check", () => {
   it("Validate inmemory store state", () => {
     let inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents
     let inMemoryStoreRows = inMemoryStore->Js.Dict.values
+
     Assert.deep_equal(
       inMemoryStoreRows,
       [
         {
           crud: Update, // TODO: fix these tests, it should be an 'Update' here.
+          eventData: {
+            chainId: 1337,
+            eventId: 65537->Ethers.BigInt.fromInt,
+          },
           entity: {
             id: "1001",
             owner: "0x1230000000000000000000000000000000000000",
@@ -85,6 +90,10 @@ describe("E2E Db check", () => {
         },
         {
           crud: Update,
+          eventData: {
+            chainId: 1337,
+            eventId: 65537->Ethers.BigInt.fromInt,
+          },
           entity: {
             id: "1002",
             owner: "0x4560000000000000000000000000000000000000",
@@ -95,6 +104,10 @@ describe("E2E Db check", () => {
         },
         {
           crud: Create, // NOTE: if this is not run against a fresh database it will get an `Update` instead of `Create`
+          eventData: {
+            chainId: 1337,
+            eventId: 65537->Ethers.BigInt.fromInt,
+          },
           entity: {
             id: "1003",
             owner: "0x7890000000000000000000000000000000000000",

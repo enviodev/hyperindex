@@ -7,6 +7,7 @@ var DbStub = require("./__mocks__/DbStub.bs.js");
 var Js_dict = require("rescript/lib/js/js_dict.js");
 var Belt_Array = require("rescript/lib/js/belt_Array.js");
 var Caml_array = require("rescript/lib/js/caml_array.js");
+var Migrations = require("generated/src/Migrations.bs.js");
 var MockEvents = require("./__mocks__/MockEvents.bs.js");
 var ContextMock = require("./__mocks__/ContextMock.bs.js");
 var DbFunctions = require("generated/src/DbFunctions.bs.js");
@@ -56,9 +57,9 @@ Mocha$RescriptMocha.describe("E2E Mock Event Batch")(undefined, undefined, undef
 
 Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (function (param) {
         Promise$RescriptMocha.before(undefined)(undefined, undefined, undefined, (async function (param) {
-                await DbFunctions.Gravatar.batchSetGravatar([
-                      MockEntities.gravatarEntity1,
-                      MockEntities.gravatarEntity2
+                await DbFunctions.Gravatar.batchSetGravatar(Migrations.sql, [
+                      MockEntities.mockInMemRow1,
+                      MockEntities.mockInMemRow2
                     ]);
                 return await EventProcessing.processEventBatch(MockEvents.eventBatch, chainId);
               }));
@@ -74,6 +75,10 @@ Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (f
                           displayName: "update1",
                           imageUrl: "https://gravatar1.com",
                           updatesCount: 2
+                        },
+                        eventData: {
+                          event_chain_id: 1337,
+                          event_id: BigInt(65537)
                         }
                       },
                       {
@@ -84,6 +89,10 @@ Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (f
                           displayName: "update2",
                           imageUrl: "https://gravatar2.com",
                           updatesCount: 2
+                        },
+                        eventData: {
+                          event_chain_id: 1337,
+                          event_id: BigInt(65537)
                         }
                       },
                       {
@@ -94,6 +103,10 @@ Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (f
                           displayName: "update3",
                           imageUrl: "https://gravatar3.com",
                           updatesCount: 2
+                        },
+                        eventData: {
+                          event_chain_id: 1337,
+                          event_id: BigInt(65537)
                         }
                       }
                     ]);

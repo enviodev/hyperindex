@@ -30,6 +30,7 @@ module RawEventsTable = {
         block_timestamp INTEGER NOT NULL,
         event_type EVENT_TYPE NOT NULL,
         params JSON NOT NULL,
+        db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (chain_id, event_id)
       );
       `")
@@ -46,7 +47,8 @@ module RawEventsTable = {
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
-    await %raw("sql`CREATE TABLE \"public\".\"{{entity.name.uncapitalized}}\" ({{#each entity.params as |param|}}\"{{param.key}}\" {{param.type_pg}},{{/each}}UNIQUE (\"id\"));`")
+    await %raw("sql`CREATE TABLE \"public\".\"{{entity.name.uncapitalized}}\" ({{#each entity.params as |param|}}\"{{param.key}}\" {{param.type_pg}},{{/each}} event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`")
+        
   }
 
   let delete{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {

@@ -1,22 +1,11 @@
-const postgres = require("postgres")
-
-const postgresConfig = require("./Config.bs.js").db
-
-const sql = postgres({...postgresConfig, 
-  transform: {
-    undefined: null
-  }
-})
-
-
 // db operations for raw_events:
 
-module.exports.readRawEventsEntities = (entityIdArray) => sql`
+module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
   SELECT *
   FROM public.raw_events
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
 
-module.exports.batchSetRawEvents = (entityDataArray) => {
+module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   const valueCopyToFixBigIntType = entityDataArray; // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
   return sql`
     INSERT INTO public.raw_events
@@ -50,7 +39,7 @@ module.exports.batchSetRawEvents = (entityDataArray) => {
   ;`;
 };
 
-module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
+module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
   FROM public.raw_events
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
@@ -61,33 +50,44 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
   }}:
 
   module.exports.read{{entity.name.capitalized
-  }}Entities = (entityIdArray) => sql`
-  SELECT *
-  FROM public.{{entity.name.uncapitalized
-  }}
+  }}Entities = (sql, entityIdArray) => sql`
+  SELECT 
+  {{#each entity.params as |param|}}
+  "{{param.key}}",
+  {{/each}}
+  event_chain_id, 
+  event_id
+  FROM public.{{entity.name.uncapitalized}}
   WHERE id IN ${sql(entityIdArray)}`
 
   module.exports.batchSet{{entity.name.capitalized
-  }} = (entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  }} = (sql, entityDataArray) => {
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
   return sql`
     INSERT INTO public.{{entity.name.uncapitalized
   }}
-  ${sql(valueCopyToFixBigIntType,
+  ${sql(combinedEntityAndEventData,
   {{#each entity.params as |param|}}
     "{{param.key}}",
   {{/each}}
+    "event_chain_id",
+    "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
   {{#each entity.params as |param|}}
-    "{{param.key}}" = EXCLUDED."{{param.key}}"{{#unless @last}},{{/unless}}
+    "{{param.key}}" = EXCLUDED."{{param.key}}",
   {{/each}}
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
   ;`
   }
 
   module.exports.batchDelete{{entity.name.capitalized
-  }} = (entityIdArray) => sql`
+  }} = (sql, entityIdArray) => sql`
   DELETE
   FROM public.{{entity.name.uncapitalized
   }}

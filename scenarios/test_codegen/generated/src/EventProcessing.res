@@ -29,7 +29,7 @@ let addEventToRawEvents = (
     params: jsonSerializedParams,
   }
 
-  IO.InMemoryStore.RawEvents.setRawEvents(~rawEvents=rawEvent, ~crud=Create)
+  IO.InMemoryStore.RawEvents.setRawEvents(~entity=rawEvent, ~crud=Create)
 }
 let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   switch event {
@@ -69,7 +69,9 @@ let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   }
 }
 
-let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.eventAndContext> => {
+let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): array<
+  Types.eventAndContext,
+> => {
   let result: array<(
     array<Types.entityRead>,
     Types.eventAndContext,
@@ -81,7 +83,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
           ~event,
           ~context=contextHelper.getLoaderContext(),
         )
-        let context = contextHelper.getContext()
+        let {logIndex, blockNumber} = event
+        let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+        let context = contextHelper.getContext(~eventData={chainId, eventId})
         (
           contextHelper.getEntitiesToLoad(),
           Types.GravatarContract_TestEventWithContext(event, context),
@@ -93,7 +97,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
           ~event,
           ~context=contextHelper.getLoaderContext(),
         )
-        let context = contextHelper.getContext()
+        let {logIndex, blockNumber} = event
+        let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+        let context = contextHelper.getContext(~eventData={chainId, eventId})
         (
           contextHelper.getEntitiesToLoad(),
           Types.GravatarContract_NewGravatarWithContext(event, context),
@@ -105,7 +111,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
           ~event,
           ~context=contextHelper.getLoaderContext(),
         )
-        let context = contextHelper.getContext()
+        let {logIndex, blockNumber} = event
+        let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+        let context = contextHelper.getContext(~eventData={chainId, eventId})
         (
           contextHelper.getEntitiesToLoad(),
           Types.GravatarContract_UpdatedGravatarWithContext(event, context),
@@ -122,17 +130,17 @@ let loadReadEntities = async (eventBatch: array<Types.event>): array<Types.event
 
   let readEntities = readEntitiesGrouped->Belt.Array.concatMany
 
-  await readEntities->IO.loadEntities
+  await DbFunctions.sql->IO.loadEntities(readEntities)
 
   contexts
 }
 
 let processEventBatch = async (eventBatch: array<Types.event>, ~chainId) => {
-  let ioBatch = IO.createBatch()
+  IO.InMemoryStore.resetStore()
 
-  let eventBatchAndContext = await eventBatch->loadReadEntities
+  let eventBatchAndContext = await eventBatch->loadReadEntities(~chainId)
 
   eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter(~chainId))
 
-  await ioBatch->IO.executeBatch
+  await DbFunctions.sql->IO.executeBatch
 }

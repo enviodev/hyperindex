@@ -1,22 +1,11 @@
-const postgres = require("postgres")
-
-const postgresConfig = require("./Config.bs.js").db
-
-const sql = postgres({...postgresConfig, 
-  transform: {
-    undefined: null
-  }
-})
-
-
 // db operations for raw_events:
 
-module.exports.readRawEventsEntities = (entityIdArray) => sql`
+module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
   SELECT *
   FROM public.raw_events
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
 
-module.exports.batchSetRawEvents = (entityDataArray) => {
+module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   const valueCopyToFixBigIntType = entityDataArray; // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
   return sql`
     INSERT INTO public.raw_events
@@ -50,7 +39,7 @@ module.exports.batchSetRawEvents = (entityDataArray) => {
   ;`;
 };
 
-module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
+module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
   FROM public.raw_events
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
@@ -58,29 +47,41 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
 
   // db operations for User:
 
-  module.exports.readUserEntities = (entityIdArray) => sql`
-  SELECT *
+  module.exports.readUserEntities = (sql, entityIdArray) => sql`
+  SELECT 
+  "id",
+  "address",
+  "gravatar",
+  event_chain_id, 
+  event_id
   FROM public.user
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetUser = (entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  module.exports.batchSetUser = (sql, entityDataArray) => {
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
   return sql`
     INSERT INTO public.user
-  ${sql(valueCopyToFixBigIntType,
+  ${sql(combinedEntityAndEventData,
     "id",
     "address",
     "gravatar",
+    "event_chain_id",
+    "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
     "id" = EXCLUDED."id",
     "address" = EXCLUDED."address",
-    "gravatar" = EXCLUDED."gravatar"
+    "gravatar" = EXCLUDED."gravatar",
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
   ;`
   }
 
-  module.exports.batchDeleteUser = (entityIdArray) => sql`
+  module.exports.batchDeleteUser = (sql, entityIdArray) => sql`
   DELETE
   FROM public.user
   WHERE id IN ${sql(entityIdArray)};`
@@ -88,21 +89,33 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
 
   // db operations for Gravatar:
 
-  module.exports.readGravatarEntities = (entityIdArray) => sql`
-  SELECT *
+  module.exports.readGravatarEntities = (sql, entityIdArray) => sql`
+  SELECT 
+  "id",
+  "owner",
+  "displayName",
+  "imageUrl",
+  "updatesCount",
+  event_chain_id, 
+  event_id
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetGravatar = (entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+  module.exports.batchSetGravatar = (sql, entityDataArray) => {
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
   return sql`
     INSERT INTO public.gravatar
-  ${sql(valueCopyToFixBigIntType,
+  ${sql(combinedEntityAndEventData,
     "id",
     "owner",
     "displayName",
     "imageUrl",
     "updatesCount",
+    "event_chain_id",
+    "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
@@ -110,11 +123,13 @@ module.exports.batchDeleteRawEvents = (entityIdArray) => sql`
     "owner" = EXCLUDED."owner",
     "displayName" = EXCLUDED."displayName",
     "imageUrl" = EXCLUDED."imageUrl",
-    "updatesCount" = EXCLUDED."updatesCount"
+    "updatesCount" = EXCLUDED."updatesCount",
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
   ;`
   }
 
-  module.exports.batchDeleteGravatar = (entityIdArray) => sql`
+  module.exports.batchDeleteGravatar = (sql, entityIdArray) => sql`
   DELETE
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)};`

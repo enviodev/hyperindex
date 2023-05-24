@@ -19,15 +19,9 @@ import { runMigrationsNoLogs, sql, EventVariants } from "./helpers/utils";
 require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
 describe("Raw Events Integration", () => {
-  before(async () => {
-    await runMigrationsNoLogs();
-  });
-  after(async () => {
-    await runMigrationsNoLogs();
-  });
-
-  it("RawEvents table contains rows after indexer runs", async function () {
+  before(async function () {
     this.timeout(30 * 1000);
+    await runMigrationsNoLogs();
     console.log("deploying Nft Factory");
     const deployedNftFactory = await deployNftFactory();
     const nftFactoryContractAddress = await deployedNftFactory.getAddress();
@@ -92,11 +86,32 @@ describe("Raw Events Integration", () => {
     console.log("processing events");
     await processAllEvents(localChainConfig);
     console.log("Successfully processed events");
+  });
+  after(async () => {
+    await runMigrationsNoLogs();
+  });
 
+  it("RawEvents table contains rows after indexer runs", async function () {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
-
     expect(rawEventsRows.count).to.be.gt(0);
+  });
 
-    console.log(rawEventsRows);
+  it("Entities have metrics and relate to their raw events", async function () {
+    let joinedMetricsRows = await sql`
+    SELECT t.db_write_timestamp AS t_write, t.event_chain_id, t.event_id, r.block_timestamp, r.db_write_timestamp AS r_write
+    FROM public.token AS t
+    JOIN public.raw_events AS r
+    ON t.event_chain_id = r.chain_id AND t.event_id = r.event_id;
+    `;
+    expect(joinedMetricsRows.count).to.be.gt(0);
+  });
+
+  it("should ensure Entites are created correctly", async function () {
+    let rowsNftcollection = await sql`SELECT * FROM public.nftcollection`;
+    expect(rowsNftcollection.count).to.be.gt(0);
+    let rowsUsers = await sql`SELECT * FROM public.user`;
+    expect(rowsUsers.count).to.be.gt(0);
+    let rowsToken = await sql`SELECT * FROM public.token`;
+    expect(rowsToken.count).to.be.gt(0);
   });
 });
