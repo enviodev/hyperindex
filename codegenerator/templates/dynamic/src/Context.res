@@ -27,7 +27,8 @@ module {{contract.name.capitalized}}Contract = {
 
             let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id))
 
-            ()->Obj.magic()
+            let tempReturnStubToImplement: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.{{required_entity.name.uncapitalized}}SubEntityLoader = Obj.magic()
+            tempReturnStubToImplement
           },
       {{/each}}
         },

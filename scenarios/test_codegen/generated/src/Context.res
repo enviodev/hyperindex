@@ -105,7 +105,8 @@ module GravatarContract = {
 
             let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id))
 
-            ()->Obj.magic()
+            let tempReturnStubToImplement: Types.GravatarContract.UpdatedGravatarEvent.gravatarSubEntityLoader = Obj.magic()
+            tempReturnStubToImplement
           },
         },
       }
