@@ -48,7 +48,6 @@ module User = {
         id,
         address,
         gravatar,
-        gravatarData: None,
         updatesCountOnUserForTesting,
       },
       eventData: {
@@ -92,7 +91,6 @@ module Gravatar = {
       entity: {
         id,
         owner,
-        ownerData: None,
         displayName,
         imageUrl,
         updatesCount,

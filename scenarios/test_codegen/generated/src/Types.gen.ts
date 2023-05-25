@@ -18,7 +18,7 @@ export type userEntity = {
   readonly id: string; 
   readonly address: string; 
   readonly gravatar: (undefined | id); 
-  readonly gravatarData: (undefined | gravatarEntity); 
+  readonly gravatarData?: gravatarEntity; 
   readonly updatesCountOnUserForTesting: number
 };
 
@@ -26,7 +26,7 @@ export type userEntity = {
 export type gravatarEntity = {
   readonly id: string; 
   readonly owner: id; 
-  readonly ownerData: (undefined | userEntity); 
+  readonly ownerData?: userEntity; 
   readonly displayName: string; 
   readonly imageUrl: string; 
   readonly updatesCount: number

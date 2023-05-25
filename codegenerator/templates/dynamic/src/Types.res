@@ -51,7 +51,7 @@ type rec
   {{#unless @first}}and {{/unless}}{{entity.name.uncapitalized}}Entity = {
     {{#each entity.params as | param |}}
     {{param.key}} : {{param.type_rescript}},
-    {{#if param.maybe_entity_name}}{{param.key}}Data : option<{{param.maybe_entity_name.uncapitalized}}Entity>, {{/if}}
+    {{#if param.maybe_entity_name}}{{param.key}}Data?: {{param.maybe_entity_name.uncapitalized}}Entity, {{/if}}
     {{/each}}
   }
 {{/each}}

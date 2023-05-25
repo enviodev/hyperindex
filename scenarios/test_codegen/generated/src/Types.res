@@ -43,13 +43,13 @@ type rec userEntity = {
   id: string,
   address: string,
   gravatar: option<id>,
-  gravatarData: option<gravatarEntity>,
+  gravatarData?: gravatarEntity,
   updatesCountOnUserForTesting: int,
 }
 and gravatarEntity = {
   id: string,
   owner: id,
-  ownerData: option<userEntity>,
+  ownerData?: userEntity,
   displayName: string,
   imageUrl: string,
   updatesCount: int,
