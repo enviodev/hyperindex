@@ -7,6 +7,7 @@ var DbStub = require("./__mocks__/DbStub.bs.js");
 var Js_dict = require("rescript/lib/js/js_dict.js");
 var Belt_Array = require("rescript/lib/js/belt_Array.js");
 var Caml_array = require("rescript/lib/js/caml_array.js");
+var Migrations = require("generated/src/Migrations.bs.js");
 var MockEvents = require("./__mocks__/MockEvents.bs.js");
 var ContextMock = require("./__mocks__/ContextMock.bs.js");
 var DbFunctions = require("generated/src/DbFunctions.bs.js");
@@ -56,7 +57,7 @@ Mocha$RescriptMocha.describe("E2E Mock Event Batch")(undefined, undefined, undef
 
 Mocha$RescriptMocha.describe("E2E Db check")(undefined, undefined, undefined, (function (param) {
         Promise$RescriptMocha.before(undefined)(undefined, undefined, undefined, (async function (param) {
-                await DbFunctions.Gravatar.batchSetGravatar([
+                await DbFunctions.Gravatar.batchSetGravatar(Migrations.sql, [
                       MockEntities.mockInMemRow1,
                       MockEntities.mockInMemRow2
                     ]);

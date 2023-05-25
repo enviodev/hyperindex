@@ -110,7 +110,7 @@ module InMemoryStore = {
 type uniqueEntityReadIds = Js.Dict.t<Types.id>
 type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
-let loadEntities = async (entityBatch: array<Types.entityRead>) => {
+let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let uniqueUserDict = Js.Dict.empty()
 
   let uniqueGravatarDict = Js.Dict.empty()
@@ -124,31 +124,27 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
     }
   })
 
-  let userEntitiesArray = await DbFunctions.User.readUserEntities(Js.Dict.values(uniqueUserDict))
+  let userEntitiesArray =
+    await sql->DbFunctions.User.readUserEntities(Js.Dict.values(uniqueUserDict))
 
   userEntitiesArray->Belt.Array.forEach(readRow => {
-    let {entity, eventData} = readRow->DbFunctions.User.readRowToReadEntityData
+    let {entity, eventData} = DbFunctions.User.readRowToReadEntityData(readRow)
     InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
   })
 
-  let gravatarEntitiesArray = await DbFunctions.Gravatar.readGravatarEntities(
-    Js.Dict.values(uniqueGravatarDict),
-  )
+  let gravatarEntitiesArray =
+    await sql->DbFunctions.Gravatar.readGravatarEntities(Js.Dict.values(uniqueGravatarDict))
 
   gravatarEntitiesArray->Belt.Array.forEach(readRow => {
-    let {entity, eventData} = readRow->DbFunctions.Gravatar.readRowToReadEntityData
+    let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
     InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
   })
 }
 
-let createBatch = () => {
-  InMemoryStore.resetStore()
-}
-
-let executeBatch = async () => {
+let executeBatch = async sql => {
   let rawEventsRows = InMemoryStore.RawEvents.rawEventsDict.contents->Js.Dict.values
 
-  let deleteRawEventsIdsPromise = () => {
+  let deleteRawEventsIdsPromise = sql => {
     let deleteRawEventsIds =
       rawEventsRows
       ->Belt.Array.keepMap(rawEventsRow =>
@@ -157,13 +153,13 @@ let executeBatch = async () => {
       ->Belt.Array.map(rawEvents => (rawEvents.chainId, rawEvents.eventId))
 
     if deleteRawEventsIds->Belt.Array.length > 0 {
-      DbFunctions.RawEvents.batchDeleteRawEvents(deleteRawEventsIds)
+      sql->DbFunctions.RawEvents.batchDeleteRawEvents(deleteRawEventsIds)
     } else {
       ()->Promise.resolve
     }
   }
 
-  let setRawEventsPromise = () => {
+  let setRawEventsPromise = sql => {
     let setRawEvents =
       rawEventsRows->Belt.Array.keepMap(rawEventsRow =>
         rawEventsRow.crud == Types.Create || rawEventsRow.crud == Update
@@ -172,7 +168,7 @@ let executeBatch = async () => {
       )
 
     if setRawEvents->Belt.Array.length > 0 {
-      DbFunctions.RawEvents.batchSetRawEvents(setRawEvents)
+      sql->DbFunctions.RawEvents.batchSetRawEvents(setRawEvents)
     } else {
       ()->Promise.resolve
     }
@@ -180,26 +176,26 @@ let executeBatch = async () => {
 
   let userRows = InMemoryStore.User.userDict.contents->Js.Dict.values
 
-  let deleteUserIdsPromise = () => {
+  let deleteUserIdsPromise = sql => {
     let deleteUserIds =
       userRows
       ->Belt.Array.keepMap(userRow => userRow.crud == Types.Delete ? Some(userRow.entity) : None)
       ->Belt.Array.map(user => user.id)
 
     if deleteUserIds->Belt.Array.length > 0 {
-      DbFunctions.User.batchDeleteUser(deleteUserIds)
+      sql->DbFunctions.User.batchDeleteUser(deleteUserIds)
     } else {
       ()->Promise.resolve
     }
   }
-  let setUserPromise = () => {
+  let setUserPromise = sql => {
     let setUser =
       userRows->Belt.Array.keepMap(userRow =>
         userRow.crud == Types.Create || userRow.crud == Update ? Some(userRow) : None
       )
 
     if setUser->Belt.Array.length > 0 {
-      setUser->DbFunctions.User.batchSetUser
+      sql->DbFunctions.User.batchSetUser(setUser)
     } else {
       ()->Promise.resolve
     }
@@ -207,7 +203,7 @@ let executeBatch = async () => {
 
   let gravatarRows = InMemoryStore.Gravatar.gravatarDict.contents->Js.Dict.values
 
-  let deleteGravatarIdsPromise = () => {
+  let deleteGravatarIdsPromise = sql => {
     let deleteGravatarIds =
       gravatarRows
       ->Belt.Array.keepMap(gravatarRow =>
@@ -216,30 +212,34 @@ let executeBatch = async () => {
       ->Belt.Array.map(gravatar => gravatar.id)
 
     if deleteGravatarIds->Belt.Array.length > 0 {
-      DbFunctions.Gravatar.batchDeleteGravatar(deleteGravatarIds)
+      sql->DbFunctions.Gravatar.batchDeleteGravatar(deleteGravatarIds)
     } else {
       ()->Promise.resolve
     }
   }
-  let setGravatarPromise = () => {
+  let setGravatarPromise = sql => {
     let setGravatar =
       gravatarRows->Belt.Array.keepMap(gravatarRow =>
         gravatarRow.crud == Types.Create || gravatarRow.crud == Update ? Some(gravatarRow) : None
       )
 
     if setGravatar->Belt.Array.length > 0 {
-      setGravatar->DbFunctions.Gravatar.batchSetGravatar
+      sql->DbFunctions.Gravatar.batchSetGravatar(setGravatar)
     } else {
       ()->Promise.resolve
     }
   }
 
-  await [
-    deleteRawEventsIdsPromise(),
-    setRawEventsPromise(),
-    deleteUserIdsPromise(),
-    setUserPromise(),
-    deleteGravatarIdsPromise(),
-    setGravatarPromise(),
-  ]->Promise.all
+  let res = await sql->Postgres.beginSql(sql => {
+    [
+      sql->deleteRawEventsIdsPromise,
+      sql->setRawEventsPromise,
+      sql->deleteUserIdsPromise,
+      sql->setUserPromise,
+      sql->deleteGravatarIdsPromise,
+      sql->setGravatarPromise,
+    ]
+  })
+
+  res
 }
