@@ -1,44 +1,42 @@
-// todo
+let { GreeterContract } = require("../generated/src/Handlers.bs.js");
 
-let {
-  GravatarContract_registerNewGravatarHandler,
-  GravatarContract_registerNewGravatarLoadEntities,
-  GravatarContract_registerUpdatedGravatarHandler,
-  GravatarContract_registerUpdatedGravatarLoadEntities,
-} = require("../generated/src/Handlers.bs.js");
-
-GravatarContract_registerNewGravatarLoadEntities(({ event, context }) => {});
-
-GravatarContract_registerNewGravatarHandler(({ event, context }) => {
-  let { id, displayName, owner, imageUrl } = event.params;
-  let gravatar = {
-    id: id.toString(),
-    displayName,
-    owner,
-    imageUrl,
-    updatesCount: 0,
-  };
-  context.gravatar.insert(gravatar);
+GreeterContract.registerNewGreetingLoadEntities((event, context) => {
+  context.greeting.greetingWithChangesLoad(event.params.user.toString());
 });
 
-GravatarContract_registerUpdatedGravatarLoadEntities(({ event, context }) => {
-  context.gravatar.gravatarWithChangesLoad(event.params.id.toString());
+GreeterContract.registerNewGreetingHandler((event, context) => {
+  let user = event.params.user;
+  let latestGreeting = event.params.greeting;
+  let numberOfGreetings = event.params.numberOfGreetings;
+
+  let existingGreeter = context.greeting.greetingWithChangesLoad;
+
+  if (existingGreeter != undefined) {
+    context.greeting.update({
+      id: user.toString(),
+      latestGreeting: latestGreeting,
+      numberOfGreetings: existingGreeter.numberOfGreetings + 1,
+    });
+  } else {
+    context.greeting.insert({
+      id: user.toString(),
+      latestGreeting: latestGreeting,
+      numberOfGreetings: 1,
+    });
+  }
 });
 
-GravatarContract_registerUpdatedGravatarHandler(({ event, context }) => {
-  let { id, displayName, owner, imageUrl } = event.params;
-  let currentUpdatesCount =
-    context.gravatar.gravatarWithChanges()?.updatesCount ?? 0;
+GreeterContract.registerClearGreetingLoadEntities((event, context) => {
+  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+});
 
-  let updatesCount = currentUpdatesCount + 1;
-
-  let gravatar = {
-    id: id.toString(),
-    displayName,
-    owner,
-    imageUrl,
-    updatesCount,
-  };
-
-  context.gravatar.update(gravatar);
+GreeterContract.registerClearGreetingHandler((event, context) => {
+  let existingGreeter = context.greeting.greetingWithChangesLoad;
+  if (existingGreeter !== undefined) {
+    context.greeting.update({
+      id: user.toString(),
+      latestGreeting: "",
+      numberOfGreetings: existingGreeter.numberOfGreetings + 1,
+    });
+  }
 });
