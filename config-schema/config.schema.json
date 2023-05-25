@@ -55,7 +55,8 @@
                   "description": "An array of addresses that the contract is deployed to on the network",
                   "type": "array",
                   "items": {
-                    "type": "string"
+                    "type": "string",
+                    "pattern": "^0x[a-fA-F0-9]{40}$"
                   }
                 },
                 "handler": {
