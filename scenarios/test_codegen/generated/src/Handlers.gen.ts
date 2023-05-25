@@ -3,6 +3,9 @@
 
 
 // @ts-ignore: Implicit any on import
+const Curry = require('rescript/lib/js/curry.js');
+
+// @ts-ignore: Implicit any on import
 const HandlersBS = require('./Handlers.bs');
 
 import type {GravatarContract_NewGravatarEvent_context as Types_GravatarContract_NewGravatarEvent_context} from './Types.gen';
@@ -43,7 +46,10 @@ export const GravatarContract_registerNewGravatarLoadEntities: (handler:((_1:{ r
 
 export const GravatarContract_registerUpdatedGravatarLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_GravatarContract_UpdatedGravatarEvent_eventArgs>; readonly context: Types_GravatarContract_UpdatedGravatarEvent_loaderContext }) => void)) => void = function (Arg1: any) {
   const result = HandlersBS.GravatarContract.registerUpdatedGravatarLoadEntities(function (Argevent: any, Argcontext: any) {
-      const result1 = Arg1({event:Argevent, context:Argcontext});
+      const result1 = Arg1({event:Argevent, context:{gravatar:{gravatarWithChangesLoad:function (Arg11: any, Arg2: any) {
+          const result2 = Curry._2(Argcontext.gravatar.gravatarWithChangesLoad, Arg11.loadOwner, Arg2);
+          return result2
+        }}}});
       return result1
     });
   return result

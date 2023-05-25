@@ -13,16 +13,11 @@ type contactDetails = {
   email: string,
 }
 
+type gravatarLoad = {loadOwner: bool}
+type userLoad = {loadGravatar: bool}
 type entityRead =
-  | UserRead(id)
-  | GravatarRead(id)
-
-let entitySerialize = (entity: entityRead) => {
-  switch entity {
-  | UserRead(id) => `user${id}`
-  | GravatarRead(id) => `gravatar${id}`
-  }
-}
+  | UserRead(id, userLoad)
+  | GravatarRead(id, gravatarLoad)
 
 type rawEventsEntity = {
   @as("chain_id") chainId: int,
@@ -43,13 +38,11 @@ type rec userEntity = {
   id: string,
   address: string,
   gravatar: option<id>,
-  gravatarData?: gravatarEntity,
   updatesCountOnUserForTesting: int,
 }
 and gravatarEntity = {
   id: string,
   owner: id,
-  ownerData?: userEntity,
   displayName: string,
   imageUrl: string,
   updatesCount: int,
@@ -160,6 +153,7 @@ module GravatarContract = {
     }
     type gravatarEntityHandlerContext = {
       gravatarWithChanges: unit => option<gravatarEntity>,
+      getOwner: gravatarEntity => userEntity,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
       delete: id => unit,
@@ -170,10 +164,7 @@ module GravatarContract = {
       gravatar: gravatarEntityHandlerContext,
     }
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
-    type gravatarSubEntityLoader = {userLoad: unit => unit}
-
-    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => gravatarSubEntityLoader}
+    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: (~loadOwner: bool=?, id) => unit}
 
     @genType
     type loaderContext = {gravatar: gravatarEntityLoaderContext}
