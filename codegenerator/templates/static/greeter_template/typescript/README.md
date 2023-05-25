@@ -4,7 +4,7 @@ The following files are required to use the Indexer:
 
 - Configuration (defaults to `config.yaml`)
 - GraphQL Schema (defaults to `schema.graphql`)
-- Event Handlers (defaults to `src/EventHandlers.res`) 
+- Event Handlers (defaults to `src/EventHandlers.ts`) 
 
 These files are auto-generated according to the Greeter template by running `envio init` command.
 
@@ -13,7 +13,7 @@ These files are auto-generated according to the Greeter template by running `env
 Example config file from Greeter scenario:
 
 ```yaml
-version: 1.0.0
+version: 0.0.0
 description: Greeter indexer
 repository: https://github.com/PaulRBerg/hardhat-template
 networks:
@@ -24,7 +24,7 @@ networks:
       - name: Greeter
         abi_file_path: abis/greeter-abi.json
         address: ["0x2B502ab6F783c2Ae96A75dc68cf82a77ce2637c2"]
-        handler: ./src/EventHandlers.bs.js
+        handler: src/EventHandlers.js
         events:
           - name: "NewGreeting"
             requiredEntities:
@@ -35,7 +35,7 @@ networks:
             requiredEntities:
               - name: "Greeting"
                 labels:
-                  - "greetingWithChanges"
+                  - "greetingWithChanges"◊
 
 ```
 
@@ -91,10 +91,16 @@ Each event handler requires two functions to be registered in order to enable fu
 
 ### Example of registering a `loadEntities` function for the `NewGreeting` event from the above example config:
 
-```rescript
-Handlers.GreeterContract.registerNewGreetingLoadEntities((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
-})
+```typescript
+import {
+  GreeterContract_registerNewGreetingLoadEntities,
+} from "../generated/src/Handlers.gen";
+
+import { greetingEntity } from "../generated/src/Types.gen";
+
+GreeterContract_registerNewGreetingLoadEntities(({ event, context }) => {
+  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+});
 ```
 
 Inspecting the config of the `NewGreeting` event from the above example config indicates that there is a defined `requiredEntities` field of the following:
@@ -115,31 +121,34 @@ events:
 
 ### Example of registering a `Handler` function for the `NewGreeting` event and using the loaded entity `greetingWithChanges`:
 
-```rescript
-Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges()
+```typescript
+import {
+  GreeterContract_registerNewGreetingHandler,
+} from "../generated/src/Handlers.gen";
 
-  switch currentGreeterOpt {
-  | Some(existingGreeter) => {
-      let greetingObject: greetingEntity = {
-        id: event.params.user->Ethers.ethAddressToString,
-        latestGreeting: event.params.greeting,
-        numberOfGreetings: existingGreeter.numberOfGreetings + 1,
-      }
+import { greetingEntity } from "../generated/src/Types.gen";
 
-      context.greeting.update(greetingObject)
-    }
+GreeterContract_registerNewGreetingHandler(({ event, context }) => {
+  let currentGreeter = context.greeting.greetingWithChanges();
 
-  | None =>
+  if (currentGreeter != null) {
     let greetingObject: greetingEntity = {
-      id: event.params.user->Ethers.ethAddressToString,
+      id: event.params.user.toString(),
+      latestGreeting: event.params.greeting,
+      numberOfGreetings: currentGreeter.numberOfGreetings + 1,
+    };
+
+    context.greeting.update(greetingObject);
+  } else {
+    let greetingObject: greetingEntity = {
+      id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
-    }
-
-    context.greeting.insert(greetingObject)
+    };
+    context.greeting.insert(greetingObject);
   }
-})
+});
+
 ```
 
 - The handler functions also follow a naming convention for all events in the form of: `register<EventName>Handler`.

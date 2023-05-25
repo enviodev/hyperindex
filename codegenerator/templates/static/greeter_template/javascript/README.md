@@ -4,7 +4,7 @@ The following files are required to use the Indexer:
 
 - Configuration (defaults to `config.yaml`)
 - GraphQL Schema (defaults to `schema.graphql`)
-- Event Handlers (defaults to `src/EventHandlers.*` depending on flavour chosen) 
+- Event Handlers (defaults to `src/EventHandlers.js`) 
 
 These files are auto-generated according to the Greeter template by running `envio init` command.
 
@@ -13,7 +13,7 @@ These files are auto-generated according to the Greeter template by running `env
 Example config file from Greeter scenario:
 
 ```yaml
-version: 1.0.0
+version: 0.0.0
 description: Greeter indexer
 repository: https://github.com/PaulRBerg/hardhat-template
 networks:
@@ -23,8 +23,8 @@ networks:
     contracts:
       - name: Greeter
         abi_file_path: abis/greeter-abi.json
-        address: ["0x2B502ab6F783c2Ae96A75dc68cf82a77ce2637c2"]
-        handler: ./src/EventHandlers.bs.js
+        address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
+        handler: ./src/EventHandlers.js
         events:
           - name: "NewGreeting"
             requiredEntities:
@@ -36,7 +36,6 @@ networks:
               - name: "Greeting"
                 labels:
                   - "greetingWithChanges"
-
 ```
 
 **Field Descriptions**
@@ -91,10 +90,12 @@ Each event handler requires two functions to be registered in order to enable fu
 
 ### Example of registering a `loadEntities` function for the `NewGreeting` event from the above example config:
 
-```rescript
-Handlers.GreeterContract.registerNewGreetingLoadEntities((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
-})
+```javascript
+let { GreeterContract } = require("../generated/src/Handlers.bs.js");
+
+GreeterContract.registerNewGreetingLoadEntities((event, context) => {
+  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+});
 ```
 
 Inspecting the config of the `NewGreeting` event from the above example config indicates that there is a defined `requiredEntities` field of the following:
@@ -115,31 +116,26 @@ events:
 
 ### Example of registering a `Handler` function for the `NewGreeting` event and using the loaded entity `greetingWithChanges`:
 
-```rescript
-Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges()
+```javascript
+let { GreeterContract } = require("../generated/src/Handlers.bs.js");
 
-  switch currentGreeterOpt {
-  | Some(existingGreeter) => {
-      let greetingObject: greetingEntity = {
-        id: event.params.user->Ethers.ethAddressToString,
-        latestGreeting: event.params.greeting,
-        numberOfGreetings: existingGreeter.numberOfGreetings + 1,
-      }
+GreeterContract.registerNewGreetingHandler((event, context) => {
+  let existingGreeter = context.greeting.greetingWithChangesLoad;
 
-      context.greeting.update(greetingObject)
-    }
-
-  | None =>
-    let greetingObject: greetingEntity = {
-      id: event.params.user->Ethers.ethAddressToString,
+  if (existingGreeter != undefined) {
+    context.greeting.update({
+      id: event.params.user.toString(),
+      latestGreeting: event.params.greeting,
+      numberOfGreetings: existingGreeter.numberOfGreetings + 1,
+    });
+  } else {
+    context.greeting.insert({
+      id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
-    }
-
-    context.greeting.insert(greetingObject)
+    });
   }
-})
+});
 ```
 
 - The handler functions also follow a naming convention for all events in the form of: `register<EventName>Handler`.

@@ -5,22 +5,18 @@ GreeterContract.registerNewGreetingLoadEntities((event, context) => {
 });
 
 GreeterContract.registerNewGreetingHandler((event, context) => {
-  let user = event.params.user;
-  let latestGreeting = event.params.greeting;
-  let numberOfGreetings = event.params.numberOfGreetings;
-
   let existingGreeter = context.greeting.greetingWithChangesLoad;
 
   if (existingGreeter != undefined) {
     context.greeting.update({
-      id: user.toString(),
-      latestGreeting: latestGreeting,
+      id: event.params.user.toString(),
+      latestGreeting: event.params.greeting,
       numberOfGreetings: existingGreeter.numberOfGreetings + 1,
     });
   } else {
     context.greeting.insert({
-      id: user.toString(),
-      latestGreeting: latestGreeting,
+      id: event.params.user.toString(),
+      latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
     });
   }
@@ -34,9 +30,9 @@ GreeterContract.registerClearGreetingHandler((event, context) => {
   let existingGreeter = context.greeting.greetingWithChangesLoad;
   if (existingGreeter !== undefined) {
     context.greeting.update({
-      id: user.toString(),
+      id: event.params.user.toString(),
       latestGreeting: "",
-      numberOfGreetings: existingGreeter.numberOfGreetings + 1,
+      numberOfGreetings: existingGreeter.numberOfGreetings,
     });
   }
 });
