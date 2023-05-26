@@ -104,21 +104,25 @@ fn gql_named_types_to_postgres_types(
 ) -> Result<String, String> {
     let converted = match scalar_type {
         GqlScalar::BuiltIn(scalar) => {
+            use BuiltInGqlScalar::{Boolean, Float, Int, String, ID};
             match scalar {
                 ID => "text".to_owned(),
                 String => "text".to_owned(),
                 Int => "integer".to_owned(),
-                BigInt => "numeric".to_owned(), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
                 Float => "numeric".to_owned(), // Should we allow this type? Rounding issues will abound.
+                Boolean => "boolean".to_owned(),
             }
         }
-        GqlScalar::Additional(scalar) => match scalar {
-            Bytes => "text".to_owned(),
-            Boolean => "boolean".to_owned(),
-        },
+        GqlScalar::Additional(scalar) => {
+            use AdditionalGqlScalar::{BigInt, Bytes};
+            match scalar {
+                Bytes => "text".to_owned(),
+                BigInt => "numeric".to_owned(), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            }
+        }
         GqlScalar::Custom(named_type) => {
             if entities_set.contains(named_type) {
-                "text".to_owned()
+                "text".to_owned() //This would be the ID of another defined entity
             } else {
                 let error_message = format!("Failed to parse undefined type: {}", named_type);
                 Err(error_message.to_owned())?
@@ -137,14 +141,16 @@ fn gql_type_to_postgres_type(
             let scalar = gql_named_to_scalar(named);
             gql_named_types_to_postgres_types(&scalar, entities_set)?
         }
-        Type::ListType(gql_type) => match **gql_type {
-            Type::NamedType(_) | Type::NonNullType(_) => {
-                gql_type_to_postgres_type(gql_type, entities_set)?
-            }
-            Type::ListType(_) => Err("Nested entity list types are unsupported")?,
+        Type::ListType(gql_type) => match *gql_type.clone() {
+            //Postgres doesn't support nullable types inside of arrays
+            Type::NonNullType(gql_type) =>format!("{}[]", gql_type_to_postgres_type(&gql_type, entities_set)?),
+            Type::NamedType(named)   => Err(format!(
+                "Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", named
+            ))?,
+            Type::ListType(_) => Err("Nullable multidemensional lists types are unsupported, please include a '!' for your inner list type eg. [[Int!]!]")?,
         },
         Type::NonNullType(gql_type) => format!(
-            "{}  NOT NULL",
+            "{} NOT NULL",
             gql_type_to_postgres_type(&gql_type, entities_set)?
         ),
     };
@@ -269,7 +275,7 @@ mod tests {
         entity_parsing::{gql_type_to_postgres_relational_type, gql_type_to_rescript_type},
         EntityRelationalTypes,
     };
-    use graphql_parser::schema::Type;
+    use graphql_parser::schema::{Definition, Type, TypeDefinition};
     use std::collections::HashSet;
 
     #[test]
@@ -422,5 +428,58 @@ mod tests {
             relationship_type: "array".to_owned(),
         };
         assert_eq!(result, expect_output);
+    }
+
+    fn convert_entity_type_to_pg_type(entity_type: &str) -> String {
+        let schema_string = format!(
+            r#"
+        type TestEntity @entity {{
+          test_field: {}
+        }}
+        "#,
+            entity_type
+        );
+        let schema = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
+        let hash_set = HashSet::new();
+        let mut gql_type: Option<Type<String>> = None;
+
+        schema.definitions.iter().for_each(|def| {
+            if let Definition::TypeDefinition(type_def) = def {
+                if let TypeDefinition::Object(obj_def) = type_def {
+                    obj_def.fields.iter().for_each(|field| {
+                        gql_type = Some(field.field_type.clone());
+                    })
+                }
+            }
+        });
+        super::gql_type_to_postgres_type(&gql_type.unwrap(), &hash_set).unwrap()
+    }
+
+    #[test]
+    fn gql_single_not_null_array_to_pg_type() {
+        let gql_type = "[String!]!";
+        let pg_type = convert_entity_type_to_pg_type(gql_type);
+        assert_eq!(pg_type, "text[] NOT NULL");
+    }
+
+    #[test]
+    fn gql_multi_not_null_array_to_pg_type() {
+        let gql_type = "[[Int!]!]!";
+        let pg_type = convert_entity_type_to_pg_type(gql_type);
+        assert_eq!(pg_type, "integer[][] NOT NULL");
+    }
+
+    #[test]
+    #[should_panic]
+    fn gql_single_nullable_array_to_pg_type_should_panic() {
+        let gql_type = "[Int]!"; //Nested lists need to be not nullable
+        convert_entity_type_to_pg_type(gql_type);
+    }
+
+    #[test]
+    #[should_panic]
+    fn gql_multi_nullable_array_to_pg_type_should_panic() {
+        let gql_type = "[[Int!]]!"; //Nested lists need to be not nullable
+        convert_entity_type_to_pg_type(gql_type);
     }
 }

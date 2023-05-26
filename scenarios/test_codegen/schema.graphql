@@ -2,6 +2,7 @@ type User @entity {
   id: ID!
   address: Bytes!
   gravatar: Gravatar
+  tags: [String!]!
 }
 
 type Gravatar @entity {

@@ -52,6 +52,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   "id",
   "address",
   "gravatar",
+  "tags",
   event_chain_id, 
   event_id
   FROM public.user
@@ -68,6 +69,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "id",
     "address",
     "gravatar",
+    "tags",
     "event_chain_id",
     "event_id",
   )}
@@ -76,6 +78,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "id" = EXCLUDED."id",
     "address" = EXCLUDED."address",
     "gravatar" = EXCLUDED."gravatar",
+    "tags" = EXCLUDED."tags",
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
   ;`

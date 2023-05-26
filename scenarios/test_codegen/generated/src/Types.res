@@ -43,6 +43,7 @@ type userEntity = {
   id: string,
   address: string,
   gravatar: option<id>,
+  tags: array<string>,
 }
 
 @genType

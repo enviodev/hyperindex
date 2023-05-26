@@ -17,7 +17,8 @@ export type contactDetails = { readonly name: string; readonly email: string };
 export type userEntity = {
   readonly id: string; 
   readonly address: string; 
-  readonly gravatar: (undefined | id)
+  readonly gravatar: (undefined | id); 
+  readonly tags: string[]
 };
 
 // tslint:disable-next-line:interface-over-type-literal
