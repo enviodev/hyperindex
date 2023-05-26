@@ -63,21 +63,17 @@ let db: Postgres.poolConfig = {
 
 let config: chainConfigs = [
   (
-    "137",
+    "1337",
     {
-      provider: Ethers.JsonRpcProvider.make(~rpcUrl="https://polygon-rpc.com", ~chainId=137),
-      startBlock: 34316032,
-      chainId: 137,
+      provider: Ethers.JsonRpcProvider.make(~rpcUrl="http://localhost:8545", ~chainId=1337),
+      startBlock: 0,
+      chainId: 1337,
       contracts: [
         {
           name: "Gravatar",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
-          address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"->Ethers.getAddressFromStringUnsafe,
-          events: [
-            GravatarContract_TestEventEvent,
-            GravatarContract_NewGravatarEvent,
-            GravatarContract_UpdatedGravatarEvent,
-          ],
+          address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
+          events: [GravatarContract_NewGravatarEvent, GravatarContract_UpdatedGravatarEvent],
         },
       ],
     },

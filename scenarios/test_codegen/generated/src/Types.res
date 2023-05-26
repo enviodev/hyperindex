@@ -7,12 +7,6 @@ type id = string
 
 //nested subrecord types
 
-@spice
-type contactDetails = {
-  name: string,
-  email: string,
-}
-
 type entityRead =
   | UserRead(id)
   | GravatarRead(id)
@@ -65,9 +59,7 @@ type gravatarEntity = {
   owner: id,
   displayName: string,
   imageUrl: string,
-  updatesCount: int,
-  bigIntTest: Ethers.BigInt.t,
-  bigIntOption: option<Ethers.BigInt.t>,
+  updatesCount: Ethers.BigInt.t,
 }
 
 type gravatarEntitySerialized = {
@@ -75,9 +67,7 @@ type gravatarEntitySerialized = {
   owner: id,
   displayName: string,
   imageUrl: string,
-  updatesCount: int,
-  bigIntTest: string,
-  bigIntOption: option<string>,
+  updatesCount: string,
 }
 
 let serializeGravatarEntity = (entity: gravatarEntity): gravatarEntitySerialized => {
@@ -86,9 +76,7 @@ let serializeGravatarEntity = (entity: gravatarEntity): gravatarEntitySerialized
     owner: entity.owner,
     displayName: entity.displayName,
     imageUrl: entity.imageUrl,
-    updatesCount: entity.updatesCount,
-    bigIntTest: entity.bigIntTest->Ethers.BigInt.toString,
-    bigIntOption: entity.bigIntOption->Belt.Option.map(opt => opt->Ethers.BigInt.toString),
+    updatesCount: entity.updatesCount->Ethers.BigInt.toString,
   }
 }
 
@@ -126,32 +114,6 @@ type eventLog<'a> = {
 }
 
 module GravatarContract = {
-  module TestEventEvent = {
-    @spice @genType
-    type eventArgs = {
-      id: Ethers.BigInt.t,
-      user: Ethers.ethAddress,
-      contactDetails: contactDetails,
-    }
-    type userEntityHandlerContext = {
-      insert: userEntity => unit,
-      update: userEntity => unit,
-      delete: id => unit,
-    }
-    type gravatarEntityHandlerContext = {
-      insert: gravatarEntity => unit,
-      update: gravatarEntity => unit,
-      delete: id => unit,
-    }
-    @genType
-    type context = {
-      user: userEntityHandlerContext,
-      gravatar: gravatarEntityHandlerContext,
-    }
-
-    @genType
-    type loaderContext = {}
-  }
   module NewGravatarEvent = {
     @spice @genType
     type eventArgs = {
@@ -212,15 +174,10 @@ module GravatarContract = {
 }
 
 type event =
-  | GravatarContract_TestEvent(eventLog<GravatarContract.TestEventEvent.eventArgs>)
   | GravatarContract_NewGravatar(eventLog<GravatarContract.NewGravatarEvent.eventArgs>)
   | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>)
 
 type eventAndContext =
-  | GravatarContract_TestEventWithContext(
-      eventLog<GravatarContract.TestEventEvent.eventArgs>,
-      GravatarContract.TestEventEvent.context,
-    )
   | GravatarContract_NewGravatarWithContext(
       eventLog<GravatarContract.NewGravatarEvent.eventArgs>,
       GravatarContract.NewGravatarEvent.context,
@@ -232,13 +189,11 @@ type eventAndContext =
 
 @spice
 type eventName =
-  | @spice.as("GravatarContract_TestEventEvent") GravatarContract_TestEventEvent
   | @spice.as("GravatarContract_NewGravatarEvent") GravatarContract_NewGravatarEvent
   | @spice.as("GravatarContract_UpdatedGravatarEvent") GravatarContract_UpdatedGravatarEvent
 
 let eventNameToString = (eventName: eventName) =>
   switch eventName {
-  | GravatarContract_TestEventEvent => "TestEvent"
   | GravatarContract_NewGravatarEvent => "NewGravatar"
   | GravatarContract_UpdatedGravatarEvent => "UpdatedGravatar"
   }

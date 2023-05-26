@@ -11,9 +11,6 @@ export type id = string;
 export type Id = id;
 
 // tslint:disable-next-line:interface-over-type-literal
-export type contactDetails = { readonly name: string; readonly email: string };
-
-// tslint:disable-next-line:interface-over-type-literal
 export type userEntity = {
   readonly id: string; 
   readonly address: string; 
@@ -26,9 +23,7 @@ export type gravatarEntity = {
   readonly owner: id; 
   readonly displayName: string; 
   readonly imageUrl: string; 
-  readonly updatesCount: number; 
-  readonly bigIntTest: Ethers_BigInt_t; 
-  readonly bigIntOption: (undefined | Ethers_BigInt_t)
+  readonly updatesCount: Ethers_BigInt_t
 };
 
 // tslint:disable-next-line:interface-over-type-literal
@@ -42,33 +37,6 @@ export type eventLog<a> = {
   readonly transactionIndex: number; 
   readonly logIndex: number
 };
-
-// tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_TestEventEvent_eventArgs = {
-  readonly id: Ethers_BigInt_t; 
-  readonly user: Ethers_ethAddress; 
-  readonly contactDetails: contactDetails
-};
-
-// tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_TestEventEvent_userEntityHandlerContext = {
-  readonly insert: (_1:userEntity) => void; 
-  readonly update: (_1:userEntity) => void; 
-  readonly delete: (_1:id) => void
-};
-
-// tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_TestEventEvent_gravatarEntityHandlerContext = {
-  readonly insert: (_1:gravatarEntity) => void; 
-  readonly update: (_1:gravatarEntity) => void; 
-  readonly delete: (_1:id) => void
-};
-
-// tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_TestEventEvent_context = { readonly user: GravatarContract_TestEventEvent_userEntityHandlerContext; readonly gravatar: GravatarContract_TestEventEvent_gravatarEntityHandlerContext };
-
-// tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_TestEventEvent_loaderContext = {};
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_NewGravatarEvent_eventArgs = {

@@ -11,12 +11,6 @@ import type {GravatarContract_NewGravatarEvent_eventArgs as Types_GravatarContra
 
 import type {GravatarContract_NewGravatarEvent_loaderContext as Types_GravatarContract_NewGravatarEvent_loaderContext} from './Types.gen';
 
-import type {GravatarContract_TestEventEvent_context as Types_GravatarContract_TestEventEvent_context} from './Types.gen';
-
-import type {GravatarContract_TestEventEvent_eventArgs as Types_GravatarContract_TestEventEvent_eventArgs} from './Types.gen';
-
-import type {GravatarContract_TestEventEvent_loaderContext as Types_GravatarContract_TestEventEvent_loaderContext} from './Types.gen';
-
 import type {GravatarContract_UpdatedGravatarEvent_context as Types_GravatarContract_UpdatedGravatarEvent_context} from './Types.gen';
 
 import type {GravatarContract_UpdatedGravatarEvent_eventArgs as Types_GravatarContract_UpdatedGravatarEvent_eventArgs} from './Types.gen';
@@ -24,14 +18,6 @@ import type {GravatarContract_UpdatedGravatarEvent_eventArgs as Types_GravatarCo
 import type {GravatarContract_UpdatedGravatarEvent_loaderContext as Types_GravatarContract_UpdatedGravatarEvent_loaderContext} from './Types.gen';
 
 import type {eventLog as Types_eventLog} from './Types.gen';
-
-export const GravatarContract_registerTestEventLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_GravatarContract_TestEventEvent_eventArgs>; readonly context: Types_GravatarContract_TestEventEvent_loaderContext }) => void)) => void = function (Arg1: any) {
-  const result = HandlersBS.GravatarContract.registerTestEventLoadEntities(function (Argevent: any, Argcontext: any) {
-      const result1 = Arg1({event:Argevent, context:Argcontext});
-      return result1
-    });
-  return result
-};
 
 export const GravatarContract_registerNewGravatarLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_GravatarContract_NewGravatarEvent_eventArgs>; readonly context: Types_GravatarContract_NewGravatarEvent_loaderContext }) => void)) => void = function (Arg1: any) {
   const result = HandlersBS.GravatarContract.registerNewGravatarLoadEntities(function (Argevent: any, Argcontext: any) {
@@ -43,14 +29,6 @@ export const GravatarContract_registerNewGravatarLoadEntities: (handler:((_1:{ r
 
 export const GravatarContract_registerUpdatedGravatarLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_GravatarContract_UpdatedGravatarEvent_eventArgs>; readonly context: Types_GravatarContract_UpdatedGravatarEvent_loaderContext }) => void)) => void = function (Arg1: any) {
   const result = HandlersBS.GravatarContract.registerUpdatedGravatarLoadEntities(function (Argevent: any, Argcontext: any) {
-      const result1 = Arg1({event:Argevent, context:Argcontext});
-      return result1
-    });
-  return result
-};
-
-export const GravatarContract_registerTestEventHandler: (handler:((_1:{ readonly event: Types_eventLog<Types_GravatarContract_TestEventEvent_eventArgs>; readonly context: Types_GravatarContract_TestEventEvent_context }) => void)) => void = function (Arg1: any) {
-  const result = HandlersBS.GravatarContract.registerTestEventHandler(function (Argevent: any, Argcontext: any) {
       const result1 = Arg1({event:Argevent, context:Argcontext});
       return result1
     });

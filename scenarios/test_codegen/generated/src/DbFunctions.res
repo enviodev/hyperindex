@@ -75,9 +75,7 @@ module Gravatar = {
     owner: id,
     displayName: string,
     imageUrl: string,
-    updatesCount: int,
-    bigIntTest: string,
-    bigIntOption: option<string>,
+    updatesCount: string,
     @as("event_chain_id") chainId: int,
     @as("event_id") eventId: Ethers.BigInt.t,
   }
@@ -85,17 +83,7 @@ module Gravatar = {
   let readRowToReadEntityData = (readRow: gravatarReadRow): readEntityData<
     Types.gravatarEntity,
   > => {
-    let {
-      id,
-      owner,
-      displayName,
-      imageUrl,
-      updatesCount,
-      bigIntTest,
-      bigIntOption,
-      chainId,
-      eventId,
-    } = readRow
+    let {id, owner, displayName, imageUrl, updatesCount, chainId, eventId} = readRow
 
     {
       entity: {
@@ -103,9 +91,7 @@ module Gravatar = {
         owner,
         displayName,
         imageUrl,
-        updatesCount,
-        bigIntTest: bigIntTest->Ethers.BigInt.fromStringUnsafe,
-        bigIntOption: bigIntOption->Belt.Option.map(opt => opt->Ethers.BigInt.fromStringUnsafe),
+        updatesCount: updatesCount->Ethers.BigInt.fromStringUnsafe,
       },
       eventData: {
         chainId,

@@ -96,8 +96,6 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   "displayName",
   "imageUrl",
   "updatesCount",
-  "bigIntTest",
-  "bigIntOption",
   event_chain_id, 
   event_id
   FROM public.gravatar
@@ -116,8 +114,6 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "displayName",
     "imageUrl",
     "updatesCount",
-    "bigIntTest",
-    "bigIntOption",
     "event_chain_id",
     "event_id",
   )}
@@ -128,8 +124,6 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "displayName" = EXCLUDED."displayName",
     "imageUrl" = EXCLUDED."imageUrl",
     "updatesCount" = EXCLUDED."updatesCount",
-    "bigIntTest" = EXCLUDED."bigIntTest",
-    "bigIntOption" = EXCLUDED."bigIntOption",
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
   ;`

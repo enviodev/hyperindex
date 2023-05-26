@@ -33,17 +33,6 @@ let addEventToRawEvents = (
 }
 let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   switch event {
-  | GravatarContract_TestEventWithContext(event, context) => {
-      let jsonSerializedParams =
-        event.params->Types.GravatarContract.TestEventEvent.eventArgs_encode
-      event->addEventToRawEvents(
-        ~chainId,
-        ~jsonSerializedParams,
-        ~eventName=GravatarContract_TestEventEvent,
-      )
-
-      Handlers.GravatarContract.getTestEventHandler()(~event, ~context)
-    }
   | GravatarContract_NewGravatarWithContext(event, context) => {
       let jsonSerializedParams =
         event.params->Types.GravatarContract.NewGravatarEvent.eventArgs_encode
@@ -77,20 +66,6 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
     Types.eventAndContext,
   )> = eventBatch->Belt.Array.map(event => {
     switch event {
-    | GravatarContract_TestEvent(event) => {
-        let contextHelper = Context.GravatarContract.TestEventEvent.contextCreator()
-        Handlers.GravatarContract.getTestEventLoadEntities()(
-          ~event,
-          ~context=contextHelper.getLoaderContext(),
-        )
-        let {logIndex, blockNumber} = event
-        let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-        let context = contextHelper.getContext(~eventData={chainId, eventId})
-        (
-          contextHelper.getEntitiesToLoad(),
-          Types.GravatarContract_TestEventWithContext(event, context),
-        )
-      }
     | GravatarContract_NewGravatar(event) => {
         let contextHelper = Context.GravatarContract.NewGravatarEvent.contextCreator()
         Handlers.GravatarContract.getNewGravatarLoadEntities()(

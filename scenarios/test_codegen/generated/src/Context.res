@@ -1,46 +1,4 @@
 module GravatarContract = {
-  module TestEventEvent = {
-    type context = Types.GravatarContract.TestEventEvent.context
-
-    type contextCreatorFunctions = {
-      getLoaderContext: unit => Types.GravatarContract.TestEventEvent.loaderContext,
-      getContext: (~eventData: Types.eventData) => Types.GravatarContract.TestEventEvent.context,
-      getEntitiesToLoad: unit => array<Types.entityRead>,
-    }
-    let contextCreator: unit => contextCreatorFunctions = () => {
-      let entitiesToLoad: array<Types.entityRead> = []
-
-      let loaderContext: Types.GravatarContract.TestEventEvent.loaderContext = {}
-      {
-        getEntitiesToLoad: () => entitiesToLoad,
-        getLoaderContext: () => loaderContext,
-        getContext: (~eventData) => {
-          user: {
-            insert: entity => {
-              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Create, ~eventData)
-            },
-            update: entity => {
-              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Update, ~eventData)
-            },
-            delete: id =>
-              Js.Console.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
-          },
-          gravatar: {
-            insert: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Create, ~eventData)
-            },
-            update: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Update, ~eventData)
-            },
-            delete: id =>
-              Js.Console.warn(
-                `[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`,
-              ),
-          },
-        },
-      }
-    }
-  }
   module NewGravatarEvent = {
     type context = Types.GravatarContract.NewGravatarEvent.context
 

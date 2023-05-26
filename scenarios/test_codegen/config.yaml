@@ -2,17 +2,16 @@ version: 0.0.0
 description: Gravatar for Ethereum
 repository: https://github.com/graphprotocol/example-subgraph
 networks:
-  - id: 137
-    rpc_url: https://polygon-rpc.com
-    start_block: 34316032
+  - id: 1337
+    rpc_url: http://localhost:8545
+    start_block: 0
     contracts:
       - name: Gravatar
         abi_file_path: abis/gravatar-abi.json
-        address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+        address: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"] # for test suite on hardhat
+        # address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"] -> use this if you want to deploy to local ganache
         handler: ./src/EventHandlers.bs.js
         events:
-          - name: "TestEvent"
-            requiredEntities: [] # empty signifies no requirements
           - name: "NewGravatar"
             requiredEntities: [] # empty signifies no requirements
           - name: "UpdatedGravatar"
