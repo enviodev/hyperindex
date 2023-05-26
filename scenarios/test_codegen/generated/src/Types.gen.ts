@@ -14,6 +14,12 @@ export type Id = id;
 export type contactDetails = { readonly name: string; readonly email: string };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type gravatarLoaderConfig = { readonly loadOwner?: userLoaderConfig };
+
+// tslint:disable-next-line:interface-over-type-literal
+export type userLoaderConfig = { readonly loadGravatar?: gravatarLoaderConfig };
+
+// tslint:disable-next-line:interface-over-type-literal
 export type userEntity = {
   readonly id: string; 
   readonly address: string; 
@@ -125,7 +131,7 @@ export type GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext =
 export type GravatarContract_UpdatedGravatarEvent_context = { readonly user: GravatarContract_UpdatedGravatarEvent_userEntityHandlerContext; readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext = { readonly gravatarWithChangesLoad: (_1:{ readonly loadOwner?: boolean }, _2:id) => void };
+export type GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext = { readonly gravatarWithChangesLoad: (_1:id, _2:{ readonly loaders?: gravatarLoaderConfig }) => void };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_loaderContext = { readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext };

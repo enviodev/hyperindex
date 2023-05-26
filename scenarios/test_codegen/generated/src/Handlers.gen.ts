@@ -47,7 +47,7 @@ export const GravatarContract_registerNewGravatarLoadEntities: (handler:((_1:{ r
 export const GravatarContract_registerUpdatedGravatarLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_GravatarContract_UpdatedGravatarEvent_eventArgs>; readonly context: Types_GravatarContract_UpdatedGravatarEvent_loaderContext }) => void)) => void = function (Arg1: any) {
   const result = HandlersBS.GravatarContract.registerUpdatedGravatarLoadEntities(function (Argevent: any, Argcontext: any) {
       const result1 = Arg1({event:Argevent, context:{gravatar:{gravatarWithChangesLoad:function (Arg11: any, Arg2: any) {
-          const result2 = Curry._2(Argcontext.gravatar.gravatarWithChangesLoad, Arg11.loadOwner, Arg2);
+          const result2 = Curry._2(Argcontext.gravatar.gravatarWithChangesLoad, Arg11, Arg2.loaders);
           return result2
         }}}});
       return result1

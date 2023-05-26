@@ -13,11 +13,12 @@ type contactDetails = {
   email: string,
 }
 
-type gravatarLoad = {loadOwner: bool}
-type userLoad = {loadGravatar: bool}
+@genType
+type rec gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
+and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig}
 type entityRead =
-  | UserRead(id, userLoad)
-  | GravatarRead(id, gravatarLoad)
+  | UserRead(id, userLoaderConfig)
+  | GravatarRead(id, gravatarLoaderConfig)
 
 type rawEventsEntity = {
   @as("chain_id") chainId: int,
@@ -33,6 +34,7 @@ type rawEventsEntity = {
   params: Js.Json.t,
 }
 
+@@warning("-30")
 @genType
 type rec userEntity = {
   id: string,
@@ -47,6 +49,8 @@ and gravatarEntity = {
   imageUrl: string,
   updatesCount: int,
 }
+@@warning("+30")
+
 type entity =
   | UserEntity(userEntity)
   | GravatarEntity(gravatarEntity)
@@ -164,7 +168,10 @@ module GravatarContract = {
       gravatar: gravatarEntityHandlerContext,
     }
 
-    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: (~loadOwner: bool=?, id) => unit}
+    @genType
+    type gravatarEntityLoaderContext = {
+      gravatarWithChangesLoad: (id, ~loaders: gravatarLoaderConfig=?) => unit,
+    }
 
     @genType
     type loaderContext = {gravatar: gravatarEntityLoaderContext}

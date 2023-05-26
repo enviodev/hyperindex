@@ -127,7 +127,10 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     | UserRead(entityId, userLoad) =>
       let _ = Js.Dict.set(uniqueUserDict, entityId, entityId)
 
-      if userLoad.loadGravatar {
+      switch userLoad.loadGravatar {
+      | Some(
+          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
+        ) =>
         let _ = populateUserLoadAsEntityFunctions->Js.Array2.push(() => {
           let _ = InMemoryStore.User.getUser(~id=entityId)->Belt.Option.map(
             userEntity => {
@@ -144,11 +147,15 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
             },
           )
         })
+      | None => ()
       }
     | GravatarRead(entityId, gravatarLoad) =>
       let _ = Js.Dict.set(uniqueGravatarDict, entityId, entityId)
 
-      if gravatarLoad.loadOwner {
+      switch gravatarLoad.loadOwner {
+      | Some(
+          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
+        ) =>
         let _ = populateGravatarLoadAsEntityFunctions->Js.Array2.push(() => {
           let _ = InMemoryStore.Gravatar.getGravatar(~id=entityId)->Belt.Option.map(
             gravatarEntity => {
@@ -162,6 +169,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
             },
           )
         })
+      | None => ()
       }
     }
   })
@@ -186,6 +194,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     })
   }
 
+  // Execute first layer of additional load functions:
   populateUserLoadAsEntityFunctions->Belt.Array.forEach(func => func())
   populateGravatarLoadAsEntityFunctions->Belt.Array.forEach(func => func())
 

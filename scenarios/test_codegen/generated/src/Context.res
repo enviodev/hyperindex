@@ -98,12 +98,13 @@ module GravatarContract = {
 
       let entitiesToLoad: array<Types.entityRead> = []
 
+      @warning("-16")
       let loaderContext: Types.GravatarContract.UpdatedGravatarEvent.loaderContext = {
         gravatar: {
-          gravatarWithChangesLoad: (~loadOwner=false, id: Types.id) => {
+          gravatarWithChangesLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_gravatarWithChanges := Some(id)
 
-            let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id, {loadOwner: loadOwner}))
+            let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id, loaders))
           },
         },
       }
