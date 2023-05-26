@@ -26,7 +26,9 @@ export type gravatarEntity = {
   readonly owner: id; 
   readonly displayName: string; 
   readonly imageUrl: string; 
-  readonly updatesCount: number
+  readonly updatesCount: number; 
+  readonly bigIntTest: Ethers_BigInt_t; 
+  readonly bigIntOption: (undefined | Ethers_BigInt_t)
 };
 
 // tslint:disable-next-line:interface-over-type-literal

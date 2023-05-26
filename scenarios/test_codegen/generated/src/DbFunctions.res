@@ -58,7 +58,7 @@ module User = {
   @module("./DbFunctionsImplementation.js")
   external batchSetUser: (
     Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.userEntity>>,
+    array<Types.inMemoryStoreRow<Types.userEntitySerialized>>,
   ) => promise<unit> = "batchSetUser"
 
   @module("./DbFunctionsImplementation.js")
@@ -76,6 +76,8 @@ module Gravatar = {
     displayName: string,
     imageUrl: string,
     updatesCount: int,
+    bigIntTest: string,
+    bigIntOption: option<string>,
     @as("event_chain_id") chainId: int,
     @as("event_id") eventId: Ethers.BigInt.t,
   }
@@ -83,7 +85,17 @@ module Gravatar = {
   let readRowToReadEntityData = (readRow: gravatarReadRow): readEntityData<
     Types.gravatarEntity,
   > => {
-    let {id, owner, displayName, imageUrl, updatesCount, chainId, eventId} = readRow
+    let {
+      id,
+      owner,
+      displayName,
+      imageUrl,
+      updatesCount,
+      bigIntTest,
+      bigIntOption,
+      chainId,
+      eventId,
+    } = readRow
 
     {
       entity: {
@@ -92,6 +104,8 @@ module Gravatar = {
         displayName,
         imageUrl,
         updatesCount,
+        bigIntTest: bigIntTest->Ethers.BigInt.fromStringUnsafe,
+        bigIntOption: bigIntOption->Belt.Option.map(opt => opt->Ethers.BigInt.fromStringUnsafe),
       },
       eventData: {
         chainId,
@@ -103,7 +117,7 @@ module Gravatar = {
   @module("./DbFunctionsImplementation.js")
   external batchSetGravatar: (
     Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.gravatarEntity>>,
+    array<Types.inMemoryStoreRow<Types.gravatarEntitySerialized>>,
   ) => promise<unit> = "batchSetGravatar"
 
   @module("./DbFunctionsImplementation.js")

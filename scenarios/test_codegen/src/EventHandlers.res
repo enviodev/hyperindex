@@ -11,6 +11,8 @@ Handlers.GravatarContract.registerNewGravatarHandler((~event, ~context) => {
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
     updatesCount: 1,
+    bigIntTest: Ethers.BigInt.fromInt(1),
+    bigIntOption: Some(Ethers.BigInt.fromInt(1)),
   }
 
   context.gravatar.insert(gravatarObject)
@@ -32,6 +34,8 @@ Handlers.GravatarContract.registerUpdatedGravatarHandler((~event, ~context) => {
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
     updatesCount,
+    bigIntTest: Ethers.BigInt.fromInt(1),
+    bigIntOption: Some(Ethers.BigInt.fromInt(1)),
   }
 
   context.gravatar.update(gravatar)
