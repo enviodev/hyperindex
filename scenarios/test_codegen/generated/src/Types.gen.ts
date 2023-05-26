@@ -11,7 +11,7 @@ export type id = string;
 export type Id = id;
 
 // tslint:disable-next-line:interface-over-type-literal
-export type contactDetails = { readonly name: string; readonly email: string };
+export type contactDetails = { readonly _0: string; readonly _1: string };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type userEntity = {

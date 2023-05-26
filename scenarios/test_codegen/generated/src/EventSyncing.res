@@ -245,7 +245,7 @@ let processAllEvents = (chainConfig: Config.chainConfig) => {
   processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
-    ~blockInterval=10000,
+    ~blockInterval=2000,
     ~provider=chainConfig.provider,
   )
 }

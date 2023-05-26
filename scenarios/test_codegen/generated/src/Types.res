@@ -9,8 +9,8 @@ type id = string
 
 @spice
 type contactDetails = {
-  name: string,
-  email: string,
+  @as(0) _0: string,
+  @as(1) _1: string,
 }
 
 type entityRead =
