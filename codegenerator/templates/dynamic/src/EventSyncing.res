@@ -53,9 +53,10 @@ let convertLogs = (
       | Some(block) => Promise.resolve(block)
       | None =>
         Promise.reject(
-          Js.Exn.raiseError(`getBLock(${blockKey}) returned null`),
+          Js.Exn.raiseError(`getBlock(${blockKey}) returned null`),
         )
       }
+    )
   }
 
   let task = async () => {
