@@ -189,10 +189,14 @@ let executeBatch = async sql => {
     }
   }
   let setUserPromise = sql => {
-    let setUser =
-      userRows->Belt.Array.keepMap(userRow =>
-        userRow.crud == Types.Create || userRow.crud == Update ? Some(userRow) : None
-      )
+    let setUser = userRows->Belt.Array.keepMap(userRow =>
+      userRow.crud == Types.Create || userRow.crud == Update
+        ? Some({
+            ...userRow,
+            entity: userRow.entity->Types.serializeUserEntity,
+          })
+        : None
+    )
 
     if setUser->Belt.Array.length > 0 {
       sql->DbFunctions.User.batchSetUser(setUser)
@@ -218,10 +222,14 @@ let executeBatch = async sql => {
     }
   }
   let setGravatarPromise = sql => {
-    let setGravatar =
-      gravatarRows->Belt.Array.keepMap(gravatarRow =>
-        gravatarRow.crud == Types.Create || gravatarRow.crud == Update ? Some(gravatarRow) : None
-      )
+    let setGravatar = gravatarRows->Belt.Array.keepMap(gravatarRow =>
+      gravatarRow.crud == Types.Create || gravatarRow.crud == Update
+        ? Some({
+            ...gravatarRow,
+            entity: gravatarRow.entity->Types.serializeGravatarEntity,
+          })
+        : None
+    )
 
     if setGravatar->Belt.Array.length > 0 {
       sql->DbFunctions.Gravatar.batchSetGravatar(setGravatar)

@@ -45,6 +45,20 @@ type userEntity = {
   gravatar: option<id>,
 }
 
+type userEntitySerialized = {
+  id: string,
+  address: string,
+  gravatar: option<id>,
+}
+
+let serializeUserEntity = (entity: userEntity): userEntitySerialized => {
+  {
+    id: entity.id,
+    address: entity.address,
+    gravatar: entity.gravatar,
+  }
+}
+
 @genType
 type gravatarEntity = {
   id: string,
@@ -52,6 +66,30 @@ type gravatarEntity = {
   displayName: string,
   imageUrl: string,
   updatesCount: int,
+  bigIntTest: Ethers.BigInt.t,
+  bigIntOption: option<Ethers.BigInt.t>,
+}
+
+type gravatarEntitySerialized = {
+  id: string,
+  owner: id,
+  displayName: string,
+  imageUrl: string,
+  updatesCount: int,
+  bigIntTest: string,
+  bigIntOption: option<string>,
+}
+
+let serializeGravatarEntity = (entity: gravatarEntity): gravatarEntitySerialized => {
+  {
+    id: entity.id,
+    owner: entity.owner,
+    displayName: entity.displayName,
+    imageUrl: entity.imageUrl,
+    updatesCount: entity.updatesCount,
+    bigIntTest: entity.bigIntTest->Ethers.BigInt.toString,
+    bigIntOption: entity.bigIntOption->Belt.Option.map(opt => opt->Ethers.BigInt.toString),
+  }
 }
 
 type entity =
