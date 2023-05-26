@@ -72,6 +72,20 @@ let convertLogs = (
                 ->Converters.Gravatar.convertUpdatedGravatarLog(~log, ~blockPromise)
 
               Some(convertedEvent)
+            | NftFactoryContract_SimpleNftCreatedEvent =>
+              let convertedEvent =
+                logDescription
+                ->Converters.NftFactory.convertSimpleNftCreatedLogDescription
+                ->Converters.NftFactory.convertSimpleNftCreatedLog(~log, ~blockPromise)
+
+              Some(convertedEvent)
+            | SimpleNftContract_TransferEvent =>
+              let convertedEvent =
+                logDescription
+                ->Converters.SimpleNft.convertTransferLogDescription
+                ->Converters.SimpleNft.convertTransferLog(~log, ~blockPromise)
+
+              Some(convertedEvent)
             }
           }
         }

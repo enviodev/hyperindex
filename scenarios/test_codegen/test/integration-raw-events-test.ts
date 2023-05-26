@@ -11,9 +11,10 @@ import { processAllEvents } from "../generated/src/EventSyncing.bs";
 import {
   Users,
   createNftFromFactory,
-  deployNftFactory,
   mintSimpleNft,
 } from "./helpers/node-and-contracts";
+import { deployContracts } from "./helpers/setupNodeAndContracts.js";
+
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 
 require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
@@ -25,7 +26,7 @@ describe("Raw Events Integration", () => {
     this.timeout(30 * 1000);
     await runMigrationsNoLogs();
     console.log("deploying Nft Factory");
-    const deployedNftFactory = await deployNftFactory();
+    const deployedNftFactory = (await deployContracts()).nftFactory;
     const nftFactoryContractAddress = await deployedNftFactory.getAddress();
     console.log(
       "Successfully deployed nftFactory at",
@@ -38,7 +39,6 @@ describe("Raw Events Integration", () => {
       symbol: "t_sym",
       supply: 200,
     });
-    console.log("Successfully created Nft", createNftTx);
 
     const simpleNftCreatedEventFilter =
       deployedNftFactory.getEvent("SimpleNftCreated");

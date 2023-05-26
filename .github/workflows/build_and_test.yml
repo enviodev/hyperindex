@@ -117,15 +117,3 @@ jobs:
         working-directory: scenarios/test_codegen
         run: |
           pnpm test
-
-      - name: nft-factory codegen
-        working-directory: scenarios/nft-factory
-        run: |
-          pnpm codegen
-          pnpm install
-          pnpm build
-
-      - name: nft-factory test
-        working-directory: scenarios/nft-factory
-        run: |
-          pnpm test
