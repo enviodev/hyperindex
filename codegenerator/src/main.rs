@@ -17,14 +17,14 @@ use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
 use include_dir::{include_dir, Dir};
 
 static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
-static GRAVATAR_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("templates/static/gravatar_template/shared");
-static GRAVATAR_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/gravatar_template/rescript");
-static GRAVATAR_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/gravatar_template/typescript");
-static GRAVATAR_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/gravatar_template/javascript");
+static GREETER_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
+    include_dir!("templates/static/greeter_template/shared");
+static GREETER_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/greeter_template/rescript");
+static GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/greeter_template/typescript");
+static GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/greeter_template/javascript");
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
@@ -38,21 +38,21 @@ fn main() -> Result<(), Box<dyn Error>> {
             //Ensure that the root path exists
             fs::create_dir_all(&project_root_path)?;
             match args.template {
-                Template::Gravatar => {
-                    //Copy in the relevant js flavor specific gravatar files
+                Template::Greeter => {
+                    //Copy in the relevant js flavor specific greeter files
                     match &args.js_flavor {
                         JsFlavor::Rescript => {
-                            GRAVATAR_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                            GREETER_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                         }
                         JsFlavor::Typescript => {
-                            GRAVATAR_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
+                            GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
                         }
                         JsFlavor::Javascript => {
-                            GRAVATAR_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                            GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
                         }
                     }
-                    //Copy in the rest of the shared gravatar files
-                    GRAVATAR_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                    //Copy in the rest of the shared greeter files
+                    GREETER_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
             }
 
