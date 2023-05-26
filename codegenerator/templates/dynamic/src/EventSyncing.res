@@ -11,6 +11,9 @@ let backoffMillis = 5000
 
 let queryTimeoutMillis = 20000
 
+// Expose key removal on JS maps, used for cache invalidation
+@val external delete: ('a, string) => unit = "delete"
+
 let convertLogs = (
   logsPromise: Promise.t<array<Ethers.log>>,
   ~provider,
@@ -23,27 +26,36 @@ let convertLogs = (
     Promise.t<Js.Nullable.t<Ethers.JsonRpcProvider.block>>,
   > = Js.Dict.empty()
 
-  //Many times logs will be from the same block so there is no need to make multiple get block requests in that case
+  // Many times logs will be from the same block so there is no need to make multiple get block requests in that case
   let getMemoisedBlockPromise = blockNumber => {
-    let blockRequestCached = blockRequestMapping->Js.Dict.get(blockNumber->Belt.Int.toString)
+    let blockKey = Belt.Int.toString(blockNumber)
+
+    let blockRequestCached = blockRequestMapping->Js.Dict.get(blockKey)
 
     let blockRequest = switch blockRequestCached {
     | Some(req) => req
     | None =>
       let newRequest = provider->Ethers.JsonRpcProvider.getBlock(blockNumber)
-      blockRequestMapping->Js.Dict.set(blockNumber->Belt.Int.toString, newRequest)
-
+      // Cache the request
+      blockRequestMapping->Js.Dict.set(blockKey, newRequest)
       newRequest
     }
-    blockRequest->Promise.then(block =>
+    blockRequest
+    ->Promise.catch(err => {
+      // Invalidate the cache, so that the request can be retried
+      delete(blockRequestMapping, blockKey)
+
+      // Propagate failure to where we handle backoff
+      Promise.reject(err)
+    })
+    ->Promise.then(block =>
       switch block->Js.Nullable.toOption {
       | Some(block) => Promise.resolve(block)
       | None =>
         Promise.reject(
-          Js.Exn.raiseError(`getBLock(${blockNumber->Belt.Int.toString}) returned null`),
+          Js.Exn.raiseError(`getBLock(${blockKey}) returned null`),
         )
       }
-    ) // dangerous to not catch here but need to catch this promise later where it is used and handle it there
   }
 
   let task = async () => {
