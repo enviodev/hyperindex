@@ -14,7 +14,33 @@ type chainConfig = {
 
 type chainConfigs = Js.Dict.t<chainConfig>
 
+// Logging:
+@genType
+type logLevel = [
+  | #TRACE
+  | #DEBUG
+  | #INFO
+  | #WARN
+  | #ERROR
+  | #FATAL
+]
+
 %%private(let envSafe = EnvSafe.make())
+
+let defaultLogLevel =
+  envSafe->EnvSafe.get(
+    ~name="LOG_LEVEL",
+    ~struct=S.union([
+      S.literalVariant(String("TRACE"), #TRACE),
+      S.literalVariant(String("DEBUG"), #DEBUG),
+      S.literalVariant(String("INFO"), #INFO),
+      S.literalVariant(String("WARN"), #WARN),
+      S.literalVariant(String("ERROR"), #ERROR),
+      S.literalVariant(String("FATAL"), #FATAL),
+    ]),
+    ~devFallback=#INFO,
+    (),
+  )
 
 let db: Postgres.poolConfig = {
   host: envSafe->EnvSafe.get(~name="PG_HOST", ~struct=S.string(), ~devFallback="localhost", ()),
@@ -32,6 +58,7 @@ let db: Postgres.poolConfig = {
     ~devFallback="envio-dev",
     (),
   ),
+  onnotice: defaultLogLevel == #WARN || defaultLogLevel == #ERROR ? None : Some(() => ()),
 }
 
 let config: chainConfigs = [

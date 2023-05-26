@@ -90,7 +90,7 @@ module {{entity.name.capitalized}} = {
 type uniqueEntityReadIds = Js.Dict.t<Types.id>
 type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
-let loadEntities = async (entityBatch: array<Types.entityRead>) => {
+let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   {{#each entities as | entity |}}
   let unique{{entity.name.capitalized}}Dict = Js.Dict.empty()
 
@@ -105,13 +105,13 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
   })
 
   {{#each entities as | entity |}}
-  let {{entity.name.uncapitalized}}EntitiesArray = await DbFunctions.{{entity.name.capitalized}}.read{{entity.name.capitalized}}Entities(
+  let {{entity.name.uncapitalized}}EntitiesArray = await sql->DbFunctions.{{entity.name.capitalized}}.read{{entity.name.capitalized}}Entities(
     Js.Dict.values(unique{{entity.name.capitalized}}Dict),
   )
 
   {{entity.name.uncapitalized}}EntitiesArray->Belt.Array.forEach((readRow) =>
     {
-      let {entity, eventData} = readRow->DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData
+      let {entity, eventData} = DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData(readRow)
       InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~crud=Types.Read)
     }
   )
@@ -119,14 +119,10 @@ let loadEntities = async (entityBatch: array<Types.entityRead>) => {
   {{/each}}
 }
 
-let createBatch = () => {
-  InMemoryStore.resetStore()
-}
-
-let executeBatch = async () => {
+let executeBatch = async (sql) => {
   let rawEventsRows = InMemoryStore.RawEvents.rawEventsDict.contents->Js.Dict.values
 
-  let deleteRawEventsIdsPromise = () => {
+  let deleteRawEventsIdsPromise = (sql) => {
     let deleteRawEventsIds =
       rawEventsRows
       ->Belt.Array.keepMap(rawEventsRow =>
@@ -137,13 +133,13 @@ let executeBatch = async () => {
       )
 
     if deleteRawEventsIds->Belt.Array.length > 0 {
-      DbFunctions.RawEvents.batchDeleteRawEvents(deleteRawEventsIds)
+      sql->DbFunctions.RawEvents.batchDeleteRawEvents(deleteRawEventsIds)
     } else {
       ()->Promise.resolve
     }
   }
 
-  let setRawEventsPromise = () => {
+  let setRawEventsPromise = (sql) => {
     let setRawEvents =
       rawEventsRows->Belt.Array.keepMap(rawEventsRow =>
         rawEventsRow.crud == Types.Create || rawEventsRow.crud == Update
@@ -152,7 +148,7 @@ let executeBatch = async () => {
       )
 
     if setRawEvents->Belt.Array.length > 0 {
-      DbFunctions.RawEvents.batchSetRawEvents(setRawEvents)
+      sql->DbFunctions.RawEvents.batchSetRawEvents(setRawEvents)
     } else {
       ()->Promise.resolve
     }
@@ -161,7 +157,7 @@ let executeBatch = async () => {
   {{#each entities as | entity |}}
   let {{entity.name.uncapitalized}}Rows = InMemoryStore.{{entity.name.capitalized}}.{{entity.name.uncapitalized}}Dict.contents->Js.Dict.values
 
-  let delete{{entity.name.capitalized}}IdsPromise = () => {
+  let delete{{entity.name.capitalized}}IdsPromise = (sql) => {
     let delete{{entity.name.capitalized}}Ids =
       {{entity.name.uncapitalized}}Rows
       ->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
@@ -170,12 +166,12 @@ let executeBatch = async () => {
       ->Belt.Array.map({{entity.name.uncapitalized}} => {{entity.name.uncapitalized}}.id)
 
       if delete{{entity.name.capitalized}}Ids->Belt.Array.length > 0 {
-        DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}}(delete{{entity.name.capitalized}}Ids)
+        sql->DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}}(delete{{entity.name.capitalized}}Ids)
       } else {
         ()->Promise.resolve
       }
   }
-  let set{{entity.name.capitalized}}Promise = () => {
+  let set{{entity.name.capitalized}}Promise = (sql) => {
     let set{{entity.name.capitalized}} =
       {{entity.name.uncapitalized}}Rows->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
         {{entity.name.uncapitalized}}Row.crud == Types.Create || {{entity.name.uncapitalized}}Row.crud == Update
@@ -187,19 +183,24 @@ let executeBatch = async () => {
       )
 
       if set{{entity.name.capitalized}}->Belt.Array.length > 0 {
-         set{{entity.name.capitalized}}->DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}}
+         sql->DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}}(set{{entity.name.capitalized}})
       } else {
         ()->Promise.resolve
       }
   }
 
   {{/each}}
-  await [
-    deleteRawEventsIdsPromise(),
-    setRawEventsPromise(),
-    {{#each entities as | entity |}}
-    delete{{entity.name.capitalized}}IdsPromise(),
-    set{{entity.name.capitalized}}Promise(),
-    {{/each}}
-  ]->Promise.all
+
+  let res = await sql->Postgres.beginSql((sql)=>{
+     [
+      sql->deleteRawEventsIdsPromise,
+      sql->setRawEventsPromise,
+      {{#each entities as | entity |}}
+      sql->delete{{entity.name.capitalized}}IdsPromise,
+      sql->set{{entity.name.capitalized}}Promise,
+      {{/each}}
+    ]
+  })
+
+  res
 }

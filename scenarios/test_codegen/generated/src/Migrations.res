@@ -4,12 +4,13 @@ module RawEventsTable = {
   let createRawEventsTable: unit => promise<unit> = async () => {
     @warning("-21")
     let _ = await %raw("sql`
-      CREATE TYPE EVENT_TYPE AS ENUM (
-      'GravatarContract_TestEventEvent',
-      'GravatarContract_NewGravatarEvent',
-      'GravatarContract_UpdatedGravatarEvent'
-      
-      );
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'event_type') THEN
+          CREATE TYPE EVENT_TYPE AS ENUM (
+          'GravatarContract_TestEventEvent',          'GravatarContract_NewGravatarEvent',          'GravatarContract_UpdatedGravatarEvent'
+          );
+        END IF;
+      END $$;
       `")
 
     @warning("-21")
@@ -32,11 +33,16 @@ module RawEventsTable = {
       `")
   }
 
+  @@warning("-21")
   let dropRawEventsTable = async () => {
-    await %raw("sql`
-    DROP TABLE public.raw_events;
-  `")
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.raw_events;
+    `")
+    let _ = await %raw("sql`
+      DROP TYPE IF EXISTS EVENT_TYPE CASCADE;
+    `")
   }
+  @@warning("+21")
 }
 
 module User = {
@@ -95,6 +101,8 @@ let runDownMigrations = async () => {
   //
   // await Gravatar.deleteGravatarTable()
   //
+
+  await RawEventsTable.dropRawEventsTable()
 
   // NOTE: For now delete any remaining tables.
   await deleteAllTables()

@@ -55,7 +55,7 @@ describe("E2E Mock Event Batch", () => {
 
 describe("E2E Db check", () => {
   before_promise(async () => {
-    let _ = await DbFunctions.Gravatar.batchSetGravatar([
+    let _ = await DbFunctions.Gravatar.batchSetGravatar(Migrations.sql, [
       MockEntities.mockInMemRow1,
       MockEntities.mockInMemRow2,
     ])
@@ -70,6 +70,7 @@ describe("E2E Db check", () => {
   it("Validate inmemory store state", () => {
     let inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents
     let inMemoryStoreRows = inMemoryStore->Js.Dict.values
+
     Assert.deep_equal(
       inMemoryStoreRows,
       [

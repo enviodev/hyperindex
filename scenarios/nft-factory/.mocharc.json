@@ -1,8 +1,13 @@
 {
   // Specify "require" for CommonJS
   "require": "ts-node/register",
-  "extensions": ["ts", "tsx"],
-  "spec": ["test/**/*.ts"],
+  "extensions": [
+    "ts",
+    "tsx"
+  ],
+  "spec": [
+    "test/**/*.ts"
+  ],
   "reporter": "mocha-reporter",
   "timeout": 30000, //Mostly integration tests so just precaution to stop ci from breaking
   "exit": true

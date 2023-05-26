@@ -5,14 +5,16 @@ module RawEventsTable = {
     @warning("-21")
     let _ = await (
       %raw("sql`
-      CREATE TYPE EVENT_TYPE AS ENUM (
-      {{#each contracts as | contract |}}
-      {{#each contract.events as | event |}}
-      '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'{{#unless @last}},{{/unless}}
-      {{/each}}
-      {{#unless @last}},{{/unless}}
-      {{/each}}
-      );
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'event_type') THEN
+          CREATE TYPE EVENT_TYPE AS ENUM (
+          {{#each contracts as | contract |}}
+          {{#each contract.events as | event |}}
+          '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'{{#unless @last}},{{/unless}}{{/each}}{{#unless @last}},{{/unless}}
+          {{/each}}
+          );
+        END IF;
+      END $$;
       `")
     )
     @warning("-21")
@@ -37,11 +39,16 @@ module RawEventsTable = {
     )
   }
 
+  @@warning("-21")
   let dropRawEventsTable = async () => {
-    await %raw("sql`
-    DROP TABLE public.raw_events;
-  `")
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.raw_events;
+    `")
+    let _ = await %raw("sql`
+      DROP TYPE IF EXISTS EVENT_TYPE CASCADE;
+    `")
   }
+  @@warning("+21")
 }
 
 {{#each entities as |entity|}}
@@ -84,6 +91,8 @@ let runDownMigrations = async () => {
   // {{#each entities as |entity|}}
   // await {{entity.name.capitalized}}.delete{{entity.name.capitalized}}Table()
   // {{/each}}
+
+  await RawEventsTable.dropRawEventsTable()
 
   // NOTE: For now delete any remaining tables.
   await deleteAllTables()

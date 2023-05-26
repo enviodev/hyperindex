@@ -4,7 +4,7 @@ import {
 } from "../../generated/src/Migrations.bs";
 import Postgres from "postgres";
 import { db } from "../../generated/src/Config.bs";
-export const sql = Postgres(db);
+export const createSql = () => Postgres(db);
 
 const originalConsoleLog = console.log;
 
