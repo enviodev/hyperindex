@@ -1,5 +1,16 @@
 exception QueryTimout(string)
 
+// After an RPC error, how much to scale back the number of blocks requested at once
+let backoffMultiplicative = 0.8
+
+// Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
+let accelerationAdditive = 20
+
+// After an error, how long to wait before retrying
+let backoffMillis = 5000
+
+let queryTimeoutMillis = 20000
+
 let convertLogs = (
   logsPromise: Promise.t<array<Ethers.log>>,
   ~provider,
@@ -78,7 +89,7 @@ let convertLogs = (
   }
 
   Time.retryOnCatchAfterDelay(
-    ~retryDelayMilliseconds=5000,
+    ~retryDelayMilliseconds=backoffMillis,
     ~retryMessage=`Failed to handle event logs from block ${fromBlockForLogging->Belt.Int.toString} to block ${toBlockForLogging->Belt.Int.toString}`,
     ~task,
   )
@@ -178,10 +189,10 @@ let processAllEventsFromBlockNumber = async (
 
   while shouldContinueProcess() {
     let rec executeQuery = (~blockInterval) => {
-      //If the query hangs for longer than 20 seconds, reject this promise to reduce the block interval
+      //If the query hangs for longer than this, reject this promise to reduce the block interval
       let queryTimoutPromise =
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=20000)->Promise.then(() =>
-          Promise.reject(QueryTimout("Query took longer than 20 seconds"))
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=queryTimeoutMillis)->Promise.then(() =>
+          Promise.reject(QueryTimout(`Query took longer than ${Belt.Int.toString(queryTimeoutMillis / 1000)} seconds`))
         )
 
       let queryPromise =
@@ -197,10 +208,10 @@ let processAllEventsFromBlockNumber = async (
       [queryTimoutPromise, queryPromise]
       ->Promise.race
       ->Promise.catch(err => {
-        Js.log2("Error getting events, waiting 5 seconds before retrying", err)
+        Js.log2(`Error getting events, waiting ${(backoffMillis / 1000)->Belt.Int.toString} seconds before retrying`, err)
 
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)->Promise.then(_ => {
-          let nextBlockIntervalTry = (blockInterval->Belt.Int.toFloat *. 0.8)->Belt.Int.fromFloat
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMillis)->Promise.then(_ => {
+          let nextBlockIntervalTry = (blockInterval->Belt.Int.toFloat *. backoffMultiplicative)->Belt.Int.fromFloat
           Js.log3("Retrying query fromBlock and toBlock:", fromBlock, nextBlockIntervalTry)
           executeQuery(~blockInterval={nextBlockIntervalTry})
         })
