@@ -1,5 +1,7 @@
 exception QueryTimout(string)
 
+let initialBlockInterval = 200
+
 // After an RPC error, how much to scale back the number of blocks requested at once
 let backoffMultiplicative = 0.8
 
@@ -12,7 +14,13 @@ let backoffMillis = 5000
 let queryTimeoutMillis = 20000
 
 // Expose key removal on JS maps, used for cache invalidation
-@val external delete: ('a, string) => unit = "delete"
+// Unfortunately Js.Dict.unsafeDeleteKey only works with Js.Dict.t<String>
+%%raw(`
+function deleteKey(obj, k) {
+  delete obj[k]
+}
+`)
+@val external deleteKey: ('a, string) => unit = "deleteKey"
 
 let convertLogs = (
   logsPromise: Promise.t<array<Ethers.log>>,
@@ -43,7 +51,7 @@ let convertLogs = (
     blockRequest
     ->Promise.catch(err => {
       // Invalidate the cache, so that the request can be retried
-      delete(blockRequestMapping, blockKey)
+      deleteKey(blockRequestMapping, blockKey)
 
       // Propagate failure to where we handle backoff
       Promise.reject(err)
@@ -259,7 +267,7 @@ let processAllEvents = (chainConfig: Config.chainConfig) => {
   processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
-    ~blockInterval=2000,
+    ~blockInterval=initialBlockInterval,
     ~provider=chainConfig.provider,
   )
 }
