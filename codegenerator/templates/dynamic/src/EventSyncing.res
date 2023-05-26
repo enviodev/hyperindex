@@ -199,6 +199,8 @@ let processAllEventsFromBlockNumber = async (
       fromBlock.contents < blockNum
     )
 
+  let currentBlockInterval = ref(maxBlockInterval)
+
   while shouldContinueProcess() {
     let rec executeQuery = (~blockInterval) => {
       //If the query hangs for longer than this, reject this promise to reduce the block interval
@@ -230,7 +232,10 @@ let processAllEventsFromBlockNumber = async (
       })
     }
 
-    let executedBlockInterval = await executeQuery(~blockInterval=maxBlockInterval)
+    let executedBlockInterval = await executeQuery(~blockInterval=currentBlockInterval.contents)
+
+    // Increase batch size going forward, https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    currentBlockInterval := executedBlockInterval + accelerationAdditive
 
     fromBlock := fromBlock.contents + executedBlockInterval
     let currentBlockFromRPC =
