@@ -98,15 +98,13 @@ module GravatarContract = {
 
       let entitiesToLoad: array<Types.entityRead> = []
 
+      @warning("-16")
       let loaderContext: Types.GravatarContract.UpdatedGravatarEvent.loaderContext = {
         gravatar: {
-          gravatarWithChangesLoad: (id: Types.id) => {
+          gravatarWithChangesLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_gravatarWithChanges := Some(id)
 
-            let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id))
-
-            let tempReturnStubToImplement: Types.GravatarContract.UpdatedGravatarEvent.gravatarSubEntityLoader = Obj.magic()
-            tempReturnStubToImplement
+            let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id, loaders))
           },
         },
       }
@@ -139,6 +137,18 @@ module GravatarContract = {
               optIdOf_gravatarWithChanges.contents->Belt.Option.flatMap(id =>
                 IO.InMemoryStore.Gravatar.getGravatar(~id)
               ),
+            getOwner: gravatar => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=gravatar.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Gravatar owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateGravatar entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
         },
       }

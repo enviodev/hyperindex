@@ -14,11 +14,16 @@ export type Id = id;
 export type contactDetails = { readonly name: string; readonly email: string };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type gravatarLoaderConfig = { readonly loadOwner?: userLoaderConfig };
+
+// tslint:disable-next-line:interface-over-type-literal
+export type userLoaderConfig = { readonly loadGravatar?: gravatarLoaderConfig };
+
+// tslint:disable-next-line:interface-over-type-literal
 export type userEntity = {
   readonly id: string; 
   readonly address: string; 
   readonly gravatar: (undefined | id); 
-  readonly gravatarData?: gravatarEntity; 
   readonly updatesCountOnUserForTesting: number
 };
 
@@ -26,7 +31,6 @@ export type userEntity = {
 export type gravatarEntity = {
   readonly id: string; 
   readonly owner: id; 
-  readonly ownerData?: userEntity; 
   readonly displayName: string; 
   readonly imageUrl: string; 
   readonly updatesCount: number
@@ -117,6 +121,7 @@ export type GravatarContract_UpdatedGravatarEvent_userEntityHandlerContext = {
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext = {
   readonly gravatarWithChanges: () => (undefined | gravatarEntity); 
+  readonly getOwner: (_1:gravatarEntity) => userEntity; 
   readonly insert: (_1:gravatarEntity) => void; 
   readonly update: (_1:gravatarEntity) => void; 
   readonly delete: (_1:id) => void
@@ -126,10 +131,7 @@ export type GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext =
 export type GravatarContract_UpdatedGravatarEvent_context = { readonly user: GravatarContract_UpdatedGravatarEvent_userEntityHandlerContext; readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_UpdatedGravatarEvent_gravatarSubEntityLoader = { readonly userLoad: () => void };
-
-// tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext = { readonly gravatarWithChangesLoad: (_1:id) => GravatarContract_UpdatedGravatarEvent_gravatarSubEntityLoader };
+export type GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext = { readonly gravatarWithChangesLoad: (_1:id, _2:{ readonly loaders?: gravatarLoaderConfig }) => void };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_loaderContext = { readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext };

@@ -14,7 +14,6 @@ Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context)
       Curry._1(context.gravatar.insert, {
             id: $$event.params.id.toString(),
             owner: Ethers.ethAddressToString($$event.params.owner),
-            ownerData: undefined,
             displayName: $$event.params.displayName,
             imageUrl: $$event.params.imageUrl,
             updatesCount: 1
@@ -22,8 +21,7 @@ Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context)
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarLoadEntities(function ($$event, context) {
-      var gravatarLoader = Curry._1(context.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
-      Curry._1(gravatarLoader.ownerLoad, undefined);
+      Curry._2(context.gravatar.gravatarWithChangesLoad, true, $$event.params.id.toString());
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, context) {
@@ -33,7 +31,6 @@ Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, cont
       Curry._1(context.gravatar.update, {
             id: $$event.params.id.toString(),
             owner: Ethers.ethAddressToString($$event.params.owner),
-            ownerData: undefined,
             displayName: $$event.params.displayName,
             imageUrl: $$event.params.imageUrl,
             updatesCount: updatesCount
