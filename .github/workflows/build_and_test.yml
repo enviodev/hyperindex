@@ -111,7 +111,8 @@ jobs:
         run: |
           pnpm codegen
           pnpm install
-          pnpm build
+          pnpm hardhat compile --verbose
+          pnpm res:build
 
       - name: test_codegen test
         working-directory: scenarios/test_codegen
