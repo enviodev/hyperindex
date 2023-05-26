@@ -101,11 +101,6 @@ jobs:
           pnpm hardhat compile --verbose
           pnpm build
 
-      - name: gravatar test
-        working-directory: scenarios/gravatar
-        run: |
-          pnpm test
-
       - name: gravatar benchmark
         working-directory: scenarios/gravatar
         run: |
@@ -117,6 +112,11 @@ jobs:
           pnpm codegen
           pnpm install
           pnpm build
+
+      - name: test_codegen test
+        working-directory: scenarios/test_codegen
+        run: |
+          pnpm test
 
       - name: nft-factory codegen
         working-directory: scenarios/nft-factory
