@@ -18,22 +18,23 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
   console.log("user1");
   console.log(user1.address);
   
-  const interestRate = 0;
-  console.log("interest Rate set");
+  const name = "Float";
+  const symbol = "FLT";
+  console.log("Name and symbol set");
 
-  let SimpleBankContract = await deploy("ERC20", {
-    args: [interestRate],
+  let ERC20Contract = await deploy("ERC20", {
+    args: [name, symbol],
     from: deployer.address,
     log: false,
   });
 
-  console.log(" SimpleBank deployed to: ", SimpleBankContract.address);
+  console.log("ERC20 Contract deployed to: ", ERC20Contract.address);
 
   console.log("");
   console.log("Contract verification command");
   console.log("----------------------------------");
   console.log(
-    `npx hardhat verify --network ${networkToUse} --contract contracts/SimpleBank.sol:SimpleBank ${SimpleBankContract.address}  `
+    `npx hardhat verify --network ${networkToUse} --contract contracts/ERC20.sol:ERC20 ${ERC20Contract.address}  `
   );
   console.log("");
 }

@@ -6,6 +6,8 @@ Install Open Zepplin contracts by running the following:
 npm install @openzeppelin/contracts
 ```
 
+Custom `Creation` event has been added to the standard contract as an example.
+
 ## Indexer Requirements
 
 The following files are required to use the Indexer:
