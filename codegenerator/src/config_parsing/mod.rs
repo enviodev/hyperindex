@@ -42,10 +42,64 @@ pub struct ConfigContract {
     //  #[serde(deserialize_with = "abi_path_to_abi")]
     pub abi_file_path: String,
     pub handler: String,
-    address: Vec<String>,
+    address: AddressUnion,
     events: Vec<Event>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(untagged)]
+enum AddressUnion {
+    Address(String),
+    Addresses(Vec<String>),
+}
+
+struct AddressUnionIterator<'a> {
+    inner: &'a AddressUnion,
+    index: usize,
+}
+
+impl<'a> Iterator for AddressUnionIterator<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.inner {
+            AddressUnion::Address(addr) => {
+                if self.index == 0 {
+                    self.index += 1;
+                    Some(addr.as_str())
+                } else {
+                    None
+                }
+            }
+            AddressUnion::Addresses(addrs) => {
+                let result = addrs.get(self.index).map(|s| s.as_str());
+                self.index += 1;
+                result
+            }
+        }
+    }
+}
+
+impl<'a> IntoIterator for &'a AddressUnion {
+    type Item = &'a str;
+    type IntoIter = AddressUnionIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        AddressUnionIterator {
+            inner: self,
+            index: 0,
+        }
+    }
+}
+
+impl AddressUnion {
+    fn iter(&self) -> AddressUnionIterator {
+        AddressUnionIterator {
+            inner: &self,
+            index: 0,
+        }
+    }
+}
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     version: String,
@@ -112,7 +166,7 @@ pub fn convert_config_to_chain_configs(
                 let single_contract = SingleContractTemplate {
                     name: contract.name.to_capitalized_options(),
                     abi: stringified_abi,
-                    address: contract_address.clone(),
+                    address: contract_address.to_string(),
                     events: contract
                         .events
                         .iter()
@@ -134,6 +188,7 @@ pub fn convert_config_to_chain_configs(
 #[cfg(test)]
 mod tests {
     use crate::capitalization::Capitalize;
+    use crate::config_parsing::AddressUnion::Address;
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
@@ -158,7 +213,7 @@ mod tests {
 
         let contract1 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address1.clone()],
+            address: Address(address1.clone()),
             name: String::from("Contract1"),
             //needed to have relative path in order to match config1.yaml
             abi_file_path: String::from("../abis/Contract1.json"),
@@ -230,7 +285,7 @@ mod tests {
 
         let contract1 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address1.clone()],
+            address: Address(address1.clone()),
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
             events: vec![event1.clone(), event2.clone()],
@@ -246,7 +301,7 @@ mod tests {
         };
         let contract2 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address2.clone()],
+            address: Address(address2.clone()),
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
             events: vec![event1.clone(), event2.clone()],
