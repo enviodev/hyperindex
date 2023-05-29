@@ -1,5 +1,12 @@
-type Greeting @entity {
+type Erc20Token @entity {
   id: ID!
-  latestGreeting: String!
-  numberOfGreetings: Int!
+  name: String!
+  symbol: String!
+  decimals: Int!
+}
+
+type TotalTransfers @entity {
+  id: ID!
+  erc20: Erc20Token!
+  totalTransfer: Int!
 }

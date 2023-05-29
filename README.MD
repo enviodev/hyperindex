@@ -60,7 +60,7 @@ This will generate the config, schema and event handlers files according to the 
 
 ## Configure the files according to your project
 
-[Here](codegenerator/templates/static/gravatar_template/shared/README.md) is an example of how to configure the files for indexing.
+[Here](codegenerator/templates/static/greeter_template/typescript/README.md) is an example of how to configure the files for indexing.
 
 ## Generate code according to configuration
 

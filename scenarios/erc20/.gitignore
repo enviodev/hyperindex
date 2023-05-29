@@ -25,6 +25,7 @@ lib/*
 .merlin
 .bsb.lock
 /node_modules/
+build/
 benchmarks/
 artifacts
 cache
