@@ -8,8 +8,6 @@ use crate::{
     Contract, Error, EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
 };
 
-// use ethereum_abi::Event as EthereumAbiEvent;
-
 use ethers::abi::{
     Contract as AbiContract, Event as EthAbiEvent, EventParam as EthAbiEventParam,
     ParamType as EthAbiParamType,
