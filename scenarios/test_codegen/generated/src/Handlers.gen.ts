@@ -87,7 +87,16 @@ export const NftFactoryContract_registerSimpleNftCreatedHandler: (handler:((_1:{
 
 export const SimpleNftContract_registerTransferLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_SimpleNftContract_TransferEvent_eventArgs>; readonly context: Types_SimpleNftContract_TransferEvent_loaderContext }) => void)) => void = function (Arg1: any) {
   const result = HandlersBS.SimpleNftContract.registerTransferLoadEntities(function (Argevent: any, Argcontext: any) {
-      const result1 = Arg1({event:Argevent, context:Argcontext});
+      const result1 = Arg1({event:Argevent, context:{user:{userFromLoad:function (Arg11: any, Arg2: any) {
+          const result2 = Curry._2(Argcontext.user.userFromLoad, Arg11, Arg2.loaders);
+          return result2
+        }, userToLoad:function (Arg12: any, Arg21: any) {
+          const result3 = Curry._2(Argcontext.user.userToLoad, Arg12, Arg21.loaders);
+          return result3
+        }}, nftcollection:Argcontext.nftcollection, token:{existingTransferredTokenLoad:function (Arg13: any, Arg22: any) {
+          const result4 = Curry._2(Argcontext.token.existingTransferredTokenLoad, Arg13, Arg22.loaders);
+          return result4
+        }}}});
       return result1
     });
   return result

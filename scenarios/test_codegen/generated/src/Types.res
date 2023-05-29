@@ -15,20 +15,21 @@ type contactDetails = {
 
 @genType
 type rec gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
-and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig}
+and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: tokenLoaderConfig}
+and tokenLoaderConfig = {loadOwner?: userLoaderConfig, nftcolletion?: bool}
 
 type entityRead =
-  | UserRead(id)
-  | GravatarRead(id)
+  | UserRead(id, userLoaderConfig)
+  | GravatarRead(id, gravatarLoaderConfig)
   | NftcollectionRead(id)
-  | TokenRead(id)
+  | TokenRead(id, tokenLoaderConfig)
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
-  | UserRead(id) => `user${id}`
-  | GravatarRead(id) => `gravatar${id}`
+  | UserRead(id, _) => `user${id}`
+  | GravatarRead(id, _) => `gravatar${id}`
   | NftcollectionRead(id) => `nftcollection${id}`
-  | TokenRead(id) => `token${id}`
+  | TokenRead(id, _) => `token${id}`
   }
 }
 
@@ -46,7 +47,6 @@ type rawEventsEntity = {
   params: Js.Json.t,
 }
 
-@@warning("-30")
 @genType
 type userEntity = {
   id: string,
@@ -151,7 +151,6 @@ let serializeTokenEntity = (entity: tokenEntity): tokenEntitySerialized => {
     owner: entity.owner,
   }
 }
-@@warning("+30")
 
 type entity =
   | UserEntity(userEntity)
@@ -388,11 +387,13 @@ module SimpleNftContract = {
     }
 
     type userEntityLoaderContext = {
-      userFromLoad: id => unit,
-      userToLoad: id => unit,
+      userFromLoad: (id, ~loaders: userLoaderConfig=?) => unit,
+      userToLoad: (id, ~loaders: userLoaderConfig=?) => unit,
     }
     type nftcollectionEntityLoaderContext = {nftCollectionUpdatedLoad: id => unit}
-    type tokenEntityLoaderContext = {existingTransferredTokenLoad: id => unit}
+    type tokenEntityLoaderContext = {
+      existingTransferredTokenLoad: (id, ~loaders: tokenLoaderConfig=?) => unit,
+    }
 
     @genType
     type loaderContext = {

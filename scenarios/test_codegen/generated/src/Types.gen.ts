@@ -17,20 +17,18 @@ export type contactDetails = { readonly name: string; readonly email: string };
 export type gravatarLoaderConfig = { readonly loadOwner?: userLoaderConfig };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type userLoaderConfig = { readonly loadGravatar?: gravatarLoaderConfig };
+export type userLoaderConfig = { readonly loadGravatar?: gravatarLoaderConfig; readonly loadTokens?: tokenLoaderConfig };
+
+// tslint:disable-next-line:interface-over-type-literal
+export type tokenLoaderConfig = { readonly loadOwner?: userLoaderConfig; readonly nftcolletion?: boolean };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type userEntity = {
   readonly id: string; 
   readonly address: string; 
-<<<<<<< HEAD
   readonly gravatar?: id; 
   readonly updatesCountOnUserForTesting: number; 
   readonly tokens: id[]
-=======
-  readonly gravatar: (undefined | id); 
-  readonly updatesCountOnUserForTesting: number
->>>>>>> origin/js/load-related-fields-structure
 };
 
 // tslint:disable-next-line:interface-over-type-literal
@@ -163,12 +161,8 @@ export type GravatarContract_UpdatedGravatarEvent_userEntityHandlerContext = {
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext = {
-<<<<<<< HEAD
   readonly gravatarWithChanges: () => (null | undefined | gravatarEntity); 
-=======
-  readonly gravatarWithChanges: () => (undefined | gravatarEntity); 
   readonly getOwner: (_1:gravatarEntity) => userEntity; 
->>>>>>> origin/js/load-related-fields-structure
   readonly insert: (_1:gravatarEntity) => void; 
   readonly update: (_1:gravatarEntity) => void; 
   readonly delete: (_1:id) => void
@@ -182,7 +176,6 @@ export type GravatarContract_UpdatedGravatarEvent_nftcollectionEntityHandlerCont
 };
 
 // tslint:disable-next-line:interface-over-type-literal
-<<<<<<< HEAD
 export type GravatarContract_UpdatedGravatarEvent_tokenEntityHandlerContext = {
   readonly insert: (_1:tokenEntity) => void; 
   readonly update: (_1:tokenEntity) => void; 
@@ -198,10 +191,7 @@ export type GravatarContract_UpdatedGravatarEvent_context = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext = { readonly gravatarWithChangesLoad: (_1:id) => void };
-=======
 export type GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext = { readonly gravatarWithChangesLoad: (_1:id, _2:{ readonly loaders?: gravatarLoaderConfig }) => void };
->>>>>>> origin/js/load-related-fields-structure
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_loaderContext = { readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext };
@@ -301,13 +291,13 @@ export type SimpleNftContract_TransferEvent_context = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type SimpleNftContract_TransferEvent_userEntityLoaderContext = { readonly userFromLoad: (_1:id) => void; readonly userToLoad: (_1:id) => void };
+export type SimpleNftContract_TransferEvent_userEntityLoaderContext = { readonly userFromLoad: (_1:id, _2:{ readonly loaders?: userLoaderConfig }) => void; readonly userToLoad: (_1:id, _2:{ readonly loaders?: userLoaderConfig }) => void };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type SimpleNftContract_TransferEvent_nftcollectionEntityLoaderContext = { readonly nftCollectionUpdatedLoad: (_1:id) => void };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type SimpleNftContract_TransferEvent_tokenEntityLoaderContext = { readonly existingTransferredTokenLoad: (_1:id) => void };
+export type SimpleNftContract_TransferEvent_tokenEntityLoaderContext = { readonly existingTransferredTokenLoad: (_1:id, _2:{ readonly loaders?: tokenLoaderConfig }) => void };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type SimpleNftContract_TransferEvent_loaderContext = {

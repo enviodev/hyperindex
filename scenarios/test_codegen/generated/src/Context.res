@@ -268,15 +268,15 @@ module SimpleNftContract = {
 
       let loaderContext: Types.SimpleNftContract.TransferEvent.loaderContext = {
         user: {
-          userFromLoad: (id: Types.id) => {
+          userFromLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_userFrom := Some(id)
 
-            let _ = Js.Array2.push(entitiesToLoad, Types.UserRead(id))
+            let _ = Js.Array2.push(entitiesToLoad, Types.UserRead(id, loaders))
           },
-          userToLoad: (id: Types.id) => {
+          userToLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_userTo := Some(id)
 
-            let _ = Js.Array2.push(entitiesToLoad, Types.UserRead(id))
+            let _ = Js.Array2.push(entitiesToLoad, Types.UserRead(id, loaders))
           },
         },
         nftcollection: {
@@ -287,10 +287,10 @@ module SimpleNftContract = {
           },
         },
         token: {
-          existingTransferredTokenLoad: (id: Types.id) => {
+          existingTransferredTokenLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_existingTransferredToken := Some(id)
 
-            let _ = Js.Array2.push(entitiesToLoad, Types.TokenRead(id))
+            let _ = Js.Array2.push(entitiesToLoad, Types.TokenRead(id, loaders))
           },
         },
       }

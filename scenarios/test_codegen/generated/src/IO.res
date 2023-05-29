@@ -171,30 +171,19 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
   let uniqueTokenDict = Js.Dict.empty()
 
-  entityBatch->Belt.Array.forEach(readEntity => {
-    switch readEntity {
-    | UserRead(entity) =>
-      let _ = Js.Dict.set(uniqueUserDict, readEntity->Types.entitySerialize, entity)
-    | GravatarRead(entity) =>
-      let _ = Js.Dict.set(uniqueGravatarDict, readEntity->Types.entitySerialize, entity)
-    | NftcollectionRead(entity) =>
-      let _ = Js.Dict.set(uniqueNftcollectionDict, readEntity->Types.entitySerialize, entity)
-    | TokenRead(entity) =>
-      let _ = Js.Dict.set(uniqueTokenDict, readEntity->Types.entitySerialize, entity)
-    }
-  })
-
   let populateUserLoadAsEntityFunctions: array<unit => unit> = []
   let populateGravatarLoadAsEntityFunctions: array<unit => unit> = []
+  let populateTokenLoadAsEntityFunctions: array<unit => unit> = []
 
   let uniqueUserAsEntityFieldArray: array<string> = []
   let uniqueGravatarAsEntityFieldArray: array<string> = []
+  let uniqueTokenAsEntityFieldArray: array<string> = []
+  let uniqueNftcollectionAsEntityFieldArray: array<string> = []
 
   entityBatch->Belt.Array.forEach(readEntity => {
     switch readEntity {
     | UserRead(entityId, userLoad) =>
       let _ = Js.Dict.set(uniqueUserDict, entityId, entityId)
-
       switch userLoad.loadGravatar {
       | Some(
           _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
@@ -217,9 +206,20 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
         })
       | None => ()
       }
+      switch userLoad.loadTokens {
+      | Some(
+          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
+        ) =>
+        let _ = populateUserLoadAsEntityFunctions->Js.Array2.push(() => {
+          // TODO: we haven't implemented entity field loading for arrays
+          Logging.warn(
+            "We haven't implemented entity field loading for arrays. Please let us know if this is important to you.",
+          )
+        })
+      | None => ()
+      }
     | GravatarRead(entityId, gravatarLoad) =>
       let _ = Js.Dict.set(uniqueGravatarDict, entityId, entityId)
-
       switch gravatarLoad.loadOwner {
       | Some(
           _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
@@ -242,49 +242,49 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     }
   })
 
-  if Js.Dict.keys(uniqueUserDict)->Array.length > 0 {
-    let userEntitiesArray =
-      await sql->DbFunctions.User.readUserEntities(Js.Dict.keys(uniqueUserDict))
+  // if Js.Dict.keys(uniqueUserDict)->Array.length > 0 {
+  //   let userEntitiesArray =
+  //     await sql->DbFunctions.User.readUserEntities(Js.Dict.keys(uniqueUserDict))
 
-    userEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.User.readRowToReadEntityData(readRow)
-      InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
+  //   userEntitiesArray->Belt.Array.forEach(readRow => {
+  //     let {entity, eventData} = DbFunctions.User.readRowToReadEntityData(readRow)
+  //     InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
+  //   })
+  // }
 
-  if Js.Dict.keys(uniqueGravatarDict)->Array.length > 0 {
-    let gravatarEntitiesArray =
-      await sql->DbFunctions.Gravatar.readGravatarEntities(Js.Dict.keys(uniqueGravatarDict))
+  // if Js.Dict.keys(uniqueGravatarDict)->Array.length > 0 {
+  //   let gravatarEntitiesArray =
+  //     await sql->DbFunctions.Gravatar.readGravatarEntities(Js.Dict.keys(uniqueGravatarDict))
 
-    gravatarEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
-      InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
+  //   gravatarEntitiesArray->Belt.Array.forEach(readRow => {
+  //     let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
+  //     InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
+  //   })
+  // }
 
-  // Execute first layer of additional load functions:
-  populateUserLoadAsEntityFunctions->Belt.Array.forEach(func => func())
-  populateGravatarLoadAsEntityFunctions->Belt.Array.forEach(func => func())
+  // // Execute first layer of additional load functions:
+  // populateUserLoadAsEntityFunctions->Belt.Array.forEach(func => func())
+  // populateGravatarLoadAsEntityFunctions->Belt.Array.forEach(func => func())
 
-  if uniqueUserAsEntityFieldArray->Array.length > 0 {
-    let userFieldEntitiesArray =
-      await sql->DbFunctions.User.readUserEntities(uniqueUserAsEntityFieldArray)
+  // if uniqueUserAsEntityFieldArray->Array.length > 0 {
+  //   let userFieldEntitiesArray =
+  //     await sql->DbFunctions.User.readUserEntities(uniqueUserAsEntityFieldArray)
 
-    userFieldEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.User.readRowToReadEntityData(readRow)
-      InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
+  //   userFieldEntitiesArray->Belt.Array.forEach(readRow => {
+  //     let {entity, eventData} = DbFunctions.User.readRowToReadEntityData(readRow)
+  //     InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
+  //   })
+  // }
 
-  if uniqueGravatarAsEntityFieldArray->Array.length > 0 {
-    let gravatarFildEntitiesArray =
-      await sql->DbFunctions.Gravatar.readGravatarEntities(uniqueGravatarAsEntityFieldArray)
+  // if uniqueGravatarAsEntityFieldArray->Array.length > 0 {
+  //   let gravatarFildEntitiesArray =
+  //     await sql->DbFunctions.Gravatar.readGravatarEntities(uniqueGravatarAsEntityFieldArray)
 
-    gravatarFildEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
-      InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
+  //   gravatarFildEntitiesArray->Belt.Array.forEach(readRow => {
+  //     let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
+  //     InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
+  //   })
+  // }
 }
 
 let executeBatch = async sql => {
