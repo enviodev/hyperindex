@@ -13,10 +13,12 @@ type contactDetails = {
   email: string,
 }
 
+// HARDCODED (for now)
 @genType
 type rec gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
 and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: tokenLoaderConfig}
 and tokenLoaderConfig = {loadOwner?: userLoaderConfig, nftcolletion?: bool}
+// TODO: make this dynamic
 
 type entityRead =
   | UserRead(id, userLoaderConfig)
@@ -60,6 +62,7 @@ type userEntitySerialized = {
   id: string,
   address: string,
   gravatar: option<id>,
+  updatesCountOnUserForTesting: int,
   tokens: array<id>,
 }
 
@@ -68,10 +71,12 @@ let serializeUserEntity = (entity: userEntity): userEntitySerialized => {
     id: entity.id,
     address: entity.address,
     gravatar: entity.gravatar,
+    updatesCountOnUserForTesting: entity.updatesCountOnUserForTesting,
     tokens: entity.tokens,
   }
 }
 
+@genType
 type gravatarEntity = {
   id: string,
   owner: id,
@@ -205,18 +210,28 @@ module GravatarContract = {
       update: gravatarEntity => unit,
       delete: id => unit,
     }
+    type nftcollectionEntityHandlerContext = {
+      insert: nftcollectionEntity => unit,
+      update: nftcollectionEntity => unit,
+      delete: id => unit,
+    }
+    type tokenEntityHandlerContext = {
+      insert: tokenEntity => unit,
+      update: tokenEntity => unit,
+      delete: id => unit,
+    }
     @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
+      nftcollection: nftcollectionEntityHandlerContext,
+      token: tokenEntityHandlerContext,
     }
 
     // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
-
     @genType
     type loaderContext = {}
   }
-
   module NewGravatarEvent = {
     @spice @genType
     type eventArgs = {
@@ -254,7 +269,6 @@ module GravatarContract = {
     }
 
     // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
-
     @genType
     type loaderContext = {}
   }
@@ -273,6 +287,7 @@ module GravatarContract = {
     }
     type gravatarEntityHandlerContext = {
       gravatarWithChanges: unit => option<gravatarEntity>,
+      // TODO: make this type correspond to if the field is optional or not.
       getOwner: gravatarEntity => userEntity,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
@@ -301,6 +316,7 @@ module GravatarContract = {
       gravatarWithChangesLoad: (id, ~loaders: gravatarLoaderConfig=?) => unit,
     }
 
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     @genType
     type loaderContext = {gravatar: gravatarEntityLoaderContext}
   }
@@ -342,6 +358,7 @@ module NftFactoryContract = {
       token: tokenEntityHandlerContext,
     }
 
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     @genType
     type loaderContext = {}
   }
@@ -357,6 +374,8 @@ module SimpleNftContract = {
     type userEntityHandlerContext = {
       userFrom: unit => option<userEntity>,
       userTo: unit => option<userEntity>,
+      // TODO: make this type correspond to if the field is optional or not.
+      getGravatar: userEntity => option<gravatarEntity>,
       insert: userEntity => unit,
       update: userEntity => unit,
       delete: id => unit,
@@ -374,6 +393,10 @@ module SimpleNftContract = {
     }
     type tokenEntityHandlerContext = {
       existingTransferredToken: unit => option<tokenEntity>,
+      // TODO: make this type correspond to if the field is optional or not.
+      getCollection: tokenEntity => nftcollectionEntity,
+      // TODO: make this type correspond to if the field is optional or not.
+      getOwner: tokenEntity => userEntity,
       insert: tokenEntity => unit,
       update: tokenEntity => unit,
       delete: id => unit,
@@ -386,15 +409,19 @@ module SimpleNftContract = {
       token: tokenEntityHandlerContext,
     }
 
+    @genType
     type userEntityLoaderContext = {
       userFromLoad: (id, ~loaders: userLoaderConfig=?) => unit,
       userToLoad: (id, ~loaders: userLoaderConfig=?) => unit,
     }
+    @genType
     type nftcollectionEntityLoaderContext = {nftCollectionUpdatedLoad: id => unit}
+    @genType
     type tokenEntityLoaderContext = {
       existingTransferredTokenLoad: (id, ~loaders: tokenLoaderConfig=?) => unit,
     }
 
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     @genType
     type loaderContext = {
       user: userEntityLoaderContext,
@@ -405,6 +432,7 @@ module SimpleNftContract = {
 }
 
 type event =
+  | GravatarContract_TestEvent(eventLog<GravatarContract.TestEventEvent.eventArgs>)
   | GravatarContract_NewGravatar(eventLog<GravatarContract.NewGravatarEvent.eventArgs>)
   | GravatarContract_UpdatedGravatar(eventLog<GravatarContract.UpdatedGravatarEvent.eventArgs>)
   | NftFactoryContract_SimpleNftCreated(
@@ -413,6 +441,10 @@ type event =
   | SimpleNftContract_Transfer(eventLog<SimpleNftContract.TransferEvent.eventArgs>)
 
 type eventAndContext =
+  | GravatarContract_TestEventWithContext(
+      eventLog<GravatarContract.TestEventEvent.eventArgs>,
+      GravatarContract.TestEventEvent.context,
+    )
   | GravatarContract_NewGravatarWithContext(
       eventLog<GravatarContract.NewGravatarEvent.eventArgs>,
       GravatarContract.NewGravatarEvent.context,
@@ -432,6 +464,7 @@ type eventAndContext =
 
 @spice
 type eventName =
+  | @spice.as("GravatarContract_TestEventEvent") GravatarContract_TestEventEvent
   | @spice.as("GravatarContract_NewGravatarEvent") GravatarContract_NewGravatarEvent
   | @spice.as("GravatarContract_UpdatedGravatarEvent") GravatarContract_UpdatedGravatarEvent
   | @spice.as("NftFactoryContract_SimpleNftCreatedEvent") NftFactoryContract_SimpleNftCreatedEvent
@@ -439,6 +472,7 @@ type eventName =
 
 let eventNameToString = (eventName: eventName) =>
   switch eventName {
+  | GravatarContract_TestEventEvent => "TestEvent"
   | GravatarContract_NewGravatarEvent => "NewGravatar"
   | GravatarContract_UpdatedGravatarEvent => "UpdatedGravatar"
   | NftFactoryContract_SimpleNftCreatedEvent => "SimpleNftCreated"

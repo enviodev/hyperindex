@@ -75,7 +75,6 @@ curl -X POST localhost:8080/v1/metadata \
 
 {{#each entities as |entity|}}
 {{#each entity.relational_params as | relational_param | }}
-{{#if relational_param.is_entity_relationship}}
 curl -X POST localhost:8080/v1/metadata \
   -H "Content-Type: application/json" \
   -H "X-Hasura-Role: admin" \
@@ -96,6 +95,5 @@ curl -X POST localhost:8080/v1/metadata \
         }
     }
 }'
-{{/if}}
 {{/each}}
 {{/each}}

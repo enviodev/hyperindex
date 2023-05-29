@@ -3,12 +3,11 @@ use crate::{
     config_parsing::{ConfigContract, Event as ConfigEvent},
     linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
-    Contract, Error, EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
+    Contract, Error, EventParamType, EventRecordType, EventTemplate, RequiredEntityEntityField,
+    RequiredEntityTemplate,
 };
 
 use std::collections::HashMap;
-
-use crate::capitalization::CapitalizedOptions;
 
 use std::path::PathBuf;
 
@@ -116,7 +115,7 @@ fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthereumAbiEvent,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
-    entity_fields_of_required_entity_map: &HashMap<String, Vec<CapitalizedOptions>>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
@@ -160,7 +159,7 @@ fn get_contract_type_from_config_contract(
     parsed_paths: &ParsedPaths,
     contract_unique_id: ContractUniqueId,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
-    entity_fields_of_required_entity_map: &HashMap<String, Vec<CapitalizedOptions>>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -203,7 +202,7 @@ fn get_contract_type_from_config_contract(
 pub fn get_contract_types_from_config(
     parsed_paths: &ParsedPaths,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
-    entity_fields_of_required_entity_map: &HashMap<String, Vec<CapitalizedOptions>>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -237,6 +236,7 @@ mod tests {
         EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
     };
     use ethereum_abi::{Event as AbiEvent, Param, Type};
+    use std::collections::HashMap;
 
     use super::{abi_type_to_rescript_string, get_event_template_from_ethereum_abi_event};
     #[test]
