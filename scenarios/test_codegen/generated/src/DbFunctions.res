@@ -2,14 +2,12 @@ let config: Postgres.poolConfig = {
   ...Config.db,
   transform: {undefined: Js.null},
 }
-
 let sql = Postgres.makeSql(~config)
 
 type chainId = int
 type eventId = Ethers.BigInt.t
 
 module RawEvents = {
-
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")
   external batchSetRawEvents: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> =

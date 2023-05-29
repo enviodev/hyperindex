@@ -8,30 +8,33 @@ use crate::{
     Contract, Error, EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
 };
 
-use ethereum_abi::{Abi, Event as EthereumAbiEvent};
+use ethers::abi::{
+    Contract as AbiContract, Event as EthAbiEvent, EventParam as EthAbiEventParam,
+    ParamType as EthAbiParamType,
+};
 
 use super::deserialize_config_from_yaml;
 
-pub fn parse_abi(abi: &str) -> Result<Abi, Box<dyn Error>> {
-    let abi: Abi = serde_json::from_str(abi)?;
+pub fn parse_abi(abi: &str) -> Result<AbiContract, Box<dyn Error>> {
+    let abi: AbiContract = serde_json::from_str(abi)?;
     Ok(abi)
 }
 
-pub fn get_abi_from_file_path(file_path: &PathBuf) -> Result<Abi, Box<dyn Error>> {
+pub fn get_abi_from_file_path(file_path: &PathBuf) -> Result<AbiContract, Box<dyn Error>> {
     let abi_file = std::fs::read_to_string(file_path)?;
     parse_abi(&abi_file)
 }
 
 struct EthereumEventParam<'a> {
     name: &'a str,
-    abi_type: &'a ethereum_abi::Type,
+    abi_type: &'a EthAbiParamType,
 }
 
 impl<'a> EthereumEventParam<'a> {
-    fn from_ethereum_abi_param(abi_type: &'a ethereum_abi::Param) -> EthereumEventParam<'a> {
+    fn from_ethereum_abi_param(abi_type: &'a EthAbiEventParam) -> EthereumEventParam<'a> {
         EthereumEventParam {
             name: &abi_type.name,
-            abi_type: &abi_type.type_,
+            abi_type: &abi_type.kind,
         }
     }
 }
@@ -41,14 +44,14 @@ fn abi_type_to_rescript_string(
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
 ) -> String {
     match &param.abi_type {
-        ethereum_abi::Type::Uint(_size) => String::from("Ethers.BigInt.t"),
-        ethereum_abi::Type::Int(_size) => String::from("Ethers.BigInt.t"),
-        ethereum_abi::Type::Bool => String::from("bool"),
-        ethereum_abi::Type::Address => String::from("Ethers.ethAddress"),
-        ethereum_abi::Type::Bytes => String::from("string"),
-        ethereum_abi::Type::String => String::from("string"),
-        ethereum_abi::Type::FixedBytes(_) => String::from("string"),
-        ethereum_abi::Type::Array(abi_type) => {
+        EthAbiParamType::Uint(_size) => String::from("Ethers.BigInt.t"),
+        EthAbiParamType::Int(_size) => String::from("Ethers.BigInt.t"),
+        EthAbiParamType::Bool => String::from("bool"),
+        EthAbiParamType::Address => String::from("Ethers.ethAddress"),
+        EthAbiParamType::Bytes => String::from("string"),
+        EthAbiParamType::String => String::from("string"),
+        EthAbiParamType::FixedBytes(_) => String::from("string"),
+        EthAbiParamType::Array(abi_type) => {
             let sub_param = EthereumEventParam {
                 abi_type: &abi_type,
                 name: param.name,
@@ -58,7 +61,7 @@ fn abi_type_to_rescript_string(
                 abi_type_to_rescript_string(&sub_param, rescript_subrecord_dependencies)
             )
         }
-        ethereum_abi::Type::FixedArray(abi_type, _) => {
+        EthAbiParamType::FixedArray(abi_type, _) => {
             let sub_param = EthereumEventParam {
                 abi_type: &abi_type,
                 name: param.name,
@@ -69,7 +72,7 @@ fn abi_type_to_rescript_string(
                 abi_type_to_rescript_string(&sub_param, rescript_subrecord_dependencies)
             )
         }
-        ethereum_abi::Type::Tuple(abi_types) => {
+        EthAbiParamType::Tuple(abi_types) => {
             let record_name = match param.name {
                 "" => "unnamed".to_string(),
                 name => name.to_string(),
@@ -78,16 +81,14 @@ fn abi_type_to_rescript_string(
             let rescript_params: Vec<EventParamType> = abi_types
                 .iter()
                 .enumerate()
-                .map(|(i, (field_name, abi_type))| {
-                    let key = match field_name.as_str() {
-                        "" => format!("@as({}) _{})", i, i),
-                        name => name.to_string(),
-                    };
+                .map(|(i, abi_type)| {
+                    let key = format!("@as({}) _{}", i, i);
 
                     let ethereum_param = EthereumEventParam {
                         name: &key,
                         abi_type: &abi_type,
                     };
+
                     let type_rescript = abi_type_to_rescript_string(
                         &ethereum_param,
                         rescript_subrecord_dependencies,
@@ -110,7 +111,7 @@ fn abi_type_to_rescript_string(
 
 fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
-    abi_event: &EthereumAbiEvent,
+    abi_event: &EthAbiEvent,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
@@ -156,10 +157,9 @@ fn get_contract_type_from_config_contract(
 
     let contract_abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
-    let abi_events: Vec<ethereum_abi::Event> = contract_abi.events;
     for config_event in config_contract.events.iter() {
-        let abi_event = abi_events
-            .iter()
+        let abi_event = contract_abi
+            .events()
             .find(|&abi_event| abi_event.name == config_event.name);
 
         match abi_event {
@@ -220,30 +220,30 @@ mod tests {
         linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
         EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
     };
-    use ethereum_abi::{Event as AbiEvent, Param, Type};
+    use ethers::abi::{Event as AbiEvent, EventParam, ParamType};
 
     use super::{abi_type_to_rescript_string, get_event_template_from_ethereum_abi_event};
     #[test]
     fn abi_event_to_record_1() {
         let input1_name = String::from("id");
 
-        let input1 = Param {
+        let input1 = EventParam {
             name: input1_name.clone(),
-            indexed: Some(false),
-            type_: Type::Uint(256),
+            indexed: false,
+            kind: ParamType::Uint(256),
         };
 
         let input2_name = String::from("owner");
-        let input2 = Param {
+        let input2 = EventParam {
             name: input2_name.clone(),
-            indexed: Some(false),
-            type_: Type::Address,
+            indexed: false,
+            kind: ParamType::Address,
         };
 
         let inputs = vec![input1, input2];
         let event_name = String::from("NewGravatar");
 
-        let abi_event = AbiEvent {
+        let abi_event: ethers::abi::Event = AbiEvent {
             name: event_name.clone(),
             anonymous: false,
             inputs,
@@ -280,17 +280,17 @@ mod tests {
     fn abi_event_to_record_2() {
         let input1_name = String::from("id");
 
-        let input1 = Param {
+        let input1 = EventParam {
             name: input1_name.clone(),
-            indexed: Some(false),
-            type_: Type::Uint(256),
+            indexed: false,
+            kind: ParamType::Uint(256),
         };
 
         let input2_name = String::from("owner");
-        let input2 = Param {
+        let input2 = EventParam {
             name: input2_name.clone(),
-            indexed: Some(false),
-            type_: Type::Address,
+            indexed: false,
+            kind: ParamType::Address,
         };
 
         let inputs = vec![input1, input2];
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_record_type_array() {
-        let array_string_type = Type::Array(Box::new(Type::String));
+        let array_string_type = ParamType::Array(Box::new(ParamType::String));
         let param = super::EthereumEventParam {
             abi_type: &array_string_type,
             name: "myArray",
@@ -352,7 +352,7 @@ mod tests {
     }
     #[test]
     fn test_record_type_fixed_array() {
-        let array_fixed_arr_type = Type::FixedArray(Box::new(Type::String), 1);
+        let array_fixed_arr_type = ParamType::FixedArray(Box::new(ParamType::String), 1);
         let param = super::EthereumEventParam {
             abi_type: &array_fixed_arr_type,
             name: "myArrayFixed",
@@ -366,10 +366,7 @@ mod tests {
 
     #[test]
     fn test_record_type_tuple() {
-        let tuple_type = Type::Tuple(vec![
-            (String::from("myString"), Type::String),
-            (String::from("myUint256"), Type::Uint(256)),
-        ]);
+        let tuple_type = ParamType::Tuple(vec![ParamType::String, ParamType::Uint(256)]);
         let param = super::EthereumEventParam {
             abi_type: &tuple_type,
             name: "myStruct",
@@ -385,11 +382,11 @@ mod tests {
             name: String::from("myStruct").to_capitalized_options(),
             params: vec![
                 EventParamType {
-                    key: "myString".to_string(),
+                    key: "@as(0) _0".to_string(),
                     type_rescript: "string".to_string(),
                 },
                 EventParamType {
-                    key: "myUint256".to_string(),
+                    key: "@as(1) _1".to_string(),
                     type_rescript: "Ethers.BigInt.t".to_string(),
                 },
             ],
