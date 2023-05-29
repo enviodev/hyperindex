@@ -38,6 +38,7 @@ describe("Raw Events Integration", () => {
       symbol: "t_sym",
       supply: 200,
     });
+    console.log("Successfully created Nft", createNftTx);
 
     const simpleNftCreatedEventFilter =
       deployedNftFactory.getEvent("SimpleNftCreated");

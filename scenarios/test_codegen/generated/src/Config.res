@@ -15,6 +15,7 @@ type chainConfig = {
 type chainConfigs = Js.Dict.t<chainConfig>
 
 // Logging:
+@genType
 type logLevel = [
   | #TRACE
   | #DEBUG
@@ -57,25 +58,34 @@ let db: Postgres.poolConfig = {
     ~devFallback="envio-dev",
     (),
   ),
+  onnotice: defaultLogLevel == #WARN || defaultLogLevel == #ERROR ? None : Some(() => ()),
 }
 
 let config: chainConfigs = [
   (
-    "137",
+    "1337",
     {
-      provider: Ethers.JsonRpcProvider.make(~rpcUrl="https://polygon-rpc.com", ~chainId=137),
-      startBlock: 34316032,
-      chainId: 137,
+      provider: Ethers.JsonRpcProvider.make(~rpcUrl="http://localhost:8545", ~chainId=1337),
+      startBlock: 0,
+      chainId: 1337,
       contracts: [
         {
           name: "Gravatar",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
-          address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"->Ethers.getAddressFromStringUnsafe,
-          events: [
-            GravatarContract_TestEventEvent,
-            GravatarContract_NewGravatarEvent,
-            GravatarContract_UpdatedGravatarEvent,
-          ],
+          address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe,
+          events: [GravatarContract_NewGravatarEvent, GravatarContract_UpdatedGravatarEvent],
+        },
+        {
+          name: "NftFactory",
+          abi: Abis.nftFactoryAbi->Ethers.makeAbi,
+          address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Ethers.getAddressFromStringUnsafe,
+          events: [NftFactoryContract_SimpleNftCreatedEvent],
+        },
+        {
+          name: "SimpleNft",
+          abi: Abis.simpleNftAbi->Ethers.makeAbi,
+          address: "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"->Ethers.getAddressFromStringUnsafe,
+          events: [SimpleNftContract_TransferEvent],
         },
       ],
     },

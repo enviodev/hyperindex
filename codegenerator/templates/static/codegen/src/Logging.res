@@ -21,37 +21,44 @@ let logLevelOrder = (level: Config.logLevel) =>
   | #FATAL => 5
   }
 
-// TODO: sholud we provide a function for this? Should this just be an environment variable?
+@genType
 let setLogLevel = (level: Config.logLevel) => {
   currentLogLevel := level
 }
 
+@genType
 let log = (level: Config.logLevel, message) => {
   if logLevelOrder(level) >= logLevelOrder(currentLogLevel.contents) {
     Js.log2(`${colors(level)}[${(level :> string)}]${resetColor}`, message)
   }
 }
 
+@genType
 let trace = message => {
   log(#TRACE, message)
 }
 
+@genType
 let debug = message => {
   log(#DEBUG, message)
 }
 
+@genType
 let info = message => {
   log(#INFO, message)
 }
 
+@genType
 let warn = message => {
   log(#WARN, message)
 }
 
+@genType
 let error = message => {
   log(#ERROR, message)
 }
 
+@genType
 let fatal = message => {
   log(#FATAL, message)
 }
