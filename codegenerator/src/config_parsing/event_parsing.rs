@@ -1,6 +1,6 @@
 use crate::{
     capitalization::Capitalize,
-    config_parsing::{ConfigContract, Event as ConfigEvent},
+    config_parsing::{ConfigContract, ConfigEvent},
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
     Contract, Error, EventParamType, EventTemplate, RequiredEntityEntityField,
     RequiredEntityTemplate,
@@ -15,7 +15,7 @@ use ethers::abi::{
     ParamType as EthAbiParamType,
 };
 
-use super::deserialize_config_from_yaml;
+use super::{deserialize_config_from_yaml, EventNameOrSig};
 
 pub fn parse_abi(abi: &str) -> Result<AbiContract, Box<dyn Error>> {
     let abi: AbiContract = serde_json::from_str(abi)?;
@@ -143,9 +143,12 @@ fn get_contract_type_from_config_contract(
     let contract_abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
     for config_event in config_contract.events.iter() {
-        let abi_event = contract_abi
-            .events()
-            .find(|&abi_event| abi_event.name == config_event.name);
+        let abi_event = match &config_event.event {
+            EventNameOrSig::Name(config_event_name) => contract_abi
+                .events()
+                .find(|&abi_event| &abi_event.name == config_event_name),
+            EventNameOrSig::Event(config_defined_event) => Some(config_defined_event),
+        };
 
         match abi_event {
             Some(abi_event) => {
@@ -202,7 +205,7 @@ mod tests {
 
     use crate::{
         capitalization::Capitalize,
-        config_parsing::{self, RequiredEntity},
+        config_parsing::{self, EventNameOrSig, RequiredEntity},
         EventParamType, EventTemplate, RequiredEntityTemplate,
     };
     use ethers::abi::{Event as AbiEvent, EventParam, ParamType};
@@ -234,8 +237,8 @@ mod tests {
             anonymous: false,
             inputs,
         };
-        let config_event = config_parsing::Event {
-            name: event_name.clone(),
+        let config_event = config_parsing::ConfigEvent {
+            event: EventNameOrSig::Name(event_name.clone()),
             required_entities: None,
         };
 
@@ -284,8 +287,8 @@ mod tests {
             anonymous: false,
             inputs,
         };
-        let config_event = config_parsing::Event {
-            name: event_name.clone(),
+        let config_event = config_parsing::ConfigEvent {
+            event: EventNameOrSig::Name(event_name.clone()),
             required_entities: Some(vec![RequiredEntity {
                 name: String::from("Gravatar"),
                 labels: vec![String::from("gravatarWithChanges")],

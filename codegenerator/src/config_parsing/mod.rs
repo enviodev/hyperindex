@@ -5,6 +5,7 @@ use std::slice::Iter;
 pub mod entity_parsing;
 pub mod event_parsing;
 
+use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
 
 use crate::project_paths::handler_paths::ContractUniqueId;
@@ -21,10 +22,57 @@ struct RequiredEntity {
     labels: Vec<String>,
 }
 
+#[derive(Debug, PartialEq, Deserialize, Clone, Serialize)]
+#[serde(try_from = "String")]
+enum EventNameOrSig {
+    Name(String),
+    Event(EthAbiEvent),
+}
+
+impl TryFrom<String> for EventNameOrSig {
+    type Error = String;
+
+    fn try_from(event_string: String) -> Result<Self, Self::Error> {
+        let parse_event_sig = |sig: &str| -> Result<EthAbiEvent, Self::Error> {
+            match HumanReadableParser::parse_event(sig) {
+                Ok(event) => Ok(event),
+                Err(err) => Err(format!(
+                    "Unable to parse event signature {} due to the following error: {}",
+                    sig, err
+                )),
+            }
+        };
+
+        let trimmed = event_string.trim();
+
+        let name_or_sig = if trimmed.starts_with("event") {
+            let parsed_event = parse_event_sig(trimmed)?;
+            EventNameOrSig::Event(parsed_event)
+        } else if trimmed.contains("(") && trimmed.contains(")") {
+            let signature = format!("event {}", trimmed);
+            let parsed_event = parse_event_sig(&signature)?;
+            EventNameOrSig::Event(parsed_event)
+        } else {
+            EventNameOrSig::Name(trimmed.to_string())
+        };
+
+        Ok(name_or_sig)
+    }
+}
+
+impl EventNameOrSig {
+    pub fn get_name(&self) -> String {
+        match self {
+            EventNameOrSig::Name(name) => name.to_owned(),
+            EventNameOrSig::Event(event) => event.name.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct Event {
-    name: String,
+struct ConfigEvent {
+    event: EventNameOrSig,
     required_entities: Option<Vec<RequiredEntity>>,
 }
 
@@ -44,7 +92,7 @@ pub struct ConfigContract {
     pub abi_file_path: String,
     pub handler: String,
     address: NormalizedList<String>,
-    events: Vec<Event>,
+    events: Vec<ConfigEvent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -165,7 +213,7 @@ pub fn convert_config_to_chain_configs(
                     events: contract
                         .events
                         .iter()
-                        .map(|event| event.name.to_capitalized_options())
+                        .map(|config_event| config_event.event.get_name().to_capitalized_options())
                         .collect(),
                 };
                 single_contracts.push(single_contract);
@@ -183,7 +231,7 @@ pub fn convert_config_to_chain_configs(
 #[cfg(test)]
 mod tests {
     use crate::capitalization::Capitalize;
-    use crate::config_parsing::NormalizedList;
+    use crate::config_parsing::{EventNameOrSig, NormalizedList};
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
@@ -196,13 +244,13 @@ mod tests {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let abi_file_path = PathBuf::from("test/abis/Contract1.json");
 
-        let event1 = super::Event {
-            name: String::from("NewGravatar"),
+        let event1 = super::ConfigEvent {
+            event: EventNameOrSig::Name(String::from("NewGravatar")),
             required_entities: None,
         };
 
-        let event2 = super::Event {
-            name: String::from("UpdatedGravatar"),
+        let event2 = super::ConfigEvent {
+            event: EventNameOrSig::Name(String::from("UpdatedGravatar")),
             required_entities: None,
         };
 
@@ -242,8 +290,8 @@ mod tests {
             abi: abi_parsed_string,
             address: address1.clone(),
             events: vec![
-                event1.name.to_capitalized_options(),
-                event2.name.to_capitalized_options(),
+                event1.event.get_name().to_capitalized_options(),
+                event2.event.get_name().to_capitalized_options(),
             ],
         };
 
@@ -268,13 +316,13 @@ mod tests {
 
         let abi_file_path = PathBuf::from("test/abis/Contract1.json");
 
-        let event1 = super::Event {
-            name: String::from("NewGravatar"),
+        let event1 = super::ConfigEvent {
+            event: EventNameOrSig::Name(String::from("NewGravatar")),
             required_entities: None,
         };
 
-        let event2 = super::Event {
-            name: String::from("UpdatedGravatar"),
+        let event2 = super::ConfigEvent {
+            event: EventNameOrSig::Name(String::from("UpdatedGravatar")),
             required_entities: None,
         };
 
@@ -324,8 +372,8 @@ mod tests {
         let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
 
         let events = vec![
-            event1.name.to_capitalized_options(),
-            event2.name.to_capitalized_options(),
+            event1.event.get_name().to_capitalized_options(),
+            event2.event.get_name().to_capitalized_options(),
         ];
 
         let abi_unparsed_string =
