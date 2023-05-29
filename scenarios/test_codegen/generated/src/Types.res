@@ -41,7 +41,6 @@ type userEntity = {
   id: string,
   address: string,
   gravatar: option<id>,
-  tags: array<string>,
   tokens: array<id>,
 }
 
@@ -49,7 +48,6 @@ type userEntitySerialized = {
   id: string,
   address: string,
   gravatar: option<id>,
-  tags: array<string>,
   tokens: array<id>,
 }
 
@@ -58,7 +56,6 @@ let serializeUserEntity = (entity: userEntity): userEntitySerialized => {
     id: entity.id,
     address: entity.address,
     gravatar: entity.gravatar,
-    tags: entity.tags,
     tokens: entity.tokens,
   }
 }

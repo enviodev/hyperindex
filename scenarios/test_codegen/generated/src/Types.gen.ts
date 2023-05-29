@@ -15,7 +15,6 @@ export type userEntity = {
   readonly id: string; 
   readonly address: string; 
   readonly gravatar?: id; 
-  readonly tags: string[]; 
   readonly tokens: id[]
 };
 

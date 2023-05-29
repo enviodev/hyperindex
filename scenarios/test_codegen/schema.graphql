@@ -2,7 +2,6 @@ type User @entity {
   id: ID!
   address: Bytes!
   gravatar: Gravatar
-  tags: [String!]!
   tokens: [Token!]!
 }
 

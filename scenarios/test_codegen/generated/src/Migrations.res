@@ -50,7 +50,7 @@ module RawEventsTable = {
 module User = {
   let createUserTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"user\" (\"id\" text NOT NULL,\"address\" text NOT NULL,\"gravatar\" text,\"tags\" text[] NOT NULL,\"tokens\" text[] NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"user\" (\"id\" text NOT NULL,\"address\" text NOT NULL,\"gravatar\" text,\"tokens\" text[] NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
     )
   }
 
