@@ -101,9 +101,60 @@ module InMemoryStore = {
       )
     }
   }
+
+  module Nftcollection = {
+    let nftcollectionDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.nftcollectionEntity>>> = ref(
+      Js.Dict.empty(),
+    )
+
+    let getNftcollection = (~id: string) => {
+      let row = Js.Dict.get(nftcollectionDict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
+
+    let setNftcollection = (
+      ~entity: Types.nftcollectionEntity,
+      ~crud: Types.crud,
+      ~eventData: Types.eventData,
+    ) => {
+      let nftcollectionCurrentCrud = Js.Dict.get(
+        nftcollectionDict.contents,
+        entity.id,
+      )->Belt.Option.map(row => {
+        row.crud
+      })
+
+      nftcollectionDict.contents->Js.Dict.set(
+        entity.id,
+        {eventData, entity, crud: entityCurrentCrud(nftcollectionCurrentCrud, crud)},
+      )
+    }
+  }
+
+  module Token = {
+    let tokenDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.tokenEntity>>> = ref(Js.Dict.empty())
+
+    let getToken = (~id: string) => {
+      let row = Js.Dict.get(tokenDict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
+
+    let setToken = (~entity: Types.tokenEntity, ~crud: Types.crud, ~eventData: Types.eventData) => {
+      let tokenCurrentCrud = Js.Dict.get(tokenDict.contents, entity.id)->Belt.Option.map(row => {
+        row.crud
+      })
+
+      tokenDict.contents->Js.Dict.set(
+        entity.id,
+        {eventData, entity, crud: entityCurrentCrud(tokenCurrentCrud, crud)},
+      )
+    }
+  }
   let resetStore = () => {
     User.userDict := Js.Dict.empty()
     Gravatar.gravatarDict := Js.Dict.empty()
+    Nftcollection.nftcollectionDict := Js.Dict.empty()
+    Token.tokenDict := Js.Dict.empty()
   }
 }
 
@@ -115,12 +166,20 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
   let uniqueGravatarDict = Js.Dict.empty()
 
+  let uniqueNftcollectionDict = Js.Dict.empty()
+
+  let uniqueTokenDict = Js.Dict.empty()
+
   entityBatch->Belt.Array.forEach(readEntity => {
     switch readEntity {
     | UserRead(entity) =>
       let _ = Js.Dict.set(uniqueUserDict, readEntity->Types.entitySerialize, entity)
     | GravatarRead(entity) =>
       let _ = Js.Dict.set(uniqueGravatarDict, readEntity->Types.entitySerialize, entity)
+    | NftcollectionRead(entity) =>
+      let _ = Js.Dict.set(uniqueNftcollectionDict, readEntity->Types.entitySerialize, entity)
+    | TokenRead(entity) =>
+      let _ = Js.Dict.set(uniqueTokenDict, readEntity->Types.entitySerialize, entity)
     }
   })
 
@@ -138,6 +197,24 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   gravatarEntitiesArray->Belt.Array.forEach(readRow => {
     let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
     InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
+  })
+
+  let nftcollectionEntitiesArray =
+    await sql->DbFunctions.Nftcollection.readNftcollectionEntities(
+      Js.Dict.values(uniqueNftcollectionDict),
+    )
+
+  nftcollectionEntitiesArray->Belt.Array.forEach(readRow => {
+    let {entity, eventData} = DbFunctions.Nftcollection.readRowToReadEntityData(readRow)
+    InMemoryStore.Nftcollection.setNftcollection(~entity, ~eventData, ~crud=Types.Read)
+  })
+
+  let tokenEntitiesArray =
+    await sql->DbFunctions.Token.readTokenEntities(Js.Dict.values(uniqueTokenDict))
+
+  tokenEntitiesArray->Belt.Array.forEach(readRow => {
+    let {entity, eventData} = DbFunctions.Token.readRowToReadEntityData(readRow)
+    InMemoryStore.Token.setToken(~entity, ~eventData, ~crud=Types.Read)
   })
 }
 
@@ -238,6 +315,70 @@ let executeBatch = async sql => {
     }
   }
 
+  let nftcollectionRows = InMemoryStore.Nftcollection.nftcollectionDict.contents->Js.Dict.values
+
+  let deleteNftcollectionIdsPromise = sql => {
+    let deleteNftcollectionIds =
+      nftcollectionRows
+      ->Belt.Array.keepMap(nftcollectionRow =>
+        nftcollectionRow.crud == Types.Delete ? Some(nftcollectionRow.entity) : None
+      )
+      ->Belt.Array.map(nftcollection => nftcollection.id)
+
+    if deleteNftcollectionIds->Belt.Array.length > 0 {
+      sql->DbFunctions.Nftcollection.batchDeleteNftcollection(deleteNftcollectionIds)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+  let setNftcollectionPromise = sql => {
+    let setNftcollection = nftcollectionRows->Belt.Array.keepMap(nftcollectionRow =>
+      nftcollectionRow.crud == Types.Create || nftcollectionRow.crud == Update
+        ? Some({
+            ...nftcollectionRow,
+            entity: nftcollectionRow.entity->Types.serializeNftcollectionEntity,
+          })
+        : None
+    )
+
+    if setNftcollection->Belt.Array.length > 0 {
+      sql->DbFunctions.Nftcollection.batchSetNftcollection(setNftcollection)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
+  let tokenRows = InMemoryStore.Token.tokenDict.contents->Js.Dict.values
+
+  let deleteTokenIdsPromise = sql => {
+    let deleteTokenIds =
+      tokenRows
+      ->Belt.Array.keepMap(tokenRow => tokenRow.crud == Types.Delete ? Some(tokenRow.entity) : None)
+      ->Belt.Array.map(token => token.id)
+
+    if deleteTokenIds->Belt.Array.length > 0 {
+      sql->DbFunctions.Token.batchDeleteToken(deleteTokenIds)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+  let setTokenPromise = sql => {
+    let setToken = tokenRows->Belt.Array.keepMap(tokenRow =>
+      tokenRow.crud == Types.Create || tokenRow.crud == Update
+        ? Some({
+            ...tokenRow,
+            entity: tokenRow.entity->Types.serializeTokenEntity,
+          })
+        : None
+    )
+
+    if setToken->Belt.Array.length > 0 {
+      sql->DbFunctions.Token.batchSetToken(setToken)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
   let res = await sql->Postgres.beginSql(sql => {
     [
       sql->deleteRawEventsIdsPromise,
@@ -246,6 +387,10 @@ let executeBatch = async sql => {
       sql->setUserPromise,
       sql->deleteGravatarIdsPromise,
       sql->setGravatarPromise,
+      sql->deleteNftcollectionIdsPromise,
+      sql->setNftcollectionPromise,
+      sql->deleteTokenIdsPromise,
+      sql->setTokenPromise,
     ]
   })
 
