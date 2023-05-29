@@ -11,6 +11,11 @@
     "type": "constructor"
   },
   {
+    "inputs": [],
+    "name": "GreeterError",
+    "type": "error"
+  },
+  {
     "anonymous": false,
     "inputs": [
       {
