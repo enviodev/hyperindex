@@ -9,7 +9,6 @@ type chainId = int
 type eventId = Ethers.BigInt.t
 
 module RawEvents = {
-
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")
   external batchSetRawEvents: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> =
@@ -44,22 +43,15 @@ module User = {
   }
 
   let readRowToReadEntityData = (readRow: userReadRow): readEntityData<Types.userEntity> => {
-<<<<<<< HEAD
-    let {id, address, gravatar, updatesCountOnUserForTesting, chainId, eventId} = readRow
-=======
-    let {id, address, gravatar, tokens, chainId, eventId} = readRow
->>>>>>> origin/main
+    let {id, address, gravatar, updatesCountOnUserForTesting, tokens, chainId, eventId} = readRow
 
     {
       entity: {
         id,
         address,
         gravatar,
-<<<<<<< HEAD
         updatesCountOnUserForTesting,
-=======
         tokens,
->>>>>>> origin/main
       },
       eventData: {
         chainId,

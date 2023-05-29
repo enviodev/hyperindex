@@ -92,9 +92,6 @@ module GravatarContract = {
             optIdOf_gravatarWithChanges := Some(id)
 
             let _ = Js.Array2.push(entitiesToLoad, Types.GravatarRead(id))
-
-            let tempReturnStubToImplement: Types.GravatarContract.UpdatedGravatarEvent.gravatarSubEntityLoader = Obj.magic()
-            tempReturnStubToImplement
           },
         },
       }

@@ -1,9 +1,11 @@
 RegisterHandlers.registerAllHandlers()
 
 let main = () => {
-  EventSyncing.startSyncingAllEvents()
+ 
+ EventSyncing.startSyncingAllEvents()
   ->Promise.then(_ => EventSubscription.startWatchingEvents())
   ->ignore
+  
 }
 
 main()

@@ -7,6 +7,12 @@ type id = string
 
 //nested subrecord types
 
+@spice
+type contactDetails = {
+  name: string,
+  email: string,
+}
+
 type entityRead =
   | UserRead(id)
   | GravatarRead(id)
@@ -59,6 +65,14 @@ let serializeUserEntity = (entity: userEntity): userEntitySerialized => {
     gravatar: entity.gravatar,
     tokens: entity.tokens,
   }
+}
+
+type gravatarEntity = {
+  id: string,
+  owner: id,
+  displayName: string,
+  imageUrl: string,
+  updatesCount: Ethers.BigInt.t,
 }
 
 type gravatarEntitySerialized = {
@@ -275,10 +289,7 @@ module GravatarContract = {
       token: tokenEntityHandlerContext,
     }
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
-    type gravatarSubEntityLoader = {userLoad: unit => unit}
-
-    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => gravatarSubEntityLoader}
+    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
 
     @genType
     type loaderContext = {gravatar: gravatarEntityLoaderContext}

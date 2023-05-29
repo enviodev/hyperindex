@@ -68,6 +68,7 @@ let serialize{{entity.name.capitalized}}Entity = (entity: {{entity.name.uncapita
 }
 
 {{/each}}
+
 type entity = 
 {{#each entities as | entity |}}
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
