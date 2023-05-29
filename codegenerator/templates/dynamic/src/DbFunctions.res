@@ -6,18 +6,38 @@ let sql = Postgres.makeSql(~config)
 
 type chainId = int
 type eventId = Ethers.BigInt.t
+type blockNumberRow = {
+  @as("block_number") blockNumber: int
+}
 
 module RawEvents = {
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")
-  external batchSetRawEvents: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> = "batchSetRawEvents"
+  external batchSetRawEvents: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> =
+    "batchSetRawEvents"
 
   @module("./DbFunctionsImplementation.js")
-  external batchDeleteRawEvents: (Postgres.sql, array<rawEventRowId>) => promise<unit> = "batchDeleteRawEvents"
+  external batchDeleteRawEvents: (Postgres.sql, array<rawEventRowId>) => promise<unit> =
+    "batchDeleteRawEvents"
 
   @module("./DbFunctionsImplementation.js")
-  external readRawEventsEntities: (Postgres.sql, array<rawEventRowId>) => promise<array<Types.rawEventsEntity>> =
-    "readRawEventsEntities"
+  external readRawEventsEntities: (
+    Postgres.sql,
+    array<rawEventRowId>,
+  ) => promise<array<Types.rawEventsEntity>> = "readRawEventsEntities"
+
+  ///Returns an array with 1 block number (the highest processed on the given chainId)
+  @module("./DbFunctionsImplementation.js")
+  external readLatestRawEventsBlockNumberProcessedOnChainId: (
+    Postgres.sql,
+    chainId,
+  ) => promise<array<blockNumberRow>> = "readLatestRawEventsBlockNumberProcessedOnChainId"
+
+  let getLatestProcessedBlockNumber = async (~chainId) => {
+    let row = await sql->readLatestRawEventsBlockNumberProcessedOnChainId(chainId)
+
+    row->Belt.Array.get(0)->Belt.Option.map(row => row.blockNumber)
+  }
 }
 
 type readEntityData<'a> = {
