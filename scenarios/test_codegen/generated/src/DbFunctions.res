@@ -2,12 +2,14 @@ let config: Postgres.poolConfig = {
   ...Config.db,
   transform: {undefined: Js.null},
 }
+
 let sql = Postgres.makeSql(~config)
 
 type chainId = int
 type eventId = Ethers.BigInt.t
 
 module RawEvents = {
+
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")
   external batchSetRawEvents: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> =
@@ -35,18 +37,20 @@ module User = {
     id: string,
     address: string,
     gravatar: option<id>,
+    tokens: array<id>,
     @as("event_chain_id") chainId: int,
     @as("event_id") eventId: Ethers.BigInt.t,
   }
 
   let readRowToReadEntityData = (readRow: userReadRow): readEntityData<Types.userEntity> => {
-    let {id, address, gravatar, chainId, eventId} = readRow
+    let {id, address, gravatar, tokens, chainId, eventId} = readRow
 
     {
       entity: {
         id,
         address,
         gravatar,
+        tokens,
       },
       eventData: {
         chainId,
@@ -75,9 +79,7 @@ module Gravatar = {
     owner: id,
     displayName: string,
     imageUrl: string,
-    updatesCount: int,
-    bigIntTest: string,
-    bigIntOption: option<string>,
+    updatesCount: string,
     @as("event_chain_id") chainId: int,
     @as("event_id") eventId: Ethers.BigInt.t,
   }
@@ -85,17 +87,7 @@ module Gravatar = {
   let readRowToReadEntityData = (readRow: gravatarReadRow): readEntityData<
     Types.gravatarEntity,
   > => {
-    let {
-      id,
-      owner,
-      displayName,
-      imageUrl,
-      updatesCount,
-      bigIntTest,
-      bigIntOption,
-      chainId,
-      eventId,
-    } = readRow
+    let {id, owner, displayName, imageUrl, updatesCount, chainId, eventId} = readRow
 
     {
       entity: {
@@ -103,9 +95,7 @@ module Gravatar = {
         owner,
         displayName,
         imageUrl,
-        updatesCount,
-        bigIntTest: bigIntTest->Ethers.BigInt.fromStringUnsafe,
-        bigIntOption: bigIntOption->Belt.Option.map(opt => opt->Ethers.BigInt.fromStringUnsafe),
+        updatesCount: updatesCount->Ethers.BigInt.fromStringUnsafe,
       },
       eventData: {
         chainId,
@@ -129,4 +119,95 @@ module Gravatar = {
     Postgres.sql,
     array<Types.id>,
   ) => promise<array<gravatarReadRow>> = "readGravatarEntities"
+}
+module Nftcollection = {
+  open Types
+  type nftcollectionReadRow = {
+    id: string,
+    contractAddress: string,
+    name: string,
+    symbol: string,
+    maxSupply: string,
+    currentSupply: int,
+    @as("event_chain_id") chainId: int,
+    @as("event_id") eventId: Ethers.BigInt.t,
+  }
+
+  let readRowToReadEntityData = (readRow: nftcollectionReadRow): readEntityData<
+    Types.nftcollectionEntity,
+  > => {
+    let {id, contractAddress, name, symbol, maxSupply, currentSupply, chainId, eventId} = readRow
+
+    {
+      entity: {
+        id,
+        contractAddress,
+        name,
+        symbol,
+        maxSupply: maxSupply->Ethers.BigInt.fromStringUnsafe,
+        currentSupply,
+      },
+      eventData: {
+        chainId,
+        eventId,
+      },
+    }
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external batchSetNftcollection: (
+    Postgres.sql,
+    array<Types.inMemoryStoreRow<Types.nftcollectionEntitySerialized>>,
+  ) => promise<unit> = "batchSetNftcollection"
+
+  @module("./DbFunctionsImplementation.js")
+  external batchDeleteNftcollection: (Postgres.sql, array<Types.id>) => promise<unit> =
+    "batchDeleteNftcollection"
+
+  @module("./DbFunctionsImplementation.js")
+  external readNftcollectionEntities: (
+    Postgres.sql,
+    array<Types.id>,
+  ) => promise<array<nftcollectionReadRow>> = "readNftcollectionEntities"
+}
+module Token = {
+  open Types
+  type tokenReadRow = {
+    id: string,
+    tokenId: string,
+    collection: id,
+    owner: id,
+    @as("event_chain_id") chainId: int,
+    @as("event_id") eventId: Ethers.BigInt.t,
+  }
+
+  let readRowToReadEntityData = (readRow: tokenReadRow): readEntityData<Types.tokenEntity> => {
+    let {id, tokenId, collection, owner, chainId, eventId} = readRow
+
+    {
+      entity: {
+        id,
+        tokenId: tokenId->Ethers.BigInt.fromStringUnsafe,
+        collection,
+        owner,
+      },
+      eventData: {
+        chainId,
+        eventId,
+      },
+    }
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external batchSetToken: (
+    Postgres.sql,
+    array<Types.inMemoryStoreRow<Types.tokenEntitySerialized>>,
+  ) => promise<unit> = "batchSetToken"
+
+  @module("./DbFunctionsImplementation.js")
+  external batchDeleteToken: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteToken"
+
+  @module("./DbFunctionsImplementation.js")
+  external readTokenEntities: (Postgres.sql, array<Types.id>) => promise<array<tokenReadRow>> =
+    "readTokenEntities"
 }
