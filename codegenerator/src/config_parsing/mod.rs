@@ -6,8 +6,6 @@ pub mod event_parsing;
 
 use serde::{Deserialize, Serialize};
 
-use ethereum_abi::Abi;
-
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
@@ -108,7 +106,7 @@ pub fn convert_config_to_chain_configs(
                     network_id: network.id,
                     name: contract.name.clone(),
                 };
-                let parsed_abi: Abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
+                let parsed_abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
                 let stringified_abi = serde_json::to_string(&parsed_abi)?;
                 let single_contract = SingleContractTemplate {
@@ -187,7 +185,7 @@ mod tests {
         let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
@@ -282,7 +280,7 @@ mod tests {
 
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),

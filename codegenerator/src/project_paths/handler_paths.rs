@@ -109,7 +109,7 @@ impl ParsedPaths {
     pub fn get_contract_abi(
         &self,
         contract_unique_id: &ContractUniqueId,
-    ) -> Result<ethereum_abi::Abi, Box<dyn Error>> {
+    ) -> Result<ethers::abi::Contract, Box<dyn Error>> {
         let abi_path = self
             .abi_paths
             .get(&contract_unique_id)
@@ -122,7 +122,8 @@ impl ParsedPaths {
                 e.to_string()
             )
         })?;
-        let abi: ethereum_abi::Abi = serde_json::from_str(&abi_file)?;
+
+        let abi: ethers::abi::Contract = serde_json::from_str(&abi_file)?;
         Ok(abi)
     }
 }
@@ -277,7 +278,8 @@ mod tests {
             ]
 "#;
 
-        let expected_abi: ethereum_abi::Abi = serde_json::from_str(expected_abi_string).unwrap();
+        let expected_abi: ethers::abi::Contract =
+            serde_json::from_str(expected_abi_string).unwrap();
 
         assert_eq!(expected_abi, contract_abi);
     }
