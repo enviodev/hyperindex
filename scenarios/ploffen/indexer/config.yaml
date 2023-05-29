@@ -8,7 +8,7 @@ networks:
     contracts:
       - name: Ploffen
         abi_file_path: ../contracts/abis/Ploffen.json
-        address: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"]
+        address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
         handler: ./src/EventHandlers.bs.js
         events:
           - name: "CreatePloffen"
