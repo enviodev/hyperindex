@@ -10,3 +10,5 @@ artifacts
 
 deployments/localhost
 deployments/ganache
+
+typechain-types

@@ -72,8 +72,20 @@ let config: chainConfigs = [
         {
           name: "Gravatar",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
-          address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
+          address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe,
           events: [GravatarContract_NewGravatarEvent, GravatarContract_UpdatedGravatarEvent],
+        },
+        {
+          name: "NftFactory",
+          abi: Abis.nftFactoryAbi->Ethers.makeAbi,
+          address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Ethers.getAddressFromStringUnsafe,
+          events: [NftFactoryContract_SimpleNftCreatedEvent],
+        },
+        {
+          name: "SimpleNft",
+          abi: Abis.simpleNftAbi->Ethers.makeAbi,
+          address: "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"->Ethers.getAddressFromStringUnsafe,
+          events: [SimpleNftContract_TransferEvent],
         },
       ],
     },

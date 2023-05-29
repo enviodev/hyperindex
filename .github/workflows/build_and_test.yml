@@ -111,21 +111,10 @@ jobs:
         run: |
           pnpm codegen
           pnpm install
-          pnpm build
+          pnpm hardhat compile --verbose
+          pnpm res:build
 
       - name: test_codegen test
         working-directory: scenarios/test_codegen
-        run: |
-          pnpm test
-
-      - name: nft-factory codegen
-        working-directory: scenarios/nft-factory
-        run: |
-          pnpm codegen
-          pnpm install
-          pnpm build
-
-      - name: nft-factory test
-        working-directory: scenarios/nft-factory
         run: |
           pnpm test

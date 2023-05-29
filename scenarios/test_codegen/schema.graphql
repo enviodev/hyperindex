@@ -2,6 +2,7 @@ type User @entity {
   id: ID!
   address: Bytes!
   gravatar: Gravatar
+  tokens: [Token!]!
 }
 
 type Gravatar @entity {
@@ -10,4 +11,20 @@ type Gravatar @entity {
   displayName: String!
   imageUrl: String!
   updatesCount: BigInt!
+}
+
+type Nftcollection @entity {
+  id: ID!
+  contractAddress: Bytes!
+  name: String!
+  symbol: String!
+  maxSupply: BigInt!
+  currentSupply: Int!
+}
+
+type Token @entity {
+  id: ID!
+  tokenId: BigInt!
+  collection: Nftcollection!
+  owner: User!
 }

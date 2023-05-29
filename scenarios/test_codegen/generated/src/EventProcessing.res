@@ -44,6 +44,7 @@ let eventRouter = (event: Types.eventAndContext, ~chainId) => {
 
       Handlers.GravatarContract.getNewGravatarHandler()(~event, ~context)
     }
+
   | GravatarContract_UpdatedGravatarWithContext(event, context) => {
       let jsonSerializedParams =
         event.params->Types.GravatarContract.UpdatedGravatarEvent.eventArgs_encode
@@ -54,6 +55,30 @@ let eventRouter = (event: Types.eventAndContext, ~chainId) => {
       )
 
       Handlers.GravatarContract.getUpdatedGravatarHandler()(~event, ~context)
+    }
+
+  | NftFactoryContract_SimpleNftCreatedWithContext(event, context) => {
+      let jsonSerializedParams =
+        event.params->Types.NftFactoryContract.SimpleNftCreatedEvent.eventArgs_encode
+      event->addEventToRawEvents(
+        ~chainId,
+        ~jsonSerializedParams,
+        ~eventName=NftFactoryContract_SimpleNftCreatedEvent,
+      )
+
+      Handlers.NftFactoryContract.getSimpleNftCreatedHandler()(~event, ~context)
+    }
+
+  | SimpleNftContract_TransferWithContext(event, context) => {
+      let jsonSerializedParams =
+        event.params->Types.SimpleNftContract.TransferEvent.eventArgs_encode
+      event->addEventToRawEvents(
+        ~chainId,
+        ~jsonSerializedParams,
+        ~eventName=SimpleNftContract_TransferEvent,
+      )
+
+      Handlers.SimpleNftContract.getTransferHandler()(~event, ~context)
     }
   }
 }
@@ -80,6 +105,7 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
           Types.GravatarContract_NewGravatarWithContext(event, context),
         )
       }
+
     | GravatarContract_UpdatedGravatar(event) => {
         let contextHelper = Context.GravatarContract.UpdatedGravatarEvent.contextCreator()
         Handlers.GravatarContract.getUpdatedGravatarLoadEntities()(
@@ -92,6 +118,36 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
         (
           contextHelper.getEntitiesToLoad(),
           Types.GravatarContract_UpdatedGravatarWithContext(event, context),
+        )
+      }
+
+    | NftFactoryContract_SimpleNftCreated(event) => {
+        let contextHelper = Context.NftFactoryContract.SimpleNftCreatedEvent.contextCreator()
+        Handlers.NftFactoryContract.getSimpleNftCreatedLoadEntities()(
+          ~event,
+          ~context=contextHelper.getLoaderContext(),
+        )
+        let {logIndex, blockNumber} = event
+        let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+        let context = contextHelper.getContext(~eventData={chainId, eventId})
+        (
+          contextHelper.getEntitiesToLoad(),
+          Types.NftFactoryContract_SimpleNftCreatedWithContext(event, context),
+        )
+      }
+
+    | SimpleNftContract_Transfer(event) => {
+        let contextHelper = Context.SimpleNftContract.TransferEvent.contextCreator()
+        Handlers.SimpleNftContract.getTransferLoadEntities()(
+          ~event,
+          ~context=contextHelper.getLoaderContext(),
+        )
+        let {logIndex, blockNumber} = event
+        let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+        let context = contextHelper.getContext(~eventData={chainId, eventId})
+        (
+          contextHelper.getEntitiesToLoad(),
+          Types.SimpleNftContract_TransferWithContext(event, context),
         )
       }
     }

@@ -71,3 +71,75 @@ module GravatarContract = {
       getDefaultHandler("updatedGravatarHandler"),
     )
 }
+
+module NftFactoryContract = {
+  %%private(
+    let simpleNftCreatedLoadEntities = ref(None)
+    let simpleNftCreatedHandler = ref(None)
+  )
+
+  @genType
+  let registerSimpleNftCreatedLoadEntities = (
+    handler: (
+      ~event: Types.eventLog<Types.NftFactoryContract.SimpleNftCreatedEvent.eventArgs>,
+      ~context: Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext,
+    ) => unit,
+  ) => {
+    simpleNftCreatedLoadEntities := Some(handler)
+  }
+
+  @genType
+  let registerSimpleNftCreatedHandler = (
+    handler: (
+      ~event: Types.eventLog<Types.NftFactoryContract.SimpleNftCreatedEvent.eventArgs>,
+      ~context: Types.NftFactoryContract.SimpleNftCreatedEvent.context,
+    ) => unit,
+  ) => {
+    simpleNftCreatedHandler := Some(handler)
+  }
+
+  let getSimpleNftCreatedLoadEntities = () =>
+    simpleNftCreatedLoadEntities.contents->Belt.Option.getWithDefault(
+      getDefaultHandler("simpleNftCreatedLoadEntities"),
+    )
+
+  let getSimpleNftCreatedHandler = () =>
+    simpleNftCreatedHandler.contents->Belt.Option.getWithDefault(
+      getDefaultHandler("simpleNftCreatedHandler"),
+    )
+}
+
+module SimpleNftContract = {
+  %%private(
+    let transferLoadEntities = ref(None)
+    let transferHandler = ref(None)
+  )
+
+  @genType
+  let registerTransferLoadEntities = (
+    handler: (
+      ~event: Types.eventLog<Types.SimpleNftContract.TransferEvent.eventArgs>,
+      ~context: Types.SimpleNftContract.TransferEvent.loaderContext,
+    ) => unit,
+  ) => {
+    transferLoadEntities := Some(handler)
+  }
+
+  @genType
+  let registerTransferHandler = (
+    handler: (
+      ~event: Types.eventLog<Types.SimpleNftContract.TransferEvent.eventArgs>,
+      ~context: Types.SimpleNftContract.TransferEvent.context,
+    ) => unit,
+  ) => {
+    transferHandler := Some(handler)
+  }
+
+  let getTransferLoadEntities = () =>
+    transferLoadEntities.contents->Belt.Option.getWithDefault(
+      getDefaultHandler("transferLoadEntities"),
+    )
+
+  let getTransferHandler = () =>
+    transferHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("transferHandler"))
+}

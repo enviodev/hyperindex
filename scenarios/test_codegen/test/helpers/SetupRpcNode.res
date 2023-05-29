@@ -1,7 +1,8 @@
-type contract
+type gravatarContract
+type deployment = {gravatar: gravatarContract}
 
 @module("./setupNodeAndContracts.js")
-external setupNodeAndContracts: contract => Promise.t<unit> = "default"
+external runBasicGravatarTransactions: gravatarContract => Promise.t<unit> = "default"
 
 @module("./setupNodeAndContracts.js")
-external deployContract: unit => Promise.t<contract> = "deployContract"
+external deployContracts: unit => Promise.t<deployment> = "deployContracts"
