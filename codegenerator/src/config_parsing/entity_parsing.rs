@@ -430,14 +430,14 @@ mod tests {
         assert_eq!(result, expect_output);
     }
 
-    fn convert_entity_type_to_pg_type(entity_type: &str) -> String {
+    fn gql_type_to_postgres_type_test_helper(gql_field_str: &str) -> String {
         let schema_string = format!(
             r#"
         type TestEntity @entity {{
           test_field: {}
         }}
         "#,
-            entity_type
+            gql_field_str
         );
         let schema = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
         let hash_set = HashSet::new();
@@ -458,14 +458,14 @@ mod tests {
     #[test]
     fn gql_single_not_null_array_to_pg_type() {
         let gql_type = "[String!]!";
-        let pg_type = convert_entity_type_to_pg_type(gql_type);
+        let pg_type = gql_type_to_postgres_type_test_helper(gql_type);
         assert_eq!(pg_type, "text[] NOT NULL");
     }
 
     #[test]
     fn gql_multi_not_null_array_to_pg_type() {
         let gql_type = "[[Int!]!]!";
-        let pg_type = convert_entity_type_to_pg_type(gql_type);
+        let pg_type = gql_type_to_postgres_type_test_helper(gql_type);
         assert_eq!(pg_type, "integer[][] NOT NULL");
     }
 
@@ -473,13 +473,13 @@ mod tests {
     #[should_panic]
     fn gql_single_nullable_array_to_pg_type_should_panic() {
         let gql_type = "[Int]!"; //Nested lists need to be not nullable
-        convert_entity_type_to_pg_type(gql_type);
+        gql_type_to_postgres_type_test_helper(gql_type);
     }
 
     #[test]
     #[should_panic]
     fn gql_multi_nullable_array_to_pg_type_should_panic() {
         let gql_type = "[[Int!]]!"; //Nested lists need to be not nullable
-        convert_entity_type_to_pg_type(gql_type);
+        gql_type_to_postgres_type_test_helper(gql_type);
     }
 }
