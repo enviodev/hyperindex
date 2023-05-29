@@ -6,7 +6,7 @@ use std::process::Command;
 use clap::Parser;
 
 use envio::{
-    cli_args::{self, JsFlavor},
+    cli_args::{self, Language},
     config_parsing, entity_parsing, event_parsing, generate_templates,
     linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
     project_paths::ParsedPaths,
@@ -39,15 +39,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             fs::create_dir_all(&project_root_path)?;
             match args.template {
                 Template::Greeter => {
-                    //Copy in the relevant js flavor specific greeter files
-                    match &args.js_flavor {
-                        JsFlavor::Rescript => {
+                    //Copy in the relevant language specific greeter files
+                    match &args.language {
+                        Language::Rescript => {
                             GREETER_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Typescript => {
+                        Language::Typescript => {
                             GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Javascript => {
+                        Language::Javascript => {
                             GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
                         }
                     }
