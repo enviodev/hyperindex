@@ -55,10 +55,10 @@ describe("E2E Mock Event Batch", () => {
 
 describe("E2E Db check", () => {
   before_promise(async () => {
-    let _ = await DbFunctions.Gravatar.batchSetGravatar(Migrations.sql, [
-      MockEntities.mockInMemRow1,
-      MockEntities.mockInMemRow2,
-    ])
+    let _ = await DbFunctions.Gravatar.batchSetGravatar(
+      Migrations.sql,
+      [MockEntities.mockInMemRow1, MockEntities.mockInMemRow2],
+    )
     await MockEvents.eventBatch->EventProcessing.processEventBatch(~chainId)
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
@@ -85,7 +85,7 @@ describe("E2E Db check", () => {
             owner: "0x1230000000000000000000000000000000000000",
             displayName: "update1",
             imageUrl: "https://gravatar1.com",
-            updatesCount: 2,
+            updatesCount: Ethers.BigInt.fromInt(2),
           },
         },
         {
@@ -99,7 +99,7 @@ describe("E2E Db check", () => {
             owner: "0x4560000000000000000000000000000000000000",
             displayName: "update2",
             imageUrl: "https://gravatar2.com",
-            updatesCount: 2,
+            updatesCount: Ethers.BigInt.fromInt(2),
           },
         },
         {
@@ -113,7 +113,7 @@ describe("E2E Db check", () => {
             owner: "0x7890000000000000000000000000000000000000",
             displayName: "update3",
             imageUrl: "https://gravatar3.com",
-            updatesCount: 2,
+            updatesCount: Ethers.BigInt.fromInt(2),
           },
         },
       ],

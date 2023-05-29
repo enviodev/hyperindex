@@ -1,6 +1,6 @@
 const hre = require("hardhat");
 
-module.exports.default = liveGravatarTxs = async (gravatar) => {
+const liveGravatarTxs = async (gravatar) => {
   await hre.run("compile");
   let accounts = await hre.ethers.getSigners();
 
@@ -22,3 +22,5 @@ module.exports.default = liveGravatarTxs = async (gravatar) => {
   await newGravatarTx.wait();
   await updateGravatarNameTx.wait();
 };
+
+module.exports.default = liveGravatarTxs

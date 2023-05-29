@@ -1,46 +1,4 @@
 module GravatarContract = {
-  module TestEventEvent = {
-    type context = Types.GravatarContract.TestEventEvent.context
-
-    type contextCreatorFunctions = {
-      getLoaderContext: unit => Types.GravatarContract.TestEventEvent.loaderContext,
-      getContext: (~eventData: Types.eventData) => Types.GravatarContract.TestEventEvent.context,
-      getEntitiesToLoad: unit => array<Types.entityRead>,
-    }
-    let contextCreator: unit => contextCreatorFunctions = () => {
-      let entitiesToLoad: array<Types.entityRead> = []
-
-      let loaderContext: Types.GravatarContract.TestEventEvent.loaderContext = {}
-      {
-        getEntitiesToLoad: () => entitiesToLoad,
-        getLoaderContext: () => loaderContext,
-        getContext: (~eventData) => {
-          user: {
-            insert: entity => {
-              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Create, ~eventData)
-            },
-            update: entity => {
-              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Update, ~eventData)
-            },
-            delete: id =>
-              Js.Console.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
-          },
-          gravatar: {
-            insert: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Create, ~eventData)
-            },
-            update: entity => {
-              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Update, ~eventData)
-            },
-            delete: id =>
-              Js.Console.warn(
-                `[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`,
-              ),
-          },
-        },
-      }
-    }
-  }
   module NewGravatarEvent = {
     type context = Types.GravatarContract.NewGravatarEvent.context
 
@@ -78,6 +36,36 @@ module GravatarContract = {
               Js.Console.warn(
                 `[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`,
               ),
+          },
+          nftcollection: {
+            insert: entity => {
+              IO.InMemoryStore.Nftcollection.setNftcollection(
+                ~entity,
+                ~crud=Types.Create,
+                ~eventData,
+              )
+            },
+            update: entity => {
+              IO.InMemoryStore.Nftcollection.setNftcollection(
+                ~entity,
+                ~crud=Types.Update,
+                ~eventData,
+              )
+            },
+            delete: id =>
+              Js.Console.warn(
+                `[unimplemented delete] can't delete entity(nftcollection) with ID ${id}.`,
+              ),
+          },
+          token: {
+            insert: entity => {
+              IO.InMemoryStore.Token.setToken(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.Token.setToken(~entity, ~crud=Types.Update, ~eventData)
+            },
+            delete: id =>
+              Js.Console.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
           },
         },
       }
@@ -135,6 +123,234 @@ module GravatarContract = {
             gravatarWithChanges: () =>
               optIdOf_gravatarWithChanges.contents->Belt.Option.flatMap(id =>
                 IO.InMemoryStore.Gravatar.getGravatar(~id)
+              ),
+          },
+          nftcollection: {
+            insert: entity => {
+              IO.InMemoryStore.Nftcollection.setNftcollection(
+                ~entity,
+                ~crud=Types.Create,
+                ~eventData,
+              )
+            },
+            update: entity => {
+              IO.InMemoryStore.Nftcollection.setNftcollection(
+                ~entity,
+                ~crud=Types.Update,
+                ~eventData,
+              )
+            },
+            delete: id =>
+              Js.Console.warn(
+                `[unimplemented delete] can't delete entity(nftcollection) with ID ${id}.`,
+              ),
+          },
+          token: {
+            insert: entity => {
+              IO.InMemoryStore.Token.setToken(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.Token.setToken(~entity, ~crud=Types.Update, ~eventData)
+            },
+            delete: id =>
+              Js.Console.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+          },
+        },
+      }
+    }
+  }
+}
+module NftFactoryContract = {
+  module SimpleNftCreatedEvent = {
+    type context = Types.NftFactoryContract.SimpleNftCreatedEvent.context
+
+    type contextCreatorFunctions = {
+      getLoaderContext: unit => Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext,
+      getContext: (
+        ~eventData: Types.eventData,
+      ) => Types.NftFactoryContract.SimpleNftCreatedEvent.context,
+      getEntitiesToLoad: unit => array<Types.entityRead>,
+    }
+    let contextCreator: unit => contextCreatorFunctions = () => {
+      let entitiesToLoad: array<Types.entityRead> = []
+
+      let loaderContext: Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext = {}
+      {
+        getEntitiesToLoad: () => entitiesToLoad,
+        getLoaderContext: () => loaderContext,
+        getContext: (~eventData) => {
+          user: {
+            insert: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Update, ~eventData)
+            },
+            delete: id =>
+              Js.Console.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
+          },
+          gravatar: {
+            insert: entity => {
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Update, ~eventData)
+            },
+            delete: id =>
+              Js.Console.warn(
+                `[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`,
+              ),
+          },
+          nftcollection: {
+            insert: entity => {
+              IO.InMemoryStore.Nftcollection.setNftcollection(
+                ~entity,
+                ~crud=Types.Create,
+                ~eventData,
+              )
+            },
+            update: entity => {
+              IO.InMemoryStore.Nftcollection.setNftcollection(
+                ~entity,
+                ~crud=Types.Update,
+                ~eventData,
+              )
+            },
+            delete: id =>
+              Js.Console.warn(
+                `[unimplemented delete] can't delete entity(nftcollection) with ID ${id}.`,
+              ),
+          },
+          token: {
+            insert: entity => {
+              IO.InMemoryStore.Token.setToken(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.Token.setToken(~entity, ~crud=Types.Update, ~eventData)
+            },
+            delete: id =>
+              Js.Console.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+          },
+        },
+      }
+    }
+  }
+}
+module SimpleNftContract = {
+  module TransferEvent = {
+    type context = Types.SimpleNftContract.TransferEvent.context
+
+    type contextCreatorFunctions = {
+      getLoaderContext: unit => Types.SimpleNftContract.TransferEvent.loaderContext,
+      getContext: (~eventData: Types.eventData) => Types.SimpleNftContract.TransferEvent.context,
+      getEntitiesToLoad: unit => array<Types.entityRead>,
+    }
+    let contextCreator: unit => contextCreatorFunctions = () => {
+      let optIdOf_userFrom = ref(None)
+      let optIdOf_userTo = ref(None)
+      let optIdOf_nftCollectionUpdated = ref(None)
+      let optIdOf_existingTransferredToken = ref(None)
+
+      let entitiesToLoad: array<Types.entityRead> = []
+
+      let loaderContext: Types.SimpleNftContract.TransferEvent.loaderContext = {
+        user: {
+          userFromLoad: (id: Types.id) => {
+            optIdOf_userFrom := Some(id)
+
+            let _ = Js.Array2.push(entitiesToLoad, Types.UserRead(id))
+          },
+          userToLoad: (id: Types.id) => {
+            optIdOf_userTo := Some(id)
+
+            let _ = Js.Array2.push(entitiesToLoad, Types.UserRead(id))
+          },
+        },
+        nftcollection: {
+          nftCollectionUpdatedLoad: (id: Types.id) => {
+            optIdOf_nftCollectionUpdated := Some(id)
+
+            let _ = Js.Array2.push(entitiesToLoad, Types.NftcollectionRead(id))
+          },
+        },
+        token: {
+          existingTransferredTokenLoad: (id: Types.id) => {
+            optIdOf_existingTransferredToken := Some(id)
+
+            let _ = Js.Array2.push(entitiesToLoad, Types.TokenRead(id))
+          },
+        },
+      }
+      {
+        getEntitiesToLoad: () => entitiesToLoad,
+        getLoaderContext: () => loaderContext,
+        getContext: (~eventData) => {
+          user: {
+            insert: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.User.setUser(~entity, ~crud=Types.Update, ~eventData)
+            },
+            delete: id =>
+              Js.Console.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
+            userFrom: () =>
+              optIdOf_userFrom.contents->Belt.Option.flatMap(id =>
+                IO.InMemoryStore.User.getUser(~id)
+              ),
+            userTo: () =>
+              optIdOf_userTo.contents->Belt.Option.flatMap(id =>
+                IO.InMemoryStore.User.getUser(~id)
+              ),
+          },
+          gravatar: {
+            insert: entity => {
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.Gravatar.setGravatar(~entity, ~crud=Types.Update, ~eventData)
+            },
+            delete: id =>
+              Js.Console.warn(
+                `[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`,
+              ),
+          },
+          nftcollection: {
+            insert: entity => {
+              IO.InMemoryStore.Nftcollection.setNftcollection(
+                ~entity,
+                ~crud=Types.Create,
+                ~eventData,
+              )
+            },
+            update: entity => {
+              IO.InMemoryStore.Nftcollection.setNftcollection(
+                ~entity,
+                ~crud=Types.Update,
+                ~eventData,
+              )
+            },
+            delete: id =>
+              Js.Console.warn(
+                `[unimplemented delete] can't delete entity(nftcollection) with ID ${id}.`,
+              ),
+            nftCollectionUpdated: () =>
+              optIdOf_nftCollectionUpdated.contents->Belt.Option.flatMap(id =>
+                IO.InMemoryStore.Nftcollection.getNftcollection(~id)
+              ),
+          },
+          token: {
+            insert: entity => {
+              IO.InMemoryStore.Token.setToken(~entity, ~crud=Types.Create, ~eventData)
+            },
+            update: entity => {
+              IO.InMemoryStore.Token.setToken(~entity, ~crud=Types.Update, ~eventData)
+            },
+            delete: id =>
+              Js.Console.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+            existingTransferredToken: () =>
+              optIdOf_existingTransferredToken.contents->Belt.Option.flatMap(id =>
+                IO.InMemoryStore.Token.getToken(~id)
               ),
           },
         },
