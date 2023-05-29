@@ -21,7 +21,11 @@ Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context)
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarLoadEntities(function ($$event, context) {
+<<<<<<< HEAD
       Curry._1(context.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
+=======
+      Curry._2(context.gravatar.gravatarWithChangesLoad, true, $$event.params.id.toString());
+>>>>>>> origin/js/load-related-fields-structure
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, context) {

@@ -13,6 +13,10 @@ type contactDetails = {
   email: string,
 }
 
+@genType
+type rec gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
+and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig}
+
 type entityRead =
   | UserRead(id)
   | GravatarRead(id)
@@ -42,6 +46,7 @@ type rawEventsEntity = {
   params: Js.Json.t,
 }
 
+@@warning("-30")
 @genType
 type userEntity = {
   id: string,
@@ -146,6 +151,8 @@ let serializeTokenEntity = (entity: tokenEntity): tokenEntitySerialized => {
     owner: entity.owner,
   }
 }
+@@warning("+30")
+
 type entity =
   | UserEntity(userEntity)
   | GravatarEntity(gravatarEntity)
@@ -267,6 +274,7 @@ module GravatarContract = {
     }
     type gravatarEntityHandlerContext = {
       gravatarWithChanges: unit => option<gravatarEntity>,
+      getOwner: gravatarEntity => userEntity,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
       delete: id => unit,
@@ -289,7 +297,10 @@ module GravatarContract = {
       token: tokenEntityHandlerContext,
     }
 
-    type gravatarEntityLoaderContext = {gravatarWithChangesLoad: id => unit}
+    @genType
+    type gravatarEntityLoaderContext = {
+      gravatarWithChangesLoad: (id, ~loaders: gravatarLoaderConfig=?) => unit,
+    }
 
     @genType
     type loaderContext = {gravatar: gravatarEntityLoaderContext}

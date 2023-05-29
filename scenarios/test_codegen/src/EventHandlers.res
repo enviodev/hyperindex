@@ -17,9 +17,7 @@ Handlers.GravatarContract.registerNewGravatarHandler((~event, ~context) => {
 })
 
 Handlers.GravatarContract.registerUpdatedGravatarLoadEntities((~event, ~context) => {
-  let gravatarLoader = context.gravatar.gravatarWithChangesLoad(
-    event.params.id->Ethers.BigInt.toString,
-  )
+  context.gravatar.gravatarWithChangesLoad(~loadOwner=true, event.params.id->Ethers.BigInt.toString)
 })
 
 Handlers.GravatarContract.registerUpdatedGravatarHandler((~event, ~context) => {
