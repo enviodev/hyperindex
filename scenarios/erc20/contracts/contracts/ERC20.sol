@@ -3,9 +3,9 @@
 
 pragma solidity ^0.8.0;
 
-import "./IERC20.sol";
-import "./extensions/IERC20Metadata.sol";
-import "../../utils/Context.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import "@openzeppelin/contracts/utils/Context.sol";
 
 /**
  * @dev Implementation of the {IERC20} interface.
@@ -45,6 +45,9 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
     string private _name;
     string private _symbol;
 
+    // additional event to be emitted in constructor
+    event Creation(string name, string symbol);
+
     /**
      * @dev Sets the values for {name} and {symbol}.
      *
@@ -54,6 +57,8 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
     constructor(string memory name_, string memory symbol_) {
         _name = name_;
         _symbol = symbol_;
+
+        emit Creation(name_, symbol_);
     }
 
     /**
@@ -286,7 +291,7 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
             // Overflow not possible: amount <= accountBalance <= totalSupply.
             _totalSupply -= amount;
         }
-
+ 
         emit Transfer(account, address(0), amount);
 
         _afterTokenTransfer(account, address(0), amount);
