@@ -11,7 +11,7 @@ Handlers.GravatarContract.registerNewGravatarHandler((~event, ~context) => {
     ownerData: None,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
-    updatesCount: 1,
+    updatesCount: Ethers.BigInt.fromInt(1),
   }
 
   context.gravatar.insert(gravatarObject)
@@ -27,8 +27,8 @@ Handlers.GravatarContract.registerUpdatedGravatarLoadEntities((~event, ~context)
 
 Handlers.GravatarContract.registerUpdatedGravatarHandler((~event, ~context) => {
   let updatesCount =
-    context.gravatar.gravatarWithChanges()->Belt.Option.mapWithDefault(1, gravatar =>
-      gravatar.updatesCount + 1
+    context.gravatar.gravatarWithChanges()->Belt.Option.mapWithDefault(Ethers.BigInt.fromInt(1), gravatar =>
+      gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1))
     )
 
   let gravatar: gravatarEntity = {

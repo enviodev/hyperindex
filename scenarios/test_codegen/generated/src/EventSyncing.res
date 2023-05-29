@@ -58,13 +58,6 @@ let convertLogs = (
               logDescription.name,
               Converters.getContractNameFromAddress(log.address, chainId),
             ) {
-            | GravatarContract_TestEventEvent =>
-              let convertedEvent =
-                logDescription
-                ->Converters.Gravatar.convertTestEventLogDescription
-                ->Converters.Gravatar.convertTestEventLog(~log, ~blockPromise)
-
-              Some(convertedEvent)
             | GravatarContract_NewGravatarEvent =>
               let convertedEvent =
                 logDescription
@@ -77,6 +70,20 @@ let convertLogs = (
                 logDescription
                 ->Converters.Gravatar.convertUpdatedGravatarLogDescription
                 ->Converters.Gravatar.convertUpdatedGravatarLog(~log, ~blockPromise)
+
+              Some(convertedEvent)
+            | NftFactoryContract_SimpleNftCreatedEvent =>
+              let convertedEvent =
+                logDescription
+                ->Converters.NftFactory.convertSimpleNftCreatedLogDescription
+                ->Converters.NftFactory.convertSimpleNftCreatedLog(~log, ~blockPromise)
+
+              Some(convertedEvent)
+            | SimpleNftContract_TransferEvent =>
+              let convertedEvent =
+                logDescription
+                ->Converters.SimpleNft.convertTransferLogDescription
+                ->Converters.SimpleNft.convertTransferLog(~log, ~blockPromise)
 
               Some(convertedEvent)
             }
@@ -245,7 +252,7 @@ let processAllEvents = (chainConfig: Config.chainConfig) => {
   processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
-    ~blockInterval=10000,
+    ~blockInterval=2000,
     ~provider=chainConfig.provider,
   )
 }

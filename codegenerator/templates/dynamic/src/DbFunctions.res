@@ -30,7 +30,7 @@ module {{entity.name.capitalized}} = {
   open Types
   type {{entity.name.uncapitalized}}ReadRow = {
   {{#each entity.params as |param|}}
-     {{param.key}}: {{param.type_rescript}}, 
+     {{param.key}} : {{#if (eq param.type_rescript "Ethers.BigInt.t")}} string{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}} option<string>{{else}}{{param.type_rescript}}{{/if}}{{/if}},
   {{/each}}
   @as("event_chain_id") chainId: int,
   @as("event_id") eventId: Ethers.BigInt.t,
@@ -48,7 +48,8 @@ module {{entity.name.capitalized}} = {
     {
       entity: {
         {{#each entity.params as | param |}}
-        {{param.key}},
+        {{param.key}} {{#if  (eq param.type_rescript "Ethers.BigInt.t")}} : {{param.key}}->Ethers.BigInt.fromStringUnsafe{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}}: {{param.key}}->Belt.Option.map(opt =>
+      opt->Ethers.BigInt.fromStringUnsafe){{/if}}{{/if}},
         {{/each}}
       },
       eventData: {
@@ -59,7 +60,7 @@ module {{entity.name.capitalized}} = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSet{{entity.name.capitalized}}: (Postgres.sql, array<Types.inMemoryStoreRow<Types.{{entity.name.uncapitalized}}Entity>>) => promise<(unit)> = "batchSet{{entity.name.capitalized}}"
+  external batchSet{{entity.name.capitalized}}: (Postgres.sql, array<Types.inMemoryStoreRow<Types.{{entity.name.uncapitalized}}EntitySerialized>>) => promise<(unit)> = "batchSet{{entity.name.capitalized}}"
 
   @module("./DbFunctionsImplementation.js")
   external batchDelete{{entity.name.capitalized}}: (Postgres.sql, array<Types.id>) => promise<(unit)> = "batchDelete{{entity.name.capitalized}}"

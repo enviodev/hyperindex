@@ -46,14 +46,27 @@ type rawEventsEntity = {
 }
 
 @genType
-type rec
-{{#each entities as | entity |}}
-  {{#unless @first}}and {{/unless}}{{entity.name.uncapitalized}}Entity = {
+type {{entity.name.uncapitalized}}Entity = {
+  {{#each entity.params as | param |}}
+  {{param.key}} : {{param.type_rescript}},
+  {{/each}}
+}
+
+type {{entity.name.uncapitalized}}EntitySerialized = {
+  {{#each entity.params as | param |}}
+  {{param.key}} : {{#if (eq param.type_rescript "Ethers.BigInt.t")}} string{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}} option<string>{{else}}{{param.type_rescript}}{{/if}}{{/if}},
+  {{/each}}
+}
+
+let serialize{{entity.name.capitalized}}Entity = (entity: {{entity.name.uncapitalized}}Entity ): {{entity.name.uncapitalized}}EntitySerialized => {
+  {
     {{#each entity.params as | param |}}
-    {{param.key}} : {{param.type_rescript}},
-    {{#if param.maybe_entity_name}}{{param.key}}Data?: {{param.maybe_entity_name.uncapitalized}}Entity, {{/if}}
+    {{param.key}} : entity.{{param.key}}{{#if (eq param.type_rescript "Ethers.BigInt.t")}}->Ethers.BigInt.toString{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}}->Belt.Option.map(opt =>
+      opt->Ethers.BigInt.toString){{/if}}{{/if}},
     {{/each}}
   }
+}
+
 {{/each}}
 type entity = 
 {{#each entities as | entity |}}
