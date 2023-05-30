@@ -11,11 +11,11 @@ networks:
         abi_file_path: abis/example-abi.json
         address: "0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"
         events:
-          - name: "Transfer"
-          - name: "UpdatedGravatar"
+          - event: "Transfer"
+          - event: "UpdatedGravatar"
             requiredEntities:
               - name: Gravatar
                 labels:
                   - "gravatarWithChanges"
-          - name: "NewGravatar"
+          - event: "NewGravatar"
             requiredEntities: []

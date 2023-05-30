@@ -78,8 +78,8 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                      "name": {
-                        "description": "Name of the event (must match the name in the ABI)",
+                      "event": {
+                        "description": "Name of the event (which must match the name in the ABI) or the signature of the event",
                         "type": "string"
                       },
                       "requiredEntities": {
