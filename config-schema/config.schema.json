@@ -52,15 +52,17 @@
                   "type": "string"
                 },
                 "address": {
-                  "description": "An address or, array of addresses, that the contract is deployed to on the network",
+                  "description": "An address, or array of addresses, that the contract is deployed to on the network",
                   "oneOf": [
                     {
-                      "type": "string"
+                      "type": "string",
+                      "pattern": "^0x[a-fA-F0-9]{40}$"
                     },
                     {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "string",
+                        "pattern": "^0x[a-fA-F0-9]{40}$"
                       }
                     }
                   ]
