@@ -1,5 +1,13 @@
 // db operations for raw_events:
 
+module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (sql, chainId) => sql`
+  SELECT block_number
+  FROM public.raw_events
+  WHERE chain_id = ${chainId}
+  ORDER BY event_id DESC
+  LIMIT 1;
+`
+
 module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
   SELECT *
   FROM public.raw_events
@@ -52,6 +60,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   "id",
   "address",
   "gravatar",
+  "tokens",
   event_chain_id, 
   event_id
   FROM public.user
@@ -68,6 +77,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "id",
     "address",
     "gravatar",
+    "tokens",
     "event_chain_id",
     "event_id",
   )}
@@ -76,6 +86,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "id" = EXCLUDED."id",
     "address" = EXCLUDED."address",
     "gravatar" = EXCLUDED."gravatar",
+    "tokens" = EXCLUDED."tokens",
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
   ;`
@@ -134,4 +145,100 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)};`
   // end db operations for Gravatar
+
+  // db operations for Nftcollection:
+
+  module.exports.readNftcollectionEntities = (sql, entityIdArray) => sql`
+  SELECT 
+  "id",
+  "contractAddress",
+  "name",
+  "symbol",
+  "maxSupply",
+  "currentSupply",
+  event_chain_id, 
+  event_id
+  FROM public.nftcollection
+  WHERE id IN ${sql(entityIdArray)}`
+
+  module.exports.batchSetNftcollection = (sql, entityDataArray) => {
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
+  return sql`
+    INSERT INTO public.nftcollection
+  ${sql(combinedEntityAndEventData,
+    "id",
+    "contractAddress",
+    "name",
+    "symbol",
+    "maxSupply",
+    "currentSupply",
+    "event_chain_id",
+    "event_id",
+  )}
+    ON CONFLICT(id) DO UPDATE
+    SET
+    "id" = EXCLUDED."id",
+    "contractAddress" = EXCLUDED."contractAddress",
+    "name" = EXCLUDED."name",
+    "symbol" = EXCLUDED."symbol",
+    "maxSupply" = EXCLUDED."maxSupply",
+    "currentSupply" = EXCLUDED."currentSupply",
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
+  ;`
+  }
+
+  module.exports.batchDeleteNftcollection = (sql, entityIdArray) => sql`
+  DELETE
+  FROM public.nftcollection
+  WHERE id IN ${sql(entityIdArray)};`
+  // end db operations for Nftcollection
+
+  // db operations for Token:
+
+  module.exports.readTokenEntities = (sql, entityIdArray) => sql`
+  SELECT 
+  "id",
+  "tokenId",
+  "collection",
+  "owner",
+  event_chain_id, 
+  event_id
+  FROM public.token
+  WHERE id IN ${sql(entityIdArray)}`
+
+  module.exports.batchSetToken = (sql, entityDataArray) => {
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
+  return sql`
+    INSERT INTO public.token
+  ${sql(combinedEntityAndEventData,
+    "id",
+    "tokenId",
+    "collection",
+    "owner",
+    "event_chain_id",
+    "event_id",
+  )}
+    ON CONFLICT(id) DO UPDATE
+    SET
+    "id" = EXCLUDED."id",
+    "tokenId" = EXCLUDED."tokenId",
+    "collection" = EXCLUDED."collection",
+    "owner" = EXCLUDED."owner",
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
+  ;`
+  }
+
+  module.exports.batchDeleteToken = (sql, entityIdArray) => sql`
+  DELETE
+  FROM public.token
+  WHERE id IN ${sql(entityIdArray)};`
+  // end db operations for Token
 

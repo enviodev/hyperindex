@@ -10,7 +10,7 @@ type Nftcollection @entity {
 type User @entity {
   id: ID!
   address: Bytes!
-  tokens: [Token!]
+  tokens: [Token!]!
 }
 
 type Token @entity {

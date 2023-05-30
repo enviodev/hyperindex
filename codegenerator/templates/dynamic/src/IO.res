@@ -175,7 +175,10 @@ let executeBatch = async (sql) => {
     let set{{entity.name.capitalized}} =
       {{entity.name.uncapitalized}}Rows->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
         {{entity.name.uncapitalized}}Row.crud == Types.Create || {{entity.name.uncapitalized}}Row.crud == Update
-          ? Some({{entity.name.uncapitalized}}Row)
+          ? Some({
+            ...{{entity.name.uncapitalized}}Row,
+            entity: {{entity.name.uncapitalized}}Row.entity->Types.serialize{{entity.name.capitalized}}Entity,
+          }) 
           : None
       )
 

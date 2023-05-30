@@ -1,5 +1,13 @@
 // db operations for raw_events:
 
+module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (sql, chainId) => sql`
+  SELECT block_number
+  FROM public.raw_events
+  WHERE chain_id = ${chainId}
+  ORDER BY event_id DESC
+  LIMIT 1;
+`
+
 module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
   SELECT *
   FROM public.raw_events
