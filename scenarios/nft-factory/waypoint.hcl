@@ -6,23 +6,25 @@
 project = "nft-factory-indexer"
 
 app "nft-factory-indexer" {
+  labels = {
+    "service" = "nft-factory-indexer"
+    "env"     = "dev"
+  }
+
   config {
     env = {
       PG_HOST     = "postgres-demo-cluster"
       PG_PORT     = 5432
       PG_USER     = "demouser"
       PG_DATABASE = "demo"
+      SSL_MODE    = "require"
     
      PG_PASSWORD = dynamic("kubernetes", {
-      name   = "postgres.postgres-demo-cluster.credentials.postgresql.acid.zalan.do" # Secret name
+      name   = "demouser.postgres-demo-cluster.credentials.postgresql.acid.zalan.do" # Secret name
       key    = "password"
       secret = true
     })
     }
-  }
-
-  labels = {
-    "service" = "nft-factory-indexer"
   }
 
   build {
@@ -31,7 +33,7 @@ app "nft-factory-indexer" {
       use "aws-ecr" {
         region     = "us-east-2"
         repository = "envio-repository"
-        tag        = "nft-indexer-fuji-22"
+        tag        = "nft-indexer-fuji-50"
       }
     }
   }
@@ -39,12 +41,15 @@ app "nft-factory-indexer" {
   deploy {
     use "kubernetes" {
       namespace = "postgres"
+      probe_path = "/_healthz"
     }
   }
 
    release {
     use "kubernetes" {
-       namespace = "postgres"
+      namespace = "postgres"
+      load_balancer = true
+      port          = 80
     }
   }
 }
