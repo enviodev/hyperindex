@@ -152,16 +152,12 @@ fn get_contract_type_from_config_contract(
                         );
                     Err(message)?
                 }
-                Some(contract_abi) => contract_abi
-                    .events()
-                    .find(|&abi_event| &abi_event.name == config_event_name),
+                Some(contract_abi) => contract_abi.event(config_event_name).ok(),
             },
             EventNameOrSig::Event(config_defined_event) => match &contract_abi_opt {
                 None => Some(config_defined_event),
                 Some(contract_abi) => {
-                    let abi_file_event_opt = contract_abi
-                        .events()
-                        .find(|&abi_event| &abi_event.name == &config_defined_event.name);
+                    let abi_file_event_opt = contract_abi.event(&config_defined_event.name).ok();
 
                     match abi_file_event_opt {
                         Some(abi_file_event) => {
