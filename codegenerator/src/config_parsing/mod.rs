@@ -208,9 +208,36 @@ pub fn convert_config_to_chain_configs(
                     network_id: network.id,
                     name: contract.name.clone(),
                 };
-                let parsed_abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
-                let stringified_abi = serde_json::to_string(&parsed_abi)?;
+                let parsed_abi_from_file = parsed_paths.get_contract_abi(&contract_unique_id)?;
+
+                let mut reduced_abi = ethers::abi::Contract::default();
+
+                for config_event in contract.events.iter() {
+                    let abi_event = match &config_event.event {
+                        EventNameOrSig::Name(config_event_name) => match &parsed_abi_from_file {
+                            Some(contract_abi) => {
+                                let format_err = |err| -> String {
+                                    format!("event \"{}\" cannot be parsed the provided abi for contract {} due to error: {}", config_event_name, contract.name, err)
+                                };
+                                contract_abi.event(&config_event_name).map_err(format_err)?
+                            }
+                            None => {
+                                let message = format!("Please add abi_file_path for contract {} to your config to parse event {} or define the signature in the config", contract.name, config_event_name);
+                                Err(message)?
+                            }
+                        },
+                        EventNameOrSig::Event(abi_event) => abi_event,
+                    };
+
+                    reduced_abi
+                        .events
+                        .entry(abi_event.name.clone())
+                        .or_default()
+                        .push(abi_event.clone());
+                }
+
+                let stringified_abi = serde_json::to_string(&reduced_abi)?;
                 let single_contract = SingleContractTemplate {
                     name: contract.name.to_capitalized_options(),
                     abi: stringified_abi,
