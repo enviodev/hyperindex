@@ -17,7 +17,7 @@ let addEventToRawEvents = (
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let rawEvent: Types.rawEventsEntity = {
     chainId,
-    eventId,
+    eventId: eventId->Ethers.BigInt.toString,
     blockNumber,
     logIndex,
     transactionIndex,
@@ -26,7 +26,7 @@ let addEventToRawEvents = (
     blockHash,
     blockTimestamp,
     eventType: eventName->Types.eventName_encode,
-    params: jsonSerializedParams,
+    params: jsonSerializedParams->Js.Json.stringify,
   }
 
   IO.InMemoryStore.RawEvents.setRawEvents(~entity=rawEvent, ~crud=Create)
@@ -99,7 +99,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
         )
         let {logIndex, blockNumber} = event
         let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-        let context = contextHelper.getContext(~eventData={chainId, eventId})
+        let context = contextHelper.getContext(
+          ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+        )
         (
           contextHelper.getEntitiesToLoad(),
           Types.GravatarContract_NewGravatarWithContext(event, context),
@@ -114,7 +116,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
         )
         let {logIndex, blockNumber} = event
         let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-        let context = contextHelper.getContext(~eventData={chainId, eventId})
+        let context = contextHelper.getContext(
+          ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+        )
         (
           contextHelper.getEntitiesToLoad(),
           Types.GravatarContract_UpdatedGravatarWithContext(event, context),
@@ -129,7 +133,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
         )
         let {logIndex, blockNumber} = event
         let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-        let context = contextHelper.getContext(~eventData={chainId, eventId})
+        let context = contextHelper.getContext(
+          ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+        )
         (
           contextHelper.getEntitiesToLoad(),
           Types.NftFactoryContract_SimpleNftCreatedWithContext(event, context),
@@ -144,7 +150,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
         )
         let {logIndex, blockNumber} = event
         let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-        let context = contextHelper.getContext(~eventData={chainId, eventId})
+        let context = contextHelper.getContext(
+          ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+        )
         (
           contextHelper.getEntitiesToLoad(),
           Types.SimpleNftContract_TransferWithContext(event, context),

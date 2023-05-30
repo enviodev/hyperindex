@@ -37,10 +37,9 @@ let packEventIndexFromRecord = (eventIndex: eventIndex) => {
 
 //Returns unique string id for an event using its chain id combined with event id
 //Used in IO for the key in the in mem rawEvents table
-let getEventIdKeyString = (~chainId: int, ~eventId: Ethers.BigInt.t) => {
+let getEventIdKeyString = (~chainId: int, ~eventId: string) => {
   let chainIdStr = chainId->Belt.Int.toString
-  let eventIdStr = eventId->Ethers.BigInt.toString
-  let key = chainIdStr ++ "_" ++ eventIdStr
+  let key = chainIdStr ++ "_" ++ eventId
 
   key
 }

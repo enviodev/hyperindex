@@ -24,7 +24,7 @@ let entitySerialize = (entity: entityRead) => {
 
 type rawEventsEntity = {
   @as("chain_id") chainId: int,
-  @as("event_id") eventId: Ethers.BigInt.t,
+  @as("event_id") eventId: string,
   @as("block_number") blockNumber: int,
   @as("log_index") logIndex: int,
   @as("transaction_index") transactionIndex: int,
@@ -33,7 +33,7 @@ type rawEventsEntity = {
   @as("block_hash") blockHash: string,
   @as("block_timestamp") blockTimestamp: int,
   @as("event_type") eventType: Js.Json.t,
-  params: Js.Json.t,
+  params: string,
 }
 
 @genType
@@ -151,7 +151,7 @@ type crud = Create | Read | Update | Delete
 
 type eventData = {
   @as("event_chain_id") chainId: int,
-  @as("event_id") eventId: Ethers.BigInt.t,
+  @as("event_id") eventId: string,
 }
 
 type inMemoryStoreRow<'a> = {

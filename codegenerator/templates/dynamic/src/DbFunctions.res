@@ -5,7 +5,7 @@ let config: Postgres.poolConfig = {
 let sql = Postgres.makeSql(~config)
 
 type chainId = int
-type eventId = Ethers.BigInt.t
+type eventId = string
 type blockNumberRow = {
   @as("block_number") blockNumber: int
 }
@@ -74,7 +74,7 @@ module {{entity.name.capitalized}} = {
       },
       eventData: {
         chainId,
-        eventId
+        eventId: eventId->Ethers.BigInt.toString,
       }
     }
   }
