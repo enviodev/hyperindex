@@ -84,6 +84,6 @@ let config: chainConfigs = [
     ]
 
   }
-)
+),
 {{/each}}
 ]->Js.Dict.fromArray
