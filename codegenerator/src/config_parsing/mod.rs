@@ -184,7 +184,12 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
         )
     })?;
 
-    let deserialized_yaml: Config = serde_yaml::from_str(&config)?;
+    let deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
+        format!(
+            "Failed to deserialize config with Error {}",
+            err.to_string()
+        )
+    })?;
     Ok(deserialized_yaml)
 }
 
