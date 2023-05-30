@@ -1,42 +1,17 @@
-let { GreeterContract } = require("../generated/src/Handlers.bs.js");
+let { ERC20Contract } = require("../generated/src/Handlers.bs.js");
 
-GreeterContract.registerNewGreetingLoadEntities((event, context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+ERC20Contract.registerCreationLoadEntities((event, context) => {
+  context.tokens.tokensCreationLoad(event.srcAddress.toString());
 });
 
-GreeterContract.registerNewGreetingHandler((event, context) => {
-  let user = event.params.user;
-  let latestGreeting = event.params.greeting;
-  let numberOfGreetings = event.params.numberOfGreetings;
+ERC20Contract.registerCreationHandler((event, context) => {
+  let tokenObject = {
+    id: event.srcAddress.toString(),
+    name: event.params.name.toString(),
+    symbol: event.params.symbol.toString(),
+    decimals: 18,
+  };
 
-  let existingGreeter = context.greeting.greetingWithChangesLoad;
-
-  if (existingGreeter != undefined) {
-    context.greeting.update({
-      id: user.toString(),
-      latestGreeting: latestGreeting,
-      numberOfGreetings: existingGreeter.numberOfGreetings + 1,
-    });
-  } else {
-    context.greeting.insert({
-      id: user.toString(),
-      latestGreeting: latestGreeting,
-      numberOfGreetings: 1,
-    });
-  }
+  context.tokens.insert(tokenObject);
 });
 
-GreeterContract.registerClearGreetingLoadEntities((event, context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
-});
-
-GreeterContract.registerClearGreetingHandler((event, context) => {
-  let existingGreeter = context.greeting.greetingWithChangesLoad;
-  if (existingGreeter !== undefined) {
-    context.greeting.update({
-      id: user.toString(),
-      latestGreeting: "",
-      numberOfGreetings: existingGreeter.numberOfGreetings + 1,
-    });
-  }
-});
