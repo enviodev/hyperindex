@@ -89,7 +89,7 @@ pub struct ConfigContract {
     pub name: String,
     // Eg for implementing a custom deserializer
     //  #[serde(deserialize_with = "abi_path_to_abi")]
-    pub abi_file_path: String,
+    pub abi_file_path: Option<String>,
     pub handler: String,
     address: NormalizedList<String>,
     events: Vec<ConfigEvent>,
@@ -266,7 +266,7 @@ mod tests {
             address: NormalizedList::from_single(address1.clone()),
             name: String::from("Contract1"),
             //needed to have relative path in order to match config1.yaml
-            abi_file_path: String::from("../abis/Contract1.json"),
+            abi_file_path: Some(String::from("../abis/Contract1.json")),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -337,7 +337,7 @@ mod tests {
             handler: "./src/EventHandler.js".to_string(),
             address: NormalizedList::from_single(address1.clone()),
             name: String::from("Contract1"),
-            abi_file_path: String::from("../abis/Contract1.json"),
+            abi_file_path: Some(String::from("../abis/Contract1.json")),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -353,7 +353,7 @@ mod tests {
             handler: "./src/EventHandler.js".to_string(),
             address: NormalizedList::from_single(address2.clone()),
             name: String::from("Contract1"),
-            abi_file_path: String::from("../abis/Contract1.json"),
+            abi_file_path: Some(String::from("../abis/Contract1.json")),
             events: vec![event1.clone(), event2.clone()],
         };
 
