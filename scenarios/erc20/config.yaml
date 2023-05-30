@@ -15,11 +15,11 @@ networks:
           #   requiredEntities: []
           - name: "Creation"
             requiredEntities:
-            - name: "Erc20Tokens"
+            - name: "Tokens"
               labels:
-                - "erc20tokensCreation"
-          # - name: "Transfer"
-          #   requiredEntities: []
-            # - name: "TotalTransfers"
-            #   labels:
-            #   - "totalTransferChanges"
+                - "tokensCreation"
+          - name: "Transfer"
+            requiredEntities:
+            - name: "Totals"
+              labels:
+                - "totalChanges"

@@ -6,7 +6,8 @@
     "build": "tsc --build",
     "watch": "tsc --watch",
     "start": "tsc --build && node build/generated/src/Index.bs.js",
-    "local-start": "cd ../.. && docker compose down -v && docker compose up -d"
+    "local-start": "cd ../.. && docker compose down -v && docker compose up -d",
+    "view-results": "./generated/register_tables_with_hasura.sh && open http://localhost:8080/console"
   },
   "devDependencies": {
     "typescript": "^5.0.4",

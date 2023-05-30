@@ -1,22 +1,22 @@
 import {
   ERC20Contract_registerCreationHandler,
   ERC20Contract_registerCreationLoadEntities,
-  // ERC20Contract_registerTransferHandler,
-  // ERC20Contract_registerTransferLoadEntities,
+  ERC20Contract_registerTransferHandler,
+  ERC20Contract_registerTransferLoadEntities,
 } from "../generated/src/Handlers.gen";
 
 import {
-  erc20TokensEntity,
-  // totalTransfersEntity,
+  tokensEntity,
+  totalsEntity,
 } from "../generated/src/Types.gen";
 
 ERC20Contract_registerCreationLoadEntities(({ event, context }) => {
-  context.erc20Tokens.erc20tokensCreationLoad(event.srcAddress.toString());
+  context.tokens.tokensCreationLoad(event.srcAddress.toString());
 });
 
 ERC20Contract_registerCreationHandler(({ event, context }) => {
   // creating a erc20TokenEntity to store the event data
-  let erc20TokenObject: erc20TokensEntity = {
+  let tokenObject: tokensEntity = {
     id: event.srcAddress.toString(),
     name: event.params.name.toString(),
     symbol: event.params.symbol.toString(),
@@ -24,12 +24,12 @@ ERC20Contract_registerCreationHandler(({ event, context }) => {
   };
 
   // creating a new entry in erc20Token table with the event data
-  context.erc20Tokens.insert(erc20TokenObject);
+  context.tokens.insert(tokenObject);
 
   // // creating a totalTransfersEntity to store the event data
   // let totalTransferObject: totalTransfersEntity = {
   //   id: event.srcAddress.toString(),
-  //   erc20: erc20TokenObject,
+  //   erc20: tokenObject,
   //   totalTransfer: 0,
   // };
 
@@ -37,25 +37,25 @@ ERC20Contract_registerCreationHandler(({ event, context }) => {
   // context.totalTransfers.insert(totalTransferObject);
 });
 
-// ERC20Contract_registerTransferLoadEntities(({ event, context }) => {
-//   // loading the required totalTransfersEntity to update the totalTransfer field
-//   context.totalTransfers.totalTransferChangesLoad(event.srcAddress.toString());
-// });
+ERC20Contract_registerTransferLoadEntities(({ event, context }) => {
+  // loading the required totalTransfersEntity to update the totalTransfer field
+  context.totals.totalChangesLoad(event.srcAddress.toString());
+});
 
-// ERC20Contract_registerTransferHandler(({ event, context }) => {
-//   // getting the current totalTransfer field value
-//   let currentTotalTransfer = context.totalTransfers.totalTransferChanges();
+ERC20Contract_registerTransferHandler(({ event, context }) => {
+  // getting the current totalTransfer field value
+  let currentTotalTransfer = context.totals.totalChanges();
 
-//   if (currentTotalTransfer != null) {
-//     // updating the totalTransfer field value
-//     let totalTransferObject: totalTransfersEntity = {
-//       id: event.srcAddress.toString(),
-//       erc20: currentTotalTransfer.erc20,
-//       totalTransfer: currentTotalTransfer.totalTransfer + Number(event.params.value),
-//     };
+  // if (currentTotalTransfer != null) {
+  //   // updating the totalTransfer field value
+  //   let totalTransferObject: totalTransfersEntity = {
+  //     id: event.srcAddress.toString(),
+  //     erc20: currentTotalTransfer.erc20,
+  //     totalTransfer: currentTotalTransfer.totalTransfer + Number(event.params.value),
+  //   };
 
-//     // updating the totalTransfers table with the new totalTransfer field value
-//     context.totalTransfers.update(totalTransferObject);
-//   } else {
-//   }
-// });
+  //   // updating the totalTransfers table with the new totalTransfer field value
+  //   context.totalTransfers.update(totalTransferObject);
+  // } else {
+  // }
+});
