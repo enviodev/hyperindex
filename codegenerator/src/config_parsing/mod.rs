@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::path::PathBuf;
+use std::slice::Iter;
 
 pub mod entity_parsing;
 pub mod event_parsing;
@@ -42,62 +43,56 @@ pub struct ConfigContract {
     //  #[serde(deserialize_with = "abi_path_to_abi")]
     pub abi_file_path: String,
     pub handler: String,
-    address: AddressUnion,
+    address: NormalizedList<String>,
     events: Vec<Event>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(untagged)]
-enum AddressUnion {
-    Address(String),
-    Addresses(Vec<String>),
+enum SingleOrList<T: Clone> {
+    Single(T),
+    List(Vec<T>),
 }
 
-struct AddressUnionIterator<'a> {
-    inner: &'a AddressUnion,
-    index: usize,
-}
+impl<T: Clone> SingleOrList<T> {
+    fn to_normalized_list(&self) -> NormalizedList<T> {
+        let list: Vec<T> = match self {
+            SingleOrList::Single(val) => vec![val.clone()],
+            SingleOrList::List(list) => list.to_vec(),
+        };
 
-impl<'a> Iterator for AddressUnionIterator<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.inner {
-            AddressUnion::Address(addr) => {
-                if self.index == 0 {
-                    self.index += 1;
-                    Some(addr.as_str())
-                } else {
-                    None
-                }
-            }
-            AddressUnion::Addresses(addrs) => {
-                let result = addrs.get(self.index).map(|s| s.as_str());
-                self.index += 1;
-                result
-            }
-        }
+        NormalizedList { inner: list }
     }
 }
 
-impl<'a> IntoIterator for &'a AddressUnion {
-    type Item = &'a str;
-    type IntoIter = AddressUnionIterator<'a>;
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(try_from = "SingleOrList<T>")]
+struct NormalizedList<T: Clone> {
+    inner: Vec<T>,
+}
 
-    fn into_iter(self) -> Self::IntoIter {
-        AddressUnionIterator {
-            inner: self,
-            index: 0,
-        }
+impl<T: Clone> NormalizedList<T> {
+    fn iter(&self) -> Iter<T> {
+        self.inner.iter()
+    }
+
+    #[cfg(test)]
+    fn from(list: Vec<T>) -> Self {
+        NormalizedList { inner: list }
+    }
+
+    #[cfg(test)]
+    fn from_single(val: T) -> Self {
+        Self::from(vec![val])
     }
 }
 
-impl AddressUnion {
-    fn iter(&self) -> AddressUnionIterator {
-        AddressUnionIterator {
-            inner: &self,
-            index: 0,
-        }
+impl<T: Clone> TryFrom<SingleOrList<T>> for NormalizedList<T> {
+    type Error = String;
+
+    fn try_from(single_or_list: SingleOrList<T>) -> Result<Self, Self::Error> {
+        let normalized_list = single_or_list.to_normalized_list();
+        Ok(normalized_list)
     }
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -188,7 +183,7 @@ pub fn convert_config_to_chain_configs(
 #[cfg(test)]
 mod tests {
     use crate::capitalization::Capitalize;
-    use crate::config_parsing::AddressUnion::Address;
+    use crate::config_parsing::NormalizedList;
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
@@ -213,7 +208,7 @@ mod tests {
 
         let contract1 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: Address(address1.clone()),
+            address: NormalizedList::from_single(address1.clone()),
             name: String::from("Contract1"),
             //needed to have relative path in order to match config1.yaml
             abi_file_path: String::from("../abis/Contract1.json"),
@@ -285,7 +280,7 @@ mod tests {
 
         let contract1 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: Address(address1.clone()),
+            address: NormalizedList::from_single(address1.clone()),
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
             events: vec![event1.clone(), event2.clone()],
@@ -301,7 +296,7 @@ mod tests {
         };
         let contract2 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: Address(address2.clone()),
+            address: NormalizedList::from_single(address2.clone()),
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
             events: vec![event1.clone(), event2.clone()],
