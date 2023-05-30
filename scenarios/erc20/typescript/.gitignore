@@ -24,7 +24,7 @@ lib/*
 .vscode
 .merlin
 .bsb.lock
-/node_modules/
+node_modules/
 build/
 benchmarks/
 artifacts
