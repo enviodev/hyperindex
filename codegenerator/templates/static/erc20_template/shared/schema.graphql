@@ -1,0 +1,12 @@
+type Tokens @entity {
+  id: ID!
+  name: String!
+  symbol: String!
+  decimals: Int!
+}
+
+type Totals @entity {
+  id: ID!
+  erc20: Tokens!
+  totalTransfer: Int!
+}
