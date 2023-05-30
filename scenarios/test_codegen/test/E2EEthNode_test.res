@@ -2,9 +2,13 @@ open RescriptMocha
 module MochaPromise = RescriptMocha.Promise
 open Mocha
 
+@@warning("-21")
 let resetPostgresClient = () => {
-    // This is a hack to reset the postgres client between tests. postgres.js seems to cache some types, and if tests clear the DB you need to also reset sql.
-    %raw("require('../generated/src/DbFunctions.bs.js').sql = require('postgres')(require('../generated/src/Config.bs.js').db)")
+  // This is a hack to reset the postgres client between tests. postgres.js seems to cache some types, and if tests clear the DB you need to also reset sql.
+
+  %raw(
+    "require('../generated/src/DbFunctions.bs.js').sql = require('postgres')(require('../generated/src/Config.bs.js').db)"
+  )
 }
 
 describe("E2E Integration Test", () => {
@@ -38,7 +42,7 @@ describe("E2E Integration Test", () => {
     }
 
     RegisterHandlers.registerAllHandlers()
-    await localChainConfig->EventSyncing.processAllEvents
+    let _ = await localChainConfig->EventSyncing.processAllEvents
 
     //Note this isn't working. Something to do with the polling on hardhat eth node
     //Would be better to spin up a local node with ganache
