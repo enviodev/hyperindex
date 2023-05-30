@@ -55,7 +55,7 @@ pub fn get_entity_record_types_from_schema(
 
             params.push(EntityParamType {
                 key: field.name.to_owned(),
-                is_optional,
+                is_optional: is_optional,
                 type_rescript: param_type,
                 type_pg: param_pg_type,
                 maybe_entity_name: param_maybe_entity_name,
@@ -130,9 +130,10 @@ fn gql_type_to_postgres_relational_type(
 ) -> Option<EntityRelationalTypes> {
     match gql_type {
         Type::NamedType(named) if entities_set.contains(named) => Some(EntityRelationalTypes {
-            relational_key: field_name.clone(),
+            relational_key: field_name.clone().to_capitalized_options(),
             mapped_entity: named.to_capitalized_options(),
             relationship_type: "object".to_owned(),
+            is_optional: true,
         }),
         Type::NamedType(_) => None,
         Type::ListType(gql_type) => {
@@ -145,7 +146,13 @@ fn gql_type_to_postgres_relational_type(
             }
         }
         Type::NonNullType(gql_type) => {
-            gql_type_to_postgres_relational_type(&field_name, &gql_type, &entities_set)
+            match gql_type_to_postgres_relational_type(&field_name, &gql_type, &entities_set) {
+                Some(mut relational_type) => {
+                    relational_type.is_optional = false;
+                    Some(relational_type)
+                }
+                None => None,
+            }
         }
     }
 }
@@ -333,7 +340,8 @@ mod tests {
         let result =
             gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
         let expect_output = Some(EntityRelationalTypes {
-            relational_key: field_name,
+            is_optional: true,
+            relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
             relationship_type: "object".to_owned(),
         });
@@ -351,7 +359,8 @@ mod tests {
         let result =
             gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
         let expect_output = Some(EntityRelationalTypes {
-            relational_key: field_name,
+            is_optional: false,
+            relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
             relationship_type: "object".to_owned(),
         });
@@ -370,7 +379,8 @@ mod tests {
         let result =
             gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
         let expect_output = Some(EntityRelationalTypes {
-            relational_key: field_name,
+            is_optional: true,
+            relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
             relationship_type: "array".to_owned(),
         });
@@ -389,7 +399,8 @@ mod tests {
         let result =
             gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
         let expect_output = Some(EntityRelationalTypes {
-            relational_key: field_name,
+            is_optional: false,
+            relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
             relationship_type: "array".to_owned(),
         });

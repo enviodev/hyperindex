@@ -20,7 +20,7 @@ export type gravatarLoaderConfig = { readonly loadOwner?: userLoaderConfig };
 export type userLoaderConfig = { readonly loadGravatar?: gravatarLoaderConfig; readonly loadTokens?: tokenLoaderConfig };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type tokenLoaderConfig = { readonly loadOwner?: userLoaderConfig; readonly nftcolletion?: boolean };
+export type tokenLoaderConfig = { readonly loadOwner?: userLoaderConfig; readonly loadCollection?: boolean };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type userEntity = {

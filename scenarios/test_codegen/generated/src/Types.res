@@ -14,10 +14,12 @@ type contactDetails = {
 }
 
 // HARDCODED (for now)
+@@warning("-30")
 @genType
 type rec gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
 and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: tokenLoaderConfig}
-and tokenLoaderConfig = {loadOwner?: userLoaderConfig, nftcolletion?: bool}
+and tokenLoaderConfig = {loadOwner?: userLoaderConfig, loadCollection?: bool}
+@@warning("+30")
 // TODO: make this dynamic
 
 type entityRead =
