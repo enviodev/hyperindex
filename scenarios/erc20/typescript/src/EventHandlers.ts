@@ -25,14 +25,14 @@ ERC20Contract_registerCreationHandler(({ event, context }) => {
 
   // creating a new entry in erc20Token table with the event data
   context.tokens.insert(tokenObject);
-
+  
   // // creating a totalTransfersEntity to store the event data
   // let totalTransferObject: totalTransfersEntity = {
   //   id: event.srcAddress.toString(),
   //   erc20: tokenObject,
   //   totalTransfer: 0,
   // };
-
+  
   // // creating a new entry in totalTransfers table with the event data
   // context.totalTransfers.insert(totalTransferObject);
 });
