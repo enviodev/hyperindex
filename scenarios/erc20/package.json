@@ -5,7 +5,8 @@
     "clean": "tsc --clean",
     "build": "tsc --build",
     "watch": "tsc --watch",
-    "start": "tsc --build && node build/generated/src/Index.bs.js"
+    "start": "tsc --build && node build/generated/src/Index.bs.js",
+    "local-start": "cd ../.. && docker compose down -v && docker compose up -d"
   },
   "devDependencies": {
     "typescript": "^5.0.4",

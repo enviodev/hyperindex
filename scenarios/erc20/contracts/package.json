@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "compile": "hardhat compile",
-    "deploy-erc20": "hardhat deploy",
+    "deploy-erc20": "rm -r -f deployments && hardhat deploy",
     "test": "npx hardhat test",
     "hardhat": "hardhat",
     "task:transfer": "npx hardhat transfer --user-from-index 1 --user-to-index 2 --amount 100",

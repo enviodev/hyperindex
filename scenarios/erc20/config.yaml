@@ -7,19 +7,19 @@ networks:
     start_block: 0
     contracts:
       - name: ERC20
-        abi_file_path: abis/ERC20.json
-        address: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"]
-        handler: ./src/EventHandlers.bs.js
+        abi_file_path: abis/erc20.json
+        address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
+        handler: src/EventHandlers.js
         events:
-          - name: "Approval"
-            requiredEntities: []
+          # - name: "Approval"
+          #   requiredEntities: []
           - name: "Creation"
-            requiredEntities: 
-            - name: "Erc20Token"
-              labels:
-                  - "erc20tokenCreation"
-          - name: "Transfer"
             requiredEntities:
-            - name: "TotalTransfers"
+            - name: "Erc20Tokens"
               labels:
-              - "totalTransferChanges"
+                - "erc20tokensCreation"
+          # - name: "Transfer"
+          #   requiredEntities: []
+            # - name: "TotalTransfers"
+            #   labels:
+            #   - "totalTransferChanges"

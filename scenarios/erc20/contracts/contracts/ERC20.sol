@@ -58,7 +58,7 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
         _name = name_;
         _symbol = symbol_;
 
-        emit Creation(name_, symbol_);
+        emit Creation(_name, _symbol);
     }
 
     /**
