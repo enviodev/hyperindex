@@ -191,8 +191,13 @@ let getAllEventFilters = (
   eventFilters
 }
 
+type blocksProcessed = {
+  from: int,
+  to: int,
+}
+
 let processAllEventsFromBlockNumber = async (
-  ~fromBlock,
+  ~fromBlock: int,
   ~blockInterval as maxBlockInterval,
   ~chainConfig: Config.chainConfig,
   ~provider,
@@ -201,11 +206,11 @@ let processAllEventsFromBlockNumber = async (
 
   let eventFilters = getAllEventFilters(~addressInterfaceMapping, ~chainConfig, ~provider)
 
-  let fromBlock = ref(fromBlock)
+  let fromBlockRef = ref(fromBlock)
   let currentBlock: ref<option<int>> = ref(None)
   let shouldContinueProcess = () =>
     currentBlock.contents->Belt.Option.mapWithDefault(true, blockNum =>
-      fromBlock.contents < blockNum
+      fromBlockRef.contents < blockNum
     )
 
   let currentBlockInterval = ref(maxBlockInterval)
@@ -222,8 +227,8 @@ let processAllEventsFromBlockNumber = async (
         queryEventsWithCombinedFilterAndExecuteHandlers(
           ~addressInterfaceMapping,
           ~eventFilters,
-          ~fromBlock=fromBlock.contents,
-          ~toBlock=fromBlock.contents + blockInterval - 1,
+          ~fromBlock=fromBlockRef.contents,
+          ~toBlock=fromBlockRef.contents + blockInterval - 1,
           ~provider,
           ~chainId=chainConfig.chainId,
         )->Promise.thenResolve(_ => blockInterval)
@@ -246,7 +251,7 @@ let processAllEventsFromBlockNumber = async (
     // Increase batch size going forward, https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
     currentBlockInterval := executedBlockInterval + accelerationAdditive
 
-    fromBlock := fromBlock.contents + executedBlockInterval
+    fromBlockRef := fromBlockRef.contents + executedBlockInterval
     let currentBlockFromRPC =
       await provider
       ->Ethers.JsonRpcProvider.getBlockNumber
@@ -256,15 +261,24 @@ let processAllEventsFromBlockNumber = async (
       })
     currentBlock := Some(currentBlockFromRPC)
     Js.log(
-      `Finished processAllEventsFromBlockNumber ${fromBlock.contents->Belt.Int.toString} out of ${currentBlockFromRPC->Belt.Int.toString}`,
+      `Finished processAllEventsFromBlockNumber ${fromBlockRef.contents->Belt.Int.toString} out of ${currentBlockFromRPC->Belt.Int.toString}`,
     )
   }
+  {from: fromBlock, to: fromBlockRef.contents - 1}
 }
 
-let processAllEvents = (chainConfig: Config.chainConfig) => {
-  let startBlock = chainConfig.startBlock
+let processAllEvents = async (chainConfig: Config.chainConfig) => {
+  let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
+    ~chainId=chainConfig.chainId,
+  )
 
-  processAllEventsFromBlockNumber(
+  let startBlock =
+    latestProcessedBlock->Belt.Option.mapWithDefault(
+      chainConfig.startBlock,
+      latestProcessedBlock => {latestProcessedBlock + 1},
+    )
+
+  await processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
     ~blockInterval=initialBlockInterval,
