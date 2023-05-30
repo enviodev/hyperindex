@@ -73,12 +73,7 @@ fn abi_type_to_rescript_string(
             )
         }
         EthAbiParamType::Tuple(abi_types) => {
-            let record_name = match param.name {
-                "" => "unnamed".to_string(),
-                name => name.to_string(),
-            };
-
-            let rescript_params: Vec<EventParamType> = abi_types
+            let rescript_types: Vec<String> = abi_types
                 .iter()
                 .enumerate()
                 .map(|(i, abi_type)| {
@@ -94,17 +89,14 @@ fn abi_type_to_rescript_string(
                         rescript_subrecord_dependencies,
                     );
 
-                    EventParamType { key, type_rescript }
+                    type_rescript
                 })
                 .collect();
 
-            let record = EventRecordType {
-                name: record_name.to_capitalized_options(),
-                params: rescript_params,
-            };
-            let type_name = rescript_subrecord_dependencies.insert(record_name, record);
+            let tuple_inner = rescript_types.join(", ");
 
-            type_name
+            let tuple = format!("({})", tuple_inner);
+            tuple
         }
     }
 }
@@ -365,7 +357,9 @@ mod tests {
     }
 
     #[test]
-    fn test_record_type_tuple() {
+    #[ignore]
+    //ignored since event structs now simply compose into tuple types
+    fn test_record_type_tuple_old() {
         let tuple_type = ParamType::Tuple(vec![ParamType::String, ParamType::Uint(256)]);
         let param = super::EthereumEventParam {
             abi_type: &tuple_type,
@@ -393,5 +387,23 @@ mod tests {
         }];
         assert_eq!(parsed_rescript_string, String::from("myStruct"));
         assert_eq!(parsed_sub_records, expected_sub_records);
+    }
+
+    #[test]
+    fn test_record_type_tuple() {
+        let tuple_type = ParamType::Tuple(vec![ParamType::String, ParamType::Uint(256)]);
+        let param = super::EthereumEventParam {
+            abi_type: &tuple_type,
+            name: "myArrayFixed",
+        };
+        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
+
+        let parsed_rescript_string =
+            abi_type_to_rescript_string(&param, &mut rescript_subrecord_dependencies);
+
+        assert_eq!(
+            parsed_rescript_string,
+            String::from("(string, Ethers.BigInt.t)")
+        )
     }
 }
