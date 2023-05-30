@@ -46,7 +46,6 @@ struct EntityRelationalTypes {
     mapped_entity: CapitalizedOptions,
     relationship_type: String,
     is_optional: bool,
-    // is_optional_str: String,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]

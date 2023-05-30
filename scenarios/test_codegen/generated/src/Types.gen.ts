@@ -14,13 +14,16 @@ export type Id = id;
 export type contactDetails = { readonly name: string; readonly email: string };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type gravatarLoaderConfig = { readonly loadOwner?: userLoaderConfig };
-
-// tslint:disable-next-line:interface-over-type-literal
 export type userLoaderConfig = { readonly loadGravatar?: gravatarLoaderConfig; readonly loadTokens?: tokenLoaderConfig };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type tokenLoaderConfig = { readonly loadOwner?: userLoaderConfig; readonly loadCollection?: boolean };
+export type gravatarLoaderConfig = { readonly loadOwner?: userLoaderConfig };
+
+// tslint:disable-next-line:interface-over-type-literal
+export type nftcollectionLoaderConfig = boolean;
+
+// tslint:disable-next-line:interface-over-type-literal
+export type tokenLoaderConfig = { readonly loadCollection?: nftcollectionLoaderConfig; readonly loadOwner?: userLoaderConfig };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type userEntity = {
