@@ -230,6 +230,8 @@ pub fn convert_config_to_chain_configs(
 
 #[cfg(test)]
 mod tests {
+    use ethers::abi::{Event, EventParam, ParamType};
+
     use crate::capitalization::Capitalize;
     use crate::config_parsing::{EventNameOrSig, NormalizedList};
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
@@ -405,5 +407,57 @@ mod tests {
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
 
         assert_eq!(chain_configs, expected_chain_configs);
+    }
+
+    #[test]
+    fn deserializes_event_name() {
+        let event_string = serde_json::to_string("MyEvent").unwrap();
+
+        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
+        let expected = EventNameOrSig::Name("MyEvent".to_string());
+        assert_eq!(name_or_sig, expected);
+    }
+
+    #[test]
+    fn deserializes_event_sig_with_event_prefix() {
+        let event_string = serde_json::to_string("event MyEvent(uint256 myArg)").unwrap();
+
+        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
+        let expected_event = Event {
+            name: "MyEvent".to_string(),
+            anonymous: false,
+            inputs: vec![EventParam {
+                indexed: false,
+                name: "myArg".to_string(),
+                kind: ParamType::Uint(256),
+            }],
+        };
+        let expected = EventNameOrSig::Event(expected_event);
+        assert_eq!(name_or_sig, expected);
+    }
+
+    #[test]
+    fn deserializes_event_sig_without_event_prefix() {
+        let event_string = serde_json::to_string("MyEvent(uint256 myArg)").unwrap();
+
+        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
+        let expected_event = Event {
+            name: "MyEvent".to_string(),
+            anonymous: false,
+            inputs: vec![EventParam {
+                indexed: false,
+                name: "myArg".to_string(),
+                kind: ParamType::Uint(256),
+            }],
+        };
+        let expected = EventNameOrSig::Event(expected_event);
+        assert_eq!(name_or_sig, expected);
+    }
+
+    #[test]
+    #[should_panic]
+    fn deserializes_event_sig_invalid_panics() {
+        let event_string = serde_json::to_string("MyEvent(uint69 myArg)").unwrap();
+        serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
     }
 }
