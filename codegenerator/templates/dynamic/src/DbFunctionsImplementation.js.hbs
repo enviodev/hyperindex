@@ -13,12 +13,11 @@ module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
   FROM public.raw_events
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
 
-module.exports.batchSetRawEvents = (sql, entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray; // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+const batchSetRawEventsCore = (sql, entityDataArray) => {
   return sql`
     INSERT INTO public.raw_events
   ${sql(
-    valueCopyToFixBigIntType,
+    entityDataArray,
     "chain_id",
     "event_id",
     "block_number",
@@ -47,6 +46,27 @@ module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   ;`;
 };
 
+const chunkBatchQuery = (sql, entityDataArray, maxItemsPerQuery, queryToExecute) => {
+  const promises = [];
+
+  // Split entityDataArray into chunks of maxItemsPerQuery
+  for (let i = 0; i < entityDataArray.length; i += maxItemsPerQuery) {
+    const chunk = entityDataArray.slice(i, i + maxItemsPerQuery);
+
+    promises.push(queryToExecute(sql, chunk));
+  }
+
+  // Execute all promises
+  return Promise.all(promises);
+};
+
+module.exports.batchSetRawEvents = (sql, entityDataArray) => {
+  // TODO: make this max batch size optimal
+  const MAX_ITEMS_PER_QUERY_RawEvents = 50;
+
+  return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_RawEvents, batchSetRawEventsCore);
+};
+
 module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
   FROM public.raw_events
@@ -68,8 +88,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   FROM public.{{entity.name.uncapitalized}}
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSet{{entity.name.capitalized
-  }} = (sql, entityDataArray) => {
+  const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
@@ -92,6 +111,14 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
   ;`
+  }
+
+  module.exports.batchSet{{entity.name.capitalized
+  }} = (sql, entityDataArray) => {
+    // TODO: make this max batch size optimal. Do calculations to achieve this.
+    const MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}} = 50;
+
+    return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}}, batchSet{{entity.name.capitalized}}Core);
   }
 
   module.exports.batchDelete{{entity.name.capitalized
