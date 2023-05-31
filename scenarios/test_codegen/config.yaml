@@ -11,11 +11,11 @@ networks:
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" # -> use this if you want to deploy to local ganache
         handler: ./src/EventHandlers.bs.js
         events:
-          - name: "TestEvent"
+          - event: "TestEvent"
             requiredEntities: [] # empty signifies no requirements
-          - name: "NewGravatar"
+          - event: "NewGravatar"
             requiredEntities: [] # empty signifies no requirements
-          - name: "UpdatedGravatar"
+          - event: "UpdatedGravatar"
             requiredEntities: # if this field isn't specified it should default to include all entities
               - name: "Gravatar"
                 labels:
@@ -25,14 +25,14 @@ networks:
         address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
         handler: src/EventHandlers.ts
         events:
-          - name: "SimpleNftCreated"
+          - event: "SimpleNftCreated"
             requiredEntities: []
       - name: SimpleNft
         abi_file_path: abis/SimpleNft.json
         address: "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"
         handler: src/EventHandlers.ts
         events:
-          - name: "Transfer"
+          - event: "Transfer"
             requiredEntities:
               - name: "User"
                 labels:

@@ -1,6 +1,6 @@
 use crate::{
     capitalization::Capitalize,
-    config_parsing::{ConfigContract, Event as ConfigEvent},
+    config_parsing::{ConfigContract, ConfigEvent},
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
     Contract, Error, EventParamType, EventTemplate, RequiredEntityEntityField,
     RequiredEntityTemplate,
@@ -15,7 +15,7 @@ use ethers::abi::{
     ParamType as EthAbiParamType,
 };
 
-use super::deserialize_config_from_yaml;
+use super::{deserialize_config_from_yaml, EventNameOrSig};
 
 pub fn parse_abi(abi: &str) -> Result<AbiContract, Box<dyn Error>> {
     let abi: AbiContract = serde_json::from_str(abi)?;
@@ -140,12 +140,40 @@ fn get_contract_type_from_config_contract(
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
-    let contract_abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
+    let contract_abi_opt = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
     for config_event in config_contract.events.iter() {
-        let abi_event = contract_abi
-            .events()
-            .find(|&abi_event| abi_event.name == config_event.name);
+        let abi_event = match &config_event.event {
+            EventNameOrSig::Name(config_event_name) => match &contract_abi_opt {
+                None => {
+                    let message = format!(
+                        "Please provide a valid abi_file_path for your named event {} or alternatively provide a event signature",
+                        config_event_name
+                        );
+                    Err(message)?
+                }
+                Some(contract_abi) => contract_abi.event(config_event_name).ok(),
+            },
+            EventNameOrSig::Event(config_defined_event) => match &contract_abi_opt {
+                None => Some(config_defined_event),
+                Some(contract_abi) => {
+                    let abi_file_event_opt = contract_abi.event(&config_defined_event.name).ok();
+
+                    match abi_file_event_opt {
+                        Some(abi_file_event) => {
+                            if abi_file_event != config_defined_event {
+                                println!("WARNING: The event signature for {} in your ABI file does not match the signature defined in the config", config_defined_event.name);
+                            }
+                            Some(config_defined_event)
+                        }
+                        None => {
+                            println!("WARNING: The event signature for {} defined in your config does not exist in the provided ABI file", config_defined_event.name);
+                            Some(config_defined_event)
+                        }
+                    }
+                }
+            },
+        };
 
         match abi_event {
             Some(abi_event) => {
@@ -202,7 +230,7 @@ mod tests {
 
     use crate::{
         capitalization::Capitalize,
-        config_parsing::{self, RequiredEntity},
+        config_parsing::{self, EventNameOrSig, RequiredEntity},
         EventParamType, EventTemplate, RequiredEntityTemplate,
     };
     use ethers::abi::{Event as AbiEvent, EventParam, ParamType};
@@ -234,8 +262,8 @@ mod tests {
             anonymous: false,
             inputs,
         };
-        let config_event = config_parsing::Event {
-            name: event_name.clone(),
+        let config_event = config_parsing::ConfigEvent {
+            event: EventNameOrSig::Name(event_name.clone()),
             required_entities: None,
         };
 
@@ -284,8 +312,8 @@ mod tests {
             anonymous: false,
             inputs,
         };
-        let config_event = config_parsing::Event {
-            name: event_name.clone(),
+        let config_event = config_parsing::ConfigEvent {
+            event: EventNameOrSig::Name(event_name.clone()),
             required_entities: Some(vec![RequiredEntity {
                 name: String::from("Gravatar"),
                 labels: vec![String::from("gravatarWithChanges")],

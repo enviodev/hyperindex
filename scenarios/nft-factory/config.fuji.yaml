@@ -11,14 +11,14 @@ networks:
         address: "0xB1540299B9853c11cEA52939D0C3e06b29Ad99ec"
         handler: src/EventHandlers.js
         events:
-          - name: "SimpleNftCreated"
+          - event: "SimpleNftCreated"
             requiredEntities: []
       - name: SimpleNft
         abi_file_path: abis/SimpleNft.json
         address: "0xd19d8469cd68d6e34617c349491c45e48a1efde0"
         handler: src/EventHandlers.js
         events:
-          - name: "Transfer"
+          - event: "Transfer"
             requiredEntities:
               - name: "User"
                 labels:

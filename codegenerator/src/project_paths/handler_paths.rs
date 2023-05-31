@@ -64,11 +64,14 @@ impl ParsedPaths {
                     .entry(contract_unique_id.clone())
                     .or_insert(handler_path);
 
-                let abi_path_str = &contract.abi_file_path;
-                let abi_path_relative = PathBuf::from(abi_path_str);
-                let abi_path_joined = config_directory.join(abi_path_relative);
-                let abi_path = path_utils::normalize_path(&abi_path_joined);
-                abi_paths.entry(contract_unique_id).or_insert(abi_path);
+                let abi_path_str_opt = &contract.abi_file_path;
+
+                if let Some(abi_path_str) = abi_path_str_opt {
+                    let abi_path_relative = PathBuf::from(abi_path_str);
+                    let abi_path_joined = config_directory.join(abi_path_relative);
+                    let abi_path = path_utils::normalize_path(&abi_path_joined);
+                    abi_paths.entry(contract_unique_id).or_insert(abi_path);
+                }
             }
         }
 
@@ -109,22 +112,25 @@ impl ParsedPaths {
     pub fn get_contract_abi(
         &self,
         contract_unique_id: &ContractUniqueId,
-    ) -> Result<ethers::abi::Contract, Box<dyn Error>> {
-        let abi_path = self
-            .abi_paths
-            .get(&contract_unique_id)
-            .ok_or_else(|| "invalid abi path configuration".to_string())?;
+    ) -> Result<Option<ethers::abi::Contract>, Box<dyn Error>> {
+        let abi_path_opt = self.abi_paths.get(&contract_unique_id);
 
-        let abi_file = std::fs::read_to_string(abi_path).map_err(|e| {
-            format!(
-                "Failed to read abi at {}, with the following error {}",
-                abi_path.to_str().unwrap_or("no_path"),
-                e.to_string()
-            )
-        })?;
+        let abi_opt = match abi_path_opt {
+            None => None,
+            Some(abi_path) => {
+                let abi_file = std::fs::read_to_string(abi_path).map_err(|e| {
+                    format!(
+                        "Failed to read abi at {}, with the following error {}",
+                        abi_path.to_str().unwrap_or("no_path"),
+                        e.to_string()
+                    )
+                })?;
 
-        let abi: ethers::abi::Contract = serde_json::from_str(&abi_file)?;
-        Ok(abi)
+                let abi: ethers::abi::Contract = serde_json::from_str(&abi_file)?;
+                Some(abi)
+            }
+        };
+        Ok(abi_opt)
     }
 }
 
@@ -218,7 +224,10 @@ mod tests {
             name: String::from("Contract1"),
         };
 
-        let contract_abi = parsed_paths.get_contract_abi(&contract_unique_id).unwrap();
+        let contract_abi = parsed_paths
+            .get_contract_abi(&contract_unique_id)
+            .unwrap()
+            .unwrap();
         let expected_abi_string = r#"
             [
             {
