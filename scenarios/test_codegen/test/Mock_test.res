@@ -78,7 +78,7 @@ describe("E2E Db check", () => {
           crud: Update, // TODO: fix these tests, it should be an 'Update' here.
           eventData: {
             chainId: 1337,
-            eventId: 65537->Ethers.BigInt.fromInt,
+            eventId: "65537",
           },
           entity: {
             id: "1001",
@@ -92,7 +92,7 @@ describe("E2E Db check", () => {
           crud: Update,
           eventData: {
             chainId: 1337,
-            eventId: 65537->Ethers.BigInt.fromInt,
+            eventId: "65537",
           },
           entity: {
             id: "1002",
@@ -106,7 +106,7 @@ describe("E2E Db check", () => {
           crud: Create, // NOTE: if this is not run against a fresh database it will get an `Update` instead of `Create`
           eventData: {
             chainId: 1337,
-            eventId: 65537->Ethers.BigInt.fromInt,
+            eventId: "65537",
           },
           entity: {
             id: "1003",
