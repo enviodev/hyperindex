@@ -230,8 +230,6 @@ pub fn get_contract_types_from_config(
 #[cfg(test)]
 mod tests {
 
-    use std::collections::HashMap;
-
     use crate::{
         capitalization::Capitalize,
         config_parsing::{self, RequiredEntity},

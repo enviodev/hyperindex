@@ -104,6 +104,7 @@ struct TypesTemplate {
     codegen_out_path: String,
 }
 
+/// transform entities into a map from entity name to a list of all linked entities (entity fields) on that entity.
 pub fn entities_to_map(
     entities: Vec<EntityRecordType>,
 ) -> HashMap<String, Vec<CapitalizedOptions>> {
@@ -146,7 +147,7 @@ pub fn generate_templates(
     let types_data = TypesTemplate {
         sub_record_dependencies,
         contracts,
-        entities: entity_types.clone(),
+        entities: entity_types,
         chain_configs,
         codegen_out_path: gitignoer_path_str,
     };
