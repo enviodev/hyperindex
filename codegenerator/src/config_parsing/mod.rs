@@ -91,10 +91,10 @@ impl<T: Clone> TryFrom<SingleOrList<T>> for NormalizedList<T> {
     type Error = String;
 
     fn try_from(single_or_list: SingleOrList<T>) -> Result<Self, Self::Error> {
-        let normalized_list = single_or_list.to_normalized_list();
-        Ok(normalized_list)
+        Ok(single_or_list.to_normalized_list())
     }
 }
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     version: String,
