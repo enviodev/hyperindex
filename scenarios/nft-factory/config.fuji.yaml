@@ -8,26 +8,25 @@ networks:
     contracts:
       - name: NftFactory
         abi_file_path: abis/NftFactory.json
-        address: ["0xB1540299B9853c11cEA52939D0C3e06b29Ad99ec"]
+        address: "0xB1540299B9853c11cEA52939D0C3e06b29Ad99ec"
         handler: src/EventHandlers.js
         events:
           - name: "SimpleNftCreated"
-            requiredEntities: [] 
+            requiredEntities: []
       - name: SimpleNft
         abi_file_path: abis/SimpleNft.json
-        address: ["0xd19d8469cd68d6e34617c349491c45e48a1efde0"]
+        address: "0xd19d8469cd68d6e34617c349491c45e48a1efde0"
         handler: src/EventHandlers.js
         events:
           - name: "Transfer"
-            requiredEntities: 
+            requiredEntities:
               - name: "User"
                 labels:
                   - "userFrom"
                   - "userTo"
               - name: Nftcollection
-                labels: 
+                labels:
                   - "nftCollectionUpdated"
               - name: Token
-                labels: 
+                labels:
                   - "existingTransferredToken"
-
