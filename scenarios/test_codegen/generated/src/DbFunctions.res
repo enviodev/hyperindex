@@ -49,19 +49,21 @@ module User = {
     id: string,
     address: string,
     gravatar: option<id>,
+    updatesCountOnUserForTesting: int,
     tokens: array<id>,
     @as("event_chain_id") chainId: int,
     @as("event_id") eventId: Ethers.BigInt.t,
   }
 
   let readRowToReadEntityData = (readRow: userReadRow): readEntityData<Types.userEntity> => {
-    let {id, address, gravatar, tokens, chainId, eventId} = readRow
+    let {id, address, gravatar, updatesCountOnUserForTesting, tokens, chainId, eventId} = readRow
 
     {
       entity: {
         id,
         address,
         gravatar,
+        updatesCountOnUserForTesting,
         tokens,
       },
       eventData: {

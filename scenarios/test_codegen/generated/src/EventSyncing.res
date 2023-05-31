@@ -87,6 +87,13 @@ let convertLogs = (
               logDescription.name,
               Converters.getContractNameFromAddress(log.address, chainId),
             ) {
+            | GravatarContract_TestEventEvent =>
+              let convertedEvent =
+                logDescription
+                ->Converters.Gravatar.convertTestEventLogDescription
+                ->Converters.Gravatar.convertTestEventLog(~log, ~blockPromise)
+
+              Some(convertedEvent)
             | GravatarContract_NewGravatarEvent =>
               let convertedEvent =
                 logDescription

@@ -2,6 +2,7 @@ type User @entity {
   id: ID!
   address: Bytes!
   gravatar: Gravatar
+  updatesCountOnUserForTesting: Int!
   tokens: [Token!]!
 }
 
