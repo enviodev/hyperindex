@@ -36,12 +36,12 @@ module {{contract.name.capitalized}}Contract = {
 
   {{#each contract.events as | event |}}
   let get{{event.name.capitalized}}LoadEntities = () =>
-  {{event.name.uncapitalized}}LoadEntities.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.uncapitalized}}LoadEntities"))
+  {{event.name.uncapitalized}}LoadEntities.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.capitalized}}LoadEntities"))
   {{/each}}
 
   {{#each contract.events as | event |}}
   let get{{event.name.capitalized}}Handler = () => 
-  {{event.name.uncapitalized}}Handler.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.uncapitalized}}Handler"))
+  {{event.name.uncapitalized}}Handler.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.capitalized}}Handler"))
   {{/each}}
 }
 

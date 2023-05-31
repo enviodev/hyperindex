@@ -10,7 +10,7 @@ networks:
       - name: Contract1
         abi_file_path: ../abis/Contract1.json
         handler: ./src/EventHandler.js
-        address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+        address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
         events:
           - name: "NewGravatar"
           - name: "UpdatedGravatar"

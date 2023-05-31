@@ -11,9 +11,6 @@ export type id = string;
 export type Id = id;
 
 // tslint:disable-next-line:interface-over-type-literal
-export type contactDetails = { readonly name: string; readonly email: string };
-
-// tslint:disable-next-line:interface-over-type-literal
 export type userLoaderConfig = { readonly loadGravatar?: gravatarLoaderConfig; readonly loadTokens?: tokenLoaderConfig };
 
 // tslint:disable-next-line:interface-over-type-literal
@@ -77,7 +74,7 @@ export type eventLog<a> = {
 export type GravatarContract_TestEventEvent_eventArgs = {
   readonly id: Ethers_BigInt_t; 
   readonly user: Ethers_ethAddress; 
-  readonly contactDetails: contactDetails
+  readonly contactDetails: [string, string]
 };
 
 // tslint:disable-next-line:interface-over-type-literal

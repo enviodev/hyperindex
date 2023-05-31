@@ -77,24 +77,24 @@ module GravatarContract = {
 
   let getTestEventLoadEntities = () =>
     testEventLoadEntities.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("testEventLoadEntities"),
+      getDefaultHandler("TestEventLoadEntities"),
     )
   let getNewGravatarLoadEntities = () =>
     newGravatarLoadEntities.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("newGravatarLoadEntities"),
+      getDefaultHandler("NewGravatarLoadEntities"),
     )
   let getUpdatedGravatarLoadEntities = () =>
     updatedGravatarLoadEntities.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("updatedGravatarLoadEntities"),
+      getDefaultHandler("UpdatedGravatarLoadEntities"),
     )
 
   let getTestEventHandler = () =>
-    testEventHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("testEventHandler"))
+    testEventHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("TestEventHandler"))
   let getNewGravatarHandler = () =>
-    newGravatarHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("newGravatarHandler"))
+    newGravatarHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("NewGravatarHandler"))
   let getUpdatedGravatarHandler = () =>
     updatedGravatarHandler.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("updatedGravatarHandler"),
+      getDefaultHandler("UpdatedGravatarHandler"),
     )
 }
 
@@ -126,12 +126,12 @@ module NftFactoryContract = {
 
   let getSimpleNftCreatedLoadEntities = () =>
     simpleNftCreatedLoadEntities.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("simpleNftCreatedLoadEntities"),
+      getDefaultHandler("SimpleNftCreatedLoadEntities"),
     )
 
   let getSimpleNftCreatedHandler = () =>
     simpleNftCreatedHandler.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("simpleNftCreatedHandler"),
+      getDefaultHandler("SimpleNftCreatedHandler"),
     )
 }
 
@@ -163,9 +163,9 @@ module SimpleNftContract = {
 
   let getTransferLoadEntities = () =>
     transferLoadEntities.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("transferLoadEntities"),
+      getDefaultHandler("TransferLoadEntities"),
     )
 
   let getTransferHandler = () =>
-    transferHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("transferHandler"))
+    transferHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("TransferHandler"))
 }

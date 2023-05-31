@@ -50,7 +50,7 @@ module RawEventsTable = {
 module User = {
   let createUserTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"user\" (\"id\" text  NOT NULL,\"address\" text  NOT NULL,\"gravatar\" text,\"updatesCountOnUserForTesting\" integer  NOT NULL,\"tokens\" text  NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"user\" (\"id\" text NOT NULL,\"address\" text NOT NULL,\"gravatar\" text,\"updatesCountOnUserForTesting\" integer NOT NULL,\"tokens\" text[] NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
     )
   }
 
@@ -63,7 +63,7 @@ module User = {
 module Gravatar = {
   let createGravatarTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"gravatar\" (\"id\" text  NOT NULL,\"owner\" text  NOT NULL,\"displayName\" text  NOT NULL,\"imageUrl\" text  NOT NULL,\"updatesCount\" numeric  NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"gravatar\" (\"id\" text NOT NULL,\"owner\" text NOT NULL,\"displayName\" text NOT NULL,\"imageUrl\" text NOT NULL,\"updatesCount\" numeric NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
     )
   }
 
@@ -76,7 +76,7 @@ module Gravatar = {
 module Nftcollection = {
   let createNftcollectionTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"nftcollection\" (\"id\" text  NOT NULL,\"contractAddress\" text  NOT NULL,\"name\" text  NOT NULL,\"symbol\" text  NOT NULL,\"maxSupply\" numeric  NOT NULL,\"currentSupply\" integer  NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"nftcollection\" (\"id\" text NOT NULL,\"contractAddress\" text NOT NULL,\"name\" text NOT NULL,\"symbol\" text NOT NULL,\"maxSupply\" numeric NOT NULL,\"currentSupply\" integer NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
     )
   }
 
@@ -89,7 +89,7 @@ module Nftcollection = {
 module Token = {
   let createTokenTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"token\" (\"id\" text  NOT NULL,\"tokenId\" numeric  NOT NULL,\"collection\" text  NOT NULL,\"owner\" text  NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"token\" (\"id\" text NOT NULL,\"tokenId\" numeric NOT NULL,\"collection\" text NOT NULL,\"owner\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
     )
   }
 

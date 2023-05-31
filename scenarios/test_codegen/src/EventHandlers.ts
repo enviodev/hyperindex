@@ -5,7 +5,11 @@ import {
   SimpleNftContract_registerTransferLoadEntities,
 } from "../generated/src/Handlers.gen";
 
-import { nftcollectionEntity, tokenEntity } from "../generated/src/Types.gen";
+import {
+  nftcollectionEntity,
+  tokenEntity,
+  userEntity,
+} from "../generated/src/Types.gen";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
@@ -92,7 +96,7 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
       userToTokens.concat(userToTokensOpt);
     }
 
-    let userTo = {
+    let userTo: userEntity = {
       id: event.params.to,
       address: event.params.to,
       tokens: userToTokens,

@@ -1,12 +1,11 @@
 use std::error::Error;
 use std::path::PathBuf;
+use std::slice::Iter;
 
 pub mod entity_parsing;
 pub mod event_parsing;
 
 use serde::{Deserialize, Serialize};
-
-use ethereum_abi::Abi;
 
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
@@ -44,8 +43,56 @@ pub struct ConfigContract {
     //  #[serde(deserialize_with = "abi_path_to_abi")]
     pub abi_file_path: String,
     pub handler: String,
-    address: Vec<String>,
+    address: NormalizedList<String>,
     events: Vec<Event>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(untagged)]
+enum SingleOrList<T: Clone> {
+    Single(T),
+    List(Vec<T>),
+}
+
+impl<T: Clone> SingleOrList<T> {
+    fn to_normalized_list(&self) -> NormalizedList<T> {
+        let list: Vec<T> = match self {
+            SingleOrList::Single(val) => vec![val.clone()],
+            SingleOrList::List(list) => list.to_vec(),
+        };
+
+        NormalizedList { inner: list }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(try_from = "SingleOrList<T>")]
+struct NormalizedList<T: Clone> {
+    inner: Vec<T>,
+}
+
+impl<T: Clone> NormalizedList<T> {
+    fn iter(&self) -> Iter<T> {
+        self.inner.iter()
+    }
+
+    #[cfg(test)]
+    fn from(list: Vec<T>) -> Self {
+        NormalizedList { inner: list }
+    }
+
+    #[cfg(test)]
+    fn from_single(val: T) -> Self {
+        Self::from(vec![val])
+    }
+}
+
+impl<T: Clone> TryFrom<SingleOrList<T>> for NormalizedList<T> {
+    type Error = String;
+
+    fn try_from(single_or_list: SingleOrList<T>) -> Result<Self, Self::Error> {
+        Ok(single_or_list.to_normalized_list())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -108,13 +155,13 @@ pub fn convert_config_to_chain_configs(
                     network_id: network.id,
                     name: contract.name.clone(),
                 };
-                let parsed_abi: Abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
+                let parsed_abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
                 let stringified_abi = serde_json::to_string(&parsed_abi)?;
                 let single_contract = SingleContractTemplate {
                     name: contract.name.to_capitalized_options(),
                     abi: stringified_abi,
-                    address: contract_address.clone(),
+                    address: contract_address.to_string(),
                     events: contract
                         .events
                         .iter()
@@ -136,6 +183,7 @@ pub fn convert_config_to_chain_configs(
 #[cfg(test)]
 mod tests {
     use crate::capitalization::Capitalize;
+    use crate::config_parsing::NormalizedList;
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
@@ -160,7 +208,7 @@ mod tests {
 
         let contract1 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address1.clone()],
+            address: NormalizedList::from_single(address1.clone()),
             name: String::from("Contract1"),
             //needed to have relative path in order to match config1.yaml
             abi_file_path: String::from("../abis/Contract1.json"),
@@ -187,7 +235,7 @@ mod tests {
         let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
@@ -232,7 +280,7 @@ mod tests {
 
         let contract1 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address1.clone()],
+            address: NormalizedList::from_single(address1.clone()),
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
             events: vec![event1.clone(), event2.clone()],
@@ -248,7 +296,7 @@ mod tests {
         };
         let contract2 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address2.clone()],
+            address: NormalizedList::from_single(address2.clone()),
             name: String::from("Contract1"),
             abi_file_path: String::from("../abis/Contract1.json"),
             events: vec![event1.clone(), event2.clone()],
@@ -282,7 +330,7 @@ mod tests {
 
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),

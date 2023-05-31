@@ -7,12 +7,6 @@ type id = string
 
 //nested subrecord types
 
-@spice
-type contactDetails = {
-  name: string,
-  email: string,
-}
-
 @@warning("-30")
 @genType
 type rec userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: tokenLoaderConfig}
@@ -200,7 +194,7 @@ module GravatarContract = {
     type eventArgs = {
       id: Ethers.BigInt.t,
       user: Ethers.ethAddress,
-      contactDetails: contactDetails,
+      contactDetails: (string, string),
     }
     type userEntityHandlerContext = {
       insert: userEntity => unit,

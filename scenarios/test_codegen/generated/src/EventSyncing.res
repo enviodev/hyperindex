@@ -1,5 +1,27 @@
 exception QueryTimout(string)
 
+let initialBlockInterval = 200
+
+// After an RPC error, how much to scale back the number of blocks requested at once
+let backoffMultiplicative = 0.8
+
+// Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
+let accelerationAdditive = 20
+
+// After an error, how long to wait before retrying
+let backoffMillis = 5000
+
+let queryTimeoutMillis = 20000
+
+// Expose key removal on JS maps, used for cache invalidation
+// Unfortunately Js.Dict.unsafeDeleteKey only works with Js.Dict.t<String>
+%%raw(`
+function deleteKey(obj, k) {
+  delete obj[k]
+}
+`)
+@val external deleteKey: ('a, string) => unit = "deleteKey"
+
 let convertLogs = (
   logsPromise: Promise.t<array<Ethers.log>>,
   ~provider,
@@ -12,27 +34,34 @@ let convertLogs = (
     Promise.t<Js.Nullable.t<Ethers.JsonRpcProvider.block>>,
   > = Js.Dict.empty()
 
-  //Many times logs will be from the same block so there is no need to make multiple get block requests in that case
+  // Many times logs will be from the same block so there is no need to make multiple get block requests in that case
   let getMemoisedBlockPromise = blockNumber => {
-    let blockRequestCached = blockRequestMapping->Js.Dict.get(blockNumber->Belt.Int.toString)
+    let blockKey = Belt.Int.toString(blockNumber)
+
+    let blockRequestCached = blockRequestMapping->Js.Dict.get(blockKey)
 
     let blockRequest = switch blockRequestCached {
     | Some(req) => req
     | None =>
       let newRequest = provider->Ethers.JsonRpcProvider.getBlock(blockNumber)
-      blockRequestMapping->Js.Dict.set(blockNumber->Belt.Int.toString, newRequest)
-
+      // Cache the request
+      blockRequestMapping->Js.Dict.set(blockKey, newRequest)
       newRequest
     }
-    blockRequest->Promise.then(block =>
+    blockRequest
+    ->Promise.catch(err => {
+      // Invalidate the cache, so that the request can be retried
+      deleteKey(blockRequestMapping, blockKey)
+
+      // Propagate failure to where we handle backoff
+      Promise.reject(err)
+    })
+    ->Promise.then(block =>
       switch block->Js.Nullable.toOption {
       | Some(block) => Promise.resolve(block)
-      | None =>
-        Promise.reject(
-          Js.Exn.raiseError(`getBLock(${blockNumber->Belt.Int.toString}) returned null`),
-        )
+      | None => Promise.reject(Js.Exn.raiseError(`getBlock(${blockKey}) returned null`))
       }
-    ) // dangerous to not catch here but need to catch this promise later where it is used and handle it there
+    )
   }
 
   let task = async () => {
@@ -104,7 +133,7 @@ let convertLogs = (
   }
 
   Time.retryOnCatchAfterDelay(
-    ~retryDelayMilliseconds=5000,
+    ~retryDelayMilliseconds=backoffMillis,
     ~retryMessage=`Failed to handle event logs from block ${fromBlockForLogging->Belt.Int.toString} to block ${toBlockForLogging->Belt.Int.toString}`,
     ~task,
   )
@@ -188,8 +217,13 @@ let getAllEventFilters = (
   eventFilters
 }
 
+type blocksProcessed = {
+  from: int,
+  to: int,
+}
+
 let processAllEventsFromBlockNumber = async (
-  ~fromBlock,
+  ~fromBlock: int,
   ~blockInterval as maxBlockInterval,
   ~chainConfig: Config.chainConfig,
   ~provider,
@@ -198,27 +232,33 @@ let processAllEventsFromBlockNumber = async (
 
   let eventFilters = getAllEventFilters(~addressInterfaceMapping, ~chainConfig, ~provider)
 
-  let fromBlock = ref(fromBlock)
+  let fromBlockRef = ref(fromBlock)
   let currentBlock: ref<option<int>> = ref(None)
   let shouldContinueProcess = () =>
     currentBlock.contents->Belt.Option.mapWithDefault(true, blockNum =>
-      fromBlock.contents < blockNum
+      fromBlockRef.contents < blockNum
     )
+
+  let currentBlockInterval = ref(maxBlockInterval)
 
   while shouldContinueProcess() {
     let rec executeQuery = (~blockInterval) => {
-      //If the query hangs for longer than 20 seconds, reject this promise to reduce the block interval
+      //If the query hangs for longer than this, reject this promise to reduce the block interval
       let queryTimoutPromise =
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=20000)->Promise.then(() =>
-          Promise.reject(QueryTimout("Query took longer than 20 seconds"))
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=queryTimeoutMillis)->Promise.then(() =>
+          Promise.reject(
+            QueryTimout(
+              `Query took longer than ${Belt.Int.toString(queryTimeoutMillis / 1000)} seconds`,
+            ),
+          )
         )
 
       let queryPromise =
         queryEventsWithCombinedFilterAndExecuteHandlers(
           ~addressInterfaceMapping,
           ~eventFilters,
-          ~fromBlock=fromBlock.contents,
-          ~toBlock=fromBlock.contents + blockInterval - 1,
+          ~fromBlock=fromBlockRef.contents,
+          ~toBlock=fromBlockRef.contents + blockInterval - 1,
           ~provider,
           ~chainId=chainConfig.chainId,
         )->Promise.thenResolve(_ => blockInterval)
@@ -226,19 +266,27 @@ let processAllEventsFromBlockNumber = async (
       [queryTimoutPromise, queryPromise]
       ->Promise.race
       ->Promise.catch(err => {
-        Js.log2("Error getting events, waiting 5 seconds before retrying", err)
+        Js.log2(
+          `Error getting events, waiting ${(backoffMillis / 1000)
+              ->Belt.Int.toString} seconds before retrying`,
+          err,
+        )
 
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=5000)->Promise.then(_ => {
-          let nextBlockIntervalTry = (blockInterval->Belt.Int.toFloat *. 0.8)->Belt.Int.fromFloat
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMillis)->Promise.then(_ => {
+          let nextBlockIntervalTry =
+            (blockInterval->Belt.Int.toFloat *. backoffMultiplicative)->Belt.Int.fromFloat
           Js.log3("Retrying query fromBlock and toBlock:", fromBlock, nextBlockIntervalTry)
           executeQuery(~blockInterval={nextBlockIntervalTry})
         })
       })
     }
 
-    let executedBlockInterval = await executeQuery(~blockInterval=maxBlockInterval)
+    let executedBlockInterval = await executeQuery(~blockInterval=currentBlockInterval.contents)
 
-    fromBlock := fromBlock.contents + executedBlockInterval
+    // Increase batch size going forward, https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    currentBlockInterval := executedBlockInterval + accelerationAdditive
+
+    fromBlockRef := fromBlockRef.contents + executedBlockInterval
     let currentBlockFromRPC =
       await provider
       ->Ethers.JsonRpcProvider.getBlockNumber
@@ -248,18 +296,27 @@ let processAllEventsFromBlockNumber = async (
       })
     currentBlock := Some(currentBlockFromRPC)
     Js.log(
-      `Finished processAllEventsFromBlockNumber ${fromBlock.contents->Belt.Int.toString} out of ${currentBlockFromRPC->Belt.Int.toString}`,
+      `Finished processAllEventsFromBlockNumber ${fromBlockRef.contents->Belt.Int.toString} out of ${currentBlockFromRPC->Belt.Int.toString}`,
     )
   }
+  {from: fromBlock, to: fromBlockRef.contents - 1}
 }
 
-let processAllEvents = (chainConfig: Config.chainConfig) => {
-  let startBlock = chainConfig.startBlock
+let processAllEvents = async (chainConfig: Config.chainConfig) => {
+  let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
+    ~chainId=chainConfig.chainId,
+  )
 
-  processAllEventsFromBlockNumber(
+  let startBlock =
+    latestProcessedBlock->Belt.Option.mapWithDefault(
+      chainConfig.startBlock,
+      latestProcessedBlock => {latestProcessedBlock + 1},
+    )
+
+  await processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
-    ~blockInterval=2000,
+    ~blockInterval=initialBlockInterval,
     ~provider=chainConfig.provider,
   )
 }
