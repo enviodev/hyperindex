@@ -144,35 +144,32 @@ fn get_contract_type_from_config_contract(
 
     for config_event in config_contract.events.iter() {
         let abi_event = match &config_event.event {
-            EventNameOrSig::Name(config_event_name) => match &contract_abi_opt {
-                None => {
-                    let message = format!(
+            EventNameOrSig::Name(config_event_name) => {
+                if let None = contract_abi_opt {
+                    Err(format!(
                         "Please provide a valid abi_file_path for your named event {} or alternatively provide a event signature",
                         config_event_name
-                        );
-                    Err(message)?
+                        ))?
                 }
-                Some(contract_abi) => contract_abi.event(config_event_name).ok(),
-            },
-            EventNameOrSig::Event(config_defined_event) => match &contract_abi_opt {
-                None => Some(config_defined_event),
-                Some(contract_abi) => {
-                    let abi_file_event_opt = contract_abi.event(&config_defined_event.name).ok();
 
-                    match abi_file_event_opt {
-                        Some(abi_file_event) => {
-                            if abi_file_event != config_defined_event {
-                                println!("WARNING: The event signature for {} in your ABI file does not match the signature defined in the config", config_defined_event.name);
-                            }
-                            Some(config_defined_event)
-                        }
-                        None => {
-                            println!("WARNING: The event signature for {} defined in your config does not exist in the provided ABI file", config_defined_event.name);
-                            Some(config_defined_event)
-                        }
-                    }
-                }
+                // TODO: Handle None: "WARNING: The event for {} was not found in your ABI", config_defined_event.name)
+                contract_abi_opt.as_ref().and_then(|abi| abi.event(config_event_name).ok())
             },
+            EventNameOrSig::Event(config_defined_event) => {
+                contract_abi_opt.as_ref().map(|contract_abi| {
+                    match &contract_abi.event(&config_defined_event.name) {
+                        Err(_) => {
+                            eprintln!("WARNING: The event signature for {} defined in your config does not exist in the provided ABI file", config_defined_event.name);
+                        },
+                        Ok(abi_file_event) => {
+                            if abi_file_event != &config_defined_event {
+                                eprintln!("WARNING: The event signature for {} in your ABI file does not match the signature defined in the config", config_defined_event.name);
+                            }
+                        },
+                    }});
+                Some(config_defined_event)
+            }
+                ,
         };
 
         match abi_event {
