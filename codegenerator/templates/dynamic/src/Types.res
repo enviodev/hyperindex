@@ -17,14 +17,15 @@ type id = string
 
 {{/each}}
 
-// HARDCODED (for now)
 @@warning("-30")
 @genType
-type rec gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
-and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: tokenLoaderConfig}
-and tokenLoaderConfig = {loadOwner?: userLoaderConfig, loadCollection?: bool}
+type rec {{#each entities as | entity |}}{{#unless @first}}
+and {{/unless}}{{entity.name.uncapitalized}}LoaderConfig = {{#if entity.relational_params.[0]}}{
+  {{#each entity.relational_params as | relational_param |}}
+  load{{relational_param.relational_key.capitalized}}?: {{relational_param.mapped_entity.uncapitalized}}LoaderConfig,{{/each}}
+}{{else}}bool{{/if}}{{/each}}
+
 @@warning("+30")
-// TODO: make this dynamic
 
 type entityRead = 
 {{#each entities as | entity |}}

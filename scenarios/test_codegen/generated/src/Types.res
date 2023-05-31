@@ -13,14 +13,14 @@ type contactDetails = {
   email: string,
 }
 
-// HARDCODED (for now)
 @@warning("-30")
 @genType
-type rec gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
-and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: tokenLoaderConfig}
-and tokenLoaderConfig = {loadOwner?: userLoaderConfig, loadCollection?: bool}
+type rec userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: tokenLoaderConfig}
+and gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
+and nftcollectionLoaderConfig = bool
+and tokenLoaderConfig = {loadCollection?: nftcollectionLoaderConfig, loadOwner?: userLoaderConfig}
+
 @@warning("+30")
-// TODO: make this dynamic
 
 type entityRead =
   | UserRead(id, userLoaderConfig)
