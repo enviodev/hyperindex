@@ -48,7 +48,7 @@ impl TryFrom<String> for EventNameOrSig {
         let name_or_sig = if trimmed.starts_with("event ") {
             let parsed_event = parse_event_sig(trimmed)?;
             EventNameOrSig::Event(parsed_event)
-        } else if trimmed.contains("(") && trimmed.contains(")") {
+        } else if trimmed.contains("(") {
             let signature = format!("event {}", trimmed);
             let parsed_event = parse_event_sig(&signature)?;
             EventNameOrSig::Event(parsed_event)
