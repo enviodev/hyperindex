@@ -83,13 +83,13 @@ curl -X POST localhost:8080/v1/metadata \
     "type": "pg_create_{{relational_param.relationship_type}}_relationship",
     "args": {
         "table": "{{entity.name.uncapitalized}}",
-        "name": "{{relational_param.relational_key}}Map",
+        "name": "{{relational_param.relational_key.uncapitalized}}Map",
         "source": "default",
         "using": {
             "manual_configuration" : {
                 "remote_table" : "{{relational_param.mapped_entity.uncapitalized}}",
                 "column_mapping" : {
-                    "{{relational_param.relational_key}}" : "id"
+                    "{{relational_param.relational_key.uncapitalized}}" : "id"
                 }
             }
         }

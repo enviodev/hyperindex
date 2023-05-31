@@ -42,9 +42,11 @@ impl HasName for EventRecordType {
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 struct EntityRelationalTypes {
-    relational_key: String,
+    relational_key: CapitalizedOptions,
     mapped_entity: CapitalizedOptions,
     relationship_type: String,
+    is_optional: bool,
+    // is_optional_str: String,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
