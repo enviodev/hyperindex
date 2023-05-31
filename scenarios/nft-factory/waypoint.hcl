@@ -23,6 +23,7 @@ app "nft-factory-indexer" {
       name   = "demouser.postgres-demo-cluster.credentials.postgresql.acid.zalan.do" # Secret name
       key    = "password"
       secret = true
+      namespace = "postgres"
     })
     }
   }
@@ -33,7 +34,7 @@ app "nft-factory-indexer" {
       use "aws-ecr" {
         region     = "us-east-2"
         repository = "envio-repository"
-        tag        = "nft-indexer-fuji-50"
+        tag        = "nft-indexer-fuji-59"
       }
     }
   }
