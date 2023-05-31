@@ -17,16 +17,23 @@ type id = string
 
 {{/each}}
 
+// HARDCODED (for now)
+@genType
+type rec gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
+and userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: tokenLoaderConfig}
+and tokenLoaderConfig = {loadOwner?: userLoaderConfig, nftcolletion?: bool}
+// TODO: make this dynamic
+
 type entityRead = 
 {{#each entities as | entity |}}
-| {{entity.name.capitalized}}Read(id)
+| {{entity.name.capitalized}}Read(id{{#if entity.relational_params.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}})
 {{/each}}
 
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
   {{#each entities as | entity |}}
-  | {{entity.name.capitalized}}Read(id) => `{{entity.name.uncapitalized}}${id}`
+  | {{entity.name.capitalized}}Read(id{{#if entity.relational_params.[0]}}, _{{/if}}) => `{{entity.name.uncapitalized}}${id}`
   {{/each}}
   }
 }
@@ -45,6 +52,7 @@ type rawEventsEntity = {
   params: Js.Json.t,
 }
 
+{{#each entities as | entity |}}
 @genType
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
@@ -68,7 +76,6 @@ let serialize{{entity.name.capitalized}}Entity = (entity: {{entity.name.uncapita
 }
 
 {{/each}}
-
 type entity = 
 {{#each entities as | entity |}}
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
@@ -122,7 +129,17 @@ module {{event.name.capitalized}}Event = {
         {{#each required_entity.labels as |label| }}
         {{label}}: unit => option<{{required_entity.name.uncapitalized}}Entity>,
         {{/each}}
+        {{#each required_entity.entity_fields_of_required_entity as | entity_field_of_required_entity |}}
+        // TODO: make this type correspond to if the field is optional or not.
+          get{{entity_field_of_required_entity.field_name.capitalized}}: {{entity.name.uncapitalized}}Entity => 
+          {{#if entity_field_of_required_entity.is_optional}}
+            option<{{entity_field_of_required_entity.type_name.uncapitalized}}Entity>,
+          {{else}}
+            {{entity_field_of_required_entity.type_name.uncapitalized}}Entity,
+          {{/if}}
+        {{/each}}
       {{/if}}
+
     {{/each}}
       insert: {{entity.name.uncapitalized}}Entity => unit,
       update: {{entity.name.uncapitalized}}Entity => unit,
@@ -136,31 +153,22 @@ module {{event.name.capitalized}}Event = {
       {{/each}}
     }
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     {{#each event.required_entities as | required_entity |}}
-    type {{required_entity.name.uncapitalized}}SubEntityLoader = {
-      {{#each required_entity.entity_fields_of_required_entity as | entityField |}}
-      {{entityField.uncapitalized}}Load: unit => unit,
-      {{/each}}
-    }
-    {{/each}}
-
-    {{#each event.required_entities as | required_entity |}}
+    @genType
     type {{required_entity.name.uncapitalized}}EntityLoaderContext = {
       {{#each required_entity.labels as | label |}}
-      {{label}}Load: id => {{required_entity.name.uncapitalized}}SubEntityLoader,
+      {{label}}Load: (id{{#if required_entity.entity_fields_of_required_entity.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
       {{/each}}
     }
     {{/each}}
 
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     @genType
     type loaderContext = {
     {{#each event.required_entities as | required_entity |}}
     {{required_entity.name.uncapitalized}} : {{required_entity.name.uncapitalized}}EntityLoaderContext,
     {{/each}}
     }
-
-  
 }
 {{/each}}
 }

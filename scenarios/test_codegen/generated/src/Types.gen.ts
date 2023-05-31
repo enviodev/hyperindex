@@ -92,7 +92,26 @@ export type GravatarContract_TestEventEvent_gravatarEntityHandlerContext = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_TestEventEvent_context = { readonly user: GravatarContract_TestEventEvent_userEntityHandlerContext; readonly gravatar: GravatarContract_TestEventEvent_gravatarEntityHandlerContext };
+export type GravatarContract_TestEventEvent_nftcollectionEntityHandlerContext = {
+  readonly insert: (_1:nftcollectionEntity) => void; 
+  readonly update: (_1:nftcollectionEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_TestEventEvent_tokenEntityHandlerContext = {
+  readonly insert: (_1:tokenEntity) => void; 
+  readonly update: (_1:tokenEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_TestEventEvent_context = {
+  readonly user: GravatarContract_TestEventEvent_userEntityHandlerContext; 
+  readonly gravatar: GravatarContract_TestEventEvent_gravatarEntityHandlerContext; 
+  readonly nftcollection: GravatarContract_TestEventEvent_nftcollectionEntityHandlerContext; 
+  readonly token: GravatarContract_TestEventEvent_tokenEntityHandlerContext
+};
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_TestEventEvent_loaderContext = {};
@@ -254,6 +273,7 @@ export type SimpleNftContract_TransferEvent_eventArgs = {
 export type SimpleNftContract_TransferEvent_userEntityHandlerContext = {
   readonly userFrom: () => (null | undefined | userEntity); 
   readonly userTo: () => (null | undefined | userEntity); 
+  readonly getGravatar: (_1:userEntity) => (null | undefined | gravatarEntity); 
   readonly insert: (_1:userEntity) => void; 
   readonly update: (_1:userEntity) => void; 
   readonly delete: (_1:id) => void
@@ -277,6 +297,8 @@ export type SimpleNftContract_TransferEvent_nftcollectionEntityHandlerContext = 
 // tslint:disable-next-line:interface-over-type-literal
 export type SimpleNftContract_TransferEvent_tokenEntityHandlerContext = {
   readonly existingTransferredToken: () => (null | undefined | tokenEntity); 
+  readonly getCollection: (_1:tokenEntity) => nftcollectionEntity; 
+  readonly getOwner: (_1:tokenEntity) => userEntity; 
   readonly insert: (_1:tokenEntity) => void; 
   readonly update: (_1:tokenEntity) => void; 
   readonly delete: (_1:id) => void

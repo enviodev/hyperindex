@@ -2,7 +2,6 @@ let config: Postgres.poolConfig = {
   ...Config.db,
   transform: {undefined: Js.null},
 }
-
 let sql = Postgres.makeSql(~config)
 
 type chainId = int

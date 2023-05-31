@@ -98,7 +98,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   entityBatch->Belt.Array.forEach(readEntity => {
     switch readEntity {
     {{#each entities as | entity |}}
-    | {{entity.name.capitalized}}Read(entity) =>
+    | {{entity.name.capitalized}}Read(entity{{#if entity.relational_params.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}) =>
       let _ = Js.Dict.set(unique{{entity.name.capitalized}}Dict, readEntity->Types.entitySerialize, entity)
     {{/each}}
     }

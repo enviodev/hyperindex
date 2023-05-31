@@ -7,7 +7,7 @@ module RawEventsTable = {
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'event_type') THEN
           CREATE TYPE EVENT_TYPE AS ENUM (
-          'GravatarContract_NewGravatarEvent',          'GravatarContract_UpdatedGravatarEvent',
+          'GravatarContract_TestEventEvent',          'GravatarContract_NewGravatarEvent',          'GravatarContract_UpdatedGravatarEvent',
           'NftFactoryContract_SimpleNftCreatedEvent',
           'SimpleNftContract_TransferEvent'
           );
