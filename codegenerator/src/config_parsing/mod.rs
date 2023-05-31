@@ -45,7 +45,7 @@ impl TryFrom<String> for EventNameOrSig {
 
         let trimmed = event_string.trim();
 
-        let name_or_sig = if trimmed.starts_with("event") {
+        let name_or_sig = if trimmed.starts_with("event ") {
             let parsed_event = parse_event_sig(trimmed)?;
             EventNameOrSig::Event(parsed_event)
         } else if trimmed.contains("(") && trimmed.contains(")") {
