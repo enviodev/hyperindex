@@ -13,12 +13,11 @@ module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
   FROM public.raw_events
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
 
-module.exports.batchSetRawEvents = (sql, entityDataArray) => {
-  const valueCopyToFixBigIntType = entityDataArray; // This is required for BigInts to work in the db. See: https://github.com/Float-Capital/indexer/issues/212
+const batchSetRawEventsCore = (sql, entityDataArray) => {
   return sql`
     INSERT INTO public.raw_events
   ${sql(
-    valueCopyToFixBigIntType,
+    entityDataArray,
     "chain_id",
     "event_id",
     "block_number",
@@ -47,6 +46,27 @@ module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   ;`;
 };
 
+const chunkBatchQuery = (sql, entityDataArray, maxItemsPerQuery, queryToExecute) => {
+  const promises = [];
+
+  // Split entityDataArray into chunks of maxItemsPerQuery
+  for (let i = 0; i < entityDataArray.length; i += maxItemsPerQuery) {
+    const chunk = entityDataArray.slice(i, i + maxItemsPerQuery);
+
+    promises.push(queryToExecute(sql, chunk));
+  }
+
+  // Execute all promises
+  return Promise.all(promises);
+};
+
+module.exports.batchSetRawEvents = (sql, entityDataArray) => {
+  // TODO: make this max batch size optimal
+  const MAX_ITEMS_PER_QUERY_RawEvents = 50;
+
+  return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_RawEvents, batchSetRawEventsCore);
+};
+
 module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
   FROM public.raw_events
@@ -67,7 +87,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   FROM public.user
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetUser = (sql, entityDataArray) => {
+  const batchSetUserCore = (sql, entityDataArray) => {
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
@@ -95,6 +115,13 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   ;`
   }
 
+  module.exports.batchSetUser = (sql, entityDataArray) => {
+    // TODO: make this max batch size optimal. Do calculations to achieve this.
+    const MAX_ITEMS_PER_QUERY_User = 50;
+
+    return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_User, batchSetUserCore);
+  }
+
   module.exports.batchDeleteUser = (sql, entityIdArray) => sql`
   DELETE
   FROM public.user
@@ -115,7 +142,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   FROM public.gravatar
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetGravatar = (sql, entityDataArray) => {
+  const batchSetGravatarCore = (sql, entityDataArray) => {
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
@@ -143,6 +170,13 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   ;`
   }
 
+  module.exports.batchSetGravatar = (sql, entityDataArray) => {
+    // TODO: make this max batch size optimal. Do calculations to achieve this.
+    const MAX_ITEMS_PER_QUERY_Gravatar = 50;
+
+    return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_Gravatar, batchSetGravatarCore);
+  }
+
   module.exports.batchDeleteGravatar = (sql, entityIdArray) => sql`
   DELETE
   FROM public.gravatar
@@ -164,7 +198,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   FROM public.nftcollection
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetNftcollection = (sql, entityDataArray) => {
+  const batchSetNftcollectionCore = (sql, entityDataArray) => {
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
@@ -194,6 +228,13 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   ;`
   }
 
+  module.exports.batchSetNftcollection = (sql, entityDataArray) => {
+    // TODO: make this max batch size optimal. Do calculations to achieve this.
+    const MAX_ITEMS_PER_QUERY_Nftcollection = 50;
+
+    return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_Nftcollection, batchSetNftcollectionCore);
+  }
+
   module.exports.batchDeleteNftcollection = (sql, entityIdArray) => sql`
   DELETE
   FROM public.nftcollection
@@ -213,7 +254,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   FROM public.token
   WHERE id IN ${sql(entityIdArray)}`
 
-  module.exports.batchSetToken = (sql, entityDataArray) => {
+  const batchSetTokenCore = (sql, entityDataArray) => {
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
@@ -237,6 +278,13 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
   ;`
+  }
+
+  module.exports.batchSetToken = (sql, entityDataArray) => {
+    // TODO: make this max batch size optimal. Do calculations to achieve this.
+    const MAX_ITEMS_PER_QUERY_Token = 50;
+
+    return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_Token, batchSetTokenCore);
   }
 
   module.exports.batchDeleteToken = (sql, entityIdArray) => sql`

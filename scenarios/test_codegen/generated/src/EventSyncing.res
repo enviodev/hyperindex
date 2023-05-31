@@ -1,12 +1,12 @@
 exception QueryTimout(string)
 
-let initialBlockInterval = 200
+let initialBlockInterval = 10000
 
 // After an RPC error, how much to scale back the number of blocks requested at once
 let backoffMultiplicative = 0.8
 
 // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-let accelerationAdditive = 20
+let accelerationAdditive = 2000
 
 // After an error, how long to wait before retrying
 let backoffMillis = 5000
