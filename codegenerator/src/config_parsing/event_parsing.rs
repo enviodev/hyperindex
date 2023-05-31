@@ -116,7 +116,7 @@ fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthereumAbiEvent,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
-    required_entity_entity_fields_map: &HashMap<String, Vec<CapitalizedOptions>>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<CapitalizedOptions>>,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
@@ -137,7 +137,7 @@ fn get_event_template_from_ethereum_abi_event(
             .map(|required_entity| RequiredEntityTemplate {
                 name: required_entity.name.to_capitalized_options(),
                 labels: required_entity.labels.clone(),
-                required_entity_entity_fields: required_entity_entity_fields_map
+                entity_fields_of_required_entity: entity_fields_of_required_entity_map
                     .get(&required_entity.name)
                     .cloned()
                     .unwrap_or_else(Vec::new),
@@ -160,7 +160,7 @@ fn get_contract_type_from_config_contract(
     parsed_paths: &ParsedPaths,
     contract_unique_id: ContractUniqueId,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
-    required_entity_entity_fields_map: &HashMap<String, Vec<CapitalizedOptions>>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<CapitalizedOptions>>,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -178,8 +178,8 @@ fn get_contract_type_from_config_contract(
                     config_event,
                     abi_event,
                     rescript_subrecord_dependencies,
-                    required_entity_entity_fields_map,
-                    // &(required_entity_entity_fields_map
+                    entity_fields_of_required_entity_map,
+                    // &(entity_fields_of_required_entity_map
                     //     .get(&config_event.name)
                     //     .map(|vec| *vec)),
                 );
@@ -203,7 +203,7 @@ fn get_contract_type_from_config_contract(
 pub fn get_contract_types_from_config(
     parsed_paths: &ParsedPaths,
     rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
-    required_entity_entity_fields_map: &HashMap<String, Vec<CapitalizedOptions>>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<CapitalizedOptions>>,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -219,7 +219,7 @@ pub fn get_contract_types_from_config(
                 parsed_paths,
                 contract_unique_id,
                 rescript_subrecord_dependencies,
-                required_entity_entity_fields_map,
+                entity_fields_of_required_entity_map,
             )?;
             contracts.push(contract);
         }
@@ -351,7 +351,7 @@ mod tests {
             required_entities: vec![RequiredEntityTemplate {
                 name: String::from("Gravatar").to_capitalized_options(),
                 labels: vec![String::from("gravatarWithChanges")],
-                required_entity_entity_fields: Vec::new(),
+                entity_fields_of_required_entity: Vec::new(),
             }],
         };
         assert_eq!(parsed_event_template, expected_event_template)

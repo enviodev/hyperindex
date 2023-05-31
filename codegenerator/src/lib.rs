@@ -72,7 +72,7 @@ impl HasName for EntityRecordType {
 pub struct RequiredEntityTemplate {
     name: CapitalizedOptions,
     labels: Vec<String>,
-    required_entity_entity_fields: Vec<CapitalizedOptions>,
+    entity_fields_of_required_entity: Vec<CapitalizedOptions>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
