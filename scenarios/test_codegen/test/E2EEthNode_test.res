@@ -3,7 +3,7 @@ module MochaPromise = RescriptMocha.Promise
 open Mocha
 
 @@warning("-21")
-let resetPostgresClient = () => {
+let resetPostgresClient: unit => unit = () => {
   // This is a hack to reset the postgres client between tests. postgres.js seems to cache some types, and if tests clear the DB you need to also reset sql.
 
   %raw(

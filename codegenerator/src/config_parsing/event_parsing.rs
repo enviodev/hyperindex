@@ -1,11 +1,14 @@
-use std::path::PathBuf;
-
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, Event as ConfigEvent},
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
-    Contract, Error, EventParamType, EventTemplate, RequiredEntityTemplate,
+    Contract, Error, EventParamType, EventTemplate, RequiredEntityEntityField,
+    RequiredEntityTemplate,
 };
+
+use std::collections::HashMap;
+
+use std::path::PathBuf;
 
 use ethers::abi::{
     Contract as AbiContract, Event as EthAbiEvent, EventParam as EthAbiEventParam,
@@ -91,6 +94,7 @@ fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
 fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthAbiEvent,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
@@ -110,6 +114,10 @@ fn get_event_template_from_ethereum_abi_event(
             .map(|required_entity| RequiredEntityTemplate {
                 name: required_entity.name.to_capitalized_options(),
                 labels: required_entity.labels.clone(),
+                entity_fields_of_required_entity: entity_fields_of_required_entity_map
+                    .get(&required_entity.name)
+                    .cloned()
+                    .unwrap_or_else(Vec::new),
             })
             .collect(),
         None => Vec::new(),
@@ -128,6 +136,7 @@ fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     parsed_paths: &ParsedPaths,
     contract_unique_id: ContractUniqueId,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
@@ -140,8 +149,12 @@ fn get_contract_type_from_config_contract(
 
         match abi_event {
             Some(abi_event) => {
-                let event_type =
-                    get_event_template_from_ethereum_abi_event(config_event, abi_event);
+                let event_type = get_event_template_from_ethereum_abi_event(
+                    config_event,
+                    abi_event,
+                    entity_fields_of_required_entity_map,
+                );
+
                 event_types.push(event_type);
             }
             None => (),
@@ -161,6 +174,7 @@ fn get_contract_type_from_config_contract(
 
 pub fn get_contract_types_from_config(
     parsed_paths: &ParsedPaths,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -175,6 +189,7 @@ pub fn get_contract_types_from_config(
                 config_contract,
                 parsed_paths,
                 contract_unique_id,
+                entity_fields_of_required_entity_map,
             )?;
             contracts.push(contract);
         }
@@ -191,6 +206,7 @@ mod tests {
         EventParamType, EventTemplate, RequiredEntityTemplate,
     };
     use ethers::abi::{Event as AbiEvent, EventParam, ParamType};
+    use std::collections::HashMap;
 
     use super::{abi_type_to_rescript_string, get_event_template_from_ethereum_abi_event};
     #[test]
@@ -224,7 +240,7 @@ mod tests {
         };
 
         let parsed_event_template =
-            get_event_template_from_ethereum_abi_event(&config_event, &abi_event);
+            get_event_template_from_ethereum_abi_event(&config_event, &abi_event, &HashMap::new());
 
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
@@ -277,7 +293,7 @@ mod tests {
         };
 
         let parsed_event_template =
-            get_event_template_from_ethereum_abi_event(&config_event, &abi_event);
+            get_event_template_from_ethereum_abi_event(&config_event, &abi_event, &HashMap::new());
 
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
@@ -294,6 +310,7 @@ mod tests {
             required_entities: vec![RequiredEntityTemplate {
                 name: String::from("Gravatar").to_capitalized_options(),
                 labels: vec![String::from("gravatarWithChanges")],
+                entity_fields_of_required_entity: Vec::new(),
             }],
         };
         assert_eq!(parsed_event_template, expected_event_template)

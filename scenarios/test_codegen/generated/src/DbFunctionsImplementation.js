@@ -60,6 +60,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   "id",
   "address",
   "gravatar",
+  "updatesCountOnUserForTesting",
   "tokens",
   event_chain_id, 
   event_id
@@ -77,6 +78,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "id",
     "address",
     "gravatar",
+    "updatesCountOnUserForTesting",
     "tokens",
     "event_chain_id",
     "event_id",
@@ -86,6 +88,7 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
     "id" = EXCLUDED."id",
     "address" = EXCLUDED."address",
     "gravatar" = EXCLUDED."gravatar",
+    "updatesCountOnUserForTesting" = EXCLUDED."updatesCountOnUserForTesting",
     "tokens" = EXCLUDED."tokens",
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
