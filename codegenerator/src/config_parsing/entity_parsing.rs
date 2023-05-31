@@ -48,7 +48,8 @@ pub fn get_entity_record_types_from_schema(
             let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
             let relationship_type =
                 gql_type_to_postgres_relational_type(&field.name, &field.field_type, &entities_set);
-            let param_maybe_entity_name = gql_type_to_is_entity(&field.field_type, &entities_set);
+            let param_maybe_entity_name =
+                gql_type_to_capitalized_entity_name(&field.field_type, &entities_set);
 
             params.push(EntityParamType {
                 key: field.name.to_owned(),
@@ -220,22 +221,18 @@ fn gql_type_to_rescript_type(
     )
 }
 
-fn gql_type_to_is_entity(
+fn gql_type_to_capitalized_entity_name(
     gql_type: &Type<String>,
     entities_set: &HashSet<String>,
 ) -> Option<CapitalizedOptions> {
     match gql_type {
-        Type::NamedType(named_type) => {
-            if entities_set.contains(named_type) {
-                Some(named_type.to_owned().to_capitalized_options())
-            } else {
-                None
-            }
-        }
+        Type::NamedType(named_type) => entities_set
+            .contains(named_type)
+            .then(|| named_type.to_owned().to_capitalized_options()),
         // NOTE: we don't support lists of entities yet
-        // TODO: make this work for lists of entities
+        // TODO [#363]: make this work for lists of entities
         Type::ListType(_gql_type) => None,
-        Type::NonNullType(gql_type) => gql_type_to_is_entity(&gql_type, entities_set),
+        Type::NonNullType(gql_type) => gql_type_to_capitalized_entity_name(&gql_type, entities_set),
     }
 }
 

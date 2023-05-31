@@ -110,7 +110,7 @@ pub fn entities_to_map(
     let mut map: HashMap<String, Vec<CapitalizedOptions>> = HashMap::new();
 
     for entity in entities {
-        let entity_name = entity.name.get_capitalized();
+        let entity_name = entity.name.capitalized;
 
         let mut related_entities = vec![];
         for param in entity.params {

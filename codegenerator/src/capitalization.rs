@@ -2,14 +2,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CapitalizedOptions {
-    capitalized: String,
-    uncapitalized: String,
-}
-
-impl CapitalizedOptions {
-    pub fn get_capitalized(&self) -> String {
-        self.capitalized.clone()
-    }
+    pub capitalized: String,
+    pub uncapitalized: String,
 }
 
 pub trait Capitalize {
