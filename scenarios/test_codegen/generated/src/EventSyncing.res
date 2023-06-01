@@ -85,7 +85,10 @@ let convertLogs = (
 
             switch Converters.eventStringToEvent(
               logDescription.name,
-              Converters.getContractNameFromAddress(log.address, chainId),
+              Converters.ContractNameAddressMappings.getContractNameFromAddress(
+                ~contractAddress=log.address,
+                ~chainId,
+              ),
             ) {
             | GravatarContract_TestEventEvent =>
               let convertedEvent =
@@ -196,22 +199,25 @@ let getAllEventFilters = (
   let eventFilters = []
 
   chainConfig.contracts->Belt.Array.forEach(contract => {
-    let contractEthers = Ethers.Contract.make(
-      ~address=contract.address,
-      ~abi=contract.abi,
-      ~provider,
-    )
-    addressInterfaceMapping->Js.Dict.set(
-      contract.address->Ethers.ethAddressToString,
-      contractEthers->Ethers.Contract.getInterface,
-    )
+    Converters.ContractNameAddressMappings.getAddressesFromContractName(
+      ~chainId=chainConfig.chainId,
+      ~contractName=contract.name,
+    )->Belt.Array.forEach(address => {
+      let contractEthers = Ethers.Contract.make(~address, ~abi=contract.abi, ~provider)
+      addressInterfaceMapping->Js.Dict.set(
+        address->Ethers.ethAddressToString,
+        contractEthers->Ethers.Contract.getInterface,
+      )
 
-    contract.events->Belt.Array.forEach(eventName => {
-      let eventFilter =
-        contractEthers->Ethers.Contract.getEventFilter(
-          ~eventName=Types.eventNameToString(eventName),
-        )
-      let _ = eventFilters->Js.Array2.push(eventFilter)
+      contract.events->Belt.Array.forEach(
+        eventName => {
+          let eventFilter =
+            contractEthers->Ethers.Contract.getEventFilter(
+              ~eventName=Types.eventNameToString(eventName),
+            )
+          let _ = eventFilters->Js.Array2.push(eventFilter)
+        },
+      )
     })
   })
   eventFilters
@@ -303,6 +309,8 @@ let processAllEventsFromBlockNumber = async (
 }
 
 let processAllEvents = async (chainConfig: Config.chainConfig) => {
+  Converters.ContractNameAddressMappings.registerStaticAddresses(~chainConfig)
+
   let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
     ~chainId=chainConfig.chainId,
   )

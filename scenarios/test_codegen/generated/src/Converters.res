@@ -15,6 +15,7 @@ module ContractNameAddressMappings: {
     ~chainId: int,
     ~contractName: string,
   ) => array<Ethers.ethAddress>
+  let registerStaticAddresses: (~chainConfig: Config.chainConfig) => unit
 } = {
   type addressToContractName = Js.Dict.t<contractName>
   type contractNameToAddresses = Js.Dict.t<Belt.Set.String.t>
@@ -42,6 +43,10 @@ module ContractNameAddressMappings: {
       addresses->Belt.Set.String.add(contractAddress->Ethers.ethAddressToString)
 
     contractNameToAddresses->Js.Dict.set(contractName, updatedAddresses)
+
+    // Ensure we've registered the outer entry, in case we got the default
+    chainAddresses->Js.Dict.set(chainIdStr, addressesToContractName)
+    chainContractNames->Js.Dict.set(chainIdStr, contractNameToAddresses)
   }
 
   let getContractNameFromAddress = (~chainId: int, ~contractAddress: Ethers.ethAddress) => {
@@ -86,19 +91,24 @@ module ContractNameAddressMappings: {
       addresses->Belt.Set.String.toArray->stringsToAddresses
     }
   }
-}
 
-let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: int): string => {
-  switch (contractAddress->Ethers.ethAddressToString, chainId->Belt.Int.toString) {
-  // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-  | ("0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3", "1337") => "Gravatar"
-  // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-  | ("0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC", "1337") => "NftFactory"
-  // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-  | ("0x93606B31d10C407F13D9702eC4E0290Fd7E32852", "1337") => "SimpleNft"
-  | _ => UndefinedContractAddress(contractAddress, chainId)->raise
+  // Insert the static address into the Contract <-> Address bi-mapping
+  let registerStaticAddresses = (~chainConfig: Config.chainConfig) => {
+    chainConfig.contracts->Belt.Array.forEach(contract => {
+      contract.addresses->Belt.Array.forEach(address => {
+        Js.log2("registering chain: ", chainConfig.chainId)
+        Js.log2("registering address", address)
+        Js.log2("registering name", contract.name)
+        addContractAddress(
+          ~chainId=chainConfig.chainId,
+          ~contractName=contract.name,
+          ~contractAddress=address,
+        )
+      })
+    })
   }
 }
+
 let eventStringToEvent = (eventName: string, contractName: string): Types.eventName => {
   switch (eventName, contractName) {
   | ("TestEvent", "Gravatar") => GravatarContract_TestEventEvent

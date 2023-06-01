@@ -9,7 +9,7 @@ module {{contract.name.capitalized}}Contract = {
       getContext: (~eventData: Types.eventData) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
       getEntitiesToLoad: unit => array<Types.entityRead>
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int) => contextCreatorFunctions = (~chainId) => {
       {{#each event.required_entities as | required_entity |}}
       {{#each required_entity.labels as |label| }}
       let optIdOf_{{label}} = ref(None)
@@ -23,7 +23,14 @@ module {{contract.name.capitalized}}Contract = {
         contractRegistration: {
         {{#each ../../contracts as |contract_inner| }}
           //TODO only add contracts we've registered for the event in the config
-          add{{contract_inner.name.capitalized}}: (_ethAddress: Ethers.ethAddress) => (),
+          add{{contract_inner.name.capitalized}}: (contractAddress: Ethers.ethAddress) => 
+          {
+             Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="{{contract_inner.name.capitalized}}",
+            )
+          },
         {{/each}}
         },
       {{#each event.required_entities as | required_entity |}}

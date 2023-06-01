@@ -15,6 +15,7 @@ module ContractNameAddressMappings: {
     ~chainId: int,
     ~contractName: string,
   ) => array<Ethers.ethAddress>
+  let registerStaticAddresses: (~chainConfig: Config.chainConfig) => unit
 } = {
   type addressToContractName = Js.Dict.t<contractName>
   type contractNameToAddresses = Js.Dict.t<Belt.Set.String.t>
@@ -42,6 +43,10 @@ module ContractNameAddressMappings: {
       addresses->Belt.Set.String.add(contractAddress->Ethers.ethAddressToString)
 
     contractNameToAddresses->Js.Dict.set(contractName, updatedAddresses)
+
+    // Ensure we've registered the outer entry, in case we got the default
+    chainAddresses->Js.Dict.set(chainIdStr, addressesToContractName)
+    chainContractNames->Js.Dict.set(chainIdStr, contractNameToAddresses)
   }
 
   let getContractNameFromAddress = (~chainId: int, ~contractAddress: Ethers.ethAddress) => {
@@ -86,21 +91,21 @@ module ContractNameAddressMappings: {
       addresses->Belt.Set.String.toArray->stringsToAddresses
     }
   }
-}
 
-let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: int): string => {
-  switch (contractAddress->Ethers.ethAddressToString, chainId->Belt.Int.toString) {
-    {{#each chain_configs as |chain_config|}}
-    {{#each chain_config.contracts as |contract|}}
-    {{#each contract.addresses as |address|}}
-    // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-    | ("{{address}}", "{{chain_config.network_config.id}}") => "{{contract.name.capitalized}}"
-    {{/each}}
-    {{/each}}
-    {{/each}}
-    | _ => UndefinedContractAddress(contractAddress, chainId)->raise
+  // Insert the static address into the Contract <-> Address bi-mapping
+  let registerStaticAddresses = (~chainConfig: Config.chainConfig) => {
+    chainConfig.contracts->Belt.Array.forEach(contract => {
+      contract.addresses->Belt.Array.forEach(address => {
+        addContractAddress(
+          ~chainId=chainConfig.chainId,
+          ~contractName=contract.name,
+          ~contractAddress=address,
+        )
+      })
+    })
   }
 }
+
 let eventStringToEvent = (eventName: string, contractName: string): Types.eventName => {
   switch (eventName, contractName) {
     {{#each contracts as |contract|}}

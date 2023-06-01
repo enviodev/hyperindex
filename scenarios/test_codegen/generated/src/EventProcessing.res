@@ -104,7 +104,7 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
   )> = eventBatch->Belt.Array.map(event => {
     switch event {
     | GravatarContract_TestEvent(event) => {
-        let contextHelper = Context.GravatarContract.TestEventEvent.contextCreator()
+        let contextHelper = Context.GravatarContract.TestEventEvent.contextCreator(~chainId)
         Handlers.GravatarContract.getTestEventLoadEntities()(
           ~event,
           ~context=contextHelper.getLoaderContext(),
@@ -121,7 +121,7 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
       }
 
     | GravatarContract_NewGravatar(event) => {
-        let contextHelper = Context.GravatarContract.NewGravatarEvent.contextCreator()
+        let contextHelper = Context.GravatarContract.NewGravatarEvent.contextCreator(~chainId)
         Handlers.GravatarContract.getNewGravatarLoadEntities()(
           ~event,
           ~context=contextHelper.getLoaderContext(),
@@ -138,7 +138,7 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
       }
 
     | GravatarContract_UpdatedGravatar(event) => {
-        let contextHelper = Context.GravatarContract.UpdatedGravatarEvent.contextCreator()
+        let contextHelper = Context.GravatarContract.UpdatedGravatarEvent.contextCreator(~chainId)
         Handlers.GravatarContract.getUpdatedGravatarLoadEntities()(
           ~event,
           ~context=contextHelper.getLoaderContext(),
@@ -155,7 +155,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
       }
 
     | NftFactoryContract_SimpleNftCreated(event) => {
-        let contextHelper = Context.NftFactoryContract.SimpleNftCreatedEvent.contextCreator()
+        let contextHelper = Context.NftFactoryContract.SimpleNftCreatedEvent.contextCreator(
+          ~chainId,
+        )
         Handlers.NftFactoryContract.getSimpleNftCreatedLoadEntities()(
           ~event,
           ~context=contextHelper.getLoaderContext(),
@@ -172,7 +174,7 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
       }
 
     | SimpleNftContract_Transfer(event) => {
-        let contextHelper = Context.SimpleNftContract.TransferEvent.contextCreator()
+        let contextHelper = Context.SimpleNftContract.TransferEvent.contextCreator(~chainId)
         Handlers.SimpleNftContract.getTransferLoadEntities()(
           ~event,
           ~context=contextHelper.getLoaderContext(),

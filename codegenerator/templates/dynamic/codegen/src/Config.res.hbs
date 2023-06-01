@@ -1,7 +1,7 @@
 type contract = {
   name: string,
   abi: Ethers.abi,
-  address: Ethers.ethAddress,
+  addresses: array<Ethers.ethAddress>,
   events: array<Types.eventName>,
 }
 
@@ -70,18 +70,20 @@ let config: chainConfigs = [
     chainId: {{chain_config.network_config.id}},
     contracts: [
       {{#each chain_config.contracts as | contract |}}
-      {{#each contract.addresses as | address |}}
       {
         name: "{{contract.name.capitalized}}",
           abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
-          address: "{{address}}"->Ethers.getAddressFromStringUnsafe,
+          addresses: [
+          {{#each contract.addresses as | address |}}
+            "{{address}}"->Ethers.getAddressFromStringUnsafe,
+          {{/each}}
+          ],
           events: [
             {{#each contract.events as | event |}}
             {{contract.name.capitalized}}Contract_{{event.capitalized}}Event,
             {{/each}}
             ],
       },
-      {{/each}}
       {{/each}}
     ]
 

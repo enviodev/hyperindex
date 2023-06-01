@@ -47,6 +47,32 @@ describe("Raw Events Integration", () => {
       createNftTx.hash
     );
     const simplNftCreatedEvent = eventQuery[0];
+
+    const { provider } = hre.ethers;
+    const localChainConfig = {
+      provider,
+      startBlock: 0,
+      chainId: 1337,
+      contracts: [
+        {
+          name: "NftFactory",
+          abi: nftFactoryAbi,
+          addresses: [nftFactoryContractAddress],
+          events: [EventVariants.NftFactoryContract_SimpleNftCreatedEvent],
+        },
+        {
+          name: "SimpleNft",
+          abi: simpleNftAbi,
+          addresses: [],
+          events: [EventVariants.SimpleNftContract_TransferEvent],
+        },
+      ],
+    };
+
+    registerAllHandlers();
+    console.log("processing events before mint");
+    await processAllEvents(localChainConfig);
+
     const simpleNftContractAddress = simplNftCreatedEvent.args.contractAddress;
     console.log("Created NFT at: ", simpleNftContractAddress);
 
@@ -63,32 +89,10 @@ describe("Raw Events Integration", () => {
     await Promise.all(mintTxs);
 
     console.log("Successfully minted");
-
-    const { provider } = hre.ethers;
-    const localChainConfig = {
-      provider,
-      startBlock: 0,
-      chainId: 1337,
-      contracts: [
-        {
-          name: "NftFactory",
-          abi: nftFactoryAbi,
-          address: nftFactoryContractAddress,
-          events: [EventVariants.NftFactoryContract_SimpleNftCreatedEvent],
-        },
-        {
-          name: "SimpleNft",
-          abi: simpleNftAbi,
-          address: simpleNftContractAddress,
-          events: [EventVariants.SimpleNftContract_TransferEvent],
-        },
-      ],
-    };
-
-    registerAllHandlers();
-    console.log("processing events");
-    await processAllEvents(localChainConfig);
     console.log("Successfully processed events");
+
+    console.log("processing events after mint");
+    await processAllEvents(localChainConfig);
   });
   after(async () => {
     await runMigrationsNoLogs();

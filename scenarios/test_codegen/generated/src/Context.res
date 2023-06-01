@@ -7,18 +7,36 @@ module GravatarContract = {
       getContext: (~eventData: Types.eventData) => Types.GravatarContract.TestEventEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int) => contextCreatorFunctions = (~chainId) => {
       let entitiesToLoad: array<Types.entityRead> = []
 
       @warning("-16")
       let loaderContext: Types.GravatarContract.TestEventEvent.loaderContext = {
         contractRegistration: {
           //TODO only add contracts we've registered for the event in the config
-          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
         },
       }
       {
@@ -87,18 +105,36 @@ module GravatarContract = {
       getContext: (~eventData: Types.eventData) => Types.GravatarContract.NewGravatarEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int) => contextCreatorFunctions = (~chainId) => {
       let entitiesToLoad: array<Types.entityRead> = []
 
       @warning("-16")
       let loaderContext: Types.GravatarContract.NewGravatarEvent.loaderContext = {
         contractRegistration: {
           //TODO only add contracts we've registered for the event in the config
-          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
         },
       }
       {
@@ -169,7 +205,7 @@ module GravatarContract = {
       ) => Types.GravatarContract.UpdatedGravatarEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int) => contextCreatorFunctions = (~chainId) => {
       let optIdOf_gravatarWithChanges = ref(None)
 
       let entitiesToLoad: array<Types.entityRead> = []
@@ -178,11 +214,29 @@ module GravatarContract = {
       let loaderContext: Types.GravatarContract.UpdatedGravatarEvent.loaderContext = {
         contractRegistration: {
           //TODO only add contracts we've registered for the event in the config
-          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
         },
         gravatar: {
           gravatarWithChangesLoad: (id: Types.id, ~loaders={}) => {
@@ -278,18 +332,36 @@ module NftFactoryContract = {
       ) => Types.NftFactoryContract.SimpleNftCreatedEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int) => contextCreatorFunctions = (~chainId) => {
       let entitiesToLoad: array<Types.entityRead> = []
 
       @warning("-16")
       let loaderContext: Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext = {
         contractRegistration: {
           //TODO only add contracts we've registered for the event in the config
-          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
         },
       }
       {
@@ -360,7 +432,7 @@ module SimpleNftContract = {
       getContext: (~eventData: Types.eventData) => Types.SimpleNftContract.TransferEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int) => contextCreatorFunctions = (~chainId) => {
       let optIdOf_userFrom = ref(None)
       let optIdOf_userTo = ref(None)
       let optIdOf_nftCollectionUpdated = ref(None)
@@ -372,11 +444,29 @@ module SimpleNftContract = {
       let loaderContext: Types.SimpleNftContract.TransferEvent.loaderContext = {
         contractRegistration: {
           //TODO only add contracts we've registered for the event in the config
-          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
           //TODO only add contracts we've registered for the event in the config
-          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
         },
         user: {
           userFromLoad: (id: Types.id, ~loaders={}) => {

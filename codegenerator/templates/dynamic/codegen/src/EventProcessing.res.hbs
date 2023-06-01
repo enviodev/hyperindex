@@ -48,19 +48,18 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
     Types.eventAndContext,
   )> = eventBatch->Belt.Array.map(event => {
       switch event {
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
+      {{#each contracts as | contract |}}
+      {{#each contract.events as | event |}}
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
-
-        let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator()
+        let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~chainId)
         Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}LoadEntities()(~event, ~context=contextHelper.getLoaderContext())
         let { logIndex, blockNumber } = event
         let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
         let context = contextHelper.getContext(~eventData={chainId, eventId: eventId->Ethers.BigInt.toString,})
         (contextHelper.getEntitiesToLoad(), Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context))
         }
-{{/each}}
-{{/each}}
+      {{/each}}
+      {{/each}}
       }
     })
 
