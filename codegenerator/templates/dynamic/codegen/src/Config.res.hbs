@@ -71,7 +71,6 @@ let config: chainConfigs = [
     chainId: {{chain_config.network_config.id}},
     contracts: [
       {{#each chain_config.contracts as | contract |}}
-      {{#each contract.addresses as | address |}}
       {
         name: "{{contract.name.capitalized}}",
           abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
@@ -86,7 +85,6 @@ let config: chainConfigs = [
             {{/each}}
             ],
       },
-      {{/each}}
       {{/each}}
     ]
 
