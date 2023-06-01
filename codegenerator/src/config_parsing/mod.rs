@@ -102,11 +102,17 @@ enum SingleOrList<T: Clone> {
     List(Vec<T>),
 }
 
-impl<T: Clone> SingleOrList<T> {
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct OptSingleOrList<T: Clone>(Option<SingleOrList<T>>);
+
+impl<T: Clone> OptSingleOrList<T> {
     fn to_normalized_list(&self) -> NormalizedList<T> {
-        let list: Vec<T> = match self {
-            SingleOrList::Single(val) => vec![val.clone()],
-            SingleOrList::List(list) => list.to_vec(),
+        let list: Vec<T> = match &self.0 {
+            Some(single_or_list) => match single_or_list {
+                SingleOrList::Single(val) => vec![val.clone()],
+                SingleOrList::List(list) => list.to_vec(),
+            },
+            None => Vec::new(),
         };
 
         NormalizedList { inner: list }
@@ -114,7 +120,7 @@ impl<T: Clone> SingleOrList<T> {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(try_from = "SingleOrList<T>")]
+#[serde(try_from = "OptSingleOrList<T>")]
 struct NormalizedList<T: Clone> {
     inner: Vec<T>,
 }
@@ -135,10 +141,10 @@ impl<T: Clone> NormalizedList<T> {
     }
 }
 
-impl<T: Clone> TryFrom<SingleOrList<T>> for NormalizedList<T> {
+impl<T: Clone> TryFrom<OptSingleOrList<T>> for NormalizedList<T> {
     type Error = String;
 
-    fn try_from(single_or_list: SingleOrList<T>) -> Result<Self, Self::Error> {
+    fn try_from(single_or_list: OptSingleOrList<T>) -> Result<Self, Self::Error> {
         Ok(single_or_list.to_normalized_list())
     }
 }
@@ -161,6 +167,7 @@ pub struct Config {
 // }
 
 type StringifiedAbi = String;
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct SingleContractTemplate {
     name: CapitalizedOptions,
@@ -218,7 +225,7 @@ pub fn convert_config_to_chain_configs(
                         EventNameOrSig::Name(config_event_name) => match &parsed_abi_from_file {
                             Some(contract_abi) => {
                                 let format_err = |err| -> String {
-                                    format!("event \"{}\" cannot be parsed the provided abi for contract {} due to error: {}", config_event_name, contract.name, err)
+                                    format!("event \"{}\" cannot be parsed the provided abi for contract {} due to error: {:?}", config_event_name, contract.name, err)
                                 };
                                 contract_abi.event(&config_event_name).map_err(format_err)?
                             }
@@ -272,6 +279,27 @@ mod tests {
 
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn deserialize_address() {
+        let no_address = r#"null"#;
+        let deserialized: NormalizedList<String> = serde_json::from_str(no_address).unwrap();
+        assert_eq!(deserialized, NormalizedList::from(vec![]));
+
+        let single_address = r#""0x123""#;
+        let deserialized: NormalizedList<String> = serde_json::from_str(single_address).unwrap();
+        assert_eq!(
+            deserialized,
+            NormalizedList::from(vec!["0x123".to_string()])
+        );
+
+        let multi_address = r#"["0x123", "0x456"]"#;
+        let deserialized: NormalizedList<String> = serde_json::from_str(multi_address).unwrap();
+        assert_eq!(
+            deserialized,
+            NormalizedList::from(vec!["0x123".to_string(), "0x456".to_string()])
+        );
+    }
 
     #[test]
     fn convert_to_chain_configs_case_1() {
