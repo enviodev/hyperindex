@@ -204,18 +204,12 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let uniqueNftcollectionDict = Js.Dict.empty()
   let uniqueTokenDict = Js.Dict.empty()
 
-  // TODO: don't create an array if the entity doesn't have any entity relation fields.
-  let populateUserLoadAsEntityFunctions: array<unit => unit> = []
-  let populateGravatarLoadAsEntityFunctions: array<unit => unit> = []
-  let populateNftcollectionLoadAsEntityFunctions: array<unit => unit> = []
-  let populateTokenLoadAsEntityFunctions: array<unit => unit> = []
-
   let populateLoadAsEntityFunctions: ref<array<unit => unit>> = ref([])
 
-  let uniqueUserAsEntityFieldArray: array<string> = []
-  let uniqueGravatarAsEntityFieldArray: array<string> = []
-  let uniqueNftcollectionAsEntityFieldArray: array<string> = []
-  let uniqueTokenAsEntityFieldArray: array<string> = []
+  let uniqueUserAsEntityFieldArray: ref<array<string>> = ref([])
+  let uniqueGravatarAsEntityFieldArray: ref<array<string>> = ref([])
+  let uniqueNftcollectionAsEntityFieldArray: ref<array<string>> = ref([])
+  let uniqueTokenAsEntityFieldArray: ref<array<string>> = ref([])
 
   let rec userLinkedEntityLoader = (
     entityId: string,
@@ -227,7 +221,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
       loadLayer := true
     }
     if Js.Dict.get(uniqueUserDict, entityId)->Belt.Option.isNone {
-      let _ = uniqueUserAsEntityFieldArray->Js.Array2.push(entityId)
+      let _ = uniqueUserAsEntityFieldArray.contents->Js.Array2.push(entityId)
       let _ = Js.Dict.set(uniqueUserDict, entityId, entityId)
     }
 
@@ -267,7 +261,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
       loadLayer := true
     }
     if Js.Dict.get(uniqueGravatarDict, entityId)->Belt.Option.isNone {
-      let _ = uniqueGravatarAsEntityFieldArray->Js.Array2.push(entityId)
+      let _ = uniqueGravatarAsEntityFieldArray.contents->Js.Array2.push(entityId)
       let _ = Js.Dict.set(uniqueGravatarDict, entityId, entityId)
     }
 
@@ -290,7 +284,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
       loadLayer := true
     }
     if Js.Dict.get(uniqueNftcollectionDict, entityId)->Belt.Option.isNone {
-      let _ = uniqueNftcollectionAsEntityFieldArray->Js.Array2.push(entityId)
+      let _ = uniqueNftcollectionAsEntityFieldArray.contents->Js.Array2.push(entityId)
       let _ = Js.Dict.set(uniqueNftcollectionDict, entityId, entityId)
     }
 
@@ -306,7 +300,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
       loadLayer := true
     }
     if Js.Dict.get(uniqueTokenDict, entityId)->Belt.Option.isNone {
-      let _ = uniqueTokenAsEntityFieldArray->Js.Array2.push(entityId)
+      let _ = uniqueTokenAsEntityFieldArray.contents->Js.Array2.push(entityId)
       let _ = Js.Dict.set(uniqueTokenDict, entityId, entityId)
     }
 
@@ -340,92 +334,61 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     }
   })
 
-  if Js.Dict.keys(uniqueUserDict)->Array.length > 0 {
-    let userEntitiesArray =
-      await sql->DbFunctions.User.readUserEntities(Js.Dict.values(uniqueUserDict))
+  while loadLayer.contents {
+    loadLayer := false
 
-    userEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.User.readRowToReadEntityData(readRow)
-      InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
+    if uniqueUserAsEntityFieldArray.contents->Array.length > 0 {
+      let userFieldEntitiesArray =
+        await sql->DbFunctions.User.readUserEntities(uniqueUserAsEntityFieldArray.contents)
 
-  if Js.Dict.keys(uniqueGravatarDict)->Array.length > 0 {
-    let gravatarEntitiesArray =
-      await sql->DbFunctions.Gravatar.readGravatarEntities(Js.Dict.values(uniqueGravatarDict))
+      userFieldEntitiesArray->Belt.Array.forEach(readRow => {
+        let {entity, eventData} = DbFunctions.User.readRowToReadEntityData(readRow)
+        InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
+      })
 
-    gravatarEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
-      InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
+      uniqueUserAsEntityFieldArray := []
+    }
+    if uniqueGravatarAsEntityFieldArray.contents->Array.length > 0 {
+      let gravatarFieldEntitiesArray =
+        await sql->DbFunctions.Gravatar.readGravatarEntities(
+          uniqueGravatarAsEntityFieldArray.contents,
+        )
 
-  if Js.Dict.keys(uniqueNftcollectionDict)->Array.length > 0 {
-    let nftcollectionEntitiesArray =
-      await sql->DbFunctions.Nftcollection.readNftcollectionEntities(
-        Js.Dict.values(uniqueNftcollectionDict),
-      )
+      gravatarFieldEntitiesArray->Belt.Array.forEach(readRow => {
+        let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
+        InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
+      })
 
-    nftcollectionEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.Nftcollection.readRowToReadEntityData(readRow)
-      InMemoryStore.Nftcollection.setNftcollection(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
+      uniqueGravatarAsEntityFieldArray := []
+    }
+    if uniqueNftcollectionAsEntityFieldArray.contents->Array.length > 0 {
+      let nftcollectionFieldEntitiesArray =
+        await sql->DbFunctions.Nftcollection.readNftcollectionEntities(
+          uniqueNftcollectionAsEntityFieldArray.contents,
+        )
 
-  if Js.Dict.keys(uniqueTokenDict)->Array.length > 0 {
-    let tokenEntitiesArray =
-      await sql->DbFunctions.Token.readTokenEntities(Js.Dict.values(uniqueTokenDict))
+      nftcollectionFieldEntitiesArray->Belt.Array.forEach(readRow => {
+        let {entity, eventData} = DbFunctions.Nftcollection.readRowToReadEntityData(readRow)
+        InMemoryStore.Nftcollection.setNftcollection(~entity, ~eventData, ~crud=Types.Read)
+      })
 
-    tokenEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.Token.readRowToReadEntityData(readRow)
-      InMemoryStore.Token.setToken(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
+      uniqueNftcollectionAsEntityFieldArray := []
+    }
+    if uniqueTokenAsEntityFieldArray.contents->Array.length > 0 {
+      let tokenFieldEntitiesArray =
+        await sql->DbFunctions.Token.readTokenEntities(uniqueTokenAsEntityFieldArray.contents)
 
-  // Execute first layer of additional load functions:
-  // TODO: make this a recursive process
-  populateUserLoadAsEntityFunctions->Belt.Array.forEach(func => func())
-  populateGravatarLoadAsEntityFunctions->Belt.Array.forEach(func => func())
-  populateNftcollectionLoadAsEntityFunctions->Belt.Array.forEach(func => func())
-  populateTokenLoadAsEntityFunctions->Belt.Array.forEach(func => func())
+      tokenFieldEntitiesArray->Belt.Array.forEach(readRow => {
+        let {entity, eventData} = DbFunctions.Token.readRowToReadEntityData(readRow)
+        InMemoryStore.Token.setToken(~entity, ~eventData, ~crud=Types.Read)
+      })
 
-  if uniqueUserAsEntityFieldArray->Array.length > 0 {
-    let userFieldEntitiesArray =
-      await sql->DbFunctions.User.readUserEntities(uniqueUserAsEntityFieldArray)
+      uniqueTokenAsEntityFieldArray := []
+    }
 
-    userFieldEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.User.readRowToReadEntityData(readRow)
-      InMemoryStore.User.setUser(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
-  if uniqueGravatarAsEntityFieldArray->Array.length > 0 {
-    let gravatarFieldEntitiesArray =
-      await sql->DbFunctions.Gravatar.readGravatarEntities(uniqueGravatarAsEntityFieldArray)
+    populateLoadAsEntityFunctions.contents->Belt.Array.forEach(func => func())
 
-    gravatarFieldEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.Gravatar.readRowToReadEntityData(readRow)
-      InMemoryStore.Gravatar.setGravatar(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
-  if uniqueNftcollectionAsEntityFieldArray->Array.length > 0 {
-    let nftcollectionFieldEntitiesArray =
-      await sql->DbFunctions.Nftcollection.readNftcollectionEntities(
-        uniqueNftcollectionAsEntityFieldArray,
-      )
-
-    nftcollectionFieldEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.Nftcollection.readRowToReadEntityData(readRow)
-      InMemoryStore.Nftcollection.setNftcollection(~entity, ~eventData, ~crud=Types.Read)
-    })
-  }
-  if uniqueTokenAsEntityFieldArray->Array.length > 0 {
-    let tokenFieldEntitiesArray =
-      await sql->DbFunctions.Token.readTokenEntities(uniqueTokenAsEntityFieldArray)
-
-    tokenFieldEntitiesArray->Belt.Array.forEach(readRow => {
-      let {entity, eventData} = DbFunctions.Token.readRowToReadEntityData(readRow)
-      InMemoryStore.Token.setToken(~entity, ~eventData, ~crud=Types.Read)
-    })
+    populateLoadAsEntityFunctions := []
   }
 }
 
