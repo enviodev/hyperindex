@@ -1,3 +1,4 @@
+open Belt
 module InMemoryStore = {
   let entityCurrentCrud = (currentCrud: option<Types.crud>, nextCrud: Types.crud) => {
     switch (currentCrud, nextCrud) {
@@ -208,10 +209,57 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let populateNftcollectionLoadAsEntityFunctions: array<unit => unit> = []
   let populateTokenLoadAsEntityFunctions: array<unit => unit> = []
 
+  let populateUserLoadAsEntityFunctionsLayers: array<array<unit => unit>> = [[]]
+  let populateGravatarLoadAsEntityFunctionsLayers: array<array<unit => unit>> = [[]]
+  let populateNftcollectionLoadAsEntityFunctionsLayers: array<array<unit => unit>> = [[]]
+  let populateTokenLoadAsEntityFunctionsLayers: array<array<unit => unit>> = [[]]
+
   let uniqueUserAsEntityFieldArray: array<string> = []
   let uniqueGravatarAsEntityFieldArray: array<string> = []
   let uniqueNftcollectionAsEntityFieldArray: array<string> = []
   let uniqueTokenAsEntityFieldArray: array<string> = []
+
+  let uniqueUserAsEntityFieldArrayLayers: array<array<string>> = []
+  let uniqueGravatarAsEntityFieldArrayLayers: array<array<string>> = []
+  let uniqueNftcollectionAsEntityFieldArrayLayers: array<array<string>> = []
+  let uniqueTokenAsEntityFieldArrayLayers: array<array<string>> = []
+
+  let rec userLinkedEntityLoader = (
+    entityId: string,
+    userLoad: Types.userLoaderConfig,
+    layer: int,
+  ) => {
+    let _ = uniqueUserAsEntityFieldArray->Js.Array2.push(entityId)
+    switch userLoad.loadGravatar {
+    | Some(loadGravatar) =>
+      let originalArray = populateUserLoadAsEntityFunctionsLayers[layer]->Option.getWithDefault([])
+
+      let newLoaderFunction = () => {
+        let _ = InMemoryStore.User.getUser(~id=entityId)->Belt.Option.map(userEntity => {
+          userEntity.gravatar->Belt.Option.map(gravatarId =>
+            switch uniqueGravatarDict->Js.Dict.get(gravatarId) {
+            | Some(_) => () // Already loaded
+            | None =>
+              let _ = uniqueGravatarAsEntityFieldArray->Js.Array2.push(gravatarId)
+              Js.Dict.set(uniqueGravatarDict, gravatarId, gravatarId)
+              gravatarLinkedEntityLoader(gravatarId, loadGravatar, layer + 1)
+            }
+          )
+        })
+      }
+
+      populateUserLoadAsEntityFunctionsLayers->Array.setUnsafe(
+        layer,
+        originalArray->Array.concat([newLoaderFunction]),
+      )
+    | None => ()
+    }
+  }
+  and gravatarLinkedEntityLoader = (
+    entityId: string,
+    gravatarLoad: Types.gravatarLoaderConfig,
+    layer: int,
+  ) => {()}
 
   entityBatch->Belt.Array.forEach(readEntity => {
     switch readEntity {
