@@ -156,7 +156,7 @@ fn get_contract_type_from_config_contract(
                 .and_then(|abi| {
                     abi.event(config_event_name).map_err(|_| {
                         format!(
-                            "Unable to find an event named {} your ABI",
+                            "Unable to find an event named {} in your ABI",
                             config_event_name
                         )
                     })
