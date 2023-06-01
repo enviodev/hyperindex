@@ -168,7 +168,7 @@ type EthAddress = String;
 struct ContractTemplate {
     name: CapitalizedOptions,
     abi: StringifiedAbi,
-    address: Vec<EthAddress>,
+    addresses: Vec<EthAddress>,
     events: Vec<CapitalizedOptions>,
 }
 
@@ -243,7 +243,7 @@ pub fn convert_config_to_chain_configs(
             let contract_template = ContractTemplate {
                 name: contract.name.to_capitalized_options(),
                 abi: stringified_abi,
-                address: contract.address.inner.clone(),
+                addresses: contract.address.inner.clone(),
                 events: contract
                     .events
                     .iter()
@@ -344,7 +344,7 @@ mod tests {
         let contract1 = super::ContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi_parsed_string,
-            address: vec![address1.clone()],
+            addresses: vec![address1.clone()],
             events: vec![
                 event1.event.get_name().to_capitalized_options(),
                 event2.event.get_name().to_capitalized_options(),
@@ -439,13 +439,13 @@ mod tests {
         let contract1 = super::ContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi_parsed_string.clone(),
-            address: vec![address1.clone()],
+            addresses: vec![address1.clone()],
             events: events.clone(),
         };
         let contract2 = super::ContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi_parsed_string.clone(),
-            address: vec![address2.clone()],
+            addresses: vec![address2.clone()],
             events,
         };
 
