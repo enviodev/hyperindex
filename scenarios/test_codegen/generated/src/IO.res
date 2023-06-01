@@ -1,4 +1,3 @@
-open Belt
 module InMemoryStore = {
   let entityCurrentCrud = (currentCrud: option<Types.crud>, nextCrud: Types.crud) => {
     switch (currentCrud, nextCrud) {
@@ -198,6 +197,8 @@ type uniqueEntityReadIds = Js.Dict.t<Types.id>
 type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
 let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
+  let loadLayer = ref(false)
+
   let uniqueUserDict = Js.Dict.empty()
   let uniqueGravatarDict = Js.Dict.empty()
   let uniqueNftcollectionDict = Js.Dict.empty()
@@ -209,166 +210,133 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let populateNftcollectionLoadAsEntityFunctions: array<unit => unit> = []
   let populateTokenLoadAsEntityFunctions: array<unit => unit> = []
 
-  let populateUserLoadAsEntityFunctionsLayers: array<array<unit => unit>> = [[]]
-  let populateGravatarLoadAsEntityFunctionsLayers: array<array<unit => unit>> = [[]]
-  let populateNftcollectionLoadAsEntityFunctionsLayers: array<array<unit => unit>> = [[]]
-  let populateTokenLoadAsEntityFunctionsLayers: array<array<unit => unit>> = [[]]
+  let populateLoadAsEntityFunctions: ref<array<unit => unit>> = ref([])
 
   let uniqueUserAsEntityFieldArray: array<string> = []
   let uniqueGravatarAsEntityFieldArray: array<string> = []
   let uniqueNftcollectionAsEntityFieldArray: array<string> = []
   let uniqueTokenAsEntityFieldArray: array<string> = []
 
-  let uniqueUserAsEntityFieldArrayLayers: array<array<string>> = []
-  let uniqueGravatarAsEntityFieldArrayLayers: array<array<string>> = []
-  let uniqueNftcollectionAsEntityFieldArrayLayers: array<array<string>> = []
-  let uniqueTokenAsEntityFieldArrayLayers: array<array<string>> = []
-
   let rec userLinkedEntityLoader = (
     entityId: string,
     userLoad: Types.userLoaderConfig,
     layer: int,
   ) => {
-    let _ = uniqueUserAsEntityFieldArray->Js.Array2.push(entityId)
+    if !loadLayer.contents {
+      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
+      loadLayer := true
+    }
+    if Js.Dict.get(uniqueUserDict, entityId)->Belt.Option.isNone {
+      let _ = uniqueUserAsEntityFieldArray->Js.Array2.push(entityId)
+      let _ = Js.Dict.set(uniqueUserDict, entityId, entityId)
+    }
+
     switch userLoad.loadGravatar {
     | Some(loadGravatar) =>
-      let originalArray = populateUserLoadAsEntityFunctionsLayers[layer]->Option.getWithDefault([])
-
-      let newLoaderFunction = () => {
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
         let _ = InMemoryStore.User.getUser(~id=entityId)->Belt.Option.map(userEntity => {
-          userEntity.gravatar->Belt.Option.map(gravatarId =>
-            switch uniqueGravatarDict->Js.Dict.get(gravatarId) {
-            | Some(_) => () // Already loaded
-            | None =>
-              let _ = uniqueGravatarAsEntityFieldArray->Js.Array2.push(gravatarId)
-              Js.Dict.set(uniqueGravatarDict, gravatarId, gravatarId)
-              gravatarLinkedEntityLoader(gravatarId, loadGravatar, layer + 1)
-            }
-          )
+          let _ =
+            userEntity.gravatar->Belt.Option.map(
+              gravatarId => gravatarLinkedEntityLoader(gravatarId, loadGravatar, layer + 1),
+            )
         })
-      }
-
-      populateUserLoadAsEntityFunctionsLayers->Array.setUnsafe(
-        layer,
-        originalArray->Array.concat([newLoaderFunction]),
-      )
+      })
     | None => ()
     }
+    switch userLoad.loadTokens {
+    | Some(loadToken) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.User.getUser(~id=entityId)->Belt.Option.map(userEntity => {
+          let _ =
+            userEntity.tokens->Belt.Array.map(
+              tokensId => tokenLinkedEntityLoader(tokensId, loadToken, layer + 1),
+            )
+        })
+      })
+    | None => ()
+    }
+    ()
   }
   and gravatarLinkedEntityLoader = (
     entityId: string,
     gravatarLoad: Types.gravatarLoaderConfig,
     layer: int,
-  ) => {()}
+  ) => {
+    if !loadLayer.contents {
+      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
+      loadLayer := true
+    }
+    if Js.Dict.get(uniqueGravatarDict, entityId)->Belt.Option.isNone {
+      let _ = uniqueGravatarAsEntityFieldArray->Js.Array2.push(entityId)
+      let _ = Js.Dict.set(uniqueGravatarDict, entityId, entityId)
+    }
+
+    switch gravatarLoad.loadOwner {
+    | Some(loadUser) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.Gravatar.getGravatar(
+          ~id=entityId,
+        )->Belt.Option.map(gravatarEntity => {
+          let _ = userLinkedEntityLoader(gravatarEntity.owner, loadUser, layer + 1)
+        })
+      })
+    | None => ()
+    }
+    ()
+  }
+  and nftcollectionLinkedEntityLoader = (entityId: string, layer: int) => {
+    if !loadLayer.contents {
+      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
+      loadLayer := true
+    }
+    if Js.Dict.get(uniqueNftcollectionDict, entityId)->Belt.Option.isNone {
+      let _ = uniqueNftcollectionAsEntityFieldArray->Js.Array2.push(entityId)
+      let _ = Js.Dict.set(uniqueNftcollectionDict, entityId, entityId)
+    }
+
+    ()
+  }
+  and tokenLinkedEntityLoader = (
+    entityId: string,
+    tokenLoad: Types.tokenLoaderConfig,
+    layer: int,
+  ) => {
+    if !loadLayer.contents {
+      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
+      loadLayer := true
+    }
+    if Js.Dict.get(uniqueTokenDict, entityId)->Belt.Option.isNone {
+      let _ = uniqueTokenAsEntityFieldArray->Js.Array2.push(entityId)
+      let _ = Js.Dict.set(uniqueTokenDict, entityId, entityId)
+    }
+
+    switch tokenLoad.loadCollection {
+    | Some(loadNftcollection) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.Token.getToken(~id=entityId)->Belt.Option.map(tokenEntity => {
+          let _ = nftcollectionLinkedEntityLoader(tokenEntity.collection, layer + 1)
+        })
+      })
+    | None => ()
+    }
+    switch tokenLoad.loadOwner {
+    | Some(loadUser) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.Token.getToken(~id=entityId)->Belt.Option.map(tokenEntity => {
+          let _ = userLinkedEntityLoader(tokenEntity.owner, loadUser, layer + 1)
+        })
+      })
+    | None => ()
+    }
+    ()
+  }
 
   entityBatch->Belt.Array.forEach(readEntity => {
     switch readEntity {
-    | UserRead(entityId, userLoad) =>
-      let _ = Js.Dict.set(uniqueUserDict, entityId, entityId)
-      switch userLoad.loadGravatar {
-      | Some(
-          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
-        ) =>
-        let _ = populateUserLoadAsEntityFunctions->Js.Array2.push(() => {
-          let _ = InMemoryStore.User.getUser(~id=entityId)->Belt.Option.map(
-            userEntity => {
-              userEntity.gravatar->Belt.Option.map(
-                gravatarId =>
-                  switch uniqueGravatarDict->Js.Dict.get(gravatarId) {
-                  | Some(_) => () // Already loaded
-                  | None =>
-                    let _ = uniqueGravatarAsEntityFieldArray->Js.Array2.push(gravatarId)
-                    Js.Dict.set(uniqueGravatarDict, gravatarId, gravatarId)
-                  },
-              )
-            },
-          )
-        })
-      | None => ()
-      }
-      switch userLoad.loadTokens {
-      | Some(
-          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
-        ) =>
-        let _ = populateUserLoadAsEntityFunctions->Js.Array2.push(() => {
-          let _ = InMemoryStore.User.getUser(~id=entityId)->Belt.Option.map(
-            userEntity => {
-              let _ = userEntity.tokens->Belt.Array.map(
-                tokensId =>
-                  switch uniqueTokenDict->Js.Dict.get(tokensId) {
-                  | Some(_) => // Already loaded
-                    ()
-                  | None =>
-                    let _ = uniqueTokenAsEntityFieldArray->Js.Array2.push(tokensId)
-                    Js.Dict.set(uniqueTokenDict, tokensId, tokensId)
-                  },
-              )
-            },
-          )
-        })
-      | None => ()
-      }
-    | GravatarRead(entityId, gravatarLoad) =>
-      let _ = Js.Dict.set(uniqueGravatarDict, entityId, entityId)
-      switch gravatarLoad.loadOwner {
-      | Some(
-          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
-        ) =>
-        let _ = populateGravatarLoadAsEntityFunctions->Js.Array2.push(() => {
-          let _ = InMemoryStore.Gravatar.getGravatar(~id=entityId)->Belt.Option.map(
-            gravatarEntity => {
-              switch uniqueUserDict->Js.Dict.get(gravatarEntity.owner) {
-              | Some(_) => () // Already loaded
-              | None =>
-                let _ = uniqueUserAsEntityFieldArray->Js.Array2.push(gravatarEntity.owner)
-                Js.Dict.set(uniqueUserDict, gravatarEntity.owner, gravatarEntity.owner)
-              }
-            },
-          )
-        })
-      | None => ()
-      }
-    | NftcollectionRead(entityId) =>
-      let _ = Js.Dict.set(uniqueNftcollectionDict, entityId, entityId)
-    | TokenRead(entityId, tokenLoad) =>
-      let _ = Js.Dict.set(uniqueTokenDict, entityId, entityId)
-      switch tokenLoad.loadCollection {
-      | Some(
-          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
-        ) =>
-        let _ = populateTokenLoadAsEntityFunctions->Js.Array2.push(() => {
-          let _ = InMemoryStore.Token.getToken(~id=entityId)->Belt.Option.map(
-            tokenEntity => {
-              switch uniqueNftcollectionDict->Js.Dict.get(tokenEntity.collection) {
-              | Some(_) => () // Already loaded
-              | None =>
-                let _ =
-                  uniqueNftcollectionAsEntityFieldArray->Js.Array2.push(tokenEntity.collection)
-                Js.Dict.set(uniqueNftcollectionDict, tokenEntity.collection, tokenEntity.collection)
-              }
-            },
-          )
-        })
-      | None => ()
-      }
-      switch tokenLoad.loadOwner {
-      | Some(
-          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
-        ) =>
-        let _ = populateTokenLoadAsEntityFunctions->Js.Array2.push(() => {
-          let _ = InMemoryStore.Token.getToken(~id=entityId)->Belt.Option.map(
-            tokenEntity => {
-              switch uniqueUserDict->Js.Dict.get(tokenEntity.owner) {
-              | Some(_) => () // Already loaded
-              | None =>
-                let _ = uniqueUserAsEntityFieldArray->Js.Array2.push(tokenEntity.owner)
-                Js.Dict.set(uniqueUserDict, tokenEntity.owner, tokenEntity.owner)
-              }
-            },
-          )
-        })
-      | None => ()
-      }
+    | UserRead(entityId, userLoad) => userLinkedEntityLoader(entityId, userLoad, 0)
+    | GravatarRead(entityId, gravatarLoad) => gravatarLinkedEntityLoader(entityId, gravatarLoad, 0)
+    | NftcollectionRead(entityId) => nftcollectionLinkedEntityLoader(entityId, 0)
+    | TokenRead(entityId, tokenLoad) => tokenLinkedEntityLoader(entityId, tokenLoad, 0)
     }
   })
 
