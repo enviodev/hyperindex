@@ -1,6 +1,5 @@
 use std::error::Error;
 use std::path::PathBuf;
-use std::slice::Iter;
 
 pub mod entity_parsing;
 pub mod event_parsing;
@@ -126,10 +125,6 @@ struct NormalizedList<T: Clone> {
 }
 
 impl<T: Clone> NormalizedList<T> {
-    fn iter(&self) -> Iter<T> {
-        self.inner.iter()
-    }
-
     #[cfg(test)]
     fn from(list: Vec<T>) -> Self {
         NormalizedList { inner: list }
@@ -167,19 +162,20 @@ pub struct Config {
 // }
 
 type StringifiedAbi = String;
+type EthAddress = String;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct SingleContractTemplate {
+struct ContractTemplate {
     name: CapitalizedOptions,
     abi: StringifiedAbi,
-    address: String,
+    address: Vec<EthAddress>,
     events: Vec<CapitalizedOptions>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct ChainConfigTemplate {
     network_config: Network,
-    contracts: Vec<SingleContractTemplate>,
+    contracts: Vec<ContractTemplate>,
 }
 
 pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box<dyn Error>> {
@@ -207,60 +203,58 @@ pub fn convert_config_to_chain_configs(
 
     let mut chain_configs = Vec::new();
     for network in config.networks.iter() {
-        let mut single_contracts = Vec::new();
+        let mut contract_templates = Vec::new();
 
         for contract in network.contracts.iter() {
-            for contract_address in contract.address.iter() {
-                let contract_unique_id = ContractUniqueId {
-                    network_id: network.id,
-                    name: contract.name.clone(),
+            let contract_unique_id = ContractUniqueId {
+                network_id: network.id,
+                name: contract.name.clone(),
+            };
+
+            let parsed_abi_from_file = parsed_paths.get_contract_abi(&contract_unique_id)?;
+
+            let mut reduced_abi = ethers::abi::Contract::default();
+
+            for config_event in contract.events.iter() {
+                let abi_event = match &config_event.event {
+                    EventNameOrSig::Name(config_event_name) => match &parsed_abi_from_file {
+                        Some(contract_abi) => {
+                            let format_err = |err| -> String {
+                                format!("event \"{}\" cannot be parsed the provided abi for contract {} due to error: {:?}", config_event_name, contract.name, err)
+                            };
+                            contract_abi.event(&config_event_name).map_err(format_err)?
+                        }
+                        None => {
+                            let message = format!("Please add abi_file_path for contract {} to your config to parse event {} or define the signature in the config", contract.name, config_event_name);
+                            Err(message)?
+                        }
+                    },
+                    EventNameOrSig::Event(abi_event) => abi_event,
                 };
 
-                let parsed_abi_from_file = parsed_paths.get_contract_abi(&contract_unique_id)?;
-
-                let mut reduced_abi = ethers::abi::Contract::default();
-
-                for config_event in contract.events.iter() {
-                    let abi_event = match &config_event.event {
-                        EventNameOrSig::Name(config_event_name) => match &parsed_abi_from_file {
-                            Some(contract_abi) => {
-                                let format_err = |err| -> String {
-                                    format!("event \"{}\" cannot be parsed the provided abi for contract {} due to error: {:?}", config_event_name, contract.name, err)
-                                };
-                                contract_abi.event(&config_event_name).map_err(format_err)?
-                            }
-                            None => {
-                                let message = format!("Please add abi_file_path for contract {} to your config to parse event {} or define the signature in the config", contract.name, config_event_name);
-                                Err(message)?
-                            }
-                        },
-                        EventNameOrSig::Event(abi_event) => abi_event,
-                    };
-
-                    reduced_abi
-                        .events
-                        .entry(abi_event.name.clone())
-                        .or_default()
-                        .push(abi_event.clone());
-                }
-
-                let stringified_abi = serde_json::to_string(&reduced_abi)?;
-                let single_contract = SingleContractTemplate {
-                    name: contract.name.to_capitalized_options(),
-                    abi: stringified_abi,
-                    address: contract_address.to_string(),
-                    events: contract
-                        .events
-                        .iter()
-                        .map(|config_event| config_event.event.get_name().to_capitalized_options())
-                        .collect(),
-                };
-                single_contracts.push(single_contract);
+                reduced_abi
+                    .events
+                    .entry(abi_event.name.clone())
+                    .or_default()
+                    .push(abi_event.clone());
             }
+
+            let stringified_abi = serde_json::to_string(&reduced_abi)?;
+            let contract_template = ContractTemplate {
+                name: contract.name.to_capitalized_options(),
+                abi: stringified_abi,
+                address: contract.address.inner.clone(),
+                events: contract
+                    .events
+                    .iter()
+                    .map(|config_event| config_event.event.get_name().to_capitalized_options())
+                    .collect(),
+            };
+            contract_templates.push(contract_template);
         }
         let chain_config = ChainConfigTemplate {
             network_config: network.clone(),
-            contracts: single_contracts,
+            contracts: contract_templates,
         };
         chain_configs.push(chain_config);
     }
@@ -347,10 +341,10 @@ mod tests {
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
-        let single_contract1 = super::SingleContractTemplate {
+        let contract1 = super::ContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi_parsed_string,
-            address: address1.clone(),
+            address: vec![address1.clone()],
             events: vec![
                 event1.event.get_name().to_capitalized_options(),
                 event2.event.get_name().to_capitalized_options(),
@@ -359,7 +353,7 @@ mod tests {
 
         let chain_config_1 = ChainConfigTemplate {
             network_config: network1,
-            contracts: vec![single_contract1],
+            contracts: vec![contract1],
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -442,26 +436,26 @@ mod tests {
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
-        let single_contract1 = super::SingleContractTemplate {
+        let contract1 = super::ContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi_parsed_string.clone(),
-            address: address1.clone(),
+            address: vec![address1.clone()],
             events: events.clone(),
         };
-        let single_contract2 = super::SingleContractTemplate {
+        let contract2 = super::ContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi_parsed_string.clone(),
-            address: address2.clone(),
+            address: vec![address2.clone()],
             events,
         };
 
         let chain_config_1 = ChainConfigTemplate {
             network_config: network1,
-            contracts: vec![single_contract1],
+            contracts: vec![contract1],
         };
         let chain_config_2 = ChainConfigTemplate {
             network_config: network2,
-            contracts: vec![single_contract2],
+            contracts: vec![contract2],
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];

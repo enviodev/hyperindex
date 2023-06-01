@@ -70,16 +70,18 @@ let config: chainConfigs = [
     chainId: {{chain_config.network_config.id}},
     contracts: [
       {{#each chain_config.contracts as | contract |}}
+      {{#each contract.address as | address |}}
       {
         name: "{{contract.name.capitalized}}",
           abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
-          address: "{{contract.address}}"->Ethers.getAddressFromStringUnsafe,
+          address: "{{address}}"->Ethers.getAddressFromStringUnsafe,
           events: [
             {{#each contract.events as | event |}}
             {{contract.name.capitalized}}Contract_{{event.capitalized}}Event,
             {{/each}}
             ],
       },
+      {{/each}}
       {{/each}}
     ]
 

@@ -64,7 +64,7 @@ export type eventLog<a> = {
   readonly blockNumber: number; 
   readonly blockTimestamp: number; 
   readonly blockHash: string; 
-  readonly srcAddress: string; 
+  readonly srcAddress: Ethers_ethAddress; 
   readonly transactionHash: string; 
   readonly transactionIndex: number; 
   readonly logIndex: number
@@ -114,7 +114,14 @@ export type GravatarContract_TestEventEvent_context = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_TestEventEvent_loaderContext = {};
+export type GravatarContract_TestEventEvent_contractRegistrations = {
+  readonly addGravatar: (_1:Ethers_ethAddress) => void; 
+  readonly addNftFactory: (_1:Ethers_ethAddress) => void; 
+  readonly addSimpleNft: (_1:Ethers_ethAddress) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_TestEventEvent_loaderContext = { readonly contractRegistration: GravatarContract_TestEventEvent_contractRegistrations };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_NewGravatarEvent_eventArgs = {
@@ -161,7 +168,14 @@ export type GravatarContract_NewGravatarEvent_context = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_NewGravatarEvent_loaderContext = {};
+export type GravatarContract_NewGravatarEvent_contractRegistrations = {
+  readonly addGravatar: (_1:Ethers_ethAddress) => void; 
+  readonly addNftFactory: (_1:Ethers_ethAddress) => void; 
+  readonly addSimpleNft: (_1:Ethers_ethAddress) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_NewGravatarEvent_loaderContext = { readonly contractRegistration: GravatarContract_NewGravatarEvent_contractRegistrations };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_eventArgs = {
@@ -213,7 +227,14 @@ export type GravatarContract_UpdatedGravatarEvent_context = {
 export type GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext = { readonly gravatarWithChangesLoad: (_1:id, _2:{ readonly loaders?: gravatarLoaderConfig }) => void };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type GravatarContract_UpdatedGravatarEvent_loaderContext = { readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext };
+export type GravatarContract_UpdatedGravatarEvent_contractRegistrations = {
+  readonly addGravatar: (_1:Ethers_ethAddress) => void; 
+  readonly addNftFactory: (_1:Ethers_ethAddress) => void; 
+  readonly addSimpleNft: (_1:Ethers_ethAddress) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_UpdatedGravatarEvent_loaderContext = { readonly contractRegistration: GravatarContract_UpdatedGravatarEvent_contractRegistrations; readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityLoaderContext };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type NftFactoryContract_SimpleNftCreatedEvent_eventArgs = {
@@ -260,7 +281,14 @@ export type NftFactoryContract_SimpleNftCreatedEvent_context = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
-export type NftFactoryContract_SimpleNftCreatedEvent_loaderContext = {};
+export type NftFactoryContract_SimpleNftCreatedEvent_contractRegistrations = {
+  readonly addGravatar: (_1:Ethers_ethAddress) => void; 
+  readonly addNftFactory: (_1:Ethers_ethAddress) => void; 
+  readonly addSimpleNft: (_1:Ethers_ethAddress) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type NftFactoryContract_SimpleNftCreatedEvent_loaderContext = { readonly contractRegistration: NftFactoryContract_SimpleNftCreatedEvent_contractRegistrations };
 
 // tslint:disable-next-line:interface-over-type-literal
 export type SimpleNftContract_TransferEvent_eventArgs = {
@@ -323,7 +351,15 @@ export type SimpleNftContract_TransferEvent_nftcollectionEntityLoaderContext = {
 export type SimpleNftContract_TransferEvent_tokenEntityLoaderContext = { readonly existingTransferredTokenLoad: (_1:id, _2:{ readonly loaders?: tokenLoaderConfig }) => void };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type SimpleNftContract_TransferEvent_contractRegistrations = {
+  readonly addGravatar: (_1:Ethers_ethAddress) => void; 
+  readonly addNftFactory: (_1:Ethers_ethAddress) => void; 
+  readonly addSimpleNft: (_1:Ethers_ethAddress) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
 export type SimpleNftContract_TransferEvent_loaderContext = {
+  readonly contractRegistration: SimpleNftContract_TransferEvent_contractRegistrations; 
   readonly user: SimpleNftContract_TransferEvent_userEntityLoaderContext; 
   readonly nftcollection: SimpleNftContract_TransferEvent_nftcollectionEntityLoaderContext; 
   readonly token: SimpleNftContract_TransferEvent_tokenEntityLoaderContext

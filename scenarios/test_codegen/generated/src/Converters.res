@@ -1,5 +1,92 @@
+type contractName = string
+type chainId = int
 exception UndefinedEvent(string)
-exception UndefinedContract(Ethers.ethAddress, int)
+exception UndefinedContractAddress(Ethers.ethAddress, chainId)
+exception UndefinedContractName(contractName, chainId)
+
+module ContractNameAddressMappings: {
+  let getContractNameFromAddress: (~chainId: int, ~contractAddress: Ethers.ethAddress) => string
+  let addContractAddress: (
+    ~chainId: int,
+    ~contractName: string,
+    ~contractAddress: Ethers.ethAddress,
+  ) => unit
+  let getAddressesFromContractName: (
+    ~chainId: int,
+    ~contractName: string,
+  ) => array<Ethers.ethAddress>
+} = {
+  type addressToContractName = Js.Dict.t<contractName>
+  type contractNameToAddresses = Js.Dict.t<Belt.Set.String.t>
+  type chainAddresses = Js.Dict.t<addressToContractName>
+  type chainContractNames = Js.Dict.t<contractNameToAddresses>
+
+  let chainAddresses: chainAddresses = Js.Dict.empty()
+  let chainContractNames: chainContractNames = Js.Dict.empty()
+
+  let addContractAddress = (~chainId: int, ~contractName, ~contractAddress: Ethers.ethAddress) => {
+    let chainIdStr = chainId->Belt.Int.toString
+    let addressesToContractName =
+      chainAddresses->Js.Dict.get(chainIdStr)->Belt.Option.getWithDefault(Js.Dict.empty())
+    let contractNameToAddresses =
+      chainContractNames->Js.Dict.get(chainIdStr)->Belt.Option.getWithDefault(Js.Dict.empty())
+
+    addressesToContractName->Js.Dict.set(contractAddress->Ethers.ethAddressToString, contractName)
+
+    let addresses =
+      contractNameToAddresses
+      ->Js.Dict.get(contractName)
+      ->Belt.Option.getWithDefault(Belt.Set.String.empty)
+
+    let updatedAddresses =
+      addresses->Belt.Set.String.add(contractAddress->Ethers.ethAddressToString)
+
+    contractNameToAddresses->Js.Dict.set(contractName, updatedAddresses)
+  }
+
+  let getContractNameFromAddress = (~chainId: int, ~contractAddress: Ethers.ethAddress) => {
+    let optAddressesToContractName = chainAddresses->Js.Dict.get(chainId->Belt.Int.toString)
+
+    switch optAddressesToContractName {
+    | None =>
+      Logging.error(`chainId ${chainId->Belt.Int.toString} was not constructed in address mapping`)
+      UndefinedContractAddress(contractAddress, chainId)->raise
+    | Some(addressesToContractName) =>
+      let contractName =
+        addressesToContractName->Js.Dict.get(contractAddress->Ethers.ethAddressToString)
+      switch contractName {
+      | None =>
+        Logging.error(
+          `contract address ${contractAddress->Ethers.ethAddressToString} on chainId ${chainId->Belt.Int.toString} was not found in address store`,
+        )
+        UndefinedContractAddress(contractAddress, chainId)->raise
+      | Some(contractName) => contractName
+      }
+    }
+  }
+
+  let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Obj.magic
+
+  let getAddressesFromContractName = (~chainId, ~contractName) => {
+    let optContractNameToAddresses = chainContractNames->Js.Dict.get(chainId->Belt.Int.toString)
+
+    switch optContractNameToAddresses {
+    | None =>
+      Logging.error(
+        `chainId ${chainId->Belt.Int.toString} was not constructed in contract name mapping`,
+      )
+      UndefinedContractName(contractName, chainId)->raise
+    | Some(contractNameToAddresses) =>
+      // this set can be empty, indicating a contract template with no registered addresses
+      let addresses =
+        contractNameToAddresses
+        ->Js.Dict.get(contractName)
+        ->Belt.Option.getWithDefault(Belt.Set.String.empty)
+
+      addresses->Belt.Set.String.toArray->stringsToAddresses
+    }
+  }
+}
 
 let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: int): string => {
   switch (contractAddress->Ethers.ethAddressToString, chainId->Belt.Int.toString) {
@@ -9,7 +96,7 @@ let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: i
   | ("0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC", "1337") => "NftFactory"
   // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
   | ("0x93606B31d10C407F13D9702eC4E0290Fd7E32852", "1337") => "SimpleNft"
-  | _ => UndefinedContract(contractAddress, chainId)->raise
+  | _ => UndefinedContractAddress(contractAddress, chainId)->raise
   }
 }
 let eventStringToEvent = (eventName: string, contractName: string): Types.eventName => {
@@ -47,7 +134,7 @@ module Gravatar = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
@@ -79,7 +166,7 @@ module Gravatar = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
@@ -113,7 +200,7 @@ module Gravatar = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
@@ -149,7 +236,7 @@ module NftFactory = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
@@ -182,7 +269,7 @@ module SimpleNft = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,

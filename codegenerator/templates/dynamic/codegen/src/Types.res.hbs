@@ -48,7 +48,7 @@ type rawEventsEntity = {
   @as("log_index") logIndex: int,
   @as("transaction_index") transactionIndex: int,
   @as("transaction_hash") transactionHash: string,
-  @as("src_address") srcAddress: string,
+  @as("src_address") srcAddress: Ethers.ethAddress,
   @as("block_hash") blockHash: string,
   @as("block_timestamp") blockTimestamp: int,
   @as("event_type") eventType: Js.Json.t,
@@ -109,7 +109,7 @@ type eventLog<'a> = {
   blockNumber: int,
   blockTimestamp: int,
   blockHash: string,
-  srcAddress: string,
+  srcAddress: Ethers.ethAddress,
   transactionHash: string,
   transactionIndex: int,
   logIndex: int,
@@ -169,9 +169,18 @@ module {{event.name.capitalized}}Event = {
     }
     {{/each}}
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+    
+    @genType
+    type contractRegistrations = {
+    {{#each ../../contracts as |contract_inner| }}
+      //TODO only add contracts we've registered for the event in the config
+      add{{contract_inner.name.capitalized}}: (Ethers.ethAddress) => unit,
+    {{/each}}
+    }
     @genType
     type loaderContext = {
+        contractRegistration: contractRegistrations,
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     {{#each event.required_entities as | required_entity |}}
     {{required_entity.name.uncapitalized}} : {{required_entity.name.uncapitalized}}EntityLoaderContext,
     {{/each}}

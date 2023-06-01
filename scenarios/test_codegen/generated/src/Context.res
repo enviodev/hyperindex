@@ -11,7 +11,16 @@ module GravatarContract = {
       let entitiesToLoad: array<Types.entityRead> = []
 
       @warning("-16")
-      let loaderContext: Types.GravatarContract.TestEventEvent.loaderContext = {}
+      let loaderContext: Types.GravatarContract.TestEventEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+        },
+      }
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
@@ -82,7 +91,16 @@ module GravatarContract = {
       let entitiesToLoad: array<Types.entityRead> = []
 
       @warning("-16")
-      let loaderContext: Types.GravatarContract.NewGravatarEvent.loaderContext = {}
+      let loaderContext: Types.GravatarContract.NewGravatarEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+        },
+      }
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
@@ -158,6 +176,14 @@ module GravatarContract = {
 
       @warning("-16")
       let loaderContext: Types.GravatarContract.UpdatedGravatarEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+        },
         gravatar: {
           gravatarWithChangesLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_gravatarWithChanges := Some(id)
@@ -256,7 +282,16 @@ module NftFactoryContract = {
       let entitiesToLoad: array<Types.entityRead> = []
 
       @warning("-16")
-      let loaderContext: Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext = {}
+      let loaderContext: Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+        },
+      }
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getLoaderContext: () => loaderContext,
@@ -335,6 +370,14 @@ module SimpleNftContract = {
 
       @warning("-16")
       let loaderContext: Types.SimpleNftContract.TransferEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (_ethAddress: Ethers.ethAddress) => (),
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (_ethAddress: Ethers.ethAddress) => (),
+        },
         user: {
           userFromLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_userFrom := Some(id)

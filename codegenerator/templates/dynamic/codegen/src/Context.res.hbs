@@ -20,6 +20,12 @@ module {{contract.name.capitalized}}Contract = {
 
       @warning("-16")
       let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext = {
+        contractRegistration: {
+        {{#each ../../contracts as |contract_inner| }}
+          //TODO only add contracts we've registered for the event in the config
+          add{{contract_inner.name.capitalized}}: (_ethAddress: Ethers.ethAddress) => (),
+        {{/each}}
+        },
       {{#each event.required_entities as | required_entity |}}
         {{required_entity.name.uncapitalized}}: {
       {{#each required_entity.labels as |label| }}

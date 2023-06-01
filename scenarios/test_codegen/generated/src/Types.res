@@ -38,7 +38,7 @@ type rawEventsEntity = {
   @as("log_index") logIndex: int,
   @as("transaction_index") transactionIndex: int,
   @as("transaction_hash") transactionHash: string,
-  @as("src_address") srcAddress: string,
+  @as("src_address") srcAddress: Ethers.ethAddress,
   @as("block_hash") blockHash: string,
   @as("block_timestamp") blockTimestamp: int,
   @as("event_type") eventType: Js.Json.t,
@@ -182,7 +182,7 @@ type eventLog<'a> = {
   blockNumber: int,
   blockTimestamp: int,
   blockHash: string,
-  srcAddress: string,
+  srcAddress: Ethers.ethAddress,
   transactionHash: string,
   transactionIndex: int,
   logIndex: int,
@@ -224,9 +224,20 @@ module GravatarContract = {
       token: tokenEntityHandlerContext,
     }
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     @genType
-    type loaderContext = {}
+    type contractRegistrations = {
+      //TODO only add contracts we've registered for the event in the config
+      addGravatar: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addNftFactory: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addSimpleNft: Ethers.ethAddress => unit,
+    }
+    @genType
+    type loaderContext = {
+      contractRegistration: contractRegistrations,
+      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+    }
   }
   module NewGravatarEvent = {
     @spice @genType
@@ -264,9 +275,20 @@ module GravatarContract = {
       token: tokenEntityHandlerContext,
     }
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     @genType
-    type loaderContext = {}
+    type contractRegistrations = {
+      //TODO only add contracts we've registered for the event in the config
+      addGravatar: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addNftFactory: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addSimpleNft: Ethers.ethAddress => unit,
+    }
+    @genType
+    type loaderContext = {
+      contractRegistration: contractRegistrations,
+      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+    }
   }
   module UpdatedGravatarEvent = {
     @spice @genType
@@ -312,9 +334,21 @@ module GravatarContract = {
       gravatarWithChangesLoad: (id, ~loaders: gravatarLoaderConfig=?) => unit,
     }
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     @genType
-    type loaderContext = {gravatar: gravatarEntityLoaderContext}
+    type contractRegistrations = {
+      //TODO only add contracts we've registered for the event in the config
+      addGravatar: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addNftFactory: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addSimpleNft: Ethers.ethAddress => unit,
+    }
+    @genType
+    type loaderContext = {
+      contractRegistration: contractRegistrations,
+      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+      gravatar: gravatarEntityLoaderContext,
+    }
   }
 }
 module NftFactoryContract = {
@@ -354,9 +388,20 @@ module NftFactoryContract = {
       token: tokenEntityHandlerContext,
     }
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     @genType
-    type loaderContext = {}
+    type contractRegistrations = {
+      //TODO only add contracts we've registered for the event in the config
+      addGravatar: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addNftFactory: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addSimpleNft: Ethers.ethAddress => unit,
+    }
+    @genType
+    type loaderContext = {
+      contractRegistration: contractRegistrations,
+      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+    }
   }
 }
 module SimpleNftContract = {
@@ -419,9 +464,19 @@ module SimpleNftContract = {
       existingTransferredTokenLoad: (id, ~loaders: tokenLoaderConfig=?) => unit,
     }
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+    @genType
+    type contractRegistrations = {
+      //TODO only add contracts we've registered for the event in the config
+      addGravatar: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addNftFactory: Ethers.ethAddress => unit,
+      //TODO only add contracts we've registered for the event in the config
+      addSimpleNft: Ethers.ethAddress => unit,
+    }
     @genType
     type loaderContext = {
+      contractRegistration: contractRegistrations,
+      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
       user: userEntityLoaderContext,
       nftcollection: nftcollectionEntityLoaderContext,
       token: tokenEntityLoaderContext,
