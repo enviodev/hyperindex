@@ -144,49 +144,50 @@ fn get_contract_type_from_config_contract(
 
     for config_event in config_contract.events.iter() {
         let abi_event = match &config_event.event {
-            EventNameOrSig::Name(config_event_name) => match &contract_abi_opt {
-                None => {
-                    let message = format!(
-                        "Please provide a valid abi_file_path for your named event {} or alternatively provide a event signature",
+            EventNameOrSig::Name(config_event_name) => contract_abi_opt
+                .as_ref()
+                .ok_or_else(|| {
+                    format!(
+                        "Please provide a valid abi_file_path for your named event {} or \
+                         alternatively provide a event signature",
                         config_event_name
-                        );
-                    Err(message)?
-                }
-                Some(contract_abi) => contract_abi.event(config_event_name).ok(),
-            },
-            EventNameOrSig::Event(config_defined_event) => match &contract_abi_opt {
-                None => Some(config_defined_event),
-                Some(contract_abi) => {
-                    let abi_file_event_opt = contract_abi.event(&config_defined_event.name).ok();
-
-                    match abi_file_event_opt {
-                        Some(abi_file_event) => {
-                            if abi_file_event != config_defined_event {
-                                println!("WARNING: The event signature for {} in your ABI file does not match the signature defined in the config", config_defined_event.name);
-                            }
-                            Some(config_defined_event)
+                    )
+                })
+                .and_then(|abi| {
+                    abi.event(config_event_name).map_err(|_| {
+                        format!(
+                            "Unable to find an event named {} in your ABI",
+                            config_event_name
+                        )
+                    })
+                })?,
+            EventNameOrSig::Event(config_defined_event) => {
+                if let Some(contract_abi) = &contract_abi_opt {
+                    match contract_abi.event(&config_defined_event.name) {
+                        Err(_) => {
+                            eprintln!(
+                                "WARNING: The event signature for {} defined in your config \
+                                 does not exist in the provided ABI file",
+                                config_defined_event.name
+                            );
                         }
-                        None => {
-                            println!("WARNING: The event signature for {} defined in your config does not exist in the provided ABI file", config_defined_event.name);
-                            Some(config_defined_event)
+                        Ok(abi_file_event) => {
+                            if abi_file_event != config_defined_event {
+                                eprintln!(
+                                    "WARNING: The event signature for {} in your ABI file \
+                                     does not match the signature defined in the config",
+                                    config_defined_event.name
+                                );
+                            }
                         }
                     }
                 }
-            },
-        };
-
-        match abi_event {
-            Some(abi_event) => {
-                let event_type = get_event_template_from_ethereum_abi_event(
-                    config_event,
-                    abi_event,
-                    entity_fields_of_required_entity_map,
-                );
-
-                event_types.push(event_type);
+                config_defined_event
             }
-            None => (),
         };
+
+        let event_type = get_event_template_from_ethereum_abi_event(config_event, &abi_event, entity_fields_of_required_entity_map);
+        event_types.push(event_type);
     }
 
     let handler_template = parsed_paths.get_contract_handler_paths_template(&contract_unique_id)?;
@@ -227,7 +228,6 @@ pub fn get_contract_types_from_config(
 
 #[cfg(test)]
 mod tests {
-
     use crate::{
         capitalization::Capitalize,
         config_parsing::{self, EventNameOrSig, RequiredEntity},
@@ -237,6 +237,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{abi_type_to_rescript_string, get_event_template_from_ethereum_abi_event};
+
     #[test]
     fn abi_event_to_record_1() {
         let input1_name = String::from("id");
@@ -356,6 +357,7 @@ mod tests {
 
         assert_eq!(parsed_rescript_string, String::from("array<string>"))
     }
+
     #[test]
     fn test_record_type_fixed_array() {
         let array_fixed_arr_type = ParamType::FixedArray(Box::new(ParamType::String), 1);
