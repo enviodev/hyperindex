@@ -1,6 +1,6 @@
 // pages
 let docs = "https://docs.envio.dev/docs"
-let gettingStarted = "https://docs.envio.dev/docs/getting-started"
+let gettingStarted = "https://docs.envio.dev/docs/quickstart"
 let useCases = "/use-cases"
 let careers = "/careers"
 let support = "/support"
