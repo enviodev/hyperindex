@@ -8,5 +8,5 @@ type Tokens @entity {
 type Totals @entity {
   id: ID!
   erc20: Tokens!
-  totalTransfer: Int!
+  totalTransfer: BigInt!
 }
