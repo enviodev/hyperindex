@@ -18,8 +18,8 @@ impl InitArgs {
             Some(args_template) => args_template.clone(),
             None => {
                 use Template::Blank;
-                use Template::Greeter;
                 use Template::Erc20;
+                use Template::Greeter;
 
                 let options = vec![Blank, Greeter, Erc20]
                     .iter()

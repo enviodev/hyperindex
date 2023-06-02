@@ -32,7 +32,7 @@ import {
 import { awesomeEntity } from "../generated/src/Types.gen";
 
 MyAwesomeContract_registerMyAwesomeEventLoadEntities(({ event, context }) => {
-    let _ = context.awesomeEvent.awesomeEntityChangesLoad()
+  let _ = context.awesomeEvent.awesomeEntityChangesLoad()
 });
 
 MyAwesomeContract_registerMyAwesomeEventHandler(({ event, context }) => {
