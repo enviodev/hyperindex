@@ -174,3 +174,27 @@ pnpm run watch
 ```
 
 ```
+
+# Deploying the nft-factory to the cluster with waypoint 
+
+ensure you are familiar with waypoint and kubernetes: https://developer.hashicorp.com/waypoint/tutorials/get-started-kubernetes/get-started-kubernetes
+
+ensure you have access to desired cluster. 
+
+run the following steps if you are setting up for the first time: 
+
+- waypoint install --platform=kubernetes -accept-tos
+- waypoint init
+
+build the indexer with fuji config:
+- pnpm codegen-fuji -s
+
+Update the container image tag and any environment variables in the application section of the waypoint.hcl file
+
+deploy using waypoint: 
+- waypoint up
+
+Alternatively, if you wish to run the indexer locally instead of deploying to a cluster, you can use the docker compose file in this directory:
+- docker compose up -d 
+
+
