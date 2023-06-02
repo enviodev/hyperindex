@@ -19,6 +19,14 @@ use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
 use include_dir::{include_dir, Dir};
 
 static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
+static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
+    include_dir!("templates/static/blank_template/shared");
+static BLANK_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/blank_template/rescript");
+static BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/blank_template/typescript");
+static BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/blank_template/javascript");
 static GREETER_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
     include_dir!("templates/static/greeter_template/shared");
 static GREETER_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
@@ -39,6 +47,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             let project_root_path = PathBuf::from(&args.directory);
 
             match args.template {
+                Template::Blank => {
+                    //Copy in the relevant js flavor specific blank template files
+                    match &args.js_flavor {
+                        JsFlavor::Rescript => {
+                            BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                        }
+                        JsFlavor::Typescript => {
+                            BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
+                        }
+                        JsFlavor::Javascript => {
+                            BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                        }
+                    }
+                    //Copy in the rest of the shared blank template files
+                    BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                }
+                
                 Template::Greeter => {
                     //Copy in the relevant language specific greeter files
                     match &args.language {
@@ -55,6 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     //Copy in the rest of the shared greeter files
                     GREETER_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
+
             }
 
             println!("Project template ready");

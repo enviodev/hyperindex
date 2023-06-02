@@ -1,0 +1,18 @@
+version: <> # Version of the config schema used by the indexer
+description: <> # Description of the project
+repository: <> # Repository of the project
+networks: # Configuration of the blockchain networks that the project is deployed on
+  - id: <> # Chain identifier of the network
+    rpc_url: <> # RPC URL that will be used to subscribe to blockchain data on this network
+    start_block: <> # Initial block from which the indexer will start listening for events
+    contracts: # Configuration for each contract 
+      - name: <> # User-defined contract name
+        abi_file_path: <> # File location of the contract ABI
+        address: <> # An array of addresses that the contract is deployed to on the network
+        handler: ./src/EventHandlers.js # Location of the file that handles the events emitted by this contract
+        events: # Configuration for each event emitted by this contract that the indexer will listen for
+          - event: <> #  Name of the event (must match the name in the ABI)
+            requiredEntities: # An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)
+              - name: <> # The name of the required entity (must match an entity defined in `schema.graphql`)
+                labels: # A user defined label that corresponds to this entity load
+                  - <>

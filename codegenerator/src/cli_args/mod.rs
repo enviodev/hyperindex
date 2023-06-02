@@ -63,7 +63,8 @@ pub struct InitArgs {
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
 ///Template to work off
 pub enum Template {
-    Greeter,
+    Blank,
+    Greeter
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
