@@ -96,9 +96,6 @@ module ContractNameAddressMappings: {
   let registerStaticAddresses = (~chainConfig: Config.chainConfig) => {
     chainConfig.contracts->Belt.Array.forEach(contract => {
       contract.addresses->Belt.Array.forEach(address => {
-        Js.log2("registering chain: ", chainConfig.chainId)
-        Js.log2("registering address", address)
-        Js.log2("registering name", contract.name)
         addContractAddress(
           ~chainId=chainConfig.chainId,
           ~contractName=contract.name,

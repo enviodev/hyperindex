@@ -55,6 +55,14 @@ type rawEventsEntity = {
   params: string,
 }
 
+type dynamicContractRegistryEntity = {
+  @as("chain_id") chainId: int,
+  @as("event_id") eventId: Ethers.BigInt.t,
+  @as("contract_address") contractAddress: Ethers.ethAddress,
+  @as("contract_type") contractType: string,
+}
+
+
 {{#each entities as | entity |}}
 @genType
 type {{entity.name.uncapitalized}}Entity = {
@@ -219,4 +227,3 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{/each}}
   {{/each}}
 }
-

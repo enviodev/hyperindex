@@ -45,6 +45,13 @@ type rawEventsEntity = {
   params: string,
 }
 
+type dynamicContractRegistryEntity = {
+  @as("chain_id") chainId: int,
+  @as("event_id") eventId: Ethers.BigInt.t,
+  @as("contract_address") contractAddress: Ethers.ethAddress,
+  @as("contract_type") contractType: string,
+}
+
 @genType
 type userEntity = {
   id: string,

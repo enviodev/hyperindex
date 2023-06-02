@@ -7,9 +7,10 @@ module {{contract.name.capitalized}}Contract = {
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
       getContext: (~eventData: Types.eventData) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
-      getEntitiesToLoad: unit => array<Types.entityRead>
+      getEntitiesToLoad: unit => array<Types.entityRead>,
+      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
-    let contextCreator: (~chainId: int) => contextCreatorFunctions = (~chainId) => {
+    let contextCreator: (~chainId: int, ~event: Types.eventLog<'a>) => contextCreatorFunctions = (~chainId, ~event) => {
       {{#each event.required_entities as | required_entity |}}
       {{#each required_entity.labels as |label| }}
       let optIdOf_{{label}} = ref(None)
@@ -18,6 +19,8 @@ module {{contract.name.capitalized}}Contract = {
 
       let entitiesToLoad: array<Types.entityRead> = []
 
+      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
+
       @warning("-16")
       let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext = {
         contractRegistration: {
@@ -25,6 +28,21 @@ module {{contract.name.capitalized}}Contract = {
           //TODO only add contracts we've registered for the event in the config
           add{{contract_inner.name.capitalized}}: (contractAddress: Ethers.ethAddress) => 
           {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "{{contract_inner.name.capitalized}}",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(~entity=dynamicContractRegistration, ~crud=Types.Create)
+
              Converters.ContractNameAddressMappings.addContractAddress(
               ~chainId,
               ~contractAddress,
@@ -47,6 +65,7 @@ module {{contract.name.capitalized}}Contract = {
       }
       {
         getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getContext: (~eventData) => ({
           {{#each ../../entities as | entity |}}
