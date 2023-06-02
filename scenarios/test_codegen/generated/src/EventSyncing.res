@@ -309,8 +309,6 @@ let processAllEventsFromBlockNumber = async (
 }
 
 let processAllEvents = async (chainConfig: Config.chainConfig) => {
-  Converters.ContractNameAddressMappings.registerStaticAddresses(~chainConfig)
-
   let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
     ~chainId=chainConfig.chainId,
   )
@@ -320,6 +318,24 @@ let processAllEvents = async (chainConfig: Config.chainConfig) => {
       chainConfig.startBlock,
       latestProcessedBlock => {latestProcessedBlock + 1},
     )
+
+  //Add all contracts and addresses from config
+  Converters.ContractNameAddressMappings.registerStaticAddresses(~chainConfig)
+
+  //Add all dynamic contracts from DB
+  let dynamicContracts =
+    await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
+      ~chainId=chainConfig.chainId,
+      ~startBlock,
+    )
+
+  dynamicContracts->Belt.Array.forEach(({contractType, contractAddress}) =>
+    Converters.ContractNameAddressMappings.addContractAddress(
+      ~chainId=chainConfig.chainId,
+      ~contractName=contractType,
+      ~contractAddress,
+    )
+  )
 
   await processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,

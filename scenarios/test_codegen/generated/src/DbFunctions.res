@@ -59,18 +59,17 @@ module DynamicContractRegistry = {
     array<dynamicContractRegistryRowId>,
   ) => promise<array<Types.dynamicContractRegistryEntity>> = "readDynamicContractRegistryEntities"
 
-  // ///Returns an array with 1 block number (the highest processed on the given chainId)
-  // @module("./DbFunctionsImplementation.js")
-  // external readLatestDynamicContractRegistryBlockNumberProcessedOnChainId: (
-  //   Postgres.sql,
-  //   chainId,
-  // ) => promise<array<blockNumberRow>> = "readLatestDynamicContractRegistryBlockNumberProcessedOnChainId"
-
-  // let getLatestProcessedBlockNumber = async (~chainId) => {
-  //   let row = await sql->readLatestDynamicContractRegistryBlockNumberProcessedOnChainId(chainId)
-
-  //   row->Belt.Array.get(0)->Belt.Option.map(row => row.blockNumber)
-  // }
+  type contractTypeAndAddress = {
+    @as("contract_address") contractAddress: Ethers.ethAddress,
+    @as("contract_type") contractType: string,
+  }
+  ///Returns an array with 1 block number (the highest processed on the given chainId)
+  @module("./DbFunctionsImplementation.js")
+  external readDynamicContractsOnChainIdAtOrBeforeBlock: (
+    Postgres.sql,
+    ~chainId: chainId,
+    ~startBlock: int,
+  ) => promise<array<contractTypeAndAddress>> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
 }
 
 type readEntityData<'a> = {

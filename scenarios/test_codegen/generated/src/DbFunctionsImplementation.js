@@ -74,6 +74,14 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
 // end db operations for raw_events
 
 
+module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (sql, chainId, block_number) => sql`
+  SELECT contract_address, contract_type
+  FROM public.dynamic_contract_registry as c
+  JOIN raw_events e ON c.chain_id = e.chain_id
+  AND c.event_id = e.event_id
+  WHERE e.block_number <= ${block_number};
+`
+
 //Start db operations dynamic_contract_registry
 module.exports.readDynamicContractRegistryEntities = (sql, entityIdArray) => sql`
   SELECT *
