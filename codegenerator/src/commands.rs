@@ -66,6 +66,24 @@ pub mod codegen {
         Ok(())
     }
 }
+
+pub mod start {
+
+    use std::{error::Error, process::Command};
+
+    use crate::project_paths::ProjectPaths;
+
+    pub fn start_indexer(
+        project_paths: &ProjectPaths,
+    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        Ok(Command::new("npm")
+            .arg("run")
+            .arg("start")
+            .current_dir(&project_paths.project_root)
+            .spawn()?
+            .wait()?)
+    }
+}
 pub mod docker {
 
     use std::{error::Error, process::Command};

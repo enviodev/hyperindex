@@ -175,6 +175,16 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             Ok(())
         }
+
+        CommandType::Start(start_args) => {
+            let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
+            let project_paths = &parsed_paths.project_paths;
+            if start_args.restart {
+                commands::db_migrate::run_db_setup(project_paths)?;
+            }
+            commands::start::start_indexer(project_paths)?;
+            Ok(())
+        }
         CommandType::Local(local_commands) => {
             let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
