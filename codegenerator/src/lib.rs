@@ -5,6 +5,7 @@ use std::path::Path;
 
 use handlebars::Handlebars;
 
+use include_dir::{Dir, DirEntry};
 use serde::Serialize;
 
 pub mod config_parsing;
@@ -19,6 +20,8 @@ pub mod capitalization;
 pub mod cli_args;
 
 use capitalization::{Capitalize, CapitalizedOptions};
+
+use crate::project_paths::path_utils::normalize_path;
 
 pub trait HasName {
     fn set_name(&mut self, name: CapitalizedOptions);
@@ -170,68 +173,69 @@ pub fn generate_templates(
     let templates = [
         (
             "src/Types.res",
-            include_str!("../templates/dynamic/src/Types.res"),
+            include_str!("../templates/dynamic/codegen/src/Types.res"),
         ),
         (
             "src/Abis.res",
-            include_str!("../templates/dynamic/src/Abis.res"),
+            include_str!("../templates/dynamic/codegen/src/Abis.res"),
         ),
         (
             "src/Handlers.res",
-            include_str!("../templates/dynamic/src/Handlers.res"),
+            include_str!("../templates/dynamic/codegen/src/Handlers.res"),
         ),
         (
             "src/DbFunctions.res",
-            include_str!("../templates/dynamic/src/DbFunctions.res"),
+            include_str!("../templates/dynamic/codegen/src/DbFunctions.res"),
         ),
         (
             "src/EventProcessing.res",
-            include_str!("../templates/dynamic/src/EventProcessing.res"),
+            include_str!("../templates/dynamic/codegen/src/EventProcessing.res"),
         ),
         (
             "src/Config.res",
-            include_str!("../templates/dynamic/src/Config.res"),
+            include_str!("../templates/dynamic/codegen/src/Config.res"),
         ),
         (
             "src/IO.res",
-            include_str!("../templates/dynamic/src/IO.res"),
+            include_str!("../templates/dynamic/codegen/src/IO.res"),
         ),
         (
             "src/Converters.res",
-            include_str!("../templates/dynamic/src/Converters.res"),
+            include_str!("../templates/dynamic/codegen/src/Converters.res"),
         ),
         (
             "src/EventSyncing.res",
-            include_str!("../templates/dynamic/src/EventSyncing.res"),
+            include_str!("../templates/dynamic/codegen/src/EventSyncing.res"),
         ),
         (
             "src/Context.res",
-            include_str!("../templates/dynamic/src/Context.res"),
+            include_str!("../templates/dynamic/codegen/src/Context.res"),
         ),
         (
             "register_tables_with_hasura.sh",
-            include_str!("../templates/dynamic/register_tables_with_hasura.sh"),
+            include_str!("../templates/dynamic/codegen/register_tables_with_hasura.sh.hbs"),
         ),
         (
             ".gitignore",
-            include_str!("../templates/dynamic/.gitignore"),
+            include_str!("../templates/dynamic/codegen/.gitignore.hbs"),
         ),
         (
             "src/RegisterHandlers.res",
-            include_str!("../templates/dynamic/src/RegisterHandlers.res"),
+            include_str!("../templates/dynamic/codegen/src/RegisterHandlers.res"),
         ),
         (
             "src/Migrations.res",
-            include_str!("../templates/dynamic/src/Migrations.res"),
+            include_str!("../templates/dynamic/codegen/src/Migrations.res"),
         ),
         (
             "src/DbFunctionsImplementation.js",
-            include_str!("../templates/dynamic/src/DbFunctionsImplementation.js.hbs"),
+            include_str!("../templates/dynamic/codegen/src/DbFunctionsImplementation.js.hbs"),
         ),
     ];
 
     for (template_path, template_content) in &templates {
         let rendered_string = handlebars.render_template(template_content, &types_data)?;
+
         write_to_file_in_generated(template_path, &rendered_string, project_paths)?;
     }
 
@@ -248,6 +252,135 @@ fn write_to_file_in_generated(
     fs::create_dir_all(&project_paths.generated)?;
     let file_path = &project_paths.generated.join(filename);
     fs::write(file_path, content)
+}
+
+pub struct HandleBarsDirGenerator<'a, T: Serialize> {
+    handlebars: handlebars::Handlebars<'a>,
+    templates_dir: &'a Dir<'a>,
+    rs_template: &'a T,
+    output_dir: &'a Path,
+}
+
+impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
+    pub fn new(templates_dir: &'a Dir, rs_template: &'a T, output_dir: &'a Path) -> Self {
+        let mut handlebars = Handlebars::new();
+        handlebars.set_strict_mode(true);
+        handlebars.register_escape_fn(handlebars::no_escape);
+
+        HandleBarsDirGenerator {
+            handlebars,
+            templates_dir,
+            rs_template,
+            output_dir,
+        }
+    }
+
+    fn generate_hbs_templates_internal_recersive(
+        &self,
+        hbs_templates_root_dir: &Dir,
+    ) -> Result<(), String> {
+        for entry in hbs_templates_root_dir.entries() {
+            match entry {
+                DirEntry::File(file) => {
+                    let path = file.path();
+                    let is_hbs_file = path.extension().map_or(false, |ext| ext == "hbs");
+
+                    if is_hbs_file {
+                        // let get_path_str = |path: AsRef<Path>>| path.to_str().unwrap_or_else(|| "bad path");
+                        let path_str = path.to_str().ok_or_else(|| {
+                            "Could not cast path to str in generate_hbs_templates"
+                        })?;
+                        //Get the parent of the file src/MyTemplate.res.hbs -> src/
+                        let parent = path
+                            .parent()
+                            .ok_or_else(|| format!("Could not produce parent of {}", path_str))?;
+
+                        //Get the file stem src/MyTemplate.res.hbs -> MyTemplate.res
+                        let file_stem = path
+                            .file_stem()
+                            .ok_or_else(|| format!("Could not produce filestem of {}", path_str))?;
+
+                        //Read the template file contents
+                        let file_str = file.contents_utf8().ok_or_else(|| {
+                            format!("Could not produce file contents of {}", path_str)
+                        })?;
+
+                        //Render the template
+                        let rendered_file = self
+                            .handlebars
+                            .render_template(file_str, &self.rs_template)
+                            .map_err(|e| {
+                                format!("Could not render file at {} error: {}", path_str, e)
+                            })?;
+
+                        //Setup output directory
+                        let output_dir_path =
+                            normalize_path(self.output_dir.join(parent).as_path());
+                        let output_dir_path_str = output_dir_path.to_str().ok_or_else(|| {
+                            "Could not cast output path to str in generate_hbs_templates"
+                        })?;
+
+                        //ensure the dir exists or is created
+                        fs::create_dir_all(&output_dir_path).map_err(|e| {
+                            format!(
+                                "create_dir_all failed at {} error: {}",
+                                &output_dir_path_str, e
+                            )
+                        })?;
+
+                        //append the filename
+                        let output_file_path = output_dir_path.join(file_stem);
+
+                        //Write the file
+                        fs::write(&output_file_path, rendered_file).map_err(|e| {
+                            format!("file write failed at {} error: {}", &output_dir_path_str, e)
+                        })?;
+                    }
+                }
+                DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recersive(self, &dir)?,
+            }
+        }
+        Ok(())
+    }
+    pub fn generate_hbs_templates(&self) -> Result<(), String> {
+        Self::generate_hbs_templates_internal_recersive(&self, self.templates_dir)
+    }
+}
+
+#[derive(Serialize)]
+pub struct InitTemplates {
+    project_name: String,
+    is_rescript: bool,
+    is_typescript: bool,
+    is_javascript: bool,
+}
+
+impl InitTemplates {
+    pub fn new(project_name: String, lang: &cli_args::Language) -> Self {
+        let template = InitTemplates {
+            project_name,
+            is_rescript: false,
+            is_typescript: false,
+            is_javascript: false,
+        };
+
+        use cli_args::Language;
+        match lang {
+            Language::Rescript => InitTemplates {
+                is_rescript: true,
+                ..template
+            },
+
+            Language::Typescript => InitTemplates {
+                is_typescript: true,
+                ..template
+            },
+            Language::Javascript => InitTemplates {
+                is_javascript: true,
+                ..template
+            },
+        }
+    }
 }
 
 #[cfg(unix)]
