@@ -48,20 +48,36 @@ module {{contract.name.capitalized}}Contract = {
                   {{/each}}
                   {{#each required_entity.entity_fields_of_required_entity as | entity_field_of_required_entity |}}
               get{{entity_field_of_required_entity.field_name.capitalized}}: {{entity.name.uncapitalized}} => {
-                {{#if entity_field_of_required_entity.is_optional}}
-                  let opt{{entity_field_of_required_entity.field_name.capitalized}} = {{entity.name.uncapitalized}}.{{entity_field_of_required_entity.field_name.uncapitalized}}->Belt.Option.map(entityFieldId => IO.InMemoryStore.{{entity_field_of_required_entity.type_name.capitalized}}.get{{entity_field_of_required_entity.type_name.capitalized}}(~id=entityFieldId))
-                {{else}}
-                  let opt{{entity_field_of_required_entity.field_name.capitalized}} = IO.InMemoryStore.{{entity_field_of_required_entity.type_name.capitalized}}.get{{entity_field_of_required_entity.type_name.capitalized}}(~id={{entity.name.uncapitalized}}.{{entity_field_of_required_entity.field_name.uncapitalized}})
-                {{/if}}
-              switch opt{{entity_field_of_required_entity.field_name.capitalized}} {
-              | Some({{entity_field_of_required_entity.field_name.uncapitalized}}) => {{entity_field_of_required_entity.field_name.uncapitalized}}
-              | None =>
-                Logging.warn(`{{entity.name.capitalized}} {{entity_field_of_required_entity.field_name.uncapitalized}} data not found. Loading associated {{entity_field_of_required_entity.type_name.uncapitalized}} from database.
+                {{#if entity_field_of_required_entity.is_array}}
+                      let {{entity_field_of_required_entity.field_name.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field_of_required_entity.field_name.uncapitalized}}->Belt.Array.map(entityId => {
+                        let optEntity = IO.InMemoryStore.{{entity_field_of_required_entity.type_name.capitalized}}.get{{entity_field_of_required_entity.type_name.capitalized}}(~id=entityId)
+
+                        switch optEntity {
+                      | Some({{entity_field_of_required_entity.field_name.uncapitalized}}) => {{entity_field_of_required_entity.field_name.uncapitalized}}
+                      | None =>
+                        Logging.warn(`{{entity.name.capitalized}} {{entity_field_of_required_entity.field_name.uncapitalized}} data not found. Loading associated {{entity_field_of_required_entity.type_name.uncapitalized}} from database.
+Please consider loading the {{entity_field_of_required_entity.type_name.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a {{entity_field_of_required_entity.type_name.uncapitalized}} with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }})
+              {{entity_field_of_required_entity.field_name.uncapitalized}}Array
+                    {{else}}
+                    {{#if entity_field_of_required_entity.is_optional}}
+                      let opt{{entity_field_of_required_entity.field_name.capitalized}} = {{entity.name.uncapitalized}}.{{entity_field_of_required_entity.field_name.uncapitalized}}->Belt.Option.map(entityFieldId => IO.InMemoryStore.{{entity_field_of_required_entity.type_name.capitalized}}.get{{entity_field_of_required_entity.type_name.capitalized}}(~id=entityFieldId))
+                    {{else}}
+                        let opt{{entity_field_of_required_entity.field_name.capitalized}} = IO.InMemoryStore.{{entity_field_of_required_entity.type_name.capitalized}}.get{{entity_field_of_required_entity.type_name.capitalized}}(~id={{entity.name.uncapitalized}}.{{entity_field_of_required_entity.field_name.uncapitalized}})
+                    {{/if}}
+                      switch opt{{entity_field_of_required_entity.field_name.capitalized}} {
+                      | Some({{entity_field_of_required_entity.field_name.uncapitalized}}) => {{entity_field_of_required_entity.field_name.uncapitalized}}
+                      | None =>
+                        Logging.warn(`{{entity.name.capitalized}} {{entity_field_of_required_entity.field_name.uncapitalized}} data not found. Loading associated {{entity_field_of_required_entity.type_name.uncapitalized}} from database.
 Please consider loading the {{entity_field_of_required_entity.type_name.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
 `)
                 // TODO: this isn't implemented yet. We should fetch a {{entity_field_of_required_entity.type_name.uncapitalized}} with this ID from the database.
                 "NOT_IMPLEMENTED_YET"->Obj.magic
               }
+                  {{/if}}
             },
 
                   {{/each}}

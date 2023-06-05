@@ -111,7 +111,9 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
         )
         let {logIndex, blockNumber} = event
         let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-        let context = contextHelper.getContext(~eventData={chainId, eventId})
+        let context = contextHelper.getContext(
+          ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+        )
         (
           contextHelper.getEntitiesToLoad(),
           Types.GravatarContract_TestEventWithContext(event, context),

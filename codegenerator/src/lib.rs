@@ -74,6 +74,7 @@ pub struct RequiredEntityEntityField {
     field_name: CapitalizedOptions,
     type_name: CapitalizedOptions,
     is_optional: bool,
+    is_array: bool,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -125,6 +126,7 @@ pub fn entities_to_map(
         for param in entity.params {
             if let Some(entity_name) = param.maybe_entity_name {
                 let required_entity: RequiredEntityEntityField = RequiredEntityEntityField {
+                    is_array: param.type_rescript.starts_with("array"),
                     field_name: param.key.to_owned().to_capitalized_options(),
                     type_name: entity_name,
                     is_optional: param.is_optional,

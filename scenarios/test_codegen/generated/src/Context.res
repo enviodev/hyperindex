@@ -398,6 +398,22 @@ Please consider loading the gravatar in the UpdateUser entity loader to greatly 
                 "NOT_IMPLEMENTED_YET"->Obj.magic
               }
             },
+            getTokens: user => {
+              let tokensArray = user.tokens->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.Token.getToken(~id=entityId)
+
+                switch optEntity {
+                | Some(tokens) => tokens
+                | None =>
+                  Logging.warn(`User tokens data not found. Loading associated token from database.
+Please consider loading the token in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a token with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              tokensArray
+            },
           },
           gravatar: {
             insert: entity => {

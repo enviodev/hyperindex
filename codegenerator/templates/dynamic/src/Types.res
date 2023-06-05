@@ -138,7 +138,11 @@ module {{event.name.capitalized}}Event = {
           {{#if entity_field_of_required_entity.is_optional}}
             option<{{entity_field_of_required_entity.type_name.uncapitalized}}Entity>,
           {{else}}
-            {{entity_field_of_required_entity.type_name.uncapitalized}}Entity,
+            {{#if entity_field_of_required_entity.is_array}}
+              array<{{entity_field_of_required_entity.type_name.uncapitalized}}Entity>,
+            {{else}}
+              {{entity_field_of_required_entity.type_name.uncapitalized}}Entity,
+            {{/if}}
           {{/if}}
         {{/each}}
       {{/if}}
