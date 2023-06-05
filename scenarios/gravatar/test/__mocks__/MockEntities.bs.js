@@ -19,18 +19,14 @@ var gravatarEntity2 = {
   updatesCount: 1
 };
 
-var mockEventData1_event_id = BigInt(456);
-
 var mockEventData1 = {
   event_chain_id: 123,
-  event_id: mockEventData1_event_id
+  event_id: "456"
 };
-
-var mockEventData2_event_id = BigInt(789);
 
 var mockEventData2 = {
   event_chain_id: 123,
-  event_id: mockEventData2_event_id
+  event_id: "789"
 };
 
 var gravatarSerialized1 = Types.serializeGravatarEntity(gravatarEntity1);
@@ -57,4 +53,4 @@ exports.gravatarSerialized1 = gravatarSerialized1;
 exports.gravatarSerialized2 = gravatarSerialized2;
 exports.mockInMemRow1 = mockInMemRow1;
 exports.mockInMemRow2 = mockInMemRow2;
-/* mockEventData1 Not a pure module */
+/* gravatarSerialized1 Not a pure module */

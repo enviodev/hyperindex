@@ -25,5 +25,6 @@ let mockUpdateGravatarContext: UpdatedGravatarEvent.context = {
       updateMock->Sinon.callStub1(gravatarUpdate.id)
     },
     delete: _id => Js.log("inimplemented delete"),
+    getOwner: Obj.magic,
   },
 }->Obj.magic

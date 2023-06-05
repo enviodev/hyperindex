@@ -8,15 +8,15 @@ networks:
     contracts:
       - name: Greeter
         abi_file_path: abis/greeter-abi.json
-        address: ["0x85539BBcC27Ec15C8763ceC68a99C14903420E34"]
+        address: "0x85539BBcC27Ec15C8763ceC68a99C14903420E34"
         handler: src/EventHandlers.js
         events:
-          - name: "NewGreeting"
+          - event: "NewGreeting"
             requiredEntities:
               - name: "Greeting"
                 labels:
                   - "greetingWithChanges"
-          - name: "ClearGreeting"
+          - event: "ClearGreeting"
             requiredEntities:
               - name: "Greeting"
                 labels:

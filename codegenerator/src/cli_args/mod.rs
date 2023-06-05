@@ -55,9 +55,9 @@ pub struct InitArgs {
     #[arg(short, long)]
     #[clap(value_enum)]
     pub template: Option<Template>,
-    #[arg(short = 'f', long = "js-flavor")]
+    #[arg(short = 'l', long = "language")]
     #[clap(value_enum)]
-    pub js_flavor: Option<JsFlavor>,
+    pub language: Option<Language>,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
@@ -67,8 +67,8 @@ pub enum Template {
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
-///Which js flavor do you want to write in?
-pub enum JsFlavor {
+///Which language do you want to write in?
+pub enum Language {
     Javascript,
     Typescript,
     Rescript,
