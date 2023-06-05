@@ -34,7 +34,7 @@ Initialize a project with a template
 
   Possible values: `gravatar`
 
-* `-f`, `--js-flavor <JS_FLAVOR>`
+* `-l`, `--language <LANGUAGE>`
 
   Possible values: `javascript`, `typescript`, `rescript`
 
