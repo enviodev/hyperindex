@@ -274,6 +274,7 @@ export type SimpleNftContract_TransferEvent_userEntityHandlerContext = {
   readonly userFrom: () => (null | undefined | userEntity); 
   readonly userTo: () => (null | undefined | userEntity); 
   readonly getGravatar: (_1:userEntity) => (null | undefined | gravatarEntity); 
+  readonly getTokens: (_1:userEntity) => tokenEntity[]; 
   readonly insert: (_1:userEntity) => void; 
   readonly update: (_1:userEntity) => void; 
   readonly delete: (_1:id) => void

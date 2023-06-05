@@ -372,6 +372,8 @@ module SimpleNftContract = {
       userTo: unit => option<userEntity>,
       // TODO: make this type correspond to if the field is optional or not.
       getGravatar: userEntity => option<gravatarEntity>,
+      // TODO: make this type correspond to if the field is optional or not.
+      getTokens: userEntity => array<tokenEntity>,
       insert: userEntity => unit,
       update: userEntity => unit,
       delete: id => unit,

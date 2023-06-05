@@ -291,9 +291,7 @@ fn gql_type_to_capitalized_entity_name(
         Type::NamedType(named_type) => entities_set
             .contains(named_type)
             .then(|| named_type.to_owned().to_capitalized_options()),
-        // NOTE: we don't support lists of entities yet
-        // TODO [#363]: make this work for lists of entities
-        Type::ListType(_gql_type) => None,
+        Type::ListType(gql_type) => gql_type_to_capitalized_entity_name(&gql_type, entities_set),
         Type::NonNullType(gql_type) => gql_type_to_capitalized_entity_name(&gql_type, entities_set),
     }
 }
