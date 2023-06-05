@@ -12,7 +12,7 @@ let addEventToRawEvents = (event: Types.eventLog<'a>, ~chainId, ~jsonSerializedP
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let rawEvent: Types.rawEventsEntity = {
     chainId,
-    eventId,
+    eventId: eventId->Ethers.BigInt.toString,
     blockNumber,
     logIndex,
     transactionIndex,
@@ -21,7 +21,7 @@ let addEventToRawEvents = (event: Types.eventLog<'a>, ~chainId, ~jsonSerializedP
     blockHash,
     blockTimestamp,
     eventType: eventName->Types.eventName_encode,
-    params: jsonSerializedParams,
+    params: jsonSerializedParams->Js.Json.stringify,
   }
 
   IO.InMemoryStore.RawEvents.setRawEvents(~entity=rawEvent, ~crud=Create)
@@ -56,7 +56,7 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
         Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}LoadEntities()(~event, ~context=contextHelper.getLoaderContext())
         let { logIndex, blockNumber } = event
         let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-        let context = contextHelper.getContext(~eventData={chainId, eventId})
+        let context = contextHelper.getContext(~eventData={chainId, eventId: eventId->Ethers.BigInt.toString,})
         (contextHelper.getEntitiesToLoad(), Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context))
         }
 {{/each}}

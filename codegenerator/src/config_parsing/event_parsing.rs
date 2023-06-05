@@ -1,19 +1,21 @@
-use std::path::PathBuf;
-
 use crate::{
     capitalization::Capitalize,
-    config_parsing::{ConfigContract, Event as ConfigEvent},
-    linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
+    config_parsing::{ConfigContract, ConfigEvent},
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
-    Contract, Error, EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
+    Contract, Error, EventParamType, EventTemplate, RequiredEntityEntityField,
+    RequiredEntityTemplate,
 };
+
+use std::collections::HashMap;
+
+use std::path::PathBuf;
 
 use ethers::abi::{
     Contract as AbiContract, Event as EthAbiEvent, EventParam as EthAbiEventParam,
     ParamType as EthAbiParamType,
 };
 
-use super::deserialize_config_from_yaml;
+use super::{deserialize_config_from_yaml, EventNameOrSig};
 
 pub fn parse_abi(abi: &str) -> Result<AbiContract, Box<dyn Error>> {
     let abi: AbiContract = serde_json::from_str(abi)?;
@@ -39,10 +41,7 @@ impl<'a> EthereumEventParam<'a> {
     }
 }
 
-fn abi_type_to_rescript_string(
-    param: &EthereumEventParam,
-    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
-) -> String {
+fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
     match &param.abi_type {
         EthAbiParamType::Uint(_size) => String::from("Ethers.BigInt.t"),
         EthAbiParamType::Int(_size) => String::from("Ethers.BigInt.t"),
@@ -56,10 +55,7 @@ fn abi_type_to_rescript_string(
                 abi_type: &abi_type,
                 name: param.name,
             };
-            format!(
-                "array<{}>",
-                abi_type_to_rescript_string(&sub_param, rescript_subrecord_dependencies)
-            )
+            format!("array<{}>", abi_type_to_rescript_string(&sub_param))
         }
         EthAbiParamType::FixedArray(abi_type, _) => {
             let sub_param = EthereumEventParam {
@@ -67,18 +63,10 @@ fn abi_type_to_rescript_string(
                 name: param.name,
             };
 
-            format!(
-                "array<{}>",
-                abi_type_to_rescript_string(&sub_param, rescript_subrecord_dependencies)
-            )
+            format!("array<{}>", abi_type_to_rescript_string(&sub_param))
         }
         EthAbiParamType::Tuple(abi_types) => {
-            let record_name = match param.name {
-                "" => "unnamed".to_string(),
-                name => name.to_string(),
-            };
-
-            let rescript_params: Vec<EventParamType> = abi_types
+            let rescript_types: Vec<String> = abi_types
                 .iter()
                 .enumerate()
                 .map(|(i, abi_type)| {
@@ -89,22 +77,16 @@ fn abi_type_to_rescript_string(
                         abi_type: &abi_type,
                     };
 
-                    let type_rescript = abi_type_to_rescript_string(
-                        &ethereum_param,
-                        rescript_subrecord_dependencies,
-                    );
+                    let type_rescript = abi_type_to_rescript_string(&ethereum_param);
 
-                    EventParamType { key, type_rescript }
+                    type_rescript
                 })
                 .collect();
 
-            let record = EventRecordType {
-                name: record_name.to_capitalized_options(),
-                params: rescript_params,
-            };
-            let type_name = rescript_subrecord_dependencies.insert(record_name, record);
+            let tuple_inner = rescript_types.join(", ");
 
-            type_name
+            let tuple = format!("({})", tuple_inner);
+            tuple
         }
     }
 }
@@ -112,7 +94,7 @@ fn abi_type_to_rescript_string(
 fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthAbiEvent,
-    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
@@ -122,7 +104,6 @@ fn get_event_template_from_ethereum_abi_event(
             key: input.name.to_owned(),
             type_rescript: abi_type_to_rescript_string(
                 &EthereumEventParam::from_ethereum_abi_param(input),
-                rescript_subrecord_dependencies,
             ),
         })
         .collect();
@@ -133,6 +114,10 @@ fn get_event_template_from_ethereum_abi_event(
             .map(|required_entity| RequiredEntityTemplate {
                 name: required_entity.name.to_capitalized_options(),
                 labels: required_entity.labels.clone(),
+                entity_fields_of_required_entity: entity_fields_of_required_entity_map
+                    .get(&required_entity.name)
+                    .cloned()
+                    .unwrap_or_else(Vec::new),
             })
             .collect(),
         None => Vec::new(),
@@ -151,28 +136,58 @@ fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     parsed_paths: &ParsedPaths,
     contract_unique_id: ContractUniqueId,
-    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> Result<Contract, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
-    let contract_abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
+    let contract_abi_opt = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
     for config_event in config_contract.events.iter() {
-        let abi_event = contract_abi
-            .events()
-            .find(|&abi_event| abi_event.name == config_event.name);
-
-        match abi_event {
-            Some(abi_event) => {
-                let event_type = get_event_template_from_ethereum_abi_event(
-                    config_event,
-                    abi_event,
-                    rescript_subrecord_dependencies,
-                );
-                event_types.push(event_type);
+        let abi_event = match &config_event.event {
+            EventNameOrSig::Name(config_event_name) => contract_abi_opt
+                .as_ref()
+                .ok_or_else(|| {
+                    format!(
+                        "Please provide a valid abi_file_path for your named event {} or \
+                         alternatively provide a event signature",
+                        config_event_name
+                    )
+                })
+                .and_then(|abi| {
+                    abi.event(config_event_name).map_err(|_| {
+                        format!(
+                            "Unable to find an event named {} in your ABI",
+                            config_event_name
+                        )
+                    })
+                })?,
+            EventNameOrSig::Event(config_defined_event) => {
+                if let Some(contract_abi) = &contract_abi_opt {
+                    match contract_abi.event(&config_defined_event.name) {
+                        Err(_) => {
+                            eprintln!(
+                                "WARNING: The event signature for {} defined in your config \
+                                 does not exist in the provided ABI file",
+                                config_defined_event.name
+                            );
+                        }
+                        Ok(abi_file_event) => {
+                            if abi_file_event != config_defined_event {
+                                eprintln!(
+                                    "WARNING: The event signature for {} in your ABI file \
+                                     does not match the signature defined in the config",
+                                    config_defined_event.name
+                                );
+                            }
+                        }
+                    }
+                }
+                config_defined_event
             }
-            None => (),
         };
+
+        let event_type = get_event_template_from_ethereum_abi_event(config_event, &abi_event, entity_fields_of_required_entity_map);
+        event_types.push(event_type);
     }
 
     let handler_template = parsed_paths.get_contract_handler_paths_template(&contract_unique_id)?;
@@ -188,7 +203,7 @@ fn get_contract_type_from_config_contract(
 
 pub fn get_contract_types_from_config(
     parsed_paths: &ParsedPaths,
-    rescript_subrecord_dependencies: &mut RescriptRecordHierarchyLinkedHashMap<EventRecordType>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
 ) -> Result<Vec<Contract>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     let mut contracts: Vec<Contract> = Vec::new();
@@ -203,7 +218,7 @@ pub fn get_contract_types_from_config(
                 config_contract,
                 parsed_paths,
                 contract_unique_id,
-                rescript_subrecord_dependencies,
+                entity_fields_of_required_entity_map,
             )?;
             contracts.push(contract);
         }
@@ -213,16 +228,16 @@ pub fn get_contract_types_from_config(
 
 #[cfg(test)]
 mod tests {
-
     use crate::{
         capitalization::Capitalize,
-        config_parsing::{self, RequiredEntity},
-        linked_hashmap::RescriptRecordHierarchyLinkedHashMap,
-        EventParamType, EventRecordType, EventTemplate, RequiredEntityTemplate,
+        config_parsing::{self, EventNameOrSig, RequiredEntity},
+        EventParamType, EventTemplate, RequiredEntityTemplate,
     };
     use ethers::abi::{Event as AbiEvent, EventParam, ParamType};
+    use std::collections::HashMap;
 
     use super::{abi_type_to_rescript_string, get_event_template_from_ethereum_abi_event};
+
     #[test]
     fn abi_event_to_record_1() {
         let input1_name = String::from("id");
@@ -248,16 +263,13 @@ mod tests {
             anonymous: false,
             inputs,
         };
-        let config_event = config_parsing::Event {
-            name: event_name.clone(),
+        let config_event = config_parsing::ConfigEvent {
+            event: EventNameOrSig::Name(event_name.clone()),
             required_entities: None,
         };
-        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
-        let parsed_event_template = get_event_template_from_ethereum_abi_event(
-            &config_event,
-            &abi_event,
-            &mut rescript_subrecord_dependencies,
-        );
+
+        let parsed_event_template =
+            get_event_template_from_ethereum_abi_event(&config_event, &abi_event, &HashMap::new());
 
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
@@ -301,20 +313,16 @@ mod tests {
             anonymous: false,
             inputs,
         };
-        let config_event = config_parsing::Event {
-            name: event_name.clone(),
+        let config_event = config_parsing::ConfigEvent {
+            event: EventNameOrSig::Name(event_name.clone()),
             required_entities: Some(vec![RequiredEntity {
                 name: String::from("Gravatar"),
                 labels: vec![String::from("gravatarWithChanges")],
             }]),
         };
 
-        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
-        let parsed_event_template = get_event_template_from_ethereum_abi_event(
-            &config_event,
-            &abi_event,
-            &mut rescript_subrecord_dependencies,
-        );
+        let parsed_event_template =
+            get_event_template_from_ethereum_abi_event(&config_event, &abi_event, &HashMap::new());
 
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
@@ -331,6 +339,7 @@ mod tests {
             required_entities: vec![RequiredEntityTemplate {
                 name: String::from("Gravatar").to_capitalized_options(),
                 labels: vec![String::from("gravatarWithChanges")],
+                entity_fields_of_required_entity: Vec::new(),
             }],
         };
         assert_eq!(parsed_event_template, expected_event_template)
@@ -344,12 +353,11 @@ mod tests {
             name: "myArray",
         };
 
-        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
-        let parsed_rescript_string =
-            abi_type_to_rescript_string(&param, &mut rescript_subrecord_dependencies);
+        let parsed_rescript_string = abi_type_to_rescript_string(&param);
 
         assert_eq!(parsed_rescript_string, String::from("array<string>"))
     }
+
     #[test]
     fn test_record_type_fixed_array() {
         let array_fixed_arr_type = ParamType::FixedArray(Box::new(ParamType::String), 1);
@@ -357,9 +365,7 @@ mod tests {
             abi_type: &array_fixed_arr_type,
             name: "myArrayFixed",
         };
-        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
-        let parsed_rescript_string =
-            abi_type_to_rescript_string(&param, &mut rescript_subrecord_dependencies);
+        let parsed_rescript_string = abi_type_to_rescript_string(&param);
 
         assert_eq!(parsed_rescript_string, String::from("array<string>"))
     }
@@ -369,29 +375,14 @@ mod tests {
         let tuple_type = ParamType::Tuple(vec![ParamType::String, ParamType::Uint(256)]);
         let param = super::EthereumEventParam {
             abi_type: &tuple_type,
-            name: "myStruct",
+            name: "myArrayFixed",
         };
-        let mut rescript_subrecord_dependencies = RescriptRecordHierarchyLinkedHashMap::new();
-        let parsed_rescript_string =
-            abi_type_to_rescript_string(&param, &mut rescript_subrecord_dependencies);
 
-        let parsed_sub_records = rescript_subrecord_dependencies
-            .iter()
-            .collect::<Vec<EventRecordType>>();
-        let expected_sub_records = vec![EventRecordType {
-            name: String::from("myStruct").to_capitalized_options(),
-            params: vec![
-                EventParamType {
-                    key: "@as(0) _0".to_string(),
-                    type_rescript: "string".to_string(),
-                },
-                EventParamType {
-                    key: "@as(1) _1".to_string(),
-                    type_rescript: "Ethers.BigInt.t".to_string(),
-                },
-            ],
-        }];
-        assert_eq!(parsed_rescript_string, String::from("myStruct"));
-        assert_eq!(parsed_sub_records, expected_sub_records);
+        let parsed_rescript_string = abi_type_to_rescript_string(&param);
+
+        assert_eq!(
+            parsed_rescript_string,
+            String::from("(string, Ethers.BigInt.t)")
+        )
     }
 }

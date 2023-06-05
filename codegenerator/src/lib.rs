@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::path::Path;
@@ -17,7 +18,7 @@ pub use config_parsing::{entity_parsing, event_parsing, ChainConfigTemplate};
 pub mod capitalization;
 pub mod cli_args;
 
-use capitalization::CapitalizedOptions;
+use capitalization::{Capitalize, CapitalizedOptions};
 
 pub trait HasName {
     fn set_name(&mut self, name: CapitalizedOptions);
@@ -41,17 +42,19 @@ impl HasName for EventRecordType {
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 struct EntityRelationalTypes {
-    is_entity_relationship: bool,
-    relational_key: String,
+    relational_key: CapitalizedOptions,
     mapped_entity: CapitalizedOptions,
     relationship_type: String,
+    is_optional: bool,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 struct EntityParamType {
     key: String,
+    is_optional: bool,
     type_rescript: String,
     type_pg: String,
+    maybe_entity_name: Option<CapitalizedOptions>,
 }
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordType {
@@ -66,10 +69,19 @@ impl HasName for EntityRecordType {
     }
 }
 
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct RequiredEntityEntityField {
+    field_name: CapitalizedOptions,
+    type_name: CapitalizedOptions,
+    is_optional: bool,
+    is_array: bool,
+}
+
 #[derive(Serialize, Debug, PartialEq)]
 pub struct RequiredEntityTemplate {
     name: CapitalizedOptions,
     labels: Vec<String>,
+    entity_fields_of_required_entity: Vec<RequiredEntityEntityField>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -99,6 +111,34 @@ struct TypesTemplate {
     entities: Vec<EntityRecordType>,
     chain_configs: Vec<ChainConfigTemplate>,
     codegen_out_path: String,
+}
+
+/// transform entities into a map from entity name to a list of all linked entities (entity fields) on that entity.
+pub fn entities_to_map(
+    entities: Vec<EntityRecordType>,
+) -> HashMap<String, Vec<RequiredEntityEntityField>> {
+    let mut map: HashMap<String, Vec<RequiredEntityEntityField>> = HashMap::new();
+
+    for entity in entities {
+        let entity_name = entity.name.capitalized;
+
+        let mut related_entities = vec![];
+        for param in entity.params {
+            if let Some(entity_name) = param.maybe_entity_name {
+                let required_entity: RequiredEntityEntityField = RequiredEntityEntityField {
+                    is_array: param.type_rescript.starts_with("array"),
+                    field_name: param.key.to_owned().to_capitalized_options(),
+                    type_name: entity_name,
+                    is_optional: param.is_optional,
+                };
+                related_entities.push(required_entity);
+            }
+        }
+
+        map.insert(entity_name, related_entities);
+    }
+
+    map
 }
 
 pub fn generate_templates(

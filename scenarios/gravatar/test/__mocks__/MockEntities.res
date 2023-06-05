@@ -14,8 +14,8 @@ let gravatarEntity2: Types.gravatarEntity = {
   updatesCount: 1,
 }
 
-let mockEventData1: Types.eventData = {chainId: 123, eventId: 456->Ethers.BigInt.fromInt}
-let mockEventData2: Types.eventData = {chainId: 123, eventId: 789->Ethers.BigInt.fromInt}
+let mockEventData1: Types.eventData = {chainId: 123, eventId: "456"}
+let mockEventData2: Types.eventData = {chainId: 123, eventId: "789"}
 let gravatarSerialized1 = gravatarEntity1->Types.serializeGravatarEntity
 let gravatarSerialized2 = gravatarEntity2->Types.serializeGravatarEntity
 let mockInMemRow1: Types.inMemoryStoreRow<Types.gravatarEntitySerialized> = {

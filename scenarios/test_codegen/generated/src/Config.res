@@ -73,7 +73,11 @@ let config: chainConfigs = [
           name: "Gravatar",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
           address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe,
-          events: [GravatarContract_NewGravatarEvent, GravatarContract_UpdatedGravatarEvent],
+          events: [
+            GravatarContract_TestEventEvent,
+            GravatarContract_NewGravatarEvent,
+            GravatarContract_UpdatedGravatarEvent,
+          ],
         },
         {
           name: "NftFactory",

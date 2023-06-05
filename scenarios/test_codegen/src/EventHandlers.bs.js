@@ -21,7 +21,9 @@ Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context)
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarLoadEntities(function ($$event, context) {
-      Curry._1(context.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
+      Curry._2(context.gravatar.gravatarWithChangesLoad, $$event.params.id.toString(), {
+            loadOwner: {}
+          });
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, context) {

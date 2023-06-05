@@ -30,11 +30,12 @@ NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
 });
 
 SimpleNftContract_registerTransferLoadEntities(({ event, context }) => {
-  context.user.userFromLoad(event.params.from);
-  context.user.userToLoad(event.params.to);
+  context.user.userFromLoad(event.params.from, {});
+  context.user.userToLoad(event.params.to, {});
   context.nftcollection.nftCollectionUpdatedLoad(event.srcAddress);
   context.token.existingTransferredTokenLoad(
     event.srcAddress.concat("-").concat(event.params.tokenId.toString())
+    , {}
   );
 });
 
@@ -80,6 +81,7 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
       id: event.params.from,
       address: event.params.from,
       tokens: userFromTokens,
+      updatesCountOnUserForTesting: loadedUserFrom?.updatesCountOnUserForTesting || 0
     };
     context.user.insert(userFrom);
   }
@@ -98,6 +100,7 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
       id: event.params.to,
       address: event.params.to,
       tokens: userToTokens,
+      updatesCountOnUserForTesting: loadedUserTo?.updatesCountOnUserForTesting || 0
     };
     context.user.insert(userTo);
   }

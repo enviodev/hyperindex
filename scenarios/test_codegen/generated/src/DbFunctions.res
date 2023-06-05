@@ -5,7 +5,7 @@ let config: Postgres.poolConfig = {
 let sql = Postgres.makeSql(~config)
 
 type chainId = int
-type eventId = Ethers.BigInt.t
+type eventId = string
 type blockNumberRow = {@as("block_number") blockNumber: int}
 
 module RawEvents = {
@@ -49,24 +49,26 @@ module User = {
     id: string,
     address: string,
     gravatar: option<id>,
+    updatesCountOnUserForTesting: int,
     tokens: array<id>,
     @as("event_chain_id") chainId: int,
     @as("event_id") eventId: Ethers.BigInt.t,
   }
 
   let readRowToReadEntityData = (readRow: userReadRow): readEntityData<Types.userEntity> => {
-    let {id, address, gravatar, tokens, chainId, eventId} = readRow
+    let {id, address, gravatar, updatesCountOnUserForTesting, tokens, chainId, eventId} = readRow
 
     {
       entity: {
         id,
         address,
         gravatar,
+        updatesCountOnUserForTesting,
         tokens,
       },
       eventData: {
         chainId,
-        eventId,
+        eventId: eventId->Ethers.BigInt.toString,
       },
     }
   }
@@ -111,7 +113,7 @@ module Gravatar = {
       },
       eventData: {
         chainId,
-        eventId,
+        eventId: eventId->Ethers.BigInt.toString,
       },
     }
   }
@@ -161,7 +163,7 @@ module Nftcollection = {
       },
       eventData: {
         chainId,
-        eventId,
+        eventId: eventId->Ethers.BigInt.toString,
       },
     }
   }
@@ -205,7 +207,7 @@ module Token = {
       },
       eventData: {
         chainId,
-        eventId,
+        eventId: eventId->Ethers.BigInt.toString,
       },
     }
   }

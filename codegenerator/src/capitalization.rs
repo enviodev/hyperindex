@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CapitalizedOptions {
-    capitalized: String,
-    uncapitalized: String,
+    pub capitalized: String,
+    pub uncapitalized: String,
 }
 
 pub trait Capitalize {

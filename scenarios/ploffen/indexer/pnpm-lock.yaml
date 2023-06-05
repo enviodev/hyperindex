@@ -33,6 +33,9 @@ importers:
         specifier: ^4.0.0
         version: 4.0.0(rescript@10.1.2)
     devDependencies:
+      '@greenlabs/ppx-spice':
+        specifier: ^0.1.14
+        version: 0.1.14
       gentype:
         specifier: ^4.5.0
         version: 4.5.0
@@ -45,6 +48,11 @@ packages:
   /@adraffy/ens-normalize@1.8.9:
     resolution: {integrity: sha512-93OmGCV0vO8+JQ3FHG+gZk/MPHzzMPDRiCiFcCQNTCnHaaxsacO3ScTPGlu2wX2dOtgfalbchPcw1cOYYjHCYQ==}
     dev: false
+
+  /@greenlabs/ppx-spice@0.1.14:
+    resolution: {integrity: sha512-2zP5E3+yWCRwYkvOl1A/VoRC1ixHdIa4CujsGD3uwbAzfJkrGc7KH83Zbc+Yw858+RNw2GKrNC35f0CNVMusHw==}
+    requiresBuild: true
+    dev: true
 
   /@noble/hashes@1.1.2:
     resolution: {integrity: sha512-KYRCASVTv6aeUi1tsF8/vpyR7zpfs3FUzy2Jqm+MU+LmUKhQ0y2FpfwqkCcxSg2ua4GALJd8k2R76WxwZGbQpA==}
