@@ -79,7 +79,7 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (sql, chainId, blo
   FROM public.dynamic_contract_registry as c
   JOIN raw_events e ON c.chain_id = e.chain_id
   AND c.event_id = e.event_id
-  WHERE e.block_number <= ${block_number};
+  WHERE e.block_number <= ${block_number} AND e.chain_id = ${chainId};
 `
 
 //Start db operations dynamic_contract_registry
