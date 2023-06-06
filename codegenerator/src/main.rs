@@ -12,7 +12,7 @@ use envio::{
         entities_to_map, generate_templates, EventRecordTypeTemplate,
     },
     linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
-    project_paths::ParsedPaths,
+    project_paths::{self, ParsedPaths},
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
@@ -45,6 +45,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             //if they haven't already been
             let args = init_args.get_init_args_interactive()?;
             let project_root_path = PathBuf::from(&args.directory);
+            // check that project_root_path exists
+            let project_dir = project_paths::path_utils::NewDir::new(project_root_path.clone())?;
 
             match args.template {
                 Template::Blank => {

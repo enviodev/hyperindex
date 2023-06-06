@@ -8,6 +8,7 @@ pub mod project_paths;
 
 pub mod capitalization;
 pub mod cli_args;
+
 pub mod hbs_templating;
 
 #[cfg(unix)]
