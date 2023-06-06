@@ -11,7 +11,6 @@ import {
 } from "../generated/src/Types.gen";
 
 ERC20Contract_registerCreationLoadEntities(({ event, context }) => {
-  context.tokens.tokensCreationLoad(event.srcAddress.toString());
 });
 
 ERC20Contract_registerCreationHandler(({ event, context }) => {

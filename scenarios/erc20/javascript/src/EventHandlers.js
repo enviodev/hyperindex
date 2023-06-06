@@ -4,9 +4,9 @@ ERC20Contract.registerCreationLoadEntities((event, context) => {});
 
 ERC20Contract.registerCreationHandler((event, context) => {
   let tokenObject = {
-    id: event.srcAddress.toString(),
-    name: event.params.name.toString(),
-    symbol: event.params.symbol.toString(),
+    id: event.srcAddress,
+    name: event.params.name,
+    symbol: event.params.symbol,
     decimals: 18,
   };
 
@@ -14,7 +14,7 @@ ERC20Contract.registerCreationHandler((event, context) => {
 
   // creating a totalsEntity to store the event data
   let totalsObject = {
-    id: event.srcAddress.toString(),
+    id: event.srcAddress,
     erc20: tokenObject.id,
     totalTransfer: BigInt(0),
   };
@@ -25,7 +25,7 @@ ERC20Contract.registerCreationHandler((event, context) => {
 
 ERC20Contract.registerTransferLoadEntities((event, context) => {
   // loading the required totalsEntity to update the totals field
-  context.totals.totalChangesLoad(event.srcAddress.toString());
+  context.totals.totalChangesLoad(event.srcAddress);
 });
 
 ERC20Contract.registerTransferHandler((event, context) => {
@@ -34,22 +34,14 @@ ERC20Contract.registerTransferHandler((event, context) => {
   if (currentTotals != undefined) {
     // updating the totals field value
     let totalsObject = {
-      id: event.srcAddress.toString(),
+      id: event.srcAddress,
       erc20: currentTotals.erc20,
-      totalTransfer: currentTotals.totalTransfer + event.params.value,
+      totalTransfer: BigInt(Number(currentTotalTransfer.totalTransfer) + Number(event.params.value)),
     };
 
     // updating the totalTransfers table with the new totals field value
     context.totals.update(totalsObject);
 
   } else {
-    let totalsObject = {
-      id: event.srcAddress.toString(),
-      erc20: event.srcAddress.toString(),
-      totalTransfer: event.params.value,
-    };
-
-    // updating the totalTransfers table with the new totals field value
-    context.totals.insert(totalsObject);
   }
 });
