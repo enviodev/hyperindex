@@ -3,7 +3,8 @@ description: NFT Factory
 repository: https://github.com/nft-factory
 networks:
   - id: 43113
-    rpc_url: https://api.avax-test.network/ext/bc/C/rpc
+    rpc_url: https://endpoints.omniatech.io/v1/avax/fuji/public
+    # rpc_url: https://api.avax-test.network/ext/bc/C/rpc
     start_block: 22009922
     contracts:
       - name: NftFactory

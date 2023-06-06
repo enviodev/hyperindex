@@ -10,7 +10,7 @@
     "test": "npx hardhat test",
     "hardhat": "hardhat",
     "task:create-nft": "npx hardhat new-simple-nft --network ganache",
-    "task:mint-nft": "npx hardhat mint-nft",
+    "task:mint-nft": "npx hardhat mint-nft --network ganache",
     "hardhat-node": "npx hardhat node"
   },
   "dependencies": {

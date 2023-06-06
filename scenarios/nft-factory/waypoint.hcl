@@ -34,7 +34,7 @@ app "nft-factory-indexer" {
       use "aws-ecr" {
         region     = "us-east-2"
         repository = "envio-repository"
-        tag        = "nft-indexer-fuji-59"
+        tag        = "nft-indexer-fuji-76"
       }
     }
   }
@@ -43,6 +43,8 @@ app "nft-factory-indexer" {
     use "kubernetes" {
       namespace = "postgres"
       probe_path = "/_healthz"
+      // Service Account Annotations
+      service_account = "postgres-pod"
     }
   }
 

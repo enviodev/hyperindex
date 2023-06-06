@@ -194,7 +194,7 @@ Update the container image tag and any environment variables in the application 
 deploy using waypoint: 
 - waypoint up
 
-Alternatively, if you wish to run the indexer locally instead of deploying to a cluster, you can use the docker compose file in this directory:
-- docker compose up -d 
+Alternatively, if you wish to run the nft-factory indexer using docker locally instead of deploying to a cluster, you can use the docker compose file in this directory:
+- docker compose up -d
 
 
