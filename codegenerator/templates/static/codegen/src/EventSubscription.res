@@ -10,7 +10,7 @@ let startWatchingEventsOnRpc = async (~chainConfig: Config.chainConfig, ~provide
   provider->Ethers.JsonRpcProvider.onBlock(blockNumber => {
     Js.log2("Querying events on new block: ", blockNumber)
 
-    EventSyncing.queryEventsWithCombinedFilterAndExecuteHandlers(
+    EventSyncing.queryEventsWithCombinedFilterAndProcessEventBatch(
       ~addressInterfaceMapping,
       ~eventFilters,
       ~fromBlock=blockNumber,

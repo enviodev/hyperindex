@@ -23,7 +23,7 @@ function deleteKey(obj, k) {
 @val external deleteKey: ('a, string) => unit = "deleteKey"
 
 let convertLogs = (
-  logsPromise: Promise.t<array<Ethers.log>>,
+  logs: array<Ethers.log>,
   ~provider,
   ~addressInterfaceMapping,
   ~fromBlockForLogging,
@@ -65,8 +65,6 @@ let convertLogs = (
   }
 
   let task = async () => {
-    let logs = await logsPromise
-
     Js.log2("Handling number of logs: ", logs->Array.length)
 
     let events =
@@ -170,7 +168,43 @@ let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlo
   )
 }
 
-let queryEventsWithCombinedFilterAndExecuteHandlers = async (
+let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
+  condition ? callback(value) : value
+}
+
+let queryEventsWithCombinedFilter = async (
+  ~addressInterfaceMapping,
+  ~eventFilters,
+  ~fromBlock,
+  ~toBlock,
+  ~minFromBlockLogIndex=0,
+  ~provider,
+  ~chainId,
+  (),
+) => {
+  let combinedFilterRes = await makeCombinedEventFilterQuery(
+    ~provider,
+    ~eventFilters,
+    ~fromBlock,
+    ~toBlock,
+  )
+
+  let logs = combinedFilterRes->applyConditionalFunction(minFromBlockLogIndex > 0, arrLogs => {
+    arrLogs->Belt.Array.keep(log => {
+      log.blockNumber == fromBlock && log.logIndex >= minFromBlockLogIndex
+    })
+  })
+
+  await logs->convertLogs(
+    ~provider,
+    ~addressInterfaceMapping,
+    ~fromBlockForLogging=fromBlock,
+    ~toBlockForLogging=toBlock,
+    ~chainId,
+  )
+}
+
+let queryEventsWithCombinedFilterAndProcessEventBatch = async (
   ~addressInterfaceMapping,
   ~eventFilters,
   ~fromBlock,
@@ -178,19 +212,49 @@ let queryEventsWithCombinedFilterAndExecuteHandlers = async (
   ~provider,
   ~chainId,
 ) => {
-  let combinedFilter = makeCombinedEventFilterQuery(~provider, ~eventFilters, ~fromBlock, ~toBlock)
-  let events =
-    await combinedFilter->convertLogs(
-      ~provider,
-      ~addressInterfaceMapping,
-      ~fromBlockForLogging=fromBlock,
-      ~toBlockForLogging=toBlock,
-      ~chainId,
-    )
-
+  let events = await queryEventsWithCombinedFilter(
+    ~addressInterfaceMapping,
+    ~eventFilters,
+    ~fromBlock,
+    ~toBlock,
+    ~provider,
+    ~chainId,
+    (),
+  )
   events->EventProcessing.processEventBatch(~chainId)
 }
 
+let getSingleContractEventFilters = (
+  ~contractAddress,
+  ~chainConfig: Config.chainConfig,
+  ~addressInterfaceMapping,
+) => {
+  let contractName = Converters.ContractNameAddressMappings.getContractNameFromAddress(
+    ~chainId=chainConfig.chainId,
+    ~contractAddress,
+  )
+  let contractConfig = switch chainConfig.contracts->Js.Array2.find(contract =>
+    contract.name == contractName
+  ) {
+  | None => Converters.UndefinedContractName(contractName, chainConfig.chainId)->raise
+  | Some(contractConfig) => contractConfig
+  }
+
+  let contractEthers = Ethers.Contract.make(
+    ~address=contractAddress,
+    ~abi=contractConfig.abi,
+    ~provider=chainConfig.provider,
+  )
+
+  addressInterfaceMapping->Js.Dict.set(
+    contractAddress->Ethers.ethAddressToString,
+    contractEthers->Ethers.Contract.getInterface,
+  )
+
+  contractConfig.events->Belt.Array.map(eventName => {
+    contractEthers->Ethers.Contract.getEventFilter(~eventName=Types.eventNameToString(eventName))
+  })
+}
 let getAllEventFilters = (
   ~addressInterfaceMapping,
   ~chainConfig: Config.chainConfig,
@@ -228,25 +292,22 @@ type blocksProcessed = {
   to: int,
 }
 
-let processAllEventsFromBlockNumber = async (
-  ~fromBlock: int,
-  ~blockInterval as maxBlockInterval,
-  ~chainConfig: Config.chainConfig,
+let getContractEventsOnFilters = async (
+  ~addressInterfaceMapping,
+  ~eventFilters,
+  ~minFromBlockLogIndex=0,
+  ~fromBlock,
+  ~toBlock,
+  ~maxBlockInterval,
+  ~chainId,
   ~provider,
+  (),
 ) => {
-  let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
-
-  let eventFilters = getAllEventFilters(~addressInterfaceMapping, ~chainConfig, ~provider)
-
   let fromBlockRef = ref(fromBlock)
-  let currentBlock: ref<option<int>> = ref(None)
-  let shouldContinueProcess = () =>
-    currentBlock.contents->Belt.Option.mapWithDefault(true, blockNum =>
-      fromBlockRef.contents < blockNum
-    )
+  let shouldContinueProcess = () => fromBlockRef.contents < toBlock
 
   let currentBlockInterval = ref(maxBlockInterval)
-
+  let events = ref([])
   while shouldContinueProcess() {
     let rec executeQuery = (~blockInterval) => {
       //If the query hangs for longer than this, reject this promise to reduce the block interval
@@ -259,17 +320,21 @@ let processAllEventsFromBlockNumber = async (
           )
         )
 
-      let queryPromise =
-        queryEventsWithCombinedFilterAndExecuteHandlers(
+      let upperBoundToBlock = fromBlockRef.contents + blockInterval - 1
+      let nextToBlock = upperBoundToBlock > toBlock ? toBlock : upperBoundToBlock
+      let eventsPromise =
+        queryEventsWithCombinedFilter(
           ~addressInterfaceMapping,
           ~eventFilters,
           ~fromBlock=fromBlockRef.contents,
-          ~toBlock=fromBlockRef.contents + blockInterval - 1,
+          ~toBlock=nextToBlock,
+          ~minFromBlockLogIndex,
           ~provider,
-          ~chainId=chainConfig.chainId,
-        )->Promise.thenResolve(_ => blockInterval)
+          ~chainId,
+          (),
+        )->Promise.thenResolve(events => (events, blockInterval))
 
-      [queryTimoutPromise, queryPromise]
+      [queryTimoutPromise, eventsPromise]
       ->Promise.race
       ->Promise.catch(err => {
         Js.log2(
@@ -287,25 +352,68 @@ let processAllEventsFromBlockNumber = async (
       })
     }
 
-    let executedBlockInterval = await executeQuery(~blockInterval=currentBlockInterval.contents)
-
+    let (intervalEvents, executedBlockInterval) = await executeQuery(
+      ~blockInterval=currentBlockInterval.contents,
+    )
+    events := events.contents->Belt.Array.concat(intervalEvents)
     // Increase batch size going forward, https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
     currentBlockInterval := executedBlockInterval + accelerationAdditive
-
     fromBlockRef := fromBlockRef.contents + executedBlockInterval
-    let currentBlockFromRPC =
-      await provider
-      ->Ethers.JsonRpcProvider.getBlockNumber
-      ->Promise.catch(_err => {
-        Js.log("Error getting current block number")
-        currentBlock.contents->Belt.Option.getWithDefault(0)->Promise.resolve
-      })
-    currentBlock := Some(currentBlockFromRPC)
-    Js.log(
-      `Finished processAllEventsFromBlockNumber ${fromBlockRef.contents->Belt.Int.toString} out of ${currentBlockFromRPC->Belt.Int.toString}`,
+
+    let boundedBlocksQueried = fromBlockRef.contents > toBlock ? toBlock : fromBlockRef.contents
+
+    Logging.info(
+      `Queried processAllEventsFromBlockNumber ${boundedBlocksQueried->Belt.Int.toString} out of ${toBlock->Belt.Int.toString}`,
     )
   }
-  {from: fromBlock, to: fromBlockRef.contents - 1}
+  (events.contents, {from: fromBlock, to: fromBlockRef.contents})
+}
+let processAllEventsFromBlockNumber = async (
+  ~fromBlock: int,
+  ~blockInterval as maxBlockInterval,
+  ~chainConfig: Config.chainConfig,
+  ~provider,
+) => {
+  let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
+
+  let eventFilters = getAllEventFilters(~addressInterfaceMapping, ~chainConfig, ~provider)
+
+  let fromBlockRef = ref(fromBlock)
+
+  let getCurrentBlockFromRPC = () =>
+    provider
+    ->Ethers.JsonRpcProvider.getBlockNumber
+    ->Promise.catch(_err => {
+      Logging.warn("Error getting current block number")
+      0->Promise.resolve
+    })
+  let currentBlock: ref<int> = ref(await getCurrentBlockFromRPC())
+
+  //we retrieve the latest processed block from the db and add 1
+  //if only one block has occurred since that processed block we ensure that the new block
+  //is handled with the below condition
+  let shouldContinueProcess = () => fromBlockRef.contents <= currentBlock.contents
+
+  while shouldContinueProcess() {
+    let (events, blocksProcessed) = await getContractEventsOnFilters(
+      ~addressInterfaceMapping,
+      ~eventFilters,
+      ~minFromBlockLogIndex=0,
+      ~fromBlock=fromBlockRef.contents,
+      ~toBlock=currentBlock.contents,
+      ~maxBlockInterval,
+      ~chainId=chainConfig.chainId,
+      ~provider,
+      (),
+    )
+
+    //process the batch of events
+    //NOTE: we can use this to track batch processing time
+    await events->EventProcessing.processEventBatch(~chainId=chainConfig.chainId)
+
+    fromBlockRef := blocksProcessed.to
+    currentBlock := (await getCurrentBlockFromRPC())
+  }
 }
 
 let processAllEvents = async (chainConfig: Config.chainConfig) => {

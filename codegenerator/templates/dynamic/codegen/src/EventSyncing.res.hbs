@@ -23,7 +23,7 @@ function deleteKey(obj, k) {
 @val external deleteKey: ('a, string) => unit = "deleteKey"
 
 let convertLogs = (
-  logsPromise: Promise.t<array<Ethers.log>>,
+  logs: array<Ethers.log>,
   ~provider,
   ~addressInterfaceMapping,
   ~fromBlockForLogging,
@@ -59,18 +59,12 @@ let convertLogs = (
     ->Promise.then(block =>
       switch block->Js.Nullable.toOption {
       | Some(block) => Promise.resolve(block)
-      | None =>
-        Promise.reject(
-          Js.Exn.raiseError(`getBlock(${blockKey}) returned null`),
-        )
+      | None => Promise.reject(Js.Exn.raiseError(`getBlock(${blockKey}) returned null`))
       }
     )
   }
 
   let task = async () => {
-    let logs = await logsPromise
-
-
     Js.log2("Handling number of logs: ", logs->Array.length)
 
     let events =
@@ -88,7 +82,7 @@ let convertLogs = (
             let logDescription = interface->Ethers.Interface.parseLog(~log)
 
             switch Converters.eventStringToEvent(
-              logDescription.name, 
+              logDescription.name,
               Converters.ContractNameAddressMappings.getContractNameFromAddress(
                 ~contractAddress=log.address,
                 ~chainId,
@@ -150,7 +144,43 @@ let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlo
   )
 }
 
-let queryEventsWithCombinedFilterAndExecuteHandlers = async (
+let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
+  condition ? callback(value) : value
+}
+
+let queryEventsWithCombinedFilter = async (
+  ~addressInterfaceMapping,
+  ~eventFilters,
+  ~fromBlock,
+  ~toBlock,
+  ~minFromBlockLogIndex=0,
+  ~provider,
+  ~chainId,
+  (),
+) => {
+  let combinedFilterRes = await makeCombinedEventFilterQuery(
+    ~provider,
+    ~eventFilters,
+    ~fromBlock,
+    ~toBlock,
+  )
+
+  let logs = combinedFilterRes->applyConditionalFunction(minFromBlockLogIndex > 0, arrLogs => {
+    arrLogs->Belt.Array.keep(log => {
+      log.blockNumber == fromBlock && log.logIndex >= minFromBlockLogIndex
+    })
+  })
+
+  await logs->convertLogs(
+    ~provider,
+    ~addressInterfaceMapping,
+    ~fromBlockForLogging=fromBlock,
+    ~toBlockForLogging=toBlock,
+    ~chainId,
+  )
+}
+
+let queryEventsWithCombinedFilterAndProcessEventBatch = async (
   ~addressInterfaceMapping,
   ~eventFilters,
   ~fromBlock,
@@ -158,19 +188,49 @@ let queryEventsWithCombinedFilterAndExecuteHandlers = async (
   ~provider,
   ~chainId,
 ) => {
-  let combinedFilter = makeCombinedEventFilterQuery(~provider, ~eventFilters, ~fromBlock, ~toBlock)
-  let events =
-    await combinedFilter->convertLogs(
-      ~provider,
-      ~addressInterfaceMapping,
-      ~fromBlockForLogging=fromBlock,
-      ~toBlockForLogging=toBlock,
-      ~chainId,
-    )
-
+  let events = await queryEventsWithCombinedFilter(
+    ~addressInterfaceMapping,
+    ~eventFilters,
+    ~fromBlock,
+    ~toBlock,
+    ~provider,
+    ~chainId,
+    (),
+  )
   events->EventProcessing.processEventBatch(~chainId)
 }
 
+let getSingleContractEventFilters = (
+  ~contractAddress,
+  ~chainConfig: Config.chainConfig,
+  ~addressInterfaceMapping,
+) => {
+  let contractName = Converters.ContractNameAddressMappings.getContractNameFromAddress(
+    ~chainId=chainConfig.chainId,
+    ~contractAddress,
+  )
+  let contractConfig = switch chainConfig.contracts->Js.Array2.find(contract =>
+    contract.name == contractName
+  ) {
+  | None => Converters.UndefinedContractName(contractName, chainConfig.chainId)->raise
+  | Some(contractConfig) => contractConfig
+  }
+
+  let contractEthers = Ethers.Contract.make(
+    ~address=contractAddress,
+    ~abi=contractConfig.abi,
+    ~provider=chainConfig.provider,
+  )
+
+  addressInterfaceMapping->Js.Dict.set(
+    contractAddress->Ethers.ethAddressToString,
+    contractEthers->Ethers.Contract.getInterface,
+  )
+
+  contractConfig.events->Belt.Array.map(eventName => {
+    contractEthers->Ethers.Contract.getEventFilter(~eventName=Types.eventNameToString(eventName))
+  })
+}
 let getAllEventFilters = (
   ~addressInterfaceMapping,
   ~chainConfig: Config.chainConfig,
@@ -208,6 +268,82 @@ type blocksProcessed = {
   to: int,
 }
 
+let getContractEventsOnFilters = async (
+  ~addressInterfaceMapping,
+  ~eventFilters,
+  ~minFromBlockLogIndex=0,
+  ~fromBlock,
+  ~toBlock,
+  ~maxBlockInterval,
+  ~chainId,
+  ~provider,
+  (),
+) => {
+  let fromBlockRef = ref(fromBlock)
+  let shouldContinueProcess = () => fromBlockRef.contents < toBlock
+
+  let currentBlockInterval = ref(maxBlockInterval)
+  let events = ref([])
+  while shouldContinueProcess() {
+    let rec executeQuery = (~blockInterval) => {
+      //If the query hangs for longer than this, reject this promise to reduce the block interval
+      let queryTimoutPromise =
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=queryTimeoutMillis)->Promise.then(() =>
+          Promise.reject(
+            QueryTimout(
+              `Query took longer than ${Belt.Int.toString(queryTimeoutMillis / 1000)} seconds`,
+            ),
+          )
+        )
+
+      let upperBoundToBlock = fromBlockRef.contents + blockInterval - 1
+      let nextToBlock = upperBoundToBlock > toBlock ? toBlock : upperBoundToBlock
+      let eventsPromise =
+        queryEventsWithCombinedFilter(
+          ~addressInterfaceMapping,
+          ~eventFilters,
+          ~fromBlock=fromBlockRef.contents,
+          ~toBlock=nextToBlock,
+          ~minFromBlockLogIndex,
+          ~provider,
+          ~chainId,
+          (),
+        )->Promise.thenResolve(events => (events, blockInterval))
+
+      [queryTimoutPromise, eventsPromise]
+      ->Promise.race
+      ->Promise.catch(err => {
+        Js.log2(
+          `Error getting events, waiting ${(backoffMillis / 1000)
+              ->Belt.Int.toString} seconds before retrying`,
+          err,
+        )
+
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMillis)->Promise.then(_ => {
+          let nextBlockIntervalTry =
+            (blockInterval->Belt.Int.toFloat *. backoffMultiplicative)->Belt.Int.fromFloat
+          Js.log3("Retrying query fromBlock and toBlock:", fromBlock, nextBlockIntervalTry)
+          executeQuery(~blockInterval={nextBlockIntervalTry})
+        })
+      })
+    }
+
+    let (intervalEvents, executedBlockInterval) = await executeQuery(
+      ~blockInterval=currentBlockInterval.contents,
+    )
+    events := events.contents->Belt.Array.concat(intervalEvents)
+    // Increase batch size going forward, https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    currentBlockInterval := executedBlockInterval + accelerationAdditive
+    fromBlockRef := fromBlockRef.contents + executedBlockInterval
+
+    let boundedBlocksQueried = fromBlockRef.contents > toBlock ? toBlock : fromBlockRef.contents
+
+    Logging.info(
+      `Queried processAllEventsFromBlockNumber ${boundedBlocksQueried->Belt.Int.toString} out of ${toBlock->Belt.Int.toString}`,
+    )
+  }
+  (events.contents, {from: fromBlock, to: fromBlockRef.contents})
+}
 let processAllEventsFromBlockNumber = async (
   ~fromBlock: int,
   ~blockInterval as maxBlockInterval,
@@ -219,64 +355,41 @@ let processAllEventsFromBlockNumber = async (
   let eventFilters = getAllEventFilters(~addressInterfaceMapping, ~chainConfig, ~provider)
 
   let fromBlockRef = ref(fromBlock)
-  let currentBlock: ref<option<int>> = ref(None)
-  let shouldContinueProcess = () =>
-    currentBlock.contents->Belt.Option.mapWithDefault(true, blockNum =>
-      fromBlockRef.contents < blockNum
-    )
 
-  let currentBlockInterval = ref(maxBlockInterval)
+  let getCurrentBlockFromRPC = () =>
+    provider
+    ->Ethers.JsonRpcProvider.getBlockNumber
+    ->Promise.catch(_err => {
+      Logging.warn("Error getting current block number")
+      0->Promise.resolve
+    })
+  let currentBlock: ref<int> = ref(await getCurrentBlockFromRPC())
+
+  //we retrieve the latest processed block from the db and add 1
+  //if only one block has occurred since that processed block we ensure that the new block
+  //is handled with the below condition
+  let shouldContinueProcess = () => fromBlockRef.contents <= currentBlock.contents
 
   while shouldContinueProcess() {
-    let rec executeQuery = (~blockInterval) => {
-      //If the query hangs for longer than this, reject this promise to reduce the block interval
-      let queryTimoutPromise =
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=queryTimeoutMillis)->Promise.then(() =>
-          Promise.reject(QueryTimout(`Query took longer than ${Belt.Int.toString(queryTimeoutMillis / 1000)} seconds`))
-        )
-
-      let queryPromise =
-        queryEventsWithCombinedFilterAndExecuteHandlers(
-          ~addressInterfaceMapping,
-          ~eventFilters,
-          ~fromBlock=fromBlockRef.contents,
-          ~toBlock=fromBlockRef.contents + blockInterval - 1,
-          ~provider,
-          ~chainId=chainConfig.chainId,
-        )->Promise.thenResolve(_ => blockInterval)
-
-      [queryTimoutPromise, queryPromise]
-      ->Promise.race
-      ->Promise.catch(err => {
-        Js.log2(`Error getting events, waiting ${(backoffMillis / 1000)->Belt.Int.toString} seconds before retrying`, err)
-
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMillis)->Promise.then(_ => {
-          let nextBlockIntervalTry = (blockInterval->Belt.Int.toFloat *. backoffMultiplicative)->Belt.Int.fromFloat
-          Js.log3("Retrying query fromBlock and toBlock:", fromBlock, nextBlockIntervalTry)
-          executeQuery(~blockInterval={nextBlockIntervalTry})
-        })
-      })
-    }
-
-    let executedBlockInterval = await executeQuery(~blockInterval=currentBlockInterval.contents)
-
-    // Increase batch size going forward, https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-    currentBlockInterval := executedBlockInterval + accelerationAdditive
-
-    fromBlockRef := fromBlockRef.contents + executedBlockInterval
-    let currentBlockFromRPC =
-      await provider
-      ->Ethers.JsonRpcProvider.getBlockNumber
-      ->Promise.catch(_err => {
-        Js.log("Error getting current block number")
-        currentBlock.contents->Belt.Option.getWithDefault(0)->Promise.resolve
-      })
-    currentBlock := Some(currentBlockFromRPC)
-    Js.log(
-      `Finished processAllEventsFromBlockNumber ${fromBlockRef.contents->Belt.Int.toString} out of ${currentBlockFromRPC->Belt.Int.toString}`,
+    let (events, blocksProcessed) = await getContractEventsOnFilters(
+      ~addressInterfaceMapping,
+      ~eventFilters,
+      ~minFromBlockLogIndex=0,
+      ~fromBlock=fromBlockRef.contents,
+      ~toBlock=currentBlock.contents,
+      ~maxBlockInterval,
+      ~chainId=chainConfig.chainId,
+      ~provider,
+      (),
     )
+
+    //process the batch of events
+    //NOTE: we can use this to track batch processing time
+    await events->EventProcessing.processEventBatch(~chainId=chainConfig.chainId)
+
+    fromBlockRef := blocksProcessed.to
+    currentBlock := (await getCurrentBlockFromRPC())
   }
-  {from: fromBlock, to: fromBlockRef.contents - 1}
 }
 
 let processAllEvents = async (chainConfig: Config.chainConfig) => {
