@@ -63,7 +63,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     //Copy in the rest of the shared blank template files
                     BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
-
                 Template::Greeter => {
                     //Copy in the relevant language specific greeter files
                     match &args.language {
