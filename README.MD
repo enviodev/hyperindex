@@ -49,14 +49,14 @@ Then choose a template out of the possible options
 ```
 Then choose a language from Javascript, Typescript or Rescript to write the event handlers file.
 ```
-? Which javascript flavor would you like to use?  
+? Which language would you like to use?  
 > "Javascript"
   "Typescript"
   "Rescript"
 [↑↓ to move, enter to select, type to filter
 ```
 
-This will generate the config, schema and event handlers files according to the template and flavour chosen.
+This will generate the config, schema and event handlers files according to the template and language chosen.
 
 ## Configure the files according to your project
 

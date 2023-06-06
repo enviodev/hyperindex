@@ -12,7 +12,7 @@ The following files are required to use the Indexer:
 
 - Configuration (defaults to `config.yaml`)
 - GraphQL Schema (defaults to `schema.graphql`)
-- Event Handlers (defaults to `src/EventHandlers.*` depending on flavour chosen)
+- Event Handlers (defaults to `src/EventHandlers.*` depending on language chosen)
 
 These files are auto-generated according to a template by running `envio init` command.
 
