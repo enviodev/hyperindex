@@ -35,8 +35,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             //if they haven't already been
             let args = init_args.get_init_args_interactive()?;
             let project_root_path = PathBuf::from(&args.directory);
-            //Ensure that the root path exists
-            fs::create_dir_all(&project_root_path)?;
+
             match args.template {
                 Template::Greeter => {
                     //Copy in the relevant language specific greeter files
