@@ -5,7 +5,7 @@ use std::path::Path;
 
 use handlebars::Handlebars;
 
-use include_dir::{Dir, DirEntry};
+use include_dir::{include_dir, Dir, DirEntry};
 use serde::Serialize;
 
 pub mod config_parsing;
@@ -151,6 +151,7 @@ pub fn generate_templates(
     entity_types: Vec<EntityRecordType>,
     project_paths: &ProjectPaths,
 ) -> Result<(), Box<dyn Error>> {
+    static CODEGEN_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/codegen");
     let mut handlebars = Handlebars::new();
     handlebars.set_strict_mode(true);
     handlebars.register_escape_fn(handlebars::no_escape);
@@ -170,88 +171,13 @@ pub fn generate_templates(
         codegen_out_path: gitignoer_path_str,
     };
 
-    let templates = [
-        (
-            "src/Types.res",
-            include_str!("../templates/dynamic/codegen/src/Types.res"),
-        ),
-        (
-            "src/Abis.res",
-            include_str!("../templates/dynamic/codegen/src/Abis.res"),
-        ),
-        (
-            "src/Handlers.res",
-            include_str!("../templates/dynamic/codegen/src/Handlers.res"),
-        ),
-        (
-            "src/DbFunctions.res",
-            include_str!("../templates/dynamic/codegen/src/DbFunctions.res"),
-        ),
-        (
-            "src/EventProcessing.res",
-            include_str!("../templates/dynamic/codegen/src/EventProcessing.res"),
-        ),
-        (
-            "src/Config.res",
-            include_str!("../templates/dynamic/codegen/src/Config.res"),
-        ),
-        (
-            "src/IO.res",
-            include_str!("../templates/dynamic/codegen/src/IO.res"),
-        ),
-        (
-            "src/Converters.res",
-            include_str!("../templates/dynamic/codegen/src/Converters.res"),
-        ),
-        (
-            "src/EventSyncing.res",
-            include_str!("../templates/dynamic/codegen/src/EventSyncing.res"),
-        ),
-        (
-            "src/Context.res",
-            include_str!("../templates/dynamic/codegen/src/Context.res"),
-        ),
-        (
-            "register_tables_with_hasura.sh",
-            include_str!("../templates/dynamic/codegen/register_tables_with_hasura.sh.hbs"),
-        ),
-        (
-            ".gitignore",
-            include_str!("../templates/dynamic/codegen/.gitignore.hbs"),
-        ),
-        (
-            "src/RegisterHandlers.res",
-            include_str!("../templates/dynamic/codegen/src/RegisterHandlers.res"),
-        ),
-        (
-            "src/Migrations.res",
-            include_str!("../templates/dynamic/codegen/src/Migrations.res"),
-        ),
-        (
-            "src/DbFunctionsImplementation.js",
-            include_str!("../templates/dynamic/codegen/src/DbFunctionsImplementation.js.hbs"),
-        ),
-    ];
-
-    for (template_path, template_content) in &templates {
-        let rendered_string = handlebars.render_template(template_content, &types_data)?;
-
-        write_to_file_in_generated(template_path, &rendered_string, project_paths)?;
-    }
+    let hbs =
+        HandleBarsDirGenerator::new(&CODEGEN_DYNAMIC_DIR, &types_data, &project_paths.generated);
+    hbs.generate_hbs_templates()?;
 
     make_file_executable("register_tables_with_hasura.sh", project_paths)?;
 
     Ok(())
-}
-
-fn write_to_file_in_generated(
-    filename: &str,
-    content: &str,
-    project_paths: &ProjectPaths,
-) -> std::io::Result<()> {
-    fs::create_dir_all(&project_paths.generated)?;
-    let file_path = &project_paths.generated.join(filename);
-    fs::write(file_path, content)
 }
 
 pub struct HandleBarsDirGenerator<'a, T: Serialize> {

@@ -9,8 +9,8 @@ use envio::{
     cli_args::{self, Language},
     config_parsing, entities_to_map, entity_parsing, event_parsing, generate_templates,
     linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
-    project_paths::{self, ParsedPaths},
-    EventRecordType, HandleBarsDirGenerator, InitTemplates,
+    project_paths::ParsedPaths,
+    EventRecordType,
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
