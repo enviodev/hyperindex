@@ -1,7 +1,7 @@
 let startWatchingEventsOnRpc = async (~chainConfig: Config.chainConfig, ~provider) => {
   let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
 
-  let eventFilters = EventSyncing.getAllEventFilters(
+  let eventFilters = EventFetching.getAllEventFilters(
     ~addressInterfaceMapping,
     ~chainConfig,
     ~provider,
@@ -16,7 +16,7 @@ let startWatchingEventsOnRpc = async (~chainConfig: Config.chainConfig, ~provide
       ~fromBlock=blockNumber,
       ~toBlock=blockNumber,
       ~provider,
-      ~chainId=chainConfig.chainId,
+      ~chainConfig,
     )
     ->Promise.thenResolve(_ => ())
     ->ignore

@@ -25,11 +25,10 @@ describe("Raw Events Integration", () => {
   let simpleNftContractAddress: string;
   let nftFactoryContractAddress: string;
   const getlocalChainConfig = (nftFactoryContractAddress: string) => {
-
     const { provider } = hre.ethers;
     return {
       provider,
-      startBlock: 0,
+      startBlock: 1,
       chainId: 1337,
       contracts: [
         {
@@ -46,7 +45,7 @@ describe("Raw Events Integration", () => {
         },
       ],
     };
-  }
+  };
 
   before(async function () {
     this.timeout(30 * 1000);
@@ -74,12 +73,8 @@ describe("Raw Events Integration", () => {
     );
     const simplNftCreatedEvent = eventQuery[0];
 
-
-
     const localChainConfig = getlocalChainConfig(nftFactoryContractAddress);
     registerAllHandlers();
-    console.log("processing events before mint");
-    await processAllEvents(localChainConfig);
 
     simpleNftContractAddress = simplNftCreatedEvent.args.contractAddress;
     console.log("Created NFT at: ", simpleNftContractAddress);
@@ -140,10 +135,17 @@ describe("Raw Events Integration", () => {
     let beforeRawEventsRows = await sql`SELECT * FROM public.raw_events`;
     //TODO: fix this test, This indicates this test is ineffective but the structure is what we want to test
     // below show that the contract address store is still populated with the contract
-    console.log("new contract", ContractNameAddressMappings.getContractNameFromAddress(1337, "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"));
+    console.log(
+      "new contract",
+      ContractNameAddressMappings.getContractNameFromAddress(
+        1337,
+        "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"
+      )
+    );
 
-    mintSimpleNft(Users.User1, simpleNftContractAddress, 1)
+    mintSimpleNft(Users.User1, simpleNftContractAddress, 1);
     const localChainConfig = getlocalChainConfig(nftFactoryContractAddress);
+
     await processAllEvents(localChainConfig);
 
     let afterRawEventsRows = await sql`SELECT * FROM public.raw_events`;

@@ -4,7 +4,7 @@ open Mocha
 let {it: it_promise, it_skip: it_skip_promise, before: before_promise} = module(
   RescriptMocha.Promise
 )
-let chainId = (Config.config->Js.Dict.values)[0].chainId
+let chainConfig = (Config.config->Js.Dict.values)[0]
 
 describe("E2E Mock Event Batch", () => {
   before(() => {
@@ -13,7 +13,7 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
     MockEvents.eventBatchWithContext->Belt.Array.forEach(
-      event => event->EventProcessing.eventRouter(~chainId),
+      event => event->EventProcessing.eventRouter(~chainId=chainConfig.chainId),
     )
   })
 
@@ -59,7 +59,11 @@ describe("E2E Db check", () => {
       Migrations.sql,
       [MockEntities.mockInMemRow1, MockEntities.mockInMemRow2],
     )
-    await MockEvents.eventBatch->EventProcessing.processEventBatch(~chainId)
+    await MockEvents.eventBatch->EventProcessing.processEventBatch(
+      ~chainConfig,
+      // Give a conservatively wide range of blocks
+      ~blocksProcessed={from: 1, to: 10},
+    )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)

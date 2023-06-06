@@ -66,7 +66,7 @@ let config: chainConfigs = [
     "1337",
     {
       provider: Ethers.JsonRpcProvider.make(~rpcUrl="http://localhost:8545", ~chainId=1337),
-      startBlock: 0,
+      startBlock: 1,
       chainId: 1337,
       contracts: [
         {
@@ -92,9 +92,7 @@ let config: chainConfigs = [
         {
           name: "SimpleNft",
           abi: Abis.simpleNftAbi->Ethers.makeAbi,
-          addresses: [
-            "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"->Ethers.getAddressFromStringUnsafe,
-          ],
+          addresses: [],
           events: [SimpleNftContract_TransferEvent],
         },
       ],
