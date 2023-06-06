@@ -48,22 +48,22 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             match args.template {
                 Template::Blank => {
-                    //Copy in the relevant js flavor specific blank template files
-                    match &args.js_flavor {
-                        JsFlavor::Rescript => {
+                    //Copy in the relevant language specific blank template files
+                    match &args.language {
+                        Language::Rescript => {
                             BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Typescript => {
+                        Language::Typescript => {
                             BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Javascript => {
+                        Language::Javascript => {
                             BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
                         }
                     }
                     //Copy in the rest of the shared blank template files
                     BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
-                
+
                 Template::Greeter => {
                     //Copy in the relevant language specific greeter files
                     match &args.language {
@@ -80,7 +80,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     //Copy in the rest of the shared greeter files
                     GREETER_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
-
             }
 
             println!("Project template ready");
