@@ -11,8 +11,9 @@ use envio::{
     hbs_templating::codegen_templates::{
         entities_to_map, generate_templates, EventRecordTypeTemplate,
     },
+    hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
     linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
-    project_paths::ParsedPaths,
+    project_paths::{self, ParsedPaths},
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
@@ -35,6 +36,8 @@ static GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/greeter_template/typescript");
 static GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/greeter_template/javascript");
+static INIT_TEMPLATES_SHARED_DIR: Dir<'_> =
+    include_dir::include_dir!("templates/dynamic/init_templates/shared");
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
@@ -45,6 +48,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             //if they haven't already been
             let args = init_args.get_init_args_interactive()?;
             let project_root_path = PathBuf::from(&args.directory);
+            // check that project_root_path exists
+            let project_dir = project_paths::path_utils::NewDir::new(project_root_path.clone())?;
+
+            let hbs_template = InitTemplates::new(project_dir.root_dir_name, &args.language);
+            let hbs_generator = HandleBarsDirGenerator::new(
+                &INIT_TEMPLATES_SHARED_DIR,
+                &hbs_template,
+                &project_root_path,
+            );
 
             match args.template {
                 Template::Blank => {
@@ -62,8 +74,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     //Copy in the rest of the shared blank template files
                     BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                    hbs_generator.generate_hbs_templates()?;
                 }
-
                 Template::Greeter => {
                     //Copy in the relevant language specific greeter files
                     match &args.language {

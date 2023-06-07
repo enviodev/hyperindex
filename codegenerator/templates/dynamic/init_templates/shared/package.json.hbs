@@ -1,0 +1,36 @@
+{
+  "name": "{{project_name}}",
+  "version": "0.1.0",
+  "scripts": {
+    {{#unless is_typescript}}
+      "start": "node generated/src/Index.bs.js"
+    {{/unless}}
+    {{#if is_typescript}}
+      "clean": "tsc --clean",
+      "build": "tsc --build",
+      "watch": "tsc --watch",
+      "start": "ts-node generated/src/Index.bs.js"
+    {{/if}}
+    {{#if is_rescript}}
+      "clean": "rescript clean -with-deps",
+      "build": "rescript build -with-deps",
+      "watch": "rescript build -w -with-deps",
+    {{/if}}
+  },
+  {{#if is_rescript}}
+  "devDependencies": {
+    "rescript": "^10.1.2",
+    "@ryyppy/rescript-promise": "^2.1.0"
+  },
+  {{/if}}
+  {{#if is_typescript}}
+  "devDependencies": {
+    "typescript": "^5.0.4",
+    "@types/node": "^18.16.1",
+    "ts-node": "^10.9.1"
+  },
+  {{/if}}
+  "dependencies": {
+    "generated": "workspace:*"
+  }
+}
