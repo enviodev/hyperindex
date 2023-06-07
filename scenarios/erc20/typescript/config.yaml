@@ -12,11 +12,13 @@ networks:
         handler: src/EventHandlers.js
         events:
           - name: "Approval"
-            requiredEntities: []
-          - name: "Creation"
-            requiredEntities: []
+            requiredEntities: 
+            - name: "Account"
+              labels:
+                - "ownerAccountChanges"
           - name: "Transfer"
             requiredEntities:
-            - name: "Totals"
+            - name: "Account"
               labels:
-                - "totalChanges"
+                - "senderAccountChanges"
+                - "receiverAccountChanges"
