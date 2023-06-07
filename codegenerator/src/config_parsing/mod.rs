@@ -83,24 +83,47 @@ pub struct Network {
     pub contracts: Vec<ConfigContract>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ConfigContract {
     pub name: String,
     // Eg for implementing a custom deserializer
     //  #[serde(deserialize_with = "abi_path_to_abi")]
     pub abi_file_path: Option<String>,
     pub handler: String,
-    #[serde(deserialize_with = "option_list_as_list")]
     address: NormalizedList<String>,
     events: Vec<ConfigEvent>,
 }
 
-fn option_list_as_list<'de, D>(deserializer: D) -> Result<NormalizedList<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let opt = NormalizedList::<String>::deserialize(deserializer)?;
-    Ok(NormalizedList::from(opt.inner))
+// We require this intermediate struct in order to allow the config to skip specifying "address".
+#[derive(Deserialize)]
+struct IntermediateConfigContract {
+    pub name: String,
+    pub abi_file_path: Option<String>,
+    pub handler: String,
+    // This is the difference - adding Option<> around it.
+    address: Option<NormalizedList<String>>,
+    events: Vec<ConfigEvent>,
+}
+
+impl From<IntermediateConfigContract> for ConfigContract {
+    fn from(icc: IntermediateConfigContract) -> Self {
+        ConfigContract {
+            name: icc.name,
+            abi_file_path: icc.abi_file_path,
+            handler: icc.handler,
+            address: icc.address.unwrap_or(NormalizedList { inner: vec![] }),
+            events: icc.events,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ConfigContract {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        IntermediateConfigContract::deserialize(deserializer).map(ConfigContract::from)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
