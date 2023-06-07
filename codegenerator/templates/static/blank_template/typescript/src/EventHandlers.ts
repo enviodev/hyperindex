@@ -23,3 +23,19 @@ The `context` also provides the following functions per entity that can be used 
 User should import the auto-generated function names for loadEntities and handlers from the Handlers file in `/generated` directory, as well as the entities from Types file in `/generated` directory.
 
 */
+
+import {
+  MyAwesomeContract_registerMyAwesomeEventLoadEntities,
+  MyAwesomeContract_registerMyAwesomeEventHandler,
+} from "../generated/src/Handlers.gen";
+
+import { awesomeEntity } from "../generated/src/Types.gen";
+
+MyAwesomeContract_registerMyAwesomeEventLoadEntities(({ event, context }) => {
+    let _ = context.awesomeEvent.awesomeEntityChangesLoad()
+});
+
+MyAwesomeContract_registerMyAwesomeEventHandler(({ event, context }) => {
+  let awesomeEventObject = context.awesomeEvent.awesomeEntityChanges();
+  context.awesomeEvent.update(awesomeEventObject);
+});
