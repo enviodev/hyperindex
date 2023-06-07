@@ -1,12 +1,5 @@
-type Tokens @entity {
+type Account @entity {
   id: ID!
-  name: String!
-  symbol: String!
-  decimals: Int!
-}
-
-type Totals @entity {
-  id: ID!
-  erc20: Tokens!
-  totalTransfer: Int!
+  approval: BigInt!
+  balance: BigInt!
 }

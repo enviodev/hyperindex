@@ -12,14 +12,13 @@ networks:
         handler: ./src/EventHandlers.bs.js
         events:
           - name: "Approval"
-            requiredEntities: []
-          - name: "Creation"
-            requiredEntities:
-            - name: "Tokens"
+            requiredEntities: 
+            - name: "Account"
               labels:
-                - "tokensCreation"
+                - "ownerAccountChanges"
           - name: "Transfer"
             requiredEntities:
-            - name: "Totals"
+            - name: "Account"
               labels:
-                - "totalChanges"
+                - "senderAccountChanges"
+                - "receiverAccountChanges"

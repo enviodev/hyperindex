@@ -11,15 +11,14 @@ networks:
         address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
         handler: src/EventHandlers.js
         events:
-          # - name: "Approval"
-          #   requiredEntities: []
-          - name: "Creation"
-            requiredEntities:
-            - name: "Tokens"
+          - name: "Approval"
+            requiredEntities: 
+            - name: "Account"
               labels:
-                - "tokensCreation"
+                - "ownerAccountChanges"
           - name: "Transfer"
             requiredEntities:
-            - name: "Totals"
+            - name: "Account"
               labels:
-                - "totalChanges"
+                - "senderAccountChanges"
+                - "receiverAccountChanges"
