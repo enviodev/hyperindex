@@ -1,9 +1,6 @@
 use std::error::Error;
 use std::path::PathBuf;
 
-pub mod entity_parsing;
-pub mod event_parsing;
-
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +9,9 @@ use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     project_paths::ParsedPaths,
 };
+
+pub mod entity_parsing;
+pub mod event_parsing;
 
 type NetworkId = i32;
 
@@ -90,8 +90,17 @@ pub struct ConfigContract {
     //  #[serde(deserialize_with = "abi_path_to_abi")]
     pub abi_file_path: Option<String>,
     pub handler: String,
+    #[serde(deserialize_with = "option_list_as_list")]
     address: NormalizedList<String>,
     events: Vec<ConfigEvent>,
+}
+
+fn option_list_as_list<'de, D>(deserializer: D) -> Result<NormalizedList<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = NormalizedList::<String>::deserialize(deserializer)?;
+    Ok(NormalizedList::from(opt.inner))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -263,6 +272,9 @@ pub fn convert_config_to_chain_configs(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
     use ethers::abi::{Event, EventParam, ParamType};
 
     use crate::capitalization::Capitalize;
@@ -270,9 +282,6 @@ mod tests {
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
-
-    use std::fs;
-    use std::path::PathBuf;
 
     #[test]
     fn deserialize_address() {
