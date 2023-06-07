@@ -13,15 +13,17 @@ let make = () => {
         {"Visit the testnet deployment of"->React.string}
       </BigParagraph>
       <div className={"relative mr-auto"}>
-        <div className={"relative h-[80px] w-[200px] mr-auto"}>
-          <Next.Image
-            src={Routes.cdnFolderRoute(
-              ~asset=`/envio/builders/float-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
-            )}
-            layout=#fill
-            objectFit="contain"
-          />
-        </div>
+        <Hyperlink href=Routes.floatTestnet openInNewTab=true>
+          <div className={"relative h-[80px] w-[200px] mr-auto"}>
+            <Next.Image
+              src={Routes.cdnFolderRoute(
+                ~asset=`/envio/builders/float-${LightDarkModeToggle.useModeUrlVariant()}.svg`,
+              )}
+              layout=#fill
+              objectFit="contain"
+            />
+          </div>
+        </Hyperlink>
       </div>
     </div>
     //     <BigParagraph className="m-2 md:max-w-50p md:px-10">
