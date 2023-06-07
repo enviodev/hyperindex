@@ -60,6 +60,8 @@ module Link = {
   external make: (
     ~href: string,
     ~_as: string=?,
+    ~target: string=?,
+    ~rel: string=?,
     ~prefetch: bool=?,
     ~replace: option<bool>=?,
     ~shallow: option<bool>=?,

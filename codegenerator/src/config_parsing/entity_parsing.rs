@@ -1,13 +1,17 @@
 use crate::{
-    capitalization::Capitalize, capitalization::CapitalizedOptions, project_paths::ParsedPaths,
-    EntityParamType, EntityRecordType, EntityRelationalTypes,
+    capitalization::Capitalize,
+    capitalization::CapitalizedOptions,
+    hbs_templating::codegen_templates::{
+        EntityParamTypeTemplate, EntityRecordTypeTemplate, EntityRelationalTypesTemplate,
+    },
+    project_paths::ParsedPaths,
 };
 use graphql_parser::schema::{Definition, Type, TypeDefinition};
 use std::collections::HashSet;
 
 pub fn get_entity_record_types_from_schema(
     parsed_paths: &ParsedPaths,
-) -> Result<Vec<EntityRecordType>, String> {
+) -> Result<Vec<EntityRecordTypeTemplate>, String> {
     let schema_string = std::fs::read_to_string(&parsed_paths.schema_path).map_err(|err| {
         format!(
             "Failed to read schema file at {} with Error: {}",
@@ -53,9 +57,9 @@ pub fn get_entity_record_types_from_schema(
 
             let is_optional = gql_type_is_optional(&field.field_type);
 
-            params.push(EntityParamType {
+            params.push(EntityParamTypeTemplate {
                 key: field.name.to_owned(),
-                is_optional: is_optional,
+                is_optional,
                 type_rescript: param_type,
                 type_pg: param_pg_type,
                 maybe_entity_name: param_maybe_entity_name,
@@ -64,7 +68,7 @@ pub fn get_entity_record_types_from_schema(
             relational_params.extend(relationship_type);
         }
 
-        entity_records.push(EntityRecordType {
+        entity_records.push(EntityRecordTypeTemplate {
             name: object.name.to_owned().to_capitalized_options(),
             params,
             relational_params,
@@ -172,14 +176,16 @@ fn gql_type_to_postgres_relational_type(
     field_name: &String,
     gql_type: &Type<String>,
     entities_set: &HashSet<String>,
-) -> Option<EntityRelationalTypes> {
+) -> Option<EntityRelationalTypesTemplate> {
     match gql_type {
-        Type::NamedType(named) if entities_set.contains(named) => Some(EntityRelationalTypes {
-            relational_key: field_name.clone().to_capitalized_options(),
-            mapped_entity: named.to_capitalized_options(),
-            relationship_type: "object".to_owned(),
-            is_optional: true,
-        }),
+        Type::NamedType(named) if entities_set.contains(named) => {
+            Some(EntityRelationalTypesTemplate {
+                relational_key: field_name.clone().to_capitalized_options(),
+                mapped_entity: named.to_capitalized_options(),
+                relationship_type: "object".to_owned(),
+                is_optional: true,
+            })
+        }
         Type::NamedType(_) => None,
         Type::ListType(gql_type) => {
             match gql_type_to_postgres_relational_type(&field_name, &gql_type, &entities_set) {
@@ -300,10 +306,10 @@ fn gql_type_to_capitalized_entity_name(
 mod tests {
     use crate::{
         capitalization::Capitalize,
-        entity_parsing::{
+        config_parsing::entity_parsing::{
             gql_type_is_optional, gql_type_to_postgres_relational_type, gql_type_to_rescript_type,
         },
-        EntityRelationalTypes,
+        hbs_templating::codegen_templates::EntityRelationalTypesTemplate,
     };
     use graphql_parser::schema::{Definition, Type, TypeDefinition};
     use std::collections::HashSet;
@@ -387,7 +393,7 @@ mod tests {
         let field_name = String::from("testField1");
         let result =
             gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
-        let expect_output = Some(EntityRelationalTypes {
+        let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: true,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
@@ -406,7 +412,7 @@ mod tests {
         let field_name = String::from("testField1");
         let result =
             gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
-        let expect_output = Some(EntityRelationalTypes {
+        let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: false,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
@@ -426,7 +432,7 @@ mod tests {
         let field_name = String::from("testField1");
         let result =
             gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
-        let expect_output = Some(EntityRelationalTypes {
+        let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: true,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
@@ -446,7 +452,7 @@ mod tests {
         let field_name = String::from("testField1");
         let result =
             gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
-        let expect_output = Some(EntityRelationalTypes {
+        let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: false,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),

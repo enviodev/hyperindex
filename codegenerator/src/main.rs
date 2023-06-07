@@ -7,10 +7,12 @@ use clap::Parser;
 
 use envio::{
     cli_args::{self, Language},
-    config_parsing, entities_to_map, entity_parsing, event_parsing, generate_templates,
+    config_parsing::{self, entity_parsing, event_parsing},
+    hbs_templating::codegen_templates::{
+        entities_to_map, generate_templates, EventRecordTypeTemplate,
+    },
     linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
     project_paths::ParsedPaths,
-    EventRecordType,
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
@@ -35,8 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             //if they haven't already been
             let args = init_args.get_init_args_interactive()?;
             let project_root_path = PathBuf::from(&args.directory);
-            //Ensure that the root path exists
-            fs::create_dir_all(&project_root_path)?;
+
             match args.template {
                 Template::Greeter => {
                     //Copy in the relevant language specific greeter files
@@ -80,12 +81,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             //to use an inline tuple type for parsed structs. However this is being left until it
             //is decided to completely remove the need for subrecords in which case the entire
             //linked_hashmap module can be removed.
-            let rescript_subrecord_dependencies: LinkedHashMap<RescriptRecordKey, EventRecordType> =
-                RescriptRecordHierarchyLinkedHashMap::new();
+            let rescript_subrecord_dependencies: LinkedHashMap<
+                RescriptRecordKey,
+                EventRecordTypeTemplate,
+            > = RescriptRecordHierarchyLinkedHashMap::new();
 
-            let sub_record_dependencies: Vec<EventRecordType> = rescript_subrecord_dependencies
-                .iter()
-                .collect::<Vec<EventRecordType>>();
+            let sub_record_dependencies: Vec<EventRecordTypeTemplate> =
+                rescript_subrecord_dependencies
+                    .iter()
+                    .collect::<Vec<EventRecordTypeTemplate>>();
 
             CODEGEN_STATIC_DIR.extract(&project_paths.generated)?;
 

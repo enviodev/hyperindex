@@ -1,12 +1,14 @@
 use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, ConfigEvent},
+    hbs_templating::codegen_templates::{
+        ContractTemplate, EventParamTypeTemplate, EventTemplate, RequiredEntityEntityFieldTemplate,
+        RequiredEntityTemplate,
+    },
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
-    Contract, Error, EventParamType, EventTemplate, RequiredEntityEntityField,
-    RequiredEntityTemplate,
 };
 
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error};
 
 use std::path::PathBuf;
 
@@ -94,13 +96,13 @@ fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
 fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthAbiEvent,
-    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityFieldTemplate>>,
 ) -> EventTemplate {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
         .inputs
         .iter()
-        .map(|input| EventParamType {
+        .map(|input| EventParamTypeTemplate {
             key: input.name.to_owned(),
             type_rescript: abi_type_to_rescript_string(
                 &EthereumEventParam::from_ethereum_abi_param(input),
@@ -136,8 +138,8 @@ fn get_contract_type_from_config_contract(
     config_contract: &ConfigContract,
     parsed_paths: &ParsedPaths,
     contract_unique_id: ContractUniqueId,
-    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
-) -> Result<Contract, Box<dyn Error>> {
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityFieldTemplate>>,
+) -> Result<ContractTemplate, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
     let contract_abi_opt = parsed_paths.get_contract_abi(&contract_unique_id)?;
@@ -186,13 +188,17 @@ fn get_contract_type_from_config_contract(
             }
         };
 
-        let event_type = get_event_template_from_ethereum_abi_event(config_event, &abi_event, entity_fields_of_required_entity_map);
+        let event_type = get_event_template_from_ethereum_abi_event(
+            config_event,
+            &abi_event,
+            entity_fields_of_required_entity_map,
+        );
         event_types.push(event_type);
     }
 
     let handler_template = parsed_paths.get_contract_handler_paths_template(&contract_unique_id)?;
 
-    let contract = Contract {
+    let contract = ContractTemplate {
         name: config_contract.name.to_capitalized_options(),
         events: event_types,
         handler: handler_template,
@@ -203,10 +209,10 @@ fn get_contract_type_from_config_contract(
 
 pub fn get_contract_types_from_config(
     parsed_paths: &ParsedPaths,
-    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityField>>,
-) -> Result<Vec<Contract>, Box<dyn Error>> {
+    entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityFieldTemplate>>,
+) -> Result<Vec<ContractTemplate>, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
-    let mut contracts: Vec<Contract> = Vec::new();
+    let mut contracts: Vec<ContractTemplate> = Vec::new();
     for network in config.networks.iter() {
         for config_contract in network.contracts.iter() {
             let contract_unique_id = ContractUniqueId {
@@ -231,7 +237,9 @@ mod tests {
     use crate::{
         capitalization::Capitalize,
         config_parsing::{self, EventNameOrSig, RequiredEntity},
-        EventParamType, EventTemplate, RequiredEntityTemplate,
+        hbs_templating::codegen_templates::{
+            EventParamTypeTemplate, EventTemplate, RequiredEntityTemplate,
+        },
     };
     use ethers::abi::{Event as AbiEvent, EventParam, ParamType};
     use std::collections::HashMap;
@@ -274,11 +282,11 @@ mod tests {
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
             params: vec![
-                EventParamType {
+                EventParamTypeTemplate {
                     key: input1_name,
                     type_rescript: String::from("Ethers.BigInt.t"),
                 },
-                EventParamType {
+                EventParamTypeTemplate {
                     key: input2_name,
                     type_rescript: String::from("Ethers.ethAddress"),
                 },
@@ -327,11 +335,11 @@ mod tests {
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
             params: vec![
-                EventParamType {
+                EventParamTypeTemplate {
                     key: input1_name,
                     type_rescript: String::from("Ethers.BigInt.t"),
                 },
-                EventParamType {
+                EventParamTypeTemplate {
                     key: input2_name,
                     type_rescript: String::from("Ethers.ethAddress"),
                 },
