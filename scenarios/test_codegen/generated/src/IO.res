@@ -185,11 +185,74 @@ module InMemoryStore = {
       )
     }
   }
+
+  module A = {
+    let aDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.aEntity>>> = ref(Js.Dict.empty())
+
+    let getA = (~id: string) => {
+      let row = Js.Dict.get(aDict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
+
+    let setA = (~entity: Types.aEntity, ~crud: Types.crud, ~eventData: Types.eventData) => {
+      let aCurrentCrud = Js.Dict.get(aDict.contents, entity.id)->Belt.Option.map(row => {
+        row.crud
+      })
+
+      aDict.contents->Js.Dict.set(
+        entity.id,
+        {eventData, entity, crud: entityCurrentCrud(aCurrentCrud, crud)},
+      )
+    }
+  }
+
+  module B = {
+    let bDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.bEntity>>> = ref(Js.Dict.empty())
+
+    let getB = (~id: string) => {
+      let row = Js.Dict.get(bDict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
+
+    let setB = (~entity: Types.bEntity, ~crud: Types.crud, ~eventData: Types.eventData) => {
+      let bCurrentCrud = Js.Dict.get(bDict.contents, entity.id)->Belt.Option.map(row => {
+        row.crud
+      })
+
+      bDict.contents->Js.Dict.set(
+        entity.id,
+        {eventData, entity, crud: entityCurrentCrud(bCurrentCrud, crud)},
+      )
+    }
+  }
+
+  module C = {
+    let cDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.cEntity>>> = ref(Js.Dict.empty())
+
+    let getC = (~id: string) => {
+      let row = Js.Dict.get(cDict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
+
+    let setC = (~entity: Types.cEntity, ~crud: Types.crud, ~eventData: Types.eventData) => {
+      let cCurrentCrud = Js.Dict.get(cDict.contents, entity.id)->Belt.Option.map(row => {
+        row.crud
+      })
+
+      cDict.contents->Js.Dict.set(
+        entity.id,
+        {eventData, entity, crud: entityCurrentCrud(cCurrentCrud, crud)},
+      )
+    }
+  }
   let resetStore = () => {
     User.userDict := Js.Dict.empty()
     Gravatar.gravatarDict := Js.Dict.empty()
     Nftcollection.nftcollectionDict := Js.Dict.empty()
     Token.tokenDict := Js.Dict.empty()
+    A.aDict := Js.Dict.empty()
+    B.bDict := Js.Dict.empty()
+    C.cDict := Js.Dict.empty()
   }
 }
 
@@ -203,6 +266,9 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let uniqueGravatarDict = Js.Dict.empty()
   let uniqueNftcollectionDict = Js.Dict.empty()
   let uniqueTokenDict = Js.Dict.empty()
+  let uniqueADict = Js.Dict.empty()
+  let uniqueBDict = Js.Dict.empty()
+  let uniqueCDict = Js.Dict.empty()
 
   let populateLoadAsEntityFunctions: ref<array<unit => unit>> = ref([])
 
@@ -210,6 +276,9 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let uniqueGravatarAsEntityFieldArray: ref<array<string>> = ref([])
   let uniqueNftcollectionAsEntityFieldArray: ref<array<string>> = ref([])
   let uniqueTokenAsEntityFieldArray: ref<array<string>> = ref([])
+  let uniqueAAsEntityFieldArray: ref<array<string>> = ref([])
+  let uniqueBAsEntityFieldArray: ref<array<string>> = ref([])
+  let uniqueCAsEntityFieldArray: ref<array<string>> = ref([])
 
   let rec userLinkedEntityLoader = (
     entityId: string,
@@ -324,6 +393,78 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     }
     ()
   }
+  and aLinkedEntityLoader = (entityId: string, aLoad: Types.aLoaderConfig, layer: int) => {
+    if !loadLayer.contents {
+      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
+      loadLayer := true
+    }
+    if Js.Dict.get(uniqueADict, entityId)->Belt.Option.isNone {
+      let _ = uniqueAAsEntityFieldArray.contents->Js.Array2.push(entityId)
+      let _ = Js.Dict.set(uniqueADict, entityId, entityId)
+    }
+
+    switch aLoad.loadB {
+    | Some(loadB) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.A.getA(~id=entityId)->Belt.Option.map(aEntity => {
+          let _ = bLinkedEntityLoader(aEntity.b, loadB, layer + 1)
+        })
+      })
+    | None => ()
+    }
+    ()
+  }
+  and bLinkedEntityLoader = (entityId: string, bLoad: Types.bLoaderConfig, layer: int) => {
+    if !loadLayer.contents {
+      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
+      loadLayer := true
+    }
+    if Js.Dict.get(uniqueBDict, entityId)->Belt.Option.isNone {
+      let _ = uniqueBAsEntityFieldArray.contents->Js.Array2.push(entityId)
+      let _ = Js.Dict.set(uniqueBDict, entityId, entityId)
+    }
+
+    switch bLoad.loadA {
+    | Some(loadA) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.B.getB(~id=entityId)->Belt.Option.map(bEntity => {
+          let _ = bEntity.a->Belt.Array.map(aId => aLinkedEntityLoader(aId, loadA, layer + 1))
+        })
+      })
+    | None => ()
+    }
+    switch bLoad.loadC {
+    | Some(loadC) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.B.getB(~id=entityId)->Belt.Option.map(bEntity => {
+          let _ = bEntity.c->Belt.Option.map(cId => cLinkedEntityLoader(cId, loadC, layer + 1))
+        })
+      })
+    | None => ()
+    }
+    ()
+  }
+  and cLinkedEntityLoader = (entityId: string, cLoad: Types.cLoaderConfig, layer: int) => {
+    if !loadLayer.contents {
+      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
+      loadLayer := true
+    }
+    if Js.Dict.get(uniqueCDict, entityId)->Belt.Option.isNone {
+      let _ = uniqueCAsEntityFieldArray.contents->Js.Array2.push(entityId)
+      let _ = Js.Dict.set(uniqueCDict, entityId, entityId)
+    }
+
+    switch cLoad.loadD {
+    | Some(loadA) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.C.getC(~id=entityId)->Belt.Option.map(cEntity => {
+          let _ = aLinkedEntityLoader(cEntity.d, loadA, layer + 1)
+        })
+      })
+    | None => ()
+    }
+    ()
+  }
 
   entityBatch->Belt.Array.forEach(readEntity => {
     switch readEntity {
@@ -331,6 +472,9 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     | GravatarRead(entityId, gravatarLoad) => gravatarLinkedEntityLoader(entityId, gravatarLoad, 0)
     | NftcollectionRead(entityId) => nftcollectionLinkedEntityLoader(entityId, 0)
     | TokenRead(entityId, tokenLoad) => tokenLinkedEntityLoader(entityId, tokenLoad, 0)
+    | ARead(entityId, aLoad) => aLinkedEntityLoader(entityId, aLoad, 0)
+    | BRead(entityId, bLoad) => bLinkedEntityLoader(entityId, bLoad, 0)
+    | CRead(entityId, cLoad) => cLinkedEntityLoader(entityId, cLoad, 0)
     }
   })
 
@@ -384,6 +528,39 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
       })
 
       uniqueTokenAsEntityFieldArray := []
+    }
+    if uniqueAAsEntityFieldArray.contents->Array.length > 0 {
+      let aFieldEntitiesArray =
+        await sql->DbFunctions.A.readAEntities(uniqueAAsEntityFieldArray.contents)
+
+      aFieldEntitiesArray->Belt.Array.forEach(readRow => {
+        let {entity, eventData} = DbFunctions.A.readRowToReadEntityData(readRow)
+        InMemoryStore.A.setA(~entity, ~eventData, ~crud=Types.Read)
+      })
+
+      uniqueAAsEntityFieldArray := []
+    }
+    if uniqueBAsEntityFieldArray.contents->Array.length > 0 {
+      let bFieldEntitiesArray =
+        await sql->DbFunctions.B.readBEntities(uniqueBAsEntityFieldArray.contents)
+
+      bFieldEntitiesArray->Belt.Array.forEach(readRow => {
+        let {entity, eventData} = DbFunctions.B.readRowToReadEntityData(readRow)
+        InMemoryStore.B.setB(~entity, ~eventData, ~crud=Types.Read)
+      })
+
+      uniqueBAsEntityFieldArray := []
+    }
+    if uniqueCAsEntityFieldArray.contents->Array.length > 0 {
+      let cFieldEntitiesArray =
+        await sql->DbFunctions.C.readCEntities(uniqueCAsEntityFieldArray.contents)
+
+      cFieldEntitiesArray->Belt.Array.forEach(readRow => {
+        let {entity, eventData} = DbFunctions.C.readRowToReadEntityData(readRow)
+        InMemoryStore.C.setC(~entity, ~eventData, ~crud=Types.Read)
+      })
+
+      uniqueCAsEntityFieldArray := []
     }
 
     populateLoadAsEntityFunctions.contents->Belt.Array.forEach(func => func())
@@ -595,6 +772,99 @@ let executeBatch = async sql => {
     }
   }
 
+  let aRows = InMemoryStore.A.aDict.contents->Js.Dict.values
+
+  let deleteAIdsPromise = sql => {
+    let deleteAIds =
+      aRows
+      ->Belt.Array.keepMap(aRow => aRow.crud == Types.Delete ? Some(aRow.entity) : None)
+      ->Belt.Array.map(a => a.id)
+
+    if deleteAIds->Belt.Array.length > 0 {
+      sql->DbFunctions.A.batchDeleteA(deleteAIds)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+  let setAPromise = sql => {
+    let setA = aRows->Belt.Array.keepMap(aRow =>
+      aRow.crud == Types.Create || aRow.crud == Update
+        ? Some({
+            ...aRow,
+            entity: aRow.entity->Types.serializeAEntity,
+          })
+        : None
+    )
+
+    if setA->Belt.Array.length > 0 {
+      sql->DbFunctions.A.batchSetA(setA)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
+  let bRows = InMemoryStore.B.bDict.contents->Js.Dict.values
+
+  let deleteBIdsPromise = sql => {
+    let deleteBIds =
+      bRows
+      ->Belt.Array.keepMap(bRow => bRow.crud == Types.Delete ? Some(bRow.entity) : None)
+      ->Belt.Array.map(b => b.id)
+
+    if deleteBIds->Belt.Array.length > 0 {
+      sql->DbFunctions.B.batchDeleteB(deleteBIds)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+  let setBPromise = sql => {
+    let setB = bRows->Belt.Array.keepMap(bRow =>
+      bRow.crud == Types.Create || bRow.crud == Update
+        ? Some({
+            ...bRow,
+            entity: bRow.entity->Types.serializeBEntity,
+          })
+        : None
+    )
+
+    if setB->Belt.Array.length > 0 {
+      sql->DbFunctions.B.batchSetB(setB)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
+  let cRows = InMemoryStore.C.cDict.contents->Js.Dict.values
+
+  let deleteCIdsPromise = sql => {
+    let deleteCIds =
+      cRows
+      ->Belt.Array.keepMap(cRow => cRow.crud == Types.Delete ? Some(cRow.entity) : None)
+      ->Belt.Array.map(c => c.id)
+
+    if deleteCIds->Belt.Array.length > 0 {
+      sql->DbFunctions.C.batchDeleteC(deleteCIds)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+  let setCPromise = sql => {
+    let setC = cRows->Belt.Array.keepMap(cRow =>
+      cRow.crud == Types.Create || cRow.crud == Update
+        ? Some({
+            ...cRow,
+            entity: cRow.entity->Types.serializeCEntity,
+          })
+        : None
+    )
+
+    if setC->Belt.Array.length > 0 {
+      sql->DbFunctions.C.batchSetC(setC)
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
   let res = await sql->Postgres.beginSql(sql => {
     [
       sql->deleteRawEventsIdsPromise,
@@ -609,6 +879,12 @@ let executeBatch = async sql => {
       sql->setNftcollectionPromise,
       sql->deleteTokenIdsPromise,
       sql->setTokenPromise,
+      sql->deleteAIdsPromise,
+      sql->setAPromise,
+      sql->deleteBIdsPromise,
+      sql->setBPromise,
+      sql->deleteCIdsPromise,
+      sql->setCPromise,
     ]
   })
 

@@ -154,6 +154,24 @@ module GravatarContract = {
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
           },
+          a: {
+            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+          },
+          b: {
+            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+          },
+          c: {
+            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
+          },
         },
       }
     }
@@ -312,6 +330,24 @@ module GravatarContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+          },
+          a: {
+            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+          },
+          b: {
+            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+          },
+          c: {
+            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
           },
         },
       }
@@ -499,6 +535,24 @@ Please consider loading the user in the UpdateGravatar entity loader to greatly 
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
           },
+          a: {
+            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+          },
+          b: {
+            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+          },
+          c: {
+            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
+          },
         },
       }
     }
@@ -661,6 +715,24 @@ module NftFactoryContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+          },
+          a: {
+            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+          },
+          b: {
+            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+          },
+          c: {
+            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
           },
         },
       }
@@ -926,6 +998,24 @@ Please consider loading the user in the UpdateToken entity loader to greatly imp
                 "NOT_IMPLEMENTED_YET"->Obj.magic
               }
             },
+          },
+          a: {
+            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+          },
+          b: {
+            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+          },
+          c: {
+            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
+            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
+            delete: id =>
+              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
           },
         },
       }

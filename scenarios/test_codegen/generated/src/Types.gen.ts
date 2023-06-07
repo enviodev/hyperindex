@@ -59,6 +59,19 @@ export type tokenEntity = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type aEntity = { readonly id: string; readonly b: id };
+
+// tslint:disable-next-line:interface-over-type-literal
+export type bEntity = {
+  readonly id: string; 
+  readonly a: id[]; 
+  readonly c?: id
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type cEntity = { readonly id: string; readonly d: id };
+
+// tslint:disable-next-line:interface-over-type-literal
 export type eventLog<a> = {
   readonly params: a; 
   readonly blockNumber: number; 
@@ -106,11 +119,35 @@ export type GravatarContract_TestEventEvent_tokenEntityHandlerContext = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_TestEventEvent_aEntityHandlerContext = {
+  readonly insert: (_1:aEntity) => void; 
+  readonly update: (_1:aEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_TestEventEvent_bEntityHandlerContext = {
+  readonly insert: (_1:bEntity) => void; 
+  readonly update: (_1:bEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_TestEventEvent_cEntityHandlerContext = {
+  readonly insert: (_1:cEntity) => void; 
+  readonly update: (_1:cEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_TestEventEvent_context = {
   readonly user: GravatarContract_TestEventEvent_userEntityHandlerContext; 
   readonly gravatar: GravatarContract_TestEventEvent_gravatarEntityHandlerContext; 
   readonly nftcollection: GravatarContract_TestEventEvent_nftcollectionEntityHandlerContext; 
-  readonly token: GravatarContract_TestEventEvent_tokenEntityHandlerContext
+  readonly token: GravatarContract_TestEventEvent_tokenEntityHandlerContext; 
+  readonly a: GravatarContract_TestEventEvent_aEntityHandlerContext; 
+  readonly b: GravatarContract_TestEventEvent_bEntityHandlerContext; 
+  readonly c: GravatarContract_TestEventEvent_cEntityHandlerContext
 };
 
 // tslint:disable-next-line:interface-over-type-literal
@@ -160,11 +197,35 @@ export type GravatarContract_NewGravatarEvent_tokenEntityHandlerContext = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_NewGravatarEvent_aEntityHandlerContext = {
+  readonly insert: (_1:aEntity) => void; 
+  readonly update: (_1:aEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_NewGravatarEvent_bEntityHandlerContext = {
+  readonly insert: (_1:bEntity) => void; 
+  readonly update: (_1:bEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_NewGravatarEvent_cEntityHandlerContext = {
+  readonly insert: (_1:cEntity) => void; 
+  readonly update: (_1:cEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_NewGravatarEvent_context = {
   readonly user: GravatarContract_NewGravatarEvent_userEntityHandlerContext; 
   readonly gravatar: GravatarContract_NewGravatarEvent_gravatarEntityHandlerContext; 
   readonly nftcollection: GravatarContract_NewGravatarEvent_nftcollectionEntityHandlerContext; 
-  readonly token: GravatarContract_NewGravatarEvent_tokenEntityHandlerContext
+  readonly token: GravatarContract_NewGravatarEvent_tokenEntityHandlerContext; 
+  readonly a: GravatarContract_NewGravatarEvent_aEntityHandlerContext; 
+  readonly b: GravatarContract_NewGravatarEvent_bEntityHandlerContext; 
+  readonly c: GravatarContract_NewGravatarEvent_cEntityHandlerContext
 };
 
 // tslint:disable-next-line:interface-over-type-literal
@@ -216,11 +277,35 @@ export type GravatarContract_UpdatedGravatarEvent_tokenEntityHandlerContext = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_UpdatedGravatarEvent_aEntityHandlerContext = {
+  readonly insert: (_1:aEntity) => void; 
+  readonly update: (_1:aEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_UpdatedGravatarEvent_bEntityHandlerContext = {
+  readonly insert: (_1:bEntity) => void; 
+  readonly update: (_1:bEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type GravatarContract_UpdatedGravatarEvent_cEntityHandlerContext = {
+  readonly insert: (_1:cEntity) => void; 
+  readonly update: (_1:cEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_context = {
   readonly user: GravatarContract_UpdatedGravatarEvent_userEntityHandlerContext; 
   readonly gravatar: GravatarContract_UpdatedGravatarEvent_gravatarEntityHandlerContext; 
   readonly nftcollection: GravatarContract_UpdatedGravatarEvent_nftcollectionEntityHandlerContext; 
-  readonly token: GravatarContract_UpdatedGravatarEvent_tokenEntityHandlerContext
+  readonly token: GravatarContract_UpdatedGravatarEvent_tokenEntityHandlerContext; 
+  readonly a: GravatarContract_UpdatedGravatarEvent_aEntityHandlerContext; 
+  readonly b: GravatarContract_UpdatedGravatarEvent_bEntityHandlerContext; 
+  readonly c: GravatarContract_UpdatedGravatarEvent_cEntityHandlerContext
 };
 
 // tslint:disable-next-line:interface-over-type-literal
@@ -273,11 +358,35 @@ export type NftFactoryContract_SimpleNftCreatedEvent_tokenEntityHandlerContext =
 };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type NftFactoryContract_SimpleNftCreatedEvent_aEntityHandlerContext = {
+  readonly insert: (_1:aEntity) => void; 
+  readonly update: (_1:aEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type NftFactoryContract_SimpleNftCreatedEvent_bEntityHandlerContext = {
+  readonly insert: (_1:bEntity) => void; 
+  readonly update: (_1:bEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type NftFactoryContract_SimpleNftCreatedEvent_cEntityHandlerContext = {
+  readonly insert: (_1:cEntity) => void; 
+  readonly update: (_1:cEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
 export type NftFactoryContract_SimpleNftCreatedEvent_context = {
   readonly user: NftFactoryContract_SimpleNftCreatedEvent_userEntityHandlerContext; 
   readonly gravatar: NftFactoryContract_SimpleNftCreatedEvent_gravatarEntityHandlerContext; 
   readonly nftcollection: NftFactoryContract_SimpleNftCreatedEvent_nftcollectionEntityHandlerContext; 
-  readonly token: NftFactoryContract_SimpleNftCreatedEvent_tokenEntityHandlerContext
+  readonly token: NftFactoryContract_SimpleNftCreatedEvent_tokenEntityHandlerContext; 
+  readonly a: NftFactoryContract_SimpleNftCreatedEvent_aEntityHandlerContext; 
+  readonly b: NftFactoryContract_SimpleNftCreatedEvent_bEntityHandlerContext; 
+  readonly c: NftFactoryContract_SimpleNftCreatedEvent_cEntityHandlerContext
 };
 
 // tslint:disable-next-line:interface-over-type-literal
@@ -334,11 +443,35 @@ export type SimpleNftContract_TransferEvent_tokenEntityHandlerContext = {
 };
 
 // tslint:disable-next-line:interface-over-type-literal
+export type SimpleNftContract_TransferEvent_aEntityHandlerContext = {
+  readonly insert: (_1:aEntity) => void; 
+  readonly update: (_1:aEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type SimpleNftContract_TransferEvent_bEntityHandlerContext = {
+  readonly insert: (_1:bEntity) => void; 
+  readonly update: (_1:bEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
+export type SimpleNftContract_TransferEvent_cEntityHandlerContext = {
+  readonly insert: (_1:cEntity) => void; 
+  readonly update: (_1:cEntity) => void; 
+  readonly delete: (_1:id) => void
+};
+
+// tslint:disable-next-line:interface-over-type-literal
 export type SimpleNftContract_TransferEvent_context = {
   readonly user: SimpleNftContract_TransferEvent_userEntityHandlerContext; 
   readonly gravatar: SimpleNftContract_TransferEvent_gravatarEntityHandlerContext; 
   readonly nftcollection: SimpleNftContract_TransferEvent_nftcollectionEntityHandlerContext; 
-  readonly token: SimpleNftContract_TransferEvent_tokenEntityHandlerContext
+  readonly token: SimpleNftContract_TransferEvent_tokenEntityHandlerContext; 
+  readonly a: SimpleNftContract_TransferEvent_aEntityHandlerContext; 
+  readonly b: SimpleNftContract_TransferEvent_bEntityHandlerContext; 
+  readonly c: SimpleNftContract_TransferEvent_cEntityHandlerContext
 };
 
 // tslint:disable-next-line:interface-over-type-literal

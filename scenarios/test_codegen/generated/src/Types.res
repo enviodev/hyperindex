@@ -13,6 +13,9 @@ type rec userLoaderConfig = {loadGravatar?: gravatarLoaderConfig, loadTokens?: t
 and gravatarLoaderConfig = {loadOwner?: userLoaderConfig}
 and nftcollectionLoaderConfig = bool
 and tokenLoaderConfig = {loadCollection?: nftcollectionLoaderConfig, loadOwner?: userLoaderConfig}
+and aLoaderConfig = {loadB?: bLoaderConfig}
+and bLoaderConfig = {loadA?: aLoaderConfig, loadC?: cLoaderConfig}
+and cLoaderConfig = {loadD?: aLoaderConfig}
 
 @@warning("+30")
 
@@ -21,6 +24,9 @@ type entityRead =
   | GravatarRead(id, gravatarLoaderConfig)
   | NftcollectionRead(id)
   | TokenRead(id, tokenLoaderConfig)
+  | ARead(id, aLoaderConfig)
+  | BRead(id, bLoaderConfig)
+  | CRead(id, cLoaderConfig)
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
@@ -28,6 +34,9 @@ let entitySerialize = (entity: entityRead) => {
   | GravatarRead(id, _) => `gravatar${id}`
   | NftcollectionRead(id) => `nftcollection${id}`
   | TokenRead(id, _) => `token${id}`
+  | ARead(id, _) => `a${id}`
+  | BRead(id, _) => `b${id}`
+  | CRead(id, _) => `c${id}`
   }
 }
 
@@ -160,11 +169,71 @@ let serializeTokenEntity = (entity: tokenEntity): tokenEntitySerialized => {
   }
 }
 
+@genType
+type aEntity = {
+  id: string,
+  b: id,
+}
+
+type aEntitySerialized = {
+  id: string,
+  b: id,
+}
+
+let serializeAEntity = (entity: aEntity): aEntitySerialized => {
+  {
+    id: entity.id,
+    b: entity.b,
+  }
+}
+
+@genType
+type bEntity = {
+  id: string,
+  a: array<id>,
+  c: option<id>,
+}
+
+type bEntitySerialized = {
+  id: string,
+  a: array<id>,
+  c: option<id>,
+}
+
+let serializeBEntity = (entity: bEntity): bEntitySerialized => {
+  {
+    id: entity.id,
+    a: entity.a,
+    c: entity.c,
+  }
+}
+
+@genType
+type cEntity = {
+  id: string,
+  d: id,
+}
+
+type cEntitySerialized = {
+  id: string,
+  d: id,
+}
+
+let serializeCEntity = (entity: cEntity): cEntitySerialized => {
+  {
+    id: entity.id,
+    d: entity.d,
+  }
+}
+
 type entity =
   | UserEntity(userEntity)
   | GravatarEntity(gravatarEntity)
   | NftcollectionEntity(nftcollectionEntity)
   | TokenEntity(tokenEntity)
+  | AEntity(aEntity)
+  | BEntity(bEntity)
+  | CEntity(cEntity)
 
 type crud = Create | Read | Update | Delete
 
@@ -223,12 +292,30 @@ module GravatarContract = {
       update: tokenEntity => unit,
       delete: id => unit,
     }
+    type aEntityHandlerContext = {
+      insert: aEntity => unit,
+      update: aEntity => unit,
+      delete: id => unit,
+    }
+    type bEntityHandlerContext = {
+      insert: bEntity => unit,
+      update: bEntity => unit,
+      delete: id => unit,
+    }
+    type cEntityHandlerContext = {
+      insert: cEntity => unit,
+      update: cEntity => unit,
+      delete: id => unit,
+    }
     @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
       nftcollection: nftcollectionEntityHandlerContext,
       token: tokenEntityHandlerContext,
+      a: aEntityHandlerContext,
+      b: bEntityHandlerContext,
+      c: cEntityHandlerContext,
     }
 
     @genType
@@ -274,12 +361,30 @@ module GravatarContract = {
       update: tokenEntity => unit,
       delete: id => unit,
     }
+    type aEntityHandlerContext = {
+      insert: aEntity => unit,
+      update: aEntity => unit,
+      delete: id => unit,
+    }
+    type bEntityHandlerContext = {
+      insert: bEntity => unit,
+      update: bEntity => unit,
+      delete: id => unit,
+    }
+    type cEntityHandlerContext = {
+      insert: cEntity => unit,
+      update: cEntity => unit,
+      delete: id => unit,
+    }
     @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
       nftcollection: nftcollectionEntityHandlerContext,
       token: tokenEntityHandlerContext,
+      a: aEntityHandlerContext,
+      b: bEntityHandlerContext,
+      c: cEntityHandlerContext,
     }
 
     @genType
@@ -328,12 +433,30 @@ module GravatarContract = {
       update: tokenEntity => unit,
       delete: id => unit,
     }
+    type aEntityHandlerContext = {
+      insert: aEntity => unit,
+      update: aEntity => unit,
+      delete: id => unit,
+    }
+    type bEntityHandlerContext = {
+      insert: bEntity => unit,
+      update: bEntity => unit,
+      delete: id => unit,
+    }
+    type cEntityHandlerContext = {
+      insert: cEntity => unit,
+      update: cEntity => unit,
+      delete: id => unit,
+    }
     @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
       nftcollection: nftcollectionEntityHandlerContext,
       token: tokenEntityHandlerContext,
+      a: aEntityHandlerContext,
+      b: bEntityHandlerContext,
+      c: cEntityHandlerContext,
     }
 
     @genType
@@ -387,12 +510,30 @@ module NftFactoryContract = {
       update: tokenEntity => unit,
       delete: id => unit,
     }
+    type aEntityHandlerContext = {
+      insert: aEntity => unit,
+      update: aEntity => unit,
+      delete: id => unit,
+    }
+    type bEntityHandlerContext = {
+      insert: bEntity => unit,
+      update: bEntity => unit,
+      delete: id => unit,
+    }
+    type cEntityHandlerContext = {
+      insert: cEntity => unit,
+      update: cEntity => unit,
+      delete: id => unit,
+    }
     @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
       nftcollection: nftcollectionEntityHandlerContext,
       token: tokenEntityHandlerContext,
+      a: aEntityHandlerContext,
+      b: bEntityHandlerContext,
+      c: cEntityHandlerContext,
     }
 
     @genType
@@ -451,12 +592,30 @@ module SimpleNftContract = {
       update: tokenEntity => unit,
       delete: id => unit,
     }
+    type aEntityHandlerContext = {
+      insert: aEntity => unit,
+      update: aEntity => unit,
+      delete: id => unit,
+    }
+    type bEntityHandlerContext = {
+      insert: bEntity => unit,
+      update: bEntity => unit,
+      delete: id => unit,
+    }
+    type cEntityHandlerContext = {
+      insert: cEntity => unit,
+      update: cEntity => unit,
+      delete: id => unit,
+    }
     @genType
     type context = {
       user: userEntityHandlerContext,
       gravatar: gravatarEntityHandlerContext,
       nftcollection: nftcollectionEntityHandlerContext,
       token: tokenEntityHandlerContext,
+      a: aEntityHandlerContext,
+      b: bEntityHandlerContext,
+      c: cEntityHandlerContext,
     }
 
     @genType
