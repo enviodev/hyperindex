@@ -45,9 +45,6 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
     string private _name;
     string private _symbol;
 
-    // additional event to be emitted in constructor
-    event Creation(string name, string symbol);
-
     /**
      * @dev Sets the values for {name} and {symbol}.
      *
@@ -57,8 +54,6 @@ contract ERC20 is Context, IERC20, IERC20Metadata {
     constructor(string memory name_, string memory symbol_) {
         _name = name_;
         _symbol = symbol_;
-
-        emit Creation(_name, _symbol);
     }
 
     /**

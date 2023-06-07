@@ -18,8 +18,8 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
   console.log("user1");
   console.log(user1.address);
   
-  const name = "Float";
-  const symbol = "FLT";
+  const name = "DAI";
+  const symbol = "DAI";
   console.log("Name and symbol set");
 
   let ERC20Contract = await deploy("ERC20", {
