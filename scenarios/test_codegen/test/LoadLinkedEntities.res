@@ -65,19 +65,12 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "aWontLoad", b: "bWontLoad"},
     ]
     let bEntities: array<Types.bEntitySerialized> = [
-      {id: "b1", a: ["a2", "a3", "a4"], c: "c1"},
-      {id: "b2", a: [], c: "c2"},
-      {id: "b3", a: [], c: "TODO_TURN_THIS_INTO_NONE"},
-      {id: "b4", a: [], c: "c3"},
-      {id: "bWontLoad", a: [], c: "TODO_TURN_THIS_INTO_NONE"},
+      {id: "b1", a: ["a2", "a3", "a4"], c: Some("c1")},
+      {id: "b2", a: [], c: Some("c2")},
+      {id: "b3", a: [], c: Some("TODO_TURN_THIS_INTO_NONE")},
+      {id: "b4", a: [], c: Some("c3")},
+      {id: "bWontLoad", a: [], c: Some("TODO_TURN_THIS_INTO_NONE")},
     ]
-    // let bEntities: array<Types.bEntitySerialized> = [
-    //   {id: "b1", a: ["a2", "a3", "a4"], c: Some("c1")},
-    //   {id: "b2", a: [], c: Some("c2")},
-    //   {id: "b3", a: [], c: Some("TODO_TURN_THIS_INTO_NONE")},
-    //   {id: "b4", a: [], c: Some("c3")},
-    //   {id: "bWontLoad", a: [], c: Some("TODO_TURN_THIS_INTO_NONE")},
-    // ]
     let cEntities: array<Types.cEntitySerialized> = [
       {id: "c1", a: "aWontLoad"},
       {id: "c2", a: "a5"},
@@ -96,7 +89,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let loaderContext = context.getLoaderContext()
 
-    loaderContext.a.testingALoad(
+    let aLoader = loaderContext.a.testingALoad(
       "a1",
       ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {loadA: {}}}}}},
     )
@@ -118,8 +111,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let c1 = handlerContext.b.getC(b1)
 
-    Assert.equal(c1.id, b1.c, ~message="c1.id should equal b1.c")
-    // Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
+    Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
 
     let aArray = handlerContext.b.getA(b1)
 
@@ -129,121 +121,17 @@ describe("Linked Entity Loader Integration Test", () => {
 
         Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
 
-        let c = handlerContext.b.getC(b)
-        Assert.equal(c.id, b.c, ~message="a.id should equal c.a")
+        let optC = handlerContext.b.getC(b)
 
-        // let optC = handlerContext.b.getC(b)
-        // Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c")
+        Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c")
 
-        // let _ = optC->Belt.Option.map(
-        //   c => {
-        //     let a = handlerContext.c.getA(c)
+        let _ = optC->Belt.Option.map(
+          c => {
+            let a = handlerContext.c.getA(c)
 
-        //     Assert.equal(a.id, b.c, ~message="a.id should equal c.a")
-        //   },
-        // )
-      },
-    )
-  })
-
-  MochaPromise.it_only("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
-    let sql = DbFunctions.sql
-
-    let testEventData: Types.eventData = {chainId: 123, eventId: "123456"}
-
-    /// NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
-    let createEventA: createEntityFunction<Types.aEntitySerialized> = entity => {
-      {
-        crud: Types.Create,
-        entity,
-        eventData: testEventData,
-      }
-    }
-    let createEventB: createEntityFunction<Types.bEntitySerialized> = entity => {
-      {
-        crud: Types.Create,
-        entity,
-        eventData: testEventData,
-      }
-    }
-    let createEventC: createEntityFunction<Types.cEntitySerialized> = entity => {
-      {
-        crud: Types.Create,
-        entity,
-        eventData: testEventData,
-      }
-    }
-
-    /// Setup DB
-    let aEntities: array<Types.aEntitySerialized> = [
-      {id: "a1", b: "b1"},
-      {id: "a2", b: "b1"},
-      {id: "a3", b: "b1"},
-      {id: "a4", b: "b1"},
-    ]
-    let bEntities: array<Types.bEntitySerialized> = [
-      {id: "b1", a: ["a2", "a3", "a4"], c: "c1"},
-      {id: "bWontLoad", a: [], c: "c1"},
-    ]
-    let cEntities: array<Types.cEntitySerialized> = [{id: "c1", a: "aWontLoad"}]
-
-    await DbFunctions.A.batchSetA(sql, aEntities->Belt.Array.map(createEventA))
-    await DbFunctions.B.batchSetB(sql, bEntities->Belt.Array.map(createEventB))
-    await DbFunctions.C.batchSetC(sql, cEntities->Belt.Array.map(createEventC))
-
-    let context = Context.GravatarContract.TestEventEvent.contextCreator(
-      ~chainId=123,
-      ~event=Obj.magic(),
-    )
-
-    let loaderContext = context.getLoaderContext()
-
-    loaderContext.a.testingALoad(
-      "a1",
-      ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {loadA: {}}}}}},
-    )
-
-    let entitiesToLoad = context.getEntitiesToLoad()
-
-    await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
-
-    let handlerContext = context.getContext(~eventData=testEventData)
-    let optTestingA = handlerContext.a.testingA()
-
-    Assert.not_equal(optTestingA, None, ~message="testingA should not be None")
-
-    let testingA = optTestingA->Belt.Option.getExn
-
-    let b1 = handlerContext.a.getB(testingA)
-
-    Assert.equal(b1.id, testingA.b, ~message="b1.id should equal testingA.b")
-
-    let c1 = handlerContext.b.getC(b1)
-
-    Assert.equal(c1.id, b1.c, ~message="c1.id should equal b1.c")
-    // Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
-
-    let aArray = handlerContext.b.getA(b1)
-
-    aArray->Belt.Array.forEach(
-      a => {
-        let b = handlerContext.a.getB(a)
-
-        Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
-
-        let c = handlerContext.b.getC(b)
-        Assert.equal(c.id, b.c, ~message="a.id should equal c.a")
-
-        // let optC = handlerContext.b.getC(b)
-        // Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c")
-
-        // let _ = optC->Belt.Option.map(
-        //   c => {
-        //     let a = handlerContext.c.getA(c)
-
-        //     Assert.equal(a.id, b.c, ~message="a.id should equal c.a")
-        //   },
-        // )
+            Assert.equal(a.id, c.a, ~message="a.id should equal c.a")
+          },
+        )
       },
     )
   })
