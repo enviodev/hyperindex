@@ -1,21 +1,21 @@
 version: 0.0.0
 description: Example schema to show all the things
 repository: https://github.com/example/example
-networks: 
-- id: 137
-  rpc_url: https://polygon-rpc.com
-  start_block: 0
-  contracts:
-  - name: LensProtocolProfiles
-    handler: ./src/EventHandlers.bs.js
-    abi_file_path: abis/example-abi.json
-    address: ["0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"]
-    events:
-    - name: "Transfer"
-    - name: "UpdatedGravatar"
-      requiredEntities:
-      - name: Gravatar
-        labels: 
-        - "gravatarWithChanges"
-    - name: "NewGravatar"
-      requiredEntities: []
+networks:
+  - id: 137
+    rpc_url: https://polygon-rpc.com
+    start_block: 0
+    contracts:
+      - name: LensProtocolProfiles
+        handler: ./src/EventHandlers.bs.js
+        abi_file_path: abis/example-abi.json
+        address: "0xDb46d1Dc155634FbC732f92E853b10B288AD5a1d"
+        events:
+          - event: "Transfer"
+          - event: "UpdatedGravatar"
+            requiredEntities:
+              - name: Gravatar
+                labels:
+                  - "gravatarWithChanges"
+          - event: "NewGravatar"
+            requiredEntities: []

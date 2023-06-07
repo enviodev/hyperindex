@@ -1,0 +1,23 @@
+version: 0.0.0
+description: Greeter indexer
+repository: https://github.com/PaulRBerg/hardhat-template
+networks:
+  - id: 1337
+    rpc_url: http://localhost:8545
+    start_block: 0
+    contracts:
+      - name: Greeter
+        abi_file_path: abis/greeter-abi.json
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        handler: ./src/EventHandlers.js
+        events:
+          - event: "NewGreeting"
+            requiredEntities:
+              - name: "Greeting"
+                labels:
+                  - "greetingWithChanges"
+          - event: "ClearGreeting"
+            requiredEntities:
+              - name: "Greeting"
+                labels:
+                  - "greetingWithChanges"

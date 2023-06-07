@@ -6,25 +6,27 @@ use std::process::Command;
 use clap::Parser;
 
 use envio::{
-    cli_args::{self, JsFlavor},
-    config_parsing, entity_parsing, event_parsing, generate_templates,
+    cli_args::{self, Language},
+    config_parsing::{self, entity_parsing, event_parsing},
+    hbs_templating::codegen_templates::{
+        entities_to_map, generate_templates, EventRecordTypeTemplate,
+    },
     linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
     project_paths::ParsedPaths,
-    EventRecordType,
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
 use include_dir::{include_dir, Dir};
 
 static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
-static GRAVATAR_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("templates/static/gravatar_template/shared");
-static GRAVATAR_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/gravatar_template/rescript");
-static GRAVATAR_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/gravatar_template/typescript");
-static GRAVATAR_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/gravatar_template/javascript");
+static GREETER_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
+    include_dir!("templates/static/greeter_template/shared");
+static GREETER_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/greeter_template/rescript");
+static GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/greeter_template/typescript");
+static GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/greeter_template/javascript");
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
@@ -35,24 +37,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             //if they haven't already been
             let args = init_args.get_init_args_interactive()?;
             let project_root_path = PathBuf::from(&args.directory);
-            //Ensure that the root path exists
-            fs::create_dir_all(&project_root_path)?;
+
             match args.template {
-                Template::Gravatar => {
-                    //Copy in the relevant js flavor specific gravatar files
-                    match &args.js_flavor {
-                        JsFlavor::Rescript => {
-                            GRAVATAR_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                Template::Greeter => {
+                    //Copy in the relevant language specific greeter files
+                    match &args.language {
+                        Language::Rescript => {
+                            GREETER_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Typescript => {
-                            GRAVATAR_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
+                        Language::Typescript => {
+                            GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Javascript => {
-                            GRAVATAR_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                        Language::Javascript => {
+                            GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
                         }
                     }
-                    //Copy in the rest of the shared gravatar files
-                    GRAVATAR_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                    //Copy in the rest of the shared greeter files
+                    GREETER_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
             }
 
@@ -66,21 +67,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             fs::create_dir_all(&project_paths.generated)?;
 
-            let mut rescript_subrecord_dependencies: LinkedHashMap<
-                RescriptRecordKey,
-                EventRecordType,
-            > = RescriptRecordHierarchyLinkedHashMap::new();
+            let entity_types = entity_parsing::get_entity_record_types_from_schema(&parsed_paths)?;
+
             let contract_types = event_parsing::get_contract_types_from_config(
                 &parsed_paths,
-                &mut rescript_subrecord_dependencies,
+                &entities_to_map(entity_types.clone()),
             )?;
 
-            let entity_types = entity_parsing::get_entity_record_types_from_schema(&parsed_paths)?;
             let chain_config_templates =
                 config_parsing::convert_config_to_chain_configs(&parsed_paths)?;
-            let sub_record_dependencies: Vec<EventRecordType> = rescript_subrecord_dependencies
-                .iter()
-                .collect::<Vec<EventRecordType>>();
+
+            //NOTE: This structure is no longer used int event parsing since it has been refactored
+            //to use an inline tuple type for parsed structs. However this is being left until it
+            //is decided to completely remove the need for subrecords in which case the entire
+            //linked_hashmap module can be removed.
+            let rescript_subrecord_dependencies: LinkedHashMap<
+                RescriptRecordKey,
+                EventRecordTypeTemplate,
+            > = RescriptRecordHierarchyLinkedHashMap::new();
+
+            let sub_record_dependencies: Vec<EventRecordTypeTemplate> =
+                rescript_subrecord_dependencies
+                    .iter()
+                    .collect::<Vec<EventRecordTypeTemplate>>();
 
             CODEGEN_STATIC_DIR.extract(&project_paths.generated)?;
 
@@ -96,6 +105,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             Command::new("pnpm")
                 .arg("install")
+                .arg("--no-frozen-lockfile")
                 .current_dir(&project_paths.generated)
                 .spawn()?
                 .wait()?;
@@ -127,18 +137,21 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .wait()?;
 
             println!("generate db migrations");
-
-            Command::new("pnpm")
-                .arg("db-migrate")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
+            if !args.skip_db_provision {
+                Command::new("pnpm")
+                    .arg("db-migrate")
+                    .current_dir(&project_paths.generated)
+                    .spawn()?
+                    .wait()?;
+            } else {
+                println!("skipping db migration")
+            }
 
             Ok(())
-        },
-        CommandType::PrintAllHelp {  } => {
-			clap_markdown::print_help_markdown::<CommandLineArgs>();
+        }
+        CommandType::PrintAllHelp {} => {
+            clap_markdown::print_help_markdown::<CommandLineArgs>();
             Ok(())
-		},
+        }
     }
 }

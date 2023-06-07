@@ -1,2 +1,6 @@
 */target
 .DS_Store
+# vim files
+*~
+*.swo
+*.swp

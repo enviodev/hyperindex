@@ -1,13 +1,13 @@
 use std::error::Error;
 
-use super::{InitArgs, JsFlavor, Template};
+use super::{InitArgs, Language, Template};
 
 use inquire::Select;
 
 pub struct InitInteractive {
     pub directory: String,
     pub template: Template,
-    pub js_flavor: JsFlavor,
+    pub language: Language,
 }
 
 impl InitArgs {
@@ -17,9 +17,9 @@ impl InitArgs {
         let template = match &self.template {
             Some(args_template) => args_template.clone(),
             None => {
-                use Template::Gravatar;
+                use Template::Greeter;
 
-                let options = vec![Gravatar]
+                let options = vec![Greeter]
                     .iter()
                     .map(|template| {
                         serde_json::to_string(template).expect("Enum should be serializable")
@@ -34,31 +34,30 @@ impl InitArgs {
             }
         };
 
-        let js_flavor = match &self.js_flavor {
-            Some(args_js_flavor) => args_js_flavor.clone(),
+        let language = match &self.language {
+            Some(args_language) => args_language.clone(),
             None => {
-                use JsFlavor::{Javascript, Rescript, Typescript};
+                use Language::{Javascript, Rescript, Typescript};
 
                 let options = vec![Javascript, Typescript, Rescript]
                     .iter()
-                    .map(|flavor| {
-                        serde_json::to_string(flavor).expect("Enum should be serializable")
+                    .map(|language| {
+                        serde_json::to_string(language).expect("Enum should be serializable")
                     })
                     .collect::<Vec<String>>();
 
-                let input_flavor =
-                    Select::new("Which javascript flavor would you like to use?", options)
-                        .prompt()?;
+                let input_language =
+                    Select::new("Which language would you like to use?", options).prompt()?;
 
-                let chosen_flavor = serde_json::from_str(&input_flavor)?;
-                chosen_flavor
+                let chosen_language = serde_json::from_str(&input_language)?;
+                chosen_language
             }
         };
 
         Ok(InitInteractive {
             directory,
             template,
-            js_flavor,
+            language,
         })
     }
 }

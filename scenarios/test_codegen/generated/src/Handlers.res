@@ -77,23 +77,95 @@ module GravatarContract = {
 
   let getTestEventLoadEntities = () =>
     testEventLoadEntities.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("testEventLoadEntities"),
+      getDefaultHandler("TestEventLoadEntities"),
     )
   let getNewGravatarLoadEntities = () =>
     newGravatarLoadEntities.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("newGravatarLoadEntities"),
+      getDefaultHandler("NewGravatarLoadEntities"),
     )
   let getUpdatedGravatarLoadEntities = () =>
     updatedGravatarLoadEntities.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("updatedGravatarLoadEntities"),
+      getDefaultHandler("UpdatedGravatarLoadEntities"),
     )
 
   let getTestEventHandler = () =>
-    testEventHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("testEventHandler"))
+    testEventHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("TestEventHandler"))
   let getNewGravatarHandler = () =>
-    newGravatarHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("newGravatarHandler"))
+    newGravatarHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("NewGravatarHandler"))
   let getUpdatedGravatarHandler = () =>
     updatedGravatarHandler.contents->Belt.Option.getWithDefault(
-      getDefaultHandler("updatedGravatarHandler"),
+      getDefaultHandler("UpdatedGravatarHandler"),
     )
+}
+
+module NftFactoryContract = {
+  %%private(
+    let simpleNftCreatedLoadEntities = ref(None)
+    let simpleNftCreatedHandler = ref(None)
+  )
+
+  @genType
+  let registerSimpleNftCreatedLoadEntities = (
+    handler: (
+      ~event: Types.eventLog<Types.NftFactoryContract.SimpleNftCreatedEvent.eventArgs>,
+      ~context: Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext,
+    ) => unit,
+  ) => {
+    simpleNftCreatedLoadEntities := Some(handler)
+  }
+
+  @genType
+  let registerSimpleNftCreatedHandler = (
+    handler: (
+      ~event: Types.eventLog<Types.NftFactoryContract.SimpleNftCreatedEvent.eventArgs>,
+      ~context: Types.NftFactoryContract.SimpleNftCreatedEvent.context,
+    ) => unit,
+  ) => {
+    simpleNftCreatedHandler := Some(handler)
+  }
+
+  let getSimpleNftCreatedLoadEntities = () =>
+    simpleNftCreatedLoadEntities.contents->Belt.Option.getWithDefault(
+      getDefaultHandler("SimpleNftCreatedLoadEntities"),
+    )
+
+  let getSimpleNftCreatedHandler = () =>
+    simpleNftCreatedHandler.contents->Belt.Option.getWithDefault(
+      getDefaultHandler("SimpleNftCreatedHandler"),
+    )
+}
+
+module SimpleNftContract = {
+  %%private(
+    let transferLoadEntities = ref(None)
+    let transferHandler = ref(None)
+  )
+
+  @genType
+  let registerTransferLoadEntities = (
+    handler: (
+      ~event: Types.eventLog<Types.SimpleNftContract.TransferEvent.eventArgs>,
+      ~context: Types.SimpleNftContract.TransferEvent.loaderContext,
+    ) => unit,
+  ) => {
+    transferLoadEntities := Some(handler)
+  }
+
+  @genType
+  let registerTransferHandler = (
+    handler: (
+      ~event: Types.eventLog<Types.SimpleNftContract.TransferEvent.eventArgs>,
+      ~context: Types.SimpleNftContract.TransferEvent.context,
+    ) => unit,
+  ) => {
+    transferHandler := Some(handler)
+  }
+
+  let getTransferLoadEntities = () =>
+    transferLoadEntities.contents->Belt.Option.getWithDefault(
+      getDefaultHandler("TransferLoadEntities"),
+    )
+
+  let getTransferHandler = () =>
+    transferHandler.contents->Belt.Option.getWithDefault(getDefaultHandler("TransferHandler"))
 }

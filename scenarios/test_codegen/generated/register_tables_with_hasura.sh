@@ -30,6 +30,30 @@ curl -X POST localhost:8080/v1/metadata \
     "name": "gravatar"
   }
 }'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+  "type": "pg_track_table",
+  "args": {
+    "source": "public",
+    "schema": "public",
+    "name": "nftcollection"
+  }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+  "type": "pg_track_table",
+  "args": {
+    "source": "public",
+    "schema": "public",
+    "name": "token"
+  }
+}'
 # reference: https://hasura.io/docs/latest/api-reference/metadata-api/permission/#metadata-pg-create-select-permission
 
 #Do this for the raw events table as well
@@ -78,6 +102,38 @@ curl -X POST localhost:8080/v1/metadata \
         }
     }
 }'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_select_permission",
+    "args": {
+        "table": "nftcollection",
+        "role": "public",
+        "source": "default",
+        "permission": {
+            "columns": "*",
+            "filter": {}
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_select_permission",
+    "args": {
+        "table": "token",
+        "role": "public",
+        "source": "default",
+        "permission": {
+            "columns": "*",
+            "filter": {}
+        }
+    }
+}'
 
 #Do this for the raw events table as well
 curl -X POST localhost:8080/v1/metadata \
@@ -93,6 +149,107 @@ curl -X POST localhost:8080/v1/metadata \
         "permission": {
             "columns": "*",
             "filter": {}
+        }
+    }
+}'
+
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "user",
+        "name": "gravatarMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "gravatar",
+                "column_mapping" : {
+                    "gravatar" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_array_relationship",
+    "args": {
+        "table": "user",
+        "name": "tokensMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "token",
+                "column_mapping" : {
+                    "tokens" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "gravatar",
+        "name": "ownerMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "user",
+                "column_mapping" : {
+                    "owner" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "token",
+        "name": "collectionMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "nftcollection",
+                "column_mapping" : {
+                    "collection" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "token",
+        "name": "ownerMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "user",
+                "column_mapping" : {
+                    "owner" : "id"
+                }
+            }
         }
     }
 }'

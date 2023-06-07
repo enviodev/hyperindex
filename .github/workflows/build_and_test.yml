@@ -1,10 +1,10 @@
-name: Build & Test
+name: Build & Test Scenario
 
-on: 
+on:
   pull_request:
     paths:
-      - 'codegenerator'
-      - 'scenarios'
+      - "codegenerator/**"
+      - "scenarios/**"
 
 defaults:
   run:
@@ -21,7 +21,7 @@ jobs:
       # Label used to access the service container
       postgres:
         # Docker Hub image
-        image: postgres:13
+        image: postgres:15.3
         # Provide the password for postgres
         env:
           POSTGRES_PASSWORD: testing
@@ -50,6 +50,15 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
+
+      - name: Cache (hardhat) Solidity
+        id: cache-hardhat-solidity
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/hardhat-nodejs
+          key: ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.config.*s') }}
+          restore-keys: |
+            ${{ runner.os }}-solidity-hardhat-
 
       - uses: pnpm/action-setup@v2
         with:
@@ -80,16 +89,17 @@ jobs:
         run: |
           pnpm codegen
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.15.0
+
       - name: gravatar build
         working-directory: scenarios/gravatar
         run: |
           pnpm install
+          pnpm hardhat compile --verbose
           pnpm build
-
-      - name: gravatar test
-        working-directory: scenarios/gravatar
-        run: |
-          pnpm test
 
       - name: gravatar benchmark
         working-directory: scenarios/gravatar
@@ -101,16 +111,10 @@ jobs:
         run: |
           pnpm codegen
           pnpm install
-          pnpm build
+          pnpm hardhat compile --verbose
+          pnpm res:build
 
-      - name: nftFactory codegen
-        working-directory: scenarios/nftFactory/nft-indexer
-        run: |
-          pnpm codegen
-          pnpm install
-          pnpm build
-
-      - name: nftFactory test
-        working-directory: scenarios/nftFactory/nft-indexer
+      - name: test_codegen test
+        working-directory: scenarios/test_codegen
         run: |
           pnpm test

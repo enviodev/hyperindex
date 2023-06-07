@@ -1,21 +1,22 @@
 let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have the correct type */)
 
 module RawEventsTable = {
-  type rawEventsTableRow = {
-    @as("chain_id") chainId: int,
-    @as("event_id") eventId: Ethers.BigInt.t,
-    @as("block_number") blockNumber: int,
-    @as("log_index") logIndex: int,
-    @as("transaction_index") transactionIndex: int,
-    @as("transaction_hash") transactionHash: string,
-    @as("src_address") srcAddress: string,
-    @as("block_hash") blockHash: string,
-    @as("block_timestamp") blockTimestamp: int,
-    params: Js.Json.t,
-  }
+  let createRawEventsTable: unit => promise<unit> = async () => {
+    @warning("-21")
+    let _ = await %raw("sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'event_type') THEN
+          CREATE TYPE EVENT_TYPE AS ENUM (
+          'GravatarContract_TestEventEvent',          'GravatarContract_NewGravatarEvent',          'GravatarContract_UpdatedGravatarEvent',
+          'NftFactoryContract_SimpleNftCreatedEvent',
+          'SimpleNftContract_TransferEvent'
+          );
+        END IF;
+      END $$;
+      `")
 
-  let createRawEventsTable = async () => {
-    await %raw("sql`
+    @warning("-21")
+    let _ = await %raw("sql`
       CREATE TABLE public.raw_events (
         chain_id INTEGER NOT NULL,
         event_id NUMERIC NOT NULL,
@@ -26,23 +27,30 @@ module RawEventsTable = {
         src_address TEXT NOT NULL,
         block_hash TEXT NOT NULL,
         block_timestamp INTEGER NOT NULL,
+        event_type EVENT_TYPE NOT NULL,
         params JSON NOT NULL,
+        db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (chain_id, event_id)
       );
-  `")
+      `")
   }
 
+  @@warning("-21")
   let dropRawEventsTable = async () => {
-    await %raw("sql`
-    DROP TABLE public.raw_events;
-  `")
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.raw_events;
+    `")
+    let _ = await %raw("sql`
+      DROP TYPE IF EXISTS EVENT_TYPE CASCADE;
+    `")
   }
+  @@warning("+21")
 }
 
 module User = {
   let createUserTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"user\" (\"id\" text  NOT NULL,\"address\" text  NOT NULL,\"gravatar\" text,UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"user\" (\"id\" text NOT NULL,\"address\" text NOT NULL,\"gravatar\" text,\"updatesCountOnUserForTesting\" integer NOT NULL,\"tokens\" text[] NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
     )
   }
 
@@ -55,13 +63,39 @@ module User = {
 module Gravatar = {
   let createGravatarTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"gravatar\" (\"id\" text  NOT NULL,\"owner\" text  NOT NULL,\"displayName\" text  NOT NULL,\"imageUrl\" text  NOT NULL,\"updatesCount\" integer  NOT NULL,UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"gravatar\" (\"id\" text NOT NULL,\"owner\" text NOT NULL,\"displayName\" text NOT NULL,\"imageUrl\" text NOT NULL,\"updatesCount\" numeric NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
     )
   }
 
   let deleteGravatarTable: unit => promise<unit> = async () => {
     // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
     await %raw("sql`DROP TABLE IF EXISTS \"public\".\"gravatar\";`")
+  }
+}
+
+module Nftcollection = {
+  let createNftcollectionTable: unit => promise<unit> = async () => {
+    await %raw(
+      "sql`CREATE TABLE \"public\".\"nftcollection\" (\"id\" text NOT NULL,\"contractAddress\" text NOT NULL,\"name\" text NOT NULL,\"symbol\" text NOT NULL,\"maxSupply\" numeric NOT NULL,\"currentSupply\" integer NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+    )
+  }
+
+  let deleteNftcollectionTable: unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"nftcollection\";`")
+  }
+}
+
+module Token = {
+  let createTokenTable: unit => promise<unit> = async () => {
+    await %raw(
+      "sql`CREATE TABLE \"public\".\"token\" (\"id\" text NOT NULL,\"tokenId\" numeric NOT NULL,\"collection\" text NOT NULL,\"owner\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+    )
+  }
+
+  let deleteTokenTable: unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"token\";`")
   }
 }
 
@@ -87,6 +121,8 @@ let runUpMigrations = async () => {
   // TODO: catch and handle query errors
   await User.createUserTable()
   await Gravatar.createGravatarTable()
+  await Nftcollection.createNftcollectionTable()
+  await Token.createTokenTable()
 }
 
 let runDownMigrations = async () => {
@@ -95,6 +131,12 @@ let runDownMigrations = async () => {
   //
   // await Gravatar.deleteGravatarTable()
   //
+  // await Nftcollection.deleteNftcollectionTable()
+  //
+  // await Token.deleteTokenTable()
+  //
+
+  await RawEventsTable.dropRawEventsTable()
 
   // NOTE: For now delete any remaining tables.
   await deleteAllTables()

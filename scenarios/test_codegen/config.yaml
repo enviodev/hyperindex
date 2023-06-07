@@ -2,21 +2,45 @@ version: 0.0.0
 description: Gravatar for Ethereum
 repository: https://github.com/graphprotocol/example-subgraph
 networks:
-  - id: 137
-    rpc_url: https://polygon-rpc.com
-    start_block: 34316032
+  - id: 1337
+    rpc_url: http://localhost:8545
+    start_block: 0
     contracts:
       - name: Gravatar
         abi_file_path: abis/gravatar-abi.json
-        address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" # -> use this if you want to deploy to local ganache
         handler: ./src/EventHandlers.bs.js
         events:
-          - name: "TestEvent"
+          - event: "TestEvent"
             requiredEntities: [] # empty signifies no requirements
-          - name: "NewGravatar"
+          - event: "NewGravatar"
             requiredEntities: [] # empty signifies no requirements
-          - name: "UpdatedGravatar"
+          - event: "UpdatedGravatar"
             requiredEntities: # if this field isn't specified it should default to include all entities
               - name: "Gravatar"
                 labels:
                   - "gravatarWithChanges"
+      - name: NftFactory
+        abi_file_path: abis/NftFactory.json
+        address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
+        handler: src/EventHandlers.ts
+        events:
+          - event: "SimpleNftCreated"
+            requiredEntities: []
+      - name: SimpleNft
+        abi_file_path: abis/SimpleNft.json
+        address: "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"
+        handler: src/EventHandlers.ts
+        events:
+          - event: "Transfer"
+            requiredEntities:
+              - name: "User"
+                labels:
+                  - "userFrom"
+                  - "userTo"
+              - name: Nftcollection
+                labels:
+                  - "nftCollectionUpdated"
+              - name: Token
+                labels:
+                  - "existingTransferredToken"

@@ -11,17 +11,16 @@ pub struct CommandLineArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandType {
-    
     ///Initialize a project with a template
     Init(InitArgs),
-    
+
     ///Generate code from a config.yaml file
     Codegen(CodegenArgs),
 
     ///Print help into a markdown file
     ///Command to run: cargo run -- print-all-help > CommandLineHelp.md
     #[clap(hide = true)]
-	PrintAllHelp
+    PrintAllHelp,
 }
 
 pub const DEFAULT_PROJECT_ROOT_PATH: &str = "./";
@@ -41,6 +40,9 @@ pub struct CodegenArgs {
     ///The file in the project containing config.
     #[arg(short, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
+    /// skip database provisioning [default: false]
+    #[arg(short, long, action, env)]
+    pub skip_db_provision: bool, //environment variable: SKIP_DB_PROVISION=
 }
 
 #[derive(Args, Debug)]
@@ -53,20 +55,20 @@ pub struct InitArgs {
     #[arg(short, long)]
     #[clap(value_enum)]
     pub template: Option<Template>,
-    #[arg(short = 'f', long = "js-flavor")]
+    #[arg(short = 'l', long = "language")]
     #[clap(value_enum)]
-    pub js_flavor: Option<JsFlavor>,
+    pub language: Option<Language>,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
 ///Template to work off
 pub enum Template {
-    Gravatar,
+    Greeter,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
-///Which js flavor do you want to write in?
-pub enum JsFlavor {
+///Which language do you want to write in?
+pub enum Language {
     Javascript,
     Typescript,
     Rescript,

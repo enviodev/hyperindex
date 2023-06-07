@@ -1,0 +1,133 @@
+// db operations for raw_events:
+
+module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (sql, chainId) => sql`
+  SELECT block_number
+  FROM public.raw_events
+  WHERE chain_id = ${chainId}
+  ORDER BY event_id DESC
+  LIMIT 1;
+`
+
+module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
+  SELECT *
+  FROM public.raw_events
+  WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
+
+const batchSetRawEventsCore = (sql, entityDataArray) => {
+  return sql`
+    INSERT INTO public.raw_events
+  ${sql(
+    entityDataArray,
+    "chain_id",
+    "event_id",
+    "block_number",
+    "log_index",
+    "transaction_index",
+    "transaction_hash",
+    "src_address",
+    "block_hash",
+    "block_timestamp",
+    "event_type",
+    "params"
+  )}
+    ON CONFLICT(chain_id, event_id) DO UPDATE
+    SET
+    "chain_id" = EXCLUDED."chain_id",
+    "event_id" = EXCLUDED."event_id",
+    "block_number" = EXCLUDED."block_number",
+    "log_index" = EXCLUDED."log_index",
+    "transaction_index" = EXCLUDED."transaction_index",
+    "transaction_hash" = EXCLUDED."transaction_hash",
+    "src_address" = EXCLUDED."src_address",
+    "block_hash" = EXCLUDED."block_hash",
+    "block_timestamp" = EXCLUDED."block_timestamp",
+    "event_type" = EXCLUDED."event_type",
+    "params" = EXCLUDED."params"
+  ;`;
+};
+
+const chunkBatchQuery = (sql, entityDataArray, maxItemsPerQuery, queryToExecute) => {
+  const promises = [];
+
+  // Split entityDataArray into chunks of maxItemsPerQuery
+  for (let i = 0; i < entityDataArray.length; i += maxItemsPerQuery) {
+    const chunk = entityDataArray.slice(i, i + maxItemsPerQuery);
+
+    promises.push(queryToExecute(sql, chunk));
+  }
+
+  // Execute all promises
+  return Promise.all(promises);
+};
+
+module.exports.batchSetRawEvents = (sql, entityDataArray) => {
+  // TODO: make this max batch size optimal
+  const MAX_ITEMS_PER_QUERY_RawEvents = 50;
+
+  return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_RawEvents, batchSetRawEventsCore);
+};
+
+module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
+  DELETE
+  FROM public.raw_events
+  WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
+// end db operations for raw_events
+
+{{#each entities as |entity|}}
+  // db operations for {{entity.name.capitalized
+  }}:
+
+  module.exports.read{{entity.name.capitalized
+  }}Entities = (sql, entityIdArray) => sql`
+  SELECT 
+  {{#each entity.params as |param|}}
+  "{{param.key}}",
+  {{/each}}
+  event_chain_id, 
+  event_id
+  FROM public.{{entity.name.uncapitalized}}
+  WHERE id IN ${sql(entityIdArray)}`
+
+  const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
+  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
+    ...entityData.entity,
+    ...entityData.eventData,
+  }));
+  return sql`
+    INSERT INTO public.{{entity.name.uncapitalized
+  }}
+  ${sql(combinedEntityAndEventData,
+  {{#each entity.params as |param|}}
+    "{{param.key}}",
+  {{/each}}
+    "event_chain_id",
+    "event_id",
+  )}
+    ON CONFLICT(id) DO UPDATE
+    SET
+  {{#each entity.params as |param|}}
+    "{{param.key}}" = EXCLUDED."{{param.key}}",
+  {{/each}}
+    "event_chain_id" = EXCLUDED."event_chain_id",
+    "event_id" = EXCLUDED."event_id"
+  ;`
+  }
+
+  module.exports.batchSet{{entity.name.capitalized
+  }} = (sql, entityDataArray) => {
+    // TODO: make this max batch size optimal. Do calculations to achieve this.
+    const MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}} = 50;
+
+    return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}}, batchSet{{entity.name.capitalized}}Core);
+  }
+
+  module.exports.batchDelete{{entity.name.capitalized
+  }} = (sql, entityIdArray) => sql`
+  DELETE
+  FROM public.{{entity.name.uncapitalized
+  }}
+  WHERE id IN ${sql(entityIdArray)};`
+  // end db operations for {{entity.name.capitalized
+  }}
+
+{{/each}}

@@ -1,12 +1,12 @@
 use std::error::Error;
 use std::path::PathBuf;
+use std::slice::Iter;
 
 pub mod entity_parsing;
 pub mod event_parsing;
 
+use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
-
-use ethereum_abi::Abi;
 
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
@@ -22,10 +22,57 @@ struct RequiredEntity {
     labels: Vec<String>,
 }
 
+#[derive(Debug, PartialEq, Deserialize, Clone, Serialize)]
+#[serde(try_from = "String")]
+enum EventNameOrSig {
+    Name(String),
+    Event(EthAbiEvent),
+}
+
+impl TryFrom<String> for EventNameOrSig {
+    type Error = String;
+
+    fn try_from(event_string: String) -> Result<Self, Self::Error> {
+        let parse_event_sig = |sig: &str| -> Result<EthAbiEvent, Self::Error> {
+            match HumanReadableParser::parse_event(sig) {
+                Ok(event) => Ok(event),
+                Err(err) => Err(format!(
+                    "Unable to parse event signature {} due to the following error: {}",
+                    sig, err
+                )),
+            }
+        };
+
+        let trimmed = event_string.trim();
+
+        let name_or_sig = if trimmed.starts_with("event ") {
+            let parsed_event = parse_event_sig(trimmed)?;
+            EventNameOrSig::Event(parsed_event)
+        } else if trimmed.contains("(") {
+            let signature = format!("event {}", trimmed);
+            let parsed_event = parse_event_sig(&signature)?;
+            EventNameOrSig::Event(parsed_event)
+        } else {
+            EventNameOrSig::Name(trimmed.to_string())
+        };
+
+        Ok(name_or_sig)
+    }
+}
+
+impl EventNameOrSig {
+    pub fn get_name(&self) -> String {
+        match self {
+            EventNameOrSig::Name(name) => name.to_owned(),
+            EventNameOrSig::Event(event) => event.name.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct Event {
-    name: String,
+struct ConfigEvent {
+    event: EventNameOrSig,
     required_entities: Option<Vec<RequiredEntity>>,
 }
 
@@ -42,10 +89,58 @@ pub struct ConfigContract {
     pub name: String,
     // Eg for implementing a custom deserializer
     //  #[serde(deserialize_with = "abi_path_to_abi")]
-    pub abi_file_path: String,
+    pub abi_file_path: Option<String>,
     pub handler: String,
-    address: Vec<String>,
-    events: Vec<Event>,
+    address: NormalizedList<String>,
+    events: Vec<ConfigEvent>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(untagged)]
+enum SingleOrList<T: Clone> {
+    Single(T),
+    List(Vec<T>),
+}
+
+impl<T: Clone> SingleOrList<T> {
+    fn to_normalized_list(&self) -> NormalizedList<T> {
+        let list: Vec<T> = match self {
+            SingleOrList::Single(val) => vec![val.clone()],
+            SingleOrList::List(list) => list.to_vec(),
+        };
+
+        NormalizedList { inner: list }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(try_from = "SingleOrList<T>")]
+struct NormalizedList<T: Clone> {
+    inner: Vec<T>,
+}
+
+impl<T: Clone> NormalizedList<T> {
+    fn iter(&self) -> Iter<T> {
+        self.inner.iter()
+    }
+
+    #[cfg(test)]
+    fn from(list: Vec<T>) -> Self {
+        NormalizedList { inner: list }
+    }
+
+    #[cfg(test)]
+    fn from_single(val: T) -> Self {
+        Self::from(vec![val])
+    }
+}
+
+impl<T: Clone> TryFrom<SingleOrList<T>> for NormalizedList<T> {
+    type Error = String;
+
+    fn try_from(single_or_list: SingleOrList<T>) -> Result<Self, Self::Error> {
+        Ok(single_or_list.to_normalized_list())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -89,7 +184,12 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
         )
     })?;
 
-    let deserialized_yaml: Config = serde_yaml::from_str(&config)?;
+    let deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
+        format!(
+            "Failed to deserialize config with Error {}",
+            err.to_string()
+        )
+    })?;
     Ok(deserialized_yaml)
 }
 
@@ -108,17 +208,44 @@ pub fn convert_config_to_chain_configs(
                     network_id: network.id,
                     name: contract.name.clone(),
                 };
-                let parsed_abi: Abi = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
-                let stringified_abi = serde_json::to_string(&parsed_abi)?;
+                let parsed_abi_from_file = parsed_paths.get_contract_abi(&contract_unique_id)?;
+
+                let mut reduced_abi = ethers::abi::Contract::default();
+
+                for config_event in contract.events.iter() {
+                    let abi_event = match &config_event.event {
+                        EventNameOrSig::Name(config_event_name) => match &parsed_abi_from_file {
+                            Some(contract_abi) => {
+                                let format_err = |err| -> String {
+                                    format!("event \"{}\" cannot be parsed the provided abi for contract {} due to error: {}", config_event_name, contract.name, err)
+                                };
+                                contract_abi.event(&config_event_name).map_err(format_err)?
+                            }
+                            None => {
+                                let message = format!("Please add abi_file_path for contract {} to your config to parse event {} or define the signature in the config", contract.name, config_event_name);
+                                Err(message)?
+                            }
+                        },
+                        EventNameOrSig::Event(abi_event) => abi_event,
+                    };
+
+                    reduced_abi
+                        .events
+                        .entry(abi_event.name.clone())
+                        .or_default()
+                        .push(abi_event.clone());
+                }
+
+                let stringified_abi = serde_json::to_string(&reduced_abi)?;
                 let single_contract = SingleContractTemplate {
                     name: contract.name.to_capitalized_options(),
                     abi: stringified_abi,
-                    address: contract_address.clone(),
+                    address: contract_address.to_string(),
                     events: contract
                         .events
                         .iter()
-                        .map(|event| event.name.to_capitalized_options())
+                        .map(|config_event| config_event.event.get_name().to_capitalized_options())
                         .collect(),
                 };
                 single_contracts.push(single_contract);
@@ -135,7 +262,10 @@ pub fn convert_config_to_chain_configs(
 
 #[cfg(test)]
 mod tests {
+    use ethers::abi::{Event, EventParam, ParamType};
+
     use crate::capitalization::Capitalize;
+    use crate::config_parsing::{EventNameOrSig, NormalizedList};
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
@@ -148,22 +278,22 @@ mod tests {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let abi_file_path = PathBuf::from("test/abis/Contract1.json");
 
-        let event1 = super::Event {
-            name: String::from("NewGravatar"),
+        let event1 = super::ConfigEvent {
+            event: EventNameOrSig::Name(String::from("NewGravatar")),
             required_entities: None,
         };
 
-        let event2 = super::Event {
-            name: String::from("UpdatedGravatar"),
+        let event2 = super::ConfigEvent {
+            event: EventNameOrSig::Name(String::from("UpdatedGravatar")),
             required_entities: None,
         };
 
         let contract1 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address1.clone()],
+            address: NormalizedList::from_single(address1.clone()),
             name: String::from("Contract1"),
             //needed to have relative path in order to match config1.yaml
-            abi_file_path: String::from("../abis/Contract1.json"),
+            abi_file_path: Some(String::from("../abis/Contract1.json")),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -187,15 +317,15 @@ mod tests {
         let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             abi: abi_parsed_string,
             address: address1.clone(),
             events: vec![
-                event1.name.to_capitalized_options(),
-                event2.name.to_capitalized_options(),
+                event1.event.get_name().to_capitalized_options(),
+                event2.event.get_name().to_capitalized_options(),
             ],
         };
 
@@ -220,21 +350,21 @@ mod tests {
 
         let abi_file_path = PathBuf::from("test/abis/Contract1.json");
 
-        let event1 = super::Event {
-            name: String::from("NewGravatar"),
+        let event1 = super::ConfigEvent {
+            event: EventNameOrSig::Name(String::from("NewGravatar")),
             required_entities: None,
         };
 
-        let event2 = super::Event {
-            name: String::from("UpdatedGravatar"),
+        let event2 = super::ConfigEvent {
+            event: EventNameOrSig::Name(String::from("UpdatedGravatar")),
             required_entities: None,
         };
 
         let contract1 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address1.clone()],
+            address: NormalizedList::from_single(address1.clone()),
             name: String::from("Contract1"),
-            abi_file_path: String::from("../abis/Contract1.json"),
+            abi_file_path: Some(String::from("../abis/Contract1.json")),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -248,9 +378,9 @@ mod tests {
         };
         let contract2 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
-            address: vec![address2.clone()],
+            address: NormalizedList::from_single(address2.clone()),
             name: String::from("Contract1"),
-            abi_file_path: String::from("../abis/Contract1.json"),
+            abi_file_path: Some(String::from("../abis/Contract1.json")),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -276,13 +406,13 @@ mod tests {
         let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
 
         let events = vec![
-            event1.name.to_capitalized_options(),
-            event2.name.to_capitalized_options(),
+            event1.event.get_name().to_capitalized_options(),
+            event2.event.get_name().to_capitalized_options(),
         ];
 
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethereum_abi::Abi = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let single_contract1 = super::SingleContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
@@ -309,5 +439,57 @@ mod tests {
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
 
         assert_eq!(chain_configs, expected_chain_configs);
+    }
+
+    #[test]
+    fn deserializes_event_name() {
+        let event_string = serde_json::to_string("MyEvent").unwrap();
+
+        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
+        let expected = EventNameOrSig::Name("MyEvent".to_string());
+        assert_eq!(name_or_sig, expected);
+    }
+
+    #[test]
+    fn deserializes_event_sig_with_event_prefix() {
+        let event_string = serde_json::to_string("event MyEvent(uint256 myArg)").unwrap();
+
+        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
+        let expected_event = Event {
+            name: "MyEvent".to_string(),
+            anonymous: false,
+            inputs: vec![EventParam {
+                indexed: false,
+                name: "myArg".to_string(),
+                kind: ParamType::Uint(256),
+            }],
+        };
+        let expected = EventNameOrSig::Event(expected_event);
+        assert_eq!(name_or_sig, expected);
+    }
+
+    #[test]
+    fn deserializes_event_sig_without_event_prefix() {
+        let event_string = serde_json::to_string("MyEvent(uint256 myArg)").unwrap();
+
+        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
+        let expected_event = Event {
+            name: "MyEvent".to_string(),
+            anonymous: false,
+            inputs: vec![EventParam {
+                indexed: false,
+                name: "myArg".to_string(),
+                kind: ParamType::Uint(256),
+            }],
+        };
+        let expected = EventNameOrSig::Event(expected_event);
+        assert_eq!(name_or_sig, expected);
+    }
+
+    #[test]
+    #[should_panic]
+    fn deserializes_event_sig_invalid_panics() {
+        let event_string = serde_json::to_string("MyEvent(uint69 myArg)").unwrap();
+        serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
     }
 }

@@ -1,7 +1,7 @@
 services:
   envio-postgres:
     container_name: envio-postgres
-    image: postgres:13
+    image: postgres:15.3
     restart: always
     ports:
       - "${PG_PORT:-5432}:5432"

@@ -16,17 +16,19 @@ Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context)
             owner: Ethers.ethAddressToString($$event.params.owner),
             displayName: $$event.params.displayName,
             imageUrl: $$event.params.imageUrl,
-            updatesCount: 1
+            updatesCount: BigInt(1)
           });
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarLoadEntities(function ($$event, context) {
-      Curry._1(context.gravatar.gravatarWithChangesLoad, $$event.params.id.toString());
+      Curry._2(context.gravatar.gravatarWithChangesLoad, $$event.params.id.toString(), {
+            loadOwner: {}
+          });
     });
 
 Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, context) {
-      var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.gravatar.gravatarWithChanges, undefined), 1, (function (gravatar) {
-              return gravatar.updatesCount + 1 | 0;
+      var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.gravatar.gravatarWithChanges, undefined), BigInt(1), (function (gravatar) {
+              return Ethers.$$BigInt.add(gravatar.updatesCount, BigInt(1));
             }));
       Curry._1(context.gravatar.update, {
             id: $$event.params.id.toString(),
