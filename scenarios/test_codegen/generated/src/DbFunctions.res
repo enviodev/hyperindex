@@ -301,7 +301,7 @@ module B = {
   type bReadRow = {
     id: string,
     a: array<id>,
-    c: option<id>,
+    c: id,
     @as("event_chain_id") chainId: int,
     @as("event_id") eventId: Ethers.BigInt.t,
   }

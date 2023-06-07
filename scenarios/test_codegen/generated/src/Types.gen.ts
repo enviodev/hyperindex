@@ -74,7 +74,7 @@ export type aEntity = { readonly id: string; readonly b: id };
 export type bEntity = {
   readonly id: string; 
   readonly a: id[]; 
-  readonly c?: id
+  readonly c: id
 };
 
 // tslint:disable-next-line:interface-over-type-literal
@@ -144,7 +144,7 @@ export type GravatarContract_TestEventEvent_aEntityHandlerContext = {
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_TestEventEvent_bEntityHandlerContext = {
   readonly getA: (_1:bEntity) => aEntity[]; 
-  readonly getC: (_1:bEntity) => (null | undefined | cEntity); 
+  readonly getC: (_1:bEntity) => cEntity; 
   readonly insert: (_1:bEntity) => void; 
   readonly update: (_1:bEntity) => void; 
   readonly delete: (_1:id) => void
@@ -234,7 +234,7 @@ export type GravatarContract_NewGravatarEvent_aEntityHandlerContext = {
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_NewGravatarEvent_bEntityHandlerContext = {
   readonly getA: (_1:bEntity) => aEntity[]; 
-  readonly getC: (_1:bEntity) => (null | undefined | cEntity); 
+  readonly getC: (_1:bEntity) => cEntity; 
   readonly insert: (_1:bEntity) => void; 
   readonly update: (_1:bEntity) => void; 
   readonly delete: (_1:id) => void
@@ -322,7 +322,7 @@ export type GravatarContract_UpdatedGravatarEvent_aEntityHandlerContext = {
 // tslint:disable-next-line:interface-over-type-literal
 export type GravatarContract_UpdatedGravatarEvent_bEntityHandlerContext = {
   readonly getA: (_1:bEntity) => aEntity[]; 
-  readonly getC: (_1:bEntity) => (null | undefined | cEntity); 
+  readonly getC: (_1:bEntity) => cEntity; 
   readonly insert: (_1:bEntity) => void; 
   readonly update: (_1:bEntity) => void; 
   readonly delete: (_1:id) => void
@@ -412,7 +412,7 @@ export type NftFactoryContract_SimpleNftCreatedEvent_aEntityHandlerContext = {
 // tslint:disable-next-line:interface-over-type-literal
 export type NftFactoryContract_SimpleNftCreatedEvent_bEntityHandlerContext = {
   readonly getA: (_1:bEntity) => aEntity[]; 
-  readonly getC: (_1:bEntity) => (null | undefined | cEntity); 
+  readonly getC: (_1:bEntity) => cEntity; 
   readonly insert: (_1:bEntity) => void; 
   readonly update: (_1:bEntity) => void; 
   readonly delete: (_1:id) => void
@@ -502,7 +502,7 @@ export type SimpleNftContract_TransferEvent_aEntityHandlerContext = {
 // tslint:disable-next-line:interface-over-type-literal
 export type SimpleNftContract_TransferEvent_bEntityHandlerContext = {
   readonly getA: (_1:bEntity) => aEntity[]; 
-  readonly getC: (_1:bEntity) => (null | undefined | cEntity); 
+  readonly getC: (_1:bEntity) => cEntity; 
   readonly insert: (_1:bEntity) => void; 
   readonly update: (_1:bEntity) => void; 
   readonly delete: (_1:id) => void

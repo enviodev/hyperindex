@@ -200,9 +200,11 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     }
   {{/each}}
 
-  populateLoadAsEntityFunctions.contents->Belt.Array.forEach(func => func())
+  let functionsToExecute = populateLoadAsEntityFunctions.contents
 
   populateLoadAsEntityFunctions := []
+
+  functionsToExecute->Belt.Array.forEach(func => func())
   }
 }
 

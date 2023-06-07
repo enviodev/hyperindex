@@ -37,7 +37,7 @@ type A @entity {
 type B @entity {
   id: ID!
   a: [A!]!
-  c: C
+  c: C!
 }
 type C @entity {
   id: ID!

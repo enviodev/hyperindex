@@ -191,13 +191,13 @@ let serializeAEntity = (entity: aEntity): aEntitySerialized => {
 type bEntity = {
   id: string,
   a: array<id>,
-  c: option<id>,
+  c: id,
 }
 
 type bEntitySerialized = {
   id: string,
   a: array<id>,
-  c: option<id>,
+  c: id,
 }
 
 let serializeBEntity = (entity: bEntity): bEntitySerialized => {
@@ -314,7 +314,7 @@ module GravatarContract = {
       // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
       // TODO: make this type correspond to if the field is optional or not.
-      getC: bEntity => option<cEntity>,
+      getC: bEntity => cEntity,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
@@ -405,7 +405,7 @@ module GravatarContract = {
       // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
       // TODO: make this type correspond to if the field is optional or not.
-      getC: bEntity => option<cEntity>,
+      getC: bEntity => cEntity,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
@@ -493,7 +493,7 @@ module GravatarContract = {
       // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
       // TODO: make this type correspond to if the field is optional or not.
-      getC: bEntity => option<cEntity>,
+      getC: bEntity => cEntity,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
@@ -588,7 +588,7 @@ module NftFactoryContract = {
       // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
       // TODO: make this type correspond to if the field is optional or not.
-      getC: bEntity => option<cEntity>,
+      getC: bEntity => cEntity,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
@@ -680,7 +680,7 @@ module SimpleNftContract = {
       // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
       // TODO: make this type correspond to if the field is optional or not.
-      getC: bEntity => option<cEntity>,
+      getC: bEntity => cEntity,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,

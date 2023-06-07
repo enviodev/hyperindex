@@ -260,6 +260,8 @@ type uniqueEntityReadIds = Js.Dict.t<Types.id>
 type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
 let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
+  /* DEBUG */ Js.log("running load entities")
+
   let loadLayer = ref(false)
 
   let uniqueUserDict = Js.Dict.empty()
@@ -296,7 +298,13 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
     switch userLoad.loadGravatar {
     | Some(loadGravatar) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for Gravatar from (User - ${entityId}->gravatar [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for Gravatar from (User - ${entityId}->gravatar [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.User.getUser(~id=entityId)->Belt.Option.map(userEntity => {
           let _ =
             userEntity.gravatar->Belt.Option.map(
@@ -304,11 +312,18 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
             )
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     switch userLoad.loadTokens {
     | Some(loadToken) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for Token from (User - ${entityId}->tokens [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for Token from (User - ${entityId}->tokens [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.User.getUser(~id=entityId)->Belt.Option.map(userEntity => {
           let _ =
             userEntity.tokens->Belt.Array.map(
@@ -316,6 +331,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
             )
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     ()
@@ -336,13 +352,20 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
     switch gravatarLoad.loadOwner {
     | Some(loadUser) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for User from (Gravatar - ${entityId}->owner [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for User from (Gravatar - ${entityId}->owner [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.Gravatar.getGravatar(
           ~id=entityId,
         )->Belt.Option.map(gravatarEntity => {
           let _ = userLinkedEntityLoader(gravatarEntity.owner, loadUser, layer + 1)
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     ()
@@ -375,20 +398,34 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
     switch tokenLoad.loadCollection {
     | Some(loadNftcollection) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for Nftcollection from (Token - ${entityId}->collection [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for Nftcollection from (Token - ${entityId}->collection [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.Token.getToken(~id=entityId)->Belt.Option.map(tokenEntity => {
           let _ = nftcollectionLinkedEntityLoader(tokenEntity.collection, layer + 1)
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     switch tokenLoad.loadOwner {
     | Some(loadUser) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for User from (Token - ${entityId}->owner [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for User from (Token - ${entityId}->owner [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.Token.getToken(~id=entityId)->Belt.Option.map(tokenEntity => {
           let _ = userLinkedEntityLoader(tokenEntity.owner, loadUser, layer + 1)
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     ()
@@ -405,11 +442,18 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
     switch aLoad.loadB {
     | Some(loadB) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for B from (A - ${entityId}->b [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for B from (A - ${entityId}->b [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.A.getA(~id=entityId)->Belt.Option.map(aEntity => {
           let _ = bLinkedEntityLoader(aEntity.b, loadB, layer + 1)
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     ()
@@ -426,20 +470,34 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
     switch bLoad.loadA {
     | Some(loadA) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for A from (B - ${entityId}->a [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for A from (B - ${entityId}->a [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.B.getB(~id=entityId)->Belt.Option.map(bEntity => {
           let _ = bEntity.a->Belt.Array.map(aId => aLinkedEntityLoader(aId, loadA, layer + 1))
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     switch bLoad.loadC {
     | Some(loadC) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for C from (B - ${entityId}->c [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for C from (B - ${entityId}->c [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.B.getB(~id=entityId)->Belt.Option.map(bEntity => {
-          let _ = bEntity.c->Belt.Option.map(cId => cLinkedEntityLoader(cId, loadC, layer + 1))
+          let _ = cLinkedEntityLoader(bEntity.c, loadC, layer + 1)
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     ()
@@ -456,11 +514,18 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
     switch cLoad.loadA {
     | Some(loadA) =>
+      /* DEBUG */ Js.log(
+        `pushing funcion into LOADer for A from (C - ${entityId}->a [[layer: ${layer->string_of_int}]])`,
+      )
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        /* DEBUG */ Js.log(
+          `RUNNING funcion into LOADer for A from (C - ${entityId}->a [[layer: ${layer->string_of_int}]])`,
+        )
         let _ = InMemoryStore.C.getC(~id=entityId)->Belt.Option.map(cEntity => {
           let _ = aLinkedEntityLoader(cEntity.a, loadA, layer + 1)
         })
       })
+      /* DEBUG */ Js.log2("PUSHED", populateLoadAsEntityFunctions.contents)
     | None => ()
     }
     ()
@@ -479,6 +544,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   })
 
   while loadLayer.contents {
+    /* DEBUG */ Js.log2("LOADING LAYER", populateLoadAsEntityFunctions.contents->Belt.Array.length)
     loadLayer := false
 
     if uniqueUserAsEntityFieldArray.contents->Array.length > 0 {
@@ -563,9 +629,11 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
       uniqueCAsEntityFieldArray := []
     }
 
-    populateLoadAsEntityFunctions.contents->Belt.Array.forEach(func => func())
-
+    let functionsToExecute = populateLoadAsEntityFunctions.contents
     populateLoadAsEntityFunctions := []
+    functionsToExecute->Belt.Array.forEach(func => func())
+
+    /* DEBUG */ Js.log("LOADING Layers done")
   }
 }
 
