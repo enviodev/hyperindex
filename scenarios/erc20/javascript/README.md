@@ -6,8 +6,6 @@ Install Open Zepplin contracts by running the following:
 npm install @openzeppelin/contracts
 ```
 
-Custom `Creation` event has been added to the standard contract to populate `Tokens` entity.
-
 ## Indexer Requirements
 
 The following files are required to use the Indexer:
@@ -37,14 +35,17 @@ networks:
         handler: src/EventHandlers.js
         events:
           - name: "Approval"
-            requiredEntities: []
-          - name: "Creation"
-            requiredEntities: []
+            requiredEntities: 
+            - name: "Account"
+              labels:
+                - "ownerAccountChanges"
           - name: "Transfer"
             requiredEntities:
-              - name: "Totals"
-                labels:
-                  - "totalChanges"
+            - name: "Account"
+              labels:
+                - "senderAccountChanges"
+                - "receiverAccountChanges"
+
 ```
 
 **Field Descriptions**
@@ -74,17 +75,10 @@ The `schema.graphql` file contains the definitions of all user-defined entities.
 Example schema definition for ERC-20 scenario:
 
 ```graphql
-type Tokens @entity {
+type Account @entity {
   id: ID!
-  name: String!
-  symbol: String!
-  decimals: Int!
-}
-
-type Totals @entity {
-  id: ID!
-  erc20: Tokens!
-  totalTransfer: BigInt!
+  approval: BigInt!
+  balance: BigInt!
 }
 ```
 
@@ -110,8 +104,9 @@ Each event handler requires two functions to be registered in order to enable fu
 
 ```javascript
 ERC20Contract.registerTransferLoadEntities((event, context) => {
-  // loading the required totalsEntity to update the totals field
-  context.totals.totalChangesLoad(event.srcAddress.toString());
+  // loading the required accountEntity
+  context.account.senderAccountChangesLoad(event.params.from.toString());
+  context.account.receiverAccountChangesLoad(event.params.to.toString());
 });
 ```
 
@@ -121,46 +116,87 @@ Inspecting the config of the `Transfer` event from the above example config indi
 events:
   - name: "Transfer"
     requiredEntities:
-      - name: "Totals"
-        labels:
-          - "totalChanges"
+    - name: "Account"
+      labels:
+        - "senderAccountChanges"
+        - "receiverAccountChanges"
+
 ```
 
 - The register function `ERC20Contract_registerTransferLoadEntities` follows a naming convention for all events: `register<EventName>LoadEntities`.
-- Within the function that is being registered the user must define the criteria for loading the `Totals` entity which corresponds to the label defined in the config.
+- Within the function that is being registered the user must define the criteria for loading the `Account` entity which corresponds to the label defined in the config.
 - This is made available to the user through the load entity context defined as `contextUpdator`.
-- In the case of the above example the `totalChanges` loads a `Totals` entity that corresponds to the srcAddress received from the event.
+- In the case of the above example the `senderAccountChanges` loads a `Account` entity that corresponds to the `from` received from the event and `receiverAccountChanges` loads a `Account` entity that corresponds to the `to` received from the event.
 
-### Example of registering a `Handler` function for the `Transfer` event and using the loaded entity `totalChanges`:
+### Example of registering a `Handler` function for the `Transfer` event and using the loaded entity `senderAccountChanges` and `receiverAccountChanges`:
 
 ```javascript
 ERC20Contract.registerTransferHandler((event, context) => {
-  let currentTotals = context.totals.totalChangesLoad;
+  // getting the sender accountEntity
+  let senderAccount = context.account.senderAccountChanges();
 
-  if (currentTotals != undefined) {
+  if (senderAccount != undefined) {
     // updating the totals field value
-    let totalsObject = {
-      id: event.srcAddress.toString(),
-      erc20: currentTotals.erc20,
-      totalTransfer: currentTotals.totalTransfer + event.params.value,
+    // updating accountEntity object
+    let accountObject = {
+      id: senderAccount.id,
+      approval: senderAccount.approval,
+      balance: BigInt(
+        Number(senderAccount.balance) - Number(event.params.value)
+      ),
     };
 
-    // updating the totalTransfers table with the new totals field value
-    context.totals.update(totalsObject);
-
+    // updating the accountEntity with the new transfer field value
+    context.account.update(accountObject);
   } else {
+    // updating accountEntity object
+    let accountObject = {
+      id: event.params.from.toString(),
+      approval: BigInt(0),
+      balance: BigInt(0 - Number(event.params.value)),
+    };
+
+    // inserting the accountEntity with the new transfer field value
+    context.account.insert(accountObject);
+  }
+
+  // getting the sender accountEntity
+  let receiverAccount = context.account.receiverAccountChanges();
+
+  if (receiverAccount != undefined) {
+    // updating accountEntity object
+    let accountObject = {
+      id: receiverAccount.id,
+      approval: receiverAccount.approval,
+      balance: BigInt(
+        Number(receiverAccount.balance) + Number(event.params.value)
+      ),
+    };
+
+    // updating the accountEntity with the new transfer field value
+    context.account.update(accountObject);
+  } else {
+    // updating accountEntity object
+    let accountObject = {
+      id: event.params.to.toString(),
+      approval: BigInt(0),
+      balance: event.params.value,
+    };
+
+    // inserting the accountEntity with the new transfer field value
+    context.account.insert(accountObject);
   }
 });
 ```
 
 - The handler functions also follow a naming convention for all events in the form of: `register<EventName>Handler`.
 - Once the user has defined their `loadEntities` function, they are then able to retrieve the loaded entity information via the labels Transfer in the `config.yaml` file.
-- In the above example, if a `Totals` entity is found matching the load criteria in the `loadEntities` function, it will be available via `totalChanges`.
+- In the above example, if a `Account` entity is found matching the load criteria in the `loadEntities` function, it will be available via `senderAccountChanges` and `receiverAccountChanges`.
 - This is made available to the user through the handler context defined simply as `context`.
 - This `context` is the gateway by which the user can interact with the indexer and the underlying database.
-- The user can then modify this retrieved entity and subsequently update the `Totals` entity in the database.
-- This is done via the `context` using the update function (`context.totals.update(totalsObject)`).
-- The user has access to a `totalsEntity` type that has all the fields defined in the schema.
+- The user can then modify this retrieved entity and subsequently update the `Account` entity in the database.
+- This is done via the `context` using the update function (`context.account.update(accountObject)`).
+- The user has access to a `accountEntity` type that has all the fields defined in the schema.
 
 This context also provides the following functions per entity that can be used to interact with that entity:
 

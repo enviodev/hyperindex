@@ -1,47 +1,96 @@
 let { ERC20Contract } = require("../generated/src/Handlers.bs.js");
 
-ERC20Contract.registerCreationLoadEntities((event, context) => {});
+ERC20Contract.registerApprovalLoadEntities((event, context) => {
+  // loading the required accountEntity
+  context.account.ownerAccountChangesLoad(event.params.owner);
+});
 
-ERC20Contract.registerCreationHandler((event, context) => {
-  let tokenObject = {
-    id: event.srcAddress,
-    name: event.params.name,
-    symbol: event.params.symbol,
-    decimals: 18,
-  };
+ERC20Contract.registerApprovalHandler((event, context) => {
+  //  getting the owner accountEntity
+  let ownerAccount = context.account.ownerAccountChanges();
 
-  context.tokens.insert(tokenObject);
+  if (ownerAccount != undefined) {
+    // updating accountEntity object
+    let accountObject = {
+      id: ownerAccount.id,
+      approval: event.params.value,
+      balance: ownerAccount.balance,
+    };
 
-  // creating a totalsEntity to store the event data
-  let totalsObject = {
-    id: event.srcAddress,
-    erc20: tokenObject.id,
-    totalTransfer: BigInt(0),
-  };
+    // updating the accountEntity with the new transfer field value
+    context.account.update(accountObject);
+  } else {
+    // updating accountEntity object
+    let accountObject = {
+      id: event.params.owner,
+      approval: event.params.value,
+      balance: BigInt(0),
+    };
 
-  // creating a new entry in totals table with the event data
-  context.totals.insert(totalsObject);
+    // inserting the accountEntity with the new transfer field value
+    context.account.insert(accountObject);
+  }
 });
 
 ERC20Contract.registerTransferLoadEntities((event, context) => {
-  // loading the required totalsEntity to update the totals field
-  context.totals.totalChangesLoad(event.srcAddress);
+  // loading the required accountEntity
+  context.account.senderAccountChangesLoad(event.params.from.toString());
+  context.account.receiverAccountChangesLoad(event.params.to.toString());
 });
 
 ERC20Contract.registerTransferHandler((event, context) => {
-  let currentTotals = context.totals.totalChangesLoad;
+  // getting the sender accountEntity
+  let senderAccount = context.account.senderAccountChanges();
 
-  if (currentTotals != undefined) {
+  if (senderAccount != undefined) {
     // updating the totals field value
-    let totalsObject = {
-      id: event.srcAddress,
-      erc20: currentTotals.erc20,
-      totalTransfer: BigInt(Number(currentTotalTransfer.totalTransfer) + Number(event.params.value)),
+    // updating accountEntity object
+    let accountObject = {
+      id: senderAccount.id,
+      approval: senderAccount.approval,
+      balance: BigInt(
+        Number(senderAccount.balance) - Number(event.params.value)
+      ),
     };
 
-    // updating the totalTransfers table with the new totals field value
-    context.totals.update(totalsObject);
-
+    // updating the accountEntity with the new transfer field value
+    context.account.update(accountObject);
   } else {
+    // updating accountEntity object
+    let accountObject = {
+      id: event.params.from.toString(),
+      approval: BigInt(0),
+      balance: BigInt(0 - Number(event.params.value)),
+    };
+
+    // inserting the accountEntity with the new transfer field value
+    context.account.insert(accountObject);
+  }
+
+  // getting the sender accountEntity
+  let receiverAccount = context.account.receiverAccountChanges();
+
+  if (receiverAccount != undefined) {
+    // updating accountEntity object
+    let accountObject = {
+      id: receiverAccount.id,
+      approval: receiverAccount.approval,
+      balance: BigInt(
+        Number(receiverAccount.balance) + Number(event.params.value)
+      ),
+    };
+
+    // updating the accountEntity with the new transfer field value
+    context.account.update(accountObject);
+  } else {
+    // updating accountEntity object
+    let accountObject = {
+      id: event.params.to.toString(),
+      approval: BigInt(0),
+      balance: event.params.value,
+    };
+
+    // inserting the accountEntity with the new transfer field value
+    context.account.insert(accountObject);
   }
 });
