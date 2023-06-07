@@ -35,6 +35,7 @@ pub struct EntityRelationalTypesTemplate {
     pub relational_key: CapitalizedOptions,
     pub mapped_entity: CapitalizedOptions,
     pub relationship_type: String,
+    pub is_array: bool,
     pub is_optional: bool,
 }
 

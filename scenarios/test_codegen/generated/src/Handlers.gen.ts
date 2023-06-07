@@ -42,7 +42,10 @@ import type {eventLog as Types_eventLog} from './Types.gen';
 
 export const GravatarContract_registerTestEventLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_GravatarContract_TestEventEvent_eventArgs>; readonly context: Types_GravatarContract_TestEventEvent_loaderContext }) => void)) => void = function (Arg1: any) {
   const result = HandlersBS.GravatarContract.registerTestEventLoadEntities(function (Argevent: any, Argcontext: any) {
-      const result1 = Arg1({event:Argevent, context:Argcontext});
+      const result1 = Arg1({event:Argevent, context:{contractRegistration:Argcontext.contractRegistration, a:{testingALoad:function (Arg11: any, Arg2: any) {
+          const result2 = Curry._2(Argcontext.a.testingALoad, Arg11, Arg2.loaders);
+          return result2
+        }}}});
       return result1
     });
   return result

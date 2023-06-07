@@ -454,11 +454,11 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
       let _ = Js.Dict.set(uniqueCDict, entityId, entityId)
     }
 
-    switch cLoad.loadD {
+    switch cLoad.loadA {
     | Some(loadA) =>
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
         let _ = InMemoryStore.C.getC(~id=entityId)->Belt.Option.map(cEntity => {
-          let _ = aLinkedEntityLoader(cEntity.d, loadA, layer + 1)
+          let _ = aLinkedEntityLoader(cEntity.a, loadA, layer + 1)
         })
       })
     | None => ()

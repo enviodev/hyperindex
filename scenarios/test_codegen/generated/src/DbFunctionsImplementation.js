@@ -440,7 +440,7 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
   module.exports.readCEntities = (sql, entityIdArray) => sql`
   SELECT 
   "id",
-  "d",
+  "a",
   event_chain_id, 
   event_id
   FROM public.c
@@ -455,14 +455,14 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
     INSERT INTO public.c
   ${sql(combinedEntityAndEventData,
     "id",
-    "d",
+    "a",
     "event_chain_id",
     "event_id",
   )}
     ON CONFLICT(id) DO UPDATE
     SET
     "id" = EXCLUDED."id",
-    "d" = EXCLUDED."d",
+    "a" = EXCLUDED."a",
     "event_chain_id" = EXCLUDED."event_chain_id",
     "event_id" = EXCLUDED."event_id"
   ;`

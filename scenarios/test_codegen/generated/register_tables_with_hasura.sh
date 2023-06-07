@@ -436,13 +436,13 @@ curl -X POST localhost:8080/v1/metadata \
     "type": "pg_create_object_relationship",
     "args": {
         "table": "c",
-        "name": "dMap",
+        "name": "aMap",
         "source": "default",
         "using": {
             "manual_configuration" : {
                 "remote_table" : "a",
                 "column_mapping" : {
-                    "d" : "id"
+                    "a" : "id"
                 }
             }
         }

@@ -12,6 +12,8 @@ module GravatarContract = {
       ~chainId,
       ~event,
     ) => {
+      let optIdOf_testingA = ref(None)
+
       let entitiesToLoad: array<Types.entityRead> = []
 
       let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
@@ -98,6 +100,13 @@ module GravatarContract = {
             )
           },
         },
+        a: {
+          testingALoad: (id: Types.id, ~loaders={}) => {
+            optIdOf_testingA := Some(id)
+
+            let _ = Js.Array2.push(entitiesToLoad, Types.ARead(id, loaders))
+          },
+        },
       }
       {
         getEntitiesToLoad: () => entitiesToLoad,
@@ -113,6 +122,38 @@ module GravatarContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
+            getGravatar: user => {
+              // is optional!
+              let optGravatar =
+                user.gravatar->Belt.Option.map(entityFieldId =>
+                  IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
+                )
+              switch optGravatar {
+              | Some(gravatar) => gravatar
+              | None =>
+                Logging.warn(`User gravatar data not found. Loading associated gravatar from database.
+Please consider loading the gravatar in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a gravatar with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
+            getTokens: user => {
+              let tokensArray = user.tokens->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.Token.getToken(~id=entityId)
+
+                switch optEntity {
+                | Some(tokens) => tokens
+                | None =>
+                  Logging.warn(`User tokens data not found. Loading associated token from database.
+Please consider loading the token in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a token with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              tokensArray
+            },
           },
           gravatar: {
             insert: entity => {
@@ -123,6 +164,18 @@ module GravatarContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`),
+            getOwner: gravatar => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=gravatar.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Gravatar owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateGravatar entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           nftcollection: {
             insert: entity => {
@@ -153,24 +206,106 @@ module GravatarContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+            getCollection: token => {
+              let optCollection = IO.InMemoryStore.Nftcollection.getNftcollection(
+                ~id=token.collection,
+              )
+              switch optCollection {
+              | Some(collection) => collection
+              | None =>
+                Logging.warn(`Token collection data not found. Loading associated nftcollection from database.
+Please consider loading the nftcollection in the UpdateToken entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a nftcollection with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
+            getOwner: token => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=token.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Token owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateToken entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           a: {
             insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+            testingA: () =>
+              optIdOf_testingA.contents->Belt.Option.flatMap(id => IO.InMemoryStore.A.getA(~id)),
+            getB: a => {
+              let optB = IO.InMemoryStore.B.getB(~id=a.b)
+              switch optB {
+              | Some(b) => b
+              | None =>
+                Logging.warn(`A b data not found. Loading associated b from database.
+Please consider loading the b in the UpdateA entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a b with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           b: {
             insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+            getA: b => {
+              let aArray = b.a->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.A.getA(~id=entityId)
+
+                switch optEntity {
+                | Some(a) => a
+                | None =>
+                  Logging.warn(`B a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              aArray
+            },
+            getC: b => {
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
+              switch optC {
+              | Some(c) => c
+              | None =>
+                Logging.warn(`B c data not found. Loading associated c from database.
+Please consider loading the c in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a c with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           c: {
             insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
+            getA: c => {
+              let optA = IO.InMemoryStore.A.getA(~id=c.a)
+              switch optA {
+              | Some(a) => a
+              | None =>
+                Logging.warn(`C a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateC entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
         },
       }
@@ -290,6 +425,38 @@ module GravatarContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
+            getGravatar: user => {
+              // is optional!
+              let optGravatar =
+                user.gravatar->Belt.Option.map(entityFieldId =>
+                  IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
+                )
+              switch optGravatar {
+              | Some(gravatar) => gravatar
+              | None =>
+                Logging.warn(`User gravatar data not found. Loading associated gravatar from database.
+Please consider loading the gravatar in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a gravatar with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
+            getTokens: user => {
+              let tokensArray = user.tokens->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.Token.getToken(~id=entityId)
+
+                switch optEntity {
+                | Some(tokens) => tokens
+                | None =>
+                  Logging.warn(`User tokens data not found. Loading associated token from database.
+Please consider loading the token in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a token with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              tokensArray
+            },
           },
           gravatar: {
             insert: entity => {
@@ -300,6 +467,18 @@ module GravatarContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`),
+            getOwner: gravatar => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=gravatar.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Gravatar owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateGravatar entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           nftcollection: {
             insert: entity => {
@@ -330,24 +509,104 @@ module GravatarContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+            getCollection: token => {
+              let optCollection = IO.InMemoryStore.Nftcollection.getNftcollection(
+                ~id=token.collection,
+              )
+              switch optCollection {
+              | Some(collection) => collection
+              | None =>
+                Logging.warn(`Token collection data not found. Loading associated nftcollection from database.
+Please consider loading the nftcollection in the UpdateToken entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a nftcollection with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
+            getOwner: token => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=token.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Token owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateToken entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           a: {
             insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+            getB: a => {
+              let optB = IO.InMemoryStore.B.getB(~id=a.b)
+              switch optB {
+              | Some(b) => b
+              | None =>
+                Logging.warn(`A b data not found. Loading associated b from database.
+Please consider loading the b in the UpdateA entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a b with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           b: {
             insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+            getA: b => {
+              let aArray = b.a->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.A.getA(~id=entityId)
+
+                switch optEntity {
+                | Some(a) => a
+                | None =>
+                  Logging.warn(`B a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              aArray
+            },
+            getC: b => {
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
+              switch optC {
+              | Some(c) => c
+              | None =>
+                Logging.warn(`B c data not found. Loading associated c from database.
+Please consider loading the c in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a c with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           c: {
             insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
+            getA: c => {
+              let optA = IO.InMemoryStore.A.getA(~id=c.a)
+              switch optA {
+              | Some(a) => a
+              | None =>
+                Logging.warn(`C a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateC entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
         },
       }
@@ -478,6 +737,38 @@ module GravatarContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
+            getGravatar: user => {
+              // is optional!
+              let optGravatar =
+                user.gravatar->Belt.Option.map(entityFieldId =>
+                  IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
+                )
+              switch optGravatar {
+              | Some(gravatar) => gravatar
+              | None =>
+                Logging.warn(`User gravatar data not found. Loading associated gravatar from database.
+Please consider loading the gravatar in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a gravatar with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
+            getTokens: user => {
+              let tokensArray = user.tokens->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.Token.getToken(~id=entityId)
+
+                switch optEntity {
+                | Some(tokens) => tokens
+                | None =>
+                  Logging.warn(`User tokens data not found. Loading associated token from database.
+Please consider loading the token in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a token with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              tokensArray
+            },
           },
           gravatar: {
             insert: entity => {
@@ -534,24 +825,104 @@ Please consider loading the user in the UpdateGravatar entity loader to greatly 
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+            getCollection: token => {
+              let optCollection = IO.InMemoryStore.Nftcollection.getNftcollection(
+                ~id=token.collection,
+              )
+              switch optCollection {
+              | Some(collection) => collection
+              | None =>
+                Logging.warn(`Token collection data not found. Loading associated nftcollection from database.
+Please consider loading the nftcollection in the UpdateToken entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a nftcollection with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
+            getOwner: token => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=token.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Token owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateToken entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           a: {
             insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+            getB: a => {
+              let optB = IO.InMemoryStore.B.getB(~id=a.b)
+              switch optB {
+              | Some(b) => b
+              | None =>
+                Logging.warn(`A b data not found. Loading associated b from database.
+Please consider loading the b in the UpdateA entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a b with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           b: {
             insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+            getA: b => {
+              let aArray = b.a->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.A.getA(~id=entityId)
+
+                switch optEntity {
+                | Some(a) => a
+                | None =>
+                  Logging.warn(`B a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              aArray
+            },
+            getC: b => {
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
+              switch optC {
+              | Some(c) => c
+              | None =>
+                Logging.warn(`B c data not found. Loading associated c from database.
+Please consider loading the c in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a c with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           c: {
             insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
+            getA: c => {
+              let optA = IO.InMemoryStore.A.getA(~id=c.a)
+              switch optA {
+              | Some(a) => a
+              | None =>
+                Logging.warn(`C a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateC entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
         },
       }
@@ -675,6 +1046,38 @@ module NftFactoryContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
+            getGravatar: user => {
+              // is optional!
+              let optGravatar =
+                user.gravatar->Belt.Option.map(entityFieldId =>
+                  IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
+                )
+              switch optGravatar {
+              | Some(gravatar) => gravatar
+              | None =>
+                Logging.warn(`User gravatar data not found. Loading associated gravatar from database.
+Please consider loading the gravatar in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a gravatar with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
+            getTokens: user => {
+              let tokensArray = user.tokens->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.Token.getToken(~id=entityId)
+
+                switch optEntity {
+                | Some(tokens) => tokens
+                | None =>
+                  Logging.warn(`User tokens data not found. Loading associated token from database.
+Please consider loading the token in the UpdateUser entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a token with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              tokensArray
+            },
           },
           gravatar: {
             insert: entity => {
@@ -685,6 +1088,18 @@ module NftFactoryContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`),
+            getOwner: gravatar => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=gravatar.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Gravatar owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateGravatar entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           nftcollection: {
             insert: entity => {
@@ -715,24 +1130,104 @@ module NftFactoryContract = {
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(token) with ID ${id}.`),
+            getCollection: token => {
+              let optCollection = IO.InMemoryStore.Nftcollection.getNftcollection(
+                ~id=token.collection,
+              )
+              switch optCollection {
+              | Some(collection) => collection
+              | None =>
+                Logging.warn(`Token collection data not found. Loading associated nftcollection from database.
+Please consider loading the nftcollection in the UpdateToken entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a nftcollection with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
+            getOwner: token => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=token.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Token owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateToken entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           a: {
             insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+            getB: a => {
+              let optB = IO.InMemoryStore.B.getB(~id=a.b)
+              switch optB {
+              | Some(b) => b
+              | None =>
+                Logging.warn(`A b data not found. Loading associated b from database.
+Please consider loading the b in the UpdateA entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a b with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           b: {
             insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+            getA: b => {
+              let aArray = b.a->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.A.getA(~id=entityId)
+
+                switch optEntity {
+                | Some(a) => a
+                | None =>
+                  Logging.warn(`B a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              aArray
+            },
+            getC: b => {
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
+              switch optC {
+              | Some(c) => c
+              | None =>
+                Logging.warn(`B c data not found. Loading associated c from database.
+Please consider loading the c in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a c with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           c: {
             insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
+            getA: c => {
+              let optA = IO.InMemoryStore.A.getA(~id=c.a)
+              switch optA {
+              | Some(a) => a
+              | None =>
+                Logging.warn(`C a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateC entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
         },
       }
@@ -894,6 +1389,7 @@ module SimpleNftContract = {
                 IO.InMemoryStore.User.getUser(~id)
               ),
             getGravatar: user => {
+              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -934,6 +1430,18 @@ Please consider loading the token in the UpdateUser entity loader to greatly imp
             },
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(gravatar) with ID ${id}.`),
+            getOwner: gravatar => {
+              let optOwner = IO.InMemoryStore.User.getUser(~id=gravatar.owner)
+              switch optOwner {
+              | Some(owner) => owner
+              | None =>
+                Logging.warn(`Gravatar owner data not found. Loading associated user from database.
+Please consider loading the user in the UpdateGravatar entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a user with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           nftcollection: {
             insert: entity => {
@@ -1004,18 +1512,72 @@ Please consider loading the user in the UpdateToken entity loader to greatly imp
             update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
+            getB: a => {
+              let optB = IO.InMemoryStore.B.getB(~id=a.b)
+              switch optB {
+              | Some(b) => b
+              | None =>
+                Logging.warn(`A b data not found. Loading associated b from database.
+Please consider loading the b in the UpdateA entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a b with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           b: {
             insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
+            getA: b => {
+              let aArray = b.a->Belt.Array.map(entityId => {
+                let optEntity = IO.InMemoryStore.A.getA(~id=entityId)
+
+                switch optEntity {
+                | Some(a) => a
+                | None =>
+                  Logging.warn(`B a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                  // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                  "NOT_IMPLEMENTED_YET"->Obj.magic
+                }
+              })
+              aArray
+            },
+            getC: b => {
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
+              switch optC {
+              | Some(c) => c
+              | None =>
+                Logging.warn(`B c data not found. Loading associated c from database.
+Please consider loading the c in the UpdateB entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a c with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
           c: {
             insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
             update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
+            getA: c => {
+              let optA = IO.InMemoryStore.A.getA(~id=c.a)
+              switch optA {
+              | Some(a) => a
+              | None =>
+                Logging.warn(`C a data not found. Loading associated a from database.
+Please consider loading the a in the UpdateC entity loader to greatly improve sync speed of your application.
+`)
+                // TODO: this isn't implemented yet. We should fetch a a with this ID from the database.
+                "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+            },
           },
         },
       }

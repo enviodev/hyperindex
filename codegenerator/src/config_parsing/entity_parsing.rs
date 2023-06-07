@@ -184,6 +184,7 @@ fn gql_type_to_postgres_relational_type(
                 mapped_entity: named.to_capitalized_options(),
                 relationship_type: "object".to_owned(),
                 is_optional: true,
+                is_array: false,
             })
         }
         Type::NamedType(_) => None,
@@ -191,6 +192,8 @@ fn gql_type_to_postgres_relational_type(
             match gql_type_to_postgres_relational_type(&field_name, &gql_type, &entities_set) {
                 Some(mut relational_type) => {
                     relational_type.relationship_type = "array".to_owned();
+                    relational_type.is_array = true;
+
                     Some(relational_type)
                 }
                 None => None,
@@ -395,6 +398,7 @@ mod tests {
             gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
         let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: true,
+            is_array: false,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
             relationship_type: "object".to_owned(),
@@ -414,6 +418,7 @@ mod tests {
             gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
         let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: false,
+            is_array: false,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
             relationship_type: "object".to_owned(),
@@ -434,6 +439,7 @@ mod tests {
             gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
         let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: true,
+            is_array: true,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
             relationship_type: "array".to_owned(),
@@ -454,6 +460,7 @@ mod tests {
             gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
         let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: false,
+            is_array: true,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
             relationship_type: "array".to_owned(),

@@ -339,18 +339,18 @@ module C = {
   open Types
   type cReadRow = {
     id: string,
-    d: id,
+    a: id,
     @as("event_chain_id") chainId: int,
     @as("event_id") eventId: Ethers.BigInt.t,
   }
 
   let readRowToReadEntityData = (readRow: cReadRow): readEntityData<Types.cEntity> => {
-    let {id, d, chainId, eventId} = readRow
+    let {id, a, chainId, eventId} = readRow
 
     {
       entity: {
         id,
-        d,
+        a,
       },
       eventData: {
         chainId,
