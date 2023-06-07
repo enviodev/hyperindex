@@ -2,10 +2,8 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
-use ethers::solc::sourcemap::Jump::In;
 use serde::{Deserialize, Serialize};
 
-use crate::config_parsing::SingleOrList::Single;
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
