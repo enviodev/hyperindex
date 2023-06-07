@@ -1,17 +1,19 @@
 use std::error::Error;
 use std::path::PathBuf;
 
-pub mod entity_parsing;
-pub mod event_parsing;
-
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
+use ethers::solc::sourcemap::Jump::In;
 use serde::{Deserialize, Serialize};
 
+use crate::config_parsing::SingleOrList::Single;
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     project_paths::ParsedPaths,
 };
+
+pub mod entity_parsing;
+pub mod event_parsing;
 
 type NetworkId = i32;
 
@@ -83,7 +85,7 @@ pub struct Network {
     pub contracts: Vec<ConfigContract>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ConfigContract {
     pub name: String,
     // Eg for implementing a custom deserializer
@@ -92,6 +94,38 @@ pub struct ConfigContract {
     pub handler: String,
     address: NormalizedList<String>,
     events: Vec<ConfigEvent>,
+}
+
+// We require this intermediate struct in order to allow the config to skip specifying "address".
+#[derive(Deserialize)]
+struct IntermediateConfigContract {
+    pub name: String,
+    pub abi_file_path: Option<String>,
+    pub handler: String,
+    // This is the difference - adding Option<> around it.
+    address: Option<NormalizedList<String>>,
+    events: Vec<ConfigEvent>,
+}
+
+impl From<IntermediateConfigContract> for ConfigContract {
+    fn from(icc: IntermediateConfigContract) -> Self {
+        ConfigContract {
+            name: icc.name,
+            abi_file_path: icc.abi_file_path,
+            handler: icc.handler,
+            address: icc.address.unwrap_or(NormalizedList { inner: vec![] }),
+            events: icc.events,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for ConfigContract {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        IntermediateConfigContract::deserialize(deserializer).map(ConfigContract::from)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -263,6 +297,9 @@ pub fn convert_config_to_chain_configs(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
     use ethers::abi::{Event, EventParam, ParamType};
 
     use crate::capitalization::Capitalize;
@@ -270,9 +307,6 @@ mod tests {
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
-
-    use std::fs;
-    use std::path::PathBuf;
 
     #[test]
     fn deserialize_address() {
