@@ -275,7 +275,9 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
@@ -574,7 +576,9 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
@@ -888,7 +892,9 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
@@ -1191,7 +1197,9 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
@@ -1539,7 +1547,9 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              // is optional!
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>

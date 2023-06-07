@@ -159,7 +159,7 @@ module A = {
 module B = {
   let createBTable: unit => promise<unit> = async () => {
     await %raw(
-      "sql`CREATE TABLE \"public\".\"b\" (\"id\" text NOT NULL,\"a\" text[] NOT NULL,\"c\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+      "sql`CREATE TABLE \"public\".\"b\" (\"id\" text NOT NULL,\"a\" text[] NOT NULL,\"c\" text, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
     )
   }
 
