@@ -139,6 +139,11 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
+    {{#each entity.params as |param|}}
+      {{#if param.is_optional}}
+    {{param.key}}: entityData.entity.{{param.key}} !== undefined ? entityData.entity.{{param.key}} : null,
+      {{/if}}
+    {{/each}} 
   }));
   return sql`
     INSERT INTO public.{{entity.name.uncapitalized

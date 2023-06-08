@@ -96,7 +96,7 @@ module User = {
       entity: {
         id,
         address,
-        gravatar,
+        ?gravatar,
         updatesCountOnUserForTesting,
         tokens,
       },
@@ -313,7 +313,7 @@ module B = {
       entity: {
         id,
         a,
-        c,
+        ?c,
       },
       eventData: {
         chainId,

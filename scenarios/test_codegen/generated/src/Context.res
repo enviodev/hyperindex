@@ -123,7 +123,6 @@ module GravatarContract = {
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -275,7 +274,6 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              // is optional!
               let optC =
                 b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
@@ -426,7 +424,6 @@ Please consider loading the a in the UpdateC entity loader to greatly improve sy
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -576,7 +573,6 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              // is optional!
               let optC =
                 b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
@@ -738,7 +734,6 @@ Please consider loading the a in the UpdateC entity loader to greatly improve sy
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -892,7 +887,6 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              // is optional!
               let optC =
                 b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
@@ -1047,7 +1041,6 @@ module NftFactoryContract = {
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -1197,7 +1190,6 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              // is optional!
               let optC =
                 b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
@@ -1389,7 +1381,6 @@ module SimpleNftContract = {
                 IO.InMemoryStore.User.getUser(~id)
               ),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -1547,7 +1538,6 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              // is optional!
               let optC =
                 b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {

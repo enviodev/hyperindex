@@ -67,20 +67,20 @@ type dynamicContractRegistryEntity = {
 @genType
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{param.key}} : {{param.type_rescript}},
+  {{param.key}}{{#if param.is_optional}}?{{/if}}: {{param.type_rescript_non_optional}},
   {{/each}}
 }
 
 type {{entity.name.uncapitalized}}EntitySerialized = {
   {{#each entity.params as | param |}}
-  {{param.key}} : {{#if (eq param.type_rescript "Ethers.BigInt.t")}} string{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}} option<string>{{else}}{{param.type_rescript}}{{/if}}{{/if}},
+  {{param.key}}{{#if param.is_optional}}?{{/if}}: {{#if (eq param.type_rescript "Ethers.BigInt.t")}}string{{else}}{{param.type_rescript_non_optional}}{{/if}},
   {{/each}}
 }
 
 let serialize{{entity.name.capitalized}}Entity = (entity: {{entity.name.uncapitalized}}Entity ): {{entity.name.uncapitalized}}EntitySerialized => {
   {
     {{#each entity.params as | param |}}
-    {{param.key}} : entity.{{param.key}}{{#if (eq param.type_rescript "Ethers.BigInt.t")}}->Ethers.BigInt.toString{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}}->Belt.Option.map(opt =>
+    {{param.key}}: {{#if param.is_optional}}?{{/if}}entity.{{param.key}}{{#if (eq param.type_rescript "Ethers.BigInt.t")}}->Ethers.BigInt.toString{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}}->Belt.Option.map(opt =>
       opt->Ethers.BigInt.toString){{/if}}{{/if}},
     {{/each}}
   }

@@ -65,7 +65,7 @@ type dynamicContractRegistryEntity = {
 type userEntity = {
   id: string,
   address: string,
-  gravatar: option<id>,
+  gravatar?: id,
   updatesCountOnUserForTesting: int,
   tokens: array<id>,
 }
@@ -73,7 +73,7 @@ type userEntity = {
 type userEntitySerialized = {
   id: string,
   address: string,
-  gravatar: option<id>,
+  gravatar?: id,
   updatesCountOnUserForTesting: int,
   tokens: array<id>,
 }
@@ -82,7 +82,7 @@ let serializeUserEntity = (entity: userEntity): userEntitySerialized => {
   {
     id: entity.id,
     address: entity.address,
-    gravatar: entity.gravatar,
+    gravatar: ?entity.gravatar,
     updatesCountOnUserForTesting: entity.updatesCountOnUserForTesting,
     tokens: entity.tokens,
   }
@@ -191,20 +191,20 @@ let serializeAEntity = (entity: aEntity): aEntitySerialized => {
 type bEntity = {
   id: string,
   a: array<id>,
-  c: option<id>,
+  c?: id,
 }
 
 type bEntitySerialized = {
   id: string,
   a: array<id>,
-  c: option<id>,
+  c?: id,
 }
 
 let serializeBEntity = (entity: bEntity): bEntitySerialized => {
   {
     id: entity.id,
     a: entity.a,
-    c: entity.c,
+    c: ?entity.c,
   }
 }
 

@@ -138,6 +138,7 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
+    gravatar: entityData.entity.gravatar !== undefined ? entityData.entity.gravatar : null,
   }));
   return sql`
     INSERT INTO public.user
@@ -402,6 +403,7 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
   const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
     ...entityData.entity,
     ...entityData.eventData,
+    c: entityData.entity.c !== undefined ? entityData.entity.c : null,
   }));
   return sql`
     INSERT INTO public.b

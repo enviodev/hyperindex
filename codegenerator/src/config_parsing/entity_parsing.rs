@@ -60,7 +60,8 @@ pub fn get_entity_record_types_from_schema(
             params.push(EntityParamTypeTemplate {
                 key: field.name.to_owned(),
                 is_optional,
-                type_rescript: param_type,
+                type_rescript: param_type.to_owned(),
+                type_rescript_non_optional: strip_option_from_rescript_type_str(&param_type),
                 type_pg: param_pg_type,
                 maybe_entity_name: param_maybe_entity_name,
             });
@@ -290,6 +291,17 @@ fn gql_type_to_rescript_type(
         NullableContainer::Nullable,
         entities_set,
     )
+}
+
+fn strip_option_from_rescript_type_str(s: &str) -> String {
+    let prefix = "option<";
+    let suffix = ">";
+    if s.starts_with(prefix) && s.ends_with(suffix) {
+        let without_prefix = s.strip_prefix(prefix).unwrap();
+        let without_suffix = without_prefix.strip_suffix(suffix).unwrap();
+        return without_suffix.to_string();
+    }
+    s.to_string()
 }
 
 fn gql_type_to_capitalized_entity_name(
@@ -538,5 +550,23 @@ mod tests {
     fn gql_multi_nullable_array_to_pg_type_should_panic() {
         let gql_type = "[[Int!]]!"; //Nested lists need to be not nullable
         gql_type_to_postgres_type_test_helper(gql_type);
+    }
+
+    #[test]
+    fn strip_option_removes_option() {
+        assert_eq!(
+            super::strip_option_from_rescript_type_str("option<bool>"),
+            "bool"
+        );
+
+        assert_eq!(
+            super::strip_option_from_rescript_type_str("option<array<string>>"),
+            "array<string>"
+        );
+
+        assert_eq!(
+            super::strip_option_from_rescript_type_str("array<string>"),
+            "array<string>"
+        );
     }
 }

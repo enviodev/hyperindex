@@ -101,8 +101,7 @@ module {{entity.name.capitalized}} = {
     {
       entity: {
         {{#each entity.params as | param |}}
-        {{param.key}} {{#if  (eq param.type_rescript "Ethers.BigInt.t")}} : {{param.key}}->Ethers.BigInt.fromStringUnsafe{{else}}{{#if (eq param.type_rescript "option<Ethers.BigInt.t>")}}: {{param.key}}->Belt.Option.map(opt =>
-      opt->Ethers.BigInt.fromStringUnsafe){{/if}}{{/if}},
+        {{param.key}}: {{#if param.is_optional}}?{{/if}}({{param.key}}{{#if  (eq param.type_rescript_non_optional "Ethers.BigInt.t")}}->Ethers.BigInt.fromStringUnsafe{{/if}}),
         {{/each}}
       },
       eventData: {
