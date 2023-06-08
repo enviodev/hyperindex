@@ -73,6 +73,53 @@ module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
 
+
+module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (sql, chainId, block_number) => sql`
+  SELECT contract_address, contract_type
+  FROM public.dynamic_contract_registry as c
+  JOIN raw_events e ON c.chain_id = e.chain_id
+  AND c.event_id = e.event_id
+  WHERE e.block_number <= ${block_number} AND e.chain_id = ${chainId};
+`
+
+//Start db operations dynamic_contract_registry
+module.exports.readDynamicContractRegistryEntities = (sql, entityIdArray) => sql`
+  SELECT *
+  FROM public.dynamic_contract_registry
+  WHERE (chain_id, contract_address) IN ${sql(entityIdArray)}`;
+
+const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
+  return sql`
+    INSERT INTO public.dynamic_contract_registry
+  ${sql(
+    entityDataArray,
+    "chain_id",
+    "event_id",
+    "contract_address",
+    "contract_type"
+  )}
+    ON CONFLICT(chain_id, contract_address) DO UPDATE
+    SET
+    "chain_id" = EXCLUDED."chain_id",
+    "event_id" = EXCLUDED."event_id",
+    "contract_address" = EXCLUDED."contract_address",
+    "contract_type" = EXCLUDED."contract_type"
+  ;`;
+};
+
+module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
+  // TODO: make this max batch size optimal
+  const MAX_ITEMS_PER_QUERY_DynamicContractRegistry = 50;
+
+  return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_DynamicContractRegistry, batchSetDynamicContractRegistryCore);
+};
+
+module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
+  DELETE
+  FROM public.dynamic_contract_registry
+  WHERE (chain_id, contract_address) IN ${sql(entityIdArray)};`;
+// end db operations for dynamic_contract_registry
+
   // db operations for User:
 
   module.exports.readUserEntities = (sql, entityIdArray) => sql`

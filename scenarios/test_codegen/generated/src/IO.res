@@ -52,6 +52,41 @@ module InMemoryStore = {
       )
     }
   }
+  module DynamicContractRegistry = {
+    let dynamicContractRegistryDict: ref<
+      Js.Dict.t<Types.inMemoryStoreRow<Types.dynamicContractRegistryEntity>>,
+    > = ref(Js.Dict.empty())
+
+    let getDynamicContractRegistry = (~id: string) => {
+      let row = Js.Dict.get(dynamicContractRegistryDict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
+
+    let setDynamicContractRegistry = (
+      ~entity: Types.dynamicContractRegistryEntity,
+      ~crud: Types.crud,
+    ) => {
+      let key = EventUtils.getContractAddressKeyString(
+        ~chainId=entity.chainId,
+        ~contractAddress=entity.contractAddress,
+      )
+      let dynamicContractRegistryCurrentCrud =
+        dynamicContractRegistryDict.contents
+        ->Js.Dict.get(key)
+        ->Belt.Option.map(row => {
+          row.crud
+        })
+
+      dynamicContractRegistryDict.contents->Js.Dict.set(
+        key,
+        {
+          eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString},
+          entity,
+          crud: entityCurrentCrud(dynamicContractRegistryCurrentCrud, crud),
+        },
+      )
+    }
+  }
 
   module User = {
     let userDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.userEntity>>> = ref(Js.Dict.empty())
@@ -411,6 +446,48 @@ let executeBatch = async sql => {
     }
   }
 
+  let dynamicContractRegistryRows =
+    InMemoryStore.DynamicContractRegistry.dynamicContractRegistryDict.contents->Js.Dict.values
+
+  let deleteDynamicContractRegistryIdsPromise = sql => {
+    let deleteDynamicContractRegistryIds =
+      dynamicContractRegistryRows
+      ->Belt.Array.keepMap(dynamicContractRegistryRow =>
+        dynamicContractRegistryRow.crud == Types.Delete
+          ? Some(dynamicContractRegistryRow.entity)
+          : None
+      )
+      ->Belt.Array.map(dynamicContractRegistry => (
+        dynamicContractRegistry.chainId,
+        dynamicContractRegistry.contractAddress,
+      ))
+
+    if deleteDynamicContractRegistryIds->Belt.Array.length > 0 {
+      sql->DbFunctions.DynamicContractRegistry.batchDeleteDynamicContractRegistry(
+        deleteDynamicContractRegistryIds,
+      )
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
+  let setDynamicContractRegistryPromise = sql => {
+    let setDynamicContractRegistry =
+      dynamicContractRegistryRows->Belt.Array.keepMap(dynamicContractRegistryRow =>
+        dynamicContractRegistryRow.crud == Types.Create || dynamicContractRegistryRow.crud == Update
+          ? Some(dynamicContractRegistryRow.entity)
+          : None
+      )
+
+    if setDynamicContractRegistry->Belt.Array.length > 0 {
+      sql->DbFunctions.DynamicContractRegistry.batchSetDynamicContractRegistry(
+        setDynamicContractRegistry,
+      )
+    } else {
+      ()->Promise.resolve
+    }
+  }
+
   let userRows = InMemoryStore.User.userDict.contents->Js.Dict.values
 
   let deleteUserIdsPromise = sql => {
@@ -543,6 +620,8 @@ let executeBatch = async sql => {
     [
       sql->deleteRawEventsIdsPromise,
       sql->setRawEventsPromise,
+      sql->deleteDynamicContractRegistryIdsPromise,
+      sql->setDynamicContractRegistryPromise,
       sql->deleteUserIdsPromise,
       sql->setUserPromise,
       sql->deleteGravatarIdsPromise,

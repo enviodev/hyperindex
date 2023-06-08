@@ -1,17 +1,85 @@
+type contractName = string
+type chainId = int
 exception UndefinedEvent(string)
-exception UndefinedContract(Ethers.ethAddress, int)
+exception UndefinedContractAddress(Ethers.ethAddress, chainId)
+exception UndefinedContractName(contractName, chainId)
 
-let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: int): string => {
-  switch (contractAddress->Ethers.ethAddressToString, chainId->Belt.Int.toString) {
-    {{#each chain_configs as |chain_config|}}
-    {{#each chain_config.contracts as |contract|}}
-    // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-    | ("{{contract.address}}", "{{chain_config.network_config.id}}") => "{{contract.name.capitalized}}"
-    {{/each}}
-    {{/each}}
-    | _ => UndefinedContract(contractAddress, chainId)->raise
+module ContractNameAddressMappings: {
+  let getContractNameFromAddress: (~chainId: int, ~contractAddress: Ethers.ethAddress) => string
+  let addContractAddress: (
+    ~chainId: int,
+    ~contractName: string,
+    ~contractAddress: Ethers.ethAddress,
+  ) => unit
+  let getAddressesFromContractName: (
+    ~chainId: int,
+    ~contractName: string,
+  ) => array<Ethers.ethAddress>
+  let registerStaticAddresses: (~chainConfig: Config.chainConfig) => unit
+} = {
+  let globalMutable = ContractAddressingMap.makeChainMappings()
+
+  let addContractAddress = (
+    ~chainId: int,
+    ~contractName: string,
+    ~contractAddress: Ethers.ethAddress,
+  ) => {
+    globalMutable->ContractAddressingMap.addChainAddress(~chainId, ~contractName, ~contractAddress)
+  }
+
+  let getContractNameFromAddress = (~chainId: int, ~contractAddress: Ethers.ethAddress) => {
+    switch globalMutable->ContractAddressingMap.getChainRegistry(~chainId) {
+    | None =>
+      Logging.error(`chainId ${chainId->Belt.Int.toString} was not constructed in address mapping`)
+      UndefinedContractAddress(contractAddress, chainId)->raise
+    | Some(registry) =>
+      switch ContractAddressingMap.getName(registry, contractAddress->Ethers.ethAddressToString) {
+      | None => {
+          Logging.error(
+            `contract address ${contractAddress->Ethers.ethAddressToString} on chainId ${chainId->Belt.Int.toString} was not found in address store`,
+          )
+          UndefinedContractAddress(contractAddress, chainId)->raise
+        }
+
+      | Some(contractName) => contractName
+      }
+    }
+  }
+
+  let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Obj.magic
+
+  let getAddressesFromContractName = (~chainId, ~contractName) => {
+    switch globalMutable->ContractAddressingMap.getChainRegistry(~chainId) {
+    | None => {
+        Logging.error(
+          `chainId ${chainId->Belt.Int.toString} was not constructed in address mapping`,
+        )
+        UndefinedContractName(contractName, chainId)->raise
+      }
+
+    | Some(registry) => switch ContractAddressingMap.getAddresses(registry, contractName) {
+      | Some(addresses) => addresses
+      | None => Belt.Set.String.empty
+      }
+      ->Belt.Set.String.toArray
+      ->stringsToAddresses
+    }
+  }
+
+  // Insert the static address into the Contract <-> Address bi-mapping
+  let registerStaticAddresses = (~chainConfig: Config.chainConfig) => {
+    chainConfig.contracts->Belt.Array.forEach(contract => {
+      contract.addresses->Belt.Array.forEach(address => {
+        globalMutable->ContractAddressingMap.addChainAddress(
+          ~chainId=chainConfig.chainId,
+          ~contractName=contract.name,
+          ~contractAddress=address,
+        )
+      })
+    })
   }
 }
+
 let eventStringToEvent = (eventName: string, contractName: string): Types.eventName => {
   switch (eventName, contractName) {
     {{#each contracts as |contract|}}
@@ -49,7 +117,7 @@ module {{contract.name.capitalized}} = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,

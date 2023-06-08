@@ -6,8 +6,8 @@ var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Handlers = require("generated/src/Handlers.bs.js");
 var Belt_Option = require("rescript/lib/js/belt_Option.js");
 
-Handlers.GravatarContract.registerNewGravatarLoadEntities(function (param, param$1) {
-      
+Handlers.GravatarContract.registerNewGravatarLoadEntities(function ($$event, context) {
+      Curry._1(context.contractRegistration.addSimpleNft, $$event.srcAddress);
     });
 
 Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context) {

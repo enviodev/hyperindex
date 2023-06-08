@@ -70,67 +70,79 @@ var updatedGravatar3 = {
   imageUrl: "https://gravatar3.com"
 };
 
+var newGravatarEventLog1_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
+
 var newGravatarEventLog1 = {
   params: newGravatar1,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: "0xabc",
+  srcAddress: newGravatarEventLog1_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1
 };
+
+var newGravatarEventLog2_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
 
 var newGravatarEventLog2 = {
   params: newGravatar2,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: "0xabc",
+  srcAddress: newGravatarEventLog2_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1
 };
+
+var newGravatarEventLog3_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
 
 var newGravatarEventLog3 = {
   params: newGravatar3,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: "0xabc",
+  srcAddress: newGravatarEventLog3_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1
 };
+
+var updatedGravatarEventLog1_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
 
 var updatedGravatarEventLog1 = {
   params: updatedGravatar1,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: "0xabc",
+  srcAddress: updatedGravatarEventLog1_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1
 };
+
+var updatedGravatarEventLog2_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
 
 var updatedGravatarEventLog2 = {
   params: updatedGravatar2,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: "0xabc",
+  srcAddress: updatedGravatarEventLog2_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1
 };
+
+var updatedGravatarEventLog3_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
 
 var updatedGravatarEventLog3 = {
   params: updatedGravatar3,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: "0xabc",
+  srcAddress: updatedGravatarEventLog3_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1

@@ -70,6 +70,20 @@ curl -X POST localhost:8080/v1/metadata \
   }
 }'
 
+#Do this for the dynamic_contract_registry as well
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+  "type": "pg_track_table",
+  "args": {
+    "source": "public",
+    "schema": "public",
+    "name": "dynamic_contract_registry"
+  }
+}'
+
 curl -X POST localhost:8080/v1/metadata \
   -H "Content-Type: application/json" \
   -H "X-Hasura-Role: admin" \
@@ -144,6 +158,23 @@ curl -X POST localhost:8080/v1/metadata \
     "type": "pg_create_select_permission",
     "args": {
         "table": "raw_events",
+        "role": "public",
+        "source": "default",
+        "permission": {
+            "columns": "*",
+            "filter": {}
+        }
+    }
+}'
+#Do this for the dynamic_contract_registry table as well
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_select_permission",
+    "args": {
+        "table": "dynamic_contract_registry",
         "role": "public",
         "source": "default",
         "permission": {

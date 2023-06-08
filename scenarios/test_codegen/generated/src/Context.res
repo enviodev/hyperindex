@@ -6,14 +6,102 @@ module GravatarContract = {
       getLoaderContext: unit => Types.GravatarContract.TestEventEvent.loaderContext,
       getContext: (~eventData: Types.eventData) => Types.GravatarContract.TestEventEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
+      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int, ~event: Types.eventLog<'a>) => contextCreatorFunctions = (
+      ~chainId,
+      ~event,
+    ) => {
       let entitiesToLoad: array<Types.entityRead> = []
 
+      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
+
       @warning("-16")
-      let loaderContext: Types.GravatarContract.TestEventEvent.loaderContext = {}
+      let loaderContext: Types.GravatarContract.TestEventEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "Gravatar",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "NftFactory",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "SimpleNft",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
+        },
+      }
       {
         getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getContext: (~eventData) => {
           user: {
@@ -77,14 +165,102 @@ module GravatarContract = {
       getLoaderContext: unit => Types.GravatarContract.NewGravatarEvent.loaderContext,
       getContext: (~eventData: Types.eventData) => Types.GravatarContract.NewGravatarEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
+      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int, ~event: Types.eventLog<'a>) => contextCreatorFunctions = (
+      ~chainId,
+      ~event,
+    ) => {
       let entitiesToLoad: array<Types.entityRead> = []
 
+      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
+
       @warning("-16")
-      let loaderContext: Types.GravatarContract.NewGravatarEvent.loaderContext = {}
+      let loaderContext: Types.GravatarContract.NewGravatarEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "Gravatar",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "NftFactory",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "SimpleNft",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
+        },
+      }
       {
         getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getContext: (~eventData) => {
           user: {
@@ -150,14 +326,100 @@ module GravatarContract = {
         ~eventData: Types.eventData,
       ) => Types.GravatarContract.UpdatedGravatarEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
+      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int, ~event: Types.eventLog<'a>) => contextCreatorFunctions = (
+      ~chainId,
+      ~event,
+    ) => {
       let optIdOf_gravatarWithChanges = ref(None)
 
       let entitiesToLoad: array<Types.entityRead> = []
 
+      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
+
       @warning("-16")
       let loaderContext: Types.GravatarContract.UpdatedGravatarEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "Gravatar",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "NftFactory",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "SimpleNft",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
+        },
         gravatar: {
           gravatarWithChangesLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_gravatarWithChanges := Some(id)
@@ -168,6 +430,7 @@ module GravatarContract = {
       }
       {
         getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getContext: (~eventData) => {
           user: {
@@ -251,14 +514,102 @@ module NftFactoryContract = {
         ~eventData: Types.eventData,
       ) => Types.NftFactoryContract.SimpleNftCreatedEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
+      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int, ~event: Types.eventLog<'a>) => contextCreatorFunctions = (
+      ~chainId,
+      ~event,
+    ) => {
       let entitiesToLoad: array<Types.entityRead> = []
 
+      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
+
       @warning("-16")
-      let loaderContext: Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext = {}
+      let loaderContext: Types.NftFactoryContract.SimpleNftCreatedEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "Gravatar",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "NftFactory",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "SimpleNft",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
+        },
+      }
       {
         getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getContext: (~eventData) => {
           user: {
@@ -324,8 +675,12 @@ module SimpleNftContract = {
       getLoaderContext: unit => Types.SimpleNftContract.TransferEvent.loaderContext,
       getContext: (~eventData: Types.eventData) => Types.SimpleNftContract.TransferEvent.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
+      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int, ~event: Types.eventLog<'a>) => contextCreatorFunctions = (
+      ~chainId,
+      ~event,
+    ) => {
       let optIdOf_userFrom = ref(None)
       let optIdOf_userTo = ref(None)
       let optIdOf_nftCollectionUpdated = ref(None)
@@ -333,8 +688,90 @@ module SimpleNftContract = {
 
       let entitiesToLoad: array<Types.entityRead> = []
 
+      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
+
       @warning("-16")
       let loaderContext: Types.SimpleNftContract.TransferEvent.loaderContext = {
+        contractRegistration: {
+          //TODO only add contracts we've registered for the event in the config
+          addGravatar: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "Gravatar",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="Gravatar",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addNftFactory: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "NftFactory",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="NftFactory",
+            )
+          },
+          //TODO only add contracts we've registered for the event in the config
+          addSimpleNft: (contractAddress: Ethers.ethAddress) => {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "SimpleNft",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(
+              ~entity=dynamicContractRegistration,
+              ~crud=Types.Create,
+            )
+
+            Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="SimpleNft",
+            )
+          },
+        },
         user: {
           userFromLoad: (id: Types.id, ~loaders={}) => {
             optIdOf_userFrom := Some(id)
@@ -364,6 +801,7 @@ module SimpleNftContract = {
       }
       {
         getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getContext: (~eventData) => {
           user: {

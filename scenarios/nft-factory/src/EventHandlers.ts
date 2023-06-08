@@ -10,7 +10,9 @@ import { nftcollectionEntity, tokenEntity } from "../generated/src/Types.gen";
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 NftFactoryContract_registerSimpleNftCreatedLoadEntities(
-  ({ event, context }) => { }
+  ({ event, context }) => {
+    context.contractRegistration.addSimpleNft(event.params.contractAddress)
+  }
 );
 
 NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
@@ -26,11 +28,11 @@ NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
 });
 
 SimpleNftContract_registerTransferLoadEntities(({ event, context }) => {
-  context.user.userFromLoad(event.params.from);
-  context.user.userToLoad(event.params.to);
+  context.user.userFromLoad(event.params.from, {});
+  context.user.userToLoad(event.params.to, {});
   context.nftcollection.nftCollectionUpdatedLoad(event.srcAddress);
   context.token.existingTransferredTokenLoad(
-    event.srcAddress.concat("-").concat(event.params.tokenId.toString())
+    event.srcAddress.concat("-").concat(event.params.tokenId.toString()), {}
   );
 });
 
