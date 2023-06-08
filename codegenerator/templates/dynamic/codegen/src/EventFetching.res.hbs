@@ -6,6 +6,9 @@ let backoffMultiplicative = 0.8
 // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
 let accelerationAdditive = 2000
 
+// Do not further increase the block interval past this limit
+let intervalCeiling = 10000
+
 // After an error, how long to wait before retrying
 let backoffMillis = 5000
 
@@ -309,8 +312,12 @@ let getContractEventsOnFilters = async (
       ~blockInterval=currentBlockInterval.contents,
     )
     events := events.contents->Belt.Array.concat(intervalEvents)
-    // Increase batch size going forward, https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-    currentBlockInterval := executedBlockInterval + accelerationAdditive
+
+    // Increase batch size going forward, but do not increase past a configured maximum
+    // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    currentBlockInterval :=
+      Pervasives.min(executedBlockInterval + accelerationAdditive, intervalCeiling)
+
     fromBlockRef := fromBlockRef.contents + executedBlockInterval
 
     Logging.info(
