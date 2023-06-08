@@ -14,7 +14,9 @@ import {
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 NftFactoryContract_registerSimpleNftCreatedLoadEntities(
-  ({ event, context }) => { }
+  ({ event, context }) => {
+    context.contractRegistration.addSimpleNft(event.params.contractAddress)
+  }
 );
 
 NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {

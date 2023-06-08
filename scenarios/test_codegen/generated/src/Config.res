@@ -1,7 +1,7 @@
 type contract = {
   name: string,
   abi: Ethers.abi,
-  address: Ethers.ethAddress,
+  addresses: array<Ethers.ethAddress>,
   events: array<Types.eventName>,
 }
 
@@ -66,13 +66,15 @@ let config: chainConfigs = [
     "1337",
     {
       provider: Ethers.JsonRpcProvider.make(~rpcUrl="http://localhost:8545", ~chainId=1337),
-      startBlock: 0,
+      startBlock: 1,
       chainId: 1337,
       contracts: [
         {
           name: "Gravatar",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
-          address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe,
+          addresses: [
+            "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe,
+          ],
           events: [
             GravatarContract_TestEventEvent,
             GravatarContract_NewGravatarEvent,
@@ -82,13 +84,15 @@ let config: chainConfigs = [
         {
           name: "NftFactory",
           abi: Abis.nftFactoryAbi->Ethers.makeAbi,
-          address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Ethers.getAddressFromStringUnsafe,
+          addresses: [
+            "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Ethers.getAddressFromStringUnsafe,
+          ],
           events: [NftFactoryContract_SimpleNftCreatedEvent],
         },
         {
           name: "SimpleNft",
           abi: Abis.simpleNftAbi->Ethers.makeAbi,
-          address: "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"->Ethers.getAddressFromStringUnsafe,
+          addresses: [],
           events: [SimpleNftContract_TransferEvent],
         },
       ],
