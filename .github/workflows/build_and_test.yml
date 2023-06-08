@@ -49,9 +49,12 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            target
+            # using both of these paths to hedge bets on which is correct.
+            ./codegenerator/target
+            ./target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
             ${{ runner.os }}-cargo-
 
       - name: Cache (hardhat) Solidity
@@ -61,6 +64,7 @@ jobs:
           path: ~/.cache/hardhat-nodejs
           key: ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.config.*s') }}
           restore-keys: |
+            ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.config.*s') }}
             ${{ runner.os }}-solidity-hardhat-
 
       - uses: pnpm/action-setup@v2
@@ -79,6 +83,7 @@ jobs:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
+            ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
             ${{ runner.os }}-pnpm-store-
 
       - name: Cargo Build
