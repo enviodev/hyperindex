@@ -1,5 +1,5 @@
-type BlankEntity @entity {
+type AwesomeEntity @entity {
   id: ID!
-  field1: String!
-  field2: String!
+  awesomeField1: String!
+  awesomeField2: String!
 }
