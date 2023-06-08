@@ -122,34 +122,21 @@ let eventBatch: array<Types.event> = [
   GravatarContract_UpdatedGravatar(updatedGravatarEventLog3),
 ]
 
-let newGravatarEventPromise = (
-  e: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs>,
-): EventFetching.eventBatchPromise => {
-  {
-    blockNumber: e.blockNumber,
-    logIndex: e.logIndex,
-    eventPromise: Promise.resolve(Types.GravatarContract_NewGravatar(e)),
+let eventPromises = eventBatch->Belt.Array.map((e): EventFetching.eventBatchPromise =>
+  switch e {
+  | GravatarContract_NewGravatar(el) => {
+      blockNumber: el.blockNumber,
+      logIndex: el.logIndex,
+      eventPromise: Promise.resolve(e),
+    }
+  | GravatarContract_UpdatedGravatar(el) => {
+      blockNumber: el.blockNumber,
+      logIndex: el.logIndex,
+      eventPromise: Promise.resolve(e),
+    }
+  | _ => Js.Exn.raiseError("I couldn't figure out how to make this method polymorphic")
   }
-}
-
-let updatedGravatarEventPromise = (
-  e: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs>,
-): EventFetching.eventBatchPromise => {
-  {
-    blockNumber: e.blockNumber,
-    logIndex: e.logIndex,
-    eventPromise: Promise.resolve(Types.GravatarContract_UpdatedGravatar(e)),
-  }
-}
-
-let eventPromises: array<EventFetching.eventBatchPromise> = [
-  newGravatarEventPromise(newGravatarEventLog1),
-  newGravatarEventPromise(newGravatarEventLog2),
-  newGravatarEventPromise(newGravatarEventLog3),
-  updatedGravatarEventPromise(updatedGravatarEventLog1),
-  updatedGravatarEventPromise(updatedGravatarEventLog2),
-  updatedGravatarEventPromise(updatedGravatarEventLog3),
-]
+)
 
 let eventBatchWithContext: array<Types.eventAndContext> = [
   GravatarContract_NewGravatarWithContext(newGravatarEventLog1, ContextMock.mockNewGravatarContext),
