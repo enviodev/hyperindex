@@ -100,21 +100,20 @@ let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlo
 
   Js.log3("Intiating Combined Query Filter fromBlock toBlock: ", fromBlock, toBlock)
 
-  let task = () =>
-    provider
-    ->Ethers.JsonRpcProvider.getLogs(
-      ~filter={combinedFilter->Ethers.CombinedFilter.combinedFilterToFilter},
-    )
-    ->Promise.thenResolve(res => {
-      Js.log3("Successful Combined Query Filter fromBlock toBlock: ", fromBlock, toBlock)
-      res
-    })
-
-  Time.retryOnCatchAfterDelay(
-    ~retryDelayMilliseconds=5000,
-    ~retryMessage=`Failed combined query filter from block ${fromBlock->Belt.Int.toString} to block ${toBlock->Belt.Int.toString}`,
-    ~task,
+  provider
+  ->Ethers.JsonRpcProvider.getLogs(
+    ~filter={combinedFilter->Ethers.CombinedFilter.combinedFilterToFilter},
   )
+  ->Promise.thenResolve(res => {
+    Js.log3("Successful Combined Query Filter fromBlock toBlock: ", fromBlock, toBlock)
+    res
+  })
+  ->Promise.catch(err => {
+    Logging.info(
+      `Failed combined query filter from block ${fromBlock->Belt.Int.toString} to block ${toBlock->Belt.Int.toString}`,
+    )
+    err->Promise.reject
+  })
 }
 
 let convertLogs = (
@@ -225,11 +224,12 @@ let convertLogs = (
     ->Promise.all
   }
 
-  Time.retryOnCatchAfterDelay(
-    ~retryDelayMilliseconds=backoffMillis,
-    ~retryMessage=`Failed to handle event logs from block ${fromBlockForLogging->Belt.Int.toString} to block ${toBlockForLogging->Belt.Int.toString}`,
-    ~task,
-  )
+  task()->Promise.catch(err => {
+    Logging.info(
+      `Failed to handle event logs from block ${fromBlockForLogging->Belt.Int.toString} to block ${toBlockForLogging->Belt.Int.toString}`,
+    )
+    err->Promise.reject
+  })
 }
 
 let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
