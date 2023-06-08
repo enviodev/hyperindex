@@ -18,6 +18,7 @@
 *.annot
 *.cmj
 *.bak
+*.bs.js
 lib/*
 *.mlast
 *.mliast

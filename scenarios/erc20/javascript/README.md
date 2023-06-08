@@ -1,11 +1,3 @@
-## Open Zepplin ERC-20
-
-Install Open Zepplin contracts by running the following:
-
-```
-npm install @openzeppelin/contracts
-```
-
 ## Indexer Requirements
 
 The following files are required to use the Indexer:
