@@ -305,24 +305,6 @@ Please consider loading the a in the UpdateC entity loader to greatly improve sy
               }
             },
           },
-          a: {
-            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
-          },
-          b: {
-            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
-          },
-          c: {
-            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
-          },
         },
       }
     }
@@ -621,24 +603,6 @@ Please consider loading the a in the UpdateC entity loader to greatly improve sy
                 "NOT_IMPLEMENTED_YET"->Obj.magic
               }
             },
-          },
-          a: {
-            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
-          },
-          b: {
-            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
-          },
-          c: {
-            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
           },
         },
       }
@@ -954,24 +918,6 @@ Please consider loading the a in the UpdateC entity loader to greatly improve sy
               }
             },
           },
-          a: {
-            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
-          },
-          b: {
-            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
-          },
-          c: {
-            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
-          },
         },
       }
     }
@@ -1274,24 +1220,6 @@ Please consider loading the a in the UpdateC entity loader to greatly improve sy
                 "NOT_IMPLEMENTED_YET"->Obj.magic
               }
             },
-          },
-          a: {
-            insert: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.A.setA(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(a) with ID ${id}.`),
-          },
-          b: {
-            insert: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.B.setB(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(b) with ID ${id}.`),
-          },
-          c: {
-            insert: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Create, ~eventData)},
-            update: entity => {IO.InMemoryStore.C.setC(~entity, ~crud=Types.Update, ~eventData)},
-            delete: id =>
-              Logging.warn(`[unimplemented delete] can't delete entity(c) with ID ${id}.`),
           },
         },
       }
