@@ -15,7 +15,7 @@ Example config file from ERC-20 scenario:
 ```yaml
 version: 1.0.0
 description: ERC-20 indexer
-repository: https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/contracts/token/ERC20
+repository: https://github.com/Envio/templates/ERC20
 networks:
   - id: 1337
     rpc_url: http://localhost:8545
