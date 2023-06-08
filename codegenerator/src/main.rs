@@ -201,7 +201,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         CommandType::Local(local_commands) => {
-            // let local_command_line_args = LocalCommandLineArgs::parse();
             match local_commands {
                 cli_args::LocalCommandTypes::Docker(args) => {
                     let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
