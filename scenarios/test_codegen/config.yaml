@@ -12,7 +12,10 @@ networks:
         handler: ./src/EventHandlers.bs.js
         events:
           - event: "TestEvent"
-            requiredEntities: [] # empty signifies no requirements
+            requiredEntities: 
+              - name: "A"
+                labels:
+                  - "testingA"
           - event: "NewGravatar"
             requiredEntities: [] # empty signifies no requirements
           - event: "UpdatedGravatar"

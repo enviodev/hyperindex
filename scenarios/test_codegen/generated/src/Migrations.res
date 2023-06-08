@@ -143,6 +143,45 @@ module Token = {
   }
 }
 
+module A = {
+  let createATable: unit => promise<unit> = async () => {
+    await %raw(
+      "sql`CREATE TABLE \"public\".\"a\" (\"id\" text NOT NULL,\"b\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+    )
+  }
+
+  let deleteATable: unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"a\";`")
+  }
+}
+
+module B = {
+  let createBTable: unit => promise<unit> = async () => {
+    await %raw(
+      "sql`CREATE TABLE \"public\".\"b\" (\"id\" text NOT NULL,\"a\" text[] NOT NULL,\"c\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+    )
+  }
+
+  let deleteBTable: unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"b\";`")
+  }
+}
+
+module C = {
+  let createCTable: unit => promise<unit> = async () => {
+    await %raw(
+      "sql`CREATE TABLE \"public\".\"c\" (\"id\" text NOT NULL,\"a\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+    )
+  }
+
+  let deleteCTable: unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"c\";`")
+  }
+}
+
 let deleteAllTables: unit => promise<unit> = async () => {
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
 
@@ -168,6 +207,9 @@ let runUpMigrations = async () => {
   await Gravatar.createGravatarTable()
   await Nftcollection.createNftcollectionTable()
   await Token.createTokenTable()
+  await A.createATable()
+  await B.createBTable()
+  await C.createCTable()
 }
 
 let runDownMigrations = async () => {
@@ -179,6 +221,12 @@ let runDownMigrations = async () => {
   // await Nftcollection.deleteNftcollectionTable()
   //
   // await Token.deleteTokenTable()
+  //
+  // await A.deleteATable()
+  //
+  // await B.deleteBTable()
+  //
+  // await C.deleteCTable()
   //
 
   await RawEventsTable.dropRawEventsTable()

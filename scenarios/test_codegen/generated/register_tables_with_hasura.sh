@@ -54,6 +54,42 @@ curl -X POST localhost:8080/v1/metadata \
     "name": "token"
   }
 }'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+  "type": "pg_track_table",
+  "args": {
+    "source": "public",
+    "schema": "public",
+    "name": "a"
+  }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+  "type": "pg_track_table",
+  "args": {
+    "source": "public",
+    "schema": "public",
+    "name": "b"
+  }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+  "type": "pg_track_table",
+  "args": {
+    "source": "public",
+    "schema": "public",
+    "name": "c"
+  }
+}'
 # reference: https://hasura.io/docs/latest/api-reference/metadata-api/permission/#metadata-pg-create-select-permission
 
 #Do this for the raw events table as well
@@ -140,6 +176,54 @@ curl -X POST localhost:8080/v1/metadata \
     "type": "pg_create_select_permission",
     "args": {
         "table": "token",
+        "role": "public",
+        "source": "default",
+        "permission": {
+            "columns": "*",
+            "filter": {}
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_select_permission",
+    "args": {
+        "table": "a",
+        "role": "public",
+        "source": "default",
+        "permission": {
+            "columns": "*",
+            "filter": {}
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_select_permission",
+    "args": {
+        "table": "b",
+        "role": "public",
+        "source": "default",
+        "permission": {
+            "columns": "*",
+            "filter": {}
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_select_permission",
+    "args": {
+        "table": "c",
         "role": "public",
         "source": "default",
         "permission": {
@@ -279,6 +363,86 @@ curl -X POST localhost:8080/v1/metadata \
                 "remote_table" : "user",
                 "column_mapping" : {
                     "owner" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "a",
+        "name": "bMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "b",
+                "column_mapping" : {
+                    "b" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_array_relationship",
+    "args": {
+        "table": "b",
+        "name": "aMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "a",
+                "column_mapping" : {
+                    "a" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "b",
+        "name": "cMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "c",
+                "column_mapping" : {
+                    "c" : "id"
+                }
+            }
+        }
+    }
+}'
+curl -X POST localhost:8080/v1/metadata \
+  -H "Content-Type: application/json" \
+  -H "X-Hasura-Role: admin" \
+  -H "X-Hasura-Admin-Secret: testing" \
+  -d '{
+    "type": "pg_create_object_relationship",
+    "args": {
+        "table": "c",
+        "name": "aMap",
+        "source": "default",
+        "using": {
+            "manual_configuration" : {
+                "remote_table" : "a",
+                "column_mapping" : {
+                    "a" : "id"
                 }
             }
         }

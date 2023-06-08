@@ -140,22 +140,22 @@ module {{event.name.capitalized}}Event = {
         {{#each required_entity.labels as |label| }}
         {{label}}: unit => option<{{required_entity.name.uncapitalized}}Entity>,
         {{/each}}
-        {{#each required_entity.entity_fields_of_required_entity as | entity_field_of_required_entity |}}
-        // TODO: make this type correspond to if the field is optional or not.
-          get{{entity_field_of_required_entity.field_name.capitalized}}: {{entity.name.uncapitalized}}Entity => 
-          {{#if entity_field_of_required_entity.is_optional}}
-            option<{{entity_field_of_required_entity.type_name.uncapitalized}}Entity>,
-          {{else}}
-            {{#if entity_field_of_required_entity.is_array}}
-              array<{{entity_field_of_required_entity.type_name.uncapitalized}}Entity>,
-            {{else}}
-              {{entity_field_of_required_entity.type_name.uncapitalized}}Entity,
-            {{/if}}
-          {{/if}}
-        {{/each}}
       {{/if}}
 
     {{/each}}
+    {{#each entity.relational_params as | entity_field |}}
+      // TODO: make this type correspond to if the field is optional or not.
+        get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}}Entity => 
+        {{#if entity_field.is_optional}}
+          option<{{entity_field.mapped_entity.uncapitalized}}Entity>,
+        {{else}}
+          {{#if entity_field.is_array}}
+            array<{{entity_field.mapped_entity.uncapitalized}}Entity>,
+          {{else}}
+            {{entity_field.mapped_entity.uncapitalized}}Entity,
+          {{/if}}
+        {{/if}}
+      {{/each}}
       insert: {{entity.name.uncapitalized}}Entity => unit,
       update: {{entity.name.uncapitalized}}Entity => unit,
       delete: id => unit,
