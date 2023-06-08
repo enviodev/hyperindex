@@ -29,3 +29,17 @@ type Token @entity {
   collection: Nftcollection!
   owner: User!
 }
+
+type A @entity {
+  id: ID!
+  b: B!
+}
+type B @entity {
+  id: ID!
+  a: [A!]!
+  c: C!
+}
+type C @entity {
+  id: ID!
+  a: A!
+}

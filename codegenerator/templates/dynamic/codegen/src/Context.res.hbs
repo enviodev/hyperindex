@@ -7,9 +7,10 @@ module {{contract.name.capitalized}}Contract = {
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
       getContext: (~eventData: Types.eventData) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
-      getEntitiesToLoad: unit => array<Types.entityRead>
+      getEntitiesToLoad: unit => array<Types.entityRead>,
+      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
-    let contextCreator: unit => contextCreatorFunctions = () => {
+    let contextCreator: (~chainId: int, ~event: Types.eventLog<'a>) => contextCreatorFunctions = (~chainId, ~event) => {
       {{#each event.required_entities as | required_entity |}}
       {{#each required_entity.labels as |label| }}
       let optIdOf_{{label}} = ref(None)
@@ -18,8 +19,38 @@ module {{contract.name.capitalized}}Contract = {
 
       let entitiesToLoad: array<Types.entityRead> = []
 
+      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
+
       @warning("-16")
       let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext = {
+        contractRegistration: {
+        {{#each ../../contracts as |contract_inner| }}
+          //TODO only add contracts we've registered for the event in the config
+          add{{contract_inner.name.capitalized}}: (contractAddress: Ethers.ethAddress) => 
+          {
+            let eventId = EventUtils.packEventIndex(
+              ~blockNumber=event.blockNumber,
+              ~logIndex=event.logIndex,
+            )
+            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+              chainId,
+              eventId,
+              contractAddress,
+              contractType: "{{contract_inner.name.capitalized}}",
+            }
+
+            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(~entity=dynamicContractRegistration, ~crud=Types.Create)
+
+             Converters.ContractNameAddressMappings.addContractAddress(
+              ~chainId,
+              ~contractAddress,
+              ~contractName="{{contract_inner.name.capitalized}}",
+            )
+          },
+        {{/each}}
+        },
       {{#each event.required_entities as | required_entity |}}
         {{required_entity.name.uncapitalized}}: {
       {{#each required_entity.labels as |label| }}
@@ -34,6 +65,7 @@ module {{contract.name.capitalized}}Contract = {
       }
       {
         getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getContext: (~eventData) => ({
           {{#each ../../entities as | entity |}}
@@ -46,43 +78,43 @@ module {{contract.name.capitalized}}Contract = {
                   {{#each required_entity.labels as |label| }}
                   {{label}}: () => optIdOf_{{label}}.contents->Belt.Option.flatMap(id => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)),
                   {{/each}}
-                  {{#each required_entity.entity_fields_of_required_entity as | entity_field_of_required_entity |}}
-              get{{entity_field_of_required_entity.field_name.capitalized}}: {{entity.name.uncapitalized}} => {
-                {{#if entity_field_of_required_entity.is_array}}
-                      let {{entity_field_of_required_entity.field_name.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field_of_required_entity.field_name.uncapitalized}}->Belt.Array.map(entityId => {
-                        let optEntity = IO.InMemoryStore.{{entity_field_of_required_entity.type_name.capitalized}}.get{{entity_field_of_required_entity.type_name.capitalized}}(~id=entityId)
-
-                        switch optEntity {
-                      | Some({{entity_field_of_required_entity.field_name.uncapitalized}}) => {{entity_field_of_required_entity.field_name.uncapitalized}}
-                      | None =>
-                        Logging.warn(`{{entity.name.capitalized}} {{entity_field_of_required_entity.field_name.uncapitalized}} data not found. Loading associated {{entity_field_of_required_entity.type_name.uncapitalized}} from database.
-Please consider loading the {{entity_field_of_required_entity.type_name.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
-`)
-                // TODO: this isn't implemented yet. We should fetch a {{entity_field_of_required_entity.type_name.uncapitalized}} with this ID from the database.
-                "NOT_IMPLEMENTED_YET"->Obj.magic
-              }})
-              {{entity_field_of_required_entity.field_name.uncapitalized}}Array
-                    {{else}}
-                    {{#if entity_field_of_required_entity.is_optional}}
-                      let opt{{entity_field_of_required_entity.field_name.capitalized}} = {{entity.name.uncapitalized}}.{{entity_field_of_required_entity.field_name.uncapitalized}}->Belt.Option.map(entityFieldId => IO.InMemoryStore.{{entity_field_of_required_entity.type_name.capitalized}}.get{{entity_field_of_required_entity.type_name.capitalized}}(~id=entityFieldId))
-                    {{else}}
-                        let opt{{entity_field_of_required_entity.field_name.capitalized}} = IO.InMemoryStore.{{entity_field_of_required_entity.type_name.capitalized}}.get{{entity_field_of_required_entity.type_name.capitalized}}(~id={{entity.name.uncapitalized}}.{{entity_field_of_required_entity.field_name.uncapitalized}})
-                    {{/if}}
-                      switch opt{{entity_field_of_required_entity.field_name.capitalized}} {
-                      | Some({{entity_field_of_required_entity.field_name.uncapitalized}}) => {{entity_field_of_required_entity.field_name.uncapitalized}}
-                      | None =>
-                        Logging.warn(`{{entity.name.capitalized}} {{entity_field_of_required_entity.field_name.uncapitalized}} data not found. Loading associated {{entity_field_of_required_entity.type_name.uncapitalized}} from database.
-Please consider loading the {{entity_field_of_required_entity.type_name.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
-`)
-                // TODO: this isn't implemented yet. We should fetch a {{entity_field_of_required_entity.type_name.uncapitalized}} with this ID from the database.
-                "NOT_IMPLEMENTED_YET"->Obj.magic
-              }
-                  {{/if}}
-            },
-
-                  {{/each}}
                 {{/if}}
               {{/each}}
+              {{#each entity.relational_params as | entity_field |}}
+              get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}} => {
+                {{#if entity_field.is_array}}
+                  let {{entity_field.relational_key.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Array.map(entityId => {
+                    let optEntity = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id=entityId)
+
+                    switch optEntity {
+                  | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
+                  | None =>
+                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+`)
+            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
+            "NOT_IMPLEMENTED_YET"->Obj.magic
+          }})
+          {{entity_field.relational_key.uncapitalized}}Array
+                {{else}}
+                {{#if entity_field.is_optional}}
+                // is optional!
+                  let opt{{entity_field.relational_key.capitalized}} = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Option.map(entityFieldId => IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id=entityFieldId))
+                {{else}}
+                    let opt{{entity_field.relational_key.capitalized}} = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id={{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}})
+                {{/if}}
+                  switch opt{{entity_field.relational_key.capitalized}} {
+                  | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
+                  | None =>
+                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+`)
+            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
+            "NOT_IMPLEMENTED_YET"->Obj.magic
+          }
+              {{/if}}
+            },
+            {{/each}}
             },
           {{/each}}
         })

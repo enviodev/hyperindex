@@ -1,0 +1,10 @@
+{
+  "name": "erc20",
+  "version": "0.1.0",
+  "scripts": {
+    "start": "node generated/src/Index.bs.js"
+  },
+  "dependencies": {
+    "generated": "workspace:*"
+  }
+}

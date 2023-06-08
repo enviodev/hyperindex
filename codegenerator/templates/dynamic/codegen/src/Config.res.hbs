@@ -1,7 +1,7 @@
 type contract = {
   name: string,
   abi: Ethers.abi,
-  address: Ethers.ethAddress,
+  addresses: array<Ethers.ethAddress>,
   events: array<Types.eventName>,
 }
 
@@ -65,7 +65,8 @@ let config: chainConfigs = [
 (
   "{{chain_config.network_config.id}}",
   {
-    provider: Ethers.JsonRpcProvider.make(~rpcUrl="{{chain_config.network_config.rpc_url}}", ~chainId={{chain_config.network_config.id}}),
+    provider: Ethers.JsonRpcProvider.make(~rpcUrl="{{chain_config.network_config.rpc_url}}",
+     ~chainId={{chain_config.network_config.id}}),
     startBlock: {{chain_config.network_config.start_block}},
     chainId: {{chain_config.network_config.id}},
     contracts: [
@@ -73,7 +74,11 @@ let config: chainConfigs = [
       {
         name: "{{contract.name.capitalized}}",
           abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
-          address: "{{contract.address}}"->Ethers.getAddressFromStringUnsafe,
+          addresses: [
+          {{#each contract.addresses as | address |}}
+            "{{address}}"->Ethers.getAddressFromStringUnsafe,
+          {{/each}}
+          ],
           events: [
             {{#each contract.events as | event |}}
             {{contract.name.capitalized}}Contract_{{event.capitalized}}Event,

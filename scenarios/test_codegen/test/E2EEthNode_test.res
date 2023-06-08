@@ -35,7 +35,9 @@ describe("E2E Integration Test", () => {
         {
           name: "GravatarRegistry",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
-          address: "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
+          addresses: [
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
+          ],
           events: [GravatarContract_NewGravatarEvent, GravatarContract_UpdatedGravatarEvent],
         },
       ],

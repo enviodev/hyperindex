@@ -48,12 +48,20 @@ type rawEventsEntity = {
   @as("log_index") logIndex: int,
   @as("transaction_index") transactionIndex: int,
   @as("transaction_hash") transactionHash: string,
-  @as("src_address") srcAddress: string,
+  @as("src_address") srcAddress: Ethers.ethAddress,
   @as("block_hash") blockHash: string,
   @as("block_timestamp") blockTimestamp: int,
   @as("event_type") eventType: Js.Json.t,
   params: string,
 }
+
+type dynamicContractRegistryEntity = {
+  @as("chain_id") chainId: int,
+  @as("event_id") eventId: Ethers.BigInt.t,
+  @as("contract_address") contractAddress: Ethers.ethAddress,
+  @as("contract_type") contractType: string,
+}
+
 
 {{#each entities as | entity |}}
 @genType
@@ -109,7 +117,7 @@ type eventLog<'a> = {
   blockNumber: int,
   blockTimestamp: int,
   blockHash: string,
-  srcAddress: string,
+  srcAddress: Ethers.ethAddress,
   transactionHash: string,
   transactionIndex: int,
   logIndex: int,
@@ -132,22 +140,22 @@ module {{event.name.capitalized}}Event = {
         {{#each required_entity.labels as |label| }}
         {{label}}: unit => option<{{required_entity.name.uncapitalized}}Entity>,
         {{/each}}
-        {{#each required_entity.entity_fields_of_required_entity as | entity_field_of_required_entity |}}
-        // TODO: make this type correspond to if the field is optional or not.
-          get{{entity_field_of_required_entity.field_name.capitalized}}: {{entity.name.uncapitalized}}Entity => 
-          {{#if entity_field_of_required_entity.is_optional}}
-            option<{{entity_field_of_required_entity.type_name.uncapitalized}}Entity>,
-          {{else}}
-            {{#if entity_field_of_required_entity.is_array}}
-              array<{{entity_field_of_required_entity.type_name.uncapitalized}}Entity>,
-            {{else}}
-              {{entity_field_of_required_entity.type_name.uncapitalized}}Entity,
-            {{/if}}
-          {{/if}}
-        {{/each}}
       {{/if}}
 
     {{/each}}
+    {{#each entity.relational_params as | entity_field |}}
+      // TODO: make this type correspond to if the field is optional or not.
+        get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}}Entity => 
+        {{#if entity_field.is_optional}}
+          option<{{entity_field.mapped_entity.uncapitalized}}Entity>,
+        {{else}}
+          {{#if entity_field.is_array}}
+            array<{{entity_field.mapped_entity.uncapitalized}}Entity>,
+          {{else}}
+            {{entity_field.mapped_entity.uncapitalized}}Entity,
+          {{/if}}
+        {{/if}}
+      {{/each}}
       insert: {{entity.name.uncapitalized}}Entity => unit,
       update: {{entity.name.uncapitalized}}Entity => unit,
       delete: id => unit,
@@ -169,9 +177,18 @@ module {{event.name.capitalized}}Event = {
     }
     {{/each}}
 
-    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
+    
+    @genType
+    type contractRegistrations = {
+    {{#each ../../contracts as |contract_inner| }}
+      //TODO only add contracts we've registered for the event in the config
+      add{{contract_inner.name.capitalized}}: (Ethers.ethAddress) => unit,
+    {{/each}}
+    }
     @genType
     type loaderContext = {
+        contractRegistration: contractRegistrations,
+    // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
     {{#each event.required_entities as | required_entity |}}
     {{required_entity.name.uncapitalized}} : {{required_entity.name.uncapitalized}}EntityLoaderContext,
     {{/each}}
@@ -210,4 +227,3 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{/each}}
   {{/each}}
 }
-

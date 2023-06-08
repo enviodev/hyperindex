@@ -18,8 +18,9 @@ impl InitArgs {
             Some(args_template) => args_template.clone(),
             None => {
                 use Template::Greeter;
+                use Template::Erc20;
 
-                let options = vec![Greeter]
+                let options = vec![Greeter, Erc20]
                     .iter()
                     .map(|template| {
                         serde_json::to_string(template).expect("Enum should be serializable")

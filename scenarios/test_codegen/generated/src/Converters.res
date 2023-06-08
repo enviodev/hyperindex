@@ -1,17 +1,86 @@
+type contractName = string
+type chainId = int
 exception UndefinedEvent(string)
-exception UndefinedContract(Ethers.ethAddress, int)
+exception UndefinedContractAddress(Ethers.ethAddress, chainId)
+exception UndefinedContractName(contractName, chainId)
 
-let getContractNameFromAddress = (contractAddress: Ethers.ethAddress, chainId: int): string => {
-  switch (contractAddress->Ethers.ethAddressToString, chainId->Belt.Int.toString) {
-  // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-  | ("0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3", "1337") => "Gravatar"
-  // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-  | ("0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC", "1337") => "NftFactory"
-  // TODO: make 'contracts' be per contract type/name, and have addresses as an array inside each contract.
-  | ("0x93606B31d10C407F13D9702eC4E0290Fd7E32852", "1337") => "SimpleNft"
-  | _ => UndefinedContract(contractAddress, chainId)->raise
+module ContractNameAddressMappings: {
+  let getContractNameFromAddress: (~chainId: int, ~contractAddress: Ethers.ethAddress) => string
+  let addContractAddress: (
+    ~chainId: int,
+    ~contractName: string,
+    ~contractAddress: Ethers.ethAddress,
+  ) => unit
+  let getAddressesFromContractName: (
+    ~chainId: int,
+    ~contractName: string,
+  ) => array<Ethers.ethAddress>
+  let registerStaticAddresses: (~chainConfig: Config.chainConfig) => unit
+} = {
+  let globalMutable = ContractAddressingMap.makeChainMappings()
+
+  let addContractAddress = (
+    ~chainId: int,
+    ~contractName: string,
+    ~contractAddress: Ethers.ethAddress,
+  ) => {
+    globalMutable->ContractAddressingMap.addChainAddress(~chainId, ~contractName, ~contractAddress)
+  }
+
+  let getContractNameFromAddress = (~chainId: int, ~contractAddress: Ethers.ethAddress) => {
+    switch globalMutable->ContractAddressingMap.getChainRegistry(~chainId) {
+    | None =>
+      Logging.error(`chainId ${chainId->Belt.Int.toString} was not constructed in address mapping`)
+      UndefinedContractAddress(contractAddress, chainId)->raise
+    | Some(registry) =>
+      switch ContractAddressingMap.getName(registry, contractAddress->Ethers.ethAddressToString) {
+      | None => {
+          Logging.error(
+            `contract address ${contractAddress->Ethers.ethAddressToString} on chainId ${chainId->Belt.Int.toString} was not found in address store`,
+          )
+          UndefinedContractAddress(contractAddress, chainId)->raise
+        }
+
+      | Some(contractName) => contractName
+      }
+    }
+  }
+
+  let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Obj.magic
+
+  let getAddressesFromContractName = (~chainId, ~contractName) => {
+    switch globalMutable->ContractAddressingMap.getChainRegistry(~chainId) {
+    | None => {
+        Logging.error(
+          `chainId ${chainId->Belt.Int.toString} was not constructed in address mapping`,
+        )
+        UndefinedContractName(contractName, chainId)->raise
+      }
+
+    | Some(registry) =>
+      switch ContractAddressingMap.getAddresses(registry, contractName) {
+      | Some(addresses) => addresses
+      | None => Belt.Set.String.empty
+      }
+      ->Belt.Set.String.toArray
+      ->stringsToAddresses
+    }
+  }
+
+  // Insert the static address into the Contract <-> Address bi-mapping
+  let registerStaticAddresses = (~chainConfig: Config.chainConfig) => {
+    chainConfig.contracts->Belt.Array.forEach(contract => {
+      contract.addresses->Belt.Array.forEach(address => {
+        globalMutable->ContractAddressingMap.addChainAddress(
+          ~chainId=chainConfig.chainId,
+          ~contractName=contract.name,
+          ~contractAddress=address,
+        )
+      })
+    })
   }
 }
+
 let eventStringToEvent = (eventName: string, contractName: string): Types.eventName => {
   switch (eventName, contractName) {
   | ("TestEvent", "Gravatar") => GravatarContract_TestEventEvent
@@ -47,7 +116,7 @@ module Gravatar = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
@@ -79,7 +148,7 @@ module Gravatar = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
@@ -113,7 +182,7 @@ module Gravatar = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
@@ -149,7 +218,7 @@ module NftFactory = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
@@ -182,7 +251,7 @@ module SimpleNft = {
       blockNumber: block.number,
       blockTimestamp: block.timestamp,
       blockHash: log.blockHash,
-      srcAddress: log.address->Ethers.ethAddressToString,
+      srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,

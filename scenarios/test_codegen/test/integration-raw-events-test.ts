@@ -16,18 +16,43 @@ import {
 import { deployContracts } from "./helpers/setupNodeAndContracts.js";
 
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
+import { ContractNameAddressMappings } from "generated/src/Converters.bs";
 
 require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
 describe("Raw Events Integration", () => {
   const sql = createSql();
+  let simpleNftContractAddress: string;
+  let nftFactoryContractAddress: string;
+  const getlocalChainConfig = (nftFactoryContractAddress: string) => {
+    const { provider } = hre.ethers;
+    return {
+      provider,
+      startBlock: 1,
+      chainId: 1337,
+      contracts: [
+        {
+          name: "NftFactory",
+          abi: nftFactoryAbi,
+          addresses: [nftFactoryContractAddress],
+          events: [EventVariants.NftFactoryContract_SimpleNftCreatedEvent],
+        },
+        {
+          name: "SimpleNft",
+          abi: simpleNftAbi,
+          addresses: [],
+          events: [EventVariants.SimpleNftContract_TransferEvent],
+        },
+      ],
+    };
+  };
 
   before(async function () {
     this.timeout(30 * 1000);
     await runMigrationsNoLogs();
     console.log("deploying Nft Factory");
     const deployedNftFactory = (await deployContracts()).nftFactory;
-    const nftFactoryContractAddress = await deployedNftFactory.getAddress();
+    nftFactoryContractAddress = await deployedNftFactory.getAddress();
     console.log(
       "Successfully deployed nftFactory at",
       nftFactoryContractAddress
@@ -47,7 +72,11 @@ describe("Raw Events Integration", () => {
       createNftTx.hash
     );
     const simplNftCreatedEvent = eventQuery[0];
-    const simpleNftContractAddress = simplNftCreatedEvent.args.contractAddress;
+
+    const localChainConfig = getlocalChainConfig(nftFactoryContractAddress);
+    registerAllHandlers();
+
+    simpleNftContractAddress = simplNftCreatedEvent.args.contractAddress;
     console.log("Created NFT at: ", simpleNftContractAddress);
 
     console.log("Minting Nft from user 1, 2 and 3");
@@ -63,32 +92,10 @@ describe("Raw Events Integration", () => {
     await Promise.all(mintTxs);
 
     console.log("Successfully minted");
-
-    const { provider } = hre.ethers;
-    const localChainConfig = {
-      provider,
-      startBlock: 0,
-      chainId: 1337,
-      contracts: [
-        {
-          name: "NftFactory",
-          abi: nftFactoryAbi,
-          address: nftFactoryContractAddress,
-          events: [EventVariants.NftFactoryContract_SimpleNftCreatedEvent],
-        },
-        {
-          name: "SimpleNft",
-          abi: simpleNftAbi,
-          address: simpleNftContractAddress,
-          events: [EventVariants.SimpleNftContract_TransferEvent],
-        },
-      ],
-    };
-
-    registerAllHandlers();
-    console.log("processing events");
-    await processAllEvents(localChainConfig);
     console.log("Successfully processed events");
+
+    console.log("processing events after mint");
+    await processAllEvents(localChainConfig);
   });
   after(async () => {
     await runMigrationsNoLogs();
@@ -116,5 +123,32 @@ describe("Raw Events Integration", () => {
     expect(rowsUsers.count).to.be.gt(0);
     let rowsToken = await sql`SELECT * FROM public.token`;
     expect(rowsToken.count).to.be.gt(0);
+  });
+
+  it("should have 1 row in the dynamic_contract_registry table", async function () {
+    let rowsDCR = await sql`SELECT * FROM public.dynamic_contract_registry`;
+    console.log(rowsDCR);
+    expect(rowsDCR.count).to.be.eq(1);
+  });
+
+  it("Tracks dynamic contract on restart", async () => {
+    let beforeRawEventsRows = await sql`SELECT * FROM public.raw_events`;
+    //TODO: fix this test, This indicates this test is ineffective but the structure is what we want to test
+    // below show that the contract address store is still populated with the contract
+    console.log(
+      "new contract",
+      ContractNameAddressMappings.getContractNameFromAddress(
+        1337,
+        "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"
+      )
+    );
+
+    mintSimpleNft(Users.User1, simpleNftContractAddress, 1);
+    const localChainConfig = getlocalChainConfig(nftFactoryContractAddress);
+
+    await processAllEvents(localChainConfig);
+
+    let afterRawEventsRows = await sql`SELECT * FROM public.raw_events`;
+    expect(afterRawEventsRows.count).to.be.gt(beforeRawEventsRows.count);
   });
 });
