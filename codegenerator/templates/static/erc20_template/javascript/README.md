@@ -24,7 +24,7 @@ networks:
       - name: ERC20
         abi_file_path: abis/erc20.json
         address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
-        handler: ./src/EventHandlers.bs.js
+        handler: ./src/EventHandlers.js
         events:
           - event: "Approval"
             requiredEntities: 

@@ -13,7 +13,7 @@ These files are auto-generated according to the ERC-20 template by running `envi
 Example config file from ERC-20 scenario:
 
 ```yaml
-version: 1.0.0
+vversion: 1.0.0
 description: ERC-20 indexer
 repository: https://github.com/Envio/templates/ERC20
 networks:
