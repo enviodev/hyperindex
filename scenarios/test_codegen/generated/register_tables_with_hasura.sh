@@ -70,7 +70,7 @@ curl -X POST localhost:8080/v1/metadata \
   }
 }'
 
-#Do this for the raw events table as well
+#Do this for the dynamic_contract_registry as well
 curl -X POST localhost:8080/v1/metadata \
   -H "Content-Type: application/json" \
   -H "X-Hasura-Role: admin" \
@@ -166,7 +166,7 @@ curl -X POST localhost:8080/v1/metadata \
         }
     }
 }'
-#Do this for the raw events table as well
+#Do this for the dynamic_contract_registry table as well
 curl -X POST localhost:8080/v1/metadata \
   -H "Content-Type: application/json" \
   -H "X-Hasura-Role: admin" \

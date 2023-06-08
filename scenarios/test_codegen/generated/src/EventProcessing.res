@@ -165,9 +165,13 @@ let rec loadReadEntitiesInner = async (
 
           let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
 
-          nestedResults
-          ->Js.Array2.push(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
-          ->ignore
+          if Belt.Array.length(dynamicContracts) > 0 {
+            nestedResults
+            ->Js.Array2.push(
+              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
+            )
+            ->ignore
+          }
 
           {
             entityReads: contextHelper.getEntitiesToLoad(),
@@ -194,9 +198,13 @@ let rec loadReadEntitiesInner = async (
 
           let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
 
-          nestedResults
-          ->Js.Array2.push(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
-          ->ignore
+          if Belt.Array.length(dynamicContracts) > 0 {
+            nestedResults
+            ->Js.Array2.push(
+              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
+            )
+            ->ignore
+          }
 
           {
             entityReads: contextHelper.getEntitiesToLoad(),
@@ -223,9 +231,13 @@ let rec loadReadEntitiesInner = async (
 
           let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
 
-          nestedResults
-          ->Js.Array2.push(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
-          ->ignore
+          if Belt.Array.length(dynamicContracts) > 0 {
+            nestedResults
+            ->Js.Array2.push(
+              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
+            )
+            ->ignore
+          }
 
           {
             entityReads: contextHelper.getEntitiesToLoad(),
@@ -252,9 +264,13 @@ let rec loadReadEntitiesInner = async (
 
           let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
 
-          nestedResults
-          ->Js.Array2.push(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
-          ->ignore
+          if Belt.Array.length(dynamicContracts) > 0 {
+            nestedResults
+            ->Js.Array2.push(
+              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
+            )
+            ->ignore
+          }
 
           {
             entityReads: contextHelper.getEntitiesToLoad(),
