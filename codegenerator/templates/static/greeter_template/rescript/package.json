@@ -4,7 +4,7 @@
   "scripts": {
     "clean": "rescript clean -with-deps",
     "build": "rescript build -with-deps",
-    "start": "node generated/src/Index.bs.js",
+    "start": "pnpm build && node generated/src/Index.bs.js",
     "watch": "rescript build -w -with-deps"
   },
   "keywords": [

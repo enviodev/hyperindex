@@ -36,8 +36,17 @@ static GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/greeter_template/typescript");
 static GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/greeter_template/javascript");
+static ERC20_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
+    include_dir!("templates/static/erc20_template/shared");
+static ERC20_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/erc20_template/rescript");
+static ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/erc20_template/typescript");
+static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
+    include_dir!("templates/static/erc20_template/javascript");
 static INIT_TEMPLATES_SHARED_DIR: Dir<'_> =
-    include_dir::include_dir!("templates/dynamic/init_templates/shared");
+    include_dir!("templates/dynamic/init_templates/shared");
+
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
@@ -91,6 +100,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     //Copy in the rest of the shared greeter files
                     GREETER_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                }
+                Template::Erc20 => {
+                    //Copy in the relevant js flavor specific greeter files
+                    match &args.language {
+                        Language::Rescript => {
+                            ERC20_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                        }
+                        Language::Typescript => {
+                            ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
+                        }
+                        Language::Javascript => {
+                            ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                        }
+                    }
+                    //Copy in the rest of the shared greeter files
+                    ERC20_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
             }
 

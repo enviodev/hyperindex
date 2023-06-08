@@ -2,7 +2,7 @@ module FullWidthImage = {
   @react.component
   let make = (~src) => {
     <section
-      className="h-[300px] lg:h-[700px] md:h-[500px] my-4 relative flex justify-center items-center">
+      className="h-[300px] lg:h-[550px] md:h-[500px] my-4 relative flex justify-center items-center">
       <div className="w-full max-w-5xl flex justify-center items-center">
         <Next.Image src layout=#fill objectFit="contain" />
       </div>

@@ -7,9 +7,14 @@ module RawEventsTable = {
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'event_type') THEN
           CREATE TYPE EVENT_TYPE AS ENUM (
-          'GravatarContract_TestEventEvent',          'GravatarContract_NewGravatarEvent',          'GravatarContract_UpdatedGravatarEvent',
-          'NftFactoryContract_SimpleNftCreatedEvent',
+          'GravatarContract_TestEventEvent',
+                    'GravatarContract_NewGravatarEvent',
+                    'GravatarContract_UpdatedGravatarEvent'
+          ,
+          'NftFactoryContract_SimpleNftCreatedEvent'
+          ,
           'SimpleNftContract_TransferEvent'
+          
           );
         END IF;
       END $$;
@@ -39,6 +44,45 @@ module RawEventsTable = {
   let dropRawEventsTable = async () => {
     let _ = await %raw("sql`
       DROP TABLE IF EXISTS public.raw_events;
+    `")
+    let _ = await %raw("sql`
+      DROP TYPE IF EXISTS EVENT_TYPE CASCADE;
+    `")
+  }
+  @@warning("+21")
+}
+
+module DynamicContractRegistryTable = {
+  let createDynamicContractRegistryTable: unit => promise<unit> = async () => {
+    @warning("-21")
+    let _ = await %raw("sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'contract_type') THEN
+          CREATE TYPE CONTRACT_TYPE AS ENUM (
+          'Gravatar',
+          'NftFactory',
+          'SimpleNft'
+          );
+        END IF;
+      END $$;
+      `")
+
+    @warning("-21")
+    let _ = await %raw("sql`
+      CREATE TABLE public.dynamic_contract_registry (
+        chain_id INTEGER NOT NULL,
+        event_id NUMERIC NOT NULL,
+        contract_address TEXT NOT NULL,
+        contract_type CONTRACT_TYPE NOT NULL,
+        PRIMARY KEY (chain_id, contract_address)
+      );
+      `")
+  }
+
+  @@warning("-21")
+  let dropDynamicContractRegistryTable = async () => {
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.dynamic_contract_registry;
     `")
     let _ = await %raw("sql`
       DROP TYPE IF EXISTS EVENT_TYPE CASCADE;
@@ -99,6 +143,45 @@ module Token = {
   }
 }
 
+module A = {
+  let createATable: unit => promise<unit> = async () => {
+    await %raw(
+      "sql`CREATE TABLE \"public\".\"a\" (\"id\" text NOT NULL,\"b\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+    )
+  }
+
+  let deleteATable: unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"a\";`")
+  }
+}
+
+module B = {
+  let createBTable: unit => promise<unit> = async () => {
+    await %raw(
+      "sql`CREATE TABLE \"public\".\"b\" (\"id\" text NOT NULL,\"a\" text[] NOT NULL,\"c\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+    )
+  }
+
+  let deleteBTable: unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"b\";`")
+  }
+}
+
+module C = {
+  let createCTable: unit => promise<unit> = async () => {
+    await %raw(
+      "sql`CREATE TABLE \"public\".\"c\" (\"id\" text NOT NULL,\"a\" text NOT NULL, event_chain_id INTEGER NOT NULL, event_id NUMERIC NOT NULL, db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE (\"id\"));`"
+    )
+  }
+
+  let deleteCTable: unit => promise<unit> = async () => {
+    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"c\";`")
+  }
+}
+
 let deleteAllTables: unit => promise<unit> = async () => {
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
 
@@ -118,11 +201,15 @@ type t
 // TODO: all the migration steps should run as a single transaction
 let runUpMigrations = async () => {
   await RawEventsTable.createRawEventsTable()
+  await DynamicContractRegistryTable.createDynamicContractRegistryTable()
   // TODO: catch and handle query errors
   await User.createUserTable()
   await Gravatar.createGravatarTable()
   await Nftcollection.createNftcollectionTable()
   await Token.createTokenTable()
+  await A.createATable()
+  await B.createBTable()
+  await C.createCTable()
 }
 
 let runDownMigrations = async () => {
@@ -135,8 +222,15 @@ let runDownMigrations = async () => {
   //
   // await Token.deleteTokenTable()
   //
+  // await A.deleteATable()
+  //
+  // await B.deleteBTable()
+  //
+  // await C.deleteCTable()
+  //
 
   await RawEventsTable.dropRawEventsTable()
+  await DynamicContractRegistryTable.dropDynamicContractRegistryTable()
 
   // NOTE: For now delete any remaining tables.
   await deleteAllTables()

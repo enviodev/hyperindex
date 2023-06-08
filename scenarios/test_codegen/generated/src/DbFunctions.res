@@ -38,6 +38,40 @@ module RawEvents = {
   }
 }
 
+module DynamicContractRegistry = {
+  type contractAddress = Ethers.ethAddress
+  type dynamicContractRegistryRowId = (chainId, contractAddress)
+  @module("./DbFunctionsImplementation.js")
+  external batchSetDynamicContractRegistry: (
+    Postgres.sql,
+    array<Types.dynamicContractRegistryEntity>,
+  ) => promise<unit> = "batchSetDynamicContractRegistry"
+
+  @module("./DbFunctionsImplementation.js")
+  external batchDeleteDynamicContractRegistry: (
+    Postgres.sql,
+    array<dynamicContractRegistryRowId>,
+  ) => promise<unit> = "batchDeleteDynamicContractRegistry"
+
+  @module("./DbFunctionsImplementation.js")
+  external readDynamicContractRegistryEntities: (
+    Postgres.sql,
+    array<dynamicContractRegistryRowId>,
+  ) => promise<array<Types.dynamicContractRegistryEntity>> = "readDynamicContractRegistryEntities"
+
+  type contractTypeAndAddress = {
+    @as("contract_address") contractAddress: Ethers.ethAddress,
+    @as("contract_type") contractType: string,
+  }
+  ///Returns an array with 1 block number (the highest processed on the given chainId)
+  @module("./DbFunctionsImplementation.js")
+  external readDynamicContractsOnChainIdAtOrBeforeBlock: (
+    Postgres.sql,
+    ~chainId: chainId,
+    ~startBlock: int,
+  ) => promise<array<contractTypeAndAddress>> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
+}
+
 type readEntityData<'a> = {
   entity: 'a,
   eventData: Types.eventData,
@@ -224,4 +258,117 @@ module Token = {
   @module("./DbFunctionsImplementation.js")
   external readTokenEntities: (Postgres.sql, array<Types.id>) => promise<array<tokenReadRow>> =
     "readTokenEntities"
+}
+module A = {
+  open Types
+  type aReadRow = {
+    id: string,
+    b: id,
+    @as("event_chain_id") chainId: int,
+    @as("event_id") eventId: Ethers.BigInt.t,
+  }
+
+  let readRowToReadEntityData = (readRow: aReadRow): readEntityData<Types.aEntity> => {
+    let {id, b, chainId, eventId} = readRow
+
+    {
+      entity: {
+        id,
+        b,
+      },
+      eventData: {
+        chainId,
+        eventId: eventId->Ethers.BigInt.toString,
+      },
+    }
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external batchSetA: (
+    Postgres.sql,
+    array<Types.inMemoryStoreRow<Types.aEntitySerialized>>,
+  ) => promise<unit> = "batchSetA"
+
+  @module("./DbFunctionsImplementation.js")
+  external batchDeleteA: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteA"
+
+  @module("./DbFunctionsImplementation.js")
+  external readAEntities: (Postgres.sql, array<Types.id>) => promise<array<aReadRow>> =
+    "readAEntities"
+}
+module B = {
+  open Types
+  type bReadRow = {
+    id: string,
+    a: array<id>,
+    c: id,
+    @as("event_chain_id") chainId: int,
+    @as("event_id") eventId: Ethers.BigInt.t,
+  }
+
+  let readRowToReadEntityData = (readRow: bReadRow): readEntityData<Types.bEntity> => {
+    let {id, a, c, chainId, eventId} = readRow
+
+    {
+      entity: {
+        id,
+        a,
+        c,
+      },
+      eventData: {
+        chainId,
+        eventId: eventId->Ethers.BigInt.toString,
+      },
+    }
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external batchSetB: (
+    Postgres.sql,
+    array<Types.inMemoryStoreRow<Types.bEntitySerialized>>,
+  ) => promise<unit> = "batchSetB"
+
+  @module("./DbFunctionsImplementation.js")
+  external batchDeleteB: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteB"
+
+  @module("./DbFunctionsImplementation.js")
+  external readBEntities: (Postgres.sql, array<Types.id>) => promise<array<bReadRow>> =
+    "readBEntities"
+}
+module C = {
+  open Types
+  type cReadRow = {
+    id: string,
+    a: id,
+    @as("event_chain_id") chainId: int,
+    @as("event_id") eventId: Ethers.BigInt.t,
+  }
+
+  let readRowToReadEntityData = (readRow: cReadRow): readEntityData<Types.cEntity> => {
+    let {id, a, chainId, eventId} = readRow
+
+    {
+      entity: {
+        id,
+        a,
+      },
+      eventData: {
+        chainId,
+        eventId: eventId->Ethers.BigInt.toString,
+      },
+    }
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external batchSetC: (
+    Postgres.sql,
+    array<Types.inMemoryStoreRow<Types.cEntitySerialized>>,
+  ) => promise<unit> = "batchSetC"
+
+  @module("./DbFunctionsImplementation.js")
+  external batchDeleteC: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteC"
+
+  @module("./DbFunctionsImplementation.js")
+  external readCEntities: (Postgres.sql, array<Types.id>) => promise<array<cReadRow>> =
+    "readCEntities"
 }

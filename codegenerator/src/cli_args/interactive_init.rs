@@ -19,8 +19,9 @@ impl InitArgs {
             None => {
                 use Template::Blank;
                 use Template::Greeter;
+                use Template::Erc20;
 
-                let options = vec![Blank, Greeter]
+                let options = vec![Blank, Greeter, Erc20]
                     .iter()
                     .map(|template| {
                         serde_json::to_string(template).expect("Enum should be serializable")
