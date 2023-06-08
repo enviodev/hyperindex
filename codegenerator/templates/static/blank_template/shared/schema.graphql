@@ -1,0 +1,5 @@
+type BlankEntity @entity {
+  id: ID!
+  field1: String!
+  field2: String!
+}

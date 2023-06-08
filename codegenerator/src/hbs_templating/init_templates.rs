@@ -1,5 +1,8 @@
+use serde::Serialize;
+
 use crate::cli_args;
 
+#[derive(Serialize)]
 pub struct InitTemplates {
     project_name: String,
     is_rescript: bool,
