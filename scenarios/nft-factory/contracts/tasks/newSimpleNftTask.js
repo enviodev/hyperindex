@@ -13,5 +13,7 @@ task("new-simple-nft", "Create new simple nft collection")
       NftFactory.address
     );
 
+    console.log(NftFactory.address)
+
     await nftFactory.createNft(name, symbol, supply);
   });

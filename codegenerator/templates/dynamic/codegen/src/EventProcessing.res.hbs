@@ -42,31 +42,115 @@ let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   }
 }
 
-let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): array<Types.eventAndContext> => {
-  let result: array<(
-    array<Types.entityRead>,
-    Types.eventAndContext,
-  )> = eventBatch->Belt.Array.map(event => {
-      switch event {
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
-        | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
+type readEntitiesResult = {
+  blockNumber: int,
+  logIndex: int,
+  entityReads: array<Types.entityRead>,
+  eventAndContext: Types.eventAndContext,
+}
 
-        let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator()
-        Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}LoadEntities()(~event, ~context=contextHelper.getLoaderContext())
-        let { logIndex, blockNumber } = event
-        let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-        let context = contextHelper.getContext(~eventData={chainId, eventId: eventId->Ethers.BigInt.toString,})
-        (contextHelper.getEntitiesToLoad(), Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context))
-        }
-{{/each}}
-{{/each}}
-      }
+let rec loadReadEntitiesInner = async (
+  eventBatch: array<Types.event>,
+  ~chainConfig: Config.chainConfig,
+  ~blocksProcessed: EventFetching.blocksProcessed,
+) => {
+
+  let loadNestedReadEntities = async (
+    ~blockNumber,
+    ~logIndex,
+    ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
+  ) => {
+    let addressInterfaceMapping = Js.Dict.empty()
+
+    let eventFilters = dynamicContracts->Belt.Array.flatMap(contract => {
+      EventFetching.getSingleContractEventFilters(
+        ~contractAddress=contract.contractAddress,
+        ~chainConfig,
+        ~addressInterfaceMapping,
+      )
     })
 
+    let (fetchedEvents, nestedBlocksProcessed) = await EventFetching.getContractEventsOnFilters(
+      ~eventFilters,
+      ~addressInterfaceMapping,
+      ~fromBlock=blockNumber,
+      ~toBlock=blocksProcessed.to,
+      ~minFromBlockLogIndex=logIndex + 1,
+      ~maxBlockInterval=blocksProcessed.to - blockNumber + 1,
+      ~chainId=chainConfig.chainId,
+      ~provider=chainConfig.provider,
+      (),
+    )
 
-  let (readEntitiesGrouped, contexts): (array<array<Types.entityRead>>, array<Types.eventAndContext>) =
-  result->Belt.Array.unzip
+    await fetchedEvents->loadReadEntitiesInner(~chainConfig, ~blocksProcessed=nestedBlocksProcessed)
+  }
+
+  let baseResults: array<readEntitiesResult> = []
+  let nestedResults: array<array<readEntitiesResult>> = []
+
+  let chainId = chainConfig.chainId
+
+  for i in 0 to eventBatch->Belt.Array.length - 1 {
+    let event = eventBatch[i]
+
+    baseResults
+    ->Js.Array2.push(
+      switch event {
+      {{#each contracts as | contract |}}
+      {{#each contract.events as | event |}}
+        | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
+          let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~chainId, ~event)
+          Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}LoadEntities()(~event, ~context=contextHelper.getLoaderContext())
+          let {logIndex, blockNumber} = event
+          let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+          let context = contextHelper.getContext(
+            ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+          )
+
+          let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
+
+          if Belt.Array.length(dynamicContracts) > 0 {
+            nestedResults
+            ->Js.Array2.push(
+              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
+            )
+            ->ignore
+          }
+
+          {
+            entityReads: contextHelper.getEntitiesToLoad(), 
+            eventAndContext: Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
+            blockNumber,
+            logIndex
+          }
+        }
+      {{/each}}
+      {{/each}}
+      })->ignore
+    }
+
+  // Flatten the nested results into the origin results, but preserving the total order
+  let pairOrder = ({blockNumber, logIndex}) => (blockNumber, logIndex)
+
+  Belt.Array.reduce(nestedResults, baseResults, (acc, additionalResults) =>
+    Utils.mergeSorted(pairOrder, acc, additionalResults)
+  )
+}
+
+let loadReadEntities = async (
+  eventBatch: array<Types.event>,
+  ~chainConfig: Config.chainConfig,
+  ~blocksProcessed: EventFetching.blocksProcessed,
+): array<Types.eventAndContext> => {
+  let result = await eventBatch->loadReadEntitiesInner(~chainConfig, ~blocksProcessed)
+
+  let flattenResult = ({entityReads, eventAndContext}) => (entityReads, eventAndContext)
+
+  let (readEntitiesGrouped, contexts): (
+    array<array<Types.entityRead>>,
+    array<Types.eventAndContext>,
+  ) =
+    result->Belt.Array.map(flattenResult)->Belt.Array.unzip
 
   let readEntities = readEntitiesGrouped->Belt.Array.concatMany
 
@@ -75,12 +159,18 @@ let loadReadEntities = async (eventBatch: array<Types.event>, ~chainId: int): ar
   contexts
 }
 
-let processEventBatch = async (eventBatch: array<Types.event>, ~chainId) => {
+let processEventBatch = async (
+  eventBatch: array<Types.event>,
+  ~chainConfig,
+  ~blocksProcessed: EventFetching.blocksProcessed,
+) => {
   IO.InMemoryStore.resetStore()
 
-  let eventBatchAndContext = await eventBatch->loadReadEntities(~chainId)
+  let eventBatchAndContext = await eventBatch->loadReadEntities(~chainConfig, ~blocksProcessed)
 
-  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter(~chainId))
+  eventBatchAndContext->Belt.Array.forEach(event =>
+    event->eventRouter(~chainId=chainConfig.chainId)
+  )
 
   await DbFunctions.sql->IO.executeBatch
 }

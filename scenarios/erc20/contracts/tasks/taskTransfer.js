@@ -1,18 +1,18 @@
 task("transfer", "Create new account")
   .addParam(
-    "userFromIndex", // this is --user-index whe running via command line
+    "userFromIndex", // this is --user-from-index whe running via command line
     "user to send the transfer",
     undefined,
     types.int
   )
   .addParam(
-    "userToIndex", // this is --user-index whe running via command line
+    "userToIndex", // this is --user-to-index when running via command line
     "user to receive the transfer",
     undefined,
     types.int
   )
   .addParam(
-    "amount", // this is --user-index whe running via command line
+    "amount", // this is --amount when running via command line
     "amount to be transferred",
     undefined,
     types.int

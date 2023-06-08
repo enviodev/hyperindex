@@ -1,13 +1,13 @@
-task("approve", "Approve an amount for a user")
+task("mint", "Mint some erc20 tokens")
   .addParam(
-    "userFromIndex", // this is --user-index whe running via command line
-    "owner of tokens to be approved",
+    "userFromIndex", // this is --user-from-index when running via command line
+    "user to send the transfer",
     undefined,
     types.int
   )
   .addParam(
-    "amount", // this is --user-index whe running via command line
-    "amount to be approved",
+    "amount", // this is --amount when running via command line
+    "amount to be minted",
     undefined,
     types.int
   )
@@ -34,12 +34,12 @@ task("approve", "Approve an amount for a user")
 
     const erc20 = await ethers.getContractAt("ERC20", ERC20.address);
 
-    const newApprovalTx = await erc20
+    const newMintTx = await erc20
       .connect(userFrom)
-      .approve(userFrom.address, amount);
-    console.log("New approval made.");
+      .mint(userFrom.address, amount);
+    console.log("New mint made.");
 
-    await newApprovalTx.wait();
+    await newMintTx.wait();
 
   });
 

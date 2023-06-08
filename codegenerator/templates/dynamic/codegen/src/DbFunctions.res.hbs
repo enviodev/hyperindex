@@ -40,6 +40,39 @@ module RawEvents = {
   }
 }
 
+module DynamicContractRegistry = {
+  type contractAddress = Ethers.ethAddress
+  type dynamicContractRegistryRowId = (chainId, contractAddress)
+  @module("./DbFunctionsImplementation.js")
+  external batchSetDynamicContractRegistry: (Postgres.sql, array<Types.dynamicContractRegistryEntity>) => promise<unit> =
+    "batchSetDynamicContractRegistry"
+
+  @module("./DbFunctionsImplementation.js")
+  external batchDeleteDynamicContractRegistry: (Postgres.sql, array<dynamicContractRegistryRowId>) => promise<unit> =
+    "batchDeleteDynamicContractRegistry"
+
+  @module("./DbFunctionsImplementation.js")
+  external readDynamicContractRegistryEntities: (
+    Postgres.sql,
+    array<dynamicContractRegistryRowId>,
+  ) => promise<array<Types.dynamicContractRegistryEntity>> = "readDynamicContractRegistryEntities"
+
+
+  type contractTypeAndAddress = {
+    @as("contract_address") contractAddress: Ethers.ethAddress,
+    @as("contract_type") contractType: string,
+  }
+  ///Returns an array with 1 block number (the highest processed on the given chainId)
+  @module("./DbFunctionsImplementation.js")
+  external readDynamicContractsOnChainIdAtOrBeforeBlock: (
+    Postgres.sql,
+    ~chainId: chainId,
+    ~startBlock: int,
+  ) => promise<array<contractTypeAndAddress>> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
+
+ 
+}
+
 type readEntityData<'a> = {
    entity: 'a,
    eventData: Types.eventData

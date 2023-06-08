@@ -1,3 +1,3 @@
-require("./testApprove");
-require("./testMint");
-require("./testTransfer");
+require("./taskApprove");
+require("./taskMint");
+require("./taskTransfer");

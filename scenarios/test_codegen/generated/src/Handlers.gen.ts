@@ -58,7 +58,7 @@ export const GravatarContract_registerNewGravatarLoadEntities: (handler:((_1:{ r
 
 export const GravatarContract_registerUpdatedGravatarLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_GravatarContract_UpdatedGravatarEvent_eventArgs>; readonly context: Types_GravatarContract_UpdatedGravatarEvent_loaderContext }) => void)) => void = function (Arg1: any) {
   const result = HandlersBS.GravatarContract.registerUpdatedGravatarLoadEntities(function (Argevent: any, Argcontext: any) {
-      const result1 = Arg1({event:Argevent, context:{gravatar:{gravatarWithChangesLoad:function (Arg11: any, Arg2: any) {
+      const result1 = Arg1({event:Argevent, context:{contractRegistration:Argcontext.contractRegistration, gravatar:{gravatarWithChangesLoad:function (Arg11: any, Arg2: any) {
           const result2 = Curry._2(Argcontext.gravatar.gravatarWithChangesLoad, Arg11, Arg2.loaders);
           return result2
         }}}});
@@ -109,7 +109,7 @@ export const NftFactoryContract_registerSimpleNftCreatedHandler: (handler:((_1:{
 
 export const SimpleNftContract_registerTransferLoadEntities: (handler:((_1:{ readonly event: Types_eventLog<Types_SimpleNftContract_TransferEvent_eventArgs>; readonly context: Types_SimpleNftContract_TransferEvent_loaderContext }) => void)) => void = function (Arg1: any) {
   const result = HandlersBS.SimpleNftContract.registerTransferLoadEntities(function (Argevent: any, Argcontext: any) {
-      const result1 = Arg1({event:Argevent, context:{user:{userFromLoad:function (Arg11: any, Arg2: any) {
+      const result1 = Arg1({event:Argevent, context:{contractRegistration:Argcontext.contractRegistration, user:{userFromLoad:function (Arg11: any, Arg2: any) {
           const result2 = Curry._2(Argcontext.user.userFromLoad, Arg11, Arg2.loaders);
           return result2
         }, userToLoad:function (Arg12: any, Arg21: any) {

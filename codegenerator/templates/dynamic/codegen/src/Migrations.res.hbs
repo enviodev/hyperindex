@@ -10,8 +10,9 @@ module RawEventsTable = {
           CREATE TYPE EVENT_TYPE AS ENUM (
           {{#each contracts as | contract |}}
           {{#each contract.events as | event |}}
-          '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'{{#unless @last}},{{/unless}}{{/each}}{{#unless @last}},{{/unless}}
-          {{/each}}
+          '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'{{#unless @last}},{{/unless}}
+          {{/each}}{{#unless @last}},{{/unless}}
+         {{/each}}
           );
         END IF;
       END $$;
@@ -51,6 +52,48 @@ module RawEventsTable = {
   @@warning("+21")
 }
 
+module DynamicContractRegistryTable = {
+  let createDynamicContractRegistryTable: unit => promise<unit> = async () => {
+    @warning("-21")
+    let _ = await (
+      %raw("sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'contract_type') THEN
+          CREATE TYPE CONTRACT_TYPE AS ENUM (
+          {{#each contracts as | contract |}}
+          '{{contract.name.capitalized}}'{{#unless @last}},{{/unless}}
+          {{/each}}
+          );
+        END IF;
+      END $$;
+      `")
+    )
+    @warning("-21")
+    let _ = await (
+      %raw("sql`
+      CREATE TABLE public.dynamic_contract_registry (
+        chain_id INTEGER NOT NULL,
+        event_id NUMERIC NOT NULL,
+        contract_address TEXT NOT NULL,
+        contract_type CONTRACT_TYPE NOT NULL,
+        PRIMARY KEY (chain_id, contract_address)
+      );
+      `")
+    )
+  }
+
+  @@warning("-21")
+  let dropDynamicContractRegistryTable = async () => {
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.dynamic_contract_registry;
+    `")
+    let _ = await %raw("sql`
+      DROP TYPE IF EXISTS EVENT_TYPE CASCADE;
+    `")
+  }
+  @@warning("+21")
+}
+
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
@@ -80,6 +123,7 @@ type t
 // TODO: all the migration steps should run as a single transaction
 let runUpMigrations = async () => {
   await RawEventsTable.createRawEventsTable()
+  await DynamicContractRegistryTable.createDynamicContractRegistryTable()
 // TODO: catch and handle query errors
 {{#each entities as |entity|}}
   await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()
@@ -93,6 +137,7 @@ let runDownMigrations = async () => {
   // {{/each}}
 
   await RawEventsTable.dropRawEventsTable()
+  await DynamicContractRegistryTable.dropDynamicContractRegistryTable()
 
   // NOTE: For now delete any remaining tables.
   await deleteAllTables()
