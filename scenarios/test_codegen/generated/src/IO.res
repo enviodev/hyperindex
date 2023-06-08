@@ -437,7 +437,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     | Some(loadC) =>
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
         let _ = InMemoryStore.B.getB(~id=entityId)->Belt.Option.map(bEntity => {
-          let _ = cLinkedEntityLoader(bEntity.c, loadC, layer + 1)
+          let _ = bEntity.c->Belt.Option.map(cId => cLinkedEntityLoader(cId, loadC, layer + 1))
         })
       })
     | None => ()

@@ -26,7 +26,7 @@ describe("Linked Entity Loader Integration Test", () => {
     await Migrations.runUpMigrations()
   })
 
-  MochaPromise.it_only("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
+  MochaPromise.it("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
     let sql = DbFunctions.sql
 
     let testEventData: Types.eventData = {chainId: 123, eventId: "123456"}
@@ -67,17 +67,10 @@ describe("Linked Entity Loader Integration Test", () => {
     let bEntities: array<Types.bEntitySerialized> = [
       {id: "b1", a: ["a2", "a3", "a4"], c: "c1"},
       {id: "b2", a: [], c: "c2"},
-      {id: "b3", a: [], c: "TODO_TURN_THIS_INTO_NONE"},
+      {id: "b3", a: []},
       {id: "b4", a: [], c: "c3"},
-      {id: "bWontLoad", a: [], c: "TODO_TURN_THIS_INTO_NONE"},
+      {id: "bWontLoad", a: []},
     ]
-    // let bEntities: array<Types.bEntitySerialized> = [
-    //   {id: "b1", a: ["a2", "a3", "a4"], c: Some("c1")},
-    //   {id: "b2", a: [], c: Some("c2")},
-    //   {id: "b3", a: [], c: Some("TODO_TURN_THIS_INTO_NONE")},
-    //   {id: "b4", a: [], c: Some("c3")},
-    //   {id: "bWontLoad", a: [], c: Some("TODO_TURN_THIS_INTO_NONE")},
-    // ]
     let cEntities: array<Types.cEntitySerialized> = [
       {id: "c1", a: "aWontLoad"},
       {id: "c2", a: "a5"},
@@ -91,12 +84,12 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
       ~chainId=123,
-      ~event=Obj.magic(),
+      ~event=Obj.magic(/*adding a dummy object here as not used by the tests*/),
     )
 
     let loaderContext = context.getLoaderContext()
 
-    loaderContext.a.testingALoad(
+    let aLoader = loaderContext.a.testingALoad(
       "a1",
       ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {loadA: {}}}}}},
     )
@@ -117,9 +110,7 @@ describe("Linked Entity Loader Integration Test", () => {
     Assert.equal(b1.id, testingA.b, ~message="b1.id should equal testingA.b")
 
     let c1 = handlerContext.b.getC(b1)
-
-    Assert.equal(c1.id, b1.c, ~message="c1.id should equal b1.c")
-    // Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
+    Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
 
     let aArray = handlerContext.b.getA(b1)
 
@@ -129,24 +120,21 @@ describe("Linked Entity Loader Integration Test", () => {
 
         Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
 
-        let c = handlerContext.b.getC(b)
-        Assert.equal(c.id, b.c, ~message="a.id should equal c.a")
+        let optC = handlerContext.b.getC(b)
+        Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c")
 
-        // let optC = handlerContext.b.getC(b)
-        // Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c")
+        let _ = optC->Belt.Option.map(
+          c => {
+            let a = handlerContext.c.getA(c)
 
-        // let _ = optC->Belt.Option.map(
-        //   c => {
-        //     let a = handlerContext.c.getA(c)
-
-        //     Assert.equal(a.id, b.c, ~message="a.id should equal c.a")
-        //   },
-        // )
+            Assert.equal(a.id, c.a, ~message="a.id should equal c.a")
+          },
+        )
       },
     )
   })
 
-  MochaPromise.it_only("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
+  MochaPromise.it("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
     let sql = DbFunctions.sql
 
     let testEventData: Types.eventData = {chainId: 123, eventId: "123456"}
@@ -180,10 +168,11 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "a2", b: "b1"},
       {id: "a3", b: "b1"},
       {id: "a4", b: "b1"},
+      {id: "aWontLoad", b: "bWontLoad"},
     ]
     let bEntities: array<Types.bEntitySerialized> = [
       {id: "b1", a: ["a2", "a3", "a4"], c: "c1"},
-      {id: "bWontLoad", a: [], c: "c1"},
+      {id: "bWontLoad", a: []},
     ]
     let cEntities: array<Types.cEntitySerialized> = [{id: "c1", a: "aWontLoad"}]
 
@@ -193,14 +182,14 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
       ~chainId=123,
-      ~event=Obj.magic(),
+      ~event=Obj.magic(/*adding a dummy object here as not used by the tests*/),
     )
 
     let loaderContext = context.getLoaderContext()
 
     loaderContext.a.testingALoad(
       "a1",
-      ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {loadA: {}}}}}},
+      ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {}, loadA: {loadB: {loadC: {}}}}}}},
     )
 
     let entitiesToLoad = context.getEntitiesToLoad()
@@ -220,8 +209,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let c1 = handlerContext.b.getC(b1)
 
-    Assert.equal(c1.id, b1.c, ~message="c1.id should equal b1.c")
-    // Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
+    Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
 
     let aArray = handlerContext.b.getA(b1)
 
@@ -231,20 +219,20 @@ describe("Linked Entity Loader Integration Test", () => {
 
         Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
 
-        let c = handlerContext.b.getC(b)
-        Assert.equal(c.id, b.c, ~message="a.id should equal c.a")
+        aArray->Belt.Array.forEach(
+          a => {
+            let b = handlerContext.a.getB(a)
 
-        // let optC = handlerContext.b.getC(b)
-        // Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c")
-
-        // let _ = optC->Belt.Option.map(
-        //   c => {
-        //     let a = handlerContext.c.getA(c)
-
-        //     Assert.equal(a.id, b.c, ~message="a.id should equal c.a")
-        //   },
-        // )
+            Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
+          },
+        )
       },
     )
+
+    let resultAWontLoad = IO.InMemoryStore.A.getA(~id="aWontLoad")
+    Assert.equal(resultAWontLoad, None, ~message="aWontLoad should not be in the store")
+
+    let resultBWontLoad = IO.InMemoryStore.B.getB(~id="bWontLoad")
+    Assert.equal(resultBWontLoad, None, ~message="bWontLoad should not be in the store")
   })
 })

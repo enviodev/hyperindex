@@ -44,6 +44,7 @@ pub struct EntityParamTypeTemplate {
     pub key: String,
     pub is_optional: bool,
     pub type_rescript: String,
+    pub type_rescript_non_optional: String,
     pub type_pg: String,
     pub maybe_entity_name: Option<CapitalizedOptions>,
 }

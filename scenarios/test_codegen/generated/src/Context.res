@@ -123,7 +123,6 @@ module GravatarContract = {
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -275,7 +274,8 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
@@ -424,7 +424,6 @@ Please consider loading the a in the UpdateC entity loader to greatly improve sy
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -574,7 +573,8 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
@@ -734,7 +734,6 @@ Please consider loading the a in the UpdateC entity loader to greatly improve sy
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -888,7 +887,8 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
@@ -1041,7 +1041,6 @@ module NftFactoryContract = {
             delete: id =>
               Logging.warn(`[unimplemented delete] can't delete entity(user) with ID ${id}.`),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -1191,7 +1190,8 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
@@ -1381,7 +1381,6 @@ module SimpleNftContract = {
                 IO.InMemoryStore.User.getUser(~id)
               ),
             getGravatar: user => {
-              // is optional!
               let optGravatar =
                 user.gravatar->Belt.Option.map(entityFieldId =>
                   IO.InMemoryStore.Gravatar.getGravatar(~id=entityFieldId)
@@ -1539,7 +1538,8 @@ Please consider loading the a in the UpdateB entity loader to greatly improve sy
               aArray
             },
             getC: b => {
-              let optC = IO.InMemoryStore.C.getC(~id=b.c)
+              let optC =
+                b.c->Belt.Option.map(entityFieldId => IO.InMemoryStore.C.getC(~id=entityFieldId))
               switch optC {
               | Some(c) => c
               | None =>
