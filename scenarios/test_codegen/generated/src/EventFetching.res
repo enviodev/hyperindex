@@ -151,6 +151,8 @@ let convertLogs = (logs: array<Ethers.log>, ~provider, ~addressInterfaceMapping,
     )
   }
 
+  Js.log2("Handling number of logs: ", logs->Array.length)
+
   logs
   ->Belt.Array.map(log => {
     let blockPromise = log.blockNumber->getMemoisedBlockPromise
