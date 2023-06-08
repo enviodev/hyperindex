@@ -17,13 +17,13 @@ let resetPostgresClient: unit => unit = () => {
 describe("Linked Entity Loader Integration Test", () => {
   MochaPromise.before(async () => {
     resetPostgresClient()
-    await Migrations.runDownMigrations()
-    await Migrations.runUpMigrations()
+    await Migrations.runDownMigrations(false)
+    await Migrations.runUpMigrations(false)
   })
 
   MochaPromise.after(async () => {
-    await Migrations.runDownMigrations()
-    await Migrations.runUpMigrations()
+    await Migrations.runDownMigrations(false)
+    await Migrations.runUpMigrations(false)
   })
 
   MochaPromise.it("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {

@@ -207,13 +207,30 @@ let runUpMigrations = async shouldExit => {
     Logging.error(`Error creating dynamic contracts table`)->Promise.resolve
   })
   // TODO: catch and handle query errors
-  await User.createUserTable()
-  await Gravatar.createGravatarTable()
-  await Nftcollection.createNftcollectionTable()
-  await Token.createTokenTable()
-  await A.createATable()
-  await B.createBTable()
-  await C.createCTable()
+  await User.createUserTable()->Promise.catch(_err => {
+    Logging.error(`Error creating User table`)->Promise.resolve
+  })
+  await Gravatar.createGravatarTable()->Promise.catch(_err => {
+    Logging.error(`Error creating Gravatar table`)->Promise.resolve
+  })
+  await Nftcollection.createNftcollectionTable()->Promise.catch(_err => {
+    Logging.error(`Error creating Nftcollection table`)->Promise.resolve
+  })
+  await Token.createTokenTable()->Promise.catch(_err => {
+    Logging.error(`Error creating Token table`)->Promise.resolve
+  })
+  await A.createATable()->Promise.catch(_err => {
+    Logging.error(`Error creating A table`)->Promise.resolve
+  })
+  await B.createBTable()->Promise.catch(_err => {
+    Logging.error(`Error creating B table`)->Promise.resolve
+  })
+  await C.createCTable()->Promise.catch(_err => {
+    Logging.error(`Error creating C table`)->Promise.resolve
+  })
+  if shouldExit {
+    process->exit()
+  }
 }
 
 let runDownMigrations = async shouldExit => {
