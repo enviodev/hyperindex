@@ -4,7 +4,6 @@ open Mocha
 let {it: it_promise, it_skip: it_skip_promise, before: before_promise} = module(
   RescriptMocha.Promise
 )
-let chainConfig = (Config.config->Js.Dict.values)[0]
 
 describe("E2E Mock Event Batch", () => {
   before(() => {
@@ -13,7 +12,7 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
     MockEvents.eventBatchWithContext->Belt.Array.forEach(
-      event => event->EventProcessing.eventRouter(~chainId=chainConfig.chainId),
+      event => event->EventProcessing.eventRouter(~chainId=MockConfig.mockChainConfig.chainId),
     )
   })
 
@@ -55,12 +54,13 @@ describe("E2E Mock Event Batch", () => {
 
 describe("E2E Db check", () => {
   before_promise(async () => {
+    Js.log("1")
     let _ = await DbFunctions.Gravatar.batchSetGravatar(
       Migrations.sql,
       [MockEntities.mockInMemRow1, MockEntities.mockInMemRow2],
     )
     await MockEvents.eventBatch->EventProcessing.processEventBatch(
-      ~chainConfig,
+      ~chainConfig=MockConfig.mockChainConfig,
       // Give a conservatively wide range of blocks
       ~blocksProcessed={from: 1, to: 10},
     )
