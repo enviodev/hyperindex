@@ -1,0 +1,19 @@
+{
+  "name": "erc20",
+  "version": "0.1.0",
+  "scripts": {
+    "clean": "tsc --clean",
+    "build": "tsc --build",
+    "watch": "tsc --watch",
+    "start": "tsc --build && node build/generated/src/Index.bs.js",
+    "local-start": "cd ../.. && docker compose down -v && docker compose up -d",
+    "view-results": "./generated/register_tables_with_hasura.sh && open http://localhost:8080/console"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.4",
+    "@types/node": "^18.16.1"
+  },
+  "dependencies": {
+    "generated": "workspace:*"
+  }
+}

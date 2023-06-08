@@ -1,44 +1,52 @@
 import {
-  GravatarContract_registerNewGravatarHandler,
-  GravatarContract_registerNewGravatarLoadEntities,
-  GravatarContract_registerUpdatedGravatarHandler,
-  GravatarContract_registerUpdatedGravatarLoadEntities,
+  GreeterContract_registerNewGreetingLoadEntities,
+  GreeterContract_registerNewGreetingHandler,
+  GreeterContract_registerClearGreetingLoadEntities,
+  GreeterContract_registerClearGreetingHandler,
 } from "../generated/src/Handlers.gen";
 
-import { gravatarEntity } from "../generated/src/Types.gen";
+import { greetingEntity } from "../generated/src/Types.gen";
 
-GravatarContract_registerNewGravatarLoadEntities(({ event, context }) => { });
-
-GravatarContract_registerNewGravatarHandler(({ event, context }) => {
-  let { id, displayName, owner, imageUrl } = event.params;
-  let gravatar: gravatarEntity = {
-    id: id.toString(),
-    displayName,
-    owner,
-    imageUrl,
-    updatesCount: 0,
-  };
-  context.gravatar.insert(gravatar);
+GreeterContract_registerNewGreetingLoadEntities(({ event, context }) => {
+  context.greeting.greetingWithChangesLoad(event.params.user.toString());
 });
 
-GravatarContract_registerUpdatedGravatarLoadEntities(({ event, context }) => {
-  context.gravatar.gravatarWithChangesLoad(event.params.id.toString());
+GreeterContract_registerNewGreetingHandler(({ event, context }) => {
+  let currentGreeter = context.greeting.greetingWithChanges();
+
+  if (currentGreeter != null) {
+    let greetingObject: greetingEntity = {
+      id: event.params.user.toString(),
+      latestGreeting: event.params.greeting,
+      numberOfGreetings: currentGreeter.numberOfGreetings + 1,
+    };
+
+    context.greeting.update(greetingObject);
+  } else {
+    let greetingObject: greetingEntity = {
+      id: event.params.user.toString(),
+      latestGreeting: event.params.greeting,
+      numberOfGreetings: 1,
+    };
+    context.greeting.insert(greetingObject);
+  }
 });
 
-GravatarContract_registerUpdatedGravatarHandler(({ event, context }) => {
-  let { id, displayName, owner, imageUrl } = event.params;
-  let currentUpdatesCount =
-    context.gravatar.gravatarWithChanges()?.updatesCount ?? 0;
+GreeterContract_registerClearGreetingLoadEntities(({ event, context }) => {
+  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+});
 
-  let updatesCount = currentUpdatesCount + 1;
+GreeterContract_registerClearGreetingHandler(({ event, context }) => {
+  let currentGreeter = context.greeting.greetingWithChanges();
 
-  let gravatar: gravatarEntity = {
-    id: id.toString(),
-    displayName,
-    owner,
-    imageUrl,
-    updatesCount,
-  };
+  if (currentGreeter != null) {
+    let greetingObject: greetingEntity = {
+      id: event.params.user.toString(),
+      latestGreeting: "",
+      numberOfGreetings: currentGreeter.numberOfGreetings,
+    };
 
-  context.gravatar.update(gravatar);
+    context.greeting.update(greetingObject);
+  } else {
+  }
 });
