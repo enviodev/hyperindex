@@ -65,14 +65,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 Template::Erc20 => {
                     //Copy in the relevant js flavor specific greeter files
-                    match &args.js_flavor {
-                        JsFlavor::Rescript => {
+                    match &args.language {
+                        Language::Rescript => {
                             ERC20_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Typescript => {
+                        Language::Typescript => {
                             ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
                         }
-                        JsFlavor::Javascript => {
+                        Language::Javascript => {
                             ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
                         }
                     }

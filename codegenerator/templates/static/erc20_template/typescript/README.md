@@ -1,11 +1,3 @@
-## Open Zepplin ERC-20
-
-Install Open Zepplin contracts by running the following:
-
-```
-npm install @openzeppelin/contracts
-```
-
 ## Indexer Requirements
 
 The following files are required to use the Indexer:
@@ -23,7 +15,7 @@ Example config file from ERC-20 scenario:
 ```yaml
 version: 1.0.0
 description: ERC-20 indexer
-repository: https://github.com/OpenZeppelin/openzeppelin-contracts/tree/master/contracts/token/ERC20
+repository: https://github.com/Envio/templates/ERC20
 networks:
   - id: 1337
     rpc_url: http://localhost:8545
@@ -34,18 +26,17 @@ networks:
         address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
         handler: src/EventHandlers.js
         events:
-          - name: "Approval"
+          - event: "Approval"
             requiredEntities: 
             - name: "Account"
               labels:
                 - "ownerAccountChanges"
-          - name: "Transfer"
+          - event: "Transfer"
             requiredEntities:
             - name: "Account"
               labels:
                 - "senderAccountChanges"
                 - "receiverAccountChanges"
-
 ```
 
 **Field Descriptions**
