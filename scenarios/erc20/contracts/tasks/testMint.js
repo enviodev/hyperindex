@@ -1,12 +1,12 @@
 task("mint", "Mint some erc20 tokens")
   .addParam(
-    "userFromIndex", // this is --user-index whe running via command line
+    "userFromIndex", // this is --user-from-index when running via command line
     "user to send the transfer",
     undefined,
     types.int
   )
   .addParam(
-    "amount", // this is --user-index whe running via command line
+    "amount", // this is --amount when running via command line
     "amount to be minted",
     undefined,
     types.int

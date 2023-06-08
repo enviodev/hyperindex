@@ -1,12 +1,12 @@
 task("approve", "Approve an amount for a user")
   .addParam(
-    "userFromIndex", // this is --user-index whe running via command line
+    "userFromIndex", // this is --user-from-index when running via command line
     "owner of tokens to be approved",
     undefined,
     types.int
   )
   .addParam(
-    "amount", // this is --user-index whe running via command line
+    "amount", // this is --amount when running via command line
     "amount to be approved",
     undefined,
     types.int
