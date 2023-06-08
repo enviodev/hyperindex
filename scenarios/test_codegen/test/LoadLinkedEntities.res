@@ -89,7 +89,10 @@ describe("Linked Entity Loader Integration Test", () => {
     await DbFunctions.B.batchSetB(sql, bEntities->Belt.Array.map(createEventB))
     await DbFunctions.C.batchSetC(sql, cEntities->Belt.Array.map(createEventC))
 
-    let context = Context.GravatarContract.TestEventEvent.contextCreator()
+    let context = Context.GravatarContract.TestEventEvent.contextCreator(
+      ~chainId=123,
+      ~event=Obj.magic(),
+    )
 
     let loaderContext = context.getLoaderContext()
 
@@ -188,7 +191,10 @@ describe("Linked Entity Loader Integration Test", () => {
     await DbFunctions.B.batchSetB(sql, bEntities->Belt.Array.map(createEventB))
     await DbFunctions.C.batchSetC(sql, cEntities->Belt.Array.map(createEventC))
 
-    let context = Context.GravatarContract.TestEventEvent.contextCreator()
+    let context = Context.GravatarContract.TestEventEvent.contextCreator(
+      ~chainId=123,
+      ~event=Obj.magic(),
+    )
 
     let loaderContext = context.getLoaderContext()
 
