@@ -198,19 +198,62 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .current_dir(&project_paths.generated)
                 .spawn()?
                 .wait()?;
-
-            println!("generate db migrations");
-            if !args.skip_db_provision {
-                Command::new("pnpm")
-                    .arg("db-migrate")
-                    .current_dir(&project_paths.generated)
-                    .spawn()?
-                    .wait()?;
-            } else {
-                println!("skipping db migration")
-            }
-
             Ok(())
+        }
+        CommandType::Local(local_commands) => {
+            // let local_command_line_args = LocalCommandLineArgs::parse();
+            match local_commands {
+                cli_args::LocalCommandTypes::Docker(args) => {
+                    let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
+                    let project_paths = &parsed_paths.project_paths;
+                    if args.up {
+                        Command::new("docker")
+                            .arg("compose")
+                            .arg("up")
+                            .arg("-d")
+                            .current_dir(&project_paths.generated)
+                            .spawn()?
+                            .wait()?;
+                    } else if args.down {
+                        Command::new("docker")
+                            .arg("compose")
+                            .arg("down")
+                            .arg("-v")
+                            .current_dir(&project_paths.generated)
+                            .spawn()?
+                            .wait()?;
+                    } else {
+                        println!("Please specify either --up or --down");
+                    }
+                    Ok(())
+                }
+                cli_args::LocalCommandTypes::DbMigrate(args) => {
+                    let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
+                    let project_paths = &parsed_paths.project_paths;
+                    if args.up {
+                        Command::new("pnpm")
+                            .arg("db-up")
+                            .current_dir(&project_paths.generated)
+                            .spawn()?
+                            .wait()?;
+                    } else if args.down {
+                        Command::new("pnpm")
+                            .arg("db-down")
+                            .current_dir(&project_paths.generated)
+                            .spawn()?
+                            .wait()?;
+                    } else if args.setup {
+                        Command::new("pnpm")
+                            .arg("db-setup")
+                            .current_dir(&project_paths.generated)
+                            .spawn()?
+                            .wait()?;
+                    } else {
+                        println!("Please specify either --up or --down or --setup");
+                    }
+                    Ok(())
+                }
+            }
         }
         CommandType::PrintAllHelp {} => {
             clap_markdown::print_help_markdown::<CommandLineArgs>();

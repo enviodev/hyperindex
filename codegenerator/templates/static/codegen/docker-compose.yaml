@@ -13,25 +13,12 @@ services:
       POSTGRES_DB: envio-dev
     networks:
       - my-proxy-net
-  pg-admin:
-    container_name: envio-pg-admin
-    image: dpage/pgadmin4:latest
-    restart: always
-    ports:
-      - "${PGADMIN_PUBLIC_PORT:-6543}:80"
-    environment:
-      - PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL:-dev@float.capital}
-      - PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD:-testing}
-    networks:
-      - my-proxy-net
-    volumes:
-      - ./.config/pgadmin/servers.json:/pgadmin4/servers.json
   ganache:
     image: trufflesuite/ganache:latest
     ports:
       - "8545:8545"
     command:
-      --mnemonic "test test test test test test test test test test test test"
+      --mnemonic "test test test test test test test test test test test"
       --db /ganache-data --chain.chainId 1337 --chain.networkId 1337 --time 2023-02-02T08:24:37+00:00
       --gasLimit 10000000
     container_name: ganache

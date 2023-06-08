@@ -199,9 +199,13 @@ type t
 @send external exit: (t, unit) => unit = "exit"
 
 // TODO: all the migration steps should run as a single transaction
-let runUpMigrations = async () => {
-  await RawEventsTable.createRawEventsTable()
-  await DynamicContractRegistryTable.createDynamicContractRegistryTable()
+let runUpMigrations = async shouldExit => {
+  await RawEventsTable.createRawEventsTable()->Promise.catch(_err => {
+    Logging.error(`Error creating raw events table`)->Promise.resolve
+  })
+  await DynamicContractRegistryTable.createDynamicContractRegistryTable()->Promise.catch(_err => {
+    Logging.error(`Error creating dynamic contracts table`)->Promise.resolve
+  })
   // TODO: catch and handle query errors
   await User.createUserTable()
   await Gravatar.createGravatarTable()
@@ -212,7 +216,7 @@ let runUpMigrations = async () => {
   await C.createCTable()
 }
 
-let runDownMigrations = async () => {
+let runDownMigrations = async shouldExit => {
   //
   // await User.deleteUserTable()
   //
@@ -229,22 +233,32 @@ let runDownMigrations = async () => {
   // await C.deleteCTable()
   //
 
-  await RawEventsTable.dropRawEventsTable()
-  await DynamicContractRegistryTable.dropDynamicContractRegistryTable()
+  await RawEventsTable.dropRawEventsTable()->Promise.catch(_err => {
+    Logging.error("Please ensure the postgres database is running")
+    Logging.error("Error dropping raw events table")->Promise.resolve
+  })
+  await DynamicContractRegistryTable.dropDynamicContractRegistryTable()->Promise.catch(_err => {
+    Logging.error("Error dropping dynamic contracts table")->Promise.resolve
+  })
 
   // NOTE: For now delete any remaining tables.
-  await deleteAllTables()
+  await deleteAllTables()->Promise.catch(_err => {
+    Logging.error("Error dropping entity tables")->Promise.resolve
+  })
+  if shouldExit {
+    process->exit()
+  }
 }
 
 let setupDb = async () => {
   // TODO: we should make a hash of the schema file (that gets stored in the DB) and either drop the tables and create new ones or keep this migration.
   //       for now we always run the down migration.
   // if (process.env.MIGRATE === "force" || hash_of_schema_file !== hash_of_current_schema)
-  await runDownMigrations()
+  await runDownMigrations(false)
   // else
   //   await clearDb()
 
-  await runUpMigrations()
+  await runUpMigrations(false)
 
   process->exit()
 }
