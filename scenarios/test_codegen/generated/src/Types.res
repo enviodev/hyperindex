@@ -273,16 +273,13 @@ module GravatarContract = {
       contactDetails: (string, string),
     }
     type userEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getGravatar: userEntity => option<gravatarEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getTokens: userEntity => array<tokenEntity>,
       insert: userEntity => unit,
       update: userEntity => unit,
       delete: id => unit,
     }
     type gravatarEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: gravatarEntity => userEntity,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
@@ -294,9 +291,7 @@ module GravatarContract = {
       delete: id => unit,
     }
     type tokenEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getCollection: tokenEntity => nftcollectionEntity,
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: tokenEntity => userEntity,
       insert: tokenEntity => unit,
       update: tokenEntity => unit,
@@ -304,23 +299,19 @@ module GravatarContract = {
     }
     type aEntityHandlerContext = {
       testingA: unit => option<aEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getB: aEntity => bEntity,
       insert: aEntity => unit,
       update: aEntity => unit,
       delete: id => unit,
     }
     type bEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getC: bEntity => option<cEntity>,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
     }
     type cEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: cEntity => aEntity,
       insert: cEntity => unit,
       update: cEntity => unit,
@@ -352,7 +343,6 @@ module GravatarContract = {
     @genType
     type loaderContext = {
       contractRegistration: contractRegistrations,
-      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
       a: aEntityLoaderContext,
     }
   }
@@ -365,16 +355,13 @@ module GravatarContract = {
       imageUrl: string,
     }
     type userEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getGravatar: userEntity => option<gravatarEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getTokens: userEntity => array<tokenEntity>,
       insert: userEntity => unit,
       update: userEntity => unit,
       delete: id => unit,
     }
     type gravatarEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: gravatarEntity => userEntity,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
@@ -386,32 +373,26 @@ module GravatarContract = {
       delete: id => unit,
     }
     type tokenEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getCollection: tokenEntity => nftcollectionEntity,
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: tokenEntity => userEntity,
       insert: tokenEntity => unit,
       update: tokenEntity => unit,
       delete: id => unit,
     }
     type aEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getB: aEntity => bEntity,
       insert: aEntity => unit,
       update: aEntity => unit,
       delete: id => unit,
     }
     type bEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getC: bEntity => option<cEntity>,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
     }
     type cEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: cEntity => aEntity,
       insert: cEntity => unit,
       update: cEntity => unit,
@@ -438,10 +419,7 @@ module GravatarContract = {
       addSimpleNft: Ethers.ethAddress => unit,
     }
     @genType
-    type loaderContext = {
-      contractRegistration: contractRegistrations,
-      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
-    }
+    type loaderContext = {contractRegistration: contractRegistrations}
   }
   module UpdatedGravatarEvent = {
     @spice @genType
@@ -452,9 +430,7 @@ module GravatarContract = {
       imageUrl: string,
     }
     type userEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getGravatar: userEntity => option<gravatarEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getTokens: userEntity => array<tokenEntity>,
       insert: userEntity => unit,
       update: userEntity => unit,
@@ -462,7 +438,6 @@ module GravatarContract = {
     }
     type gravatarEntityHandlerContext = {
       gravatarWithChanges: unit => option<gravatarEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: gravatarEntity => userEntity,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
@@ -474,32 +449,26 @@ module GravatarContract = {
       delete: id => unit,
     }
     type tokenEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getCollection: tokenEntity => nftcollectionEntity,
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: tokenEntity => userEntity,
       insert: tokenEntity => unit,
       update: tokenEntity => unit,
       delete: id => unit,
     }
     type aEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getB: aEntity => bEntity,
       insert: aEntity => unit,
       update: aEntity => unit,
       delete: id => unit,
     }
     type bEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getC: bEntity => option<cEntity>,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
     }
     type cEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: cEntity => aEntity,
       insert: cEntity => unit,
       update: cEntity => unit,
@@ -533,7 +502,6 @@ module GravatarContract = {
     @genType
     type loaderContext = {
       contractRegistration: contractRegistrations,
-      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
       gravatar: gravatarEntityLoaderContext,
     }
   }
@@ -548,16 +516,13 @@ module NftFactoryContract = {
       contractAddress: Ethers.ethAddress,
     }
     type userEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getGravatar: userEntity => option<gravatarEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getTokens: userEntity => array<tokenEntity>,
       insert: userEntity => unit,
       update: userEntity => unit,
       delete: id => unit,
     }
     type gravatarEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: gravatarEntity => userEntity,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
@@ -569,32 +534,26 @@ module NftFactoryContract = {
       delete: id => unit,
     }
     type tokenEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getCollection: tokenEntity => nftcollectionEntity,
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: tokenEntity => userEntity,
       insert: tokenEntity => unit,
       update: tokenEntity => unit,
       delete: id => unit,
     }
     type aEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getB: aEntity => bEntity,
       insert: aEntity => unit,
       update: aEntity => unit,
       delete: id => unit,
     }
     type bEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getC: bEntity => option<cEntity>,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
     }
     type cEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: cEntity => aEntity,
       insert: cEntity => unit,
       update: cEntity => unit,
@@ -621,10 +580,7 @@ module NftFactoryContract = {
       addSimpleNft: Ethers.ethAddress => unit,
     }
     @genType
-    type loaderContext = {
-      contractRegistration: contractRegistrations,
-      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
-    }
+    type loaderContext = {contractRegistration: contractRegistrations}
   }
 }
 module SimpleNftContract = {
@@ -638,16 +594,13 @@ module SimpleNftContract = {
     type userEntityHandlerContext = {
       userFrom: unit => option<userEntity>,
       userTo: unit => option<userEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getGravatar: userEntity => option<gravatarEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getTokens: userEntity => array<tokenEntity>,
       insert: userEntity => unit,
       update: userEntity => unit,
       delete: id => unit,
     }
     type gravatarEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: gravatarEntity => userEntity,
       insert: gravatarEntity => unit,
       update: gravatarEntity => unit,
@@ -661,32 +614,26 @@ module SimpleNftContract = {
     }
     type tokenEntityHandlerContext = {
       existingTransferredToken: unit => option<tokenEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getCollection: tokenEntity => nftcollectionEntity,
-      // TODO: make this type correspond to if the field is optional or not.
       getOwner: tokenEntity => userEntity,
       insert: tokenEntity => unit,
       update: tokenEntity => unit,
       delete: id => unit,
     }
     type aEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getB: aEntity => bEntity,
       insert: aEntity => unit,
       update: aEntity => unit,
       delete: id => unit,
     }
     type bEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: bEntity => array<aEntity>,
-      // TODO: make this type correspond to if the field is optional or not.
       getC: bEntity => option<cEntity>,
       insert: bEntity => unit,
       update: bEntity => unit,
       delete: id => unit,
     }
     type cEntityHandlerContext = {
-      // TODO: make this type correspond to if the field is optional or not.
       getA: cEntity => aEntity,
       insert: cEntity => unit,
       update: cEntity => unit,
@@ -727,7 +674,6 @@ module SimpleNftContract = {
     @genType
     type loaderContext = {
       contractRegistration: contractRegistrations,
-      // NOTE: this only allows single level deep linked entity data loading. TODO: make it recursive
       user: userEntityLoaderContext,
       nftcollection: nftcollectionEntityLoaderContext,
       token: tokenEntityLoaderContext,
