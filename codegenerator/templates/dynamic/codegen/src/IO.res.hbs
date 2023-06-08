@@ -119,105 +119,91 @@ type uniqueEntityReadIds = Js.Dict.t<Types.id>
 type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
 let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
+  let loadLayer = ref(false)
+
   {{#each entities as | entity |}}
   let unique{{entity.name.capitalized}}Dict = Js.Dict.empty()
   {{/each}}
 
-  // TODO: don't create an array if the entity doesn't have any entity relation fields.
-  {{#each entities as | entity |}}
-  let populate{{entity.name.capitalized}}LoadAsEntityFunctions: array<unit => unit> = []
-  {{/each}}
+  let populateLoadAsEntityFunctions: ref<array<unit => unit>> = ref([])
 
   {{#each entities as | entity |}}
-  let unique{{entity.name.capitalized}}AsEntityFieldArray: array<string> = []
+  let unique{{entity.name.capitalized}}AsEntityFieldArray: ref<array<string>> = ref([])
   {{/each}}
+
+  let rec{{#each entities as | entity |}}{{#unless @first}} and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
+    entityId: string,
+    {{#if entity.relational_params.[0]}}{{entity.name.uncapitalized}}Load: Types.{{entity.name.uncapitalized}}LoaderConfig,{{/if}}
+    layer: int,
+  ) => {
+    if (!loadLayer.contents) {
+      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
+      loadLayer := true
+    }
+    if Js.Dict.get(unique{{entity.name.capitalized}}Dict, entityId)->Belt.Option.isNone {
+      let _ = unique{{entity.name.capitalized}}AsEntityFieldArray.contents->Js.Array2.push(entityId)
+      let _ = Js.Dict.set(unique{{entity.name.capitalized}}Dict, entityId, entityId)
+    }
+
+    {{#each entity.relational_params as | relational_param |}}
+    switch {{entity.name.uncapitalized}}Load.load{{relational_param.relational_key.capitalized}} {
+    | Some(load{{relational_param.mapped_entity.capitalized}}) =>
+      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
+        let _ = InMemoryStore.{{entity.name.capitalized}}.get{{entity.name.capitalized}}(~id=entityId)->Belt.Option.map(
+          {{entity.name.uncapitalized}}Entity => {
+            {{#if (eq relational_param.relationship_type "array")}}
+              let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Array.map(
+                    {{relational_param.relational_key.uncapitalized}}Id =>
+                {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+              )
+            {{else}}
+              {{#if relational_param.is_optional}}
+                let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Option.map(
+                  {{relational_param.relational_key.uncapitalized}}Id =>
+                    {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+                )
+              {{else}}
+                let _ = {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+              {{/if}}
+            {{/if}}
+          })
+      })
+    | None => ()
+    }
+    {{/each}}
+    ()
+  }{{/each}}
 
   entityBatch->Belt.Array.forEach(readEntity => {
-    switch readEntity {
+        switch readEntity {
     {{#each entities as | entity |}}
     | {{entity.name.capitalized}}Read(entityId{{#if entity.relational_params.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}) =>
-      let _ = Js.Dict.set(unique{{entity.name.capitalized}}Dict, entityId, entityId)
-      {{#each entity.relational_params as | relational_param |}}
-      switch {{entity.name.uncapitalized}}Load.load{{relational_param.relational_key.capitalized}} {
-      | Some(
-          _ /* TODO: read this and recursively add loaders. See: https://github.com/Float-Capital/indexer/issues/293 */,
-        ) => 
-          let _ = populate{{entity.name.capitalized}}LoadAsEntityFunctions->Js.Array2.push(() => {
-          let _ = InMemoryStore.{{entity.name.capitalized}}.get{{entity.name.capitalized}}(~id=entityId)->Belt.Option.map(
-            {{entity.name.uncapitalized}}Entity => {
-              {{#if (eq relational_param.relationship_type "array")}}
-                let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Array.map(
-                     {{relational_param.relational_key.uncapitalized}}Id =>
-                  switch unique{{relational_param.mapped_entity.capitalized}}Dict->Js.Dict.get({{relational_param.relational_key.uncapitalized}}Id) {
-                  | Some(_) => // Already loaded
-                    ()
-                  | None =>
-                    let _ = unique{{relational_param.mapped_entity.capitalized}}AsEntityFieldArray->Js.Array2.push({{relational_param.relational_key.uncapitalized}}Id)
-                    Js.Dict.set(unique{{relational_param.mapped_entity.capitalized}}Dict, {{relational_param.relational_key.uncapitalized}}Id, {{relational_param.relational_key.uncapitalized}}Id)
-                  })
-              {{else}}
-                {{#if relational_param.is_optional}}
-                  {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Option.map(
-                    {{relational_param.relational_key.uncapitalized}}Id =>
-                      switch unique{{relational_param.mapped_entity.capitalized}}Dict->Js.Dict.get({{relational_param.relational_key.uncapitalized}}Id) {
-                      | Some(_) => () // Already loaded
-                      | None =>
-                        let _ = unique{{relational_param.mapped_entity.capitalized}}AsEntityFieldArray->Js.Array2.push({{relational_param.relational_key.uncapitalized}}Id)
-                        Js.Dict.set(unique{{relational_param.mapped_entity.capitalized}}Dict, {{relational_param.relational_key.uncapitalized}}Id, {{relational_param.relational_key.uncapitalized}}Id)
-                      },
-                  )
-                {{else}}
-                  switch unique{{relational_param.mapped_entity.capitalized}}Dict->Js.Dict.get({{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}) {
-                  | Some(_) => () // Already loaded
-                  | None =>
-                    let _ = unique{{relational_param.mapped_entity.capitalized}}AsEntityFieldArray->Js.Array2.push({{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}})
-                    Js.Dict.set(unique{{relational_param.mapped_entity.capitalized}}Dict, {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}, {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}})
-                  }
-                {{/if}}
-              {{/if}}
-            },
-          )
-        })
-      | None => ()
-      }
-      {{/each}}
+      {{entity.name.uncapitalized}}LinkedEntityLoader(entityId{{#if entity.relational_params.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}, 0)
     {{/each}}
     }
   })
 
-  {{#each entities as | entity |}}
-  if Js.Dict.keys(unique{{entity.name.capitalized}}Dict)->Array.length > 0 {
-    let {{entity.name.uncapitalized}}EntitiesArray = await sql->DbFunctions.{{entity.name.capitalized}}.read{{entity.name.capitalized}}Entities(
-      Js.Dict.values(unique{{entity.name.capitalized}}Dict),
-    )
-
-    {{entity.name.uncapitalized}}EntitiesArray->Belt.Array.forEach((readRow) =>
-      {
-        let {entity, eventData} = DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData(readRow)
-        InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~crud=Types.Read)
-      }
-    )
-  }
-
-  {{/each}}
-
-  // Execute first layer of additional load functions:
-  // TODO: make this a recursive process
-  {{#each entities as | entity |}}
-  populate{{entity.name.capitalized}}LoadAsEntityFunctions->Belt.Array.forEach(func => func())
-  {{/each}}
+  while loadLayer.contents {
+    loadLayer := false
 
   {{#each entities as | entity |}}
-    if unique{{entity.name.capitalized}}AsEntityFieldArray->Array.length > 0 {
+    if unique{{entity.name.capitalized}}AsEntityFieldArray.contents->Array.length > 0 {
       let {{entity.name.uncapitalized}}FieldEntitiesArray =
-        await sql->DbFunctions.{{entity.name.capitalized}}.read{{entity.name.capitalized}}Entities(unique{{entity.name.capitalized}}AsEntityFieldArray)
+        await sql->DbFunctions.{{entity.name.capitalized}}.read{{entity.name.capitalized}}Entities(unique{{entity.name.capitalized}}AsEntityFieldArray.contents)
 
       {{entity.name.uncapitalized}}FieldEntitiesArray->Belt.Array.forEach(readRow => {
         let {entity, eventData} = DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData(readRow)
         InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~crud=Types.Read)
       })
+
+      unique{{entity.name.capitalized}}AsEntityFieldArray := []
     }
   {{/each}}
+
+  populateLoadAsEntityFunctions.contents->Belt.Array.forEach(func => func())
+
+  populateLoadAsEntityFunctions := []
+  }
 }
 
 let executeBatch = async (sql) => {
