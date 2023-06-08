@@ -568,5 +568,14 @@ mod tests {
             super::strip_option_from_rescript_type_str("array<string>"),
             "array<string>"
         );
+        assert_eq!(
+            super::strip_option_from_rescript_type_str("array<string>"),
+            "array<string>"
+        );
+        assert_eq!(super::strip_option_from_rescript_type_str("option<>"), "");
+        assert_eq!(
+            super::strip_option_from_rescript_type_str("option<"),
+            "option<"
+        );
     }
 }
