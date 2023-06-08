@@ -59,7 +59,7 @@ describe("E2E Db check", () => {
       Migrations.sql,
       [MockEntities.mockInMemRow1, MockEntities.mockInMemRow2],
     )
-    await MockEvents.eventBatch->EventProcessing.processEventBatch(
+    await MockEvents.eventPromises->EventProcessing.processEventBatch(
       ~chainConfig=MockConfig.mockChainConfig,
       // Give a conservatively wide range of blocks
       ~blocksProcessed={from: 1, to: 10},

@@ -102,16 +102,27 @@ type readEntitiesResult = {
   eventAndContext: Types.eventAndContext,
 }
 
+type rec readEntitiesResultPromise = {
+  blockNumber: int,
+  logIndex: int,
+  promise: promise<(
+    array<Types.entityRead>,
+    Types.eventAndContext,
+    option<array<readEntitiesResultPromise>>,
+  )>,
+}
+
 let rec loadReadEntitiesInner = async (
-  eventBatch: array<Types.event>,
+  eventBatch: array<EventFetching.eventBatchPromise>,
   ~chainConfig: Config.chainConfig,
   ~blocksProcessed: EventFetching.blocksProcessed,
-) => {
-  let loadNestedReadEntities = async (
+): array<readEntitiesResultPromise> => {
+  // Recursively load entities
+  let loadNestedReadEntities = (
     ~blockNumber,
     ~logIndex,
     ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
-  ) => {
+  ): promise<array<readEntitiesResultPromise>> => {
     let addressInterfaceMapping = Js.Dict.empty()
 
     let eventFilters = dynamicContracts->Belt.Array.flatMap(contract => {
@@ -122,7 +133,7 @@ let rec loadReadEntitiesInner = async (
       )
     })
 
-    let (fetchedEvents, nestedBlocksProcessed) = await EventFetching.getContractEventsOnFilters(
+    EventFetching.getContractEventsOnFilters(
       ~eventFilters,
       ~addressInterfaceMapping,
       ~fromBlock=blockNumber,
@@ -132,213 +143,229 @@ let rec loadReadEntitiesInner = async (
       ~chainId=chainConfig.chainId,
       ~provider=chainConfig.provider,
       (),
-    )
-
-    await fetchedEvents->loadReadEntitiesInner(~chainConfig, ~blocksProcessed=nestedBlocksProcessed)
+    )->Promise.then(((fetchedEvents, nestedBlocksProcessed)) => {
+      fetchedEvents->loadReadEntitiesInner(~chainConfig, ~blocksProcessed=nestedBlocksProcessed)
+    })
   }
 
-  let baseResults: array<readEntitiesResult> = []
-  let nestedResults: array<array<readEntitiesResult>> = []
+  let baseResults: array<readEntitiesResultPromise> = []
 
   let chainId = chainConfig.chainId
 
   for i in 0 to eventBatch->Belt.Array.length - 1 {
-    let event = eventBatch[i]
-
+    let {blockNumber, logIndex, eventPromise} = eventBatch[i]
     baseResults
-    ->Js.Array2.push(
-      switch event {
-      | GravatarContract_TestEvent(event) => {
-          let contextHelper = Context.GravatarContract.TestEventEvent.contextCreator(
-            ~chainId,
-            ~event,
-          )
-          Handlers.GravatarContract.getTestEventLoadEntities()(
-            ~event,
-            ~context=contextHelper.getLoaderContext(),
-          )
-          let {logIndex, blockNumber} = event
-          let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-          let context = contextHelper.getContext(
-            ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
-          )
-
-          let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
-
-          if Belt.Array.length(dynamicContracts) > 0 {
-            nestedResults
-            ->Js.Array2.push(
-              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
+    ->Js.Array2.push({
+      blockNumber,
+      logIndex,
+      promise: eventPromise->Promise.then(async event =>
+        switch event {
+        | GravatarContract_TestEvent(event) => {
+            let contextHelper = Context.GravatarContract.TestEventEvent.contextCreator(
+              ~chainId,
+              ~event,
             )
-            ->ignore
+            Handlers.GravatarContract.getTestEventLoadEntities()(
+              ~event,
+              ~context=contextHelper.getLoaderContext(),
+            )
+            let {logIndex, blockNumber} = event
+            let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+            let context = contextHelper.getContext(
+              ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+            )
+
+            let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
+
+            (
+              contextHelper.getEntitiesToLoad(),
+              Types.GravatarContract_TestEventWithContext(event, context),
+              if Belt.Array.length(dynamicContracts) > 0 {
+                Some(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
+              } else {
+                None
+              },
+            )
           }
 
-          {
-            entityReads: contextHelper.getEntitiesToLoad(),
-            eventAndContext: Types.GravatarContract_TestEventWithContext(event, context),
-            blockNumber,
-            logIndex,
+        | GravatarContract_NewGravatar(event) => {
+            let contextHelper = Context.GravatarContract.NewGravatarEvent.contextCreator(
+              ~chainId,
+              ~event,
+            )
+            Handlers.GravatarContract.getNewGravatarLoadEntities()(
+              ~event,
+              ~context=contextHelper.getLoaderContext(),
+            )
+            let {logIndex, blockNumber} = event
+            let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+            let context = contextHelper.getContext(
+              ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+            )
+
+            let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
+
+            (
+              contextHelper.getEntitiesToLoad(),
+              Types.GravatarContract_NewGravatarWithContext(event, context),
+              if Belt.Array.length(dynamicContracts) > 0 {
+                Some(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
+              } else {
+                None
+              },
+            )
+          }
+
+        | GravatarContract_UpdatedGravatar(event) => {
+            let contextHelper = Context.GravatarContract.UpdatedGravatarEvent.contextCreator(
+              ~chainId,
+              ~event,
+            )
+            Handlers.GravatarContract.getUpdatedGravatarLoadEntities()(
+              ~event,
+              ~context=contextHelper.getLoaderContext(),
+            )
+            let {logIndex, blockNumber} = event
+            let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+            let context = contextHelper.getContext(
+              ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+            )
+
+            let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
+
+            (
+              contextHelper.getEntitiesToLoad(),
+              Types.GravatarContract_UpdatedGravatarWithContext(event, context),
+              if Belt.Array.length(dynamicContracts) > 0 {
+                Some(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
+              } else {
+                None
+              },
+            )
+          }
+
+        | NftFactoryContract_SimpleNftCreated(event) => {
+            let contextHelper = Context.NftFactoryContract.SimpleNftCreatedEvent.contextCreator(
+              ~chainId,
+              ~event,
+            )
+            Handlers.NftFactoryContract.getSimpleNftCreatedLoadEntities()(
+              ~event,
+              ~context=contextHelper.getLoaderContext(),
+            )
+            let {logIndex, blockNumber} = event
+            let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+            let context = contextHelper.getContext(
+              ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+            )
+
+            let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
+
+            (
+              contextHelper.getEntitiesToLoad(),
+              Types.NftFactoryContract_SimpleNftCreatedWithContext(event, context),
+              if Belt.Array.length(dynamicContracts) > 0 {
+                Some(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
+              } else {
+                None
+              },
+            )
+          }
+
+        | SimpleNftContract_Transfer(event) => {
+            let contextHelper = Context.SimpleNftContract.TransferEvent.contextCreator(
+              ~chainId,
+              ~event,
+            )
+            Handlers.SimpleNftContract.getTransferLoadEntities()(
+              ~event,
+              ~context=contextHelper.getLoaderContext(),
+            )
+            let {logIndex, blockNumber} = event
+            let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+            let context = contextHelper.getContext(
+              ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+            )
+
+            let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
+
+            (
+              contextHelper.getEntitiesToLoad(),
+              Types.SimpleNftContract_TransferWithContext(event, context),
+              if Belt.Array.length(dynamicContracts) > 0 {
+                Some(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
+              } else {
+                None
+              },
+            )
           }
         }
-
-      | GravatarContract_NewGravatar(event) => {
-          let contextHelper = Context.GravatarContract.NewGravatarEvent.contextCreator(
-            ~chainId,
-            ~event,
-          )
-          Handlers.GravatarContract.getNewGravatarLoadEntities()(
-            ~event,
-            ~context=contextHelper.getLoaderContext(),
-          )
-          let {logIndex, blockNumber} = event
-          let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-          let context = contextHelper.getContext(
-            ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
-          )
-
-          let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
-
-          if Belt.Array.length(dynamicContracts) > 0 {
-            nestedResults
-            ->Js.Array2.push(
-              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
-            )
-            ->ignore
-          }
-
-          {
-            entityReads: contextHelper.getEntitiesToLoad(),
-            eventAndContext: Types.GravatarContract_NewGravatarWithContext(event, context),
-            blockNumber,
-            logIndex,
-          }
-        }
-
-      | GravatarContract_UpdatedGravatar(event) => {
-          let contextHelper = Context.GravatarContract.UpdatedGravatarEvent.contextCreator(
-            ~chainId,
-            ~event,
-          )
-          Handlers.GravatarContract.getUpdatedGravatarLoadEntities()(
-            ~event,
-            ~context=contextHelper.getLoaderContext(),
-          )
-          let {logIndex, blockNumber} = event
-          let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-          let context = contextHelper.getContext(
-            ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
-          )
-
-          let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
-
-          if Belt.Array.length(dynamicContracts) > 0 {
-            nestedResults
-            ->Js.Array2.push(
-              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
-            )
-            ->ignore
-          }
-
-          {
-            entityReads: contextHelper.getEntitiesToLoad(),
-            eventAndContext: Types.GravatarContract_UpdatedGravatarWithContext(event, context),
-            blockNumber,
-            logIndex,
-          }
-        }
-
-      | NftFactoryContract_SimpleNftCreated(event) => {
-          let contextHelper = Context.NftFactoryContract.SimpleNftCreatedEvent.contextCreator(
-            ~chainId,
-            ~event,
-          )
-          Handlers.NftFactoryContract.getSimpleNftCreatedLoadEntities()(
-            ~event,
-            ~context=contextHelper.getLoaderContext(),
-          )
-          let {logIndex, blockNumber} = event
-          let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-          let context = contextHelper.getContext(
-            ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
-          )
-
-          let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
-
-          if Belt.Array.length(dynamicContracts) > 0 {
-            nestedResults
-            ->Js.Array2.push(
-              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
-            )
-            ->ignore
-          }
-
-          {
-            entityReads: contextHelper.getEntitiesToLoad(),
-            eventAndContext: Types.NftFactoryContract_SimpleNftCreatedWithContext(event, context),
-            blockNumber,
-            logIndex,
-          }
-        }
-
-      | SimpleNftContract_Transfer(event) => {
-          let contextHelper = Context.SimpleNftContract.TransferEvent.contextCreator(
-            ~chainId,
-            ~event,
-          )
-          Handlers.SimpleNftContract.getTransferLoadEntities()(
-            ~event,
-            ~context=contextHelper.getLoaderContext(),
-          )
-          let {logIndex, blockNumber} = event
-          let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-          let context = contextHelper.getContext(
-            ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
-          )
-
-          let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
-
-          if Belt.Array.length(dynamicContracts) > 0 {
-            nestedResults
-            ->Js.Array2.push(
-              await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts),
-            )
-            ->ignore
-          }
-
-          {
-            entityReads: contextHelper.getEntitiesToLoad(),
-            eventAndContext: Types.SimpleNftContract_TransferWithContext(event, context),
-            blockNumber,
-            logIndex,
-          }
-        }
-      },
-    )
+      ),
+    })
     ->ignore
   }
 
-  // Flatten the nested results into the origin results, but preserving the total order
-  let pairOrder = ({blockNumber, logIndex}) => (blockNumber, logIndex)
+  baseResults
+}
 
+type rec nestedResult = {
+  result: readEntitiesResult,
+  nested: option<array<nestedResult>>,
+}
+// Given a read entities promise, unwrap just the top level result
+let unwrap = async (p: readEntitiesResultPromise): readEntitiesResult => {
+  let (er, ec, _) = await p.promise
+  {
+    blockNumber: p.blockNumber,
+    logIndex: p.logIndex,
+    entityReads: er,
+    eventAndContext: ec,
+  }
+}
+
+// Recursively await the promises to get their results
+let rec recurseEntityPromises = async (p: readEntitiesResultPromise): nestedResult => {
+  let (_, _, nested) = await p.promise
+
+  {
+    result: await unwrap(p),
+    nested: switch nested {
+    | None => None
+    | Some(xs) => Some(await xs->Belt.Array.map(recurseEntityPromises)->Promise.all)
+    },
+  }
+}
+
+// This function is used to sort results according to their order in the chain
+let resultPosition = ({blockNumber, logIndex}: readEntitiesResult) => (blockNumber, logIndex)
+
+// Given the recursively awaited results, flatten them down into a single list using chain order
+let rec flattenNested = (xs: array<nestedResult>): array<readEntitiesResult> => {
+  let baseResults = xs->Belt.Array.map(({result}) => result)
+  let nestedNestedResults = xs->Belt.Array.keepMap(({nested}) => nested)
+  let nestedResults = nestedNestedResults->Belt.Array.map(flattenNested)
   Belt.Array.reduce(nestedResults, baseResults, (acc, additionalResults) =>
-    Utils.mergeSorted(pairOrder, acc, additionalResults)
+    Utils.mergeSorted(resultPosition, acc, additionalResults)
   )
 }
 
 let loadReadEntities = async (
-  eventBatch: array<Types.event>,
+  eventBatch: array<EventFetching.eventBatchPromise>,
   ~chainConfig: Config.chainConfig,
   ~blocksProcessed: EventFetching.blocksProcessed,
 ): array<Types.eventAndContext> => {
-  let result = await eventBatch->loadReadEntitiesInner(~chainConfig, ~blocksProcessed)
+  let batch = await eventBatch->loadReadEntitiesInner(~chainConfig, ~blocksProcessed)
 
-  let flattenResult = ({entityReads, eventAndContext}) => (entityReads, eventAndContext)
+  let nestedResults = await batch->Belt.Array.map(recurseEntityPromises)->Promise.all
+  let mergedResults = flattenNested(nestedResults)
+
+  let resultToPair = ({entityReads, eventAndContext}) => (entityReads, eventAndContext)
 
   let (readEntitiesGrouped, contexts): (
     array<array<Types.entityRead>>,
     array<Types.eventAndContext>,
   ) =
-    result->Belt.Array.map(flattenResult)->Belt.Array.unzip
+    mergedResults->Belt.Array.map(resultToPair)->Belt.Array.unzip
 
   let readEntities = readEntitiesGrouped->Belt.Array.concatMany
 
@@ -348,7 +375,7 @@ let loadReadEntities = async (
 }
 
 let processEventBatch = async (
-  eventBatch: array<Types.event>,
+  eventBatch: array<EventFetching.eventBatchPromise>,
   ~chainConfig,
   ~blocksProcessed: EventFetching.blocksProcessed,
 ) => {

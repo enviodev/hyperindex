@@ -110,14 +110,13 @@ let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlo
   })
 }
 
-let convertLogs = (
-  logs: array<Ethers.log>,
-  ~provider,
-  ~addressInterfaceMapping,
-  ~fromBlockForLogging,
-  ~toBlockForLogging,
-  ~chainId,
-) => {
+type eventBatchPromise = {
+  blockNumber: int,
+  logIndex: int,
+  eventPromise: promise<Types.event>,
+}
+
+let convertLogs = (logs: array<Ethers.log>, ~provider, ~addressInterfaceMapping, ~chainId) => {
   let blockRequestMapping: Js.Dict.t<
     Promise.t<Js.Nullable.t<Ethers.JsonRpcProvider.block>>,
   > = Js.Dict.empty()
@@ -152,20 +151,21 @@ let convertLogs = (
     )
   }
 
-  let task = () => {
-    Js.log2("Handling number of logs: ", logs->Array.length)
+  logs
+  ->Belt.Array.map(log => {
+    let blockPromise = log.blockNumber->getMemoisedBlockPromise
 
-    logs
-    ->Belt.Array.map(log => {
-      let blockPromise = log.blockNumber->getMemoisedBlockPromise
+    //get a specific interface type
+    //interface type parses the log
+    let optInterface = addressInterfaceMapping->Js.Dict.get(log.address->Obj.magic)
 
-      //get a specific interface type
-      //interface type parses the log
-      let optInterface = addressInterfaceMapping->Js.Dict.get(log.address->Obj.magic)
-
-      switch optInterface {
-      | None => None
-      | Some(interface) => {
+    switch optInterface {
+    | None => None
+    | Some(interface) =>
+      Some({
+        blockNumber: log.blockNumber,
+        logIndex: log.logIndex,
+        eventPromise: {
           let logDescription = interface->Ethers.Interface.parseLog(~log)
 
           switch Converters.eventStringToEvent(
@@ -181,49 +181,41 @@ let convertLogs = (
               ->Converters.Gravatar.convertTestEventLogDescription
               ->Converters.Gravatar.convertTestEventLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           | GravatarContract_NewGravatarEvent =>
             let convertedEvent =
               logDescription
               ->Converters.Gravatar.convertNewGravatarLogDescription
               ->Converters.Gravatar.convertNewGravatarLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           | GravatarContract_UpdatedGravatarEvent =>
             let convertedEvent =
               logDescription
               ->Converters.Gravatar.convertUpdatedGravatarLogDescription
               ->Converters.Gravatar.convertUpdatedGravatarLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           | NftFactoryContract_SimpleNftCreatedEvent =>
             let convertedEvent =
               logDescription
               ->Converters.NftFactory.convertSimpleNftCreatedLogDescription
               ->Converters.NftFactory.convertSimpleNftCreatedLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           | SimpleNftContract_TransferEvent =>
             let convertedEvent =
               logDescription
               ->Converters.SimpleNft.convertTransferLogDescription
               ->Converters.SimpleNft.convertTransferLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           }
-        }
-      }
-    })
-    ->Belt.Array.keepMap(opt => opt)
-    ->Promise.all
-  }
-
-  task()->Promise.catch(err => {
-    Logging.info(
-      `Failed to handle event logs from block ${fromBlockForLogging->Belt.Int.toString} to block ${toBlockForLogging->Belt.Int.toString}`,
-    )
-    err->Promise.reject
+        },
+      })
+    }
   })
+  ->Belt.Array.keepMap(opt => opt)
 }
 
 let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
@@ -254,13 +246,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  await logs->convertLogs(
-    ~provider,
-    ~addressInterfaceMapping,
-    ~fromBlockForLogging=fromBlock,
-    ~toBlockForLogging=toBlock,
-    ~chainId,
-  )
+  logs->convertLogs(~provider, ~addressInterfaceMapping, ~chainId)
 }
 let getContractEventsOnFilters = async (
   ~addressInterfaceMapping,

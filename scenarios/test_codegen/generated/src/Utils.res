@@ -32,3 +32,8 @@ let mergeSorted = (f: 'a => 'b, xs: array<'a>, ys: array<'a>) => {
     result
   }
 }
+
+// A good friend when you're pretty confused.
+//
+// let inspectObj = _myObject =>
+//   %raw(`require('util').inspect(_myObject, {showHidden: false, depth: null, colors: true})`)
