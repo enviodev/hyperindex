@@ -316,27 +316,17 @@ pub fn convert_config_to_sync_config(
     parsed_paths: &ParsedPaths,
 ) -> Result<SyncConfigTemplate, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
-    let c = config.unstable__sync_config;
-
-    // This is a bit ugly since:
-    // 1. fn cannot capture variables like a closure
-    // 2. closures cannot use generics (AFAIK)
-    fn get_or<V: Clone>(
-        c: &Option<SyncConfigUnstable>,
-        f: impl Fn(&SyncConfigUnstable) -> Option<V>,
-        default: V,
-    ) -> V {
-        c.as_ref().and_then(f).unwrap_or(default)
-    }
+    let c = config.unstable__sync_config.as_ref();
 
     let d = defaults::SYNC_CONFIG;
+
     let sync_config = SyncConfigTemplate {
-        initial_block_interval: get_or(&c, |c| c.initial_block_interval, d.initial_block_interval),
-        backoff_multiplicative: get_or(&c, |c| c.backoff_multiplicative, d.backoff_multiplicative),
-        acceleration_additive: get_or(&c, |c| c.acceleration_additive, d.acceleration_additive),
-        interval_ceiling: get_or(&c, |c| c.interval_ceiling, d.interval_ceiling),
-        backoff_millis: get_or(&c, |c| c.backoff_millis, d.backoff_millis),
-        query_timeout_millis: get_or(&c, |c| c.query_timeout_millis, d.query_timeout_millis),
+        initial_block_interval: c.and_then(|c| c.initial_block_interval).unwrap_or(d.initial_block_interval),
+        backoff_multiplicative: c.and_then(|c| c.backoff_multiplicative).unwrap_or(d.backoff_multiplicative),
+        acceleration_additive: c.and_then(|c| c.acceleration_additive).unwrap_or(d.acceleration_additive),
+        interval_ceiling: c.and_then(|c| c.interval_ceiling).unwrap_or(d.interval_ceiling),
+        backoff_millis: c.and_then(|c| c.backoff_millis).unwrap_or(d.backoff_millis),
+        query_timeout_millis: c.and_then(|c| c.query_timeout_millis).unwrap_or(d.query_timeout_millis),
     };
 
     Ok(sync_config)
