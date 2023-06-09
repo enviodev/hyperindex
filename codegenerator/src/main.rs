@@ -121,7 +121,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             println!("Project template ready");
-            Ok(())
+            println!("Running codegen");
+
+            let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
+            let project_paths = &parsed_paths.project_paths;
+            commands::codegen::run_codegen_command_sequence(&project_paths)
         }
 
         CommandType::Codegen(args) => {
@@ -167,17 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 sync_config,
             )?;
 
-            println!("installing packages... ");
-            commands::codegen::pnpm_install(project_paths)?;
-
-            println!("clean build directory");
-            commands::codegen::pnpm_clean(project_paths)?;
-
-            println!("formatting code");
-            commands::codegen::rescript_format(project_paths)?;
-
-            println!("building code");
-            commands::codegen::rescript_build(project_paths)?;
+            commands::codegen::run_codegen_command_sequence(project_paths)?;
 
             Ok(())
         }

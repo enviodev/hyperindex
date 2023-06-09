@@ -47,6 +47,24 @@ pub mod codegen {
             .spawn()?
             .wait()?)
     }
+
+    pub fn run_codegen_command_sequence(
+        project_paths: &ProjectPaths,
+    ) -> Result<(), Box<dyn Error>> {
+        println!("installing packages... ");
+        pnpm_install(project_paths)?;
+
+        println!("clean build directory");
+        pnpm_clean(project_paths)?;
+
+        println!("formatting code");
+        rescript_format(project_paths)?;
+
+        println!("building code");
+        rescript_build(project_paths)?;
+
+        Ok(())
+    }
 }
 pub mod docker {
 
