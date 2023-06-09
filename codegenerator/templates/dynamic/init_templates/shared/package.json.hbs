@@ -2,9 +2,9 @@
   "name": "{{project_name}}",
   "version": "0.1.0",
   "scripts": {
-    {{#unless is_typescript}}
+    {{#if is_javascript}}
       "start": "node generated/src/Index.bs.js"
-    {{/unless}}
+    {{/if}}
     {{#if is_typescript}}
       "clean": "tsc --clean",
       "build": "tsc --build",
@@ -15,6 +15,7 @@
       "clean": "rescript clean -with-deps",
       "build": "rescript build -with-deps",
       "watch": "rescript build -w -with-deps",
+      "start": "pnpm build && node generated/src/Index.bs.js"
     {{/if}}
   },
   {{#if is_rescript}}
