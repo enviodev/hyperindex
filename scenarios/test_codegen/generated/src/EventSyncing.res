@@ -1,5 +1,3 @@
-let initialBlockInterval = 10000
-
 let queryEventsWithCombinedFilterAndProcessEventBatch = async (
   ~addressInterfaceMapping,
   ~eventFilters,
@@ -108,7 +106,7 @@ let processAllEvents = async (chainConfig: Config.chainConfig) => {
   await processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
-    ~blockInterval=initialBlockInterval,
+    ~blockInterval=Config.syncConfig.initialBlockInterval,
     ~provider=chainConfig.provider,
   )
 }

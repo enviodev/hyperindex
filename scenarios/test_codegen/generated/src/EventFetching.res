@@ -1,19 +1,5 @@
 exception QueryTimout(string)
 
-// After an RPC error, how much to scale back the number of blocks requested at once
-let backoffMultiplicative = 0.8
-
-// Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-let accelerationAdditive = 2000
-
-// Do not further increase the block interval past this limit
-let intervalCeiling = 10000
-
-// After an error, how long to wait before retrying
-let backoffMillis = 5000
-
-let queryTimeoutMillis = 20000
-
 type blocksProcessed = {
   from: int,
   to: int,
@@ -282,6 +268,8 @@ let getContractEventsOnFilters = async (
   ~provider,
   (),
 ) => {
+  let sc = Config.syncConfig
+
   let fromBlockRef = ref(fromBlock)
   let shouldContinueProcess = () => fromBlockRef.contents <= toBlock
 
@@ -292,10 +280,10 @@ let getContractEventsOnFilters = async (
     let rec executeQuery = (~blockInterval) => {
       //If the query hangs for longer than this, reject this promise to reduce the block interval
       let queryTimoutPromise =
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=queryTimeoutMillis)->Promise.then(() =>
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
           Promise.reject(
             QueryTimout(
-              `Query took longer than ${Belt.Int.toString(queryTimeoutMillis / 1000)} seconds`,
+              `Query took longer than ${Belt.Int.toString(sc.queryTimeoutMillis / 1000)} seconds`,
             ),
           )
         )
@@ -318,14 +306,14 @@ let getContractEventsOnFilters = async (
       ->Promise.race
       ->Promise.catch(err => {
         Js.log2(
-          `Error getting events, waiting ${(backoffMillis / 1000)
+          `Error getting events, waiting ${(sc.backoffMillis / 1000)
               ->Belt.Int.toString} seconds before retrying`,
           err,
         )
 
-        Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMillis)->Promise.then(_ => {
+        Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.backoffMillis)->Promise.then(_ => {
           let nextBlockIntervalTry =
-            (blockInterval->Belt.Int.toFloat *. backoffMultiplicative)->Belt.Int.fromFloat
+            (blockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
           Js.log3("Retrying query fromBlock and toBlock:", fromBlock, nextBlockIntervalTry)
           executeQuery(~blockInterval={nextBlockIntervalTry})
         })
@@ -340,7 +328,7 @@ let getContractEventsOnFilters = async (
     // Increase batch size going forward, but do not increase past a configured maximum
     // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
     currentBlockInterval :=
-      Pervasives.min(executedBlockInterval + accelerationAdditive, intervalCeiling)
+      Pervasives.min(executedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
 
     fromBlockRef := fromBlockRef.contents + executedBlockInterval
 
