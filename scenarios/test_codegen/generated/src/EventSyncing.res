@@ -48,10 +48,12 @@ let processAllEventsFromBlockNumber = async (
     })
   let currentBlock: ref<int> = ref(await getCurrentBlockFromRPC())
 
+  let targetBlock = Pervasives.min(currentBlock.contents, fromBlock + maxBlockInterval - 1)
+
   //we retrieve the latest processed block from the db and add 1
   //if only one block has occurred since that processed block we ensure that the new block
   //is handled with the below condition
-  let shouldContinueProcess = () => fromBlockRef.contents <= currentBlock.contents
+  let shouldContinueProcess = () => fromBlockRef.contents <= targetBlock
 
   while shouldContinueProcess() {
     let (events, blocksProcessed) = await EventFetching.getContractEventsOnFilters(
@@ -59,7 +61,7 @@ let processAllEventsFromBlockNumber = async (
       ~eventFilters,
       ~minFromBlockLogIndex=0,
       ~fromBlock=fromBlockRef.contents,
-      ~toBlock=currentBlock.contents,
+      ~toBlock=targetBlock,
       ~maxBlockInterval,
       ~chainId=chainConfig.chainId,
       ~provider,
