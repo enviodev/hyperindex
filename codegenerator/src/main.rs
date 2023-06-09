@@ -44,9 +44,7 @@ static ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/erc20_template/typescript");
 static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/erc20_template/javascript");
-static INIT_TEMPLATES_SHARED_DIR: Dir<'_> =
-    include_dir!("templates/dynamic/init_templates/shared");
-
+static INIT_TEMPLATES_SHARED_DIR: Dir<'_> = include_dir!("templates/dynamic/init_templates/shared");
 
 fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
@@ -139,6 +137,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let chain_config_templates =
                 config_parsing::convert_config_to_chain_configs(&parsed_paths)?;
 
+            let sync_config = config_parsing::convert_config_to_sync_config(&parsed_paths)?;
+
             //NOTE: This structure is no longer used int event parsing since it has been refactored
             //to use an inline tuple type for parsed structs. However this is being left until it
             //is decided to completely remove the need for subrecords in which case the entire
@@ -161,6 +161,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 chain_config_templates,
                 entity_types,
                 &project_paths,
+                sync_config,
             )?;
 
             println!("installing packages... ");

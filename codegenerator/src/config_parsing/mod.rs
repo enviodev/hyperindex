@@ -4,12 +4,14 @@ use std::path::PathBuf;
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
 
+use crate::hbs_templating::codegen_templates::SyncConfigTemplate;
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     project_paths::ParsedPaths,
 };
 
+mod defaults;
 pub mod entity_parsing;
 pub mod event_parsing;
 
@@ -177,12 +179,29 @@ impl<T: Clone> TryFrom<OptSingleOrList<T>> for NormalizedList<T> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct SyncConfigUnstable {
+    initial_block_interval: Option<u32>,
+    // After an RPC error, how much to scale back the number of blocks requested at once
+    backoff_multiplicative: Option<f32>,
+    // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
+    acceleration_additive: Option<u32>,
+    // Do not further increase the block interval past this limit
+    interval_ceiling: Option<u32>,
+    // After an error, how long to wait before retrying
+    backoff_millis: Option<u32>,
+    // How long to wait before cancelling an RPC request
+    query_timeout_millis: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     version: String,
     description: String,
     repository: String,
     pub schema: Option<String>,
     pub networks: Vec<Network>,
+    // Make it very clear that this config is not stabilized yet
+    pub unstable__sync_config: Option<SyncConfigUnstable>,
 }
 
 // fn abi_path_to_abi<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -291,6 +310,36 @@ pub fn convert_config_to_chain_configs(
         chain_configs.push(chain_config);
     }
     Ok(chain_configs)
+}
+
+pub fn convert_config_to_sync_config(
+    parsed_paths: &ParsedPaths,
+) -> Result<SyncConfigTemplate, Box<dyn Error>> {
+    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
+    let c = config.unstable__sync_config;
+
+    // This is a bit ugly since:
+    // 1. fn cannot capture variables like a closure
+    // 2. closures cannot use generics (AFAIK)
+    fn get_or<V: Clone>(
+        c: &Option<SyncConfigUnstable>,
+        f: impl Fn(&SyncConfigUnstable) -> Option<V>,
+        default: V,
+    ) -> V {
+        c.as_ref().and_then(f).unwrap_or(default)
+    }
+
+    let d = defaults::SYNC_CONFIG;
+    let sync_config = SyncConfigTemplate {
+        initial_block_interval: get_or(&c, |c| c.initial_block_interval, d.initial_block_interval),
+        backoff_multiplicative: get_or(&c, |c| c.backoff_multiplicative, d.backoff_multiplicative),
+        acceleration_additive: get_or(&c, |c| c.acceleration_additive, d.acceleration_additive),
+        interval_ceiling: get_or(&c, |c| c.interval_ceiling, d.interval_ceiling),
+        backoff_millis: get_or(&c, |c| c.backoff_millis, d.backoff_millis),
+        query_timeout_millis: get_or(&c, |c| c.query_timeout_millis, d.query_timeout_millis),
+    };
+
+    Ok(sync_config)
 }
 
 #[cfg(test)]
