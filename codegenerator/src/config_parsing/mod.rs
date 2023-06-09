@@ -4,12 +4,14 @@ use std::path::PathBuf;
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
 
+use crate::hbs_templating::codegen_templates::SyncConfigTemplate;
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     project_paths::ParsedPaths,
 };
 
+mod defaults;
 pub mod entity_parsing;
 pub mod event_parsing;
 
@@ -177,12 +179,29 @@ impl<T: Clone> TryFrom<OptSingleOrList<T>> for NormalizedList<T> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct SyncConfigUnstable {
+    initial_block_interval: Option<u32>,
+    // After an RPC error, how much to scale back the number of blocks requested at once
+    backoff_multiplicative: Option<f32>,
+    // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
+    acceleration_additive: Option<u32>,
+    // Do not further increase the block interval past this limit
+    interval_ceiling: Option<u32>,
+    // After an error, how long to wait before retrying
+    backoff_millis: Option<u32>,
+    // How long to wait before cancelling an RPC request
+    query_timeout_millis: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     version: String,
     description: String,
     repository: String,
     pub schema: Option<String>,
     pub networks: Vec<Network>,
+    // Make it very clear that this config is not stabilized yet
+    pub unstable__sync_config: Option<SyncConfigUnstable>,
 }
 
 // fn abi_path_to_abi<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -291,6 +310,26 @@ pub fn convert_config_to_chain_configs(
         chain_configs.push(chain_config);
     }
     Ok(chain_configs)
+}
+
+pub fn convert_config_to_sync_config(
+    parsed_paths: &ParsedPaths,
+) -> Result<SyncConfigTemplate, Box<dyn Error>> {
+    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
+    let c = config.unstable__sync_config.as_ref();
+
+    let d = defaults::SYNC_CONFIG;
+
+    let sync_config = SyncConfigTemplate {
+        initial_block_interval: c.and_then(|c| c.initial_block_interval).unwrap_or(d.initial_block_interval),
+        backoff_multiplicative: c.and_then(|c| c.backoff_multiplicative).unwrap_or(d.backoff_multiplicative),
+        acceleration_additive: c.and_then(|c| c.acceleration_additive).unwrap_or(d.acceleration_additive),
+        interval_ceiling: c.and_then(|c| c.interval_ceiling).unwrap_or(d.interval_ceiling),
+        backoff_millis: c.and_then(|c| c.backoff_millis).unwrap_or(d.backoff_millis),
+        query_timeout_millis: c.and_then(|c| c.query_timeout_millis).unwrap_or(d.query_timeout_millis),
+    };
+
+    Ok(sync_config)
 }
 
 #[cfg(test)]

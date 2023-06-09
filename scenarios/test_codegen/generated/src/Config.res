@@ -112,7 +112,7 @@ type syncConfig = {
 let syncConfig = {
   initialBlockInterval: EnvUtils.getIntEnvVar(
     ~envSafe,
-    "UNSTABLE__SYNC_BLOCK_INTERVAL",
+    "UNSTABLE__SYNC_INITIAL_BLOCK_INTERVAL",
     ~fallback=10000,
   ),
   // After an RPC error, how much to scale back the number of blocks requested at once
