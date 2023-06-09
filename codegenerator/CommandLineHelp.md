@@ -7,6 +7,9 @@ This document contains the help content for the `envio` command-line program.
 * [`envio`↴](#envio)
 * [`envio init`↴](#envio-init)
 * [`envio codegen`↴](#envio-codegen)
+* [`envio local`↴](#envio-local)
+* [`envio local docker`↴](#envio-local-docker)
+* [`envio local db-migrate`↴](#envio-local-db-migrate)
 
 ## `envio`
 
@@ -16,6 +19,7 @@ This document contains the help content for the `envio` command-line program.
 
 * `init` — Initialize a project with a template
 * `codegen` — Generate code from a config.yaml file
+* `local` — Run local docker instance of indexer
 
 
 
@@ -32,7 +36,7 @@ Initialize a project with a template
   Default value: `./`
 * `-t`, `--template <TEMPLATE>` — The file in the project containing config
 
-  Possible values: `gravatar`
+  Possible values: `blank`, `greeter`, `erc20`
 
 * `-l`, `--language <LANGUAGE>`
 
@@ -58,6 +62,46 @@ Generate code from a config.yaml file
 * `-c`, `--config <CONFIG>` — The file in the project containing config
 
   Default value: `config.yaml`
+
+
+
+## `envio local`
+
+Run local docker instance of indexer
+
+**Usage:** `envio local <COMMAND>`
+
+###### **Subcommands:**
+
+* `docker` — Local Envio and ganache environment commands
+* `db-migrate` — Local Envio database commands
+
+
+
+## `envio local docker`
+
+Local Envio and ganache environment commands
+
+**Usage:** `envio local docker [OPTIONS]`
+
+###### **Options:**
+
+* `-u`, `--up` — Start local docker postgres and ganache instance for indexer
+* `-d`, `--down` — Drop local docker postgres and ganache instance for indexer
+
+
+
+## `envio local db-migrate`
+
+Local Envio database commands
+
+**Usage:** `envio local db-migrate [OPTIONS]`
+
+###### **Options:**
+
+* `-u`, `--up` — Migrate latest schema to database
+* `-d`, `--down` — Drop database schema
+* `-s`, `--setup` — Setup DB
 
 
 
