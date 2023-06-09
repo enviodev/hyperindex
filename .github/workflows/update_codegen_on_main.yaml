@@ -11,11 +11,10 @@ on:
 
 defaults:
   run:
-    working-directory: codegenerator
+    working-directory: scenarios/test_codegen
 
 env:
   CARGO_TERM_COLOR: always
-  FLOAT_OPERATOR_GH_API_KEY: ${{ secrets.FLOAT_OPERATOR_GH_API_KEY }}
 
 jobs:
   get_codegen_diff:
@@ -65,27 +64,38 @@ jobs:
         run: echo "::set-output name=hash::$(git rev-parse --short "$GITHUB_SHA")"
 
       - name: Run envio codegen
-        working-directory: scenarios/test_codegen
         run: pnpm codegen -s
 
-      - name: Checkout output repository
-        uses: actions/checkout@v2
+      - uses: webfactory/ssh-agent@v0.7.0
         with:
-          repository: Float-Capital/test-codegen-output
-          token: ${{ secrets.FLOAT_OPERATOR_GH_API_KEY }}
-          path: ./scenarios/codegen-output
+          ssh-private-key: ${{ secrets.OPERATOR_SSH_PRIVATE_KEY }}
 
-      - name: Copy codegen output to output repository
-        working-directory: scenarios/test_codegen
+      - name: Get the branch name
+        id: extract_branch
         run: |
-          find . -not -name ".git" -not -name ".gitignore" -mindepth 1 -maxdepth 1 -exec rm -rf {} \;
-          cp -r /* ./codegen-output
+          # ${{ github.head_ref || github.ref_name }} or ${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}} both work. `github.head_ref` doesn't work for direct pushes (not PRs).
+          #   Reference: https://stackoverflow.com/questions/60300169/how-to-get-branch-name-on-github-action
+          echo "::set-output name=branch::$(echo ${{ github.head_ref || github.ref_name }})"
 
       - name: Commit and push changes to output repository
         run: |
-          git config --local user.email "operator@mycompany.com"
-          git config --local user.name "Operator"
+          git clone git@github.com:Float-Capital/test-codegen-output.git
+          cd test-codegen-output
+          git fetch origin
+          if git branch -r | grep -q "origin/${{ steps.extract_branch.outputs.branch }}"; then
+            git checkout ${{ steps.extract_branch.outputs.branch }}
+            git pull origin ${{ steps.extract_branch.outputs.branch }}
+          else
+            git checkout -b ${{ steps.extract_branch.outputs.branch }}
+          fi
+          git config --local user.name "Codegen Bot Beep Boop"
+          find . -not -name ".git" -not -name ".gitignore" -mindepth 1 -maxdepth 1 -exec rm -rf {} \;
+          cp -r ../generated/* .
           git add -A
-          git commit -m "<main-branch> Update based on commit ${{ steps.gethash.outputs.hash }} in parent repo"
-          git push
-        working-directory: ./codegen-output
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          else
+            git commit -m "Update based on commit ${{ steps.gethash.outputs.hash }} in parent repo"
+            git push origin ${{ steps.extract_branch.outputs.branch }}
+          fi
