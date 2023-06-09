@@ -2,17 +2,15 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 pub mod interactive_init;
 
+pub const DEFAULT_PROJECT_ROOT_PATH: &str = "./";
+pub const DEFAULT_GENERATED_PATH: &str = "generated/";
+pub const DEFAULT_CONFIG_PATH: &str = "config.yaml";
+
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
 pub struct CommandLineArgs {
     #[clap(subcommand)]
     pub command: CommandType,
-}
-#[derive(Debug, Parser)]
-#[clap(author, version, about)]
-pub struct LocalCommandLineArgs {
-    #[clap(subcommand)]
-    pub command: LocalCommandTypes,
 }
 
 #[derive(Debug, Subcommand)]
@@ -23,7 +21,7 @@ pub enum CommandType {
     ///Generate code from a config.yaml file
     Codegen(CodegenArgs),
 
-    ///Run local docker instance of indexer
+    ///Prepare local environment for envio testing
     #[command(subcommand)]
     Local(LocalCommandTypes),
 
@@ -36,36 +34,29 @@ pub enum CommandType {
 #[derive(Debug, Subcommand)]
 pub enum LocalCommandTypes {
     /// Local Envio and ganache environment commands
+    #[command(subcommand)]
     Docker(LocalDockerArgs),
     /// Local Envio database commands
+    #[command(subcommand)]
     DbMigrate(DbMigrateArgs),
 }
 
-pub const DEFAULT_PROJECT_ROOT_PATH: &str = "./";
-pub const DEFAULT_GENERATED_PATH: &str = "generated/";
-pub const DEFAULT_CONFIG_PATH: &str = "config.yaml";
-
-#[derive(Args, Debug)]
-pub struct LocalDockerArgs {
-    /// Start local docker postgres and ganache instance for indexer
-    #[arg(short, long, action)]
-    pub up: bool,
-    /// Drop local docker postgres and ganache instance for indexer
-    #[arg(short, long, action)]
-    pub down: bool,
+#[derive(Clone, Debug, Subcommand)]
+pub enum LocalDockerArgs {
+    ///Create a docker container for ganache and postgres
+    Up,
+    ///Shut down docker container for ganache and postgres
+    Down,
 }
 
-#[derive(Args, Debug)]
-pub struct DbMigrateArgs {
+#[derive(Clone, Debug, Subcommand)]
+pub enum DbMigrateArgs {
     ///Migrate latest schema to database
-    #[arg(short, long, action)]
-    pub up: bool,
+    Up,
     ///Drop database schema
-    #[arg(short, long, action)]
-    pub down: bool,
+    Down,
     ///Setup database by dropping schema and running up migrations
-    #[arg(short, long, action)]
-    pub setup: bool,
+    Setup,
 }
 #[derive(Args, Debug)]
 pub struct CodegenArgs {

@@ -6,7 +6,7 @@ use std::process::Command;
 use clap::Parser;
 
 use envio::{
-    cli_args::{self, Language},
+    cli_args::{self, DbMigrateArgs, Language, LocalDockerArgs},
     config_parsing::{self, entity_parsing, event_parsing},
     hbs_templating::codegen_templates::{
         entities_to_map, generate_templates, EventRecordTypeTemplate,
@@ -200,12 +200,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .wait()?;
             Ok(())
         }
-        CommandType::Local(local_commands) => {
-            match local_commands {
-                cli_args::LocalCommandTypes::Docker(args) => {
-                    let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
-                    let project_paths = &parsed_paths.project_paths;
-                    if args.up {
+        CommandType::Local(local_commands) => match local_commands {
+            cli_args::LocalCommandTypes::Docker(args) => {
+                let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
+                let project_paths = &parsed_paths.project_paths;
+                match args {
+                    LocalDockerArgs::Up => {
                         Command::new("docker")
                             .arg("compose")
                             .arg("up")
@@ -213,7 +213,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                             .current_dir(&project_paths.generated)
                             .spawn()?
                             .wait()?;
-                    } else if args.down {
+
+                        println!("Creating new docker container");
+                    }
+                    LocalDockerArgs::Down => {
                         Command::new("docker")
                             .arg("compose")
                             .arg("down")
@@ -221,39 +224,48 @@ fn main() -> Result<(), Box<dyn Error>> {
                             .current_dir(&project_paths.generated)
                             .spawn()?
                             .wait()?;
-                    } else {
-                        println!("Please specify either --up or --down");
+
+                        println!("Shutting down existing docker container");
                     }
-                    Ok(())
                 }
-                cli_args::LocalCommandTypes::DbMigrate(args) => {
-                    let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
-                    let project_paths = &parsed_paths.project_paths;
-                    if args.up {
+                Ok(())
+            }
+            cli_args::LocalCommandTypes::DbMigrate(args) => {
+                let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
+                let project_paths = &parsed_paths.project_paths;
+                match args {
+                    DbMigrateArgs::Up => {
                         Command::new("pnpm")
                             .arg("db-up")
                             .current_dir(&project_paths.generated)
                             .spawn()?
                             .wait()?;
-                    } else if args.down {
+
+                        println!("Migrating latest schema to database");
+                    }
+
+                    DbMigrateArgs::Down => {
                         Command::new("pnpm")
                             .arg("db-down")
                             .current_dir(&project_paths.generated)
                             .spawn()?
                             .wait()?;
-                    } else if args.setup {
+
+                        println!("Dropping database schema")
+                    }
+                    DbMigrateArgs::Setup => {
                         Command::new("pnpm")
                             .arg("db-setup")
                             .current_dir(&project_paths.generated)
                             .spawn()?
                             .wait()?;
-                    } else {
-                        println!("Please specify either --up or --down or --setup");
+
+                        println!("Setting up database by dropping schema and running up migrations")
                     }
-                    Ok(())
                 }
+                Ok(())
             }
-        }
+        },
         CommandType::PrintAllHelp {} => {
             clap_markdown::print_help_markdown::<CommandLineArgs>();
             Ok(())

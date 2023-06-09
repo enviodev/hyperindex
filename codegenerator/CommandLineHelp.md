@@ -9,7 +9,12 @@ This document contains the help content for the `envio` command-line program.
 * [`envio codegen`↴](#envio-codegen)
 * [`envio local`↴](#envio-local)
 * [`envio local docker`↴](#envio-local-docker)
+* [`envio local docker up`↴](#envio-local-docker-up)
+* [`envio local docker down`↴](#envio-local-docker-down)
 * [`envio local db-migrate`↴](#envio-local-db-migrate)
+* [`envio local db-migrate up`↴](#envio-local-db-migrate-up)
+* [`envio local db-migrate down`↴](#envio-local-db-migrate-down)
+* [`envio local db-migrate setup`↴](#envio-local-db-migrate-setup)
 
 ## `envio`
 
@@ -19,7 +24,7 @@ This document contains the help content for the `envio` command-line program.
 
 * `init` — Initialize a project with a template
 * `codegen` — Generate code from a config.yaml file
-* `local` — Run local docker instance of indexer
+* `local` — Prepare local environment for envio testing
 
 
 
@@ -67,7 +72,7 @@ Generate code from a config.yaml file
 
 ## `envio local`
 
-Run local docker instance of indexer
+Prepare local environment for envio testing
 
 **Usage:** `envio local <COMMAND>`
 
@@ -82,12 +87,28 @@ Run local docker instance of indexer
 
 Local Envio and ganache environment commands
 
-**Usage:** `envio local docker [OPTIONS]`
+**Usage:** `envio local docker <COMMAND>`
 
-###### **Options:**
+###### **Subcommands:**
 
-* `-u`, `--up` — Start local docker postgres and ganache instance for indexer
-* `-d`, `--down` — Drop local docker postgres and ganache instance for indexer
+* `up` — Create a docker container for ganache and postgres
+* `down` — Shut down docker container for ganache and postgres
+
+
+
+## `envio local docker up`
+
+Create a docker container for ganache and postgres
+
+**Usage:** `envio local docker up`
+
+
+
+## `envio local docker down`
+
+Shut down docker container for ganache and postgres
+
+**Usage:** `envio local docker down`
 
 
 
@@ -95,13 +116,37 @@ Local Envio and ganache environment commands
 
 Local Envio database commands
 
-**Usage:** `envio local db-migrate [OPTIONS]`
+**Usage:** `envio local db-migrate <COMMAND>`
 
-###### **Options:**
+###### **Subcommands:**
 
-* `-u`, `--up` — Migrate latest schema to database
-* `-d`, `--down` — Drop database schema
-* `-s`, `--setup` — Setup DB
+* `up` — Migrate latest schema to database
+* `down` — Drop database schema
+* `setup` — Setup database by dropping schema and running up migrations
+
+
+
+## `envio local db-migrate up`
+
+Migrate latest schema to database
+
+**Usage:** `envio local db-migrate up`
+
+
+
+## `envio local db-migrate down`
+
+Drop database schema
+
+**Usage:** `envio local db-migrate down`
+
+
+
+## `envio local db-migrate setup`
+
+Setup database by dropping schema and running up migrations
+
+**Usage:** `envio local db-migrate setup`
 
 
 
