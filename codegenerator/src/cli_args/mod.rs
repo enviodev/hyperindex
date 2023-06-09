@@ -63,7 +63,7 @@ pub struct DbMigrateArgs {
     ///Drop database schema
     #[arg(short, long, action)]
     pub down: bool,
-    ///Setup DB
+    ///Setup database by dropping schema and running up migrations
     #[arg(short, long, action)]
     pub setup: bool,
 }
