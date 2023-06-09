@@ -1,0 +1,91 @@
+name: Generate codegen on main
+
+on:
+  push:
+    branches:
+      - main
+      - test-codegen-output-main # Branch to help test this pipeline
+    paths:
+      - "codegenerator/**"
+      - "scenarios/test_codegen/**"
+
+defaults:
+  run:
+    working-directory: codegenerator
+
+env:
+  CARGO_TERM_COLOR: always
+  FLOAT_OPERATOR_GH_API_KEY: ${{ secrets.FLOAT_OPERATOR_GH_API_KEY }}
+
+jobs:
+  get_codegen_diff:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup rust cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            # using both of these paths to hedge bets on which is correct.
+            ./codegenerator/target
+            ./target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.os }}-cargo-
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Get commit hash
+        id: gethash
+        run: echo "::set-output name=hash::$(git rev-parse --short "$GITHUB_SHA")"
+
+      - name: Run envio codegen
+        working-directory: scenarios/test_codegen
+        run: pnpm codegen -s
+
+      - name: Checkout output repository
+        uses: actions/checkout@v2
+        with:
+          repository: Float-Capital/test-codegen-output
+          token: ${{ secrets.FLOAT_OPERATOR_GH_API_KEY }}
+          path: ./scenarios/codegen-output
+
+      - name: Copy codegen output to output repository
+        working-directory: scenarios/test_codegen
+        run: |
+          find . -not -name ".git" -not -name ".gitignore" -mindepth 1 -maxdepth 1 -exec rm -rf {} \;
+          cp -r /* ./codegen-output
+
+      - name: Commit and push changes to output repository
+        run: |
+          git config --local user.email "operator@mycompany.com"
+          git config --local user.name "Operator"
+          git add -A
+          git commit -m "<main-branch> Update based on commit ${{ steps.gethash.outputs.hash }} in parent repo"
+          git push
+        working-directory: ./codegen-output
