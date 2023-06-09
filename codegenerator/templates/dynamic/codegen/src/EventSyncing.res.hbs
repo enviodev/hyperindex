@@ -56,12 +56,17 @@ let processAllEventsFromBlockNumber = async (
   let shouldContinueProcess = () => fromBlockRef.contents <= currentBlock.contents
 
   while shouldContinueProcess() {
+    let targetBlock = Pervasives.min(
+      currentBlock.contents,
+      fromBlockRef.contents + maxBlockInterval - 1
+    )
+
     let (events, blocksProcessed) = await EventFetching.getContractEventsOnFilters(
       ~addressInterfaceMapping,
       ~eventFilters,
       ~minFromBlockLogIndex=0,
       ~fromBlock=fromBlockRef.contents,
-      ~toBlock=currentBlock.contents,
+      ~toBlock=targetBlock,
       ~maxBlockInterval,
       ~chainId=chainConfig.chainId,
       ~provider,
