@@ -5,14 +5,18 @@ type blocksProcessed = {
   to: int,
 }
 
-// Expose key removal on JS maps, used for cache invalidation
-// Unfortunately Js.Dict.unsafeDeleteKey only works with Js.Dict.t<String>
-%%raw(`
-function deleteKey(obj, k) {
-  delete obj[k]
-}
-`)
-@val external deleteKey: ('a, string) => unit = "deleteKey"
+let getUnwrappedBlock = (provider, blockNumber) =>
+  provider
+  ->Ethers.JsonRpcProvider.getBlock(blockNumber)
+  ->Promise.then(blockNullable =>
+    switch blockNullable->Js.Nullable.toOption {
+    | Some(block) => Promise.resolve(block)
+    | None =>
+      Promise.reject(
+        Js.Exn.raiseError(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`),
+      )
+    }
+  )
 
 let getSingleContractEventFilters = (
   ~contractAddress,
@@ -116,46 +120,12 @@ type eventBatchPromise = {
   eventPromise: promise<Types.event>,
 }
 
-let convertLogs = (logs: array<Ethers.log>, ~provider, ~addressInterfaceMapping, ~chainId) => {
-  let blockRequestMapping: Js.Dict.t<
-    Promise.t<Js.Nullable.t<Ethers.JsonRpcProvider.block>>,
-  > = Js.Dict.empty()
-
-  // Many times logs will be from the same block so there is no need to make multiple get block requests in that case
-  let getMemoisedBlockPromise = blockNumber => {
-    let blockKey = Belt.Int.toString(blockNumber)
-
-    let blockRequestCached = blockRequestMapping->Js.Dict.get(blockKey)
-
-    let blockRequest = switch blockRequestCached {
-    | Some(req) => req
-    | None =>
-      let newRequest = provider->Ethers.JsonRpcProvider.getBlock(blockNumber)
-      // Cache the request
-      blockRequestMapping->Js.Dict.set(blockKey, newRequest)
-      newRequest
-    }
-    blockRequest
-    ->Promise.catch(err => {
-      // Invalidate the cache, so that the request can be retried
-      deleteKey(blockRequestMapping, blockKey)
-
-      // Propagate failure to where we handle backoff
-      Promise.reject(err)
-    })
-    ->Promise.then(block =>
-      switch block->Js.Nullable.toOption {
-      | Some(block) => Promise.resolve(block)
-      | None => Promise.reject(Js.Exn.raiseError(`getBlock(${blockKey}) returned null`))
-      }
-    )
-  }
-
+let convertLogs = (logs: array<Ethers.log>, ~blockLoader, ~addressInterfaceMapping, ~chainId) => {
   Js.log2("Handling number of logs: ", logs->Array.length)
 
   logs
   ->Belt.Array.map(log => {
-    let blockPromise = log.blockNumber->getMemoisedBlockPromise
+    let blockPromise = blockLoader->LazyLoader.get(log.blockNumber)
 
     //get a specific interface type
     //interface type parses the log
@@ -230,6 +200,7 @@ let queryEventsWithCombinedFilter = async (
   ~fromBlock,
   ~toBlock,
   ~minFromBlockLogIndex=0,
+  ~blockLoader,
   ~provider,
   ~chainId,
   (),
@@ -248,7 +219,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  logs->convertLogs(~provider, ~addressInterfaceMapping, ~chainId)
+  logs->convertLogs(~blockLoader, ~addressInterfaceMapping, ~chainId)
 }
 let getContractEventsOnFilters = async (
   ~addressInterfaceMapping,
@@ -259,6 +230,7 @@ let getContractEventsOnFilters = async (
   ~maxBlockInterval,
   ~chainId,
   ~provider,
+  ~blockLoader,
   (),
 ) => {
   let sc = Config.syncConfig
@@ -291,6 +263,7 @@ let getContractEventsOnFilters = async (
           ~toBlock=nextToBlock,
           ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
           ~provider,
+          ~blockLoader,
           ~chainId,
           (),
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))

@@ -116,6 +116,7 @@ let rec loadReadEntitiesInner = async (
   eventBatch: array<EventFetching.eventBatchPromise>,
   ~chainConfig: Config.chainConfig,
   ~blocksProcessed: EventFetching.blocksProcessed,
+  ~blockLoader,
 ): array<readEntitiesResultPromise> => {
   // Recursively load entities
   let loadNestedReadEntities = (
@@ -142,9 +143,14 @@ let rec loadReadEntitiesInner = async (
       ~maxBlockInterval=blocksProcessed.to - blockNumber + 1,
       ~chainId=chainConfig.chainId,
       ~provider=chainConfig.provider,
+      ~blockLoader,
       (),
     )->Promise.then(((fetchedEvents, nestedBlocksProcessed)) => {
-      fetchedEvents->loadReadEntitiesInner(~chainConfig, ~blocksProcessed=nestedBlocksProcessed)
+      fetchedEvents->loadReadEntitiesInner(
+        ~chainConfig,
+        ~blockLoader,
+        ~blocksProcessed=nestedBlocksProcessed,
+      )
     })
   }
 
@@ -352,13 +358,15 @@ let rec flattenNested = (xs: array<nestedResult>): array<readEntitiesResult> => 
 let loadReadEntities = async (
   eventBatch: array<EventFetching.eventBatchPromise>,
   ~chainConfig: Config.chainConfig,
+  ~blockLoader,
   ~blocksProcessed: EventFetching.blocksProcessed,
 ): array<Types.eventAndContext> => {
-  let batch = await eventBatch->loadReadEntitiesInner(~chainConfig, ~blocksProcessed)
+  let batch = await eventBatch->loadReadEntitiesInner(~chainConfig, ~blocksProcessed, ~blockLoader)
 
   let nestedResults = await batch->Belt.Array.map(recurseEntityPromises)->Promise.all
   let mergedResults = flattenNested(nestedResults)
 
+  // Project the result record into a tuple, so that we can unzip the two payloads.
   let resultToPair = ({entityReads, eventAndContext}) => (entityReads, eventAndContext)
 
   let (readEntitiesGrouped, contexts): (
@@ -378,10 +386,12 @@ let processEventBatch = async (
   eventBatch: array<EventFetching.eventBatchPromise>,
   ~chainConfig,
   ~blocksProcessed: EventFetching.blocksProcessed,
+  ~blockLoader,
 ) => {
   IO.InMemoryStore.resetStore()
 
-  let eventBatchAndContext = await eventBatch->loadReadEntities(~chainConfig, ~blocksProcessed)
+  let eventBatchAndContext =
+    await eventBatch->loadReadEntities(~chainConfig, ~blockLoader, ~blocksProcessed)
 
   eventBatchAndContext->Belt.Array.forEach(event =>
     event->eventRouter(~chainId=chainConfig.chainId)

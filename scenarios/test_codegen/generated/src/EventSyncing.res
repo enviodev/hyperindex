@@ -3,6 +3,7 @@ let queryEventsWithCombinedFilterAndProcessEventBatch = async (
   ~eventFilters,
   ~fromBlock,
   ~toBlock,
+  ~blockLoader,
   ~provider,
   ~chainConfig: Config.chainConfig,
 ) => {
@@ -11,12 +12,14 @@ let queryEventsWithCombinedFilterAndProcessEventBatch = async (
     ~eventFilters,
     ~fromBlock,
     ~toBlock,
+    ~blockLoader,
     ~provider,
     ~chainId=chainConfig.chainId,
     (),
   )
   events->EventProcessing.processEventBatch(
     ~chainConfig,
+    ~blockLoader,
     ~blocksProcessed={from: fromBlock, to: toBlock},
   )
 }
@@ -26,6 +29,7 @@ let processAllEventsFromBlockNumber = async (
   ~blockInterval as maxBlockInterval,
   ~chainConfig: Config.chainConfig,
   ~provider,
+  ~blockLoader,
 ) => {
   let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
 
@@ -61,12 +65,13 @@ let processAllEventsFromBlockNumber = async (
       ~maxBlockInterval,
       ~chainId=chainConfig.chainId,
       ~provider,
+      ~blockLoader,
       (),
     )
 
     //process the batch of events
     //NOTE: we can use this to track batch processing time
-    await events->EventProcessing.processEventBatch(~chainConfig, ~blocksProcessed)
+    await events->EventProcessing.processEventBatch(~chainConfig, ~blockLoader, ~blocksProcessed)
 
     fromBlockRef := blocksProcessed.to + 1
     currentBlock := (await getCurrentBlockFromRPC())
@@ -74,6 +79,10 @@ let processAllEventsFromBlockNumber = async (
 }
 
 let processAllEvents = async (chainConfig: Config.chainConfig) => {
+  let blockLoader = LazyLoader.make(
+    ~loaderFn=EventFetching.getUnwrappedBlock(chainConfig.provider),
+    (),
+  )
   let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
     ~chainId=chainConfig.chainId,
   )
@@ -106,6 +115,7 @@ let processAllEvents = async (chainConfig: Config.chainConfig) => {
     ~chainConfig,
     ~blockInterval=Config.syncConfig.initialBlockInterval,
     ~provider=chainConfig.provider,
+    ~blockLoader,
   )
 }
 
