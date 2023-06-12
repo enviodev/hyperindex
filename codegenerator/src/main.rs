@@ -1,12 +1,15 @@
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 use clap::Parser;
 
 use envio::{
-    cli_args::{self, Language},
+    cli_args::{
+        self, DbMigrateSubcommands, Language, LocalCommandTypes, LocalDockerSubcommands,
+        ProjectPathsArgs,
+    },
+    commands,
     config_parsing::{self, entity_parsing, event_parsing},
     hbs_templating::codegen_templates::{
         entities_to_map, generate_templates, EventRecordTypeTemplate,
@@ -118,7 +121,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             println!("Project template ready");
-            Ok(())
+            println!("Running codegen");
+
+            let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
+            let project_paths = &parsed_paths.project_paths;
+            commands::codegen::run_codegen_command_sequence(&project_paths)
         }
 
         CommandType::Codegen(args) => {
@@ -164,52 +171,36 @@ fn main() -> Result<(), Box<dyn Error>> {
                 sync_config,
             )?;
 
-            println!("installing packages... ");
+            commands::codegen::run_codegen_command_sequence(project_paths)?;
 
-            Command::new("pnpm")
-                .arg("install")
-                .arg("--no-frozen-lockfile")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
+            Ok(())
+        }
+        CommandType::Local(local_commands) => {
+            let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
+            let project_paths = &parsed_paths.project_paths;
+            match local_commands {
+                LocalCommandTypes::Docker(subcommand) => match subcommand {
+                    LocalDockerSubcommands::Up => {
+                        commands::docker::docker_compose_up_d(project_paths)?;
+                    }
+                    LocalDockerSubcommands::Down => {
+                        commands::docker::docker_compose_down_v(project_paths)?;
+                    }
+                },
+                LocalCommandTypes::DbMigrate(subcommand) => match subcommand {
+                    DbMigrateSubcommands::Up => {
+                        commands::db_migrate::run_up_migrations(project_paths)?;
+                    }
 
-            println!("clean build directory");
+                    DbMigrateSubcommands::Down => {
+                        commands::db_migrate::run_drop_schema(project_paths)?;
+                    }
 
-            Command::new("pnpm")
-                .arg("clean")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
-
-            println!("formatting code");
-
-            Command::new("pnpm")
-                .arg("rescript")
-                .arg("format")
-                .arg("-all")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
-
-            println!("building code");
-
-            Command::new("pnpm")
-                .arg("build")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
-
-            println!("generate db migrations");
-            if !args.skip_db_provision {
-                Command::new("pnpm")
-                    .arg("db-migrate")
-                    .current_dir(&project_paths.generated)
-                    .spawn()?
-                    .wait()?;
-            } else {
-                println!("skipping db migration")
+                    DbMigrateSubcommands::Setup => {
+                        commands::db_migrate::run_db_setup(project_paths)?;
+                    }
+                },
             }
-
             Ok(())
         }
         CommandType::PrintAllHelp {} => {
