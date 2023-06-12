@@ -665,7 +665,7 @@ let executeBatch = async sql => {
       userRow.crud == Types.Create || userRow.crud == Update
         ? Some({
             ...userRow,
-            entity: userRow.entity->Types.serializeUserEntity,
+            entity: userRow.entity->Types.userEntity_encode,
           })
         : None
     )
@@ -698,7 +698,7 @@ let executeBatch = async sql => {
       gravatarRow.crud == Types.Create || gravatarRow.crud == Update
         ? Some({
             ...gravatarRow,
-            entity: gravatarRow.entity->Types.serializeGravatarEntity,
+            entity: gravatarRow.entity->Types.gravatarEntity_encode,
           })
         : None
     )
@@ -731,7 +731,7 @@ let executeBatch = async sql => {
       nftcollectionRow.crud == Types.Create || nftcollectionRow.crud == Update
         ? Some({
             ...nftcollectionRow,
-            entity: nftcollectionRow.entity->Types.serializeNftcollectionEntity,
+            entity: nftcollectionRow.entity->Types.nftcollectionEntity_encode,
           })
         : None
     )
@@ -762,7 +762,7 @@ let executeBatch = async sql => {
       tokenRow.crud == Types.Create || tokenRow.crud == Update
         ? Some({
             ...tokenRow,
-            entity: tokenRow.entity->Types.serializeTokenEntity,
+            entity: tokenRow.entity->Types.tokenEntity_encode,
           })
         : None
     )
@@ -793,7 +793,7 @@ let executeBatch = async sql => {
       aRow.crud == Types.Create || aRow.crud == Update
         ? Some({
             ...aRow,
-            entity: aRow.entity->Types.serializeAEntity,
+            entity: aRow.entity->Types.aEntity_encode,
           })
         : None
     )
@@ -824,7 +824,7 @@ let executeBatch = async sql => {
       bRow.crud == Types.Create || bRow.crud == Update
         ? Some({
             ...bRow,
-            entity: bRow.entity->Types.serializeBEntity,
+            entity: bRow.entity->Types.bEntity_encode,
           })
         : None
     )
@@ -855,7 +855,7 @@ let executeBatch = async sql => {
       cRow.crud == Types.Create || cRow.crud == Update
         ? Some({
             ...cRow,
-            entity: cRow.entity->Types.serializeCEntity,
+            entity: cRow.entity->Types.cEntity_encode,
           })
         : None
     )

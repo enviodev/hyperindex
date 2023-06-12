@@ -106,12 +106,9 @@ module User = {
       },
     }
   }
-
   @module("./DbFunctionsImplementation.js")
-  external batchSetUser: (
-    Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.userEntitySerialized>>,
-  ) => promise<unit> = "batchSetUser"
+  external batchSetUser: (Postgres.sql, array<Types.inMemoryStoreRow<Js.Json.t>>) => promise<unit> =
+    "batchSetUser"
 
   @module("./DbFunctionsImplementation.js")
   external batchDeleteUser: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteUser"
@@ -151,11 +148,10 @@ module Gravatar = {
       },
     }
   }
-
   @module("./DbFunctionsImplementation.js")
   external batchSetGravatar: (
     Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.gravatarEntitySerialized>>,
+    array<Types.inMemoryStoreRow<Js.Json.t>>,
   ) => promise<unit> = "batchSetGravatar"
 
   @module("./DbFunctionsImplementation.js")
@@ -201,11 +197,10 @@ module Nftcollection = {
       },
     }
   }
-
   @module("./DbFunctionsImplementation.js")
   external batchSetNftcollection: (
     Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.nftcollectionEntitySerialized>>,
+    array<Types.inMemoryStoreRow<Js.Json.t>>,
   ) => promise<unit> = "batchSetNftcollection"
 
   @module("./DbFunctionsImplementation.js")
@@ -245,11 +240,10 @@ module Token = {
       },
     }
   }
-
   @module("./DbFunctionsImplementation.js")
   external batchSetToken: (
     Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.tokenEntitySerialized>>,
+    array<Types.inMemoryStoreRow<Js.Json.t>>,
   ) => promise<unit> = "batchSetToken"
 
   @module("./DbFunctionsImplementation.js")
@@ -282,12 +276,9 @@ module A = {
       },
     }
   }
-
   @module("./DbFunctionsImplementation.js")
-  external batchSetA: (
-    Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.aEntitySerialized>>,
-  ) => promise<unit> = "batchSetA"
+  external batchSetA: (Postgres.sql, array<Types.inMemoryStoreRow<Js.Json.t>>) => promise<unit> =
+    "batchSetA"
 
   @module("./DbFunctionsImplementation.js")
   external batchDeleteA: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteA"
@@ -321,12 +312,9 @@ module B = {
       },
     }
   }
-
   @module("./DbFunctionsImplementation.js")
-  external batchSetB: (
-    Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.bEntitySerialized>>,
-  ) => promise<unit> = "batchSetB"
+  external batchSetB: (Postgres.sql, array<Types.inMemoryStoreRow<Js.Json.t>>) => promise<unit> =
+    "batchSetB"
 
   @module("./DbFunctionsImplementation.js")
   external batchDeleteB: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteB"
@@ -358,12 +346,9 @@ module C = {
       },
     }
   }
-
   @module("./DbFunctionsImplementation.js")
-  external batchSetC: (
-    Postgres.sql,
-    array<Types.inMemoryStoreRow<Types.cEntitySerialized>>,
-  ) => promise<unit> = "batchSetC"
+  external batchSetC: (Postgres.sql, array<Types.inMemoryStoreRow<Js.Json.t>>) => promise<unit> =
+    "batchSetC"
 
   @module("./DbFunctionsImplementation.js")
   external batchDeleteC: (Postgres.sql, array<Types.id>) => promise<unit> = "batchDeleteC"

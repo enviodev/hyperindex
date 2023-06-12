@@ -301,7 +301,7 @@ let executeBatch = async (sql) => {
         {{entity.name.uncapitalized}}Row.crud == Types.Create || {{entity.name.uncapitalized}}Row.crud == Update
           ? Some({
             ...{{entity.name.uncapitalized}}Row,
-            entity: {{entity.name.uncapitalized}}Row.entity->Types.serialize{{entity.name.capitalized}}Entity,
+            entity: {{entity.name.uncapitalized}}Row.entity->Types.{{entity.name.uncapitalized}}Entity_encode,
           }) 
           : None
       )

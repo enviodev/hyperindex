@@ -2,7 +2,7 @@
 //***ENTITIES**
 //*************
 
-@genType.as("Id")
+@spice @genType.as("Id")
 type id = string
 
 //nested subrecord types
@@ -64,7 +64,7 @@ type dynamicContractRegistryEntity = {
 
 
 {{#each entities as | entity |}}
-@genType
+@spice @genType
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
   {{param.key}}{{#if param.is_optional}}?{{/if}}: {{param.type_rescript_non_optional}},

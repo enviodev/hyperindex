@@ -2,7 +2,7 @@
 //***ENTITIES**
 //*************
 
-@genType.as("Id")
+@spice @genType.as("Id")
 type id = string
 
 //nested subrecord types
@@ -61,7 +61,7 @@ type dynamicContractRegistryEntity = {
   @as("contract_type") contractType: string,
 }
 
-@genType
+@spice @genType
 type userEntity = {
   id: string,
   address: string,
@@ -88,7 +88,7 @@ let serializeUserEntity = (entity: userEntity): userEntitySerialized => {
   }
 }
 
-@genType
+@spice @genType
 type gravatarEntity = {
   id: string,
   owner: id,
@@ -115,7 +115,7 @@ let serializeGravatarEntity = (entity: gravatarEntity): gravatarEntitySerialized
   }
 }
 
-@genType
+@spice @genType
 type nftcollectionEntity = {
   id: string,
   contractAddress: string,
@@ -145,7 +145,7 @@ let serializeNftcollectionEntity = (entity: nftcollectionEntity): nftcollectionE
   }
 }
 
-@genType
+@spice @genType
 type tokenEntity = {
   id: string,
   tokenId: Ethers.BigInt.t,
@@ -169,7 +169,7 @@ let serializeTokenEntity = (entity: tokenEntity): tokenEntitySerialized => {
   }
 }
 
-@genType
+@spice @genType
 type aEntity = {
   id: string,
   b: id,
@@ -187,7 +187,7 @@ let serializeAEntity = (entity: aEntity): aEntitySerialized => {
   }
 }
 
-@genType
+@spice @genType
 type bEntity = {
   id: string,
   a: array<id>,
@@ -208,7 +208,7 @@ let serializeBEntity = (entity: bEntity): bEntitySerialized => {
   }
 }
 
-@genType
+@spice @genType
 type cEntity = {
   id: string,
   a: id,
