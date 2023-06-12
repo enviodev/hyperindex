@@ -21,6 +21,9 @@ pub enum CommandType {
     ///Generate code from a config.yaml file
     Codegen(CodegenArgs),
 
+    ///Start the indexer
+    Start(StartArgs),
+
     ///Prepare local environment for envio testing
     #[command(subcommand)]
     Local(LocalCommandTypes),
@@ -29,6 +32,16 @@ pub enum CommandType {
     ///Command to run: cargo run -- print-all-help > CommandLineHelp.md
     #[clap(hide = true)]
     PrintAllHelp,
+}
+
+#[derive(Debug, Args)]
+pub struct StartArgs {
+    ///Clear your database and restart indexing from scratch
+    #[arg(short = 'r', long, default_value_t = false)]
+    pub restart: bool,
+    ///The directory of the project
+    #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
+    pub directory: String,
 }
 
 #[derive(Debug, Subcommand)]
@@ -135,6 +148,15 @@ impl ToProjectPathsArgs for CodegenArgs {
 }
 
 impl ToProjectPathsArgs for InitArgs {
+    fn to_project_paths_args(&self) -> ProjectPathsArgs {
+        ProjectPathsArgs {
+            project_root: self.directory.clone(),
+            generated: DEFAULT_GENERATED_PATH.to_string(),
+            config: DEFAULT_CONFIG_PATH.to_string(),
+        }
+    }
+}
+impl ToProjectPathsArgs for StartArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
             project_root: self.directory.clone(),
