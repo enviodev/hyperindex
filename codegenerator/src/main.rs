@@ -1,12 +1,15 @@
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 use clap::Parser;
 
 use envio::{
-    cli_args::{self, DbMigrateArgs, Language, LocalDockerArgs},
+    cli_args::{
+        self, DbMigrateSubcommands, Language, LocalCommandTypes, LocalDockerSubcommands,
+        ProjectPathsArgs,
+    },
+    commands,
     config_parsing::{self, entity_parsing, event_parsing},
     hbs_templating::codegen_templates::{
         entities_to_map, generate_templates, EventRecordTypeTemplate,
@@ -118,7 +121,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             println!("Project template ready");
-            Ok(())
+            println!("Running codegen");
+
+            let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
+            let project_paths = &parsed_paths.project_paths;
+            commands::codegen::run_codegen_command_sequence(&project_paths)
         }
 
         CommandType::Codegen(args) => {
@@ -164,108 +171,38 @@ fn main() -> Result<(), Box<dyn Error>> {
                 sync_config,
             )?;
 
-            println!("installing packages... ");
+            commands::codegen::run_codegen_command_sequence(project_paths)?;
 
-            Command::new("pnpm")
-                .arg("install")
-                .arg("--no-frozen-lockfile")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
-
-            println!("clean build directory");
-
-            Command::new("pnpm")
-                .arg("clean")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
-
-            println!("formatting code");
-
-            Command::new("pnpm")
-                .arg("rescript")
-                .arg("format")
-                .arg("-all")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
-
-            println!("building code");
-
-            Command::new("pnpm")
-                .arg("build")
-                .current_dir(&project_paths.generated)
-                .spawn()?
-                .wait()?;
             Ok(())
         }
-        CommandType::Local(local_commands) => match local_commands {
-            cli_args::LocalCommandTypes::Docker(args) => {
-                let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
-                let project_paths = &parsed_paths.project_paths;
-                match args {
-                    LocalDockerArgs::Up => {
-                        Command::new("docker")
-                            .arg("compose")
-                            .arg("up")
-                            .arg("-d")
-                            .current_dir(&project_paths.generated)
-                            .spawn()?
-                            .wait()?;
-
-                        println!("Creating new docker container");
+        CommandType::Local(local_commands) => {
+            let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
+            let project_paths = &parsed_paths.project_paths;
+            match local_commands {
+                LocalCommandTypes::Docker(subcommand) => match subcommand {
+                    LocalDockerSubcommands::Up => {
+                        commands::docker::docker_compose_up_d(project_paths)?;
                     }
-                    LocalDockerArgs::Down => {
-                        Command::new("docker")
-                            .arg("compose")
-                            .arg("down")
-                            .arg("-v")
-                            .current_dir(&project_paths.generated)
-                            .spawn()?
-                            .wait()?;
-
-                        println!("Shutting down existing docker container");
+                    LocalDockerSubcommands::Down => {
+                        commands::docker::docker_compose_down_v(project_paths)?;
                     }
-                }
-                Ok(())
+                },
+                LocalCommandTypes::DbMigrate(subcommand) => match subcommand {
+                    DbMigrateSubcommands::Up => {
+                        commands::db_migrate::run_up_migrations(project_paths)?;
+                    }
+
+                    DbMigrateSubcommands::Down => {
+                        commands::db_migrate::run_drop_schema(project_paths)?;
+                    }
+
+                    DbMigrateSubcommands::Setup => {
+                        commands::db_migrate::run_db_setup(project_paths)?;
+                    }
+                },
             }
-            cli_args::LocalCommandTypes::DbMigrate(args) => {
-                let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
-                let project_paths = &parsed_paths.project_paths;
-                match args {
-                    DbMigrateArgs::Up => {
-                        Command::new("pnpm")
-                            .arg("db-up")
-                            .current_dir(&project_paths.generated)
-                            .spawn()?
-                            .wait()?;
-
-                        println!("Migrating latest schema to database");
-                    }
-
-                    DbMigrateArgs::Down => {
-                        Command::new("pnpm")
-                            .arg("db-down")
-                            .current_dir(&project_paths.generated)
-                            .spawn()?
-                            .wait()?;
-
-                        println!("Dropping database schema")
-                    }
-                    DbMigrateArgs::Setup => {
-                        Command::new("pnpm")
-                            .arg("db-setup")
-                            .current_dir(&project_paths.generated)
-                            .spawn()?
-                            .wait()?;
-
-                        println!("Setting up database by dropping schema and running up migrations")
-                    }
-                }
-                Ok(())
-            }
-        },
+            Ok(())
+        }
         CommandType::PrintAllHelp {} => {
             clap_markdown::print_help_markdown::<CommandLineArgs>();
             Ok(())

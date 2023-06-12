@@ -14,6 +14,7 @@ pub mod project_paths;
 pub mod capitalization;
 pub mod cli_args;
 
+pub mod commands;
 pub mod hbs_templating;
 
 use crate::project_paths::path_utils::normalize_path;

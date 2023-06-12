@@ -91,14 +91,14 @@ Local Envio and ganache environment commands
 
 ###### **Subcommands:**
 
-* `up` — Create a docker container for ganache and postgres
-* `down` — Shut down docker container for ganache and postgres
+* `up` — Run docker compose up -d on generated/docker-compose.yaml
+* `down` — Run docker compose down -v on generated/docker-compose.yaml
 
 
 
 ## `envio local docker up`
 
-Create a docker container for ganache and postgres
+Run docker compose up -d on generated/docker-compose.yaml
 
 **Usage:** `envio local docker up`
 
@@ -106,7 +106,7 @@ Create a docker container for ganache and postgres
 
 ## `envio local docker down`
 
-Shut down docker container for ganache and postgres
+Run docker compose down -v on generated/docker-compose.yaml
 
 **Usage:** `envio local docker down`
 
@@ -122,7 +122,7 @@ Local Envio database commands
 
 * `up` — Migrate latest schema to database
 * `down` — Drop database schema
-* `setup` — Setup database by dropping schema and running up migrations
+* `setup` — Setup database by dropping schema and then running migrations
 
 
 
@@ -144,7 +144,7 @@ Drop database schema
 
 ## `envio local db-migrate setup`
 
-Setup database by dropping schema and running up migrations
+Setup database by dropping schema and then running migrations
 
 **Usage:** `envio local db-migrate setup`
 

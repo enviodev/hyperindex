@@ -35,27 +35,27 @@ pub enum CommandType {
 pub enum LocalCommandTypes {
     /// Local Envio and ganache environment commands
     #[command(subcommand)]
-    Docker(LocalDockerArgs),
+    Docker(LocalDockerSubcommands),
     /// Local Envio database commands
     #[command(subcommand)]
-    DbMigrate(DbMigrateArgs),
+    DbMigrate(DbMigrateSubcommands),
 }
 
-#[derive(Clone, Debug, Subcommand)]
-pub enum LocalDockerArgs {
-    ///Create a docker container for ganache and postgres
+#[derive(Subcommand, Debug, Clone)]
+pub enum LocalDockerSubcommands {
+    ///Run docker compose up -d on generated/docker-compose.yaml
     Up,
-    ///Shut down docker container for ganache and postgres
+    ///Run docker compose down -v on generated/docker-compose.yaml
     Down,
 }
 
-#[derive(Clone, Debug, Subcommand)]
-pub enum DbMigrateArgs {
+#[derive(Subcommand, Debug)]
+pub enum DbMigrateSubcommands {
     ///Migrate latest schema to database
     Up,
     ///Drop database schema
     Down,
-    ///Setup database by dropping schema and running up migrations
+    ///Setup database by dropping schema and then running migrations
     Setup,
 }
 #[derive(Args, Debug)]
@@ -110,6 +110,16 @@ pub struct ProjectPathsArgs {
     pub config: String,
 }
 
+impl ProjectPathsArgs {
+    pub fn default() -> Self {
+        ProjectPathsArgs {
+            project_root: DEFAULT_PROJECT_ROOT_PATH.to_string(),
+            generated: DEFAULT_GENERATED_PATH.to_string(),
+            config: DEFAULT_CONFIG_PATH.to_string(),
+        }
+    }
+}
+
 pub trait ToProjectPathsArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs;
 }
@@ -128,25 +138,6 @@ impl ToProjectPathsArgs for InitArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
             project_root: self.directory.clone(),
-            generated: DEFAULT_GENERATED_PATH.to_string(),
-            config: DEFAULT_CONFIG_PATH.to_string(),
-        }
-    }
-}
-
-impl ToProjectPathsArgs for LocalDockerArgs {
-    fn to_project_paths_args(&self) -> ProjectPathsArgs {
-        ProjectPathsArgs {
-            project_root: DEFAULT_PROJECT_ROOT_PATH.to_string(),
-            generated: DEFAULT_GENERATED_PATH.to_string(),
-            config: DEFAULT_CONFIG_PATH.to_string(),
-        }
-    }
-}
-impl ToProjectPathsArgs for DbMigrateArgs {
-    fn to_project_paths_args(&self) -> ProjectPathsArgs {
-        ProjectPathsArgs {
-            project_root: DEFAULT_PROJECT_ROOT_PATH.to_string(),
             generated: DEFAULT_GENERATED_PATH.to_string(),
             config: DEFAULT_CONFIG_PATH.to_string(),
         }
