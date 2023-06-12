@@ -113,6 +113,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                     //Copy in the rest of the shared greeter files
                     ERC20_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
+                Template::SubgraphMigration => {
+                    return Ok(())
+                }
             }
 
             println!("Project template ready");

@@ -20,8 +20,9 @@ impl InitArgs {
                 use Template::Blank;
                 use Template::Erc20;
                 use Template::Greeter;
+                use Template::SubgraphMigration;
 
-                let options = vec![Blank, Greeter, Erc20]
+                let options = vec![Blank, Greeter, Erc20, SubgraphMigration]
                     .iter()
                     .map(|template| {
                         serde_json::to_string(template).expect("Enum should be serializable")
