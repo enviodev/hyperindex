@@ -1,0 +1,7 @@
+waypoint*
+node_modules
+build
+test
+data.db
+Dockerfile
+docker-compose*

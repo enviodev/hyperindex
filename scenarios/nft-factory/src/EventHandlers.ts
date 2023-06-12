@@ -28,11 +28,11 @@ NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
 });
 
 SimpleNftContract_registerTransferLoadEntities(({ event, context }) => {
-  context.user.userFromLoad(event.params.from, {});
-  context.user.userToLoad(event.params.to, {});
+  context.user.userFromLoad(event.params.from, { loaders: undefined });
+  context.user.userToLoad(event.params.to, { loaders: undefined });
   context.nftcollection.nftCollectionUpdatedLoad(event.srcAddress);
   context.token.existingTransferredTokenLoad(
-    event.srcAddress.concat("-").concat(event.params.tokenId.toString()), {}
+    event.srcAddress.concat("-").concat(event.params.tokenId.toString()), { loaders: undefined }
   );
 });
 

@@ -58,6 +58,14 @@ let db: Postgres.poolConfig = {
     ~devFallback="envio-dev",
     (),
   ),
+  ssl: envSafe->EnvSafe.get(
+    ~name="SSL_MODE",
+    ~struct=S.string(),
+    //this is a dev fallback option for local deployments, shouldn't run in the prod env
+    //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
+    ~devFallback=false->Obj.magic,
+    (),
+  ),
   onnotice: defaultLogLevel == #WARN || defaultLogLevel == #ERROR ? None : Some(() => ()),
 }
 

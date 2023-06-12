@@ -26,8 +26,13 @@
     "@ryyppy/rescript-promise",
     "rescript-envsafe",
     "rescript-struct",
-    "@greenlabs/ppx-spice"
+    "@greenlabs/ppx-spice",
+    "rescript-express"
   ],
-  "ppx-flags": ["@greenlabs/ppx-spice/ppx"],
-  "bsc-flags": ["-open RescriptStruct"]
+  "ppx-flags": [
+    "@greenlabs/ppx-spice/ppx"
+  ],
+  "bsc-flags": [
+    "-open RescriptStruct"
+  ]
 }

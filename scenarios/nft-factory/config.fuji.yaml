@@ -3,7 +3,8 @@ description: NFT Factory
 repository: https://github.com/nft-factory
 networks:
   - id: 43113
-    rpc_url: https://api.avax-test.network/ext/bc/C/rpc
+    rpc_url: https://endpoints.omniatech.io/v1/avax/fuji/public
+    # rpc_url: https://api.avax-test.network/ext/bc/C/rpc
     start_block: 22009922
     contracts:
       - name: NftFactory
@@ -15,7 +16,7 @@ networks:
             requiredEntities: []
       - name: SimpleNft
         abi_file_path: abis/SimpleNft.json
-        address: "0xd19d8469cd68d6e34617c349491c45e48a1efde0"
+        address: "0xD19d8469cd68D6E34617c349491C45e48a1EFDe0"
         handler: src/EventHandlers.js
         events:
           - event: "Transfer"
