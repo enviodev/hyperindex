@@ -87,20 +87,23 @@ let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlo
       ~toBlock=BlockNumber(toBlock)->blockTagFromVariant,
     )
 
-  Js.log3("Intiating Combined Query Filter fromBlock toBlock: ", fromBlock, toBlock)
+  let numBlocks = toBlock - fromBlock + 1
+
+  let fromStr = Belt.Int.toString(fromBlock)
+  let toStr = Belt.Int.toString(toBlock)
+  let numStr = Belt.Int.toString(numBlocks)
+  Js.log(`Initiating Combined Query Filter from block ${fromStr} to ${toStr} (${numStr} blocks)`)
 
   provider
   ->Ethers.JsonRpcProvider.getLogs(
     ~filter={combinedFilter->Ethers.CombinedFilter.combinedFilterToFilter},
   )
   ->Promise.thenResolve(res => {
-    Js.log3("Successful Combined Query Filter fromBlock toBlock: ", fromBlock, toBlock)
+    Js.log(`Successful Combined Query Filter from block ${fromStr} to ${toStr} (${numStr} blocks)`)
     res
   })
   ->Promise.catch(err => {
-    Logging.info(
-      `Failed combined query filter from block ${fromBlock->Belt.Int.toString} to block ${toBlock->Belt.Int.toString}`,
-    )
+    Logging.info(`Failed Combined Query Filter from block ${fromStr} to ${toStr} (${numStr} blocks)`)
     err->Promise.reject
   })
 }
