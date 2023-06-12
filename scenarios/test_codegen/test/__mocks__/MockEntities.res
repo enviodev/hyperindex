@@ -16,15 +16,15 @@ let gravatarEntity2: Types.gravatarEntity = {
 
 let mockEventData1: Types.eventData = {chainId: 123, eventId: "456"}
 let mockEventData2: Types.eventData = {chainId: 123, eventId: "789"}
-let gravatarSerialized1 = gravatarEntity1->Types.serializeGravatarEntity
-let gravatarSerialized2 = gravatarEntity2->Types.serializeGravatarEntity
-let mockInMemRow1: Types.inMemoryStoreRow<Types.gravatarEntitySerialized> = {
+let gravatarSerialized1 = gravatarEntity1->Types.gravatarEntity_encode
+let gravatarSerialized2 = gravatarEntity2->Types.gravatarEntity_encode
+let mockInMemRow1: Types.inMemoryStoreRow<Js.Json.t> = {
   entity: gravatarSerialized1,
   eventData: mockEventData1,
   crud: Types.Create,
 }
 
-let mockInMemRow2: Types.inMemoryStoreRow<Types.gravatarEntitySerialized> = {
+let mockInMemRow2: Types.inMemoryStoreRow<Js.Json.t> = {
   entity: gravatarSerialized2,
   eventData: mockEventData2,
   crud: Types.Create,

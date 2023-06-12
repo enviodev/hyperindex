@@ -70,24 +70,6 @@ type userEntity = {
   tokens: array<id>,
 }
 
-type userEntitySerialized = {
-  id: string,
-  address: string,
-  gravatar?: id,
-  updatesCountOnUserForTesting: int,
-  tokens: array<id>,
-}
-
-let serializeUserEntity = (entity: userEntity): userEntitySerialized => {
-  {
-    id: entity.id,
-    address: entity.address,
-    gravatar: ?entity.gravatar,
-    updatesCountOnUserForTesting: entity.updatesCountOnUserForTesting,
-    tokens: entity.tokens,
-  }
-}
-
 @spice @genType
 type gravatarEntity = {
   id: string,
@@ -95,24 +77,6 @@ type gravatarEntity = {
   displayName: string,
   imageUrl: string,
   updatesCount: Ethers.BigInt.t,
-}
-
-type gravatarEntitySerialized = {
-  id: string,
-  owner: id,
-  displayName: string,
-  imageUrl: string,
-  updatesCount: string,
-}
-
-let serializeGravatarEntity = (entity: gravatarEntity): gravatarEntitySerialized => {
-  {
-    id: entity.id,
-    owner: entity.owner,
-    displayName: entity.displayName,
-    imageUrl: entity.imageUrl,
-    updatesCount: entity.updatesCount->Ethers.BigInt.toString,
-  }
 }
 
 @spice @genType
@@ -125,26 +89,6 @@ type nftcollectionEntity = {
   currentSupply: int,
 }
 
-type nftcollectionEntitySerialized = {
-  id: string,
-  contractAddress: string,
-  name: string,
-  symbol: string,
-  maxSupply: string,
-  currentSupply: int,
-}
-
-let serializeNftcollectionEntity = (entity: nftcollectionEntity): nftcollectionEntitySerialized => {
-  {
-    id: entity.id,
-    contractAddress: entity.contractAddress,
-    name: entity.name,
-    symbol: entity.symbol,
-    maxSupply: entity.maxSupply->Ethers.BigInt.toString,
-    currentSupply: entity.currentSupply,
-  }
-}
-
 @spice @genType
 type tokenEntity = {
   id: string,
@@ -153,38 +97,10 @@ type tokenEntity = {
   owner: id,
 }
 
-type tokenEntitySerialized = {
-  id: string,
-  tokenId: string,
-  collection: id,
-  owner: id,
-}
-
-let serializeTokenEntity = (entity: tokenEntity): tokenEntitySerialized => {
-  {
-    id: entity.id,
-    tokenId: entity.tokenId->Ethers.BigInt.toString,
-    collection: entity.collection,
-    owner: entity.owner,
-  }
-}
-
 @spice @genType
 type aEntity = {
   id: string,
   b: id,
-}
-
-type aEntitySerialized = {
-  id: string,
-  b: id,
-}
-
-let serializeAEntity = (entity: aEntity): aEntitySerialized => {
-  {
-    id: entity.id,
-    b: entity.b,
-  }
 }
 
 @spice @genType
@@ -194,36 +110,10 @@ type bEntity = {
   c?: id,
 }
 
-type bEntitySerialized = {
-  id: string,
-  a: array<id>,
-  c?: id,
-}
-
-let serializeBEntity = (entity: bEntity): bEntitySerialized => {
-  {
-    id: entity.id,
-    a: entity.a,
-    c: ?entity.c,
-  }
-}
-
 @spice @genType
 type cEntity = {
   id: string,
   a: id,
-}
-
-type cEntitySerialized = {
-  id: string,
-  a: id,
-}
-
-let serializeCEntity = (entity: cEntity): cEntitySerialized => {
-  {
-    id: entity.id,
-    a: entity.a,
-  }
 }
 
 type entity =

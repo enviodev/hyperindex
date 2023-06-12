@@ -2,7 +2,7 @@ open RescriptMocha
 module MochaPromise = RescriptMocha.Promise
 open Mocha
 
-type createEntityFunction<'a> = 'a => Types.inMemoryStoreRow<'a>
+type createEntityFunction<'a> = 'a => Types.inMemoryStoreRow<Js.Json.t>
 
 @@warning("-21")
 let resetPostgresClient: unit => unit = () => {
@@ -31,31 +31,31 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let testEventData: Types.eventData = {chainId: 123, eventId: "123456"}
 
-    /// NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
-    let createEventA: createEntityFunction<Types.aEntitySerialized> = entity => {
+    // NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
+    let createEventA: createEntityFunction<Types.aEntity> = entity => {
       {
         crud: Types.Create,
-        entity,
+        entity: entity->Types.aEntity_encode,
         eventData: testEventData,
       }
     }
-    let createEventB: createEntityFunction<Types.bEntitySerialized> = entity => {
+    let createEventB: createEntityFunction<Types.bEntity> = entity => {
       {
         crud: Types.Create,
-        entity,
+        entity: entity->Types.bEntity_encode,
         eventData: testEventData,
       }
     }
-    let createEventC: createEntityFunction<Types.cEntitySerialized> = entity => {
+    let createEventC: createEntityFunction<Types.cEntity> = entity => {
       {
         crud: Types.Create,
-        entity,
+        entity: entity->Types.cEntity_encode,
         eventData: testEventData,
       }
     }
 
     /// Setup DB
-    let aEntities: array<Types.aEntitySerialized> = [
+    let aEntities: array<Types.aEntity> = [
       {id: "a1", b: "b1"},
       {id: "a2", b: "b2"},
       {id: "a3", b: "b3"},
@@ -64,14 +64,14 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "a6", b: "bWontLoad"},
       {id: "aWontLoad", b: "bWontLoad"},
     ]
-    let bEntities: array<Types.bEntitySerialized> = [
+    let bEntities: array<Types.bEntity> = [
       {id: "b1", a: ["a2", "a3", "a4"], c: "c1"},
       {id: "b2", a: [], c: "c2"},
       {id: "b3", a: []},
       {id: "b4", a: [], c: "c3"},
       {id: "bWontLoad", a: []},
     ]
-    let cEntities: array<Types.cEntitySerialized> = [
+    let cEntities: array<Types.cEntity> = [
       {id: "c1", a: "aWontLoad"},
       {id: "c2", a: "a5"},
       {id: "c3", a: "a6"},
@@ -140,41 +140,41 @@ describe("Linked Entity Loader Integration Test", () => {
     let testEventData: Types.eventData = {chainId: 123, eventId: "123456"}
 
     /// NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
-    let createEventA: createEntityFunction<Types.aEntitySerialized> = entity => {
+    let createEventA: createEntityFunction<Types.aEntity> = entity => {
       {
         crud: Types.Create,
-        entity,
+        entity: entity->Types.aEntity_encode,
         eventData: testEventData,
       }
     }
-    let createEventB: createEntityFunction<Types.bEntitySerialized> = entity => {
+    let createEventB: createEntityFunction<Types.bEntity> = entity => {
       {
         crud: Types.Create,
-        entity,
+        entity: entity->Types.bEntity_encode,
         eventData: testEventData,
       }
     }
-    let createEventC: createEntityFunction<Types.cEntitySerialized> = entity => {
+    let createEventC: createEntityFunction<Types.cEntity> = entity => {
       {
         crud: Types.Create,
-        entity,
+        entity: entity->Types.cEntity_encode,
         eventData: testEventData,
       }
     }
 
     /// Setup DB
-    let aEntities: array<Types.aEntitySerialized> = [
+    let aEntities: array<Types.aEntity> = [
       {id: "a1", b: "b1"},
       {id: "a2", b: "b1"},
       {id: "a3", b: "b1"},
       {id: "a4", b: "b1"},
       {id: "aWontLoad", b: "bWontLoad"},
     ]
-    let bEntities: array<Types.bEntitySerialized> = [
+    let bEntities: array<Types.bEntity> = [
       {id: "b1", a: ["a2", "a3", "a4"], c: "c1"},
       {id: "bWontLoad", a: []},
     ]
-    let cEntities: array<Types.cEntitySerialized> = [{id: "c1", a: "aWontLoad"}]
+    let cEntities: array<Types.cEntity> = [{id: "c1", a: "aWontLoad"}]
 
     await DbFunctions.A.batchSetA(sql, aEntities->Belt.Array.map(createEventA))
     await DbFunctions.B.batchSetB(sql, bEntities->Belt.Array.map(createEventB))
