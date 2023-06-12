@@ -107,7 +107,6 @@ pub enum Template {
     Blank,
     Greeter,
     Erc20,
-    /// Template for migrating from hosted subgraph to Envio
     SubgraphMigration,
 }
 

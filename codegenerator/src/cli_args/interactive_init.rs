@@ -1,5 +1,7 @@
 use std::error::Error;
 
+use dialoguer::Input;
+
 use super::{InitArgs, Language, Template};
 
 use inquire::Select;
@@ -8,6 +10,7 @@ pub struct InitInteractive {
     pub directory: String,
     pub template: Template,
     pub language: Language,
+    pub subgraph_id: String,
 }
 
 impl InitArgs {
@@ -57,10 +60,20 @@ impl InitArgs {
             }
         };
 
+        let subgraph_id = match &template {
+            Template::SubgraphMigration => {
+                let input_subgraph_id = Input::<String>::new().interact()?;
+                println!("Subgraph ID: {}", input_subgraph_id);
+                input_subgraph_id
+            }
+            _ => "".to_string(),
+        };
+
         Ok(InitInteractive {
             directory,
             template,
             language,
+            subgraph_id
         })
     }
 }
