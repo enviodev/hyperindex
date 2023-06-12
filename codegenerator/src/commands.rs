@@ -124,7 +124,7 @@ pub mod db_migrate {
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("node")
             .arg("-e")
-            .arg("'require(`./src/Migrations.bs.js`).runUpMigrations(true)'")
+            .arg("require(`./src/Migrations.bs.js`).runUpMigrations(true)")
             .current_dir(&project_paths.generated)
             .spawn()?
             .wait()?)
@@ -135,7 +135,7 @@ pub mod db_migrate {
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("node")
             .arg("-e")
-            .arg("'require(`./src/Migrations.bs.js`).runDownMigrations(true)'")
+            .arg("require(`./src/Migrations.bs.js`).runDownMigrations(true)")
             .current_dir(&project_paths.generated)
             .spawn()?
             .wait()?)
@@ -146,7 +146,7 @@ pub mod db_migrate {
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("node")
             .arg("-e")
-            .arg("'require(`./src/Migrations.bs.js`).setupDb()'")
+            .arg("require(`./src/Migrations.bs.js`).setupDb()")
             .current_dir(&project_paths.generated)
             .spawn()?
             .wait()?)
