@@ -47,6 +47,9 @@ pub struct EntityParamTypeTemplate {
     pub type_rescript_non_optional: String,
     pub type_pg: String,
     pub maybe_entity_name: Option<CapitalizedOptions>,
+    ///Used in template to tell whether it is a field looked up from another table or a value in
+    ///the table
+    pub is_derived_from: bool,
 }
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {

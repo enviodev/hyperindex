@@ -67,7 +67,7 @@ type dynamicContractRegistryEntity = {
 @spice @genType
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{param.key}}{{#if param.is_optional}}?{{/if}}: {{param.type_rescript_non_optional}},
+  {{#unless param.is_derived_from }}{{param.key}}{{#if param.is_optional}}?{{/if}}: {{param.type_rescript_non_optional}}, {{/unless}}
   {{/each}}
 }
 
@@ -76,7 +76,6 @@ type entity =
 {{#each entities as | entity |}}
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
 {{/each}}
-
 
 
 type crud = Create | Read | Update | Delete

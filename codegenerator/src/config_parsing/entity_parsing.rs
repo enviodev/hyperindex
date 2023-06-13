@@ -6,7 +6,7 @@ use crate::{
     },
     project_paths::ParsedPaths,
 };
-use graphql_parser::schema::{Definition, Type, TypeDefinition};
+use graphql_parser::schema::{Definition, Directive, Type, TypeDefinition};
 use std::collections::HashSet;
 
 pub fn get_entity_record_types_from_schema(
@@ -48,6 +48,21 @@ pub fn get_entity_record_types_from_schema(
         let mut params = Vec::new();
         let mut relational_params = Vec::new();
         for field in object.fields.iter() {
+            let derived_from_directives = field
+                .directives
+                .iter()
+                .filter(|directive| directive.name == "derivedFrom")
+                .collect::<Vec<&Directive<'_, String>>>();
+            if derived_from_directives.len() > 1 {
+                let msg = format!(
+                    "Cannot use more than one @derivedFrom directive, please update your entity {} at field {}",
+                    object.name, field.name
+                );
+                return Err(msg);
+            }
+            let maybe_derived_from_directive = derived_from_directives.get(0);
+            let is_derived_from = maybe_derived_from_directive.map_or(false, |_| true);
+
             let param_type = gql_type_to_rescript_type(&field.field_type, &entities_set)?;
             let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
             let relationship_type =
@@ -64,6 +79,7 @@ pub fn get_entity_record_types_from_schema(
                 type_rescript_non_optional: strip_option_from_rescript_type_str(&param_type),
                 type_pg: param_pg_type,
                 maybe_entity_name: param_maybe_entity_name,
+                is_derived_from,
             });
 
             relational_params.extend(relationship_type);
@@ -577,5 +593,47 @@ mod tests {
             super::strip_option_from_rescript_type_str("option<"),
             "option<"
         );
+    }
+
+    #[test]
+    fn test_gql_directive() {
+        let gql_file_str =
+            std::fs::read_to_string("test/schemas/schema-with-directive.graphql").unwrap();
+
+        //check if a field has a derived from directive
+        //check if it's an object or an array relationshig
+        //if it's derived from then it should be omitted from the write entity type
+        //the read entity type will include it, it could be either id or full type but lets do id
+        //
+        let schema_doc = graphql_parser::parse_schema::<String>(&gql_file_str).unwrap();
+
+        for definition in schema_doc.definitions.iter() {
+            // println!("{:?}", definition);
+            // println!("");
+            match definition {
+                Definition::SchemaDefinition(_) => (),
+                Definition::TypeDefinition(def) => match def {
+                    TypeDefinition::Scalar(_) => (),
+                    TypeDefinition::Object(object) => {
+                        for field in object.fields.iter() {
+                            // println!("field {:?}", field);
+                            let field_type = &field.field_type;
+                            // println!("field_type {:?}", field_type);
+
+                            let directives = &field.directives;
+                            for directive in directives.iter() {
+                                println!("directive {:?}", directive);
+                            }
+                        }
+                    }
+                    TypeDefinition::Interface(_) => (),
+                    TypeDefinition::Union(_) => (),
+                    TypeDefinition::Enum(_) => (),
+                    TypeDefinition::InputObject(_) => (),
+                },
+                Definition::DirectiveDefinition(_) => (),
+                Definition::TypeExtension(_) => (),
+            };
+        }
     }
 }
