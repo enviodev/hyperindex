@@ -1,0 +1,101 @@
+name: Generate codegen on main
+
+on:
+  push:
+    branches:
+      - main
+      - test-codegen-output-main # Branch to help test this pipeline
+    paths:
+      - "codegenerator/**"
+      - "scenarios/test_codegen/**"
+
+defaults:
+  run:
+    working-directory: scenarios/test_codegen
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  get_codegen_diff:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup rust cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            # using both of these paths to hedge bets on which is correct.
+            ./codegenerator/target
+            ./target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.os }}-cargo-
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Get commit hash
+        id: gethash
+        run: echo "::set-output name=hash::$(git rev-parse --short "$GITHUB_SHA")"
+
+      - name: Run envio codegen
+        run: pnpm codegen -s
+
+      - uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.OPERATOR_SSH_PRIVATE_KEY }}
+
+      - name: Get the branch name
+        id: extract_branch
+        run: |
+          # ${{ github.head_ref || github.ref_name }} or ${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}} both work. `github.head_ref` doesn't work for direct pushes (not PRs).
+          #   Reference: https://stackoverflow.com/questions/60300169/how-to-get-branch-name-on-github-action
+          echo "::set-output name=branch::$(echo ${{ github.head_ref || github.ref_name }})"
+
+      - name: Commit and push changes to output repository
+        run: |
+          git clone git@github.com:Float-Capital/test-codegen-output.git
+          cd test-codegen-output
+          git fetch origin
+          if git branch -r | grep -q "origin/${{ steps.extract_branch.outputs.branch }}"; then
+            git checkout ${{ steps.extract_branch.outputs.branch }}
+            git pull origin ${{ steps.extract_branch.outputs.branch }}
+          else
+            git checkout -b ${{ steps.extract_branch.outputs.branch }}
+          fi
+          git config --local user.name "Codegen Bot Beep Boop"
+          find . -not -name ".git" -not -name ".gitignore" -mindepth 1 -maxdepth 1 -exec rm -rf {} \;
+          cp -r ../generated/* .
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          else
+            git commit -m "Update based on commit ${{ steps.gethash.outputs.hash }} in parent repo"
+            git push origin ${{ steps.extract_branch.outputs.branch }}
+          fi
