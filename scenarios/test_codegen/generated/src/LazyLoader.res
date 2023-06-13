@@ -32,14 +32,7 @@ let make = (~loaderFn, ~cacheSize: int=10_000, ~loaderPoolSize: int=10, ()) => {
   loaderFn,
 }
 
-// Expose key removal on JS maps, used for cache invalidation
-// Unfortunately Js.Dict.unsafeDeleteKey only works with Js.Dict.t<String>
-%%raw(`
-function deleteKey(obj, k) {
-  delete obj[k]
-}
-`)
-@val external deleteKey: ('a, string) => unit = "deleteKey"
+let deleteKey: (Js.Dict.t<'a>, string) => unit = (_obj, _k) => %raw(`delete _obj[_k]`)
 
 let rec loadNext = (am: asyncMap<'a>, k: int): unit => {
   let key = k->Belt.Int.toString
