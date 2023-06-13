@@ -140,12 +140,12 @@ let rec loadReadEntitiesInner = async (
       ~fromBlock=blockNumber,
       ~toBlock=blocksProcessed.to,
       ~minFromBlockLogIndex=logIndex + 1,
-      ~maxBlockInterval=blocksProcessed.to - blockNumber + 1,
+      ~initialBlockInterval=blocksProcessed.to - blockNumber + 1,
       ~chainId=chainConfig.chainId,
       ~provider=chainConfig.provider,
       ~blockLoader,
       (),
-    )->Promise.then(((fetchedEvents, nestedBlocksProcessed)) => {
+    )->Promise.then(((fetchedEvents, nestedBlocksProcessed, _)) => {
       fetchedEvents->loadReadEntitiesInner(
         ~chainConfig,
         ~blockLoader,

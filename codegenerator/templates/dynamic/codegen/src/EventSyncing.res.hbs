@@ -26,11 +26,12 @@ let queryEventsWithCombinedFilterAndProcessEventBatch = async (
 
 let processAllEventsFromBlockNumber = async (
   ~fromBlock: int,
-  ~blockInterval as maxBlockInterval,
+  ~initialBlockInterval,
   ~chainConfig: Config.chainConfig,
   ~provider,
   ~blockLoader,
 ) => {
+  let sc = Config.syncConfig
   let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
 
   let eventFilters = EventFetching.getAllEventFilters(
@@ -55,19 +56,26 @@ let processAllEventsFromBlockNumber = async (
   //is handled with the below condition
   let shouldContinueProcess = () => fromBlockRef.contents <= currentBlock.contents
 
+  let currentBlockInterval = ref(initialBlockInterval)
+
   while shouldContinueProcess() {
+    let blockInterval = currentBlockInterval.contents
     let targetBlock = Pervasives.min(
       currentBlock.contents,
-      fromBlockRef.contents + maxBlockInterval - 1
+      fromBlockRef.contents + blockInterval - 1
     )
 
-    let (events, blocksProcessed) = await EventFetching.getContractEventsOnFilters(
+    let (
+      events,
+      blocksProcessed,
+      finalBlockInterval,
+    ) = await EventFetching.getContractEventsOnFilters(
       ~addressInterfaceMapping,
       ~eventFilters,
       ~minFromBlockLogIndex=0,
       ~fromBlock=fromBlockRef.contents,
       ~toBlock=targetBlock,
-      ~maxBlockInterval,
+      ~initialBlockInterval=blockInterval,
       ~chainId=chainConfig.chainId,
       ~provider,
       ~blockLoader,
@@ -80,6 +88,11 @@ let processAllEventsFromBlockNumber = async (
 
     fromBlockRef := blocksProcessed.to + 1
     currentBlock := (await getCurrentBlockFromRPC())
+
+    // Increase batch size going forward, but do not increase past a configured maximum
+    // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    currentBlockInterval :=
+      Pervasives.min(finalBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
   }
 }
 
@@ -116,7 +129,7 @@ let processAllEvents = async (chainConfig: Config.chainConfig) => {
   await processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
-    ~blockInterval=Config.syncConfig.initialBlockInterval,
+    ~initialBlockInterval=Config.syncConfig.initialBlockInterval,
     ~provider=chainConfig.provider,
     ~blockLoader,
   )

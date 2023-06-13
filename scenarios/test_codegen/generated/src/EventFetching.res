@@ -227,7 +227,7 @@ let getContractEventsOnFilters = async (
   ~minFromBlockLogIndex=0,
   ~fromBlock,
   ~toBlock,
-  ~maxBlockInterval,
+  ~initialBlockInterval,
   ~chainId,
   ~provider,
   ~blockLoader,
@@ -238,7 +238,7 @@ let getContractEventsOnFilters = async (
   let fromBlockRef = ref(fromBlock)
   let shouldContinueProcess = () => fromBlockRef.contents <= toBlock
 
-  let currentBlockInterval = ref(maxBlockInterval)
+  let currentBlockInterval = ref(initialBlockInterval)
   let events = ref([])
   while shouldContinueProcess() {
     Js.log("continuing to process...")
@@ -254,7 +254,7 @@ let getContractEventsOnFilters = async (
         )
 
       let upperBoundToBlock = fromBlockRef.contents + blockInterval - 1
-      let nextToBlock = upperBoundToBlock > toBlock ? toBlock : upperBoundToBlock
+      let nextToBlock = Pervasives.min(upperBoundToBlock, toBlock)
       let eventsPromise =
         queryEventsWithCombinedFilter(
           ~addressInterfaceMapping,
@@ -303,5 +303,5 @@ let getContractEventsOnFilters = async (
           ->Belt.Int.toString} out of ${toBlock->Belt.Int.toString}`,
     )
   }
-  (events.contents, {from: fromBlock, to: fromBlockRef.contents - 1})
+  (events.contents, {from: fromBlock, to: fromBlockRef.contents - 1}, currentBlockInterval.contents)
 }
