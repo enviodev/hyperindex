@@ -8,4 +8,3 @@ let makeAsc = () => makeAdvanced([], (a, b) => a - b)
 
 @send external pop: t<'a> => option<'a> = "pop"
 @send external push: (t<'a>, 'a) => unit = "push"
-@val external length: t<'a> => int = "length"
