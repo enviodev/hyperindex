@@ -2,6 +2,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 pub mod interactive_init;
 
+pub const DEFAULT_PROJECT_ROOT_PATH: &str = "./";
+pub const DEFAULT_GENERATED_PATH: &str = "generated/";
+pub const DEFAULT_CONFIG_PATH: &str = "config.yaml";
+
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
 pub struct CommandLineArgs {
@@ -17,16 +21,56 @@ pub enum CommandType {
     ///Generate code from a config.yaml file
     Codegen(CodegenArgs),
 
+    ///Start the indexer
+    Start(StartArgs),
+
+    ///Prepare local environment for envio testing
+    #[command(subcommand)]
+    Local(LocalCommandTypes),
+
     ///Print help into a markdown file
     ///Command to run: cargo run -- print-all-help > CommandLineHelp.md
     #[clap(hide = true)]
     PrintAllHelp,
 }
 
-pub const DEFAULT_PROJECT_ROOT_PATH: &str = "./";
-pub const DEFAULT_GENERATED_PATH: &str = "generated/";
-pub const DEFAULT_CONFIG_PATH: &str = "config.yaml";
+#[derive(Debug, Args)]
+pub struct StartArgs {
+    ///Clear your database and restart indexing from scratch
+    #[arg(short = 'r', long, default_value_t = false)]
+    pub restart: bool,
+    ///The directory of the project
+    #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
+    pub directory: String,
+}
 
+#[derive(Debug, Subcommand)]
+pub enum LocalCommandTypes {
+    /// Local Envio and ganache environment commands
+    #[command(subcommand)]
+    Docker(LocalDockerSubcommands),
+    /// Local Envio database commands
+    #[command(subcommand)]
+    DbMigrate(DbMigrateSubcommands),
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum LocalDockerSubcommands {
+    ///Run docker compose up -d on generated/docker-compose.yaml
+    Up,
+    ///Run docker compose down -v on generated/docker-compose.yaml
+    Down,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DbMigrateSubcommands {
+    ///Migrate latest schema to database
+    Up,
+    ///Drop database schema
+    Down,
+    ///Setup database by dropping schema and then running migrations
+    Setup,
+}
 #[derive(Args, Debug)]
 pub struct CodegenArgs {
     ///The directory of the project
@@ -40,9 +84,6 @@ pub struct CodegenArgs {
     ///The file in the project containing config.
     #[arg(short, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
-    /// skip database provisioning [default: false]
-    #[arg(short, long, action, env)]
-    pub skip_db_provision: bool, //environment variable: SKIP_DB_PROVISION=
 }
 
 #[derive(Args, Debug)]
@@ -65,7 +106,7 @@ pub struct InitArgs {
 pub enum Template {
     Blank,
     Greeter,
-    Erc20
+    Erc20,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
@@ -80,6 +121,16 @@ pub struct ProjectPathsArgs {
     pub project_root: String,
     pub generated: String,
     pub config: String,
+}
+
+impl ProjectPathsArgs {
+    pub fn default() -> Self {
+        ProjectPathsArgs {
+            project_root: DEFAULT_PROJECT_ROOT_PATH.to_string(),
+            generated: DEFAULT_GENERATED_PATH.to_string(),
+            config: DEFAULT_CONFIG_PATH.to_string(),
+        }
+    }
 }
 
 pub trait ToProjectPathsArgs {
@@ -97,6 +148,15 @@ impl ToProjectPathsArgs for CodegenArgs {
 }
 
 impl ToProjectPathsArgs for InitArgs {
+    fn to_project_paths_args(&self) -> ProjectPathsArgs {
+        ProjectPathsArgs {
+            project_root: self.directory.clone(),
+            generated: DEFAULT_GENERATED_PATH.to_string(),
+            config: DEFAULT_CONFIG_PATH.to_string(),
+        }
+    }
+}
+impl ToProjectPathsArgs for StartArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
             project_root: self.directory.clone(),

@@ -8,6 +8,7 @@ type poolConfig = {
   user: string,
   password: string,
   database: string,
+  ssl: string,
   onnotice: option<unit => unit>,
   transform?: transformConfig,
 }

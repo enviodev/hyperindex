@@ -55,6 +55,16 @@ pub struct EntityRecordTypeTemplate {
     pub relational_params: Vec<EntityRelationalTypesTemplate>,
 }
 
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct SyncConfigTemplate {
+    pub initial_block_interval: u32,
+    pub backoff_multiplicative: f32,
+    pub acceleration_additive: u32,
+    pub interval_ceiling: u32,
+    pub backoff_millis: u32,
+    pub query_timeout_millis: u32,
+}
+
 impl HasName for EntityRecordTypeTemplate {
     fn set_name(&mut self, name: CapitalizedOptions) {
         self.name = name;
@@ -97,6 +107,7 @@ struct TypesTemplate {
     entities: Vec<EntityRecordTypeTemplate>,
     chain_configs: Vec<ChainConfigTemplate>,
     codegen_out_path: String,
+    sync_config: SyncConfigTemplate,
 }
 
 /// transform entities into a map from entity name to a list of all linked entities (entity fields) on that entity.
@@ -133,6 +144,7 @@ pub fn generate_templates(
     chain_configs: Vec<ChainConfigTemplate>,
     entity_types: Vec<EntityRecordTypeTemplate>,
     project_paths: &ProjectPaths,
+    sync_config: SyncConfigTemplate,
 ) -> Result<(), Box<dyn Error>> {
     static CODEGEN_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/codegen");
     let mut handlebars = handlebars::Handlebars::new();
@@ -141,7 +153,7 @@ pub fn generate_templates(
 
     //TODO: make this a method in path handlers
     let gitignore_generated_path = project_paths.generated.join("*");
-    let gitignoer_path_str = gitignore_generated_path
+    let gitignore_path_str = gitignore_generated_path
         .to_str()
         .ok_or("invalid codegen path")?
         .to_string();
@@ -151,7 +163,8 @@ pub fn generate_templates(
         contracts,
         entities: entity_types,
         chain_configs,
-        codegen_out_path: gitignoer_path_str,
+        codegen_out_path: gitignore_path_str,
+        sync_config,
     };
 
     let hbs =

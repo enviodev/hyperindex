@@ -5,7 +5,9 @@
     "clean": "rescript clean -with-deps",
     "build": "rescript build -with-deps",
     "watch": "rescript build -with-deps -w",
-    "db-migrate": "node -e 'require(`./src/Migrations.bs.js`).setupDb()'"
+    "db-up": "node -e 'require(`./src/Migrations.bs.js`).runUpMigrations(true)'",
+    "db-down": "node -e 'require(`./src/Migrations.bs.js`).runDownMigrations(true)'",
+    "db-setup": "node -e 'require(`./src/Migrations.bs.js`).setupDb()'"
   },
   "keywords": [
     "ReScript"
@@ -22,6 +24,8 @@
     "ethers": "^6",
     "postgres": "^3.3.4",
     "rescript-envsafe": "^1.3.0",
-    "rescript-struct": "^4.0.0"
+    "rescript-struct": "^4.0.0",
+    "rescript-express": "^0.4.1",
+    "express": "^4.17.1"
   }
 }
