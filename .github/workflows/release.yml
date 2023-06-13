@@ -249,7 +249,7 @@ jobs:
           ls -la
           envsubst < ./package.json.tmpl > "package.json"
           cat package.json
-          pnpm install
+          pnpm install --no-frozen-lockfile
           pnpm build
           cp ../../README.md .
           npm publish --access public
