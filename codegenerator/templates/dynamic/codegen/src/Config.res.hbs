@@ -69,7 +69,7 @@ addresses: array<Ethers.ethAddress>,
         (
         "{{chain_config.network_config.id}}",
         {
-        provider: Ethers.JsonRpcProvider.make(~rpcUrl="{{chain_config.network_config.rpc_url}}",
+        provider: Ethers.JsonRpcProvider.makeStatic(~rpcUrl="{{chain_config.network_config.rpc_url}}",
         ~chainId={{chain_config.network_config.id}}),
         startBlock: {{chain_config.network_config.start_block}},
         chainId: {{chain_config.network_config.id}},
