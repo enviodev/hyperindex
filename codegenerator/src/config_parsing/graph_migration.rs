@@ -25,8 +25,6 @@ pub struct Schema {
     pub file: KeyValue,
 }
 
-// serde_yaml::from_str::<GraphManifest>(manifest_str).unwrap();
-
 #[derive(Debug, Deserialize)]
 pub struct DataSource {
     pub kind: String,
@@ -43,8 +41,6 @@ pub struct Template {
     pub source: TemplateSource,
     pub mapping: Mapping,
 }
-
-// serde_yaml::from_str::<DataSource>(data_source_str).unwrap();
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -135,7 +131,7 @@ pub enum ContractAddress {
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Event {
     event: String,
-    requiredEntities: Vec<RequiredEntity>,
+    required_entities: Vec<RequiredEntity>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -254,23 +250,14 @@ mod test {
         for data_source in data_sources {
             // Fetching contract name from config
             let contract_name = &data_source.name;
-            // println!("Contract name: {}", contract_name);
-
             // Fetching contract address and start block from config
             let address = data_source.source.address.as_str();
-            // println!("Address: {}", address);
             let start_block = data_source.source.start_block.as_str();
-            // println!("Start block: {}", start_block);
-
             // Fetching chain ID from config
             let chain_id = get_graph_protocol_chain_id(data_source.network.as_str());
-            // println!("Chain ID: {}", chain_id.unwrap());
-
             // Fetching schema file path from config
             let schema_file_path = &manifest.schema.file;
-            // println!("Schema file path: {:?}", schema_file_path.value);
             let schema_id = &schema_file_path.value.as_str()[6..];
-            // println!("Schema ID: {}", schema_id);
             let schema = fetch_ipfs_file(schema_id)
                 .await
                 .unwrap()
@@ -278,15 +265,11 @@ mod test {
             let mut file = File::create( "./schema.graphql").expect("Failed to create file");
             file.write_all(schema.as_bytes())
                 .expect("Failed to write to file");
-            // print!("schema: {}", schema);
 
             // Fetching abi file path from config
             let abi_file_path = &data_source.mapping.abis[0].file;
             // println!("ABI file path: {:?}", abi_file_path.value);
-            let abi_id = &abi_file_path.value.as_str()[6..];
-            // println!("ABI ID: {}", schema_id);
-            // let abi = fetch_ipfs_file(abi_id).await.unwrap();
-            // print!("ABI: {}", abi);
+            let abi_id: &str = &abi_file_path.value.as_str()[6..];
 
             let mut network = super::Network {
                 id: chain_id.unwrap(),
@@ -302,19 +285,15 @@ mod test {
                 handler: "rust".to_string(),
                 events: vec![],
             };
-
-
-
             
             // Fetching event names from config
             let event_handlers = &data_source.mapping.event_handlers;
             for event_handler in event_handlers {
                 if let Some(start) = event_handler.event.as_str().find('(') {
                     let event_name =  &event_handler.event.as_str()[..start];
-                    // println!("Event: {}", &event_handler.event.as_str()[..start]);
                     let mut event = super::Event {
                         event: event_name.to_string(),
-                        requiredEntities: vec![],
+                        required_entities: vec![],
                     };
                     contract.events.push(event);
                 }
@@ -325,12 +304,7 @@ mod test {
             
         }
     
-        let mut event = super::Event {
-            event: "MyEvent".to_string(),
-            requiredEntities: vec![],
-        };
-    
-        // Convert config to YAML
+        // Convert config to YAML file
         let yaml_string = serde_yaml::to_string(&config).unwrap();
     
         // Write YAML string to a file
