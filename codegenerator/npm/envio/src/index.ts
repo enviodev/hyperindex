@@ -30,10 +30,10 @@ function getExePath() {
 /**
   * Runs `envio` with args using nodejs spawn
   */
-function runGitCliff() {
+function runEnvio() {
   const args = process.argv.slice(2)
   const processResult = spawnSync(getExePath(), args, { stdio: "inherit" })
   process.exit(processResult.status ?? 0)
 }
 
-runGitCliff()
+runEnvio()

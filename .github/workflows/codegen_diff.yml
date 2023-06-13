@@ -97,6 +97,7 @@ jobs:
           else
             git commit -m "Update based on commit ${{ steps.gethash.outputs.hash }} in parent repo"
             git push origin ${{ steps.extract_branch.outputs.branch }}
+            echo "::set-output name=no_changes::false"
           fi
 
       - name: Get diff URL
