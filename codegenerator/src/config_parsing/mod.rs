@@ -16,6 +16,7 @@ pub mod validation;
 
 pub mod constants;
 use crate::links;
+pub mod graph_migration;
 
 type NetworkId = i32;
 
