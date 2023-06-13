@@ -106,24 +106,35 @@ mod test {
         let manifest_str = std::fs::read_to_string("test/configs/graph_manifest.yaml").unwrap();
         let manifest = serde_yaml::from_str::<super::GraphManifest>(&manifest_str).unwrap();
 
-        // Fetching contract address and start block from config
-        let address = manifest.data_sources[0].source.address.as_str();
-        println!("{}", address);
-        let start_block = manifest.data_sources[0].source.start_block.as_str();
-        println!("{}", start_block);
+        let data_sources = &manifest.data_sources;
+        for data_source in data_sources {
+            // Fetching contract name from config
+            let contract_name = &data_source.name;
+            println!("Contract name: {}", contract_name);
+            
+            // Fetching contract address and start block from config
+            let address = data_source.source.address.as_str();
+            println!("Address: {}", address);
+            let start_block = data_source.source.start_block.as_str();
+            println!("Start block: {}", start_block);
 
-        // Fetching event names from config
-        let event_handlers = &manifest.data_sources[0].mapping.event_handlers;
-        println!("{:?}", event_handlers);
-        
-        for event_handler in event_handlers {
-            println!("{}", event_handler.event);
-            println!("{}", event_handler.handler);
+
+            // Fetching chain ID from config
+            let chain_id = get_graph_protocol_chain_id(data_source.network.as_str());
+            println!("Chain ID: {}", chain_id.unwrap());
+
+            // Fetching abi file path from config
+            let abi_file_path = &data_source.mapping.abis[0].file;
+            println!("ABI file path: {}", abi_file_path);
+
+            // Fetching event names from config
+            let event_handlers = &data_source.mapping.event_handlers;
+            for event_handler in event_handlers {
+                if let Some(start) = event_handler.event.as_str().find('(') {
+                    println!("Event: {}", &event_handler.event.as_str()[..start]);
+                }
+            }
         }
-        
-        // Fetch chain ID from config
-        let chain_id = get_graph_protocol_chain_id(manifest.data_sources[0].network.as_str());
-        println!("Chain ID: {}", chain_id.unwrap());
     }
 
     #[tokio::test]
