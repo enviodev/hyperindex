@@ -213,7 +213,7 @@ module PreparedTopicFilter = {
 module JsonRpcProvider = {
   type t
   @module("ethers") @scope("ethers") @new
-  external make: (~rpcUrl: string, ~chainId: int) => t = "JsonRpcProvider"
+  external make: (~rpcUrl: string, ~chainId: int) => t = "StaticJsonRpcProvider"
 
   @send
   external getLogs: (t, ~filter: Filter.t) => promise<array<log>> = "getLogs"
