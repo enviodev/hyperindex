@@ -37,12 +37,3 @@ function runGitCliff() {
 }
 
 runGitCliff()
-
-/*
-    "envio-linux-x64": "${version}",
-    "envio-linux-arm64": "${version}",
-    "envio-darwin-x64": "${version}",
-    "envio-darwin-arm64": "${version}",
-    "envio-windows-x64": "${version}",
-    "envio-windows-arm64": "${version}"
-*/

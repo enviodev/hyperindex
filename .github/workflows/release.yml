@@ -29,9 +29,6 @@ jobs:
       - name: Compute release name and tag
         id: release_info
         run: |
-          if [[ -z "${GITHUB_REF_NAME}" ]]; then
-            GITHUB_REF_NAME="v0.0.0-default-release"
-          fi
           echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
           echo "::set-output name=release_name::${GITHUB_REF_NAME}"
 
@@ -187,7 +184,7 @@ jobs:
       - name: Install node
         uses: actions/setup-node@v3
         with:
-          node-version: "16"
+          node-version: "18.16.0"
           registry-url: "https://registry.npmjs.org"
 
       - name: Publish to NPM
@@ -235,7 +232,7 @@ jobs:
       - name: Install node
         uses: actions/setup-node@v3
         with:
-          node-version: "18"
+          node-version: "18.16.0"
           registry-url: "https://registry.npmjs.org"
       - uses: pnpm/action-setup@v2
         with:
@@ -246,9 +243,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           version: ${{ needs.prepare.outputs.tag_name }}
         run: |
-          ls -la
           envsubst < ./package.json.tmpl > "package.json"
-          cat package.json
           pnpm install --no-frozen-lockfile
           pnpm build
           cp ../../README.md .
