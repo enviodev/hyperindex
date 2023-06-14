@@ -1,10 +1,6 @@
 name: Build & Test Scenario
 
-on:
-  pull_request:
-    paths:
-      - "codegenerator/**"
-      - "scenarios/**"
+on: pull_request
 
 defaults:
   run:
@@ -39,8 +35,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+      - uses: dorny/paths-filter@v2
+        id: changes
+        with:
+          filters: |
+            testChanges:
+              - "codegenerator/**"
+              - "scenarios/**"
 
       - name: Setup rust cache
+        if: steps.changes.outputs.testChanges == 'true'
         uses: actions/cache@v3
         with:
           path: |
@@ -58,6 +62,7 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Cache (hardhat) Solidity
+        if: steps.changes.outputs.testChanges == 'true'
         id: cache-hardhat-solidity
         uses: actions/cache@v2
         with:
@@ -68,16 +73,19 @@ jobs:
             ${{ runner.os }}-solidity-hardhat-
 
       - uses: pnpm/action-setup@v2
+        if: steps.changes.outputs.testChanges == 'true'
         with:
           version: 8
 
       - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+        if: steps.changes.outputs.testChanges == 'true'
         id: pnpm-cache
         shell: bash
         run: |
           echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
 
       - uses: actions/cache@v3
+        if: steps.changes.outputs.testChanges == 'true'
         name: Setup pnpm cache
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
@@ -87,22 +95,27 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Cargo Build
+        if: steps.changes.outputs.testChanges == 'true'
         run: cargo build --verbose
 
       - name: Cargo Tests
+        if: steps.changes.outputs.testChanges == 'true'
         run: cargo test --verbose
 
       - name: gravatar codegen
+        if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/gravatar
         run: |
           pnpm codegen
 
       - name: Setup Node.js
+        if: steps.changes.outputs.testChanges == 'true'
         uses: actions/setup-node@v3
         with:
           node-version: 18.15.0
 
       - name: gravatar build
+        if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/gravatar
         run: |
           pnpm install
@@ -110,11 +123,13 @@ jobs:
           pnpm build
 
       - name: gravatar benchmark
+        if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/gravatar
         run: |
           pnpm bench
 
       - name: test_codegen build
+        if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/test_codegen
         run: |
           pnpm codegen
@@ -123,6 +138,7 @@ jobs:
           pnpm res:build
 
       - name: test_codegen test
+        if: steps.changes.outputs.testChanges == 'true'
         working-directory: scenarios/test_codegen
         run: |
           pnpm test
