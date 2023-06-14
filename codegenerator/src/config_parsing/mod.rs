@@ -1,6 +1,9 @@
 use std::error::Error;
 use std::path::PathBuf;
 
+use serde::ser::Error as SerdeError;
+use serde::Serializer;
+
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
 
@@ -121,7 +124,7 @@ struct ConfigEvent {
     required_entities: Option<Vec<RequiredEntity>>,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Clone, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Clone)]
 #[serde(try_from = "String")]
 enum EventNameOrSig {
     Name(String),
@@ -134,6 +137,26 @@ struct RequiredEntity {
     labels: Vec<String>,
 }
 
+impl Serialize for EventNameOrSig{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer {
+                match self{
+                    EventNameOrSig::Name(event_name)=> serializer.serialize_str(event_name),
+                    EventNameOrSig::Event(eth_abi_event)=> {
+                        eth_abi_event.serialize(serializer)
+                    }
+                }
+    }
+}
+
+impl<T:Serialize + Clone> Serialize for NormalizedList<T>{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer {
+                self.inner.serialize(serializer)
+            }
+    }
 impl TryFrom<String> for EventNameOrSig {
     type Error = String;
 
@@ -230,20 +253,18 @@ impl<T: Clone> OptSingleOrList<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(try_from = "OptSingleOrList<T>")]
 struct NormalizedList<T: Clone> {
     inner: Vec<T>,
 }
 
 impl<T: Clone> NormalizedList<T> {
-    #[cfg(test)]
-    fn from(list: Vec<T>) -> Self {
+    pub fn from(list: Vec<T>) -> Self {
         NormalizedList { inner: list }
     }
 
-    #[cfg(test)]
-    fn from_single(val: T) -> Self {
+    pub fn from_single(val: T) -> Self {
         Self::from(vec![val])
     }
 }

@@ -1,7 +1,19 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_yaml;
 use serde_json::{json, Value};
+use serde_yaml;
+
+use tokio::time::{timeout, Duration};
+
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Write;
+
+use ethers::etherscan::contract;
+
+use crate::config_parsing::{
+    Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,62 +107,14 @@ pub struct BlockHandler {
     pub handler: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Config {
-    version: String,
-    description: String,
-    repository: String,
-    networks: Vec<Network>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Network {
-    id: i32,
-    rpc_url: String,
-    start_block: i32,
-    contracts: Vec<Contract>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Contract {
-    name: String,
-    abi_file_path: String,
-    address: ContractAddress,
-    // #[serde(serialize_with = "serialize_handler")]
-    handler: String,
-    events: Vec<Event>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum ContractAddress {
-    Single(String),
-    Multiple(Vec<String>),
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Event {
-    event: String,
-    required_entities: Vec<RequiredEntity>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct RequiredEntity {
-    name: String,
-    labels: Vec<String>,
-}
-
 pub fn get_event_handler_directory(language: &str) -> String {
     // Logic to get the event handler directory based on the language
-    unimplemented!()
-}
-
-pub fn serialize_handler<S>(handler: &String, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    let directory = get_event_handler_directory(handler);
-    serializer.serialize_str(&directory)
+    match language {
+        "Javascript" => "./src/EventHandlers.js".to_string(),
+        "Typescript" => "./src/EventHandlers.bs.js".to_string(),
+        "Rescript" => "src/EventHandlers.js".to_string(),
+        _ => "".to_string(),
+    }
 }
 
 async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
@@ -174,199 +138,186 @@ pub async fn from_subgraph_id(subgraph_id: &str) -> Result<String, Box<dyn std::
     Ok(schema_cleaned)
 }
 
-#[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
-mod test {
+async fn generate_network_contract_hashmap(
+    manifest_raw: &str,
+) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
+    let manifest: GraphManifest = serde_yaml::from_str(manifest_raw)?;
 
-    use std::collections::HashMap;
-    use std::fs::File;
-    use std::io::Write;
+    let mut network_contracts: HashMap<String, Vec<String>> = HashMap::new();
 
-    async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
-        let url = format!("https://ipfs.network.thegraph.com/api/v0/cat?arg={}", cid);
-        let client = reqwest::Client::new();
-        let response = client.get(&url).send().await?;
-        let content_raw = response.text().await?;
-        Ok(content_raw)
+    for data_source in manifest.data_sources {
+        let network = data_source.network;
+        let contracts: Vec<_> = data_source
+            .mapping
+            .abis
+            .iter()
+            .map(|abi| abi.name.clone())
+            .collect();
+        network_contracts
+            .entry(network)
+            .or_insert_with(Vec::new)
+            .extend(contracts);
     }
 
-    #[test]
-    fn deserialize_manifest() {
-        let manifest_str = std::fs::read_to_string("test/configs/graph_manifest.yaml").unwrap();
-        let manifest = serde_yaml::from_str::<super::GraphManifest>(&manifest_str).unwrap();
-
-        let data_sources = &manifest.data_sources;
-        for data_source in data_sources {
-            // Fetching contract name from config
-            let contract_name = &data_source.name;
-            println!("Contract name: {}", contract_name);
-
-            // Fetching contract address and start block from config
-            let address = data_source.source.address.as_str();
-            println!("Address: {}", address);
-            let start_block = data_source.source.start_block.as_str();
-            println!("Start block: {}", start_block);
-
-            // Fetching chain ID from config
-            let chain_id = get_graph_protocol_chain_id(data_source.network.as_str());
-            println!("Chain ID: {}", chain_id.unwrap());
-
-            // Fetching abi file path from config
-            let abi_file_path = &data_source.mapping.abis[0].file;
-            println!("ABI file path: {:?}", abi_file_path);
-
-            // Fetching event names from config
-            let event_handlers = &data_source.mapping.event_handlers;
-            for event_handler in event_handlers {
-                if let Some(start) = event_handler.event.as_str().find('(') {
-                    println!("Event: {}", &event_handler.event.as_str()[..start]);
-                }
-            }
+    if let Some(templates) = manifest.templates {
+        for template in templates {
+            let network = template.network;
+            let contracts: Vec<_> = template
+                .mapping
+                .abis
+                .iter()
+                .map(|abi| abi.name.clone())
+                .collect();
+            network_contracts
+                .entry(network)
+                .or_insert_with(Vec::new)
+                .extend(contracts);
         }
     }
 
-    #[tokio::test]
-    async fn from_subgraph_id() {
-        let mut config = super::Config {
-            version: String::new(),
-            description: String::new(),
-            repository: String::new(),
-            networks: vec![],
+    Ok(network_contracts)
+}
+
+async fn generate_config_from_subgraph_id(subgraph_id: &str, language: &str) {
+    let mut config = Config {
+        version: String::new(),
+        description: String::new(),
+        repository: String::new(),
+        schema: Some(String::new()),
+        networks: vec![],
+        unstable_sync_config: None,
+    };
+
+    let manifest_str = fetch_ipfs_file(subgraph_id).await.unwrap();
+
+    let manifest = serde_yaml::from_str::<GraphManifest>(&manifest_str).unwrap();
+
+    // Populate custom values for each field
+    config.version = "1.0.0".to_string();
+    config.description = manifest.description.to_string();
+    config.repository = manifest.repository.to_string();
+    config.repository = manifest.repository.to_string();
+
+    let schema_file_path = &manifest.schema.file;
+    let schema_id = &schema_file_path.value.as_str()[6..];
+    let schema = fetch_ipfs_file(schema_id)
+        .await
+        .unwrap()
+        .replace("BigDecimal", "Float");
+    let mut file = File::create("./schema.graphql").expect("Failed to create file");
+    file.write_all(schema.as_bytes())
+        .expect("Failed to write to file");
+
+    let network_hashmap = generate_network_contract_hashmap(&manifest_str)
+        .await
+        .unwrap();
+
+    for (network_id, contracts) in &network_hashmap {
+        let mut network = Network {
+            id: get_graph_protocol_chain_id(network_id).unwrap(),
+            rpc_url: "https://example.com/rpc".to_string(),
+            start_block: 0,
+            contracts: vec![],
         };
-
-        let cid: &str = "QmQ2rQ6zfhQFwRRJLb1XT1kteweQqhyo7Va8NnfiSLC8qe";
-        let manifest_str = fetch_ipfs_file(cid).await.unwrap();
-
-        println!("Manifest: {}", manifest_str);
-
-        let manifest = serde_yaml::from_str::<super::GraphManifest>(&manifest_str).unwrap();
-
-        let data_sources = &manifest.data_sources;
-
-        // Populate custom values for each field
-        config.version = "1.0.0".to_string();
-        config.description = manifest.description.to_string();
-        config.repository = manifest.repository.to_string();
-
-        for data_source in data_sources {
-            // Fetching contract name from config
-            let contract_name = &data_source.name;
-            // Fetching contract address and start block from config
-            let address = data_source.source.address.as_str();
-            let start_block = data_source.source.start_block.as_str();
-            // Fetching chain ID from config
-            let chain_id = get_graph_protocol_chain_id(data_source.network.as_str());
-            // Fetching schema file path from config
-            let schema_file_path = &manifest.schema.file;
-            let schema_id = &schema_file_path.value.as_str()[6..];
-            let schema = fetch_ipfs_file(schema_id)
-                .await
-                .unwrap()
-                .replace("BigDecimal", "Float");
-            let mut file = File::create( "./schema.graphql").expect("Failed to create file");
-            file.write_all(schema.as_bytes())
-                .expect("Failed to write to file");
-
-            // Fetching abi file path from config
-            let abi_file_path = &data_source.mapping.abis[0].file;
-            // println!("ABI file path: {:?}", abi_file_path.value);
-            let abi_id: &str = &abi_file_path.value.as_str()[6..];
-
-            let mut network = super::Network {
-                id: chain_id.unwrap(),
-                rpc_url: "https://example.com/rpc".to_string(),
-                start_block: start_block.parse::<i32>().unwrap(),
-                contracts: vec![],
-            };
-
-            let mut contract =super::Contract {
-                name: contract_name.to_string(),
-                abi_file_path: "./path/to/abi.json".to_string(),
-                address: super::ContractAddress::Single(address.to_string()),
-                handler: "rust".to_string(),
-                events: vec![],
-            };
-            
-            // Fetching event names from config
-            let event_handlers = &data_source.mapping.event_handlers;
-            for event_handler in event_handlers {
-                if let Some(start) = event_handler.event.as_str().find('(') {
-                    let event_name =  &event_handler.event.as_str()[..start];
-                    let mut event = super::Event {
-                        event: event_name.to_string(),
-                        required_entities: vec![],
-                    };
-                    contract.events.push(event);
+        for contract in contracts {
+            if let Some(data_source) = manifest.data_sources.iter().find(|ds| &ds.name == contract)
+            {
+                let mut contract = ConfigContract {
+                    name: data_source.name.to_string(),
+                    abi_file_path: Some("./path/to/abi.json".to_string()),
+                    address: NormalizedList::from_single(data_source.source.address.to_string()),
+                    handler: get_event_handler_directory(language),
+                    events: vec![],
+                };
+                // Fetching event names from config
+                let event_handlers = &data_source.mapping.event_handlers;
+                for event_handler in event_handlers {
+                    if let Some(start) = event_handler.event.as_str().find('(') {
+                        let event_name = &event_handler.event.as_str()[..start];
+                        let event = ConfigEvent {
+                            event: EventNameOrSig::Name(event_name.to_string()),
+                            required_entities: Some(vec![]),
+                        };
+                        contract.events.push(event.clone());
+                    }
                 }
+                network.contracts.push(contract.clone());
+
+                // Fetching abi file path from config
+                let abi_file_path = &data_source.mapping.abis[0].file;
+                let abi_id: &str = &abi_file_path.value.as_str()[6..];
+
+                let fetch_abi = timeout(Duration::from_secs(20), fetch_ipfs_file(abi_id));
+                match fetch_abi.await {
+                    Ok(Ok(abi)) => {
+                        let file_name = format!("{}.json", data_source.name.to_string()); // Assuming `name` is the string variable
+                        let mut file = File::create(&file_name).expect("Failed to create file");
+                        file.write_all(abi.as_bytes()).expect("Failed to write ABI to file");
+                        println!("ABI written to file: {}", file_name);
+                    }
+                    Ok(Err(error)) => {
+                        eprintln!("Failed to fetch ABI: {:?}", error);
+                        eprintln!("Please export contract ABI manually");
+                    }
+                    Err(_) => {
+                        eprintln!("Fetching ABI timed out for contract: {}", data_source.name);
+                        eprintln!("Please export contract ABI manually");
+                    }
+                }
+            } else {
+                println!("Data source not found");
             }
-
-            network.contracts.push(contract);
-            config.networks.push(network);
-            
         }
-    
-        // Convert config to YAML file
-        let yaml_string = serde_yaml::to_string(&config).unwrap();
-    
-        // Write YAML string to a file
-        std::fs::write("config.yaml", yaml_string).expect("Failed to write config.yaml");
+        config.networks.push(network);
     }
+    // Convert config to YAML file
+    let yaml_string = serde_yaml::to_string(&config).unwrap();
 
-    fn get_graph_protocol_chain_id(network_name: &str) -> Option<i32> {
-        let chain_id_by_graph_network: HashMap<&str, i32> = [
-            ("mainnet", 1),
-            ("kovan", 42),
-            ("rinkeby", 4),
-            ("ropsten", 3),
-            ("goerli", 5),
-            ("poa-core", 99),
-            ("poa-sokol", 77),
-            ("xdai", 100),
-            ("matic", 137),
-            ("mumbai", 80001),
-            ("fantom", 250),
-            ("fantom-testnet", 4002),
-            ("bsc", 56),
-            ("chapel", -1),
-            ("clover", 0),
-            ("avalanche", 43114),
-            ("fuji", 43113),
-            ("celo", 42220),
-            ("celo-alfajores", 44787),
-            ("fuse", 122),
-            ("moonbeam", 1284),
-            ("moonriver", 1285),
-            ("mbase", -1),
-            ("arbitrum-one", 42161),
-            ("arbitrum-rinkeby", 421611),
-            ("optimism", 10),
-            ("optimism-kovan", 69),
-            ("aurora", 1313161554),
-            ("aurora-testnet", 1313161555),
-        ]
-        .iter()
-        .cloned()
-        .collect();
+    // Write YAML string to a file
+    std::fs::write("config.yaml", yaml_string).expect("Failed to write config.yaml");
+}
 
-        chain_id_by_graph_network.get(network_name).cloned()
+fn get_graph_protocol_chain_id(network_name: &str) -> Option<i32> {
+    match network_name {
+        "mainnet" => Some(1),
+        "kovan" => Some(42),
+        "rinkeby" => Some(4),
+        "ropsten" => Some(3),
+        "goerli" => Some(5),
+        "poa-core" => Some(99),
+        "poa-sokol" => Some(77),
+        "xdai" => Some(100),
+        "matic" => Some(137),
+        "mumbai" => Some(80001),
+        "fantom" => Some(250),
+        "fantom-testnet" => Some(4002),
+        "bsc" => Some(56),
+        "chapel" => Some(-1),
+        "clover" => Some(0),
+        "avalanche" => Some(43114),
+        "fuji" => Some(43113),
+        "celo" => Some(42220),
+        "celo-alfajores" => Some(44787),
+        "fuse" => Some(122),
+        "moonbeam" => Some(1284),
+        "moonriver" => Some(1285),
+        "mbase" => Some(-1),
+        "arbitrum-one" => Some(42161),
+        "arbitrum-rinkeby" => Some(421611),
+        "optimism" => Some(10),
+        "optimism-kovan" => Some(69),
+        "aurora" => Some(1313161554),
+        "aurora-testnet" => Some(1313161555),
+        _ => None,
     }
 }
 
-//loop through contracts
-//get network id and set a hashmap entry of key network id and value contract config
-
-
-//manifest
-// [
-//     {
-//         contract: 1
-//          networkid: 1
-//     },
-//     {
-//         contract: 2,
-//         networkid: 1
-//     }
-// ]
-
-// {
-//     "1" : {contacts: [contract1, contract2], startblocks: [1,2]},
-// }
+#[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
+mod test {
+    #[tokio::test]
+    async fn test_generate_config_from_subgraph_id() {
+        let cid: &str = "QmQ2rQ6zfhQFwRRJLb1XT1kteweQqhyo7Va8NnfiSLC8qe";
+        let language: &str = "Javascript";
+        super::generate_config_from_subgraph_id(cid, language).await;
+    }
+}
