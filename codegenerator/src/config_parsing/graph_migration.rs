@@ -1,18 +1,17 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 use serde_yaml;
-
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use tokio::time::{timeout, Duration};
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::Write;
-
-use ethers::etherscan::contract;
-
-use crate::config_parsing::{
-    Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
+use crate::{
+    cli_args::Language,
+    config_parsing::{
+        Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -107,13 +106,12 @@ pub struct BlockHandler {
     pub handler: String,
 }
 
-pub fn get_event_handler_directory(language: &str) -> String {
+fn get_event_handler_directory(language: &Language) -> String {
     // Logic to get the event handler directory based on the language
     match language {
-        "Javascript" => "./src/EventHandlers.js".to_string(),
-        "Typescript" => "./src/EventHandlers.bs.js".to_string(),
-        "Rescript" => "src/EventHandlers.js".to_string(),
-        _ => "".to_string(),
+        Language::Rescript => "./src/EventHandlers.bs.js".to_string(),
+        Language::Typescript => "src/EventHandlers.ts".to_string(),
+        Language::Javascript => "./src/EventHandlers.js".to_string(),
     }
 }
 
@@ -123,19 +121,6 @@ async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
     let response = client.get(&url).send().await?;
     let content_raw = response.text().await?;
     Ok(content_raw)
-}
-
-pub async fn from_subgraph_id(subgraph_id: &str) -> Result<String, Box<dyn std::error::Error>> {
-    // Fetch the manifest file.
-    let manifest_raw = fetch_ipfs_file(subgraph_id).await?;
-    let manifest: GraphManifest = serde_yaml::from_str(&manifest_raw)?;
-
-    // Fetch and write the schema.graphql file.
-    let schema_cid = manifest.schema.file.value.as_str()[6..].to_owned();
-    let schema_raw = fetch_ipfs_file(&schema_cid).await?;
-    let schema_cleaned = schema_raw.replace("BigDecimal", "Float");
-
-    Ok(schema_cleaned)
 }
 
 async fn generate_network_contract_hashmap(
@@ -178,25 +163,28 @@ async fn generate_network_contract_hashmap(
     Ok(network_contracts)
 }
 
-async fn generate_config_from_subgraph_id(subgraph_id: &str, language: &str) {
+pub async fn generate_config_from_subgraph_id(
+    project_root_path: &PathBuf,
+    subgraph_id: &str,
+    language: &Language,
+) {
+    println!("Generating config for subgraph ID: {}", subgraph_id);
+
+    println!("{:?}", project_root_path);
+
+    
+    let manifest_str = fetch_ipfs_file(subgraph_id).await.unwrap();
+    
+    let manifest = serde_yaml::from_str::<GraphManifest>(&manifest_str).unwrap();
+    
     let mut config = Config {
-        version: String::new(),
-        description: String::new(),
-        repository: String::new(),
-        schema: Some(String::new()),
+        version: "1.0.0".to_string(),
+        description: manifest.description.to_string(),
+        repository: manifest.repository.to_string(),
+        schema: None,
         networks: vec![],
         unstable_sync_config: None,
     };
-
-    let manifest_str = fetch_ipfs_file(subgraph_id).await.unwrap();
-
-    let manifest = serde_yaml::from_str::<GraphManifest>(&manifest_str).unwrap();
-
-    // Populate custom values for each field
-    config.version = "1.0.0".to_string();
-    config.description = manifest.description.to_string();
-    config.repository = manifest.repository.to_string();
-    config.repository = manifest.repository.to_string();
 
     let schema_file_path = &manifest.schema.file;
     let schema_id = &schema_file_path.value.as_str()[6..];
@@ -204,7 +192,8 @@ async fn generate_config_from_subgraph_id(subgraph_id: &str, language: &str) {
         .await
         .unwrap()
         .replace("BigDecimal", "Float");
-    let mut file = File::create("./schema.graphql").expect("Failed to create file");
+    let mut file = File::create(format!("{}schema.graphql", project_root_path.display()))
+        .expect("Failed to create file");
     file.write_all(schema.as_bytes())
         .expect("Failed to write to file");
 
@@ -215,6 +204,7 @@ async fn generate_config_from_subgraph_id(subgraph_id: &str, language: &str) {
     for (network_id, contracts) in &network_hashmap {
         let mut network = Network {
             id: get_graph_protocol_chain_id(network_id).unwrap(),
+            // TODO: update to the final rpc url
             rpc_url: "https://example.com/rpc".to_string(),
             start_block: 0,
             contracts: vec![],
@@ -224,7 +214,11 @@ async fn generate_config_from_subgraph_id(subgraph_id: &str, language: &str) {
             {
                 let mut contract = ConfigContract {
                     name: data_source.name.to_string(),
-                    abi_file_path: Some("./path/to/abi.json".to_string()),
+                    abi_file_path: Some(format!(
+                        "{}abis/{}.json",
+                        project_root_path.display(),
+                        data_source.name.to_string()
+                    )),
                     address: NormalizedList::from_single(data_source.source.address.to_string()),
                     handler: get_event_handler_directory(language),
                     events: vec![],
@@ -250,9 +244,21 @@ async fn generate_config_from_subgraph_id(subgraph_id: &str, language: &str) {
                 let fetch_abi = timeout(Duration::from_secs(20), fetch_ipfs_file(abi_id));
                 match fetch_abi.await {
                     Ok(Ok(abi)) => {
-                        let file_name = format!("{}.json", data_source.name.to_string()); // Assuming `name` is the string variable
+                        let file_name = format!(
+                            "{}abis/{}.json",
+                            project_root_path.display(),
+                            data_source.name.to_string()
+                        );
+                        let file_path = Path::new(&file_name);
+
+                        if let Some(parent_dir) = file_path.parent() {
+                            if !parent_dir.exists() {
+                                fs::create_dir_all(parent_dir).expect("Failed to create directory");
+                            }
+                        }
                         let mut file = File::create(&file_name).expect("Failed to create file");
-                        file.write_all(abi.as_bytes()).expect("Failed to write ABI to file");
+                        file.write_all(abi.as_bytes())
+                            .expect("Failed to write ABI to file");
                         println!("ABI written to file: {}", file_name);
                     }
                     Ok(Err(error)) => {
@@ -314,10 +320,13 @@ fn get_graph_protocol_chain_id(network_name: &str) -> Option<i32> {
 
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
 mod test {
+    use crate::cli_args::Language;
+
     #[tokio::test]
     async fn test_generate_config_from_subgraph_id() {
         let cid: &str = "QmQ2rQ6zfhQFwRRJLb1XT1kteweQqhyo7Va8NnfiSLC8qe";
-        let language: &str = "Javascript";
-        super::generate_config_from_subgraph_id(cid, language).await;
+        let language: Language = Language::Rescript;
+        let project_root_path: std::path::PathBuf = std::path::PathBuf::from("./");
+        super::generate_config_from_subgraph_id(&project_root_path, cid, &language).await;
     }
 }

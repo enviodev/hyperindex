@@ -1,9 +1,6 @@
 use std::error::Error;
 use std::path::PathBuf;
 
-use serde::ser::Error as SerdeError;
-use serde::Serializer;
-
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
 

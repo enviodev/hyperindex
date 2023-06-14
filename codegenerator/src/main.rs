@@ -10,13 +10,16 @@ use envio::{
         ProjectPathsArgs,
     },
     commands,
+config_parsing::{self, entity_parsing, event_parsing, graph_migration::generate_config_from_subgraph_id},
+hbs_templating::codegen_templates::{
+    entities_to_map, generate_templates, EventRecordTypeTemplate,
+},
     hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
     persisted_state::PersistedState,
     project_paths::{self, ParsedPaths},
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
-use graphql_parser::schema;
 use include_dir::{include_dir, Dir};
 
 static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
@@ -43,17 +46,10 @@ static ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/erc20_template/typescript");
 static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/erc20_template/javascript");
-static SUBGRAPH_MIGRATION_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("templates/static/subgraph_migration_template/rescript");
-static SUBGRAPH_MIGRATION_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/subgraph_migration_template/rescript");
-static SUBGRAPH_MIGRATION_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/subgraph_migration_template/typescript");
-static SUBGRAPH_MIGRATION_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/subgraph_migration_template/javascript");
 static INIT_TEMPLATES_SHARED_DIR: Dir<'_> = include_dir!("templates/dynamic/init_templates/shared");
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
 
     match command_line_args.command {
@@ -123,22 +119,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     ERC20_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
                 Template::SubgraphMigration => {
-        
-                    // let schema = graph_migration::from_subgraph_id(&args.subgraph_id)?;
-                     //Copy in the relevant js flavor specific greeter files
-                     match &args.language {
+                    
+                    //  Copy in the relevant js flavor specific subgraph migration files
+                    match &args.language {
                         Language::Rescript => {
-                            SUBGRAPH_MIGRATION_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                            BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                         }
                         Language::Typescript => {
-                            SUBGRAPH_MIGRATION_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
+                            BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
                         }
                         Language::Javascript => {
-                            SUBGRAPH_MIGRATION_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                            BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
                         }
                     }
-                    //Copy in the rest of the shared greeter files
-                    SUBGRAPH_MIGRATION_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                    //Copy in the rest of the shared subgraph migration files
+                    BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                    
+                    generate_config_from_subgraph_id(&project_root_path, &args.subgraph_id, &args.language).await;
                 }
             }
 
