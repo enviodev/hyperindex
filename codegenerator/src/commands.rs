@@ -7,18 +7,20 @@ pub mod codegen {
     pub fn pnpm_install(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        Ok(Command::new("pnpm")
+        Ok(Command::new("npm")
             .arg("install")
             .arg("--no-frozen-lockfile")
             .current_dir(&project_paths.generated)
             .spawn()?
             .wait()?)
     }
-    pub fn pnpm_clean(
+    pub fn rescript_clean(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        Ok(Command::new("pnpm")
+        Ok(Command::new("npx")
+            .arg("rescript")
             .arg("clean")
+            .arg("-with-deps")
             .current_dir(&project_paths.generated)
             .spawn()?
             .wait()?)
@@ -55,7 +57,7 @@ pub mod codegen {
         pnpm_install(project_paths)?;
 
         println!("clean build directory");
-        pnpm_clean(project_paths)?;
+        rescript_clean(project_paths)?;
 
         println!("formatting code");
         rescript_format(project_paths)?;
