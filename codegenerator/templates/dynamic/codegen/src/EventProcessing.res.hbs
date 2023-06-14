@@ -66,11 +66,11 @@ let rec loadReadEntitiesInner = async (
   ~blockLoader,
 ): array<readEntitiesResultPromise> => {
   // Recursively load entities
-  let loadNestedReadEntities = (
+  let loadNestedReadEntities = async (
     ~blockNumber,
     ~logIndex,
     ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
-  ): promise<array<readEntitiesResultPromise>> => {
+  ): array<readEntitiesResultPromise> => {
     let addressInterfaceMapping = Js.Dict.empty()
 
     let eventFilters = dynamicContracts->Belt.Array.flatMap(contract => {
@@ -81,7 +81,7 @@ let rec loadReadEntitiesInner = async (
       )
     })
 
-    EventFetching.getContractEventsOnFilters(
+    let (fetchedEvents, nestedBlocksProcessed, _) = await EventFetching.getContractEventsOnFilters(
       ~eventFilters,
       ~addressInterfaceMapping,
       ~fromBlock=blockNumber,
@@ -92,13 +92,13 @@ let rec loadReadEntitiesInner = async (
       ~provider=chainConfig.provider,
       ~blockLoader,
       (),
-    )->Promise.then(((fetchedEvents, nestedBlocksProcessed, _)) => {
-      fetchedEvents->loadReadEntitiesInner(
-        ~chainConfig,
-        ~blockLoader,
-        ~blocksProcessed=nestedBlocksProcessed
-      )
-    })
+    )
+
+    await fetchedEvents->loadReadEntitiesInner(
+      ~chainConfig,
+      ~blockLoader,
+      ~blocksProcessed=nestedBlocksProcessed,
+    )
   }
 
   let baseResults: array<readEntitiesResultPromise> = []
