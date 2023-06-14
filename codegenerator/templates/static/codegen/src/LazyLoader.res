@@ -1,3 +1,5 @@
+exception LoaderTimeout(string)
+
 type blockNumber = int
 
 let s = Belt.MutableSet.Int.make()
@@ -7,6 +9,11 @@ type asyncMap<'a> = {
   _cacheSize: int,
   // The maximum number of results we can try to load simultaneously.
   _loaderPoolSize: int,
+  // How long to wait before retrying failures
+  // TODO: Add randomized exponential back-off
+  _retryDelayMillis: int,
+  // How long to wait before cancelling a load request
+  _timeoutMillis: int,
   // The promises we return to callers. We satisfy them asynchronously.
   externalPromises: Js.Dict.t<promise<'a>>,
   // The handled used to populate the external promises once we have loaded their data.
@@ -21,9 +28,18 @@ type asyncMap<'a> = {
   loaderFn: int => promise<'a>,
 }
 
-let make = (~loaderFn, ~cacheSize: int=10_000, ~loaderPoolSize: int=10, ()) => {
+let make = (
+  ~loaderFn,
+  ~cacheSize: int=10_000,
+  ~loaderPoolSize: int=10,
+  ~retryDelayMillis=5_000,
+  ~timeoutMillis=30_000,
+  ()
+) => {
   _cacheSize: cacheSize,
   _loaderPoolSize: loaderPoolSize,
+  _retryDelayMillis: retryDelayMillis,
+  _timeoutMillis: timeoutMillis,
   externalPromises: Js.Dict.empty(),
   resolvers: Js.Dict.empty(),
   inProgress: Belt.MutableSet.Int.make(),
@@ -34,13 +50,22 @@ let make = (~loaderFn, ~cacheSize: int=10_000, ~loaderPoolSize: int=10, ()) => {
 
 let deleteKey: (Js.Dict.t<'a>, string) => unit = (_obj, _k) => %raw(`delete _obj[_k]`)
 
+// If something takes longer than this to load, reject the promise and try again
+let timeoutAfter = timeoutMillis =>
+  Time.resolvePromiseAfterDelay(~delayMilliseconds=timeoutMillis)->Promise.then(() =>
+    Promise.reject(
+      LoaderTimeout(
+        `Query took longer than ${Belt.Int.toString(timeoutMillis / 1000)} seconds`,
+      ),
+    )
+  )
 
 let rec loadNext = (am: asyncMap<'a>, k: int): unit => {
   let key = k->Belt.Int.toString
   // Track that we are loading it now
   am.inProgress->Belt.MutableSet.Int.add(k)
-  // Load the value immediately (replace with real promiser)
-  am.loaderFn(k)
+
+  Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
   ->Promise.thenResolve(val => {
     // Resolve the external promise
     am.resolvers->Js.Dict.get(key)->Belt.Option.map(r => r(. val))->ignore
@@ -50,8 +75,6 @@ let rec loadNext = (am: asyncMap<'a>, k: int): unit => {
 
     // Track that we've loaded this key
     am.loadedKeys->PriorityQueue.push(k)
-
-    // Js.log4("Loaded", k, "queue", am.loaderQueue)
 
     // Delete the oldest key if the cache is overly full
     if am.loadedKeys["length"] > am._cacheSize {
@@ -70,10 +93,9 @@ let rec loadNext = (am: asyncMap<'a>, k: int): unit => {
   ->Promise.catch(e => {
     // If there's a failure, retry it
     // TODO: Make sure this actually works (e.g. disconnect network)
-    // TODO: Perhaps fetch another block first to check if its a poison pill.
     // TODO: Propagate failure after long enough time?
     // TODO: Add timeouts on individual requests
-    loadNext(am, k)
+    Js.Global.setTimeout(_ => loadNext(am, k), am._retryDelayMillis)->ignore
     Promise.reject(e)
   })
   ->ignore
