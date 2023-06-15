@@ -59,10 +59,15 @@ describe("E2E Db check", () => {
       Migrations.sql,
       [MockEntities.mockInMemRow1, MockEntities.mockInMemRow2],
     )
-    await MockEvents.eventBatch->EventProcessing.processEventBatch(
+    let blockLoader = LazyLoader.make(
+      ~loaderFn=EventFetching.getUnwrappedBlock(Hardhat.hardhatProvider),
+      (),
+    )
+    await MockEvents.eventPromises->EventProcessing.processEventBatch(
       ~chainConfig=MockConfig.mockChainConfig,
       // Give a conservatively wide range of blocks
       ~blocksProcessed={from: 1, to: 10},
+      ~blockLoader,
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
