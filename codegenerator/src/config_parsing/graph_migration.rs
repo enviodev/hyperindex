@@ -1,4 +1,3 @@
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::collections::HashMap;
@@ -163,126 +162,6 @@ async fn generate_network_contract_hashmap(
     Ok(network_contracts)
 }
 
-pub async fn generate_config_from_subgraph_id(
-    project_root_path: &PathBuf,
-    subgraph_id: &str,
-    language: &Language,
-) {
-    println!("Generating config for subgraph ID: {}", subgraph_id);
-
-    println!("{:?}", project_root_path);
-
-    
-    let manifest_str = fetch_ipfs_file(subgraph_id).await.unwrap();
-    
-    let manifest = serde_yaml::from_str::<GraphManifest>(&manifest_str).unwrap();
-    
-    let mut config = Config {
-        version: "1.0.0".to_string(),
-        description: manifest.description.to_string(),
-        repository: manifest.repository.to_string(),
-        schema: None,
-        networks: vec![],
-        unstable_sync_config: None,
-    };
-
-    let schema_file_path = &manifest.schema.file;
-    let schema_id = &schema_file_path.value.as_str()[6..];
-    let schema = fetch_ipfs_file(schema_id)
-        .await
-        .unwrap()
-        .replace("BigDecimal", "Float");
-    let mut file = File::create(format!("{}schema.graphql", project_root_path.display()))
-        .expect("Failed to create file");
-    file.write_all(schema.as_bytes())
-        .expect("Failed to write to file");
-
-    let network_hashmap = generate_network_contract_hashmap(&manifest_str)
-        .await
-        .unwrap();
-
-    for (network_id, contracts) in &network_hashmap {
-        let mut network = Network {
-            id: get_graph_protocol_chain_id(network_id).unwrap(),
-            // TODO: update to the final rpc url
-            rpc_url: "https://example.com/rpc".to_string(),
-            start_block: 0,
-            contracts: vec![],
-        };
-        for contract in contracts {
-            if let Some(data_source) = manifest.data_sources.iter().find(|ds| &ds.name == contract)
-            {
-                let mut contract = ConfigContract {
-                    name: data_source.name.to_string(),
-                    abi_file_path: Some(format!(
-                        "{}abis/{}.json",
-                        project_root_path.display(),
-                        data_source.name.to_string()
-                    )),
-                    address: NormalizedList::from_single(data_source.source.address.to_string()),
-                    handler: get_event_handler_directory(language),
-                    events: vec![],
-                };
-                // Fetching event names from config
-                let event_handlers = &data_source.mapping.event_handlers;
-                for event_handler in event_handlers {
-                    if let Some(start) = event_handler.event.as_str().find('(') {
-                        let event_name = &event_handler.event.as_str()[..start];
-                        let event = ConfigEvent {
-                            event: EventNameOrSig::Name(event_name.to_string()),
-                            required_entities: Some(vec![]),
-                        };
-                        contract.events.push(event.clone());
-                    }
-                }
-                network.contracts.push(contract.clone());
-
-                // Fetching abi file path from config
-                let abi_file_path = &data_source.mapping.abis[0].file;
-                let abi_id: &str = &abi_file_path.value.as_str()[6..];
-
-                let fetch_abi = timeout(Duration::from_secs(20), fetch_ipfs_file(abi_id));
-                match fetch_abi.await {
-                    Ok(Ok(abi)) => {
-                        let file_name = format!(
-                            "{}abis/{}.json",
-                            project_root_path.display(),
-                            data_source.name.to_string()
-                        );
-                        let file_path = Path::new(&file_name);
-
-                        if let Some(parent_dir) = file_path.parent() {
-                            if !parent_dir.exists() {
-                                fs::create_dir_all(parent_dir).expect("Failed to create directory");
-                            }
-                        }
-                        let mut file = File::create(&file_name).expect("Failed to create file");
-                        file.write_all(abi.as_bytes())
-                            .expect("Failed to write ABI to file");
-                        println!("ABI written to file: {}", file_name);
-                    }
-                    Ok(Err(error)) => {
-                        eprintln!("Failed to fetch ABI: {:?}", error);
-                        eprintln!("Please export contract ABI manually");
-                    }
-                    Err(_) => {
-                        eprintln!("Fetching ABI timed out for contract: {}", data_source.name);
-                        eprintln!("Please export contract ABI manually");
-                    }
-                }
-            } else {
-                println!("Data source not found");
-            }
-        }
-        config.networks.push(network);
-    }
-    // Convert config to YAML file
-    let yaml_string = serde_yaml::to_string(&config).unwrap();
-
-    // Write YAML string to a file
-    std::fs::write("config.yaml", yaml_string).expect("Failed to write config.yaml");
-}
-
 fn get_graph_protocol_chain_id(network_name: &str) -> Option<i32> {
     match network_name {
         "mainnet" => Some(1),
@@ -315,6 +194,152 @@ fn get_graph_protocol_chain_id(network_name: &str) -> Option<i32> {
         "aurora" => Some(1313161554),
         "aurora-testnet" => Some(1313161555),
         _ => None,
+    }
+}
+
+pub async fn generate_config_from_subgraph_id(
+    project_root_path: &PathBuf,
+    subgraph_id: &str,
+    language: &Language,
+) {
+    println!("Generating config for subgraph ID: {}", subgraph_id);
+
+    println!("Fetching subgraph manifest file");
+    let fetch_manifest_str = timeout(Duration::from_secs(20), fetch_ipfs_file(subgraph_id));
+    match fetch_manifest_str.await.unwrap() {
+        Ok(manifest_str) => {
+            println!("Manifest file: {}", manifest_str);
+
+            // Convert manifest to YAML string
+            let manifest_yaml = serde_yaml::to_string(&manifest_str).unwrap();
+
+            // Write manifest YAML file to a file
+            std::fs::write("manifest.yaml", manifest_yaml).expect("Failed to write manifest.yaml");
+
+            let manifest = serde_yaml::from_str::<GraphManifest>(&manifest_str).unwrap();
+
+            let mut config = Config {
+                version: "1.0.0".to_string(),
+                description: manifest.description.to_string(),
+                repository: manifest.repository.to_string(),
+                schema: None,
+                networks: vec![],
+                unstable_sync_config: None,
+            };
+
+            let schema_file_path = &manifest.schema.file;
+            let schema_id = &schema_file_path.value.as_str()[6..];
+            println!("Fetching subgraph schema file");
+            let schema = fetch_ipfs_file(schema_id)
+                .await
+                .unwrap()
+                .replace("BigDecimal", "Float");
+            let mut schema_file_directory = File::create(format!("{}schema.graphql", project_root_path.display()))
+                .expect("Failed to create file");
+            schema_file_directory.write_all(schema.as_bytes())
+                .expect("Failed to write to file");
+
+            let network_hashmap = generate_network_contract_hashmap(&manifest_str)
+                .await
+                .unwrap();
+
+            for (network_id, contracts) in &network_hashmap {
+                let mut network = Network {
+                    id: get_graph_protocol_chain_id(network_id).unwrap(),
+                    // TODO: update to the final rpc url
+                    rpc_url: "https://example.com/rpc".to_string(),
+                    start_block: 0,
+                    contracts: vec![],
+                };
+                for contract in contracts {
+                    if let Some(data_source) =
+                        manifest.data_sources.iter().find(|ds| &ds.name == contract)
+                    {
+                        let mut contract = ConfigContract {
+                            name: data_source.name.to_string(),
+                            abi_file_path: Some(format!(
+                                "{}abis/{}.json",
+                                project_root_path.display(),
+                                data_source.name.to_string()
+                            )),
+                            address: NormalizedList::from_single(
+                                data_source.source.address.to_string(),
+                            ),
+                            handler: get_event_handler_directory(language),
+                            events: vec![],
+                        };
+                        // Fetching event names from config
+                        let event_handlers = &data_source.mapping.event_handlers;
+                        for event_handler in event_handlers {
+                            if let Some(start) = event_handler.event.as_str().find('(') {
+                                let event_name = &event_handler.event.as_str()[..start];
+                                let event = ConfigEvent {
+                                    event: EventNameOrSig::Name(event_name.to_string()),
+                                    required_entities: Some(vec![]),
+                                };
+                                contract.events.push(event.clone());
+                            }
+                        }
+                        network.contracts.push(contract.clone());
+
+                        // Fetching abi file path from config
+                        let abi_file_path = &data_source.mapping.abis[0].file;
+                        let abi_id: &str = &abi_file_path.value.as_str()[6..];
+
+                        let fetch_abi = timeout(Duration::from_secs(20), fetch_ipfs_file(abi_id));
+                        match fetch_abi.await {
+                            Ok(Ok(abi)) => {
+                                let abi_file_directory = format!(
+                                    "{}abis/{}.json",
+                                    project_root_path.display(),
+                                    data_source.name.to_string()
+                                );
+                                let file_path = Path::new(&abi_file_directory);
+
+                                if let Some(parent_dir) = file_path.parent() {
+                                    if !parent_dir.exists() {
+                                        fs::create_dir_all(parent_dir)
+                                            .expect("Failed to create directory");
+                                    }
+                                }
+                                let mut abi_file =
+                                    File::create(&abi_file_directory).expect("Failed to create file");
+                                    abi_file.write_all(abi.as_bytes())
+                                    .expect("Failed to write ABI to file");
+                                println!("ABI written to file: {}", abi_file_directory);
+                            }
+                            Ok(Err(error)) => {
+                                eprintln!("Failed to fetch ABI: {:?}", error);
+                                eprintln!("Please export contract ABI manually");
+                            }
+                            Err(_) => {
+                                eprintln!(
+                                    "Fetching ABI timed out for contract: {}",
+                                    data_source.name
+                                );
+                                eprintln!("Please export contract ABI manually");
+                            }
+                        }
+                    } else {
+                        println!("Data source not found");
+                    }
+                }
+                config.networks.push(network);
+            }
+            // Convert config to YAML file
+            let yaml_string = serde_yaml::to_string(&config).unwrap();
+
+            // Write YAML string to a file
+            std::fs::write("config.yaml", yaml_string).expect("Failed to write config.yaml");
+        }
+        Err(error) => {
+            eprintln!("Failed to fetch manifest: {:?}", error);
+            eprintln!("Please migrate subgraph manually");
+        }
+        Err(_) => {
+            eprintln!("Fetching manifest timed out for subgraph ID: {}", subgraph_id);
+            eprintln!("Please migrate subgraph manually");
+        }
     }
 }
 
