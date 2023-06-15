@@ -5,14 +5,18 @@ type blocksProcessed = {
   to: int,
 }
 
-// Expose key removal on JS maps, used for cache invalidation
-// Unfortunately Js.Dict.unsafeDeleteKey only works with Js.Dict.t<String>
-%%raw(`
-function deleteKey(obj, k) {
-  delete obj[k]
-}
-`)
-@val external deleteKey: ('a, string) => unit = "deleteKey"
+let getUnwrappedBlock = (provider, blockNumber) =>
+  provider
+  ->Ethers.JsonRpcProvider.getBlock(blockNumber)
+  ->Promise.then(blockNullable =>
+    switch blockNullable->Js.Nullable.toOption {
+    | Some(block) => Promise.resolve(block)
+    | None =>
+      Promise.reject(
+        Js.Exn.raiseError(`RPC returned null for blockNumber ${blockNumber->Belt.Int.toString}`),
+      )
+    }
+  )
 
 let getSingleContractEventFilters = (
   ~contractAddress,
@@ -110,62 +114,30 @@ let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlo
   })
 }
 
-let convertLogs = (
-  logs: array<Ethers.log>,
-  ~provider,
-  ~addressInterfaceMapping,
-  ~fromBlockForLogging,
-  ~toBlockForLogging,
-  ~chainId,
-) => {
-  let blockRequestMapping: Js.Dict.t<
-    Promise.t<Js.Nullable.t<Ethers.JsonRpcProvider.block>>,
-  > = Js.Dict.empty()
+type eventBatchPromise = {
+  blockNumber: int,
+  logIndex: int,
+  eventPromise: promise<Types.event>,
+}
 
-  // Many times logs will be from the same block so there is no need to make multiple get block requests in that case
-  let getMemoisedBlockPromise = blockNumber => {
-    let blockKey = Belt.Int.toString(blockNumber)
+let convertLogs = (logs: array<Ethers.log>, ~blockLoader, ~addressInterfaceMapping, ~chainId) => {
+  Js.log2("Handling number of logs: ", logs->Array.length)
 
-    let blockRequestCached = blockRequestMapping->Js.Dict.get(blockKey)
+  logs
+  ->Belt.Array.map(log => {
+    let blockPromise = blockLoader->LazyLoader.get(log.blockNumber)
 
-    let blockRequest = switch blockRequestCached {
-    | Some(req) => req
-    | None =>
-      let newRequest = provider->Ethers.JsonRpcProvider.getBlock(blockNumber)
-      // Cache the request
-      blockRequestMapping->Js.Dict.set(blockKey, newRequest)
-      newRequest
-    }
-    blockRequest
-    ->Promise.catch(err => {
-      // Invalidate the cache, so that the request can be retried
-      deleteKey(blockRequestMapping, blockKey)
+    //get a specific interface type
+    //interface type parses the log
+    let optInterface = addressInterfaceMapping->Js.Dict.get(log.address->Obj.magic)
 
-      // Propagate failure to where we handle backoff
-      Promise.reject(err)
-    })
-    ->Promise.then(block =>
-      switch block->Js.Nullable.toOption {
-      | Some(block) => Promise.resolve(block)
-      | None => Promise.reject(Js.Exn.raiseError(`getBlock(${blockKey}) returned null`))
-      }
-    )
-  }
-
-  let task = () => {
-    Js.log2("Handling number of logs: ", logs->Array.length)
-
-    logs
-    ->Belt.Array.map(log => {
-      let blockPromise = log.blockNumber->getMemoisedBlockPromise
-
-      //get a specific interface type
-      //interface type parses the log
-      let optInterface = addressInterfaceMapping->Js.Dict.get(log.address->Obj.magic)
-
-      switch optInterface {
-      | None => None
-      | Some(interface) => {
+    switch optInterface {
+    | None => None
+    | Some(interface) =>
+      Some({
+        blockNumber: log.blockNumber,
+        logIndex: log.logIndex,
+        eventPromise: {
           let logDescription = interface->Ethers.Interface.parseLog(~log)
 
           switch Converters.eventStringToEvent(
@@ -181,49 +153,41 @@ let convertLogs = (
               ->Converters.Gravatar.convertTestEventLogDescription
               ->Converters.Gravatar.convertTestEventLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           | GravatarContract_NewGravatarEvent =>
             let convertedEvent =
               logDescription
               ->Converters.Gravatar.convertNewGravatarLogDescription
               ->Converters.Gravatar.convertNewGravatarLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           | GravatarContract_UpdatedGravatarEvent =>
             let convertedEvent =
               logDescription
               ->Converters.Gravatar.convertUpdatedGravatarLogDescription
               ->Converters.Gravatar.convertUpdatedGravatarLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           | NftFactoryContract_SimpleNftCreatedEvent =>
             let convertedEvent =
               logDescription
               ->Converters.NftFactory.convertSimpleNftCreatedLogDescription
               ->Converters.NftFactory.convertSimpleNftCreatedLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           | SimpleNftContract_TransferEvent =>
             let convertedEvent =
               logDescription
               ->Converters.SimpleNft.convertTransferLogDescription
               ->Converters.SimpleNft.convertTransferLog(~log, ~blockPromise)
 
-            Some(convertedEvent)
+            convertedEvent
           }
-        }
-      }
-    })
-    ->Belt.Array.keepMap(opt => opt)
-    ->Promise.all
-  }
-
-  task()->Promise.catch(err => {
-    Logging.info(
-      `Failed to handle event logs from block ${fromBlockForLogging->Belt.Int.toString} to block ${toBlockForLogging->Belt.Int.toString}`,
-    )
-    err->Promise.reject
+        },
+      })
+    }
   })
+  ->Belt.Array.keepMap(opt => opt)
 }
 
 let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
@@ -236,6 +200,7 @@ let queryEventsWithCombinedFilter = async (
   ~fromBlock,
   ~toBlock,
   ~minFromBlockLogIndex=0,
+  ~blockLoader,
   ~provider,
   ~chainId,
   (),
@@ -254,13 +219,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  await logs->convertLogs(
-    ~provider,
-    ~addressInterfaceMapping,
-    ~fromBlockForLogging=fromBlock,
-    ~toBlockForLogging=toBlock,
-    ~chainId,
-  )
+  logs->convertLogs(~blockLoader, ~addressInterfaceMapping, ~chainId)
 }
 let getContractEventsOnFilters = async (
   ~addressInterfaceMapping,
@@ -268,9 +227,10 @@ let getContractEventsOnFilters = async (
   ~minFromBlockLogIndex=0,
   ~fromBlock,
   ~toBlock,
-  ~maxBlockInterval,
+  ~initialBlockInterval,
   ~chainId,
   ~provider,
+  ~blockLoader,
   (),
 ) => {
   let sc = Config.syncConfig
@@ -278,7 +238,7 @@ let getContractEventsOnFilters = async (
   let fromBlockRef = ref(fromBlock)
   let shouldContinueProcess = () => fromBlockRef.contents <= toBlock
 
-  let currentBlockInterval = ref(maxBlockInterval)
+  let currentBlockInterval = ref(initialBlockInterval)
   let events = ref([])
   while shouldContinueProcess() {
     Js.log("continuing to process...")
@@ -294,7 +254,7 @@ let getContractEventsOnFilters = async (
         )
 
       let upperBoundToBlock = fromBlockRef.contents + blockInterval - 1
-      let nextToBlock = upperBoundToBlock > toBlock ? toBlock : upperBoundToBlock
+      let nextToBlock = Pervasives.min(upperBoundToBlock, toBlock)
       let eventsPromise =
         queryEventsWithCombinedFilter(
           ~addressInterfaceMapping,
@@ -303,6 +263,7 @@ let getContractEventsOnFilters = async (
           ~toBlock=nextToBlock,
           ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
           ~provider,
+          ~blockLoader,
           ~chainId,
           (),
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))
@@ -342,5 +303,5 @@ let getContractEventsOnFilters = async (
           ->Belt.Int.toString} out of ${toBlock->Belt.Int.toString}`,
     )
   }
-  (events.contents, {from: fromBlock, to: fromBlockRef.contents - 1})
+  (events.contents, {from: fromBlock, to: fromBlockRef.contents - 1}, currentBlockInterval.contents)
 }

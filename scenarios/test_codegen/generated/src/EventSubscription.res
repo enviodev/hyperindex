@@ -1,4 +1,6 @@
 let startWatchingEventsOnRpc = async (~chainConfig: Config.chainConfig, ~provider) => {
+  let blockLoader = LazyLoader.make(~loaderFn=EventFetching.getUnwrappedBlock(provider), ())
+
   let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
 
   let eventFilters = EventFetching.getAllEventFilters(
@@ -15,6 +17,7 @@ let startWatchingEventsOnRpc = async (~chainConfig: Config.chainConfig, ~provide
       ~eventFilters,
       ~fromBlock=blockNumber,
       ~toBlock=blockNumber,
+      ~blockLoader,
       ~provider,
       ~chainConfig,
     )
