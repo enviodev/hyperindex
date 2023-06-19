@@ -29,9 +29,9 @@ var mockEventData2 = {
   event_id: "789"
 };
 
-var gravatarSerialized1 = Types.serializeGravatarEntity(gravatarEntity1);
+var gravatarSerialized1 = Types.gravatarEntity_encode(gravatarEntity1);
 
-var gravatarSerialized2 = Types.serializeGravatarEntity(gravatarEntity2);
+var gravatarSerialized2 = Types.gravatarEntity_encode(gravatarEntity2);
 
 var mockInMemRow1 = {
   crud: /* Create */0,
