@@ -121,7 +121,7 @@ curl -X POST localhost:8080/v1/metadata \
                 "remote_table" : "{{relational_param.mapped_entity.uncapitalized}}",
                 "column_mapping" : {
                   {{#if relational_param.derived_from_field_key}}
-                    "id" : "{{relational_param.derived_from_field_key}}"
+                    "id" : "{{relational_param.derived_from_field_key.uncapitalized}}"
                   {{else}}
                     "{{relational_param.relational_key.uncapitalized}}" : "id"
                   {{/if}}

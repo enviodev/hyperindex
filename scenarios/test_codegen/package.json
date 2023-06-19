@@ -17,7 +17,8 @@
     "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen",
     "docker-up": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- local docker down",
-    "db-setup": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- local db-migrate setup"
+    "db-setup": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- local db-migrate setup",
+    "envio": "cargo run --manifest-path ../../codegenerator/Cargo.toml --"
   },
   "keywords": [
     "ReScript"
