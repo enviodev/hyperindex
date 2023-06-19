@@ -44,7 +44,7 @@ pub struct EntityRelationalTypesTemplate {
     pub relationship_type: RelationshipTypeTemplate,
     pub is_array: bool,
     pub is_optional: bool,
-    pub is_derived_from: bool,
+    pub derived_from_field_key: Option<CapitalizedOptions>,
 }
 
 pub trait HasIsDerivedFrom {
@@ -95,7 +95,10 @@ pub struct EntityParamTypeTemplate {
 
 impl HasIsDerivedFrom for EntityRelationalTypesTemplate {
     fn get_is_derived_from(&self) -> bool {
-        self.is_derived_from
+        match self.derived_from_field_key {
+            None => false,
+            Some(_) => true,
+        }
     }
 }
 
