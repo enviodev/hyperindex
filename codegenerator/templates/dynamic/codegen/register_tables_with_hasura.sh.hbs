@@ -105,7 +105,7 @@ curl -X POST localhost:8080/v1/metadata \
 }'
 
 {{#each entities as |entity|}}
-{{#each entity.relational_params as | relational_param | }}
+{{#each entity.relational_params.all as | relational_param | }}
 curl -X POST localhost:8080/v1/metadata \
   -H "Content-Type: application/json" \
   -H "X-Hasura-Role: admin" \

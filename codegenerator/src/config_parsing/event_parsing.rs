@@ -2,8 +2,8 @@ use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, ConfigEvent},
     hbs_templating::codegen_templates::{
-        ContractTemplate, EventParamTypeTemplate, EventTemplate, RequiredEntityEntityFieldTemplate,
-        RequiredEntityTemplate,
+        ContractTemplate, EventParamTypeTemplate, EventTemplate, FilteredTemplateLists,
+        RequiredEntityEntityFieldTemplate, RequiredEntityTemplate,
     },
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
 };
@@ -113,13 +113,21 @@ fn get_event_template_from_ethereum_abi_event(
     let required_entities = match &config_event.required_entities {
         Some(required_entities_config) => required_entities_config
             .iter()
-            .map(|required_entity| RequiredEntityTemplate {
-                name: required_entity.name.to_capitalized_options(),
-                labels: required_entity.labels.clone(),
-                entity_fields_of_required_entity: entity_fields_of_required_entity_map
+            .map(|required_entity| {
+                let entity_fields_of_required_entity_all = entity_fields_of_required_entity_map
                     .get(&required_entity.name)
                     .cloned()
-                    .unwrap_or_else(Vec::new),
+                    .unwrap_or_else(Vec::new);
+
+                //Template needs access to both the full list and filtered for
+                //required entities that are not using a "@derivedFrom" directive
+                let entity_fields_of_required_entity =
+                    FilteredTemplateLists::new(entity_fields_of_required_entity_all);
+                RequiredEntityTemplate {
+                    name: required_entity.name.to_capitalized_options(),
+                    labels: required_entity.labels.clone(),
+                    entity_fields_of_required_entity,
+                }
             })
             .collect(),
         None => Vec::new(),

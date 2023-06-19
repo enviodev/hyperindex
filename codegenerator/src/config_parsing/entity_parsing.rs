@@ -3,6 +3,7 @@ use crate::{
     capitalization::CapitalizedOptions,
     hbs_templating::codegen_templates::{
         EntityParamTypeTemplate, EntityRecordTypeTemplate, EntityRelationalTypesTemplate,
+        FilteredTemplateLists, RelationshipTypeTemplate,
     },
     project_paths::ParsedPaths,
 };
@@ -46,7 +47,7 @@ pub fn get_entity_record_types_from_schema(
     let mut entity_records = Vec::new();
     for object in schema_object_types.iter() {
         let mut params = Vec::new();
-        let mut relational_params = Vec::new();
+        let mut relational_params_all = Vec::new();
         for field in object.fields.iter() {
             let derived_from_directives = field
                 .directives
@@ -65,11 +66,12 @@ pub fn get_entity_record_types_from_schema(
 
             let param_type = gql_type_to_rescript_type(&field.field_type, &entities_set)?;
             let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
-            let relationship_type = if is_derived_from {
-                None
-            } else {
-                gql_type_to_postgres_relational_type(&field.name, &field.field_type, &entities_set)
-            };
+            let relationship_type = gql_type_to_postgres_relational_type(
+                &field.name,
+                &field.field_type,
+                &entities_set,
+                is_derived_from,
+            );
             let param_maybe_entity_name =
                 gql_type_to_capitalized_entity_name(&field.field_type, &entities_set);
 
@@ -85,9 +87,12 @@ pub fn get_entity_record_types_from_schema(
                 is_derived_from,
             });
 
-            relational_params.extend(relationship_type);
+            relational_params_all.extend(relationship_type);
         }
 
+        //Template needs access to both the full list and filtered for
+        //relational params that are not using a "@derivedFrom" directive
+        let relational_params = FilteredTemplateLists::new(relational_params_all);
         entity_records.push(EntityRecordTypeTemplate {
             name: object.name.to_owned().to_capitalized_options(),
             params,
@@ -196,22 +201,29 @@ fn gql_type_to_postgres_relational_type(
     field_name: &String,
     gql_type: &Type<String>,
     entities_set: &HashSet<String>,
+    is_derived_from: bool,
 ) -> Option<EntityRelationalTypesTemplate> {
     match gql_type {
         Type::NamedType(named) if entities_set.contains(named) => {
             Some(EntityRelationalTypesTemplate {
                 relational_key: field_name.clone().to_capitalized_options(),
                 mapped_entity: named.to_capitalized_options(),
-                relationship_type: "object".to_owned(),
+                relationship_type: RelationshipTypeTemplate::Object,
                 is_optional: true,
                 is_array: false,
+                is_derived_from,
             })
         }
         Type::NamedType(_) => None,
         Type::ListType(gql_type) => {
-            match gql_type_to_postgres_relational_type(&field_name, &gql_type, &entities_set) {
+            match gql_type_to_postgres_relational_type(
+                &field_name,
+                &gql_type,
+                &entities_set,
+                is_derived_from,
+            ) {
                 Some(mut relational_type) => {
-                    relational_type.relationship_type = "array".to_owned();
+                    relational_type.relationship_type = RelationshipTypeTemplate::Array;
                     relational_type.is_array = true;
 
                     Some(relational_type)
@@ -220,7 +232,12 @@ fn gql_type_to_postgres_relational_type(
             }
         }
         Type::NonNullType(gql_type) => {
-            match gql_type_to_postgres_relational_type(&field_name, &gql_type, &entities_set) {
+            match gql_type_to_postgres_relational_type(
+                &field_name,
+                &gql_type,
+                &entities_set,
+                is_derived_from,
+            ) {
                 Some(mut relational_type) => {
                     relational_type.is_optional = false;
                     Some(relational_type)

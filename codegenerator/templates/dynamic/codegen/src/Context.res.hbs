@@ -54,10 +54,10 @@ module {{contract.name.capitalized}}Contract = {
       {{#each event.required_entities as | required_entity |}}
         {{required_entity.name.uncapitalized}}: {
       {{#each required_entity.labels as |label| }}
-          {{label}}Load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.[0]}}, ~loaders={}{{/if}}) => {
+          {{label}}Load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
             optIdOf_{{label}} := Some(id)
 
-            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.[0]}}, loaders{{/if}}))
+            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
           },
       {{/each}}
         },
@@ -80,7 +80,7 @@ module {{contract.name.capitalized}}Contract = {
                   {{/each}}
                 {{/if}}
               {{/each}}
-              {{#each entity.relational_params as | entity_field |}}
+              {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
               get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}} => {
                 {{#if entity_field.is_array}}
                   let {{entity_field.relational_key.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Array.map(entityId => {
