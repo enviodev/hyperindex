@@ -246,7 +246,7 @@ mod tests {
         capitalization::Capitalize,
         config_parsing::{self, EventNameOrSig, RequiredEntity},
         hbs_templating::codegen_templates::{
-            EventParamTypeTemplate, EventTemplate, RequiredEntityTemplate,
+            EventParamTypeTemplate, EventTemplate, FilteredTemplateLists, RequiredEntityTemplate,
         },
     };
     use ethers::abi::{Event as AbiEvent, EventParam, ParamType};
@@ -355,7 +355,7 @@ mod tests {
             required_entities: vec![RequiredEntityTemplate {
                 name: String::from("Gravatar").to_capitalized_options(),
                 labels: vec![String::from("gravatarWithChanges")],
-                entity_fields_of_required_entity: Vec::new(),
+                entity_fields_of_required_entity: FilteredTemplateLists::empty(),
             }],
         };
         assert_eq!(parsed_event_template, expected_event_template)

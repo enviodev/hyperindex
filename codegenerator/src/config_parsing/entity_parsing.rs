@@ -360,7 +360,9 @@ mod tests {
         config_parsing::entity_parsing::{
             gql_type_is_optional, gql_type_to_postgres_relational_type, gql_type_to_rescript_type,
         },
-        hbs_templating::codegen_templates::EntityRelationalTypesTemplate,
+        hbs_templating::codegen_templates::{
+            EntityRelationalTypesTemplate, RelationshipTypeTemplate,
+        },
     };
     use graphql_parser::schema::{Definition, Type, TypeDefinition};
     use std::collections::HashSet;
@@ -429,8 +431,13 @@ mod tests {
 
         let gql_object_type = Type::NamedType("Int".to_owned());
         let field_name = String::from("testField1");
-        let result =
-            gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
+        let is_derived_from = false;
+        let result = gql_type_to_postgres_relational_type(
+            &field_name,
+            &gql_object_type,
+            &entity_set,
+            is_derived_from,
+        );
         let expect_output = None;
         assert_eq!(result, expect_output);
     }
@@ -442,14 +449,20 @@ mod tests {
         entity_set.insert(test_entity_string.clone());
         let gql_object_type = Type::NamedType(test_entity_string.clone());
         let field_name = String::from("testField1");
-        let result =
-            gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
+        let is_derived_from = false;
+        let result = gql_type_to_postgres_relational_type(
+            &field_name,
+            &gql_object_type,
+            &entity_set,
+            is_derived_from,
+        );
         let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: true,
             is_array: false,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
-            relationship_type: "object".to_owned(),
+            relationship_type: RelationshipTypeTemplate::Object,
+            is_derived_from,
         });
         assert_eq!(result, expect_output);
     }
@@ -462,14 +475,20 @@ mod tests {
         let gql_object_type =
             Type::NonNullType(Box::new(Type::NamedType(test_entity_string.clone())));
         let field_name = String::from("testField1");
-        let result =
-            gql_type_to_postgres_relational_type(&field_name, &gql_object_type, &entity_set);
+        let is_derived_from = false;
+        let result = gql_type_to_postgres_relational_type(
+            &field_name,
+            &gql_object_type,
+            &entity_set,
+            is_derived_from,
+        );
         let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: false,
             is_array: false,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
-            relationship_type: "object".to_owned(),
+            relationship_type: RelationshipTypeTemplate::Object,
+            is_derived_from,
         });
         assert_eq!(result, expect_output);
     }
@@ -483,14 +502,20 @@ mod tests {
             Type::ListType(Box::new(Type::NamedType(test_entity_string.clone())));
 
         let field_name = String::from("testField1");
-        let result =
-            gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
+        let is_derived_from = false;
+        let result = gql_type_to_postgres_relational_type(
+            &field_name,
+            &gql_array_object_type,
+            &entity_set,
+            is_derived_from,
+        );
         let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: true,
             is_array: true,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
-            relationship_type: "array".to_owned(),
+            relationship_type: RelationshipTypeTemplate::Array,
+            is_derived_from,
         });
         assert_eq!(result, expect_output);
     }
@@ -504,14 +529,20 @@ mod tests {
         ))));
 
         let field_name = String::from("testField1");
-        let result =
-            gql_type_to_postgres_relational_type(&field_name, &gql_array_object_type, &entity_set);
+        let is_derived_from = false;
+        let result = gql_type_to_postgres_relational_type(
+            &field_name,
+            &gql_array_object_type,
+            &entity_set,
+            is_derived_from,
+        );
         let expect_output = Some(EntityRelationalTypesTemplate {
             is_optional: false,
             is_array: true,
             relational_key: field_name.to_capitalized_options(),
             mapped_entity: test_entity_string.to_capitalized_options(),
-            relationship_type: "array".to_owned(),
+            relationship_type: RelationshipTypeTemplate::Array,
+            is_derived_from,
         });
         assert_eq!(result, expect_output);
     }
@@ -613,47 +644,5 @@ mod tests {
             super::strip_option_from_rescript_type_str("option<"),
             "option<"
         );
-    }
-
-    #[test]
-    fn test_gql_directive() {
-        let gql_file_str =
-            std::fs::read_to_string("test/schemas/schema-with-directive.graphql").unwrap();
-
-        //check if a field has a derived from directive
-        //check if it's an object or an array relationshig
-        //if it's derived from then it should be omitted from the write entity type
-        //the read entity type will include it, it could be either id or full type but lets do id
-        //
-        let schema_doc = graphql_parser::parse_schema::<String>(&gql_file_str).unwrap();
-
-        for definition in schema_doc.definitions.iter() {
-            // println!("{:?}", definition);
-            // println!("");
-            match definition {
-                Definition::SchemaDefinition(_) => (),
-                Definition::TypeDefinition(def) => match def {
-                    TypeDefinition::Scalar(_) => (),
-                    TypeDefinition::Object(object) => {
-                        for field in object.fields.iter() {
-                            // println!("field {:?}", field);
-                            let field_type = &field.field_type;
-                            // println!("field_type {:?}", field_type);
-
-                            let directives = &field.directives;
-                            for directive in directives.iter() {
-                                println!("directive {:?}", directive);
-                            }
-                        }
-                    }
-                    TypeDefinition::Interface(_) => (),
-                    TypeDefinition::Union(_) => (),
-                    TypeDefinition::Enum(_) => (),
-                    TypeDefinition::InputObject(_) => (),
-                },
-                Definition::DirectiveDefinition(_) => (),
-                Definition::TypeExtension(_) => (),
-            };
-        }
     }
 }

@@ -70,6 +70,14 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
             filtered_not_derived_from,
         }
     }
+
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        FilteredTemplateLists {
+            all: Vec::new(),
+            filtered_not_derived_from: Vec::new(),
+        }
+    }
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
