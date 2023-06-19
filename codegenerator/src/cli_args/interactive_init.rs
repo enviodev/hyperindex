@@ -23,9 +23,9 @@ impl InitArgs {
                 use Template::Blank;
                 use Template::Erc20;
                 use Template::Greeter;
-                use Template::SubgraphMigration;
+                use Template::SubgraphMigrationExperimental;
 
-                let options = vec![Blank, Greeter, Erc20, SubgraphMigration]
+                let options = vec![Blank, Greeter, Erc20, SubgraphMigrationExperimental]
                     .iter()
                     .map(|template| {
                         serde_json::to_string(template).expect("Enum should be serializable")
@@ -61,9 +61,10 @@ impl InitArgs {
         };
 
         let subgraph_id = match &template {
-            Template::SubgraphMigration => {
-                let input_subgraph_id = Input::<String>::new().interact()?;
-                println!("Subgraph ID: {}", input_subgraph_id);
+            Template::SubgraphMigrationExperimental => {
+                let input_subgraph_id = Input::<String>::new()
+                    .with_prompt("Enter subgraph ID")
+                    .interact()?;
                 input_subgraph_id
             }
             _ => "".to_string(),
@@ -73,7 +74,7 @@ impl InitArgs {
             directory,
             template,
             language,
-            subgraph_id
+            subgraph_id,
         })
     }
 }

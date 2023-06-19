@@ -105,8 +105,8 @@ pub struct BlockHandler {
     pub handler: String,
 }
 
+// Logic to get the event handler directory based on the language
 fn get_event_handler_directory(language: &Language) -> String {
-    // Logic to get the event handler directory based on the language
     match language {
         Language::Rescript => "./src/EventHandlers.bs.js".to_string(),
         Language::Typescript => "src/EventHandlers.ts".to_string(),
@@ -114,6 +114,8 @@ fn get_event_handler_directory(language: &Language) -> String {
     }
 }
 
+// Function to fetch a file from IPFS
+// TODO: use a pinning service of hitting the IPFS gateway which can be slow sometimes
 async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
     let url = format!("https://ipfs.network.thegraph.com/api/v0/cat?arg={}", cid);
     let client = reqwest::Client::new();
@@ -122,6 +124,9 @@ async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
     Ok(content_raw)
 }
 
+// Function to generate a hashmap of network name to contracts
+// Unnecessary to use a hashmap for subgraphs, because there is only one network per subgraph
+// But will be useful multiple subgraph IDs for same subgraph across different chains
 async fn generate_network_contract_hashmap(
     manifest_raw: &str,
 ) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
@@ -162,6 +167,7 @@ async fn generate_network_contract_hashmap(
     Ok(network_contracts)
 }
 
+// Function to return the chain ID of the network based on the network name
 fn get_graph_protocol_chain_id(network_name: &str) -> Option<i32> {
     match network_name {
         "mainnet" => Some(1),
@@ -204,12 +210,11 @@ pub async fn generate_config_from_subgraph_id(
 ) {
     println!("Generating config for subgraph ID: {}", subgraph_id);
 
+    // manifest file not required for Envio's indexing, but useful to save in project directory for debugging
     println!("Fetching subgraph manifest file");
     let fetch_manifest_str = timeout(Duration::from_secs(20), fetch_ipfs_file(subgraph_id));
     match fetch_manifest_str.await.unwrap() {
         Ok(manifest_str) => {
-            println!("Manifest file: {}", manifest_str);
-
             // Convert manifest to YAML string
             let manifest_yaml = serde_yaml::to_string(&manifest_str).unwrap();
 
@@ -226,7 +231,8 @@ pub async fn generate_config_from_subgraph_id(
                 networks: vec![],
                 unstable_sync_config: None,
             };
-
+            
+            // Fetching schema file path from config
             let schema_file_path = &manifest.schema.file;
             let schema_id = &schema_file_path.value.as_str()[6..];
             println!("Fetching subgraph schema file");
@@ -234,9 +240,11 @@ pub async fn generate_config_from_subgraph_id(
                 .await
                 .unwrap()
                 .replace("BigDecimal", "Float");
-            let mut schema_file_directory = File::create(format!("{}schema.graphql", project_root_path.display()))
-                .expect("Failed to create file");
-            schema_file_directory.write_all(schema.as_bytes())
+            let mut schema_file_directory =
+                File::create(format!("{}schema.graphql", project_root_path.display()))
+                    .expect("Failed to create file");
+            schema_file_directory
+                .write_all(schema.as_bytes())
                 .expect("Failed to write to file");
 
             let network_hashmap = generate_network_contract_hashmap(&manifest_str)
@@ -302,9 +310,10 @@ pub async fn generate_config_from_subgraph_id(
                                             .expect("Failed to create directory");
                                     }
                                 }
-                                let mut abi_file =
-                                    File::create(&abi_file_directory).expect("Failed to create file");
-                                    abi_file.write_all(abi.as_bytes())
+                                let mut abi_file = File::create(&abi_file_directory)
+                                    .expect("Failed to create file");
+                                abi_file
+                                    .write_all(abi.as_bytes())
                                     .expect("Failed to write ABI to file");
                                 println!("ABI written to file: {}", abi_file_directory);
                             }
@@ -336,10 +345,6 @@ pub async fn generate_config_from_subgraph_id(
             eprintln!("Failed to fetch manifest: {:?}", error);
             eprintln!("Please migrate subgraph manually");
         }
-        Err(_) => {
-            eprintln!("Fetching manifest timed out for subgraph ID: {}", subgraph_id);
-            eprintln!("Please migrate subgraph manually");
-        }
     }
 }
 
@@ -349,7 +354,8 @@ mod test {
 
     #[tokio::test]
     async fn test_generate_config_from_subgraph_id() {
-        let cid: &str = "QmQ2rQ6zfhQFwRRJLb1XT1kteweQqhyo7Va8NnfiSLC8qe";
+        // subgraph ID of USDC on Ethereum mainnet
+        let cid: &str = "QmU5V3jy56KnFbxX2uZagvMwocYZASzy1inX828W2XWtTd";
         let language: Language = Language::Rescript;
         let project_root_path: std::path::PathBuf = std::path::PathBuf::from("./");
         super::generate_config_from_subgraph_id(&project_root_path, cid, &language).await;

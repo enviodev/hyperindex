@@ -118,7 +118,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     //Copy in the rest of the shared greeter files
                     ERC20_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                 }
-                Template::SubgraphMigration => {
+                Template::SubgraphMigrationExperimental => {
                     
                     //  Copy in the relevant js flavor specific subgraph migration files
                     match &args.language {

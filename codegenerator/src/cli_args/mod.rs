@@ -107,7 +107,7 @@ pub enum Template {
     Blank,
     Greeter,
     Erc20,
-    SubgraphMigration,
+    SubgraphMigrationExperimental,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
