@@ -7,6 +7,7 @@ This document contains the help content for the `envio` command-line program.
 * [`envio`↴](#envio)
 * [`envio init`↴](#envio-init)
 * [`envio codegen`↴](#envio-codegen)
+* [`envio start`↴](#envio-start)
 * [`envio local`↴](#envio-local)
 * [`envio local docker`↴](#envio-local-docker)
 * [`envio local docker up`↴](#envio-local-docker-up)
@@ -24,6 +25,7 @@ This document contains the help content for the `envio` command-line program.
 
 * `init` — Initialize a project with a template
 * `codegen` — Generate code from a config.yaml file
+* `start` — Start the indexer
 * `local` — Prepare local environment for envio testing
 
 
@@ -67,6 +69,23 @@ Generate code from a config.yaml file
 * `-c`, `--config <CONFIG>` — The file in the project containing config
 
   Default value: `config.yaml`
+
+
+
+## `envio start`
+
+Start the indexer
+
+**Usage:** `envio start [OPTIONS]`
+
+###### **Options:**
+
+* `-r`, `--restart` — Clear your database and restart indexing from scratch
+
+  Default value: `false`
+* `-d`, `--directory <DIRECTORY>` — The directory of the project
+
+  Default value: `./`
 
 
 
