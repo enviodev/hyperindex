@@ -103,7 +103,7 @@ describe("Raw Events Integration", () => {
     console.log("Successfully processed events");
   });
   after(async () => {
-    await runMigrationsNoLogs();
+    // await runMigrationsNoLogs();
   });
 
   it("RawEvents table contains rows after indexer runs", async function() {
