@@ -5,17 +5,6 @@ let defaultPinoOptions = {
 }
 let logger = make(defaultPinoOptions)
 
-// define log level order
-let logLevelOrder = (level: logLevel) =>
-  switch level {
-  | #TRACE => "trace"
-  | #DEBUG => "debug"
-  | #INFO => "info"
-  | #WARN => "warn"
-  | #ERROR => "error"
-  | #FATAL => "fatal"
-  }
-
 @genType
 let setLogLevel = (level: Pino.logLevel) => {
   logger->setLevel(level)
@@ -55,7 +44,7 @@ let fatal = message => {
 // // TODO: use environment varibles to set log levels
 
 /* // Testing usage:
-setLogLevel(#TRACE)
+setLogLevel(#trace)
 Js.log2("this is a summary of the available log levels", logger->levels)
 Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message.")
@@ -65,7 +54,7 @@ warn("This is a warning message.")
 error("This is an error message.")
 fatal(("This is a fatal message.", "another"))
 
-setLogLevel(#DEBUG)
+setLogLevel(#debug)
 Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message.")
@@ -74,7 +63,7 @@ warn("This is a warning message.")
 error("This is an error message.")
 fatal("This is a fatal message.")
 
-setLogLevel(#INFO)
+setLogLevel(#info)
 Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
@@ -83,7 +72,7 @@ warn("This is a warning message.")
 error("This is an error message.")
 fatal("This is a fatal message.")
 
-setLogLevel(#WARN)
+setLogLevel(#warn)
 Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
@@ -92,7 +81,7 @@ warn("This is a warning message.")
 error("This is an error message.")
 fatal("This is a fatal message.")
 
-setLogLevel(#ERROR)
+setLogLevel(#error)
 Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
@@ -102,5 +91,14 @@ error("This is an error message.")
 fatal("This is a fatal message.")
 
 // Logging also works with objects of all shapes and sizes
-fatal({"this": "is", "a": "fatal", "message": "object", "with": {"nested": "objects", "and": {"arrays": ["of", "things"]}, "and": {"numbers": 0.5654}}})
+fatal({
+  "this": "is",
+  "a": "fatal",
+  "message": "object",
+  "with": {
+    "nested": "objects",
+    "and": {"arrays": ["of", "things"]},
+    "additionally": {"numbers": 0.5654},
+  },
+})
  */

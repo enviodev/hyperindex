@@ -1,10 +1,10 @@
 @genType
 type logLevel = [
-| #TRACE
-| #DEBUG
-| #INFO
-| #WARN
-| #ERROR
+| #trace
+| #debug
+| #info
+| #warn
+| #error
 | #FATAL
 ]
 
