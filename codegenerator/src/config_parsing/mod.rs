@@ -195,6 +195,7 @@ pub struct SyncConfigUnstable {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
+    name: String,
     version: String,
     description: String,
     repository: String,
@@ -321,17 +322,31 @@ pub fn convert_config_to_sync_config(
     let d = defaults::SYNC_CONFIG;
 
     let sync_config = SyncConfigTemplate {
-        initial_block_interval: c.and_then(|c| c.initial_block_interval).unwrap_or(d.initial_block_interval),
-        backoff_multiplicative: c.and_then(|c| c.backoff_multiplicative).unwrap_or(d.backoff_multiplicative),
-        acceleration_additive: c.and_then(|c| c.acceleration_additive).unwrap_or(d.acceleration_additive),
-        interval_ceiling: c.and_then(|c| c.interval_ceiling).unwrap_or(d.interval_ceiling),
+        initial_block_interval: c
+            .and_then(|c| c.initial_block_interval)
+            .unwrap_or(d.initial_block_interval),
+        backoff_multiplicative: c
+            .and_then(|c| c.backoff_multiplicative)
+            .unwrap_or(d.backoff_multiplicative),
+        acceleration_additive: c
+            .and_then(|c| c.acceleration_additive)
+            .unwrap_or(d.acceleration_additive),
+        interval_ceiling: c
+            .and_then(|c| c.interval_ceiling)
+            .unwrap_or(d.interval_ceiling),
         backoff_millis: c.and_then(|c| c.backoff_millis).unwrap_or(d.backoff_millis),
-        query_timeout_millis: c.and_then(|c| c.query_timeout_millis).unwrap_or(d.query_timeout_millis),
+        query_timeout_millis: c
+            .and_then(|c| c.query_timeout_millis)
+            .unwrap_or(d.query_timeout_millis),
     };
 
     Ok(sync_config)
 }
 
+pub fn get_project_name_from_config(parsed_paths: &ParsedPaths) -> Result<String, Box<dyn Error>> {
+    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
+    Ok(config.name)
+}
 #[cfg(test)]
 mod tests {
     use std::fs;
