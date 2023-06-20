@@ -75,9 +75,8 @@ pub fn get_entity_record_types_from_schema(
                         })?;
                     match &field_arg.1 {
                         Value::String(val) => Some(val.to_capitalized_options()),
-                        _ => {
-                            Err(format!("'field' argument in @derivedFrom directive on field {}, entity {} needs to contain a string", field.name, object.name))?
-                        }
+                        _ => Err(format!("'field' argument in @derivedFrom directive on field {}, entity {} needs to contain a string", field.name, object.name))?
+
                     }
                 }
             };
@@ -85,12 +84,47 @@ pub fn get_entity_record_types_from_schema(
 
             let param_type = gql_type_to_rescript_type(&field.field_type, &entities_set)?;
             let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
-            let relationship_type = gql_type_to_postgres_relational_type(
+            let maybe_relationship_type = gql_type_to_postgres_relational_type(
                 &field.name,
                 &field.field_type,
                 &entities_set,
                 derived_from_field_key,
             );
+
+            //If the field has a relational type with a derived from field key
+            //Validate that the derived_from_field_key exists
+            //This simpler to do here once the relational_type has already been parsed
+            if let Some(relational_type) = &maybe_relationship_type {
+                if let Some(field_key) = &relational_type.derived_from_field_key {
+                    let entity = schema_object_types
+                        .iter()
+                        .find(|obj| {
+                            obj.name.to_capitalized_options().uncapitalized
+                                == relational_type.mapped_entity.uncapitalized
+                        })
+                        .ok_or_else(|| {
+                            format!(
+                                "Derived entity {} does not exist in schema",
+                                relational_type.mapped_entity.capitalized
+                            )
+                        })?;
+
+                    entity
+                        .fields
+                        .iter()
+                        .find(|field| {
+                            field.name.to_capitalized_options().uncapitalized
+                                == field_key.uncapitalized
+                        })
+                        .ok_or_else(|| {
+                            format!(
+                                "Derived field {} does not exist on entity {}",
+                                field_key.uncapitalized, entity.name
+                            )
+                        })?;
+                }
+            }
+
             let param_maybe_entity_name =
                 gql_type_to_capitalized_entity_name(&field.field_type, &entities_set);
 
@@ -106,7 +140,7 @@ pub fn get_entity_record_types_from_schema(
                 is_derived_from,
             });
 
-            relational_params_all.extend(relationship_type);
+            relational_params_all.extend(maybe_relationship_type);
         }
 
         //Template needs access to both the full list and filtered for
