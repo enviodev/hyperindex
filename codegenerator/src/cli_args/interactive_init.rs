@@ -1,10 +1,8 @@
 use std::error::Error;
 
-use dialoguer::Input;
-
 use super::{InitArgs, Language, Template};
 
-use inquire::Select;
+use inquire::{Select, Text};
 
 pub struct InitInteractive {
     pub directory: String,
@@ -23,9 +21,9 @@ impl InitArgs {
                 use Template::Blank;
                 use Template::Erc20;
                 use Template::Greeter;
-                use Template::SubgraphMigrationExperimental;
+                use Template::SubgraphMigration;
 
-                let options = vec![Blank, Greeter, Erc20, SubgraphMigrationExperimental]
+                let options = vec![Blank, Greeter, Erc20, SubgraphMigration]
                     .iter()
                     .map(|template| {
                         serde_json::to_string(template).expect("Enum should be serializable")
@@ -61,10 +59,10 @@ impl InitArgs {
         };
 
         let subgraph_id = match &template {
-            Template::SubgraphMigrationExperimental => {
-                let input_subgraph_id = Input::<String>::new()
-                    .with_prompt("Enter subgraph ID")
-                    .interact()?;
+            Template::SubgraphMigration => {
+                let input_subgraph_id =
+                    Text::new("[BETA VERSION] What is the subgraph ID?").prompt().unwrap();
+                    
                 input_subgraph_id
             }
             _ => "".to_string(),

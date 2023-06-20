@@ -14,6 +14,43 @@ use crate::{
 };
 
 #[derive(Debug, Deserialize)]
+enum NetworkName {
+    Mainnet,
+    Goerli,
+    Optimism,
+    Bsc,
+    PoaSokol,
+    Chapel,
+    PoaCore,
+    Gnosis,
+    Fuse,
+    Matic,
+    Fantom,
+    ZkSync2Testnet,
+    Boba,
+    OptimismGoerli,
+    Clover,
+    Moonbeam,
+    Moonriver,
+    Mbase,
+    FantomTestnet,
+    ArbitrumOne,
+    ArbitrumGoerli,
+    Celo,
+    Fuji,
+    Avalanche,
+    CeloAlfajores,
+    Mumbai,
+    Aurora,
+    AuroraTestnet,
+    Harmony,
+    BaseTestnet,
+    PolygonZkevm,
+    ZkSyncEra,
+    Sepolia,
+}
+
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphManifest {
     pub spec_version: String,
@@ -25,14 +62,14 @@ pub struct GraphManifest {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct KeyValue {
+pub struct FileID {
     #[serde(rename = "/")]
     pub value: String,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Schema {
-    pub file: KeyValue,
+    pub file: FileID,
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,13 +116,13 @@ pub struct Mapping {
     pub event_handlers: Vec<EventHandler>,
     pub call_handlers: Option<Vec<CallHandler>>,
     pub block_handlers: Option<Vec<BlockHandler>>,
-    pub file: KeyValue,
+    pub file: FileID,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Abi {
     pub name: String,
-    pub file: KeyValue,
+    pub file: FileID,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,10 +164,8 @@ async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
 // Function to generate a hashmap of network name to contracts
 // Unnecessary to use a hashmap for subgraphs, because there is only one network per subgraph
 // But will be useful multiple subgraph IDs for same subgraph across different chains
-async fn generate_network_contract_hashmap(
-    manifest_raw: &str,
-) -> Result<HashMap<String, Vec<String>>, Box<dyn std::error::Error>> {
-    let manifest: GraphManifest = serde_yaml::from_str(manifest_raw)?;
+async fn generate_network_contract_hashmap(manifest_raw: &str) -> HashMap<String, Vec<String>> {
+    let manifest: GraphManifest = serde_yaml::from_str::<GraphManifest>(manifest_raw).unwrap();
 
     let mut network_contracts: HashMap<String, Vec<String>> = HashMap::new();
 
@@ -164,46 +199,84 @@ async fn generate_network_contract_hashmap(
         }
     }
 
-    Ok(network_contracts)
+    network_contracts
+}
+
+fn serialize_network_name(network_name: &str) -> Option<NetworkName> {
+    match network_name {
+        "mainnet" => Some(NetworkName::Mainnet),
+        "goerli" => Some(NetworkName::Goerli),
+        "optimism" => Some(NetworkName::Optimism),
+        "bsc" => Some(NetworkName::Bsc),
+        "poa-sokol" => Some(NetworkName::PoaSokol),
+        "chapel" => Some(NetworkName::Chapel),
+        "poa-core" => Some(NetworkName::PoaCore),
+        "gnosis" => Some(NetworkName::Gnosis),
+        "fuse" => Some(NetworkName::Fuse),
+        "matic" => Some(NetworkName::Matic),
+        "fantom" => Some(NetworkName::Fantom),
+        "zksync2-testnet" => Some(NetworkName::ZkSync2Testnet),
+        "boba" => Some(NetworkName::Boba),
+        "optimism-goerli" => Some(NetworkName::OptimismGoerli),
+        "clover" => Some(NetworkName::Clover),
+        "moonbeam" => Some(NetworkName::Moonbeam),
+        "moonriver" => Some(NetworkName::Moonriver),
+        "mbase" => Some(NetworkName::Mbase),
+        "fantom-testnet" => Some(NetworkName::FantomTestnet),
+        "arbitrum-one" => Some(NetworkName::ArbitrumOne),
+        "arbitrum-goerli" => Some(NetworkName::ArbitrumGoerli),
+        "celo" => Some(NetworkName::Celo),
+        "fuji" => Some(NetworkName::Fuji),
+        "avalanche" => Some(NetworkName::Avalanche),
+        "celo-alfajores" => Some(NetworkName::CeloAlfajores),
+        "mumbai" => Some(NetworkName::Mumbai),
+        "aurora" => Some(NetworkName::Aurora),
+        "aurora-testnet" => Some(NetworkName::AuroraTestnet),
+        "harmony" => Some(NetworkName::Harmony),
+        "base-testnet" => Some(NetworkName::BaseTestnet),
+        "polygon-zkevm" => Some(NetworkName::PolygonZkevm),
+        "zksync-era" => Some(NetworkName::ZkSyncEra),
+        "sepolia" => Some(NetworkName::Sepolia),
+        _ => None,
+    }
 }
 
 // Function to return the chain ID of the network based on the network name
-fn get_graph_protocol_chain_id(network_name: &str) -> Option<i32> {
+fn get_graph_protocol_chain_id(network_name: NetworkName) -> Option<i32> {
     match network_name {
-        "mainnet" => Some(1),
-        "goerli" => Some(5),
-        "optimism" => Some(10),
-        "bsc" => Some(56),
-        "poa-sokol" => Some(77),
-        "chapel" => Some(97),
-        "poa-core" => Some(99),
-        "gnosis" => Some(100),
-        "fuse" => Some(122),
-        "matic" => Some(137),
-        "fantom" => Some(250),
-        "zksync2-testnet" => Some(280),
-        "boba" => Some(288),
-        "optimism-goerli" => Some(420),
-        "clover" => Some(1023),
-        "moonbeam" => Some(1284),
-        "moonriver" => Some(1285),
-        "mbase" => Some(1287),
-        "fantom-testnet" => Some(4002),
-        "arbitrum-one" => Some(42161),
-        "arbitrum-goerli" => Some(421613),
-        "celo" => Some(42220),
-        "fuji" => Some(43113),
-        "avalanche" => Some(43114),
-        "celo-alfajores" => Some(44787),
-        "mumbai" => Some(80001),
-        "aurora" => Some(1313161554),
-        "aurora-testnet" => Some(1313161555),
-        "harmony" => Some(1666600000),
-        "base-testnet" => Some(84531),
-        "polygon-zkevm" => Some(1101),
-        "zksync-era" => Some(324),
-        "sepolia" => Some(11155111),
-        _ => None,
+        NetworkName::Mainnet => Some(1),
+        NetworkName::Goerli => Some(5),
+        NetworkName::Optimism => Some(10),
+        NetworkName::Bsc => Some(56),
+        NetworkName::PoaSokol => Some(77),
+        NetworkName::Chapel => Some(97),
+        NetworkName::PoaCore => Some(99),
+        NetworkName::Gnosis => Some(100),
+        NetworkName::Fuse => Some(122),
+        NetworkName::Matic => Some(137),
+        NetworkName::Fantom => Some(250),
+        NetworkName::ZkSync2Testnet => Some(280),
+        NetworkName::Boba => Some(288),
+        NetworkName::OptimismGoerli => Some(420),
+        NetworkName::Clover => Some(1023),
+        NetworkName::Moonbeam => Some(1284),
+        NetworkName::Moonriver => Some(1285),
+        NetworkName::Mbase => Some(1287),
+        NetworkName::FantomTestnet => Some(4002),
+        NetworkName::ArbitrumOne => Some(42161),
+        NetworkName::ArbitrumGoerli => Some(421613),
+        NetworkName::Celo => Some(42220),
+        NetworkName::Fuji => Some(43113),
+        NetworkName::Avalanche => Some(43114),
+        NetworkName::CeloAlfajores => Some(44787),
+        NetworkName::Mumbai => Some(80001),
+        NetworkName::Aurora => Some(1313161554),
+        NetworkName::AuroraTestnet => Some(1313161555),
+        NetworkName::Harmony => Some(1666600000),
+        NetworkName::BaseTestnet => Some(84531),
+        NetworkName::PolygonZkevm => Some(1101),
+        NetworkName::ZkSyncEra => Some(324),
+        NetworkName::Sepolia => Some(11155111),
     }
 }
 
@@ -251,95 +324,98 @@ pub async fn generate_config_from_subgraph_id(
                 .write_all(schema.as_bytes())
                 .expect("Failed to write to file");
 
-            let network_hashmap = generate_network_contract_hashmap(&manifest_str)
-                .await
-                .unwrap();
+            let network_hashmap = generate_network_contract_hashmap(&manifest_str).await;
 
-            for (network_id, contracts) in &network_hashmap {
-                let mut network = Network {
-                    id: get_graph_protocol_chain_id(network_id).unwrap(),
-                    // TODO: update to the final rpc url
-                    rpc_url: "https://example.com/rpc".to_string(),
-                    start_block: 0,
-                    contracts: vec![],
-                };
-                for contract in contracts {
-                    if let Some(data_source) = manifest
-                        .data_sources
-                        .iter()
-                        .find(|ds| &ds.source.abi == contract)
-                    {
-                        let mut contract = ConfigContract {
-                            name: data_source.name.to_string(),
-                            abi_file_path: Some(format!(
-                                "{}abis/{}.json",
-                                project_root_path.display(),
-                                data_source.name.to_string()
-                            )),
-                            address: NormalizedList::from_single(
-                                data_source.source.address.to_string(),
-                            ),
-                            handler: get_event_handler_directory(language),
-                            events: vec![],
-                        };
-                        // Fetching event names from config
-                        let event_handlers = &data_source.mapping.event_handlers;
-                        for event_handler in event_handlers {
-                            if let Some(start) = event_handler.event.as_str().find('(') {
-                                let event_name = &event_handler.event.as_str()[..start];
+            for (network_name, contracts) in &network_hashmap {
+                if let Some(serialized_network_name) = serialize_network_name(network_name) {
+                    let mut network = Network {
+                        id: get_graph_protocol_chain_id(serialized_network_name).unwrap(),
+                        // TODO: update to the final rpc url
+                        rpc_url: "https://example.com/rpc".to_string(),
+                        start_block: 0,
+                        contracts: vec![],
+                    };
+                    for contract in contracts {
+                        if let Some(data_source) = manifest
+                            .data_sources
+                            .iter()
+                            .find(|ds| &ds.source.abi == contract)
+                        {
+                            let mut contract = ConfigContract {
+                                name: data_source.name.to_string(),
+                                abi_file_path: Some(format!(
+                                    "{}abis/{}.json",
+                                    project_root_path.display(),
+                                    data_source.name.to_string()
+                                )),
+                                address: NormalizedList::from_single(
+                                    data_source.source.address.to_string(),
+                                ),
+                                handler: get_event_handler_directory(language),
+                                events: vec![],
+                            };
+                            // Fetching event names from config
+                            let event_handlers = &data_source.mapping.event_handlers;
+                            for event_handler in event_handlers {
+                                let event_name = &event_handler.event.as_str();
                                 let event = ConfigEvent {
                                     event: EventNameOrSig::Name(event_name.to_string()),
                                     required_entities: Some(vec![]),
                                 };
-                                contract.events.push(event.clone());
+                                contract.events.push(event);
                             }
-                        }
-                        network.contracts.push(contract.clone());
+                            network.contracts.push(contract.clone());
 
-                        // Fetching abi file path from config
-                        let abi_file_path = &data_source.mapping.abis[0].file;
-                        let abi_id: &str = &abi_file_path.value.as_str()[6..];
+                            // Fetching abi file path from config
+                            let abi_file_path = &data_source.mapping.abis[0].file;
+                            let abi_id: &str = &abi_file_path.value.as_str()[6..];
 
-                        let fetch_abi = timeout(Duration::from_secs(20), fetch_ipfs_file(abi_id));
-                        match fetch_abi.await {
-                            Ok(Ok(abi)) => {
-                                let abi_file_directory = format!(
-                                    "{}abis/{}.json",
-                                    project_root_path.display(),
-                                    data_source.name.to_string()
-                                );
-                                let file_path = Path::new(&abi_file_directory);
+                            let fetch_abi =
+                                timeout(Duration::from_secs(20), fetch_ipfs_file(abi_id));
+                            match fetch_abi.await {
+                                Ok(Ok(abi)) => {
+                                    let abi_file_directory = project_root_path
+                                        .join("abis")
+                                        .join(format!("{}.json", data_source.name.to_string()));
 
-                                if let Some(parent_dir) = file_path.parent() {
-                                    if !parent_dir.exists() {
-                                        fs::create_dir_all(parent_dir)
-                                            .expect("Failed to create directory");
+                                    let file_path = Path::new(&abi_file_directory);
+
+                                    if let Some(parent_dir) = file_path.parent() {
+                                        if !parent_dir.exists() {
+                                            fs::create_dir_all(parent_dir)
+                                                .expect("Failed to create directory");
+                                        }
                                     }
+                                    let mut abi_file = File::create(&abi_file_directory)
+                                        .expect("Failed to create file");
+                                    abi_file
+                                        .write_all(abi.as_bytes())
+                                        .expect("Failed to write ABI to file");
+                                    println!(
+                                        "ABI written to file: {}",
+                                        abi_file_directory.display()
+                                    );
                                 }
-                                let mut abi_file = File::create(&abi_file_directory)
-                                    .expect("Failed to create file");
-                                abi_file
-                                    .write_all(abi.as_bytes())
-                                    .expect("Failed to write ABI to file");
-                                println!("ABI written to file: {}", abi_file_directory);
+                                Ok(Err(error)) => {
+                                    eprintln!("Failed to fetch ABI: {:?}", error);
+                                    eprintln!("Please export contract ABI manually");
+                                }
+                                Err(_) => {
+                                    eprintln!(
+                                        "Fetching ABI timed out for contract: {}",
+                                        data_source.name
+                                    );
+                                    eprintln!("Please export contract ABI manually");
+                                }
                             }
-                            Ok(Err(error)) => {
-                                eprintln!("Failed to fetch ABI: {:?}", error);
-                                eprintln!("Please export contract ABI manually");
-                            }
-                            Err(_) => {
-                                eprintln!(
-                                    "Fetching ABI timed out for contract: {}",
-                                    data_source.name
-                                );
-                                eprintln!("Please export contract ABI manually");
-                            }
+                        } else {
+                            println!("Data source not found");
                         }
-                    } else {
-                        println!("Data source not found");
                     }
+                    config.networks.push(network);
+                } else {
+                    println!("Invalid network");
                 }
-                config.networks.push(network);
             }
             // Convert config to YAML file
             let yaml_string = serde_yaml::to_string(&config).unwrap();
