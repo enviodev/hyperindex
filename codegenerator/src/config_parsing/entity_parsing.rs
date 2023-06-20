@@ -7,7 +7,7 @@ use crate::{
     },
     project_paths::ParsedPaths,
 };
-use graphql_parser::schema::{Definition, Directive, Type, TypeDefinition};
+use graphql_parser::schema::{Definition, Directive, Type, TypeDefinition, Value};
 use std::collections::HashSet;
 
 pub fn get_entity_record_types_from_schema(
@@ -69,11 +69,16 @@ pub fn get_entity_record_types_from_schema(
                     let field_arg =
                         d.arguments.iter().find(|a| a.0 == "field").ok_or_else(|| {
                             format!(
-                                "No 'field' argument supplied to @derivedFrom diretive at {} on {}",
+                                "No 'field' argument supplied to @derivedFrom directive on field {}, entity {}",
                                 field.name, object.name
                             )
                         })?;
-                    Some(field_arg.1.to_string().to_capitalized_options())
+                    match &field_arg.1 {
+                        Value::String(val) => Some(val.to_capitalized_options()),
+                        _ => {
+                            Err(format!("'field' argument in @derivedFrom directive on field {}, entity {} needs to contain a string", field.name, object.name))?
+                        }
+                    }
                 }
             };
             let is_derived_from = maybe_derived_from_directive.map_or(false, |_| true);
