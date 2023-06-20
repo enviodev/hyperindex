@@ -1,3 +1,4 @@
+name: nft-indexer-fuji
 version: 0.0.0
 description: NFT Factory
 repository: https://github.com/nft-factory
@@ -16,7 +17,7 @@ networks:
             requiredEntities: []
       - name: SimpleNft
         abi_file_path: abis/SimpleNft.json
-        address: "0xD19d8469cd68D6E34617c349491C45e48a1EFDe0"
+        # address: "0xD19d8469cd68D6E34617c349491C45e48a1EFDe0"
         handler: src/EventHandlers.js
         events:
           - event: "Transfer"
