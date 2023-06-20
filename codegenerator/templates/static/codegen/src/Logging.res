@@ -1,81 +1,72 @@
-let currentLogLevel = ref(Config.defaultLogLevel)
+open Pino
 
-let colors = (level: Config.logLevel) =>
-  switch level {
-  | #TRACE => "\x1b[35m"
-  | #DEBUG => "\x1b[34m"
-  | #INFO => "\x1b[32m"
-  | #WARN => "\x1b[33m"
-  | #ERROR => "\x1b[31m"
-  | #FATAL => "\x1b[31m"
-  }
-let resetColor = "\x1b[0m"
-
-let logLevelOrder = (level: Config.logLevel) =>
-  switch level {
-  | #TRACE => 0
-  | #DEBUG => 1
-  | #INFO => 2
-  | #WARN => 3
-  | #ERROR => 4
-  | #FATAL => 5
-  }
-
-@genType
-let setLogLevel = (level: Config.logLevel) => {
-  currentLogLevel := level
+let defaultPinoOptions = {
+  level: Config.defaultLogLevel,
 }
+let logger = make(defaultPinoOptions)
+
+// define log level order
+let logLevelOrder = (level: logLevel) =>
+  switch level {
+  | #TRACE => "trace"
+  | #DEBUG => "debug"
+  | #INFO => "info"
+  | #WARN => "warn"
+  | #ERROR => "error"
+  | #FATAL => "fatal"
+  }
 
 @genType
-let log = (level: Config.logLevel, message) => {
-  if logLevelOrder(level) >= logLevelOrder(currentLogLevel.contents) {
-    Js.log2(`${colors(level)}[${(level :> string)}]${resetColor}`, message)
-  }
+let setLogLevel = (level: Pino.logLevel) => {
+  logger->setLevel(level)
 }
 
 @genType
 let trace = message => {
-  log(#TRACE, message)
+  logger.trace(. message->createPinoMessage)
 }
 
 @genType
 let debug = message => {
-  log(#DEBUG, message)
+  logger.debug(. message->createPinoMessage)
 }
 
 @genType
 let info = message => {
-  log(#INFO, message)
+  logger.info(. message->createPinoMessage)
 }
 
 @genType
 let warn = message => {
-  log(#WARN, message)
+  logger.warn(. message->createPinoMessage)
 }
 
 @genType
 let error = message => {
-  log(#ERROR, message)
+  logger.error(. message->createPinoMessage)
 }
 
 @genType
 let fatal = message => {
-  log(#FATAL, message)
+  logger.fatal(. message->createPinoMessage)
 }
 
-// TODO: set ethers and postgres log levels in a similar way
-// TODO: use environment varibles to set log levels
+// // TODO: set ethers and postgres log levels in a similar way
+// // TODO: use environment varibles to set log levels
 
 /* // Testing usage:
 setLogLevel(#TRACE)
+Js.log2("this is a summary of the available log levels", logger->levels)
+Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message.")
 debug("This is a debug message.")
 info("This is an info message.")
 warn("This is a warning message.")
 error("This is an error message.")
-fatal("This is a fatal message.")
+fatal(("This is a fatal message.", "another"))
 
 setLogLevel(#DEBUG)
+Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message.")
 info("This is an info message.")
@@ -84,6 +75,7 @@ error("This is an error message.")
 fatal("This is a fatal message.")
 
 setLogLevel(#INFO)
+Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
 info("This is an info message.")
@@ -92,6 +84,7 @@ error("This is an error message.")
 fatal("This is a fatal message.")
 
 setLogLevel(#WARN)
+Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
 info("This is an info message. (should not be printed)")
@@ -100,10 +93,14 @@ error("This is an error message.")
 fatal("This is a fatal message.")
 
 setLogLevel(#ERROR)
+Js.log(`Current log level: ${logger->getLevel->logLevelOrder}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
 info("This is an info message. (should not be printed)")
 warn("This is a warning message. (should not be printed)")
 error("This is an error message.")
 fatal("This is a fatal message.")
-*/
+
+// Logging also works with objects of all shapes and sizes
+fatal({"this": "is", "a": "fatal", "message": "object", "with": {"nested": "objects", "and": {"arrays": ["of", "things"]}, "and": {"numbers": 0.5654}}})
+ */
