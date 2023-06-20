@@ -7,7 +7,7 @@ pub mod codegen {
     pub fn pnpm_install(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        Ok(Command::new("npm")
+        Ok(Command::new("pnpm")
             .arg("install")
             .arg("--no-frozen-lockfile")
             .current_dir(&project_paths.generated)
@@ -49,7 +49,6 @@ pub mod codegen {
             .spawn()?
             .wait()?)
     }
-
     pub fn run_codegen_command_sequence(
         project_paths: &ProjectPaths,
     ) -> Result<(), Box<dyn Error>> {
