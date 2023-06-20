@@ -1,3 +1,4 @@
+name: config1
 version: 0.0.0
 schema: ../schemas/schema.graphql
 description: Gravatar for Ethereum
