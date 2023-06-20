@@ -210,10 +210,31 @@ module PreparedTopicFilter = {
   @get @scope("fragment") external getTopicHash: t => EventFilter.topic = "topicHash"
 }
 
+module Network = {
+  type t
+
+  @module("ethers") @new
+  external make: (~name: string, ~chainId: int) => t = "Network"
+
+  @module("ethers") @scope("Network")
+  external fromChainId: (~chainId: int) => t = "from"
+}
+
 module JsonRpcProvider = {
   type t
+
+  type rpcOptions = {staticNetwork: Network.t}
+
   @module("ethers") @scope("ethers") @new
-  external make: (~rpcUrl: string, ~chainId: int) => t = "JsonRpcProvider"
+  external makeWithOptions: (
+    ~rpcUrl: string,
+    ~chainId: option<Network.t>,
+    ~options: rpcOptions,
+  ) => t = "JsonRpcProvider"
+  let makeStatic: (~rpcUrl: string, ~chainId: int) => t = (~rpcUrl, ~chainId) => {
+    let network = Network.fromChainId(~chainId)
+    makeWithOptions(~rpcUrl, ~chainId=Some(network), ~options={staticNetwork: network})
+  }
 
   @send
   external getLogs: (t, ~filter: Filter.t) => promise<array<log>> = "getLogs"

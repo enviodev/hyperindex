@@ -73,7 +73,7 @@ let config: chainConfigs = [
   (
     "1337",
     {
-      provider: Ethers.JsonRpcProvider.make(~rpcUrl="http://localhost:8545", ~chainId=1337),
+      provider: Ethers.JsonRpcProvider.makeStatic(~rpcUrl="http://localhost:8545", ~chainId=1337),
       startBlock: 1,
       chainId: 1337,
       contracts: [
