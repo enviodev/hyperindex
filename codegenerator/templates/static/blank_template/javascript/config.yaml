@@ -1,3 +1,4 @@
+name: My Awesome Contract Indexer # Name of the project
 version: 0.0.1 # Version of the config schema used by the indexer
 description: My Awesome Contract # Description of the project
 repository:  # Repository of the project
