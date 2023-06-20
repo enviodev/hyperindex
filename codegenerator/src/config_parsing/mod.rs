@@ -196,6 +196,7 @@ pub struct SyncConfigUnstable {
 #[derive(Debug, Serialize, Deserialize)]
 #[allow(non_snake_case)] //Allow unstable__sync_config to be non_snake_case§
 pub struct Config {
+    name: String,
     version: String,
     description: String,
     repository: String,
@@ -343,6 +344,10 @@ pub fn convert_config_to_sync_config(
     Ok(sync_config)
 }
 
+pub fn get_project_name_from_config(parsed_paths: &ParsedPaths) -> Result<String, Box<dyn Error>> {
+    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
+    Ok(config.name)
+}
 #[cfg(test)]
 mod tests {
     use std::fs;

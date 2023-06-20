@@ -1,0 +1,23 @@
+%raw("require('isomorphic-fetch')")
+
+%%private(let envSafe = EnvSafe.make())
+let operatorUrl = envSafe->EnvSafe.get(~name="ENVIO_OPERATOR_URL", ~struct=S.string(), ~devFallback="svc/envio-operator", ())
+let operatorPort = envSafe->EnvSafe.get(~name="ENVIO_OPERATOR_PORT", ~struct=S.int()->S.Int.port(), ~devFallback=8081, ())
+let commitHash = envSafe->EnvSafe.get(~name="COMMIT_HASH", ~struct=S.string(), ~devFallback="latest", ())
+
+let createDatabase = async () => {
+open Fetch
+
+let databaseName = `{{project_name}}-${commitHash}`
+let response = await fetch(
+    `${operatorUrl}:${operatorPort->Belt.Int.toString}/databases`,
+    {
+      method: #POST,
+      body: databaseName->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
+      headers: Headers.fromObject({
+        "Content-type": "application/json",
+      }),
+    },
+  )
+  await response->Response.json
+}
