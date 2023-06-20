@@ -145,6 +145,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 config_parsing::convert_config_to_chain_configs(&parsed_paths)?;
 
             let sync_config = config_parsing::convert_config_to_sync_config(&parsed_paths)?;
+            //Used to create project specific configuration during deployment
             let project_name = config_parsing::get_project_name_from_config(&parsed_paths)?;
             //NOTE: This structure is no longer used int event parsing since it has been refactored
             //to use an inline tuple type for parsed structs. However this is being left until it
