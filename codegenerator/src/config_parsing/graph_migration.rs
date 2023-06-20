@@ -17,8 +17,8 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct GraphManifest {
     pub spec_version: String,
-    pub description: String,
-    pub repository: String,
+    pub description: Option<String>,
+    pub repository: Option<String>,
     pub schema: Schema,
     pub data_sources: Vec<DataSource>,
     pub templates: Option<Vec<Template>>,
@@ -225,8 +225,8 @@ pub async fn generate_config_from_subgraph_id(
 
             let mut config = Config {
                 version: "1.0.0".to_string(),
-                description: manifest.description.to_string(),
-                repository: manifest.repository.to_string(),
+                description: manifest.description.unwrap_or_else(|| "".to_string()),
+                repository: manifest.repository.unwrap_or_else(|| "".to_string()),
                 schema: None,
                 networks: vec![],
                 unstable_sync_config: None,
@@ -261,7 +261,7 @@ pub async fn generate_config_from_subgraph_id(
                 };
                 for contract in contracts {
                     if let Some(data_source) =
-                        manifest.data_sources.iter().find(|ds| &ds.name == contract)
+                        manifest.data_sources.iter().find(|ds| &ds.source.abi == contract)
                     {
                         let mut contract = ConfigContract {
                             name: data_source.name.to_string(),
