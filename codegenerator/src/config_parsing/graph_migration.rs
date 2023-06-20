@@ -171,34 +171,38 @@ async fn generate_network_contract_hashmap(
 fn get_graph_protocol_chain_id(network_name: &str) -> Option<i32> {
     match network_name {
         "mainnet" => Some(1),
-        "kovan" => Some(42),
-        "rinkeby" => Some(4),
-        "ropsten" => Some(3),
         "goerli" => Some(5),
-        "poa-core" => Some(99),
-        "poa-sokol" => Some(77),
-        "xdai" => Some(100),
-        "matic" => Some(137),
-        "mumbai" => Some(80001),
-        "fantom" => Some(250),
-        "fantom-testnet" => Some(4002),
+        "optimism" => Some(10),
         "bsc" => Some(56),
-        "chapel" => Some(-1),
-        "clover" => Some(0),
-        "avalanche" => Some(43114),
-        "fuji" => Some(43113),
-        "celo" => Some(42220),
-        "celo-alfajores" => Some(44787),
+        "poa-sokol" => Some(77),
+        "chapel" => Some(97),
+        "poa-core" => Some(99),
+        "gnosis" => Some(100),
         "fuse" => Some(122),
+        "matic" => Some(137),
+        "fantom" => Some(250),
+        "zksync2-testnet" => Some(280),
+        "boba" => Some(288),
+        "optimism-goerli" => Some(420),
+        "clover" => Some(1023),
         "moonbeam" => Some(1284),
         "moonriver" => Some(1285),
-        "mbase" => Some(-1),
+        "mbase" => Some(1287),
+        "fantom-testnet" => Some(4002),
         "arbitrum-one" => Some(42161),
-        "arbitrum-rinkeby" => Some(421611),
-        "optimism" => Some(10),
-        "optimism-kovan" => Some(69),
+        "arbitrum-goerli" => Some(421613),
+        "celo" => Some(42220),
+        "fuji" => Some(43113),
+        "avalanche" => Some(43114),
+        "celo-alfajores" => Some(44787),
+        "mumbai" => Some(80001),
         "aurora" => Some(1313161554),
         "aurora-testnet" => Some(1313161555),
+        "harmony" => Some(1666600000),
+        "base-testnet" => Some(84531),
+        "polygon-zkevm" => Some(1101),
+        "zksync-era" => Some(324),
+        "sepolia" => Some(11155111),
         _ => None,
     }
 }
@@ -231,7 +235,7 @@ pub async fn generate_config_from_subgraph_id(
                 networks: vec![],
                 unstable_sync_config: None,
             };
-            
+
             // Fetching schema file path from config
             let schema_file_path = &manifest.schema.file;
             let schema_id = &schema_file_path.value.as_str()[6..];
@@ -260,8 +264,10 @@ pub async fn generate_config_from_subgraph_id(
                     contracts: vec![],
                 };
                 for contract in contracts {
-                    if let Some(data_source) =
-                        manifest.data_sources.iter().find(|ds| &ds.source.abi == contract)
+                    if let Some(data_source) = manifest
+                        .data_sources
+                        .iter()
+                        .find(|ds| &ds.source.abi == contract)
                     {
                         let mut contract = ConfigContract {
                             name: data_source.name.to_string(),
