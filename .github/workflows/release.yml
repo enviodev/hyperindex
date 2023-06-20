@@ -4,8 +4,11 @@ on:
   push:
     tags:
       - "v*.*.*"
-      - "v*.*.*-*"
-      - "v*.*.*-*.*"
+    branches:
+      - main
+      # The following two branch names can be used to force build a version for development and sharing a patch.
+      - "*force-npm-publish*"
+      - "v*.*.*-branch*"
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,6 +21,8 @@ jobs:
     outputs:
       tag_name: ${{ steps.release_info.outputs.tag_name }}
       release_name: ${{ steps.release_info.outputs.release_name }}
+      is_tagged: ${{ steps.release_info.outputs.is_tagged }}
+      matrix: ${{ steps.set_matrix.outputs.matrix }}
       changelog: ${{ steps.build_changelog.outputs.changelog }}
 
     steps:
@@ -29,11 +34,42 @@ jobs:
       - name: Compute release name and tag
         id: release_info
         run: |
-          echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
-          echo "::set-output name=release_name::${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?(\.[a-zA-Z0-9]+)?)$ ]]; then
+            echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
+            echo "::set-output name=release_name::${GITHUB_REF_NAME}"
+            echo "::set-output name=is_tagged::true"
+          else
+            timestamp=$(date +'%Y%m%d%H%M%S')
+            short_commit=$(echo $GITHUB_SHA | cut -c 1-7)
+            echo "::set-output name=tag_name::v0.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
+            echo "::set-output name=release_name::v0.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
+            echo "::set-output name=is_tagged::false"
+          fi
+
+      - name: Set matrix
+        id: set_matrix
+        # The OS is used for the runner
+        # The platform is a generic platform name
+        # The target is used by Cargo
+        # The arch is either 386, arm64 or amd64
+        # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
+        run: |
+          matrix='[
+            {"os":"ubuntu-20.04", "platform":"linux", "target":"x86_64-unknown-linux-gnu", "arch":"amd64", "svm_target_platform":"linux-amd64", "name":"linux-x64-glibc"},
+            {"os":"ubuntu-20.04", "platform":"linux", "target":"aarch64-unknown-linux-gnu", "arch":"arm64", "svm_target_platform":"linux-aarch64", "name":"linux-arm64-glibc"},
+            {"os":"macos-latest", "platform":"darwin", "target":"x86_64-apple-darwin", "arch":"amd64", "svm_target_platform":"macosx-amd64", "name":"darwin-x64"},
+            {"os":"macos-latest", "platform":"darwin", "target":"aarch64-apple-darwin", "arch":"arm64", "svm_target_platform":"macosx-aarch64", "name":"darwin-arm64"},
+            {"os":"windows-latest", "platform":"win32", "target":"x86_64-pc-windows-msvc", "arch":"amd64", "svm_target_platform":"windows-amd64", "name":"win32-x64-msvc"}
+          ]'
+          if [[ "${{ steps.release_info.outputs.is_tagged }}" == "false" ]]; then
+            matrix=$(echo "$matrix" | jq '[.[] | select(.platform != "win32" and .target != "aarch64-unknown-linux-gnu")]')
+          fi
+          matrix=$(echo "$matrix" | jq -c '.') # put it on a single line (compact)
+          echo "::set-output name=matrix::${matrix}"
 
       - name: Build changelog
         id: build_changelog
+        if: steps.release_info.outputs.is_tagged == 'true'
         uses: mikepenz/release-changelog-builder-action@v2
         with:
           configuration: "./.github/changelog.json"
@@ -51,47 +87,7 @@ jobs:
     needs: prepare
     strategy:
       matrix:
-        job:
-          # The OS is used for the runner
-          # The platform is a generic platform name
-          # The target is used by Cargo
-          # The arch is either 386, arm64 or amd64
-          # The svm target platform to use for the binary https://github.com/roynalnaruto/svm-rs/blob/84cbe0ac705becabdc13168bae28a45ad2299749/svm-builds/build.rs#L4-L24
-          - os: ubuntu-20.04
-            platform: linux
-            target: x86_64-unknown-linux-gnu
-            arch: amd64
-            svm_target_platform: linux-amd64
-            name: linux-x64-glibc
-
-          - os: ubuntu-20.04
-            platform: linux
-            target: aarch64-unknown-linux-gnu
-            arch: arm64
-            svm_target_platform: linux-aarch64
-            name: linux-arm64-glibc
-
-          - os: macos-latest
-            platform: darwin
-            target: x86_64-apple-darwin
-            arch: amd64
-            svm_target_platform: macosx-amd64
-            name: darwin-x64
-
-          - os: macos-latest
-            platform: darwin
-            target: aarch64-apple-darwin
-            arch: arm64
-            svm_target_platform: macosx-aarch64
-            name: darwin-arm64
-
-          # NPM publish broken for windows 😿
-          - os: windows-latest
-            platform: win32
-            target: x86_64-pc-windows-msvc
-            arch: amd64
-            svm_target_platform: windows-amd64
-            name: win32-x64-msvc
+        job: ${{ fromJSON(needs.prepare.outputs.matrix) }}
 
     steps:
       - name: Checkout sources
