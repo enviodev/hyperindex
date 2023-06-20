@@ -64,7 +64,7 @@ jobs:
         run: echo "::set-output name=hash::$(git rev-parse --short "$GITHUB_SHA")"
 
       - name: Run envio codegen
-        run: pnpm codegen -s
+        run: pnpm codegen
 
       - uses: webfactory/ssh-agent@v0.7.0
         with:
