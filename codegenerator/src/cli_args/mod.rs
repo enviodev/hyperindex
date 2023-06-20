@@ -18,15 +18,15 @@ pub enum CommandType {
     ///Initialize a project with a template
     Init(InitArgs),
 
-    ///Generate code from a config.yaml file
+    ///Generate code from a config.yaml & schema.graphql file
     Codegen(CodegenArgs),
-
-    ///Start the indexer
-    Start(StartArgs),
 
     ///Prepare local environment for envio testing
     #[command(subcommand)]
     Local(LocalCommandTypes),
+
+    ///Start the indexer
+    Start(StartArgs),
 
     ///Print help into a markdown file
     ///Command to run: cargo run -- print-all-help > CommandLineHelp.md
