@@ -9,46 +9,9 @@ use tokio::time::{timeout, Duration};
 use crate::{
     cli_args::Language,
     config_parsing::{
-        Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
+        chain_parsing, Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
     },
 };
-
-#[derive(Debug, Deserialize)]
-enum NetworkName {
-    Mainnet,
-    Goerli,
-    Optimism,
-    Bsc,
-    PoaSokol,
-    Chapel,
-    PoaCore,
-    Gnosis,
-    Fuse,
-    Matic,
-    Fantom,
-    ZkSync2Testnet,
-    Boba,
-    OptimismGoerli,
-    Clover,
-    Moonbeam,
-    Moonriver,
-    Mbase,
-    FantomTestnet,
-    ArbitrumOne,
-    ArbitrumGoerli,
-    Celo,
-    Fuji,
-    Avalanche,
-    CeloAlfajores,
-    Mumbai,
-    Aurora,
-    AuroraTestnet,
-    Harmony,
-    BaseTestnet,
-    PolygonZkevm,
-    ZkSyncEra,
-    Sepolia,
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -202,84 +165,6 @@ async fn generate_network_contract_hashmap(manifest_raw: &str) -> HashMap<String
     network_contracts
 }
 
-fn serialize_network_name(network_name: &str) -> Option<NetworkName> {
-    match network_name {
-        "mainnet" => Some(NetworkName::Mainnet),
-        "goerli" => Some(NetworkName::Goerli),
-        "optimism" => Some(NetworkName::Optimism),
-        "bsc" => Some(NetworkName::Bsc),
-        "poa-sokol" => Some(NetworkName::PoaSokol),
-        "chapel" => Some(NetworkName::Chapel),
-        "poa-core" => Some(NetworkName::PoaCore),
-        "gnosis" => Some(NetworkName::Gnosis),
-        "fuse" => Some(NetworkName::Fuse),
-        "matic" => Some(NetworkName::Matic),
-        "fantom" => Some(NetworkName::Fantom),
-        "zksync2-testnet" => Some(NetworkName::ZkSync2Testnet),
-        "boba" => Some(NetworkName::Boba),
-        "optimism-goerli" => Some(NetworkName::OptimismGoerli),
-        "clover" => Some(NetworkName::Clover),
-        "moonbeam" => Some(NetworkName::Moonbeam),
-        "moonriver" => Some(NetworkName::Moonriver),
-        "mbase" => Some(NetworkName::Mbase),
-        "fantom-testnet" => Some(NetworkName::FantomTestnet),
-        "arbitrum-one" => Some(NetworkName::ArbitrumOne),
-        "arbitrum-goerli" => Some(NetworkName::ArbitrumGoerli),
-        "celo" => Some(NetworkName::Celo),
-        "fuji" => Some(NetworkName::Fuji),
-        "avalanche" => Some(NetworkName::Avalanche),
-        "celo-alfajores" => Some(NetworkName::CeloAlfajores),
-        "mumbai" => Some(NetworkName::Mumbai),
-        "aurora" => Some(NetworkName::Aurora),
-        "aurora-testnet" => Some(NetworkName::AuroraTestnet),
-        "harmony" => Some(NetworkName::Harmony),
-        "base-testnet" => Some(NetworkName::BaseTestnet),
-        "polygon-zkevm" => Some(NetworkName::PolygonZkevm),
-        "zksync-era" => Some(NetworkName::ZkSyncEra),
-        "sepolia" => Some(NetworkName::Sepolia),
-        _ => None,
-    }
-}
-
-// Function to return the chain ID of the network based on the network name
-fn get_graph_protocol_chain_id(network_name: NetworkName) -> Option<i32> {
-    match network_name {
-        NetworkName::Mainnet => Some(1),
-        NetworkName::Goerli => Some(5),
-        NetworkName::Optimism => Some(10),
-        NetworkName::Bsc => Some(56),
-        NetworkName::PoaSokol => Some(77),
-        NetworkName::Chapel => Some(97),
-        NetworkName::PoaCore => Some(99),
-        NetworkName::Gnosis => Some(100),
-        NetworkName::Fuse => Some(122),
-        NetworkName::Matic => Some(137),
-        NetworkName::Fantom => Some(250),
-        NetworkName::ZkSync2Testnet => Some(280),
-        NetworkName::Boba => Some(288),
-        NetworkName::OptimismGoerli => Some(420),
-        NetworkName::Clover => Some(1023),
-        NetworkName::Moonbeam => Some(1284),
-        NetworkName::Moonriver => Some(1285),
-        NetworkName::Mbase => Some(1287),
-        NetworkName::FantomTestnet => Some(4002),
-        NetworkName::ArbitrumOne => Some(42161),
-        NetworkName::ArbitrumGoerli => Some(421613),
-        NetworkName::Celo => Some(42220),
-        NetworkName::Fuji => Some(43113),
-        NetworkName::Avalanche => Some(43114),
-        NetworkName::CeloAlfajores => Some(44787),
-        NetworkName::Mumbai => Some(80001),
-        NetworkName::Aurora => Some(1313161554),
-        NetworkName::AuroraTestnet => Some(1313161555),
-        NetworkName::Harmony => Some(1666600000),
-        NetworkName::BaseTestnet => Some(84531),
-        NetworkName::PolygonZkevm => Some(1101),
-        NetworkName::ZkSyncEra => Some(324),
-        NetworkName::Sepolia => Some(11155111),
-    }
-}
-
 pub async fn generate_config_from_subgraph_id(
     project_root_path: &PathBuf,
     subgraph_id: &str,
@@ -327,9 +212,12 @@ pub async fn generate_config_from_subgraph_id(
             let network_hashmap = generate_network_contract_hashmap(&manifest_str).await;
 
             for (network_name, contracts) in &network_hashmap {
-                if let Some(serialized_network_name) = serialize_network_name(network_name) {
+                if let Some(serialized_network_name) =
+                    chain_parsing::serialize_network_name(network_name)
+                {
                     let mut network = Network {
-                        id: get_graph_protocol_chain_id(serialized_network_name).unwrap(),
+                        id: chain_parsing::get_graph_protocol_chain_id(serialized_network_name)
+                            .unwrap(),
                         // TODO: update to the final rpc url
                         rpc_url: "https://example.com/rpc".to_string(),
                         start_block: 0,
