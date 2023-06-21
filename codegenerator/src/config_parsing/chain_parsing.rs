@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 
 #[derive(Debug, Deserialize)]
 pub enum NetworkName {
