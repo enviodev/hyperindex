@@ -5,7 +5,7 @@ type logLevel = [
 | #info
 | #warn
 | #error
-| #FATAL
+| #fatal
 ]
 
 type pinoConfig = {level: logLevel}

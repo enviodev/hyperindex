@@ -17,19 +17,21 @@ addresses: array<Ethers.ethAddress>,
         // Logging:
         %%private(let envSafe = EnvSafe.make())
 
-        let defaultLogLevel: Pino.logLevel = envSafe->EnvSafe.get(
-        ~name="LOG_LEVEL",
-        ~struct=S.union([
-        S.literalVariant(String("TRACE"), #trace),
-        S.literalVariant(String("DEBUG"), #debug),
-        S.literalVariant(String("INFO"), #info),
-        S.literalVariant(String("WARN"), #warn),
-        S.literalVariant(String("ERROR"), #error),
-        S.literalVariant(String("FATAL"), #FATAL),
-        ]),
-        ~devFallback=#info,
-        (),
-        )
+let defaultLogLevel: Pino.logLevel = envSafe->EnvSafe.get(
+  ~name="LOG_LEVEL",
+  ~struct=S.union([
+    S.literalVariant(String("trace"), #trace),
+    S.literalVariant(String("debug"), #debug),
+    S.literalVariant(String("info"), #info),
+    S.literalVariant(String("warn"), #warn),
+    S.literalVariant(String("error"), #error),
+    S.literalVariant(String("fatal"), #fatal),
+    // Default value is #info
+    S.literalVariant(String(""), #info),
+    S.literalVariant(EmptyOption, #info),
+  ]),
+  (),
+)
 
         let db: Postgres.poolConfig = {
         host: envSafe->EnvSafe.get(~name="PG_HOST", ~struct=S.string(), ~devFallback="localhost", ()),
@@ -125,3 +127,6 @@ addresses: array<Ethers.ethAddress>,
         // How long to wait before cancelling an RPC request
         queryTimeoutMillis: {{sync_config.query_timeout_millis}},
         }
+
+// You need to close the envSafe after you're done with it so that it immediately tells you about your misconfigured environment on startup.
+envSafe->EnvSafe.close()
