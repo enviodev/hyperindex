@@ -1,5 +1,5 @@
 use std::error::Error;
-use std::fs;
+
 use std::path::PathBuf;
 
 use clap::Parser;
@@ -10,19 +10,13 @@ use envio::{
         ProjectPathsArgs,
     },
     commands,
-    config_parsing::{self, entity_parsing, event_parsing},
-    hbs_templating::codegen_templates::{
-        entities_to_map, generate_templates, EventRecordTypeTemplate,
-    },
     hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
-    linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
     project_paths::{self, ParsedPaths},
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
 use include_dir::{include_dir, Dir};
 
-static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
 static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
     include_dir!("templates/static/blank_template/shared");
 static BLANK_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
@@ -125,55 +119,15 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
-            commands::codegen::run_codegen_command_sequence(&project_paths)
+            commands::codegen::run_codegen(&parsed_paths)?;
+            commands::codegen::run_post_codegen_command_sequence(&project_paths)
         }
 
         CommandType::Codegen(args) => {
             let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
-
-            fs::create_dir_all(&project_paths.generated)?;
-
-            let entity_types = entity_parsing::get_entity_record_types_from_schema(&parsed_paths)?;
-
-            let contract_types = event_parsing::get_contract_types_from_config(
-                &parsed_paths,
-                &entities_to_map(entity_types.clone()),
-            )?;
-
-            let chain_config_templates =
-                config_parsing::convert_config_to_chain_configs(&parsed_paths)?;
-
-            let sync_config = config_parsing::convert_config_to_sync_config(&parsed_paths)?;
-            //Used to create project specific configuration during deployment
-            let project_name = config_parsing::get_project_name_from_config(&parsed_paths)?;
-            //NOTE: This structure is no longer used int event parsing since it has been refactored
-            //to use an inline tuple type for parsed structs. However this is being left until it
-            //is decided to completely remove the need for subrecords in which case the entire
-            //linked_hashmap module can be removed.
-            let rescript_subrecord_dependencies: LinkedHashMap<
-                RescriptRecordKey,
-                EventRecordTypeTemplate,
-            > = RescriptRecordHierarchyLinkedHashMap::new();
-
-            let sub_record_dependencies: Vec<EventRecordTypeTemplate> =
-                rescript_subrecord_dependencies
-                    .iter()
-                    .collect::<Vec<EventRecordTypeTemplate>>();
-
-            CODEGEN_STATIC_DIR.extract(&project_paths.generated)?;
-
-            generate_templates(
-                sub_record_dependencies,
-                contract_types,
-                chain_config_templates,
-                entity_types,
-                &project_paths,
-                sync_config,
-                project_name,
-            )?;
-
-            commands::codegen::run_codegen_command_sequence(project_paths)?;
+            commands::codegen::run_codegen(&parsed_paths)?;
+            commands::codegen::run_post_codegen_command_sequence(project_paths)?;
 
             Ok(())
         }
