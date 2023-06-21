@@ -245,12 +245,17 @@ pub async fn generate_config_from_subgraph_id(
                             // Fetching event names from config
                             let event_handlers = &data_source.mapping.event_handlers;
                             for event_handler in event_handlers {
-                                let event_name = &event_handler.event.as_str();
-                                let event = ConfigEvent {
-                                    event: EventNameOrSig::Name(event_name.to_string()),
-                                    required_entities: Some(vec![]),
+                                // Event signatures of the manifest file from theGraph can differ from smart contract event signature convention
+                                // therefore just extracting event name from event signature
+                                if let Some(start) = event_handler.event.as_str().find('(') {
+                                    let event_name = &event_handler.event.as_str().chars().take(start).collect::<String>();
+                                    let event = ConfigEvent {
+                                        event: EventNameOrSig::Name(event_name.to_string()),
+                                        required_entities: Some(vec![]),
+                                    };
+                                    
+                                    contract.events.push(event);
                                 };
-                                contract.events.push(event);
                             }
                             network.contracts.push(contract.clone());
 
@@ -317,7 +322,6 @@ pub async fn generate_config_from_subgraph_id(
         }
     }
 }
-
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
 mod test {
     use crate::cli_args::Language;
@@ -331,3 +335,4 @@ mod test {
         super::generate_config_from_subgraph_id(&project_root_path, cid, &language).await;
     }
 }
+
