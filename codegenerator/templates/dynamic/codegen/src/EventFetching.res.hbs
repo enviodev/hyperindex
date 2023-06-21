@@ -82,7 +82,7 @@ let getAllEventFilters = (
   eventFilters
 }
 
-let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlock) => {
+let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlock, ~logger: Pino.t) => {
   open Ethers.BlockTag
 
   let combinedFilter =
@@ -93,21 +93,33 @@ let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlo
 
   let numBlocks = toBlock - fromBlock + 1
 
-  let fromStr = Belt.Int.toString(fromBlock)
-  let toStr = Belt.Int.toString(toBlock)
-  let numStr = Belt.Int.toString(numBlocks)
-  Js.log(`Initiating Combined Query Filter from block ${fromStr} to ${toStr} (${numStr} blocks)`)
+  logger->Logging.childTrace({
+    "msg": "Initiating Combined Query Filter",
+    "from": fromBlock,
+    "to": toBlock,
+    "numBlocks": numBlocks,
+  })
 
   provider
   ->Ethers.JsonRpcProvider.getLogs(
     ~filter={combinedFilter->Ethers.CombinedFilter.combinedFilterToFilter},
   )
   ->Promise.thenResolve(res => {
-    Js.log(`Successful Combined Query Filter from block ${fromStr} to ${toStr} (${numStr} blocks)`)
+    logger->Logging.childTrace({
+      "msg": "Successful Combined Query Filter",
+      "from": fromBlock,
+      "to": toBlock,
+      "numBlocks": numBlocks,
+    })
     res
   })
   ->Promise.catch(err => {
-    Logging.info(`Failed Combined Query Filter from block ${fromStr} to ${toStr} (${numStr} blocks)`)
+    logger->Logging.childWarn({
+      "msg": "Failed Combined Query Filter from block",
+      "from": fromBlock,
+      "to": toBlock,
+      "numBlocks": numBlocks,
+    })
     err->Promise.reject
   })
 }
@@ -118,8 +130,17 @@ type eventBatchPromise = {
   eventPromise: promise<Types.event>,
 }
 
-let convertLogs = (logs: array<Ethers.log>, ~blockLoader, ~addressInterfaceMapping, ~chainId) => {
-  Js.log2("Handling number of logs: ", logs->Array.length)
+let convertLogs = (
+  logs: array<Ethers.log>,
+  ~blockLoader,
+  ~addressInterfaceMapping,
+  ~chainId,
+  ~logger,
+) => {
+  logger->Logging.childTrace({
+    "msg": "Handling of logs",
+    "numberLogs": logs->Belt.Array.length,
+  })
 
   logs
   ->Belt.Array.map(log => {
@@ -177,13 +198,15 @@ let queryEventsWithCombinedFilter = async (
   ~blockLoader,
   ~provider,
   ~chainId,
+  ~logger: Pino.t,
   (),
-) => {
+): array<eventBatchPromise> => {
   let combinedFilterRes = await makeCombinedEventFilterQuery(
     ~provider,
     ~eventFilters,
     ~fromBlock,
     ~toBlock,
+    ~logger,
   )
 
   let logs = combinedFilterRes->applyConditionalFunction(minFromBlockLogIndex > 0, arrLogs => {
@@ -193,7 +216,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  logs->convertLogs(~blockLoader, ~addressInterfaceMapping, ~chainId)
+  logs->convertLogs(~blockLoader, ~addressInterfaceMapping, ~chainId, ~logger)
 }
 let getContractEventsOnFilters = async (
   ~addressInterfaceMapping,
@@ -205,6 +228,7 @@ let getContractEventsOnFilters = async (
   ~chainId,
   ~provider,
   ~blockLoader,
+  ~logger,
   (),
 ) => {
   let sc = Config.syncConfig
@@ -215,8 +239,8 @@ let getContractEventsOnFilters = async (
   let currentBlockInterval = ref(initialBlockInterval)
   let events = ref([])
   while shouldContinueProcess() {
-    Js.log("continuing to process...")
-    let rec executeQuery = (~blockInterval) => {
+    logger->Logging.childTrace("continuing to process...")
+    let rec executeQuery = (~blockInterval): Promise.t<(array<eventBatchPromise>, int)> => {
       //If the query hangs for longer than this, reject this promise to reduce the block interval
       let queryTimoutPromise =
         Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
@@ -239,22 +263,28 @@ let getContractEventsOnFilters = async (
           ~provider,
           ~blockLoader,
           ~chainId,
+          ~logger,
           (),
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))
 
       [queryTimoutPromise, eventsPromise]
       ->Promise.race
       ->Promise.catch(err => {
-        Js.log2(
-          `Error getting events, waiting ${(sc.backoffMillis / 1000)
-              ->Belt.Int.toString} seconds before retrying`,
-          err,
-        )
+        logger->Logging.childWarn({
+          "msg": "Error getting events, will retry after backoff time",
+          "backOffMilliseconds": sc.backoffMillis,
+          "err": err,
+        })
 
         Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.backoffMillis)->Promise.then(_ => {
           let nextBlockIntervalTry =
             (blockInterval->Belt.Int.toFloat *. sc.backoffMultiplicative)->Belt.Int.fromFloat
-          Js.log3("Retrying query fromBlock and toBlock:", fromBlock, nextBlockIntervalTry)
+          logger->Logging.childTrace({
+            "msg": "Retrying query fromBlock and toBlock",
+            "fromBlock": fromBlock,
+            "toBlock": nextBlockIntervalTry,
+          })
+
           executeQuery(~blockInterval={nextBlockIntervalTry})
         })
       })
@@ -271,10 +301,12 @@ let getContractEventsOnFilters = async (
       Pervasives.min(executedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
 
     fromBlockRef := fromBlockRef.contents + executedBlockInterval
-
-    Logging.info(
-      `Queried processAllEventsFromBlockNumber ${(fromBlockRef.contents - 1)->Belt.Int.toString} out of ${toBlock->Belt.Int.toString}`,
-    )
+    logger->Logging.childTrace({
+      "msg": "Queried processAllEventsFromBlockNumber ",
+      "lastBlockProcessed": fromBlockRef.contents - 1,
+      "toBlock": toBlock,
+      "numEvents": intervalEvents->Array.length,
+    })
   }
   (events.contents, {from: fromBlock, to: fromBlockRef.contents - 1}, currentBlockInterval.contents)
 }

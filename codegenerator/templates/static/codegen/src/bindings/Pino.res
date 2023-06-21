@@ -42,3 +42,7 @@ module Trasport = {
 }
 
 @module("pino") external makeWithTransport: Trasport.t => t = "default"
+
+type childParams
+let createChildParams: 'a => childParams = Obj.magic
+@send external child: (t, childParams) => t = "child"

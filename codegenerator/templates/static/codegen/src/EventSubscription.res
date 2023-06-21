@@ -1,4 +1,6 @@
 let startWatchingEventsOnRpc = async (~chainConfig: Config.chainConfig, ~provider) => {
+  let traceLogger = Logging.createChild(~params={"chainId": chainConfig.chainId})
+
   let blockLoader = LazyLoader.make(~loaderFn=EventFetching.getUnwrappedBlock(provider), ())
 
   let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
@@ -10,7 +12,10 @@ let startWatchingEventsOnRpc = async (~chainConfig: Config.chainConfig, ~provide
   )
 
   provider->Ethers.JsonRpcProvider.onBlock(blockNumber => {
-    Js.log2("Querying events on new block: ", blockNumber)
+    traceLogger->Logging.childTrace({
+      "msg": "Querying events on new block",
+      "blockNumber": blockNumber,
+    })
 
     EventSyncing.queryEventsWithCombinedFilterAndProcessEventBatch(
       ~addressInterfaceMapping,
@@ -20,6 +25,7 @@ let startWatchingEventsOnRpc = async (~chainConfig: Config.chainConfig, ~provide
       ~blockLoader,
       ~provider,
       ~chainConfig,
+      ~logger=traceLogger,
     )
     ->Promise.thenResolve(_ => ())
     ->ignore
