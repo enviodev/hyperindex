@@ -25,6 +25,7 @@
     "express": "^4.17.1",
     "js-sdsl": "^4.4",
     "pino": "^8.14.1",
+    "pino-pretty": "^10.0.0",
     "postgres": "^3.3.4",
     "rescript-envsafe": "^1.3.0",
     "rescript-express": "^0.4.1",
