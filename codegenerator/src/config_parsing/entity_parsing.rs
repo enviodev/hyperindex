@@ -49,11 +49,16 @@ pub fn get_entity_record_types_from_schema(
         let mut params = Vec::new();
         let mut relational_params_all = Vec::new();
         for field in object.fields.iter() {
+            //Get all gql derictives labeled @derivedFrom
             let derived_from_directives = field
                 .directives
                 .iter()
                 .filter(|directive| directive.name == "derivedFrom")
                 .collect::<Vec<&Directive<'_, String>>>();
+
+            //Do not allow for multiple @derivedFrom directives
+            //If this step is not important and we are fine with just taking the first one
+            //in the case of multiple we can just use a find rather than a filter method above
             if derived_from_directives.len() > 1 {
                 let msg = format!(
                     "Cannot use more than one @derivedFrom directive, please update your entity {} at field {}",
