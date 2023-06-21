@@ -1,7 +1,6 @@
 
 #rescript base
 
-
 FROM --platform=linux/amd64 node:18.14.0-bullseye-slim
 WORKDIR /app/base-template
 

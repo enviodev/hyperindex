@@ -13,7 +13,7 @@ let response = await fetch(
     `${operatorUrl}:${operatorPort->Belt.Int.toString}/databases`,
     {
       method: #POST,
-      body: databaseName->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
+      body: databaseName->Body.string,
       headers: Headers.fromObject({
         "Content-type": "application/json",
       }),
