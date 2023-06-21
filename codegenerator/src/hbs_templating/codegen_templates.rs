@@ -124,6 +124,9 @@ pub fn entities_to_map(
 
         let mut related_entities = vec![];
         for param in entity.params {
+            if param.is_derived_from {
+                continue;
+            }
             if let Some(entity_name) = param.maybe_entity_name {
                 let required_entity = RequiredEntityEntityFieldTemplate {
                     is_array: param.type_rescript.starts_with("array"),

@@ -65,8 +65,11 @@ pub fn get_entity_record_types_from_schema(
 
             let param_type = gql_type_to_rescript_type(&field.field_type, &entities_set)?;
             let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
-            let relationship_type =
-                gql_type_to_postgres_relational_type(&field.name, &field.field_type, &entities_set);
+            let relationship_type = if is_derived_from {
+                None
+            } else {
+                gql_type_to_postgres_relational_type(&field.name, &field.field_type, &entities_set)
+            };
             let param_maybe_entity_name =
                 gql_type_to_capitalized_entity_name(&field.field_type, &entities_set);
 

@@ -21,6 +21,7 @@ type Nftcollection @entity {
   symbol: String!
   maxSupply: BigInt!
   currentSupply: Int!
+  tokens: [Token!]! @derivedFrom(field: "collection")
 }
 
 type Token @entity {
