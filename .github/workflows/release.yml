@@ -284,9 +284,7 @@ jobs:
           file: ./.github/Dockerfile #this parameter does not take into account the context above
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/envio:${{ steps.vars.outputs.hash_short }}
-          build-args: | 
-             COMMIT_HASH_ARG=${{ steps.vars.outputs.hash_short }}
-            
+          build-args: COMMIT_HASH_ARG=${{ steps.vars.outputs.hash_short }}  
           cache-from: type=local,src=/tmp/.base-template-deployer-docker-cache
           cache-to: type=local,dest=/tmp/.base-template-deployer-docker-cache-new
 

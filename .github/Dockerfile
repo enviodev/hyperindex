@@ -14,7 +14,7 @@ RUN npm install --global envio
 RUN envio init -t erc20 -l rescript
 
 ARG COMMIT_HASH_ARG
-ENV COMMIT_HASH=$COMMIT_HASH_ARG
+ENV COMMIT_HASH=${COMMIT_HASH_ARG}
 
 RUN envio codegen -d ./
 
