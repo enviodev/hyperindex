@@ -1,4 +1,4 @@
-use serde::{Deserialize};
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub enum NetworkName {
@@ -36,7 +36,6 @@ pub enum NetworkName {
     ZkSyncEra,
     Sepolia,
 }
-
 
 pub fn serialize_network_name(network_name: &str) -> Option<NetworkName> {
     match network_name {

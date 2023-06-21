@@ -17,7 +17,6 @@ pub mod validation;
 pub mod constants;
 use crate::links;
 pub mod graph_migration;
-pub mod chain_parsing;
 
 type NetworkId = i32;
 
@@ -137,23 +136,22 @@ struct RequiredEntity {
 
 impl Serialize for EventNameOrSig{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer {
-                match self{
-                    EventNameOrSig::Name(event_name)=> serializer.serialize_str(event_name),
-                    EventNameOrSig::Event(eth_abi_event)=> {
-                        eth_abi_event.serialize(serializer)
-                    }
-                }
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            EventNameOrSig::Name(event_name) => serializer.serialize_str(event_name),
+            EventNameOrSig::Event(eth_abi_event) => eth_abi_event.serialize(serializer),
+        }
     }
 }
 
-impl<T:Serialize + Clone> Serialize for NormalizedList<T>{
+impl<T: Serialize + Clone> Serialize for NormalizedList<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer {
-                self.inner.serialize(serializer)
-            }
+    where
+        S: serde::Serializer,
+    {
+        self.inner.serialize(serializer)
     }
 impl TryFrom<String> for EventNameOrSig {
     type Error = String;

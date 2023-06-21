@@ -9,9 +9,11 @@ use tokio::time::{timeout, Duration};
 use crate::{
     cli_args::Language,
     config_parsing::{
-        chain_parsing, Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
+        Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
     },
 };
+
+mod chain_helpers;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -213,10 +215,10 @@ pub async fn generate_config_from_subgraph_id(
 
             for (network_name, contracts) in &network_hashmap {
                 if let Some(serialized_network_name) =
-                    chain_parsing::serialize_network_name(network_name)
+                    chain_helpers::serialize_network_name(network_name)
                 {
                     let mut network = Network {
-                        id: chain_parsing::get_graph_protocol_chain_id(serialized_network_name)
+                        id: chain_helpers::get_graph_protocol_chain_id(serialized_network_name)
                             .unwrap(),
                         // TODO: update to the final rpc url
                         rpc_url: "https://example.com/rpc".to_string(),
@@ -248,12 +250,17 @@ pub async fn generate_config_from_subgraph_id(
                                 // Event signatures of the manifest file from theGraph can differ from smart contract event signature convention
                                 // therefore just extracting event name from event signature
                                 if let Some(start) = event_handler.event.as_str().find('(') {
-                                    let event_name = &event_handler.event.as_str().chars().take(start).collect::<String>();
+                                    let event_name = &event_handler
+                                        .event
+                                        .as_str()
+                                        .chars()
+                                        .take(start)
+                                        .collect::<String>();
                                     let event = ConfigEvent {
                                         event: EventNameOrSig::Name(event_name.to_string()),
                                         required_entities: Some(vec![]),
                                     };
-                                    
+
                                     contract.events.push(event);
                                 };
                             }
@@ -326,7 +333,10 @@ pub async fn generate_config_from_subgraph_id(
 mod test {
     use crate::cli_args::Language;
 
+    use super::GraphManifest;
+
     #[tokio::test]
+    #[ignore = "Integration test that interacts with ipfs"]
     async fn test_generate_config_from_subgraph_id() {
         // subgraph ID of USDC on Ethereum mainnet
         let cid: &str = "QmU5V3jy56KnFbxX2uZagvMwocYZASzy1inX828W2XWtTd";
@@ -334,5 +344,10 @@ mod test {
         let project_root_path: std::path::PathBuf = std::path::PathBuf::from("./");
         super::generate_config_from_subgraph_id(&project_root_path, cid, &language).await;
     }
-}
 
+    #[test]
+    fn manifest_deserializes() {
+        let manifest_file = std::fs::read_to_string("test/configs/graph-manifest.yaml").unwrap();
+        serde_yaml::from_str::<GraphManifest>(&manifest_file).unwrap();
+    }
+}

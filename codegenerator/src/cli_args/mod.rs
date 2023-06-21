@@ -86,6 +86,7 @@ pub struct CodegenArgs {
     pub config: String,
 }
 
+type SubgraphMigrationID = String;
 #[derive(Args, Debug)]
 pub struct InitArgs {
     ///The directory of the project
@@ -96,6 +97,11 @@ pub struct InitArgs {
     #[arg(short, long)]
     #[clap(value_enum)]
     pub template: Option<Template>,
+
+    ///Subgraph ID to start a migration from
+    #[arg(short, long)]
+    pub subgraph_migration: Option<SubgraphMigrationID>,
+
     #[arg(short = 'l', long = "language")]
     #[clap(value_enum)]
     pub language: Option<Language>,
@@ -107,7 +113,6 @@ pub enum Template {
     Blank,
     Greeter,
     Erc20,
-    SubgraphMigration,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
