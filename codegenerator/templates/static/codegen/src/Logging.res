@@ -1,14 +1,26 @@
 open Pino
 
-let defaultPinoOptions = {
-  level: Config.defaultLogLevel,
-}
-let logger = make(defaultPinoOptions)
+type pinoTransportConfig
+
+let makePinoConfig: 'a => pinoTransportConfig = Obj.magic
+
+let transport = Trasport.make({
+  "targets": [
+    {
+      "target": "pino/file",
+      "options": {"destination": Config.logFilePath, "append": true, "mkdir": true},
+      "level": Config.defaultFileLogLevel,
+    }->makePinoConfig,
+    {"target": "pino-pretty", "level": Config.userLogLevel}->makePinoConfig,
+  ],
+})
+let logger = makeWithTransport(transport)
 
 @genType
 let setLogLevel = (level: Pino.logLevel) => {
   logger->setLevel(level)
 }
+setLogLevel(Config.baseLogLevel)
 
 @genType
 let trace = message => {
@@ -43,8 +55,10 @@ let fatal = message => {
 // // TODO: set ethers and postgres log levels in a similar way
 // // TODO: use environment varibles to set log levels
 
-/* // Testing usage:
-setLogLevel(#trace)
+// Testing usage:
+trace("By default - This trace message should only be seen in the log file.")
+debug("By default - This debug message should only be seen in the log file.")
+
 Js.log2("this is a summary of the available log levels", logger->levels)
 Js.log(`Current log level: ${(logger->getLevel :> string)}`)
 trace("This is an trace message.")
@@ -55,7 +69,7 @@ error("This is an error message.")
 fatal(("This is a fatal message.", "another"))
 
 setLogLevel(#debug)
-Js.log(`Current log level: ${(logger->getLevel :> string)}}`)
+Js.log(`Current log level: ${(logger->getLevel :> string)}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message.")
 info("This is an info message.")
@@ -73,7 +87,7 @@ error("This is an error message.")
 fatal("This is a fatal message.")
 
 setLogLevel(#warn)
-Js.log(`Current log level: ${(logger->getLevel :> string)}}`)
+Js.log(`Current log level: ${(logger->getLevel :> string)}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
 info("This is an info message. (should not be printed)")
@@ -82,7 +96,7 @@ error("This is an error message.")
 fatal("This is a fatal message.")
 
 setLogLevel(#error)
-Js.log(`Current log level: ${(logger->getLevel :> string)}}`)
+Js.log(`Current log level: ${(logger->getLevel :> string)}`)
 trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
 info("This is an info message. (should not be printed)")
@@ -100,5 +114,4 @@ fatal({
     "and": {"arrays": ["of", "things"]},
     "additionally": {"numbers": 0.5654},
   },
-})
- */
+}) 

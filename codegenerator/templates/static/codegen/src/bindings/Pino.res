@@ -34,3 +34,11 @@ external levels: t => 'a = "levels"
 
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
 let createPinoMessage = (message): pinoMessageBlob => Obj.magic(message)
+
+module Trasport = {
+  type t
+  @module("pino")
+  external make: 'a => t = "transport"
+}
+
+@module("pino") external makeWithTransport: Trasport.t => t = "default"
