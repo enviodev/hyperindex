@@ -15,31 +15,29 @@ addresses: array<Ethers.ethAddress>,
       type chainConfigs = Js.Dict.t<chainConfig>
 
         // Logging:
-        @genType
-        type logLevel = [
-        | #TRACE
-        | #DEBUG
-        | #INFO
-        | #WARN
-        | #ERROR
-        | #FATAL
-        ]
-
         %%private(let envSafe = EnvSafe.make())
 
-        let defaultLogLevel = envSafe->EnvSafe.get(
-        ~name="LOG_LEVEL",
+        let getLogLevelConfig = (~name, ~default): Pino.logLevel =>
+        envSafe->EnvSafe.get(
+        ~name,
         ~struct=S.union([
-        S.literalVariant(String("TRACE"), #TRACE),
-        S.literalVariant(String("DEBUG"), #DEBUG),
-        S.literalVariant(String("INFO"), #INFO),
-        S.literalVariant(String("WARN"), #WARN),
-        S.literalVariant(String("ERROR"), #ERROR),
-        S.literalVariant(String("FATAL"), #FATAL),
+        S.literalVariant(String("trace"), #trace),
+        S.literalVariant(String("debug"), #debug),
+        S.literalVariant(String("info"), #info),
+        S.literalVariant(String("warn"), #warn),
+        S.literalVariant(String("error"), #error),
+        S.literalVariant(String("fatal"), #fatal),
+        S.literalVariant(String(""), default),
+        S.literalVariant(EmptyOption, default),
         ]),
-        ~devFallback=#INFO,
         (),
         )
+
+        let logFilePath =
+        envSafe->EnvSafe.get(~name="LOG_FILE", ~struct=S.string(), ~devFallback="logs/envio.log", ())
+        let userLogLevel = getLogLevelConfig(~name="LOG_LEVEL", ~default=#warn)
+        let baseLogLevel = getLogLevelConfig(~name="BASE_LOG_LEVEL", ~default=#trace)
+        let defaultFileLogLevel = getLogLevelConfig(~name="FILE_LOG_LEVEL", ~default=#trace)
 
         let db: Postgres.poolConfig = {
         host: envSafe->EnvSafe.get(~name="PG_HOST", ~struct=S.string(), ~devFallback="localhost", ()),
@@ -61,7 +59,8 @@ addresses: array<Ethers.ethAddress>,
         //this is a dev fallback option for local deployments, shouldn't run in the prod env
         //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
         ~devFallback=false->Obj.magic, ()),
-        onnotice: (defaultLogLevel == #WARN || defaultLogLevel == #ERROR) ? None : Some(() => ())
+        // TODO: think how we want to pipe these logs to pino.
+        onnotice: userLogLevel == #warn || userLogLevel == #error ? None : Some(() => ()),
         }
 
         let config: chainConfigs = [
@@ -135,3 +134,6 @@ addresses: array<Ethers.ethAddress>,
         // How long to wait before cancelling an RPC request
         queryTimeoutMillis: {{sync_config.query_timeout_millis}},
         }
+
+// You need to close the envSafe after you're done with it so that it immediately tells you about your misconfigured environment on startup.
+envSafe->EnvSafe.close()

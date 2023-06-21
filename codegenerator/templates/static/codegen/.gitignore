@@ -1,4 +1,3 @@
-
 *.exe
 *.obj
 *.out
@@ -28,4 +27,4 @@
 /node_modules/
 /benchmarks/
 *.bs.js
-{{codegen_out_path}}
+logs/*
