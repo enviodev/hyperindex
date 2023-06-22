@@ -274,12 +274,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-base-template-deployer-docker-cache-
 
-      - name: Declare commit hash variable
-        id: vars
-        shell: bash
-        run: |
-          echo "::set-output name=hash_short::$(git rev-parse --short HEAD)"
-
       - name: Log in to Docker Hub
         uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
         with:
@@ -292,7 +286,7 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           file: ./.github/Dockerfile #this parameter does not take into account the context above
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/envio:${{ steps.vars.outputs.hash_short }}
+          tags: ${{ secrets.DOCKER_USERNAME }}/envio:erc20-base-rescript-${{ needs.prepare.outputs.commit_hash }}
           build-args: |
             COMMIT_HASH_ARG= ${{ needs.prepare.outputs.commit_hash }}  #used for database name
             ENVIO_VERSION=${{ needs.prepare.outputs.tag_name }}
