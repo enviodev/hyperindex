@@ -17,13 +17,12 @@ describe("E2E Mock Event Batch", () => {
   })
 
   after(() => {
-    ContextMock.insertMock->Sinon.resetStub
-    ContextMock.updateMock->Sinon.resetStub
+    ContextMock.setMock->Sinon.resetStub
   })
 
   it("3 newgravatar event insert calls in order", () => {
     let insertCallFirstArgs =
-      ContextMock.insertMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
+      ContextMock.setMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
 
     Assert.deep_equal(
       [
@@ -39,7 +38,7 @@ describe("E2E Mock Event Batch", () => {
    this test tests the exact same thing as above since events have the same IDs. */
   it("3 updategravatar event insert calls in order", () => {
     let insertCallFirstArgs =
-      ContextMock.insertMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
+      ContextMock.setMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
 
     Assert.deep_equal(
       insertCallFirstArgs,
@@ -85,7 +84,7 @@ describe("E2E Db check", () => {
       inMemoryStoreRows,
       [
         {
-          crud: Update, // TODO: fix these tests, it should be an 'Update' here.
+          crud: Set,
           eventData: {
             chainId: 1337,
             eventId: "65537",
@@ -99,7 +98,7 @@ describe("E2E Db check", () => {
           },
         },
         {
-          crud: Update,
+          crud: Set,
           eventData: {
             chainId: 1337,
             eventId: "65537",
@@ -113,7 +112,7 @@ describe("E2E Db check", () => {
           },
         },
         {
-          crud: Create, // NOTE: if this is not run against a fresh database it will get an `Update` instead of `Create`
+          crud: Set,
           eventData: {
             chainId: 1337,
             eventId: "65537",

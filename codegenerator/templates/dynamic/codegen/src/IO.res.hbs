@@ -1,26 +1,13 @@
 module InMemoryStore = {
-
-  let entityCurrentCrud = (currentCrud: option<Types.crud>, nextCrud: Types.crud) => {
-
-     switch (currentCrud, nextCrud) {
-    | (Some(Create), Create) => Types.Create
-    | (Some(Read), Create)
-    | (Some(Update), Create)
-    | (Some(Delete), Create) =>
-      // dont know if this is an update or create
-      Update
-    | (Some(Create), Read) => Create
+  let entityCurrentCrud = (currentCrud: option<Types.crud>, nextCrud: Types.crud): Types.crud => {
+    switch (currentCrud, nextCrud) {
+    | (Some(Set), Read)
+    | (_, Set) =>
+      Set
     | (Some(Read), Read) => Read
-    | (Some(Update), Read) => Update
-    | (Some(Delete), Read) => Delete
-    | (Some(Create), Update) => Create
-    | (Some(Read), Update) => Update
-    | (Some(Update), Update) => Update
-    | (Some(Delete), Update) => Update
-    | (Some(Create), Delete) => Delete // interesting to note to line 23
-    | (Some(Read), Delete) => Delete
-    | (Some(Update), Delete) => Delete
-    | (Some(Delete), Delete) => Delete
+    | (Some(Delete), Read)
+    | (_, Delete) =>
+      Delete
     | (None, _) => nextCrud
     }
   }
@@ -63,7 +50,7 @@ module InMemoryStore = {
         row->Belt.Option.map(row => row.entity)
       }
 
-      let setDynamicContractRegistry = (~entity: Types.dynamicContractRegistryEntity, ~crud: Types.crud) => {
+      let setDynamicContractRegistry = (~entity: Types.dynamicContractRegistryEntity) => {
         let key = EventUtils.getContractAddressKeyString(
           ~chainId=entity.chainId,
           ~contractAddress=entity.contractAddress,
@@ -77,7 +64,7 @@ module InMemoryStore = {
 
         dynamicContractRegistryDict.contents->Js.Dict.set(
           key,
-          {eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString}, entity, crud: entityCurrentCrud(dynamicContractRegistryCurrentCrud, crud)},
+          {eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString}, entity, crud: Types.Set},
         )
       }
     }
@@ -234,7 +221,7 @@ let executeBatch = async (sql) => {
   let setRawEventsPromise = (sql) => {
     let setRawEvents =
       rawEventsRows->Belt.Array.keepMap(rawEventsRow =>
-        rawEventsRow.crud == Types.Create || rawEventsRow.crud == Update
+        rawEventsRow.crud == Types.Set
           ? Some(rawEventsRow.entity)
           : None
       )
@@ -269,7 +256,8 @@ let executeBatch = async (sql) => {
   let setDynamicContractRegistryPromise = (sql) => {
     let setDynamicContractRegistry =
       dynamicContractRegistryRows->Belt.Array.keepMap(dynamicContractRegistryRow =>
-        dynamicContractRegistryRow.crud == Types.Create || dynamicContractRegistryRow.crud == Update
+        // NOTE: the currently they will all be of type 'Set', but in the future we may add functionality to also delete contracts from the registry.
+        dynamicContractRegistryRow.crud == Types.Set
           ? Some(dynamicContractRegistryRow.entity)
           : None
       )
@@ -301,7 +289,7 @@ let executeBatch = async (sql) => {
   let set{{entity.name.capitalized}}Promise = (sql) => {
     let set{{entity.name.capitalized}} =
       {{entity.name.uncapitalized}}Rows->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
-        {{entity.name.uncapitalized}}Row.crud == Types.Create || {{entity.name.uncapitalized}}Row.crud == Update
+        {{entity.name.uncapitalized}}Row.crud == Types.Set
           ? Some({
             ...{{entity.name.uncapitalized}}Row,
             entity: {{entity.name.uncapitalized}}Row.entity->Types.{{entity.name.uncapitalized}}Entity_encode,
