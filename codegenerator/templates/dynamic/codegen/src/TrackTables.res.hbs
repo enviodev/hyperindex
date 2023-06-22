@@ -90,13 +90,10 @@ let createEntityRelationship = async (
 ) => {
   let derivedFromTo =
     derivedFromFieldKey != ""
-      ? `"id": ${derivedFromFieldKey->Js.String.toLowerCase}`
+      ? `"id": "${derivedFromFieldKey->Js.String.toLowerCase}"`
       : `"${relationalKey}" : "id"`
 
-  let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": "${tableName}","name": "${relationalKey}","source": "default","using": {"manual_configuration": {"remote_table": "${mappedEntity}","column_mapping": {${derivedFromTo}}}}}}
-  `
-
-  bodyString->Body.string->Js.log
+  let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": "${tableName}","name": "${relationalKey}Map","source": "default","using": {"manual_configuration": {"remote_table": "${mappedEntity}","column_mapping": {${derivedFromTo}}}}}}`
 
   let response = await fetch(
     hasuraGraphqlEndpoint,
@@ -125,12 +122,13 @@ let trackAllTables = async () => {
   let _ = await createSelectPermissions(~tableName="{{entity.name.uncapitalized}}")
   {{/each}}
     {{#each entities as |entity|}}
+    {{#each entity.relational_params.all as | relational_param | }}
       let _ = await createEntityRelationship(
         ~tableName="{{entity.name.uncapitalized}}",
         ~relationshipType="{{relational_param.relationship_type}}",
         ~relationalKey="{{relational_param.relational_key.uncapitalized}}",
         ~mappedEntity="{{relational_param.mapped_entity.uncapitalized}}",
-        ~derivedFromFieldKey="{{relational_param.derived_from_field_key}}", // todo: handle uncapitalized && if empty proper handling
+        ~derivedFromFieldKey="{{#if relational_param.derived_from_field_key}}{{relational_param.derived_from_field_key.uncapitalized}}{{/if}}", 
       )
     {{/each}}
 {{/each}}

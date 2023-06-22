@@ -3,10 +3,10 @@ use std::error::Error;
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::capitalization::Capitalize;
+use crate::capitalization::CapitalizedOptions;
 use crate::config_parsing::ChainConfigTemplate;
 use crate::project_paths::handler_paths::HandlerPathsTemplate;
 use crate::project_paths::ProjectPaths;
-use crate::{capitalization::CapitalizedOptions, make_file_executable};
 use include_dir::{include_dir, Dir};
 use serde::Serialize;
 
@@ -235,8 +235,6 @@ pub fn generate_templates(
     let hbs =
         HandleBarsDirGenerator::new(&CODEGEN_DYNAMIC_DIR, &types_data, &project_paths.generated);
     hbs.generate_hbs_templates()?;
-
-    make_file_executable("register_tables_with_hasura.sh", project_paths)?;
 
     Ok(())
 }

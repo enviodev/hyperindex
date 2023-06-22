@@ -134,6 +134,9 @@ let runUpMigrations = async (shouldExit) => {
     Logging.error(`Error creating {{entity.name.capitalized}} table`)->Promise.resolve
   })
 {{/each}}
+await TrackTables.trackAllTables()->Promise.catch(_err => {
+    Logging.error(`Error tracking tables`)->Promise.resolve
+  })
 if shouldExit {
     process->exit()
   }
