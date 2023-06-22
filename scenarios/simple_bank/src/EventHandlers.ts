@@ -10,7 +10,7 @@ import {
 import { bankEntity, accountEntity } from "../generated/src/Types.gen";
 
 SimpleBankContract_registerAccountCreatedLoadEntities(
-  ({ event, context }) => {}
+  ({ event, context }) => { }
 );
 
 SimpleBankContract_registerAccountCreatedHandler(({ event, context }) => {
@@ -22,7 +22,7 @@ SimpleBankContract_registerAccountCreatedHandler(({ event, context }) => {
     depositCount: 0,
     withdrawalCount: 0,
   };
-  context.account.insert(account);
+  context.account.set(account);
 });
 
 SimpleBankContract_registerDepositMadeLoadEntities(({ event, context }) => {

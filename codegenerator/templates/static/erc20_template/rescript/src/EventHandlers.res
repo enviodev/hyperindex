@@ -19,7 +19,7 @@ Handlers.ERC20Contract.registerApprovalHandler((~event, ~context) => {
       }
 
       // updating the accountEntity with the new transfer field value
-      context.account.update(accountObject)
+      context.account.set(accountObject)
     }
 
   | None => {
@@ -31,7 +31,7 @@ Handlers.ERC20Contract.registerApprovalHandler((~event, ~context) => {
       }
 
       // inserting the accountEntity with the new transfer field value
-      context.account.insert(accountObject)
+      context.account.set(accountObject)
     }
   }
 })
@@ -56,7 +56,7 @@ Handlers.ERC20Contract.registerTransferHandler((~event, ~context) => {
       }
 
       // updating the accountEntity with the new transfer field value
-      context.account.update(accountObject)
+      context.account.set(accountObject)
     }
 
   | None => {
@@ -68,7 +68,7 @@ Handlers.ERC20Contract.registerTransferHandler((~event, ~context) => {
         }
 
         // inserting the accountEntity with the new transfer field value
-        context.account.insert(accountObject)
+        context.account.set(accountObject)
     }
   }
 
@@ -85,7 +85,7 @@ Handlers.ERC20Contract.registerTransferHandler((~event, ~context) => {
       }
 
       // updating the accountEntity with the new transfer field value
-      context.account.update(accountObject)
+      context.account.set(accountObject)
     }
 
   | None => {
@@ -97,7 +97,7 @@ Handlers.ERC20Contract.registerTransferHandler((~event, ~context) => {
           }
 
           // inserting the accountEntity with the new transfer field value
-          context.account.insert(accountObject)
+          context.account.set(accountObject)
     }
   }
 })

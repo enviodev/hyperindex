@@ -35,7 +35,7 @@ ERC20Contract_registerApprovalHandler(({ event, context }) => {
     };
 
     // inserting the accountEntity with the new transfer field value
-    context.account.insert(accountObject);
+    context.account.set(accountObject);
   }
 });
 
@@ -71,7 +71,7 @@ ERC20Contract_registerTransferHandler(({ event, context }) => {
     };
 
     // inserting the accountEntity with the new transfer field value
-    context.account.insert(accountObject);
+    context.account.set(accountObject);
   }
 
   // getting the sender accountEntity
@@ -98,6 +98,6 @@ ERC20Contract_registerTransferHandler(({ event, context }) => {
     };
 
     // inserting the accountEntity with the new transfer field value
-    context.account.insert(accountObject);
+    context.account.set(accountObject);
   }
 });

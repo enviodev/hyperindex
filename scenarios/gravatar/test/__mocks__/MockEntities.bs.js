@@ -34,13 +34,13 @@ var gravatarSerialized1 = Types.gravatarEntity_encode(gravatarEntity1);
 var gravatarSerialized2 = Types.gravatarEntity_encode(gravatarEntity2);
 
 var mockInMemRow1 = {
-  crud: /* Create */0,
+  dbOp: /* Create */0,
   entity: gravatarSerialized1,
   eventData: mockEventData1
 };
 
 var mockInMemRow2 = {
-  crud: /* Create */0,
+  dbOp: /* Create */0,
   entity: gravatarSerialized2,
   eventData: mockEventData2
 };

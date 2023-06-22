@@ -32,6 +32,6 @@ Handlers.MyAwesomeContract.registerMyAwesomeContractLoadEntities((~event, ~conte
 
 Handlers.MyAwesomeContract.registerMyAwesomeContractHandler((~event, ~context) => {
     let awesomeEventObject = context.awesomeEvent.awesomeEntityChanges()
-    context.awesomeEvent.update(awesomeEventObject)
+    context.awesomeEvent.set(awesomeEventObject)
 })
 

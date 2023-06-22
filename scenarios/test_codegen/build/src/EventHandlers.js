@@ -2,7 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const Handlers_gen_1 = require("../generated/src/Handlers.gen");
 const zeroAddress = "0x0000000000000000000000000000000000000000";
-(0, Handlers_gen_1.NftFactoryContract_registerSimpleNftCreatedLoadEntities)(({ event, context }) => { });
+(0, Handlers_gen_1.NftFactoryContract_registerSimpleNftCreatedLoadEntities)(({ event, context }) => {
+    context.contractRegistration.addSimpleNft(event.params.contractAddress);
+});
 (0, Handlers_gen_1.NftFactoryContract_registerSimpleNftCreatedHandler)(({ event, context }) => {
     let nftCollection = {
         id: event.params.contractAddress,
@@ -12,13 +14,13 @@ const zeroAddress = "0x0000000000000000000000000000000000000000";
         maxSupply: event.params.maxSupply,
         currentSupply: 0,
     };
-    context.nftcollection.insert(nftCollection);
+    context.nftcollection.set(nftCollection);
 });
 (0, Handlers_gen_1.SimpleNftContract_registerTransferLoadEntities)(({ event, context }) => {
-    context.user.userFromLoad(event.params.from);
-    context.user.userToLoad(event.params.to);
+    context.user.userFromLoad(event.params.from, {});
+    context.user.userToLoad(event.params.to, {});
     context.nftcollection.nftCollectionUpdatedLoad(event.srcAddress);
-    context.token.existingTransferredTokenLoad(event.srcAddress.concat("-").concat(event.params.tokenId.toString()));
+    context.token.existingTransferredTokenLoad(event.srcAddress.concat("-").concat(event.params.tokenId.toString()), {});
 });
 (0, Handlers_gen_1.SimpleNftContract_registerTransferHandler)(({ event, context }) => {
     let nftCollectionUpdated = context.nftcollection.nftCollectionUpdated();
@@ -36,7 +38,7 @@ const zeroAddress = "0x0000000000000000000000000000000000000000";
                 ...nftCollectionUpdated,
                 currentSupply,
             };
-            context.nftcollection.update(nftCollection);
+            context.nftcollection.set(nftCollection);
         }
     }
     else {
@@ -58,8 +60,9 @@ const zeroAddress = "0x0000000000000000000000000000000000000000";
             id: event.params.from,
             address: event.params.from,
             tokens: userFromTokens,
+            updatesCountOnUserForTesting: loadedUserFrom?.updatesCountOnUserForTesting || 0
         };
-        context.user.insert(userFrom);
+        context.user.set(userFrom);
     }
     if (event.params.to !== zeroAddress) {
         let loadedUserTo = context.user.userTo();
@@ -72,8 +75,9 @@ const zeroAddress = "0x0000000000000000000000000000000000000000";
             id: event.params.to,
             address: event.params.to,
             tokens: userToTokens,
+            updatesCountOnUserForTesting: loadedUserTo?.updatesCountOnUserForTesting || 0
         };
-        context.user.insert(userTo);
+        context.user.set(userTo);
     }
-    context.token.insert(token);
+    context.token.set(token);
 });

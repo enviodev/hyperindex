@@ -24,7 +24,7 @@ NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
     maxSupply: event.params.maxSupply,
     currentSupply: 0,
   };
-  context.nftcollection.insert(nftCollection);
+  context.nftcollection.set(nftCollection);
 });
 
 SimpleNftContract_registerTransferLoadEntities(({ event, context }) => {
@@ -79,7 +79,7 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
       address: event.params.from,
       tokens: userFromTokens,
     };
-    context.user.insert(userFrom);
+    context.user.set(userFrom);
   }
 
   if (event.params.to !== zeroAddress) {
@@ -97,8 +97,8 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
       address: event.params.to,
       tokens: userToTokens,
     };
-    context.user.insert(userTo);
+    context.user.set(userTo);
   }
 
-  context.token.insert(token);
+  context.token.set(token);
 });
