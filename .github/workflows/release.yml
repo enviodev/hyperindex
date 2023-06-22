@@ -286,7 +286,7 @@ jobs:
           builder: ${{ steps.buildx.outputs.name }}
           file: ./.github/Dockerfile #this parameter does not take into account the context above
           push: true
-          tags: ${{ secrets.DOCKER_USERNAME }}/envio:erc20-base-rescript-${{ needs.prepare.outputs.commit_hash }}
+          tags: ${{ secrets.DOCKER_USERNAME }}/envio:${{ needs.prepare.outputs.release_name }}-rescript-pnpm-${{ needs.prepare.outputs.commit_hash }}
           build-args: |
             COMMIT_HASH_ARG= ${{ needs.prepare.outputs.commit_hash }}  #used for database name
             ENVIO_VERSION=${{ needs.prepare.outputs.tag_name }}
