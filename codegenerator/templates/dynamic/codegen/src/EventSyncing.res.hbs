@@ -97,12 +97,21 @@ let (
     )
 
     fromBlockRef := blocksProcessed.to + 1
-    currentBlock := (await getCurrentBlockFromRPC())
 
     // Increase batch size going forward, but do not increase past a configured maximum
     // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
     currentBlockInterval :=
       Pervasives.min(finalBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
+
+    // Only fetch the current block if it could affect the length of our next batch
+    let nextIntervalEnd = fromBlockRef.contents + currentBlockInterval.contents - 1
+    if currentBlock.contents <= nextIntervalEnd {
+      Logging.info(
+        `We will finish processing known blocks in the next block. Checking for a newer block than ${currentBlock.contents->Belt.Int.toString}`,
+      )
+      currentBlock := (await getCurrentBlockFromRPC())
+      Logging.info(`getCurrentBlockFromRPC() => ${currentBlock.contents->Belt.Int.toString}`)
+    }
   }
 }
 
