@@ -98,7 +98,7 @@ describe("Raw Events Integration", () => {
     await processAllEvents(localChainConfig);
   });
   after(async () => {
-    // await runMigrationsNoLogs();
+    await runMigrationsNoLogs();
   });
 
   it("RawEvents table contains rows after indexer runs", async function() {
