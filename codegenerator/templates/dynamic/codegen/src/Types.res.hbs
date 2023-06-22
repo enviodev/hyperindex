@@ -20,8 +20,8 @@ type id = string
 @@warning("-30")
 @genType
 type rec {{#each entities as | entity |}}{{#unless @first}}
-and {{/unless}}{{entity.name.uncapitalized}}LoaderConfig = {{#if entity.relational_params.[0]}}{
-  {{#each entity.relational_params as | relational_param |}}
+and {{/unless}}{{entity.name.uncapitalized}}LoaderConfig = {{#if entity.relational_params.filtered_not_derived_from.[0]}}{
+  {{#each entity.relational_params.filtered_not_derived_from as | relational_param |}}
   load{{relational_param.relational_key.capitalized}}?: {{relational_param.mapped_entity.uncapitalized}}LoaderConfig,{{/each}}
 }{{else}}bool{{/if}}{{/each}}
 
@@ -29,14 +29,14 @@ and {{/unless}}{{entity.name.uncapitalized}}LoaderConfig = {{#if entity.relation
 
 type entityRead = 
 {{#each entities as | entity |}}
-| {{entity.name.capitalized}}Read(id{{#if entity.relational_params.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}})
+| {{entity.name.capitalized}}Read(id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}})
 {{/each}}
 
 
 let entitySerialize = (entity: entityRead) => {
   switch entity {
   {{#each entities as | entity |}}
-  | {{entity.name.capitalized}}Read(id{{#if entity.relational_params.[0]}}, _{{/if}}) => `{{entity.name.uncapitalized}}${id}`
+  | {{entity.name.capitalized}}Read(id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, _{{/if}}) => `{{entity.name.uncapitalized}}${id}`
   {{/each}}
   }
 }
@@ -67,7 +67,7 @@ type dynamicContractRegistryEntity = {
 @spice @genType
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{param.key}}{{#if param.is_optional}}?{{/if}}: {{param.type_rescript_non_optional}},
+  {{#unless param.is_derived_from }}{{param.key}}{{#if param.is_optional}}?{{/if}}: {{param.type_rescript_non_optional}}, {{/unless}}
   {{/each}}
 }
 
@@ -76,7 +76,6 @@ type entity =
 {{#each entities as | entity |}}
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
 {{/each}}
-
 
 
 type crud = Create | Read | Update | Delete
@@ -128,7 +127,7 @@ module {{event.name.capitalized}}Event = {
       {{/if}}
 
     {{/each}}
-    {{#each entity.relational_params as | entity_field |}}
+    {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
         get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}}Entity => 
         {{#if entity_field.is_optional}}
           option<{{entity_field.mapped_entity.uncapitalized}}Entity>,
@@ -156,7 +155,7 @@ module {{event.name.capitalized}}Event = {
     @genType
     type {{required_entity.name.uncapitalized}}EntityLoaderContext = {
       {{#each required_entity.labels as | label |}}
-      {{label}}Load: (id{{#if required_entity.entity_fields_of_required_entity.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
+      {{label}}Load: (id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
       {{/each}}
     }
     {{/each}}

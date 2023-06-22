@@ -131,9 +131,9 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let unique{{entity.name.capitalized}}AsEntityFieldArray: ref<array<string>> = ref([])
   {{/each}}
 
-  let rec{{#each entities as | entity |}}{{#unless @first}} and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
+  let rec{{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
     entityId: string,
-    {{#if entity.relational_params.[0]}}{{entity.name.uncapitalized}}Load: Types.{{entity.name.uncapitalized}}LoaderConfig,{{/if}}
+    {{#if entity.relational_params.filtered_not_derived_from.[0]}}{{entity.name.uncapitalized}}Load: Types.{{entity.name.uncapitalized}}LoaderConfig,{{/if}}
     layer: int,
   ) => {
     if (!loadLayer.contents) {
@@ -145,7 +145,10 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
       let _ = Js.Dict.set(unique{{entity.name.capitalized}}Dict, entityId, entityId)
     }
 
-    {{#each entity.relational_params as | relational_param |}}
+    {{#each entity.relational_params.filtered_not_derived_from as | relational_param |}}
+    //Loader is not used in every generated case
+    //Suppressing unused variable warning 27 for these cases
+    @warning("-27")
     switch {{entity.name.uncapitalized}}Load.load{{relational_param.relational_key.capitalized}} {
     | Some(load{{relational_param.mapped_entity.capitalized}}) =>
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
@@ -154,16 +157,16 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
             {{#if (eq relational_param.relationship_type "array")}}
               let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Array.map(
                     {{relational_param.relational_key.uncapitalized}}Id =>
-                {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+                {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
               )
             {{else}}
               {{#if relational_param.is_optional}}
                 let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Option.map(
                   {{relational_param.relational_key.uncapitalized}}Id =>
-                    {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+                    {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
                 )
               {{else}}
-                let _ = {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+                let _ = {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
               {{/if}}
             {{/if}}
           })
@@ -177,8 +180,8 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   entityBatch->Belt.Array.forEach(readEntity => {
         switch readEntity {
     {{#each entities as | entity |}}
-    | {{entity.name.capitalized}}Read(entityId{{#if entity.relational_params.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}) =>
-      {{entity.name.uncapitalized}}LinkedEntityLoader(entityId{{#if entity.relational_params.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}, 0)
+    | {{entity.name.capitalized}}Read(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}) =>
+      {{entity.name.uncapitalized}}LinkedEntityLoader(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}, 0)
     {{/each}}
     }
   })

@@ -31,12 +31,53 @@ impl HasName for EventRecordTypeTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum RelationshipTypeTemplate {
+    Object,
+    Array,
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRelationalTypesTemplate {
     pub relational_key: CapitalizedOptions,
     pub mapped_entity: CapitalizedOptions,
-    pub relationship_type: String,
+    pub relationship_type: RelationshipTypeTemplate,
     pub is_array: bool,
     pub is_optional: bool,
+    pub derived_from_field_key: Option<CapitalizedOptions>,
+}
+
+pub trait HasIsDerivedFrom {
+    fn get_is_derived_from(&self) -> bool;
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct FilteredTemplateLists<T: HasIsDerivedFrom> {
+    pub all: Vec<T>,
+    pub filtered_not_derived_from: Vec<T>,
+}
+
+impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
+    pub fn new(unfiltered: Vec<T>) -> Self {
+        let filtered_not_derived_from = unfiltered
+            .iter()
+            .filter(|item| !item.get_is_derived_from())
+            .cloned()
+            .collect::<Vec<T>>();
+
+        FilteredTemplateLists {
+            all: unfiltered,
+            filtered_not_derived_from,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        FilteredTemplateLists {
+            all: Vec::new(),
+            filtered_not_derived_from: Vec::new(),
+        }
+    }
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -47,12 +88,25 @@ pub struct EntityParamTypeTemplate {
     pub type_rescript_non_optional: String,
     pub type_pg: String,
     pub maybe_entity_name: Option<CapitalizedOptions>,
+    ///Used in template to tell whether it is a field looked up from another table or a value in
+    ///the table
+    pub is_derived_from: bool,
 }
+
+impl HasIsDerivedFrom for EntityRelationalTypesTemplate {
+    fn get_is_derived_from(&self) -> bool {
+        match self.derived_from_field_key {
+            None => false,
+            Some(_) => true,
+        }
+    }
+}
+
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EntityParamTypeTemplate>,
-    pub relational_params: Vec<EntityRelationalTypesTemplate>,
+    pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -77,13 +131,20 @@ pub struct RequiredEntityEntityFieldTemplate {
     pub type_name: CapitalizedOptions,
     pub is_optional: bool,
     pub is_array: bool,
+    pub is_derived_from: bool,
+}
+
+impl HasIsDerivedFrom for RequiredEntityEntityFieldTemplate {
+    fn get_is_derived_from(&self) -> bool {
+        self.is_derived_from
+    }
 }
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct RequiredEntityTemplate {
     pub name: CapitalizedOptions,
     pub labels: Vec<String>,
-    pub entity_fields_of_required_entity: Vec<RequiredEntityEntityFieldTemplate>,
+    pub entity_fields_of_required_entity: FilteredTemplateLists<RequiredEntityEntityFieldTemplate>,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -127,6 +188,7 @@ pub fn entities_to_map(
                     field_name: param.key.to_owned().to_capitalized_options(),
                     type_name: entity_name,
                     is_optional: param.is_optional,
+                    is_derived_from: param.is_derived_from,
                 };
                 related_entities.push(required_entity);
             }

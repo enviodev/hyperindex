@@ -105,7 +105,7 @@ curl -X POST localhost:8080/v1/metadata \
 }'
 
 {{#each entities as |entity|}}
-{{#each entity.relational_params as | relational_param | }}
+{{#each entity.relational_params.all as | relational_param | }}
 curl -X POST localhost:8080/v1/metadata \
   -H "Content-Type: application/json" \
   -H "X-Hasura-Role: admin" \
@@ -120,7 +120,11 @@ curl -X POST localhost:8080/v1/metadata \
             "manual_configuration" : {
                 "remote_table" : "{{relational_param.mapped_entity.uncapitalized}}",
                 "column_mapping" : {
+                  {{#if relational_param.derived_from_field_key}}
+                    "id" : "{{relational_param.derived_from_field_key.uncapitalized}}"
+                  {{else}}
                     "{{relational_param.relational_key.uncapitalized}}" : "id"
+                  {{/if}}
                 }
             }
         }

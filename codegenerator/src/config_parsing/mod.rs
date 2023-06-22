@@ -194,6 +194,7 @@ pub struct SyncConfigUnstable {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[allow(non_snake_case)] //Allow unstable__sync_config to be non_snake_case§
 pub struct Config {
     version: String,
     description: String,
@@ -321,12 +322,22 @@ pub fn convert_config_to_sync_config(
     let d = defaults::SYNC_CONFIG;
 
     let sync_config = SyncConfigTemplate {
-        initial_block_interval: c.and_then(|c| c.initial_block_interval).unwrap_or(d.initial_block_interval),
-        backoff_multiplicative: c.and_then(|c| c.backoff_multiplicative).unwrap_or(d.backoff_multiplicative),
-        acceleration_additive: c.and_then(|c| c.acceleration_additive).unwrap_or(d.acceleration_additive),
-        interval_ceiling: c.and_then(|c| c.interval_ceiling).unwrap_or(d.interval_ceiling),
+        initial_block_interval: c
+            .and_then(|c| c.initial_block_interval)
+            .unwrap_or(d.initial_block_interval),
+        backoff_multiplicative: c
+            .and_then(|c| c.backoff_multiplicative)
+            .unwrap_or(d.backoff_multiplicative),
+        acceleration_additive: c
+            .and_then(|c| c.acceleration_additive)
+            .unwrap_or(d.acceleration_additive),
+        interval_ceiling: c
+            .and_then(|c| c.interval_ceiling)
+            .unwrap_or(d.interval_ceiling),
         backoff_millis: c.and_then(|c| c.backoff_millis).unwrap_or(d.backoff_millis),
-        query_timeout_millis: c.and_then(|c| c.query_timeout_millis).unwrap_or(d.query_timeout_millis),
+        query_timeout_millis: c
+            .and_then(|c| c.query_timeout_millis)
+            .unwrap_or(d.query_timeout_millis),
     };
 
     Ok(sync_config)

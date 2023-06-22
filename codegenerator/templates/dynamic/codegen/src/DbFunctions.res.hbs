@@ -92,7 +92,7 @@ module {{entity.name.capitalized}} = {
   let readRowToReadEntityData = (readRow: {{entity.name.uncapitalized}}ReadRow): readEntityData<Types.{{entity.name.uncapitalized}}Entity> => {
     let {
       {{#each entity.params as | param |}}
-      {{param.key}},
+      {{#unless param.is_derived_from}}{{param.key}},{{/unless}}
       {{/each}}
       chainId,
       eventId
@@ -101,7 +101,7 @@ module {{entity.name.capitalized}} = {
     {
       entity: {
         {{#each entity.params as | param |}}
-        {{param.key}}: {{#if param.is_optional}}?{{/if}}({{param.key}}{{#if  (eq param.type_rescript_non_optional "Ethers.BigInt.t")}}->Ethers.BigInt.fromStringUnsafe{{/if}}),
+        {{#unless param.is_derived_from}}{{param.key}}: {{#if param.is_optional}}?{{/if}}({{param.key}}{{#if  (eq param.type_rescript_non_optional "Ethers.BigInt.t")}}->Ethers.BigInt.fromStringUnsafe{{/if}}),{{/unless}}
         {{/each}}
       },
       eventData: {
