@@ -68,6 +68,7 @@ describe("E2E Db check", () => {
       // Give a conservatively wide range of blocks
       ~blocksProcessed={from: 1, to: 10},
       ~blockLoader,
+      ~logger=Logging.logger
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
