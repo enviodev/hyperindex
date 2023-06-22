@@ -24,12 +24,18 @@ jobs:
       is_tagged: ${{ steps.release_info.outputs.is_tagged }}
       matrix: ${{ steps.set_matrix.outputs.matrix }}
       changelog: ${{ steps.build_changelog.outputs.changelog }}
-
+      commit_hash: ${{ steps.vars.outputs.hash_short }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
+      
+      - name: Declare commit hash variable
+        id: vars
+        shell: bash
+        run: | 
+          echo "::set-output name=hash_short::$(git rev-parse --short HEAD)"
 
       - name: Compute release name and tag
         id: release_info
@@ -40,7 +46,7 @@ jobs:
             echo "::set-output name=is_tagged::true"
           else
             timestamp=$(date +'%Y%m%d%H%M%S')
-            short_commit=$(echo $GITHUB_SHA | cut -c 1-7)
+            short_commit=${{ steps.vars.outputs.hash_short }}
             echo "::set-output name=tag_name::v0.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
             echo "::set-output name=release_name::v0.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
             echo "::set-output name=is_tagged::false"
@@ -248,6 +254,7 @@ jobs:
   build-and-push: 
     name: "build, publish and add docker container for deployment"
     needs:
+      - "prepare"
       - "publish-npm"
     runs-on: ubuntu-latest
 
@@ -286,7 +293,9 @@ jobs:
           file: ./.github/Dockerfile #this parameter does not take into account the context above
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/envio:${{ steps.vars.outputs.hash_short }}
-          build-args: COMMIT_HASH_ARG=${{ steps.vars.outputs.hash_short }}  #used for database name
+          build-args: |
+            COMMIT_HASH_ARG= ${{ needs.prepare.outputs.commit_hash }}  #used for database name
+            ENVIO_VERSION=${{ needs.prepare.outputs.tag_name }}
           cache-from: type=local,src=/tmp/.base-template-deployer-docker-cache
           cache-to: type=local,dest=/tmp/.base-template-deployer-docker-cache-new
 

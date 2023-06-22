@@ -7,7 +7,7 @@ let commitHash = envSafe->EnvSafe.get(~name="COMMIT_HASH", ~struct=S.string(), ~
 
 let createDatabase = async () => {
 open Fetch
-
+// TODO: add the orginisation/user ID to this to allow multiple people to have the same project name and avoid confusion! 
 let databaseName = `{{project_name}}-${commitHash}`
 let response = await fetch(
     `${operatorUrl}:${operatorPort->Belt.Int.toString}/databases`,
