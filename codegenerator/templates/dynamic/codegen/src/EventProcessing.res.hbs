@@ -64,6 +64,7 @@ let rec loadReadEntitiesInner = async (
   ~chainConfig: Config.chainConfig,
   ~blocksProcessed: EventFetching.blocksProcessed,
   ~blockLoader,
+  ~logger,
 ): array<readEntitiesResultPromise> => {
   // Recursively load entities
   let loadNestedReadEntities = async (
@@ -91,6 +92,7 @@ let rec loadReadEntitiesInner = async (
       ~chainId=chainConfig.chainId,
       ~provider=chainConfig.provider,
       ~blockLoader,
+      ~logger,
       (),
     )
 
@@ -98,6 +100,7 @@ let rec loadReadEntitiesInner = async (
       ~chainConfig,
       ~blockLoader,
       ~blocksProcessed=nestedBlocksProcessed,
+      ~logger,
     )
   }
 
@@ -191,8 +194,10 @@ let loadReadEntities = async (
   ~chainConfig: Config.chainConfig,
   ~blockLoader,
   ~blocksProcessed: EventFetching.blocksProcessed,
+  ~logger: Pino.t,
 ): array<Types.eventAndContext> => {
-  let batch = await eventBatch->loadReadEntitiesInner(~chainConfig, ~blocksProcessed, ~blockLoader)
+  let batch =
+    await eventBatch->loadReadEntitiesInner(~chainConfig, ~blocksProcessed, ~blockLoader, ~logger)
 
   let nestedResults = await batch->Belt.Array.map(recurseEntityPromises)->Promise.all
   let mergedResults = flattenNested(nestedResults)
@@ -218,11 +223,12 @@ let processEventBatch = async (
   ~chainConfig,
   ~blocksProcessed: EventFetching.blocksProcessed,
   ~blockLoader,
+  ~logger: Pino.t,
 ) => {
   IO.InMemoryStore.resetStore()
 
-  let eventBatchAndContext = 
-    await eventBatch->loadReadEntities(~chainConfig, ~blockLoader, ~blocksProcessed)
+  let eventBatchAndContext =
+    await eventBatch->loadReadEntities(~chainConfig, ~blockLoader, ~blocksProcessed, ~logger)
 
   eventBatchAndContext->Belt.Array.forEach(event =>
     event->eventRouter(~chainId=chainConfig.chainId)

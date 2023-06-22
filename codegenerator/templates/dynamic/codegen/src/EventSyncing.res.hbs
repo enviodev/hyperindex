@@ -6,6 +6,7 @@ let queryEventsWithCombinedFilterAndProcessEventBatch = async (
   ~blockLoader,
   ~provider,
   ~chainConfig: Config.chainConfig,
+  ~logger: Pino.t,
 ) => {
   let events = await EventFetching.queryEventsWithCombinedFilter(
     ~addressInterfaceMapping,
@@ -15,12 +16,14 @@ let queryEventsWithCombinedFilterAndProcessEventBatch = async (
     ~blockLoader,
     ~provider,
     ~chainId=chainConfig.chainId,
+    ~logger,
     (),
   )
   events->EventProcessing.processEventBatch(
     ~chainConfig,
     ~blockLoader,
     ~blocksProcessed={from: fromBlock, to: toBlock},
+    ~logger,
   )
 }
 
@@ -30,6 +33,7 @@ let processAllEventsFromBlockNumber = async (
   ~chainConfig: Config.chainConfig,
   ~provider,
   ~blockLoader,
+  ~logger,
 ) => {
   let sc = Config.syncConfig
   let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
@@ -46,7 +50,7 @@ let processAllEventsFromBlockNumber = async (
     provider
     ->Ethers.JsonRpcProvider.getBlockNumber
     ->Promise.catch(_err => {
-      Logging.warn("Error getting current block number")
+      logger->Logging.childWarn("Error getting current block number")
       0->Promise.resolve
     })
   let currentBlock: ref<int> = ref(await getCurrentBlockFromRPC())
@@ -65,7 +69,7 @@ let processAllEventsFromBlockNumber = async (
       fromBlockRef.contents + blockInterval - 1
     )
 
-    let (
+let (
       events,
       blocksProcessed,
       finalBlockInterval,
@@ -79,12 +83,18 @@ let processAllEventsFromBlockNumber = async (
       ~chainId=chainConfig.chainId,
       ~provider,
       ~blockLoader,
+      ~logger,
       (),
     )
 
     //process the batch of events
     //NOTE: we can use this to track batch processing time
-    await events->EventProcessing.processEventBatch(~chainConfig, ~blockLoader, ~blocksProcessed)
+    await events->EventProcessing.processEventBatch(
+      ~chainConfig,
+      ~blockLoader,
+      ~blocksProcessed,
+      ~logger,
+    )
 
     fromBlockRef := blocksProcessed.to + 1
     currentBlock := (await getCurrentBlockFromRPC())
@@ -97,19 +107,28 @@ let processAllEventsFromBlockNumber = async (
 }
 
 let processAllEvents = async (chainConfig: Config.chainConfig) => {
-  let blockLoader = LazyLoader.make(~loaderFn=EventFetching.getUnwrappedBlock(chainConfig.provider), ())
+  let traceLogger = Logging.createChild(~params={"chainId": chainConfig.chainId})
+
+  let blockLoader = LazyLoader.make(
+    ~loaderFn=EventFetching.getUnwrappedBlock(chainConfig.provider),
+    (),
+  )
   let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
     ~chainId=chainConfig.chainId,
   )
 
   let startBlock =
-    latestProcessedBlock->Belt.Option.mapWithDefault(
-      chainConfig.startBlock,
-      latestProcessedBlock => latestProcessedBlock + 1,
+    latestProcessedBlock->Belt.Option.mapWithDefault(chainConfig.startBlock, latestProcessedBlock =>
+      latestProcessedBlock + 1
     )
+  traceLogger->Logging.childTrace({
+    "msg": "Starting processing events for chain.",
+    "startBlock": startBlock,
+    "latestProcessedBlock": latestProcessedBlock,
+  })
 
   //Add all contracts and addresses from config
-  Converters.ContractNameAddressMappings.registerStaticAddresses(~chainConfig)
+  Converters.ContractNameAddressMappings.registerStaticAddresses(~chainConfig, ~logger=traceLogger)
 
   //Add all dynamic contracts from DB
   let dynamicContracts =
@@ -132,10 +151,12 @@ let processAllEvents = async (chainConfig: Config.chainConfig) => {
     ~initialBlockInterval=Config.syncConfig.initialBlockInterval,
     ~provider=chainConfig.provider,
     ~blockLoader,
+    ~logger=traceLogger,
   )
 }
 
 let startSyncingAllEvents = () => {
+  Logging.trace("Starting syncing all events")
   Config.config
   ->Js.Dict.values
   ->Belt.Array.map(chainConfig => {

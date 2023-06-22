@@ -15,7 +15,7 @@ module ContractNameAddressMappings: {
     ~chainId: int,
     ~contractName: string,
   ) => array<Ethers.ethAddress>
-  let registerStaticAddresses: (~chainConfig: Config.chainConfig) => unit
+  let registerStaticAddresses: (~chainConfig: Config.chainConfig, ~logger: Pino.t) => unit
 } = {
   let globalMutable = ContractAddressingMap.makeChainMappings()
 
@@ -67,9 +67,18 @@ module ContractNameAddressMappings: {
   }
 
   // Insert the static address into the Contract <-> Address bi-mapping
-  let registerStaticAddresses = (~chainConfig: Config.chainConfig) => {
+  let registerStaticAddresses = (~chainConfig: Config.chainConfig, ~logger: Pino.t) => {
     chainConfig.contracts->Belt.Array.forEach(contract => {
       contract.addresses->Belt.Array.forEach(address => {
+        Logging.childTrace(
+          logger,
+          {
+            "msg": "adding contract address",
+            "contractName": contract.name,
+            "address": address,
+          },
+        )
+
         globalMutable->ContractAddressingMap.addChainAddress(
           ~chainId=chainConfig.chainId,
           ~contractName=contract.name,

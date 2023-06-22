@@ -31,3 +31,4 @@ cache
 build
 *.bs.js
 generated
+logs

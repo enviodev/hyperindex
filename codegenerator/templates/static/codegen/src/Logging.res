@@ -52,10 +52,36 @@ let fatal = message => {
   logger.fatal(. message->createPinoMessage)
 }
 
+let childTrace = (logger, params: 'a) => {
+  logger.trace(. params->createPinoMessage)
+}
+let childDebug = (logger, params: 'a) => {
+  logger.debug(. params->createPinoMessage)
+}
+let childInfo = (logger, params: 'a) => {
+  logger.info(. params->createPinoMessage)
+}
+let childWarn = (logger, params: 'a) => {
+  logger.warn(. params->createPinoMessage)
+}
+let childError = (logger, params: 'a) => {
+  logger.error(. params->createPinoMessage)
+}
+let childFatal = (logger, params: 'a) => {
+  logger.fatal(. params->createPinoMessage)
+}
+
+let createChild = (~params: 'a) => {
+  logger->child(params->createChildParams)
+}
+let createChildFrom = (~logger: t, ~params: 'a) => {
+  logger->child(params->createChildParams)
+}
+
 // // TODO: set ethers and postgres log levels in a similar way
 // // TODO: use environment varibles to set log levels
 
-// Testing usage:
+/* // Testing usage:
 trace("By default - This trace message should only be seen in the log file.")
 debug("By default - This debug message should only be seen in the log file.")
 
@@ -115,3 +141,4 @@ fatal({
     "additionally": {"numbers": 0.5654},
   },
 }) 
+*/
