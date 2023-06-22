@@ -14,7 +14,7 @@ describe("Raw Events Table Migrations", () => {
     await runMigrationsNoLogs();
   });
   after(async () => {
-    // await runMigrationsNoLogs();
+    await runMigrationsNoLogs();
   });
 
   it("Raw events table should migrate successfully", async () => {
