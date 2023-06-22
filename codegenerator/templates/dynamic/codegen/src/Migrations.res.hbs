@@ -137,7 +137,7 @@ let runUpMigrations = async (shouldExit) => {
 await TrackTables.trackAllTables()->Promise.catch(_err => {
     Logging.error(`Error tracking tables`)->Promise.resolve
   })
-if shouldExit {
+ if shouldExit {
     process->exit()
   }
 }
