@@ -124,18 +124,25 @@ pub fn check_user_file_diff_match(parsed_paths: &ParsedPaths) -> Result<bool, Bo
     let persisted_state = PersistedState::get_from_generated_file(&parsed_paths.project_paths)?;
     let current_config_hash = HashString::from_file_path(&parsed_paths.project_paths.config)?;
     if persisted_state.config_hash != current_config_hash {
+        println!("Change in config detected");
         return Ok(false);
     }
     let current_schema_hash = HashString::from_file_path(&parsed_paths.schema_path)?;
     if persisted_state.schema_hash != current_schema_hash {
+        println!("Change in schema detected");
         return Ok(false);
     }
     let current_handlers_hash = HashString::from_file_paths(parsed_paths.get_all_handler_paths())?;
     if persisted_state.handler_files_hash != current_handlers_hash {
+        println!("Change in handlers detected");
         return Ok(false);
     }
     let current_abi_hash = HashString::from_file_paths(parsed_paths.get_all_abi_paths())?;
-    Ok(persisted_state.abi_files_hash == current_abi_hash)
+    if persisted_state.abi_files_hash != current_abi_hash {
+        println!("Change in abis detected");
+        return Ok(false);
+    }
+    Ok(true)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
