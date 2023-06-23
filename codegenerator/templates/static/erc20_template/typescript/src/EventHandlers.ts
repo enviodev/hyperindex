@@ -17,24 +17,24 @@ ERC20Contract_registerApprovalHandler(({ event, context }) => {
   let ownerAccount = context.account.ownerAccountChanges();
 
   if (ownerAccount != undefined) {
-    // updating accountEntity object
+    // setting accountEntity object
     let accountObject: accountEntity = {
       id: ownerAccount.id,
       approval: event.params.value,
       balance: ownerAccount.balance,
     };
 
-    // updating the accountEntity with the new transfer field value
+    // setting the accountEntity with the new transfer field value
     context.account.update(accountObject);
   } else {
-    // updating accountEntity object
+    // setting accountEntity object
     let accountObject: accountEntity = {
       id: event.params.owner.toString(),
       approval: event.params.value,
       balance: BigInt(0),
     };
 
-    // inserting the accountEntity with the new transfer field value
+    // setting the accountEntity with the new transfer field value
     context.account.set(accountObject);
   }
 });
@@ -50,8 +50,8 @@ ERC20Contract_registerTransferHandler(({ event, context }) => {
   let senderAccount = context.account.senderAccountChanges();
 
   if (senderAccount != undefined) {
-    // updating the totals field value
-    // updating accountEntity object
+    // setting the totals field value
+    // setting accountEntity object
     let accountObject: accountEntity = {
       id: senderAccount.id,
       approval: senderAccount.approval,
@@ -60,17 +60,17 @@ ERC20Contract_registerTransferHandler(({ event, context }) => {
       ),
     };
 
-    // updating the accountEntity with the new transfer field value
+    // setting the accountEntity with the new transfer field value
     context.account.update(accountObject);
   } else {
-    // updating accountEntity object
+    // setting accountEntity object
     let accountObject: accountEntity = {
       id: event.params.from.toString(),
       approval: BigInt(0),
       balance: BigInt(0 - Number(event.params.value)),
     };
 
-    // inserting the accountEntity with the new transfer field value
+    // setting the accountEntity with the new transfer field value
     context.account.set(accountObject);
   }
 
@@ -78,7 +78,7 @@ ERC20Contract_registerTransferHandler(({ event, context }) => {
   let receiverAccount = context.account.receiverAccountChanges();
 
   if (receiverAccount != undefined) {
-    // updating accountEntity object
+    // setting accountEntity object
     let accountObject: accountEntity = {
       id: receiverAccount.id,
       approval: receiverAccount.approval,
@@ -87,17 +87,17 @@ ERC20Contract_registerTransferHandler(({ event, context }) => {
       ),
     };
 
-    // updating the accountEntity with the new transfer field value
+    // setting the accountEntity with the new transfer field value
     context.account.update(accountObject);
   } else {
-    // updating accountEntity object
+    // setting accountEntity object
     let accountObject: accountEntity = {
       id: event.params.to.toString(),
       approval: BigInt(0),
       balance: event.params.value,
     };
 
-    // inserting the accountEntity with the new transfer field value
+    // setting the accountEntity with the new transfer field value
     context.account.set(accountObject);
   }
 });

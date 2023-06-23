@@ -21,11 +21,11 @@ let gravatarSerialized2 = gravatarEntity2->Types.gravatarEntity_encode
 let mockInMemRow1: Types.inMemoryStoreRow<Js.Json.t> = {
   entity: gravatarSerialized1,
   eventData: mockEventData1,
-  dbOp: Types.Create,
+  dbOp: Types.Set,
 }
 
 let mockInMemRow2: Types.inMemoryStoreRow<Js.Json.t> = {
   entity: gravatarSerialized2,
   eventData: mockEventData2,
-  dbOp: Types.Create,
+  dbOp: Types.Set,
 }

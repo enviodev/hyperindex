@@ -16,8 +16,7 @@ User can use `context` as the gateway to interact with the indexer and the under
 
 The `context` also provides the following functions per entity that can be used to interact with that entity:
 
-- insert
-- update
+- set
 - delete
 
 User should import the auto-generated function names for loadEntities and handlers from the Handlers file in `/generated` directory, as well as the entities from Types file in `/generated` directory.

@@ -20,19 +20,19 @@ describe("E2E Mock Event Batch", () => {
     ContextMock.setMock->Sinon.resetStub
   })
 
-  it("6 newgravatar event insert calls in order", () => {
-    let insertCallFirstArgs =
+  it("6 newgravatar event set calls in order", () => {
+    let setCallFirstArgs =
       ContextMock.setMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
 
     Assert.deep_equal(
-      insertCallFirstArgs,
+      setCallFirstArgs,
       [
         MockEvents.newGravatar1.id->Ethers.BigInt.toString,
         MockEvents.newGravatar2.id->Ethers.BigInt.toString,
         MockEvents.newGravatar3.id->Ethers.BigInt.toString,
-        MockEvents.updatedGravatar1.id->Ethers.BigInt.toString,
-        MockEvents.updatedGravatar2.id->Ethers.BigInt.toString,
-        MockEvents.updatedGravatar3.id->Ethers.BigInt.toString,
+        MockEvents.setGravatar1.id->Ethers.BigInt.toString,
+        MockEvents.setGravatar2.id->Ethers.BigInt.toString,
+        MockEvents.setGravatar3.id->Ethers.BigInt.toString,
       ],
     )
   })

@@ -5,17 +5,12 @@ var Sinon = require("../bindings/Sinon.bs.js");
 var Sinon$1 = require("sinon");
 var MockEntities = require("./MockEntities.bs.js");
 
-var insertMock = Sinon$1.stub();
-
-var updateMock = Sinon$1.stub();
+var setMock = Sinon$1.stub();
 
 var mockNewGravatarContext = {
   gravatar: {
-    insert: (function (gravatarInsert) {
-        Sinon.callStub1(insertMock, gravatarInsert.id);
-      }),
-    update: (function (gravatarUpdate) {
-        Sinon.callStub1(updateMock, gravatarUpdate.id);
+    set: (function (gravatarSet) {
+        Sinon.callStub1(setMock, gravatarSet.id);
       }),
     delete: (function (_id) {
         console.log("inimplemented delete");
@@ -28,11 +23,8 @@ var mockUpdateGravatarContext = {
     gravatarWithChanges: (function (param) {
         return MockEntities.gravatarEntity1;
       }),
-    insert: (function (gravatarInsert) {
-        Sinon.callStub1(insertMock, gravatarInsert.id);
-      }),
-    update: (function (gravatarUpdate) {
-        Sinon.callStub1(updateMock, gravatarUpdate.id);
+    set: (function (gravatarSet) {
+        Sinon.callStub1(setMock, gravatarSet.id);
       }),
     delete: (function (_id) {
         console.log("inimplemented delete");
@@ -40,8 +32,7 @@ var mockUpdateGravatarContext = {
   }
 };
 
-exports.insertMock = insertMock;
-exports.updateMock = updateMock;
+exports.setMock = setMock;
 exports.mockNewGravatarContext = mockNewGravatarContext;
 exports.mockUpdateGravatarContext = mockUpdateGravatarContext;
-/* insertMock Not a pure module */
+/* setMock Not a pure module */

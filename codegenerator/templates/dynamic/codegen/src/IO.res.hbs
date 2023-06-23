@@ -196,21 +196,6 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 let executeBatch = async sql => {
   let rawEventsRows = InMemoryStore.RawEvents.rawEventsDict.contents->Js.Dict.values
 
-  // let deleteRawEventsIdsPromise = sql => {
-  //   let deleteRawEventsIds =
-  //     rawEventsRows
-  //     ->Belt.Array.keepMap(rawEventsRow =>
-  //       rawEventsRow.dbOp == Types.Delete ? Some(rawEventsRow.entity) : None
-  //     )
-  //     ->Belt.Array.map(rawEvents => (rawEvents.chainId, rawEvents.eventId))
-
-  //   if deleteRawEventsIds->Belt.Array.length > 0 {
-  //     sql->DbFunctions.RawEvents.batchDeleteRawEvents(deleteRawEventsIds)
-  //   } else {
-  //     ()->Promise.resolve
-  //   }
-  // }
-
   let setRawEventsPromise = sql => {
     // NOTE: This is commented out because raw events are always 'Set' operations. Likely that will stay the case even with reorgs protections in place since it'll just re-run the batch rather than edit a partially run batch.
     // TODO: remove if not necessary

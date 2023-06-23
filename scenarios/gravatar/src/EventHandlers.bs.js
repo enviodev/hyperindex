@@ -11,7 +11,7 @@ Handlers.GravatarContract.registerNewGravatarLoadEntities(function (param, param
     });
 
 Handlers.GravatarContract.registerNewGravatarHandler(function ($$event, context) {
-      Curry._1(context.gravatar.insert, {
+      Curry._1(context.gravatar.set, {
             id: $$event.params.id.toString(),
             owner: Ethers.ethAddressToString($$event.params.owner),
             displayName: $$event.params.displayName,
@@ -28,7 +28,7 @@ Handlers.GravatarContract.registerUpdatedGravatarHandler(function ($$event, cont
       var updatesCount = Belt_Option.mapWithDefault(Curry._1(context.gravatar.gravatarWithChanges, undefined), 1, (function (gravatar) {
               return gravatar.updatesCount + 1 | 0;
             }));
-      Curry._1(context.gravatar.update, {
+      Curry._1(context.gravatar.set, {
             id: $$event.params.id.toString(),
             owner: Ethers.ethAddressToString($$event.params.owner),
             displayName: $$event.params.displayName,

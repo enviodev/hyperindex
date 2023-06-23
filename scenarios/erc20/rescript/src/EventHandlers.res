@@ -11,26 +11,26 @@ Handlers.ERC20Contract.registerApprovalHandler((~event, ~context) => {
 
   switch ownerAccount {
   | Some(existingAccount) => {
-      // updating accountEntity object
+      // setting accountEntity object
       let accountObject: accountEntity = {
         id: existingAccount.id,
         approval: event.params.value,
         balance: existingAccount.balance,
       }
 
-      // updating the accountEntity with the new transfer field value
+      // setting the accountEntity with the new transfer field value
       context.account.set(accountObject)
     }
 
   | None => {
-      // updating accountEntity object
+      // setting accountEntity object
       let accountObject: accountEntity = {
         id: event.params.owner->Ethers.ethAddressToString,
         approval: event.params.value,
         balance: Ethers.BigInt.fromInt(0),
       }
 
-      // inserting the accountEntity with the new transfer field value
+      // setting the accountEntity with the new transfer field value
       context.account.set(accountObject)
     }
   }
@@ -48,26 +48,26 @@ Handlers.ERC20Contract.registerTransferHandler((~event, ~context) => {
 
   switch senderAccount {
   | Some(existingSenderAccount) => {
-      // updating accountEntity object
+      // setting accountEntity object
       let accountObject: accountEntity = {
         id: existingSenderAccount.id,
         approval: existingSenderAccount.approval,
         balance: existingSenderAccount.balance->Ethers.BigInt.sub(event.params.value),
       }
 
-      // updating the accountEntity with the new transfer field value
+      // setting the accountEntity with the new transfer field value
       context.account.set(accountObject)
     }
 
   | None => {
-      // updating accountEntity object
+      // setting accountEntity object
         let accountObject: accountEntity = {
           id: event.params.from->Ethers.ethAddressToString,
           approval: Ethers.BigInt.fromInt(0),
           balance: Ethers.BigInt.fromInt(0) ->Ethers.BigInt.sub(event.params.value),
         }
 
-        // inserting the accountEntity with the new transfer field value
+        // setting the accountEntity with the new transfer field value
         context.account.set(accountObject)
     }
   }
@@ -77,26 +77,26 @@ Handlers.ERC20Contract.registerTransferHandler((~event, ~context) => {
 
   switch receiverAccount {
   | Some(existingReceiverAccount) => {
-      // updating accountEntity object
+      // setting accountEntity object
       let accountObject: accountEntity = {
         id: existingReceiverAccount.id,
         approval: existingReceiverAccount.approval,
         balance: existingReceiverAccount.balance->Ethers.BigInt.add(event.params.value),
       }
 
-      // updating the accountEntity with the new transfer field value
+      // setting the accountEntity with the new transfer field value
       context.account.set(accountObject)
     }
 
   | None => {
-      // updating accountEntity object
+      // setting accountEntity object
           let accountObject: accountEntity = {
             id: event.params.to->Ethers.ethAddressToString,
             approval: Ethers.BigInt.fromInt(0),
             balance: event.params.value,
           }
 
-          // inserting the accountEntity with the new transfer field value
+          // setting the accountEntity with the new transfer field value
           context.account.set(accountObject)
     }
   }

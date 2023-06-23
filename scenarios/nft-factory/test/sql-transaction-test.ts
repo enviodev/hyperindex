@@ -15,7 +15,7 @@ describe("Sql transaction tests", () => {
     await runMigrationsNoLogs();
   });
 
-  it("3 raw events inserted as transaction", async () => {
+  it("3 raw events set as transaction", async () => {
     const mockRawEventRow2 = {
       ...mockRawEventRow,
       event_id: mockRawEventRow.event_id + 1,
@@ -37,7 +37,7 @@ describe("Sql transaction tests", () => {
     expect(rawEventsRows.count).to.be.eq(3);
   });
 
-  it("3 raw events inserted with one invalid fails", async () => {
+  it("3 raw events set with one invalid fails", async () => {
     const mockRawEventRow2 = {
       ...mockRawEventRow,
       event_id: mockRawEventRow.event_id + 1,
