@@ -41,7 +41,7 @@ module {{contract.name.capitalized}}Contract = {
 
             addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
 
-            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(~entity=dynamicContractRegistration, ~crud=Types.Create)
+            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(~entity=dynamicContractRegistration)
 
              Converters.ContractNameAddressMappings.addContractAddress(
               ~chainId,
@@ -70,8 +70,7 @@ module {{contract.name.capitalized}}Contract = {
         getContext: (~eventData) => ({
           {{#each ../../entities as | entity |}}
             {{entity.name.uncapitalized}}: {
-              insert: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity = entity, ~crud = Types.Create, ~eventData)},
-              update: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity = entity, ~crud = Types.Update, ~eventData)},
+              set: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity = entity, ~dbOp = Types.Set, ~eventData)},
               delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
                 {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}

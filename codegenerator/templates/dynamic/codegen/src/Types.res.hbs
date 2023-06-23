@@ -77,8 +77,7 @@ type entity =
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
 {{/each}}
 
-
-type crud = Create | Read | Update | Delete
+type dbOp = Read | Set | Delete
 
 type eventData = {
   @as("event_chain_id") chainId: int,
@@ -86,7 +85,7 @@ type eventData = {
 }
 
 type inMemoryStoreRow<'a> = {
-  crud: crud,
+  dbOp: dbOp,
   entity: 'a,
   eventData: eventData,
 }
@@ -139,8 +138,7 @@ module {{event.name.capitalized}}Event = {
           {{/if}}
         {{/if}}
       {{/each}}
-      insert: {{entity.name.uncapitalized}}Entity => unit,
-      update: {{entity.name.uncapitalized}}Entity => unit,
+      set: {{entity.name.uncapitalized}}Entity => unit,
       delete: id => unit,
     }
     {{/each}}

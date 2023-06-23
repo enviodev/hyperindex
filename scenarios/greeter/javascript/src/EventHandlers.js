@@ -8,13 +8,13 @@ GreeterContract.registerNewGreetingHandler((event, context) => {
   let existingGreeter = context.greeting.greetingWithChangesLoad;
 
   if (existingGreeter != undefined) {
-    context.greeting.update({
+    context.greeting.set({
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: existingGreeter.numberOfGreetings + 1,
     });
   } else {
-    context.greeting.insert({
+    context.greeting.set({
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
@@ -29,7 +29,7 @@ GreeterContract.registerClearGreetingLoadEntities((event, context) => {
 GreeterContract.registerClearGreetingHandler((event, context) => {
   let existingGreeter = context.greeting.greetingWithChangesLoad;
   if (existingGreeter !== undefined) {
-    context.greeting.update({
+    context.greeting.set({
       id: event.params.user.toString(),
       latestGreeting: "",
       numberOfGreetings: existingGreeter.numberOfGreetings,

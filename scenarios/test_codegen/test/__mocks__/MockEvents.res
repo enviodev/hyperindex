@@ -19,21 +19,21 @@ let newGravatar3: Types.GravatarContract.NewGravatarEvent.eventArgs = {
   imageUrl: "https://gravatar3.com",
 }
 
-let updatedGravatar1: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
+let setGravatar1: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
   id: 1001->Ethers.BigInt.fromInt,
   owner: "0x1230000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update1",
   imageUrl: "https://gravatar1.com",
 }
 
-let updatedGravatar2: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
+let setGravatar2: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
   id: 1002->Ethers.BigInt.fromInt,
   owner: "0x4560000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update2",
   imageUrl: "https://gravatar2.com",
 }
 
-let updatedGravatar3: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
+let setGravatar3: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
   id: 1003->Ethers.BigInt.fromInt,
   owner: "0x7890000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update3",
@@ -74,10 +74,10 @@ let newGravatarEventLog3: Types.eventLog<Types.GravatarContract.NewGravatarEvent
   logIndex: 1,
 }
 
-let updatedGravatarEventLog1: Types.eventLog<
+let setGravatarEventLog1: Types.eventLog<
   Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
 > = {
-  params: updatedGravatar1,
+  params: setGravatar1,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
@@ -87,10 +87,10 @@ let updatedGravatarEventLog1: Types.eventLog<
   logIndex: 1,
 }
 
-let updatedGravatarEventLog2: Types.eventLog<
+let setGravatarEventLog2: Types.eventLog<
   Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
 > = {
-  params: updatedGravatar2,
+  params: setGravatar2,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
@@ -100,10 +100,10 @@ let updatedGravatarEventLog2: Types.eventLog<
   logIndex: 1,
 }
 
-let updatedGravatarEventLog3: Types.eventLog<
+let setGravatarEventLog3: Types.eventLog<
   Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
 > = {
-  params: updatedGravatar3,
+  params: setGravatar3,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
@@ -117,9 +117,9 @@ let eventBatch: array<Types.event> = [
   GravatarContract_NewGravatar(newGravatarEventLog1),
   GravatarContract_NewGravatar(newGravatarEventLog2),
   GravatarContract_NewGravatar(newGravatarEventLog3),
-  GravatarContract_UpdatedGravatar(updatedGravatarEventLog1),
-  GravatarContract_UpdatedGravatar(updatedGravatarEventLog2),
-  GravatarContract_UpdatedGravatar(updatedGravatarEventLog3),
+  GravatarContract_UpdatedGravatar(setGravatarEventLog1),
+  GravatarContract_UpdatedGravatar(setGravatarEventLog2),
+  GravatarContract_UpdatedGravatar(setGravatarEventLog3),
 ]
 
 let eventPromises = eventBatch->Belt.Array.map((e): EventFetching.eventBatchPromise =>
@@ -143,15 +143,15 @@ let eventBatchWithContext: array<Types.eventAndContext> = [
   GravatarContract_NewGravatarWithContext(newGravatarEventLog2, ContextMock.mockNewGravatarContext),
   GravatarContract_NewGravatarWithContext(newGravatarEventLog3, ContextMock.mockNewGravatarContext),
   GravatarContract_UpdatedGravatarWithContext(
-    updatedGravatarEventLog1,
+    setGravatarEventLog1,
     ContextMock.mockUpdateGravatarContext,
   ),
   GravatarContract_UpdatedGravatarWithContext(
-    updatedGravatarEventLog2,
+    setGravatarEventLog2,
     ContextMock.mockUpdateGravatarContext,
   ),
   GravatarContract_UpdatedGravatarWithContext(
-    updatedGravatarEventLog3,
+    setGravatarEventLog3,
     ContextMock.mockUpdateGravatarContext,
   ),
 ]

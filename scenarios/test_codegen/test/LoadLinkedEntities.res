@@ -34,21 +34,21 @@ describe("Linked Entity Loader Integration Test", () => {
     // NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
     let createEventA: createEntityFunction<Types.aEntity> = entity => {
       {
-        crud: Types.Create,
+        dbOp: Types.Set,
         entity: entity->Types.aEntity_encode,
         eventData: testEventData,
       }
     }
     let createEventB: createEntityFunction<Types.bEntity> = entity => {
       {
-        crud: Types.Create,
+        dbOp: Types.Set,
         entity: entity->Types.bEntity_encode,
         eventData: testEventData,
       }
     }
     let createEventC: createEntityFunction<Types.cEntity> = entity => {
       {
-        crud: Types.Create,
+        dbOp: Types.Set,
         entity: entity->Types.cEntity_encode,
         eventData: testEventData,
       }
@@ -84,12 +84,12 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
       ~chainId=123,
-      ~event=Obj.magic(/*adding a dummy object here as not used by the tests*/),
+      ~event=Obj.magic(),
     )
 
     let loaderContext = context.getLoaderContext()
 
-    let aLoader = loaderContext.a.testingALoad(
+    let _aLoader = loaderContext.a.testingALoad(
       "a1",
       ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {loadA: {}}}}}},
     )
@@ -142,21 +142,21 @@ describe("Linked Entity Loader Integration Test", () => {
     /// NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
     let createEventA: createEntityFunction<Types.aEntity> = entity => {
       {
-        crud: Types.Create,
+        dbOp: Types.Set,
         entity: entity->Types.aEntity_encode,
         eventData: testEventData,
       }
     }
     let createEventB: createEntityFunction<Types.bEntity> = entity => {
       {
-        crud: Types.Create,
+        dbOp: Types.Set,
         entity: entity->Types.bEntity_encode,
         eventData: testEventData,
       }
     }
     let createEventC: createEntityFunction<Types.cEntity> = entity => {
       {
-        crud: Types.Create,
+        dbOp: Types.Set,
         entity: entity->Types.cEntity_encode,
         eventData: testEventData,
       }
@@ -182,7 +182,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
       ~chainId=123,
-      ~event=Obj.magic(/*adding a dummy object here as not used by the tests*/),
+      ~event=Obj.magic(),
     )
 
     let loaderContext = context.getLoaderContext()

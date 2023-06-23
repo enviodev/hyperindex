@@ -28,7 +28,7 @@ GreeterContract_registerNewGreetingHandler(({ event, context }) => {
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
     };
-    context.greeting.insert(greetingObject);
+    context.greeting.set(greetingObject);
   }
 });
 

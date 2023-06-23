@@ -21,7 +21,7 @@ Handlers.PloffenContract.registerCreatePloffenHandler((~event, ~context) => {
     possibleWinner: None,
     possibleGameWinTime: 0,
   }
-  context.ploffengame.insert(ploffenObject)
+  context.ploffengame.set(ploffenObject)
 })
 
 /////////////////////////
@@ -44,7 +44,7 @@ Handlers.PloffenContract.registerStartPloffenHandler((~event, ~context) => {
         status: "Started",
         totalPot: event.params.seedAmount,
       }
-      context.ploffengame.insert(ploffenObject)
+      context.ploffengame.set(ploffenObject)
     }
 
   | None => Js.log("trying to start a ploffen that doens't exist")
@@ -74,7 +74,7 @@ Handlers.PloffenContract.registerPlayPloffenHandler((~event, ~context) => {
           numberOfTimesPlayed: user.numberOfTimesPlayed + 1,
           totalContributed: user.totalContributed->Ethers.BigInt.add(event.params.amount),
         }
-        context.user.insert(userObject)
+        context.user.set(userObject)
 
         let ploffenObject: ploffengameEntity = {
           ...ploffen,
@@ -82,7 +82,7 @@ Handlers.PloffenContract.registerPlayPloffenHandler((~event, ~context) => {
           possibleGameWinTime: event.blockTimestamp + 3600,
           possibleWinner: Some(user.id),
         }
-        context.ploffengame.insert(ploffenObject)
+        context.ploffengame.set(ploffenObject)
       }
 
     | None => {
@@ -92,7 +92,7 @@ Handlers.PloffenContract.registerPlayPloffenHandler((~event, ~context) => {
           numberOfTimesPlayed: 1,
           totalContributed: event.params.amount,
         }
-        context.user.insert(userObject)
+        context.user.set(userObject)
 
         let ploffenObject: ploffengameEntity = {
           ...ploffen,
@@ -101,7 +101,7 @@ Handlers.PloffenContract.registerPlayPloffenHandler((~event, ~context) => {
           possibleWinner: Some(userObject.id),
           users: Some(Array.append(ploffen.users->Belt.Option.getWithDefault([]), [userObject.id])),
         }
-        context.ploffengame.insert(ploffenObject)
+        context.ploffengame.set(ploffenObject)
       }
     }
 
@@ -128,7 +128,7 @@ Handlers.PloffenContract.registerWinPloffenHandler((~event, ~context) => {
       status: "Ended",
       winner: Some(event.params.winner->Ethers.ethAddressToString),
     }
-    context.ploffengame.insert(ploffenObject)
+    context.ploffengame.set(ploffenObject)
   | None => Js.log("Trying to win a non-existing ploffen game")
   }
 })

@@ -17,36 +17,22 @@ describe("E2E Mock Event Batch", () => {
   })
 
   after(() => {
-    ContextMock.insertMock->Sinon.resetStub
-    ContextMock.updateMock->Sinon.resetStub
+    ContextMock.setMock->Sinon.resetStub
   })
 
-  it("3 newgravatar event insert calls in order", () => {
-    let insertCallFirstArgs =
-      ContextMock.insertMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
+  it("6 newgravatar event set calls in order", () => {
+    let setCallFirstArgs =
+      ContextMock.setMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
 
     Assert.deep_equal(
+      setCallFirstArgs,
       [
         MockEvents.newGravatar1.id->Ethers.BigInt.toString,
         MockEvents.newGravatar2.id->Ethers.BigInt.toString,
         MockEvents.newGravatar3.id->Ethers.BigInt.toString,
-      ],
-      insertCallFirstArgs,
-    )
-  })
-
-  /* TODO: Make this update different entities
-   this test tests the exact same thing as above since events have the same IDs. */
-  it("3 updategravatar event insert calls in order", () => {
-    let insertCallFirstArgs =
-      ContextMock.insertMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
-
-    Assert.deep_equal(
-      insertCallFirstArgs,
-      [
-        MockEvents.updatedGravatar1.id->Ethers.BigInt.toString,
-        MockEvents.updatedGravatar2.id->Ethers.BigInt.toString,
-        MockEvents.updatedGravatar3.id->Ethers.BigInt.toString,
+        MockEvents.setGravatar1.id->Ethers.BigInt.toString,
+        MockEvents.setGravatar2.id->Ethers.BigInt.toString,
+        MockEvents.setGravatar3.id->Ethers.BigInt.toString,
       ],
     )
   })
@@ -68,7 +54,7 @@ describe("E2E Db check", () => {
       // Give a conservatively wide range of blocks
       ~blocksProcessed={from: 1, to: 10},
       ~blockLoader,
-      ~logger=Logging.logger
+      ~logger=Logging.logger,
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
@@ -85,7 +71,7 @@ describe("E2E Db check", () => {
       inMemoryStoreRows,
       [
         {
-          crud: Update, // TODO: fix these tests, it should be an 'Update' here.
+          dbOp: Set,
           eventData: {
             chainId: 1337,
             eventId: "65537",
@@ -99,7 +85,7 @@ describe("E2E Db check", () => {
           },
         },
         {
-          crud: Update,
+          dbOp: Set,
           eventData: {
             chainId: 1337,
             eventId: "65537",
@@ -113,7 +99,7 @@ describe("E2E Db check", () => {
           },
         },
         {
-          crud: Create, // NOTE: if this is not run against a fresh database it will get an `Update` instead of `Create`
+          dbOp: Set,
           eventData: {
             chainId: 1337,
             eventId: "65537",

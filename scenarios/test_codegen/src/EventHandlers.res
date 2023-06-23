@@ -13,7 +13,7 @@ Handlers.GravatarContract.registerNewGravatarHandler((~event, ~context) => {
     updatesCount: Ethers.BigInt.fromInt(1),
   }
 
-  context.gravatar.insert(gravatarObject)
+  context.gravatar.set(gravatarObject)
 })
 
 Handlers.GravatarContract.registerUpdatedGravatarLoadEntities((~event, ~context) => {
@@ -38,5 +38,5 @@ Handlers.GravatarContract.registerUpdatedGravatarHandler((~event, ~context) => {
     updatesCount,
   }
 
-  context.gravatar.update(gravatar)
+  context.gravatar.set(gravatar)
 })

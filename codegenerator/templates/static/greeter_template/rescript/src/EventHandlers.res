@@ -15,7 +15,7 @@ Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
         numberOfGreetings: existingGreeter.numberOfGreetings + 1,
       }
 
-      context.greeting.update(greetingObject)
+      context.greeting.set(greetingObject)
     }
 
   | None =>
@@ -25,7 +25,7 @@ Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
       numberOfGreetings: 1,
     }
 
-    context.greeting.insert(greetingObject)
+    context.greeting.set(greetingObject)
   }
 })
 
@@ -45,7 +45,7 @@ Handlers.GreeterContract.registerClearGreetingHandler((~event, ~context) => {
         numberOfGreetings: existingGreeter.numberOfGreetings,
       }
 
-      context.greeting.update(greetingObject)
+      context.greeting.set(greetingObject)
     }
   | None => ()
   }

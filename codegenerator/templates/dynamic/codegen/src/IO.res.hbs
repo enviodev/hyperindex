@@ -1,26 +1,13 @@
 module InMemoryStore = {
-
-  let entityCurrentCrud = (currentCrud: option<Types.crud>, nextCrud: Types.crud) => {
-
-     switch (currentCrud, nextCrud) {
-    | (Some(Create), Create) => Types.Create
-    | (Some(Read), Create)
-    | (Some(Update), Create)
-    | (Some(Delete), Create) =>
-      // dont know if this is an update or create
-      Update
-    | (Some(Create), Read) => Create
+  let entityCurrentCrud = (currentCrud: option<Types.dbOp>, nextCrud: Types.dbOp): Types.dbOp => {
+    switch (currentCrud, nextCrud) {
+    | (Some(Set), Read)
+    | (_, Set) =>
+      Set
     | (Some(Read), Read) => Read
-    | (Some(Update), Read) => Update
-    | (Some(Delete), Read) => Delete
-    | (Some(Create), Update) => Create
-    | (Some(Read), Update) => Update
-    | (Some(Update), Update) => Update
-    | (Some(Delete), Update) => Update
-    | (Some(Create), Delete) => Delete // interesting to note to line 23
-    | (Some(Read), Delete) => Delete
-    | (Some(Update), Delete) => Delete
-    | (Some(Delete), Delete) => Delete
+    | (Some(Delete), Read)
+    | (_, Delete) =>
+      Delete
     | (None, _) => nextCrud
     }
   }
@@ -35,21 +22,15 @@ module InMemoryStore = {
       row->Belt.Option.map(row => row.entity)
     }
 
-    let setRawEvents = (~entity: Types.rawEventsEntity, ~crud: Types.crud) => {
+    let setRawEvents = (~entity: Types.rawEventsEntity) => {
       let key = EventUtils.getEventIdKeyString(
         ~chainId=entity.chainId,
         ~eventId=entity.eventId,
       )
-      let rawEventCurrentCrud =
-        rawEventsDict.contents
-        ->Js.Dict.get(key)
-        ->Belt.Option.map(row => {
-          row.crud
-        })
 
       rawEventsDict.contents->Js.Dict.set(
         key,
-        {eventData: {chainId: entity.chainId, eventId: entity.eventId}, entity, crud: entityCurrentCrud(rawEventCurrentCrud, crud)},
+        {eventData: {chainId: entity.chainId, eventId: entity.eventId}, entity, dbOp: Set},
       )
     }   
   }
@@ -63,21 +44,22 @@ module InMemoryStore = {
         row->Belt.Option.map(row => row.entity)
       }
 
-      let setDynamicContractRegistry = (~entity: Types.dynamicContractRegistryEntity, ~crud: Types.crud) => {
+      let setDynamicContractRegistry = (~entity: Types.dynamicContractRegistryEntity) => {
         let key = EventUtils.getContractAddressKeyString(
           ~chainId=entity.chainId,
           ~contractAddress=entity.contractAddress,
         )
-        let dynamicContractRegistryCurrentCrud =
-          dynamicContractRegistryDict.contents
-          ->Js.Dict.get(key)
-          ->Belt.Option.map(row => {
-            row.crud
-          })
+      /// NOTE: currently deleting dynamic contracts in unimplemented,so the dbOp/dbOperation type is always 'Set'
+      // let dynamicContractRegistryCurrentCrud =
+      //   dynamicContractRegistryDict.contents
+      //   ->Js.Dict.get(key)
+      //   ->Belt.Option.map(row => {
+      //     row.dbOp
+      //   })
 
         dynamicContractRegistryDict.contents->Js.Dict.set(
           key,
-          {eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString}, entity, crud: entityCurrentCrud(dynamicContractRegistryCurrentCrud, crud)},
+          {eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString}, entity, dbOp: Types.Set},
         )
       }
     }
@@ -94,17 +76,17 @@ module {{entity.name.capitalized}} = {
     row->Belt.Option.map(row => row.entity)
   }
 
-  let set{{entity.name.capitalized}} = (~entity: Types.{{entity.name.uncapitalized}}Entity, ~crud: Types.crud, ~eventData: Types.eventData) => {
+  let set{{entity.name.capitalized}} = (~entity: Types.{{entity.name.uncapitalized}}Entity, ~dbOp: Types.dbOp, ~eventData: Types.eventData) => {
     let {{entity.name.uncapitalized}}CurrentCrud = Js.Dict.get(
       {{entity.name.uncapitalized}}Dict.contents,
       entity.id,
     )->Belt.Option.map(row => {
-      row.crud
+      row.dbOp
     })
 
 
 
-    {{entity.name.uncapitalized}}Dict.contents->Js.Dict.set(entity.id, {eventData, entity, crud: entityCurrentCrud({{entity.name.uncapitalized}}CurrentCrud, crud)})
+    {{entity.name.uncapitalized}}Dict.contents->Js.Dict.set(entity.id, {eventData, entity, dbOp: entityCurrentCrud({{entity.name.uncapitalized}}CurrentCrud, dbOp)})
   }
   }
   {{/each}}
@@ -196,7 +178,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
       {{entity.name.uncapitalized}}FieldEntitiesArray->Belt.Array.forEach(readRow => {
         let {entity, eventData} = DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData(readRow)
-        InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~crud=Types.Read)
+        InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~dbOp=Types.Read)
       })
 
       unique{{entity.name.capitalized}}AsEntityFieldArray := []
@@ -211,71 +193,66 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   }
 }
 
-let executeBatch = async (sql) => {
+let executeBatch = async sql => {
   let rawEventsRows = InMemoryStore.RawEvents.rawEventsDict.contents->Js.Dict.values
 
-  let deleteRawEventsIdsPromise = (sql) => {
-    let deleteRawEventsIds =
-      rawEventsRows
-      ->Belt.Array.keepMap(rawEventsRow =>
-        rawEventsRow.crud == Types.Delete ? Some(rawEventsRow.entity) : None
-      )
-      ->Belt.Array.map(rawEvents =>
-      (rawEvents.chainId, rawEvents.eventId)
-      )
+  let setRawEventsPromise = sql => {
+    // NOTE: This is commented out because raw events are always 'Set' operations. Likely that will stay the case even with reorgs protections in place since it'll just re-run the batch rather than edit a partially run batch.
+    // TODO: remove if not necessary
+    // let setRawEvents =
+    //   rawEventsRows->Belt.Array.keepMap(rawEventsRow =>
+    //     rawEventsRow.dbOp == Types.Set
+    //       ? Some(rawEventsRow.entity)
+    //       : None
+    //   )
+    let rawEventsToSet = rawEventsRows->Belt.Array.map(rawEventsRow => rawEventsRow.entity)
 
-    if deleteRawEventsIds->Belt.Array.length > 0 {
-      sql->DbFunctions.RawEvents.batchDeleteRawEvents(deleteRawEventsIds)
+    if rawEventsToSet->Belt.Array.length > 0 {
+      sql->DbFunctions.RawEvents.batchSetRawEvents(rawEventsToSet)
     } else {
       ()->Promise.resolve
     }
   }
 
-  let setRawEventsPromise = (sql) => {
-    let setRawEvents =
-      rawEventsRows->Belt.Array.keepMap(rawEventsRow =>
-        rawEventsRow.crud == Types.Create || rawEventsRow.crud == Update
-          ? Some(rawEventsRow.entity)
-          : None
-      )
+  let dynamicContractRegistryRows =
+    InMemoryStore.DynamicContractRegistry.dynamicContractRegistryDict.contents->Js.Dict.values
 
-    if setRawEvents->Belt.Array.length > 0 {
-      sql->DbFunctions.RawEvents.batchSetRawEvents(setRawEvents)
-    } else {
-      ()->Promise.resolve
-    }
-  }
+  // // NOTE: currently deleting dynamic contracts in unimplemented
+  // let deleteDynamicContractRegistryIdsPromise = sql => {
+  //   let deleteDynamicContractRegistryIds =
+  //     dynamicContractRegistryRows
+  //     ->Belt.Array.keepMap(dynamicContractRegistryRow =>
+  //       dynamicContractRegistryRow.dbOp == Types.Delete
+  //         ? Some(dynamicContractRegistryRow.entity)
+  //         : None
+  //     )
+  //     ->Belt.Array.map(dynamicContractRegistry => (
+  //       dynamicContractRegistry.chainId,
+  //       dynamicContractRegistry.contractAddress,
+  //     ))
 
-  let dynamicContractRegistryRows = InMemoryStore.DynamicContractRegistry.dynamicContractRegistryDict.contents->Js.Dict.values
+  //   if deleteDynamicContractRegistryIds->Belt.Array.length > 0 {
+  //     sql->DbFunctions.DynamicContractRegistry.batchDeleteDynamicContractRegistry(
+  //       deleteDynamicContractRegistryIds,
+  //     )
+  //   } else {
+  //     ()->Promise.resolve
+  //   }
+  // }
 
-  let deleteDynamicContractRegistryIdsPromise = (sql) => {
-    let deleteDynamicContractRegistryIds =
-      dynamicContractRegistryRows
-      ->Belt.Array.keepMap(dynamicContractRegistryRow =>
-        dynamicContractRegistryRow.crud == Types.Delete ? Some(dynamicContractRegistryRow.entity) : None
-      )
-      ->Belt.Array.map(dynamicContractRegistry => (
-        dynamicContractRegistry.chainId,
-        dynamicContractRegistry.contractAddress,
-      ))
-
-    if deleteDynamicContractRegistryIds->Belt.Array.length > 0 {
-      sql->DbFunctions.DynamicContractRegistry.batchDeleteDynamicContractRegistry(deleteDynamicContractRegistryIds)
-    } else {
-      ()->Promise.resolve
-    }
-  }
-
-  let setDynamicContractRegistryPromise = (sql) => {
+  let setDynamicContractRegistryPromise = sql => {
     let setDynamicContractRegistry =
       dynamicContractRegistryRows->Belt.Array.keepMap(dynamicContractRegistryRow =>
-        dynamicContractRegistryRow.crud == Types.Create || dynamicContractRegistryRow.crud == Update
+        // NOTE: the currently they will all be of type 'Set', but in the future we may add functionality to also delete contracts from the registry.
+        dynamicContractRegistryRow.dbOp == Types.Set
           ? Some(dynamicContractRegistryRow.entity)
           : None
       )
 
     if setDynamicContractRegistry->Belt.Array.length > 0 {
-      sql->DbFunctions.DynamicContractRegistry.batchSetDynamicContractRegistry(setDynamicContractRegistry)
+      sql->DbFunctions.DynamicContractRegistry.batchSetDynamicContractRegistry(
+        setDynamicContractRegistry,
+      )
     } else {
       ()->Promise.resolve
     }
@@ -288,7 +265,7 @@ let executeBatch = async (sql) => {
     let delete{{entity.name.capitalized}}Ids =
       {{entity.name.uncapitalized}}Rows
       ->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
-        {{entity.name.uncapitalized}}Row.crud == Types.Delete ? Some({{entity.name.uncapitalized}}Row.entity) : None
+        {{entity.name.uncapitalized}}Row.dbOp == Types.Delete ? Some({{entity.name.uncapitalized}}Row.entity) : None
       )
       ->Belt.Array.map({{entity.name.uncapitalized}} => {{entity.name.uncapitalized}}.id)
 
@@ -301,7 +278,7 @@ let executeBatch = async (sql) => {
   let set{{entity.name.capitalized}}Promise = (sql) => {
     let set{{entity.name.capitalized}} =
       {{entity.name.uncapitalized}}Rows->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
-        {{entity.name.uncapitalized}}Row.crud == Types.Create || {{entity.name.uncapitalized}}Row.crud == Update
+        {{entity.name.uncapitalized}}Row.dbOp == Types.Set
           ? Some({
             ...{{entity.name.uncapitalized}}Row,
             entity: {{entity.name.uncapitalized}}Row.entity->Types.{{entity.name.uncapitalized}}Entity_encode,
@@ -320,9 +297,8 @@ let executeBatch = async (sql) => {
 
   let res = await sql->Postgres.beginSql((sql)=>{
      [
-      sql->deleteRawEventsIdsPromise,
       sql->setRawEventsPromise,
-      sql->deleteDynamicContractRegistryIdsPromise,
+      // sql->deleteDynamicContractRegistryIdsPromise, // NOTE: currently deleting dynamic contracts in unimplemented
       sql->setDynamicContractRegistryPromise,
       {{#each entities as | entity |}}
       sql->delete{{entity.name.capitalized}}IdsPromise,

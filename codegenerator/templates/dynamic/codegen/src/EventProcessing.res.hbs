@@ -24,7 +24,7 @@ let addEventToRawEvents = (event: Types.eventLog<'a>, ~chainId, ~jsonSerializedP
     params: jsonSerializedParams->Js.Json.stringify,
   }
 
-  IO.InMemoryStore.RawEvents.setRawEvents(~entity=rawEvent, ~crud=Create)
+  IO.InMemoryStore.RawEvents.setRawEvents(~entity=rawEvent)
 }
 let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   switch event {

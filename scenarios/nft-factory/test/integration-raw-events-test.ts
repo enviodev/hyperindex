@@ -50,7 +50,7 @@ describe("Raw Events Integration", () => {
     ],
   });
 
-  before(async function() {
+  before(async function () {
     this.timeout(30 * 1000);
     await runMigrationsNoLogs();
     console.log("deploying Nft Factory");
@@ -106,12 +106,12 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async function() {
+  it("RawEvents table contains rows after indexer runs", async function () {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
-  it("Entities have metrics and relate to their raw events", async function() {
+  it("Entities have metrics and relate to their raw events", async function () {
     let joinedMetricsRows = await sql`
     SELECT t.db_write_timestamp AS t_write, t.event_chain_id, t.event_id, r.block_timestamp, r.db_write_timestamp AS r_write
     FROM public.token AS t
@@ -121,7 +121,7 @@ describe("Raw Events Integration", () => {
     expect(joinedMetricsRows.count).to.be.gt(0);
   });
 
-  it("should ensure Entites are created correctly", async function() {
+  it("should ensure Entites are created correctly", async function () {
     let rowsNftcollection = await sql`SELECT * FROM public.nftcollection`;
     expect(rowsNftcollection.count).to.be.gt(0);
     let rowsUsers = await sql`SELECT * FROM public.user`;
@@ -130,7 +130,7 @@ describe("Raw Events Integration", () => {
     expect(rowsToken.count).to.be.gt(0);
   });
 
-  it("should return the highest blockNumber processed processeing event", async function() {
+  it("should return the highest blockNumber processed processeing event", async function () {
     type blockNumberRow = {
       block_number: number;
     };
@@ -145,7 +145,7 @@ describe("Raw Events Integration", () => {
     expect(latestBlock).to.be.eq(5);
   });
 
-  it("latest block number function returns expected", async function() {
+  it("latest block number function returns expected", async function () {
     let chainId = 1337;
     let latestBlockNumber = await RawEvents.getLatestProcessedBlockNumber(
       chainId
@@ -154,7 +154,7 @@ describe("Raw Events Integration", () => {
     expect(latestBlockNumber).to.be.eq(5);
   });
 
-  it("reprocesses only new blocks after new events", async function() {
+  it("reprocesses only new blocks after new events", async function () {
     const mintTxs = [
       { user: Users.User1, quantity: 3 },
       { user: Users.User2, quantity: 6 },

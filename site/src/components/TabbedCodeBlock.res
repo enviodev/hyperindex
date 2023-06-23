@@ -44,7 +44,7 @@ let make = () => {
         <code>
           {`  
   }
-   context.gravatar.insert(gravatarObject)
+   context.gravatar.set(gravatarObject)
 })`->React.string}
         </code>
       </div>
