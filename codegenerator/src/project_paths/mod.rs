@@ -5,7 +5,8 @@ use std::{
 };
 
 use crate::cli_args::{
-    ProjectPathsArgs, DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH,
+    ProjectPathsArgs, ToProjectPathsArgs, DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH,
+    DEFAULT_PROJECT_ROOT_PATH,
 };
 
 pub mod handler_paths;
@@ -55,6 +56,22 @@ impl ProjectPaths {
             project_root,
             generated,
             config,
+        }
+    }
+}
+
+impl ToProjectPathsArgs for ProjectPaths {
+    fn to_project_paths_args(&self) -> ProjectPathsArgs {
+        let pathbuf_to_string = |path: &PathBuf| {
+            path.to_str()
+                .expect("project path should be convertable to a string")
+                .to_string()
+        };
+
+        ProjectPathsArgs {
+            project_root: pathbuf_to_string(&self.project_root),
+            generated: pathbuf_to_string(&self.generated),
+            config: pathbuf_to_string(&self.config),
         }
     }
 }

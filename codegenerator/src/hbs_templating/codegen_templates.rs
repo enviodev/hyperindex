@@ -219,7 +219,7 @@ pub fn generate_templates(
         chain_configs,
         codegen_out_path: gitignore_path_str,
         project_name,
-        persisted_state: PersistedStateJsonString::default(),
+        persisted_state: PersistedStateJsonString::try_default(project_paths)?,
     };
 
     let hbs =
