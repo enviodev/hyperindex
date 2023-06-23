@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::project_paths::{self, ProjectPaths};
+use crate::project_paths::ProjectPaths;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PersistedState {
