@@ -15,6 +15,7 @@ pub mod cli_args;
 
 pub mod commands;
 pub mod hbs_templating;
+pub mod persisted_state;
 
 use crate::project_paths::path_utils::normalize_path;
 
