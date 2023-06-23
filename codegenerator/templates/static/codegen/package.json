@@ -7,7 +7,8 @@
     "watch": "rescript build -with-deps -w",
     "db-up": "node -e 'require(`./src/Migrations.bs.js`).runUpMigrations(true)'",
     "db-down": "node -e 'require(`./src/Migrations.bs.js`).runDownMigrations(true)'",
-    "db-setup": "node -e 'require(`./src/Migrations.bs.js`).setupDb()'"
+    "db-setup": "node -e 'require(`./src/Migrations.bs.js`).setupDb()'",
+    "db-track-tables": "node -e 'require(`./src/TrackTables.bs.js`).trackAllTables()'"
   },
   "keywords": [
     "ReScript"
@@ -20,7 +21,9 @@
     "rescript": "^10.1.2"
   },
   "dependencies": {
+    "@glennsl/rescript-fetch": "^0.2.0",
     "@ryyppy/rescript-promise": "^2.1.0",
+    "isomorphic-fetch": "^3.0.0",
     "ethers": "^6",
     "express": "^4.17.1",
     "@glennsl/rescript-fetch": "^0.2.0",
