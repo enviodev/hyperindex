@@ -132,6 +132,14 @@ impl ParsedPaths {
         };
         Ok(abi_opt)
     }
+
+    pub fn get_all_handler_paths(&self) -> Vec<&PathBuf> {
+        self.handler_paths.values().collect::<Vec<&PathBuf>>()
+    }
+
+    pub fn get_all_abi_paths(&self) -> Vec<&PathBuf> {
+        self.abi_paths.values().collect::<Vec<&PathBuf>>()
+    }
 }
 
 #[cfg(test)]

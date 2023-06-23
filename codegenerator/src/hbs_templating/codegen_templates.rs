@@ -6,8 +6,7 @@ use crate::capitalization::Capitalize;
 use crate::capitalization::CapitalizedOptions;
 use crate::config_parsing::ChainConfigTemplate;
 use crate::persisted_state::PersistedStateJsonString;
-use crate::project_paths::handler_paths::HandlerPathsTemplate;
-use crate::project_paths::ProjectPaths;
+use crate::project_paths::{handler_paths::HandlerPathsTemplate, ParsedPaths};
 use include_dir::{include_dir, Dir};
 use serde::Serialize;
 
@@ -197,7 +196,8 @@ pub fn generate_templates(
     contracts: Vec<ContractTemplate>,
     chain_configs: Vec<ChainConfigTemplate>,
     entity_types: Vec<EntityRecordTypeTemplate>,
-    project_paths: &ProjectPaths,
+    parsed_paths: &ParsedPaths,
+    sync_config: SyncConfigTemplate,
     project_name: String,
 ) -> Result<(), Box<dyn Error>> {
     static CODEGEN_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/codegen");
@@ -206,7 +206,7 @@ pub fn generate_templates(
     handlebars.register_escape_fn(handlebars::no_escape);
 
     //TODO: make this a method in path handlers
-    let gitignore_generated_path = project_paths.generated.join("*");
+    let gitignore_generated_path = parsed_paths.project_paths.generated.join("*");
     let gitignore_path_str = gitignore_generated_path
         .to_str()
         .ok_or("invalid codegen path")?
@@ -219,11 +219,14 @@ pub fn generate_templates(
         chain_configs,
         codegen_out_path: gitignore_path_str,
         project_name,
-        persisted_state: PersistedStateJsonString::try_default(project_paths)?,
+        persisted_state: PersistedStateJsonString::try_default(parsed_paths)?,
     };
 
-    let hbs =
-        HandleBarsDirGenerator::new(&CODEGEN_DYNAMIC_DIR, &types_data, &project_paths.generated);
+    let hbs = HandleBarsDirGenerator::new(
+        &CODEGEN_DYNAMIC_DIR,
+        &types_data,
+        &parsed_paths.project_paths.generated,
+    );
     hbs.generate_hbs_templates()?;
 
     Ok(())

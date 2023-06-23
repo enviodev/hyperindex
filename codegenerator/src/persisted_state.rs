@@ -1,4 +1,10 @@
-use std::{error::Error, fs::File, io::Read, path::PathBuf};
+use std::{
+    error::Error,
+    fmt::{self, Display},
+    fs::File,
+    io::Read,
+    path::PathBuf,
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,13 +15,15 @@ use crate::project_paths::{ParsedPaths, ProjectPaths};
 pub struct HashString(String);
 
 impl HashString {
-    fn from_file(file_path: &PathBuf) -> Result<Self, Box<dyn Error>> {
-        // Open the file
-        let mut file = File::open(file_path)?;
-
+    fn from_file_paths(file_paths: Vec<&PathBuf>) -> Result<Self, Box<dyn Error>> {
         // Read file contents into a buffer
         let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
+
+        for file_path in file_paths {
+            // Open the file
+            let mut file = File::open(file_path)?;
+            file.read_to_end(&mut buffer)?;
+        }
 
         // Create a hash of the file contents
         let hash = Sha256::digest(&buffer);
@@ -26,28 +34,40 @@ impl HashString {
         Ok(HashString(hash_string))
     }
 
-    fn from_config_file(project_paths: &ProjectPaths) -> Result<Self, Box<dyn Error>> {
-        Self::from_file(&project_paths.config)
+    fn from_file_path(file_path: &PathBuf) -> Result<Self, Box<dyn Error>> {
+        Self::from_file_paths(vec![file_path])
     }
 
-    // fn from_schema_file(project_paths: &ProjectPaths) -> Result<Self, Box<dyn Error>> {
-    //     // ParsedPaths::new(project_paths.)
-    //     // Self::from_file(&project_paths.)
-    // }
+    #[cfg(test)]
+    fn inner(&self) -> String {
+        self.0.clone()
+    }
+}
+
+impl Display for HashString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PersistedState {
     pub has_run_db_migrations: bool,
     pub config_hash: HashString,
+    pub schema_hash: HashString,
+    pub handler_files_hash: HashString,
+    pub abi_files_hash: HashString,
 }
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 
 impl PersistedState {
-    pub fn try_default(project_paths: &ProjectPaths) -> Result<Self, Box<dyn Error>> {
+    pub fn try_default(parsed_paths: &ParsedPaths) -> Result<Self, Box<dyn Error>> {
         Ok(PersistedState {
             has_run_db_migrations: false,
-            config_hash: HashString::from_file(&project_paths.config)?,
+            config_hash: HashString::from_file_path(&parsed_paths.project_paths.config)?,
+            schema_hash: HashString::from_file_path(&parsed_paths.schema_path)?,
+            handler_files_hash: HashString::from_file_paths(parsed_paths.get_all_handler_paths())?,
+            abi_files_hash: HashString::from_file_paths(parsed_paths.get_all_abi_paths())?,
         })
     }
 
@@ -100,20 +120,60 @@ impl PersistedState {
     }
 }
 
-fn check_diff_match(parsed_paths: &ParsedPaths) -> Result<bool, Box<dyn Error>> {
+pub fn check_user_file_diff_match(parsed_paths: &ParsedPaths) -> Result<bool, Box<dyn Error>> {
     let persisted_state = PersistedState::get_from_generated_file(&parsed_paths.project_paths)?;
-    let current_config_hash = HashString::from_config_file(&parsed_paths.project_paths)?;
-    let current_schema_hash = HashString::from_file(&parsed_paths.schema_path)?;
-    Ok(persisted_state.config_hash == current_config_hash)
+    let current_config_hash = HashString::from_file_path(&parsed_paths.project_paths.config)?;
+    if persisted_state.config_hash != current_config_hash {
+        return Ok(false);
+    }
+    let current_schema_hash = HashString::from_file_path(&parsed_paths.schema_path)?;
+    if persisted_state.schema_hash != current_schema_hash {
+        return Ok(false);
+    }
+    let current_handlers_hash = HashString::from_file_paths(parsed_paths.get_all_handler_paths())?;
+    if persisted_state.handler_files_hash != current_handlers_hash {
+        return Ok(false);
+    }
+    let current_abi_hash = HashString::from_file_paths(parsed_paths.get_all_abi_paths())?;
+    Ok(persisted_state.abi_files_hash == current_abi_hash)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PersistedStateJsonString(String);
 
 impl PersistedStateJsonString {
-    pub fn try_default(project_paths: &ProjectPaths) -> Result<Self, Box<dyn Error>> {
+    pub fn try_default(parsed_paths: &ParsedPaths) -> Result<Self, Box<dyn Error>> {
         Ok(PersistedStateJsonString(
-            PersistedState::try_default(project_paths)?.to_json_string(),
+            PersistedState::try_default(parsed_paths)?.to_json_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use std::path::PathBuf;
+
+    use super::HashString;
+    const CONFIG_1: &str = "test/configs/config1.yaml";
+    const CONFIG_2: &str = "test/configs/config2.yaml";
+    #[test]
+    fn file_hash_single() {
+        let config1_path = PathBuf::from(CONFIG_1);
+        let hash = HashString::from_file_path(&config1_path).unwrap();
+        assert_eq!(
+            hash.inner(),
+            "70d77546796f25584e5b87fa851885990bc7870f02cf2b4afa9f64ef9a42b02a".to_string()
+        );
+    }
+    #[test]
+    fn file_hash_multiple() {
+        let config1_path = PathBuf::from(CONFIG_1);
+        let config2_path = PathBuf::from(CONFIG_2);
+        let hash = HashString::from_file_paths(vec![&config1_path, &config2_path]).unwrap();
+        assert_eq!(
+            hash.inner(),
+            "95b678bf1e788f56a819f8f13b7ece20a91775095360d297f9fea5555ad0e39b".to_string()
+        );
     }
 }
