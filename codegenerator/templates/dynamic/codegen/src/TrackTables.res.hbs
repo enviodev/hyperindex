@@ -45,9 +45,7 @@ let trackTable = async (~tableName: string) => {
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
 
-  Js.log2(tableName, "table tracked")
-  Js.log2("Status code:", statusCode)
-  Js.log(responseJson)
+  Logging.trace({"msg": "Table Tracked", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
 }
 
 let createSelectPermissions = async (~tableName: string) => {
@@ -76,9 +74,7 @@ let createSelectPermissions = async (~tableName: string) => {
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
 
-  Js.log2(tableName, "select permissions created")
-  Js.log2("Status code:", statusCode)
-  Js.log(responseJson)
+  Logging.trace({"msg": "Hasura select permissions created", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
 }
 
 let createEntityRelationship = async (
@@ -107,9 +103,7 @@ let createEntityRelationship = async (
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
 
-  Js.log2(tableName, "derived field permissions created")
-  Js.log2("Status code:", statusCode)
-  Js.log(responseJson)
+  Logging.trace({"msg": "Hasura derived field permissions created", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
 }
 
 let trackAllTables = async () => {
