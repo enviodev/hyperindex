@@ -5,6 +5,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::capitalization::Capitalize;
 use crate::capitalization::CapitalizedOptions;
 use crate::config_parsing::ChainConfigTemplate;
+use crate::persisted_state::PersistedStateJsonString;
 use crate::project_paths::handler_paths::HandlerPathsTemplate;
 use crate::project_paths::ProjectPaths;
 use include_dir::{include_dir, Dir};
@@ -170,6 +171,7 @@ struct TypesTemplate {
     chain_configs: Vec<ChainConfigTemplate>,
     codegen_out_path: String,
     sync_config: SyncConfigTemplate,
+    persisted_state: PersistedStateJsonString,
 }
 
 /// transform entities into a map from entity name to a list of all linked entities (entity fields) on that entity.
@@ -230,6 +232,7 @@ pub fn generate_templates(
         codegen_out_path: gitignore_path_str,
         sync_config,
         project_name,
+        persisted_state: PersistedStateJsonString::default(),
     };
 
     let hbs =

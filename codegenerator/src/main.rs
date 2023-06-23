@@ -11,6 +11,7 @@ use envio::{
     },
     commands,
     hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
+    persisted_state::PersistedState,
     project_paths::{self, ParsedPaths},
 };
 
@@ -135,7 +136,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         CommandType::Start(start_args) => {
             let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
-            if start_args.restart {
+
+            //TODO: handle the case where codegen has not been run yet on envio start where
+            //persisted state does not exist yet. Currently this will error but it should run
+            //the codegen command automatically
+            let persisted_state = PersistedState::get_from_generated_file(project_paths)?;
+            if start_args.restart || !persisted_state.has_run_db_migrations {
                 commands::db_migrate::run_db_setup(project_paths)?;
             }
             commands::start::start_indexer(project_paths)?;
