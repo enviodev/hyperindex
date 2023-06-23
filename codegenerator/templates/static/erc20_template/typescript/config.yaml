@@ -1,3 +1,4 @@
+name: erc20-indexer
 version: 1.0.0
 description: ERC-20 indexer
 repository: https://github.com/Envio/templates/ERC20
@@ -7,7 +8,7 @@ networks:
     start_block: 0
     contracts:
       - name: ERC20
-        abi_file_path: abis/erc20.json
+        abi_file_path: abis/ERC20.json
         address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
         handler: src/EventHandlers.js
         events:

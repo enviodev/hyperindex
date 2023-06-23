@@ -163,6 +163,7 @@ pub struct ContractTemplate {
 
 #[derive(Serialize)]
 struct TypesTemplate {
+    project_name: String,
     sub_record_dependencies: Vec<EventRecordTypeTemplate>,
     contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
@@ -207,6 +208,7 @@ pub fn generate_templates(
     entity_types: Vec<EntityRecordTypeTemplate>,
     project_paths: &ProjectPaths,
     sync_config: SyncConfigTemplate,
+    project_name: String,
 ) -> Result<(), Box<dyn Error>> {
     static CODEGEN_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/codegen");
     let mut handlebars = handlebars::Handlebars::new();
@@ -227,6 +229,7 @@ pub fn generate_templates(
         chain_configs,
         codegen_out_path: gitignore_path_str,
         sync_config,
+        project_name,
     };
 
     let hbs =
