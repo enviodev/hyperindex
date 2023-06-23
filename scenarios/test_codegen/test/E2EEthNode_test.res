@@ -14,13 +14,13 @@ let resetPostgresClient: unit => unit = () => {
 describe("E2E Integration Test", () => {
   MochaPromise.before(async () => {
     resetPostgresClient()
-    await Migrations.runDownMigrations(false)
-    await Migrations.runUpMigrations(false)
+    (await Migrations.runDownMigrations(false))->ignore
+    (await Migrations.runUpMigrations(false))->ignore
   })
 
   MochaPromise.after(async () => {
-    await Migrations.runDownMigrations(false)
-    await Migrations.runUpMigrations(false)
+    (await Migrations.runDownMigrations(false))->ignore
+    (await Migrations.runUpMigrations(false))->ignore
   })
 
   MochaPromise.it("Complete E2E", ~timeout=5 * 1000, async () => {
