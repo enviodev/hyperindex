@@ -93,7 +93,6 @@ pub mod codegen {
         let chain_config_templates =
             config_parsing::convert_config_to_chain_configs(&parsed_paths)?;
 
-        let sync_config = config_parsing::convert_config_to_sync_config(&parsed_paths)?;
         //Used to create project specific configuration during deployment
         let project_name = config_parsing::get_project_name_from_config(&parsed_paths)?;
         //NOTE: This structure is no longer used int event parsing since it has been refactored
@@ -117,7 +116,6 @@ pub mod codegen {
             chain_config_templates,
             entity_types,
             &project_paths,
-            sync_config,
             project_name,
         )?;
         Ok(())

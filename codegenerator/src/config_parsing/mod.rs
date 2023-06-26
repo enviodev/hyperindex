@@ -4,7 +4,6 @@ use std::path::PathBuf;
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
 
-use crate::hbs_templating::codegen_templates::SyncConfigTemplate;
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
@@ -88,23 +87,7 @@ pub struct Network {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct RpcConfig {
     url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    initial_block_interval: Option<u32>,
-    // After an RPC error, how much to scale back the number of blocks requested at once
-    #[serde(skip_serializing_if = "Option::is_none")]
-    backoff_multiplicative: Option<f32>,
-    // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-    #[serde(skip_serializing_if = "Option::is_none")]
-    acceleration_additive: Option<u32>,
-    // Do not further increase the block interval past this limit
-    #[serde(skip_serializing_if = "Option::is_none")]
-    interval_ceiling: Option<u32>,
-    // After an error, how long to wait before retrying
-    #[serde(skip_serializing_if = "Option::is_none")]
-    backoff_millis: Option<u32>,
-    // How long to wait before cancelling an RPC request
-    #[serde(skip_serializing_if = "Option::is_none")]
-    query_timeout_millis: Option<u32>,
+    unstable__sync_config: Option<SyncConfigUnstable>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -200,7 +183,7 @@ impl<T: Clone> TryFrom<OptSingleOrList<T>> for NormalizedList<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct SyncConfigUnstable {
     initial_block_interval: Option<u32>,
     // After an RPC error, how much to scale back the number of blocks requested at once
@@ -278,6 +261,11 @@ pub fn convert_config_to_chain_configs(
 
     let mut chain_configs = Vec::new();
     for network in config.networks.iter() {
+        
+        let mut network_template = network.clone();
+        // update RPC config with default sync config here
+        network_template.rpc_config = update_with_default_sync_config_values_if_missing(&parsed_paths)?;
+
         let mut contract_templates = Vec::new();
 
         for contract in network.contracts.iter() {
@@ -328,7 +316,7 @@ pub fn convert_config_to_chain_configs(
             contract_templates.push(contract_template);
         }
         let chain_config = ChainConfigTemplate {
-            network_config: network.clone(),
+            network_config: network_template,
             contracts: contract_templates,
         };
         chain_configs.push(chain_config);
@@ -336,34 +324,38 @@ pub fn convert_config_to_chain_configs(
     Ok(chain_configs)
 }
 
-pub fn convert_config_to_sync_config(
+pub fn update_with_default_sync_config_values_if_missing(
     parsed_paths: &ParsedPaths,
-) -> Result<SyncConfigTemplate, Box<dyn Error>> {
+) -> Result<RpcConfig, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
-    let c = config.unstable__sync_config.as_ref();
+    let c = config.networks[0].rpc_config.unstable__sync_config.as_ref();
 
     let d = defaults::SYNC_CONFIG;
 
-    let sync_config = SyncConfigTemplate {
-        initial_block_interval: c
+    let sync_config = SyncConfigUnstable {
+        initial_block_interval: Some(c
             .and_then(|c| c.initial_block_interval)
-            .unwrap_or(d.initial_block_interval),
-        backoff_multiplicative: c
-            .and_then(|c| c.backoff_multiplicative)
-            .unwrap_or(d.backoff_multiplicative),
-        acceleration_additive: c
+            .unwrap_or(d.initial_block_interval)),
+        backoff_multiplicative: Some(c.and_then(|c| c.backoff_multiplicative)
+            .unwrap_or(d.backoff_multiplicative)),
+        acceleration_additive: Some(c
             .and_then(|c| c.acceleration_additive)
-            .unwrap_or(d.acceleration_additive),
-        interval_ceiling: c
+            .unwrap_or(d.acceleration_additive)),
+        interval_ceiling: Some(c
             .and_then(|c| c.interval_ceiling)
-            .unwrap_or(d.interval_ceiling),
-        backoff_millis: c.and_then(|c| c.backoff_millis).unwrap_or(d.backoff_millis),
-        query_timeout_millis: c
+            .unwrap_or(d.interval_ceiling)),
+        backoff_millis: Some(c.and_then(|c| c.backoff_millis).unwrap_or(d.backoff_millis)),
+        query_timeout_millis: Some(c
             .and_then(|c| c.query_timeout_millis)
-            .unwrap_or(d.query_timeout_millis),
+            .unwrap_or(d.query_timeout_millis)),
     };
 
-    Ok(sync_config)
+    let rpc_config =  RpcConfig{
+        url: config.networks[0].rpc_config.url.clone(),
+        unstable__sync_config: Some(sync_config)
+    };
+    
+    Ok(rpc_config)
 }
 
 pub fn get_project_name_from_config(parsed_paths: &ParsedPaths) -> Result<String, Box<dyn Error>> {
@@ -429,15 +421,19 @@ mod tests {
         };
 
         let contracts = vec![contract1.clone()];
+
+        let sync_config = super::SyncConfigUnstable{
+            initial_block_interval: Some(10000),
+            interval_ceiling: Some(10000),
+            backoff_multiplicative: Some(0.8),
+            acceleration_additive: Some(2000),
+            backoff_millis: Some(5000),
+            query_timeout_millis: Some(20000),
+        };
         
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            initial_block_interval: Some(10000),
-            interval_ceiling: Some(10000),
-            backoff_multiplicative: None,
-            acceleration_additive: None,
-            backoff_millis: None,
-            query_timeout_millis: None,
+            unstable__sync_config: Some(sync_config),
         };
 
         let network1 = super::Network {
@@ -512,14 +508,18 @@ mod tests {
 
         let contracts1 = vec![contract1.clone()];
 
-        let rpc_config1 = super::RpcConfig {
-            url: String::from("https://eth.com"),
+        let sync_config = super::SyncConfigUnstable{
             initial_block_interval: Some(10000),
             interval_ceiling: Some(10000),
-            backoff_multiplicative: None,
-            acceleration_additive: None,
-            backoff_millis: None,
-            query_timeout_millis: None,
+            backoff_multiplicative: Some(0.8),
+            acceleration_additive: Some(2000),
+            backoff_millis: Some(5000),
+            query_timeout_millis: Some(20000),
+        };
+
+        let rpc_config1 = super::RpcConfig {
+            url: String::from("https://eth.com"),
+            unstable__sync_config: Some(sync_config)
         };
 
         let network1 = super::Network {
@@ -538,14 +538,18 @@ mod tests {
 
         let contracts2 = vec![contract2];
 
-        let rpc_config2 = super::RpcConfig {
-            url: String::from("https://eth.com"),
+        let sync_config = super::SyncConfigUnstable{
             initial_block_interval: Some(10000),
             interval_ceiling: Some(10000),
-            backoff_multiplicative: None,
-            acceleration_additive: None,
-            backoff_millis: None,
-            query_timeout_millis: None,
+            backoff_multiplicative: Some(0.8),
+            acceleration_additive: Some(2000),
+            backoff_millis: Some(5000),
+            query_timeout_millis: Some(20000),
+        };
+
+        let rpc_config2 = super::RpcConfig {
+            url: String::from("https://eth.com"),
+            unstable__sync_config: Some(sync_config)
         };
 
         let network2 = super::Network {
