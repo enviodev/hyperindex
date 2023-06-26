@@ -11,7 +11,7 @@ use envio::{
     },
     commands,
     hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
-    persisted_state::{check_user_file_diff_match, PersistedState},
+    persisted_state::{check_user_file_diff_match, persisted_state_file_exists, PersistedState},
     project_paths::{self, ParsedPaths},
 };
 
@@ -137,7 +137,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
 
-            if !check_user_file_diff_match(&parsed_paths)? {
+            if !persisted_state_file_exists(&project_paths)
+                || !check_user_file_diff_match(&parsed_paths)?
+            {
                 commands::codegen::run_codegen(&parsed_paths)?;
                 commands::codegen::run_post_codegen_command_sequence(&parsed_paths.project_paths)?;
             }

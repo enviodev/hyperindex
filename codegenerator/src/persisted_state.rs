@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     fmt::{self, Display},
-    fs::File,
+    fs::{self, File},
     io::Read,
     path::PathBuf,
 };
@@ -143,6 +143,16 @@ pub fn check_user_file_diff_match(parsed_paths: &ParsedPaths) -> Result<bool, Bo
         return Ok(false);
     }
     Ok(true)
+}
+
+pub fn persisted_state_file_exists(project_paths: &ProjectPaths) -> bool {
+    let file_path = project_paths.generated.join(PERSISTED_STATE_FILE_NAME);
+
+    if fs::metadata(&file_path).is_ok() {
+        return true;
+    } else {
+        return false;
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
