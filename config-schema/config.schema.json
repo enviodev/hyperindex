@@ -28,9 +28,53 @@
             "description": "Chain identifier of the network",
             "type": "integer"
           },
-          "rpc_url": {
-            "description": "RPC URL that will be used to subscribe to blockchain data on this network",
-            "type": "string"
+          "rpc_config": {
+            "description": "RPC configuration will be used to subscribe to blockchain data on this network",
+            "type": "array",
+            "items":{
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "url": {
+                  "description": "URL of the RPC endpoint",
+                  "type": "string"
+                },
+                "unstable__sync_config":{
+                  "description": "Sync configuration that will used to configure the RPC request",
+                  "type": "array",
+                  "items":{
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "initial_block_interval": {
+                        "description": "Initial block interval which the indexer will use to make RPC requests",
+                        "type": "integer"
+                      },
+                      "backoff_multiplicative": {
+                        "description": "After an RPC error, how much to scale back the number of blocks requested at once",
+                        "type": "integer"
+                      },
+                      "acceleration_additive": {
+                        "description": "Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch",
+                        "type": "integer"
+                      },
+                      "interval_ceiling": {
+                        "description": "Do not further increase the block interval past this limit",
+                        "type": "integer"
+                      },
+                      "backoff_millis": {
+                        "description": "After an error, how long to wait before retrying",
+                        "type": "integer"
+                      },
+                      "query_timeout_millis": {
+                        "description": "How long to wait before cancelling an RPC request",
+                        "type": "integer"
+                      }
+                    }
+                  }    
+                }
+              }
+            }
           },
           "start_block": {
             "description": "Initial block from which the indexer will start listening for events",
