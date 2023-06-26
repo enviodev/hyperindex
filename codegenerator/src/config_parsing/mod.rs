@@ -80,9 +80,31 @@ struct ConfigEvent {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Network {
     pub id: NetworkId,
-    rpc_url: String,
+    rpc_config: RpcConfig,
     start_block: i32,
     pub contracts: Vec<ConfigContract>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct RpcConfig {
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    initial_block_interval: Option<u32>,
+    // After an RPC error, how much to scale back the number of blocks requested at once
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backoff_multiplicative: Option<f32>,
+    // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
+    #[serde(skip_serializing_if = "Option::is_none")]
+    acceleration_additive: Option<u32>,
+    // Do not further increase the block interval past this limit
+    #[serde(skip_serializing_if = "Option::is_none")]
+    interval_ceiling: Option<u32>,
+    // After an error, how long to wait before retrying
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backoff_millis: Option<u32>,
+    // How long to wait before cancelling an RPC request
+    #[serde(skip_serializing_if = "Option::is_none")]
+    query_timeout_millis: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -407,9 +429,20 @@ mod tests {
         };
 
         let contracts = vec![contract1.clone()];
+        
+        let rpc_config1 = super::RpcConfig {
+            url: String::from("https://eth.com"),
+            initial_block_interval: Some(10000),
+            interval_ceiling: Some(10000),
+            backoff_multiplicative: None,
+            acceleration_additive: None,
+            backoff_millis: None,
+            query_timeout_millis: None,
+        };
+
         let network1 = super::Network {
             id: 1,
-            rpc_url: String::from("https://eth.com"),
+            rpc_config: rpc_config1,
             start_block: 0,
             contracts,
         };
@@ -479,9 +512,19 @@ mod tests {
 
         let contracts1 = vec![contract1.clone()];
 
+        let rpc_config1 = super::RpcConfig {
+            url: String::from("https://eth.com"),
+            initial_block_interval: Some(10000),
+            interval_ceiling: Some(10000),
+            backoff_multiplicative: None,
+            acceleration_additive: None,
+            backoff_millis: None,
+            query_timeout_millis: None,
+        };
+
         let network1 = super::Network {
             id: 1,
-            rpc_url: String::from("https://eth.com"),
+            rpc_config: rpc_config1,
             start_block: 0,
             contracts: contracts1,
         };
@@ -495,9 +538,19 @@ mod tests {
 
         let contracts2 = vec![contract2];
 
+        let rpc_config2 = super::RpcConfig {
+            url: String::from("https://eth.com"),
+            initial_block_interval: Some(10000),
+            interval_ceiling: Some(10000),
+            backoff_multiplicative: None,
+            acceleration_additive: None,
+            backoff_millis: None,
+            query_timeout_millis: None,
+        };
+
         let network2 = super::Network {
             id: 2,
-            rpc_url: String::from("https://eth.com"),
+            rpc_config: rpc_config2,
             start_block: 0,
             contracts: contracts2,
         };

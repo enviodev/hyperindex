@@ -31,6 +31,14 @@ describe("E2E Integration Test", () => {
       provider,
       startBlock: 0,
       chainId: 1337,
+      syncConfig: {
+        initialBlockInterval: 10000,
+        backoffMultiplicative: 10000.0,
+        accelerationAdditive: 10000,
+        intervalCeiling: 10000,
+        backoffMillis: 10000,
+        queryTimeoutMillis: 10000,
+      },
       contracts: [
         {
           name: "GravatarRegistry",

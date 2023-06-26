@@ -219,19 +219,18 @@ let queryEventsWithCombinedFilter = async (
   logs->convertLogs(~blockLoader, ~addressInterfaceMapping, ~chainId, ~logger)
 }
 let getContractEventsOnFilters = async (
-  ~addressInterfaceMapping,
   ~eventFilters,
-  ~minFromBlockLogIndex=0,
+  ~addressInterfaceMapping,
   ~fromBlock,
   ~toBlock,
   ~initialBlockInterval,
-  ~chainId,
-  ~provider,
+  ~minFromBlockLogIndex=0,
+  ~chainConfig: Config.chainConfig,
   ~blockLoader,
   ~logger,
   (),
 ) => {
-  let sc = Config.syncConfig
+  let sc = chainConfig.syncConfig
 
   let fromBlockRef = ref(fromBlock)
   let shouldContinueProcess = () => fromBlockRef.contents <= toBlock
@@ -260,9 +259,9 @@ let getContractEventsOnFilters = async (
           ~fromBlock=fromBlockRef.contents,
           ~toBlock=nextToBlock,
           ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
-          ~provider,
+          ~provider = chainConfig.provider,
           ~blockLoader,
-          ~chainId,
+          ~chainId = chainConfig.chainId,
           ~logger,
           (),
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))

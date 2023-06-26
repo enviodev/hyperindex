@@ -5,12 +5,22 @@ addresses: array<Ethers.ethAddress>,
   events: array<Types.eventName>,
     }
 
-    type chainConfig = {
-    provider: Ethers.JsonRpcProvider.t,
-    startBlock: int,
-    chainId: int,
-    contracts: array<contract>,
-      }
+    type syncConfig = {
+  initialBlockInterval: int,
+  backoffMultiplicative: float,
+  accelerationAdditive: int,
+  intervalCeiling: int,
+  backoffMillis: int,
+  queryTimeoutMillis: int,
+}
+
+type chainConfig = {
+  provider: Ethers.JsonRpcProvider.t,
+  startBlock: int,
+  chainId: int,
+  contracts: array<contract>,
+  syncConfig: syncConfig,
+}
 
       type chainConfigs = Js.Dict.t<chainConfig>
 
@@ -68,10 +78,39 @@ addresses: array<Ethers.ethAddress>,
         (
         "{{chain_config.network_config.id}}",
         {
-        provider: Ethers.JsonRpcProvider.makeStatic(~rpcUrl="{{chain_config.network_config.rpc_url}}",
+        provider: Ethers.JsonRpcProvider.makeStatic(~rpcUrl="{{chain_config.network_config.rpc_config.url}}",
         ~chainId={{chain_config.network_config.id}}),
         startBlock: {{chain_config.network_config.start_block}},
         chainId: {{chain_config.network_config.id}},
+        syncConfig: {
+          initialBlockInterval: EnvUtils.getIntEnvVar(
+            ~envSafe,
+            "RPC_SYNC_INITIAL_BLOCK_INTERVAL",
+            ~fallback={{#if chain_config.network_config.rpc_config.initial_block_interval}} {{chain_config.network_config.rpc_config.initial_block_interval}} {{else}} 5000 {{/if}},
+          ),
+          // After an RPC error, how much to scale back the number of blocks requested at once
+          backoffMultiplicative: EnvUtils.getFloatEnvVar(
+            ~envSafe,
+            "RPC_SYNC_BACKOFF_MULTIPLICATIVE",
+            ~fallback={{#if chain_config.network_config.rpc_config.backoff_multiplicative}} {{chain_config.network_config.rpc_config.backoff_multiplicative}} {{else}} 1.5 {{/if}},
+          ),
+          // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
+          accelerationAdditive: EnvUtils.getIntEnvVar(
+            ~envSafe,
+            "RPC_SYNC_ACCELERATION_ADDITIVE",
+            ~fallback={{#if chain_config.network_config.rpc_config.acceleration_additive}} {{chain_config.network_config.rpc_config.acceleration_additive}} {{else}} 1000 {{/if}},
+          ),
+          // Do not further increase the block interval past this limit
+          intervalCeiling: EnvUtils.getIntEnvVar(
+            ~envSafe,
+            "RPC_SYNC_INTERVAL_CEILING",
+            ~fallback={{#if chain_config.network_config.rpc_config.interval_ceiling}} {{chain_config.network_config.rpc_config.interval_ceiling}} {{else}} 20000 {{/if}},
+          ),
+          // After an error, how long to wait before retrying
+          backoffMillis: {{#if chain_config.network_config.rpc_config.backoff_millis}} {{chain_config.network_config.rpc_config.backoff_millis}} {{else}} 2000 {{/if}},
+          // How long to wait before cancelling an RPC request
+          queryTimeoutMillis: {{#if chain_config.network_config.rpc_config.query_timeout_millis}} {{chain_config.network_config.rpc_config.query_timeout_millis}} {{else}} 2000 {{/if}},
+        },
         contracts: [
         {{#each chain_config.contracts as | contract |}}
         {
@@ -96,44 +135,7 @@ addresses: array<Ethers.ethAddress>,
         {{/each}}
         ]->Js.Dict.fromArray
 
-        type syncConfig = {
-        initialBlockInterval: int,
-        backoffMultiplicative: float,
-        accelerationAdditive: int,
-        intervalCeiling: int,
-        backoffMillis: int,
-        queryTimeoutMillis: int,
-        }
-
-        let syncConfig = {
-        initialBlockInterval: EnvUtils.getIntEnvVar(
-        ~envSafe,
-        "UNSTABLE__SYNC_INITIAL_BLOCK_INTERVAL",
-        ~fallback={{sync_config.initial_block_interval}},
-        ),
-        // After an RPC error, how much to scale back the number of blocks requested at once
-        backoffMultiplicative: EnvUtils.getFloatEnvVar(
-        ~envSafe,
-        "UNSTABLE__SYNC_BACKOFF_MULTIPLICATIVE",
-        ~fallback={{sync_config.backoff_multiplicative}},
-        ),
-        // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-        accelerationAdditive: EnvUtils.getIntEnvVar(
-        ~envSafe,
-        "UNSTABLE__SYNC_ACCELERATION_ADDITIVE",
-        ~fallback={{sync_config.acceleration_additive}},
-        ),
-        // Do not further increase the block interval past this limit
-        intervalCeiling: EnvUtils.getIntEnvVar(
-        ~envSafe,
-        "UNSTABLE__SYNC_INTERVAL_CEILING",
-        ~fallback={{sync_config.interval_ceiling}},
-        ),
-        // After an error, how long to wait before retrying
-        backoffMillis: {{sync_config.backoff_millis}},
-        // How long to wait before cancelling an RPC request
-        queryTimeoutMillis: {{sync_config.query_timeout_millis}},
-        }
+        
 
 // You need to close the envSafe after you're done with it so that it immediately tells you about your misconfigured environment on startup.
 envSafe->EnvSafe.close()

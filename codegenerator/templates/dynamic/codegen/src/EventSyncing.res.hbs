@@ -29,14 +29,13 @@ let queryEventsWithCombinedFilterAndProcessEventBatch = async (
 
 let processAllEventsFromBlockNumber = async (
   ~fromBlock: int,
-  ~initialBlockInterval,
   ~chainConfig: Config.chainConfig,
-  ~provider,
   ~blockLoader,
   ~logger,
 ) => {
-  let sc = Config.syncConfig
+  let sc = chainConfig.syncConfig
   let addressInterfaceMapping: Js.Dict.t<Ethers.Interface.t> = Js.Dict.empty()
+  let provider = chainConfig.provider
 
   let eventFilters = EventFetching.getAllEventFilters(
     ~addressInterfaceMapping,
@@ -60,7 +59,7 @@ let processAllEventsFromBlockNumber = async (
   //is handled with the below condition
   let shouldContinueProcess = () => fromBlockRef.contents <= currentBlock.contents
 
-  let currentBlockInterval = ref(initialBlockInterval)
+  let currentBlockInterval = ref(sc.initialBlockInterval)
 
   while shouldContinueProcess() {
     let blockInterval = currentBlockInterval.contents
@@ -74,14 +73,13 @@ let (
       blocksProcessed,
       finalBlockInterval,
     ) = await EventFetching.getContractEventsOnFilters(
-      ~addressInterfaceMapping,
       ~eventFilters,
-      ~minFromBlockLogIndex=0,
+      ~addressInterfaceMapping,
       ~fromBlock=fromBlockRef.contents,
       ~toBlock=targetBlock,
       ~initialBlockInterval=blockInterval,
-      ~chainId=chainConfig.chainId,
-      ~provider,
+      ~minFromBlockLogIndex=0,
+      ~chainConfig=chainConfig,
       ~blockLoader,
       ~logger,
       (),
@@ -157,8 +155,6 @@ let processAllEvents = async (chainConfig: Config.chainConfig) => {
   await processAllEventsFromBlockNumber(
     ~fromBlock=startBlock,
     ~chainConfig,
-    ~initialBlockInterval=Config.syncConfig.initialBlockInterval,
-    ~provider=chainConfig.provider,
     ~blockLoader,
     ~logger=traceLogger,
   )
