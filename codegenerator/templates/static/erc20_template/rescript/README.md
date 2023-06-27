@@ -18,7 +18,8 @@ description: ERC-20 indexer
 repository: https://github.com/Envio/templates/ERC20
 networks:
   - id: 1337
-    rpc_url: http://localhost:8545
+    rpc_config: 
+      url: http://localhost:8545
     start_block: 0
     contracts:
       - name: ERC20
@@ -46,7 +47,8 @@ networks:
 - `repository` - Repository of the project
 - `networks` - Configuration of the blockchain networks that the project is deployed on
   - `id` - Chain identifier of the network
-  - `rpc_url` - RPC URL that will be used to subscribe to blockchain data on this network
+- `rpc_config` - RPC Config that will be used to subscribe to blockchain data on this network
+    - `url` -  URL of the RPC endpoint
   - `start_block` - Initial block from which the indexer will start listening for events
   - `contracts` - Configuration for each contract deployed on the network
     - `name` - User-defined contract name
