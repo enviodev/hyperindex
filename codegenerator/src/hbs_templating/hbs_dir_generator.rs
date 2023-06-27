@@ -29,7 +29,7 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
         }
     }
 
-    fn generate_hbs_templates_internal_recersive(
+    fn generate_hbs_templates_internal_recursive(
         &self,
         hbs_templates_root_dir: &Dir,
     ) -> Result<(), String> {
@@ -91,12 +91,12 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                         })?;
                     }
                 }
-                DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recersive(self, &dir)?,
+                DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recursive(self, &dir)?,
             }
         }
         Ok(())
     }
     pub fn generate_hbs_templates(&self) -> Result<(), String> {
-        Self::generate_hbs_templates_internal_recersive(&self, self.templates_dir)
+        Self::generate_hbs_templates_internal_recursive(&self, self.templates_dir)
     }
 }

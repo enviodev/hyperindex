@@ -44,6 +44,14 @@ describe("Raw Events Integration", () => {
           events: [EventVariants.SimpleNftContract_TransferEvent],
         },
       ],
+      syncConfig: {
+        initialBlockInterval: 10000,
+        backoffMultiplicative:10000,
+        accelerationAdditive: 10000,
+        intervalCeiling: 10000,
+        backoffMillis: 10000,
+        queryTimeoutMillis: 10000,
+      },
     };
   };
 

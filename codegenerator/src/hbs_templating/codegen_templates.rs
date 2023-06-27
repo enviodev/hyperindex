@@ -110,16 +110,6 @@ pub struct EntityRecordTypeTemplate {
     pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct SyncConfigTemplate {
-    pub initial_block_interval: u32,
-    pub backoff_multiplicative: f32,
-    pub acceleration_additive: u32,
-    pub interval_ceiling: u32,
-    pub backoff_millis: u32,
-    pub query_timeout_millis: u32,
-}
-
 impl HasName for EntityRecordTypeTemplate {
     fn set_name(&mut self, name: CapitalizedOptions) {
         self.name = name;
@@ -170,7 +160,6 @@ struct TypesTemplate {
     entities: Vec<EntityRecordTypeTemplate>,
     chain_configs: Vec<ChainConfigTemplate>,
     codegen_out_path: String,
-    sync_config: SyncConfigTemplate,
     persisted_state: PersistedStateJsonString,
 }
 
@@ -209,7 +198,6 @@ pub fn generate_templates(
     chain_configs: Vec<ChainConfigTemplate>,
     entity_types: Vec<EntityRecordTypeTemplate>,
     project_paths: &ProjectPaths,
-    sync_config: SyncConfigTemplate,
     project_name: String,
 ) -> Result<(), Box<dyn Error>> {
     static CODEGEN_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/codegen");
@@ -230,7 +218,6 @@ pub fn generate_templates(
         entities: entity_types,
         chain_configs,
         codegen_out_path: gitignore_path_str,
-        sync_config,
         project_name,
         persisted_state: PersistedStateJsonString::default(),
     };

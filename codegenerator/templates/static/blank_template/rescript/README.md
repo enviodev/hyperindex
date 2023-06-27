@@ -18,7 +18,8 @@ description: My Awesome Contract # Description of the project
 repository:  # Repository of the project
 networks: # Configuration of the blockchain networks that the project is deployed on
   - id: 1337 # Chain identifier of the network
-    rpc_url: http://localhost:8545 # RPC URL that will be used to subscribe to blockchain data on this network
+    rpc_config: 
+      url: http://localhost:8545 # RPC URL that will be used to subscribe to blockchain data on this network
     start_block: 0 # Initial block from which the indexer will start listening for events
     contracts: # Configuration for each contract 
       - name: MyAwesomeContract # User-defined contract name
@@ -40,7 +41,8 @@ networks: # Configuration of the blockchain networks that the project is deploye
 - `repository` - Repository of the project
 - `networks` - Configuration of the blockchain networks that the project is deployed on
   - `id` - Chain identifier of the network
-  - `rpc_url` - RPC URL that will be used to subscribe to blockchain data on this network
+- `rpc_config` - RPC Config that will be used to subscribe to blockchain data on this network
+    - `url` -  URL of the RPC endpoint
   - `start_block` - Initial block from which the indexer will start listening for events
   - `contracts` - Configuration for each contract deployed on the network
     - `name` - User-defined contract name
