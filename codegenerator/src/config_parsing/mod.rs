@@ -85,6 +85,7 @@ pub struct Network {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
 pub struct RpcConfig {
     url: String,
     unstable__sync_config: Option<SyncConfigUnstable>,
