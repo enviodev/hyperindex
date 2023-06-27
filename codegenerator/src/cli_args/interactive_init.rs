@@ -97,16 +97,6 @@ impl InitArgs {
                 chosen_language
             }
         };
-        //
-        // let subgraph_id = match &template {
-        //     Template::SubgraphMigration => {
-        //         let input_subgraph_id =
-        //             Text::new("[BETA VERSION] What is the subgraph ID?").prompt().unwrap();
-        //
-        //         input_subgraph_id
-        //     }
-        //     _ => "".to_string(),
-        // };
 
         Ok(InitInteractive {
             directory,
