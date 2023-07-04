@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use serde_yaml;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
@@ -130,10 +130,13 @@ async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
 // Unnecessary to use a hashmap for subgraphs, because there is only one network per subgraph
 // But will be useful multiple subgraph IDs for same subgraph across different chains
 async fn generate_network_contract_hashmap(manifest_raw: &str) -> HashMap<String, Vec<String>> {
+
+    // Deserialize manifest file
     let manifest: GraphManifest = serde_yaml::from_str::<GraphManifest>(manifest_raw).unwrap();
 
     let mut network_contracts: HashMap<String, Vec<String>> = HashMap::new();
 
+    // Iterate through data sources and templates to get network name and contracts
     for data_source in manifest.data_sources {
         let network = data_source.network;
         let contracts: Vec<_> = data_source
@@ -148,6 +151,7 @@ async fn generate_network_contract_hashmap(manifest_raw: &str) -> HashMap<String
             .extend(contracts);
     }
 
+    // If templates exist, iterate through templates to get network name and contracts
     if let Some(templates) = manifest.templates {
         for template in templates {
             let network = template.network;
@@ -167,26 +171,31 @@ async fn generate_network_contract_hashmap(manifest_raw: &str) -> HashMap<String
     network_contracts
 }
 
+// Function to generate config, schema and abis from subgraph ID
 pub async fn generate_config_from_subgraph_id(
     project_root_path: &PathBuf,
     subgraph_id: &str,
     language: &Language,
 ) {
-    println!("Generating config for subgraph ID: {}", subgraph_id);
 
-    // manifest file not required for Envio's indexing, but useful to save in project directory for debugging
     println!("Fetching subgraph manifest file");
     let fetch_manifest_str = timeout(Duration::from_secs(20), fetch_ipfs_file(subgraph_id));
+
+    // Starting the migration process
     match fetch_manifest_str.await.unwrap() {
         Ok(manifest_str) => {
+
             // Convert manifest to YAML string
             let manifest_yaml = serde_yaml::to_string(&manifest_str).unwrap();
-
+            
             // Write manifest YAML file to a file
+            // manifest file not required for Envio's indexing, but useful to save in project directory for debugging
             std::fs::write("manifest.yaml", manifest_yaml).expect("Failed to write manifest.yaml");
-
+            
+            // Deserialize manifest file
             let manifest = serde_yaml::from_str::<GraphManifest>(&manifest_str).unwrap();
-
+            
+            // Create config object to be populated
             let mut config = Config {
                 version: "1.0.0".to_string(),
                 description: manifest.description.unwrap_or_else(|| "".to_string()),
@@ -199,11 +208,14 @@ pub async fn generate_config_from_subgraph_id(
             // Fetching schema file path from config
             let schema_file_path = &manifest.schema.file;
             let schema_id = &schema_file_path.value.as_str()[6..];
+
+            // Fetching schema file from IPFS and performing minor cleanup
             println!("Fetching subgraph schema file");
             let schema = fetch_ipfs_file(schema_id)
                 .await
                 .unwrap()
                 .replace("BigDecimal", "Float");
+            // Write the schema file 
             let mut schema_file_directory =
                 File::create(format!("{}schema.graphql", project_root_path.display()))
                     .expect("Failed to create file");
@@ -211,12 +223,17 @@ pub async fn generate_config_from_subgraph_id(
                 .write_all(schema.as_bytes())
                 .expect("Failed to write to file");
 
+            // Generate network contract hashmap
             let network_hashmap = generate_network_contract_hashmap(&manifest_str).await;
 
             for (network_name, contracts) in &network_hashmap {
+
+                // Serialize network name
+                // If network name not found, should continue with placeholder network name
                 if let Some(serialized_network_name) =
-                    chain_helpers::serialize_network_name(network_name)
+                    chain_helpers::deserialize_network_name(network_name)
                 {
+                    // Create network object to be populated
                     let mut network = Network {
                         id: chain_helpers::get_graph_protocol_chain_id(serialized_network_name)
                             .unwrap(),
@@ -225,6 +242,7 @@ pub async fn generate_config_from_subgraph_id(
                         start_block: 0,
                         contracts: vec![],
                     };
+                    // Iterate through contracts to get contract name, abi file path, address and event names
                     for contract in contracts {
                         if let Some(data_source) = manifest
                             .data_sources
@@ -260,10 +278,12 @@ pub async fn generate_config_from_subgraph_id(
                                         event: EventNameOrSig::Name(event_name.to_string()),
                                         required_entities: Some(vec![]),
                                     };
-
+                                    
+                                    // Pushing event to contract
                                     contract.events.push(event);
                                 };
                             }
+                            // Pushing contract to network
                             network.contracts.push(contract.clone());
 
                             // Fetching abi file path from config
@@ -279,13 +299,15 @@ pub async fn generate_config_from_subgraph_id(
                                         .join(format!("{}.json", data_source.name.to_string()));
 
                                     let file_path = Path::new(&abi_file_directory);
-
+                                    
+                                    // Create abi file directory if it doesn't exist
                                     if let Some(parent_dir) = file_path.parent() {
                                         if !parent_dir.exists() {
                                             fs::create_dir_all(parent_dir)
                                                 .expect("Failed to create directory");
                                         }
                                     }
+                                    // Write abi file to directory
                                     let mut abi_file = File::create(&abi_file_directory)
                                         .expect("Failed to create file");
                                     abi_file
@@ -312,8 +334,10 @@ pub async fn generate_config_from_subgraph_id(
                             println!("Data source not found");
                         }
                     }
+                    // Pushing network to config
                     config.networks.push(network);
                 } else {
+                    // Error message if network name is not found
                     println!("Invalid network");
                 }
             }
@@ -334,6 +358,9 @@ mod test {
     use crate::cli_args::Language;
 
     use super::GraphManifest;
+    
+    use super::chain_helpers;
+    // mod chain_helpers;
 
     #[tokio::test]
     #[ignore = "Integration test that interacts with ipfs"]
@@ -346,8 +373,37 @@ mod test {
     }
 
     #[test]
-    fn manifest_deserializes() {
+    fn test_manifest_deserializes() {
         let manifest_file = std::fs::read_to_string("test/configs/graph-manifest.yaml").unwrap();
         serde_yaml::from_str::<GraphManifest>(&manifest_file).unwrap();
     }
+    
+    #[test]
+    fn test_network_deserialization() {
+        let manifest_file = std::fs::read_to_string("test/configs/graph-manifest.yaml").unwrap();
+        let manifest: GraphManifest = serde_yaml::from_str::<GraphManifest>(&manifest_file).unwrap();
+        let network_name = "matic";
+        match chain_helpers::deserialize_network_name(network_name){
+            Some(serialized_network_name) => {
+                println!("{:?}", serialized_network_name);
+            },
+            None => {
+                println!("Invalid network");
+            }
+        }
+        // for data_source in manifest.data_sources{
+        //     // let chain_id = chain_helpers::get_graph_protocol_chain_id(network);
+        //     // let network = serde_yaml::from_str::<super::Network>(data_source.network).unwrap();
+        // }
+    }
+
+    // Ideas for unit tests
+    // - test that the config file is generated correctly
+    // - test that the schema file is generated correctly
+    // - test that the abi files are generated correctly
+    // - test that the event handler file is generated correctly
+    // - test that the config file is generated correctly for multiple networks
+    // - test that the config file is generated correctly for multiple contracts
+    // - test that the config file is generated correctly for multiple contracts and networks
+    // - test that the config file is generated correctly for multiple contracts and networks with multiple events
 }

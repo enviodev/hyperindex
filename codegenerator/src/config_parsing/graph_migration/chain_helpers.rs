@@ -1,6 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all(serialize = "kebab-case", deserialize = "kebab-case"))]
 pub enum NetworkName {
     Mainnet,
     Goerli,
@@ -11,9 +12,9 @@ pub enum NetworkName {
     PoaCore,
     Gnosis,
     Fuse,
-    Matic,
     Fantom,
-    ZkSync2Testnet,
+    Matic,
+    Zksync2Testnet,
     Boba,
     OptimismGoerli,
     Clover,
@@ -33,47 +34,12 @@ pub enum NetworkName {
     Harmony,
     BaseTestnet,
     PolygonZkevm,
-    ZkSyncEra,
+    ZksyncEra,
     Sepolia,
 }
 
-pub fn serialize_network_name(network_name: &str) -> Option<NetworkName> {
-    match network_name {
-        "mainnet" => Some(NetworkName::Mainnet),
-        "goerli" => Some(NetworkName::Goerli),
-        "optimism" => Some(NetworkName::Optimism),
-        "bsc" => Some(NetworkName::Bsc),
-        "poa-sokol" => Some(NetworkName::PoaSokol),
-        "chapel" => Some(NetworkName::Chapel),
-        "poa-core" => Some(NetworkName::PoaCore),
-        "gnosis" => Some(NetworkName::Gnosis),
-        "fuse" => Some(NetworkName::Fuse),
-        "matic" => Some(NetworkName::Matic),
-        "fantom" => Some(NetworkName::Fantom),
-        "zksync2-testnet" => Some(NetworkName::ZkSync2Testnet),
-        "boba" => Some(NetworkName::Boba),
-        "optimism-goerli" => Some(NetworkName::OptimismGoerli),
-        "clover" => Some(NetworkName::Clover),
-        "moonbeam" => Some(NetworkName::Moonbeam),
-        "moonriver" => Some(NetworkName::Moonriver),
-        "mbase" => Some(NetworkName::Mbase),
-        "fantom-testnet" => Some(NetworkName::FantomTestnet),
-        "arbitrum-one" => Some(NetworkName::ArbitrumOne),
-        "arbitrum-goerli" => Some(NetworkName::ArbitrumGoerli),
-        "celo" => Some(NetworkName::Celo),
-        "fuji" => Some(NetworkName::Fuji),
-        "avalanche" => Some(NetworkName::Avalanche),
-        "celo-alfajores" => Some(NetworkName::CeloAlfajores),
-        "mumbai" => Some(NetworkName::Mumbai),
-        "aurora" => Some(NetworkName::Aurora),
-        "aurora-testnet" => Some(NetworkName::AuroraTestnet),
-        "harmony" => Some(NetworkName::Harmony),
-        "base-testnet" => Some(NetworkName::BaseTestnet),
-        "polygon-zkevm" => Some(NetworkName::PolygonZkevm),
-        "zksync-era" => Some(NetworkName::ZkSyncEra),
-        "sepolia" => Some(NetworkName::Sepolia),
-        _ => None,
-    }
+pub fn deserialize_network_name(network_name: &str) -> Option<NetworkName> {
+    serde_json::from_str(network_name).ok()
 }
 
 // Function to return the chain ID of the network based on the network name
@@ -90,7 +56,7 @@ pub fn get_graph_protocol_chain_id(network_name: NetworkName) -> Option<i32> {
         NetworkName::Fuse => Some(122),
         NetworkName::Matic => Some(137),
         NetworkName::Fantom => Some(250),
-        NetworkName::ZkSync2Testnet => Some(280),
+        NetworkName::Zksync2Testnet => Some(280),
         NetworkName::Boba => Some(288),
         NetworkName::OptimismGoerli => Some(420),
         NetworkName::Clover => Some(1023),
@@ -110,7 +76,7 @@ pub fn get_graph_protocol_chain_id(network_name: NetworkName) -> Option<i32> {
         NetworkName::Harmony => Some(1666600000),
         NetworkName::BaseTestnet => Some(84531),
         NetworkName::PolygonZkevm => Some(1101),
-        NetworkName::ZkSyncEra => Some(324),
+        NetworkName::ZksyncEra => Some(324),
         NetworkName::Sepolia => Some(11155111),
     }
 }
