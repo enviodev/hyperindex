@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all(serialize = "kebab-case", deserialize = "kebab-case"))]
+#[serde(rename_all = "kebab-case")]
 pub enum NetworkName {
     Mainnet,
     Goerli,
@@ -39,44 +39,48 @@ pub enum NetworkName {
 }
 
 pub fn deserialize_network_name(network_name: &str) -> Option<NetworkName> {
-    serde_json::from_str(network_name).ok()
+    serde_json::to_value(network_name)
+        .ok()
+        .and_then(|value| serde_json::from_value(value).ok())
 }
 
 // Function to return the chain ID of the network based on the network name
-pub fn get_graph_protocol_chain_id(network_name: NetworkName) -> Option<i32> {
+pub fn get_graph_protocol_chain_id(network_name: Option<NetworkName>) -> i32 {
     match network_name {
-        NetworkName::Mainnet => Some(1),
-        NetworkName::Goerli => Some(5),
-        NetworkName::Optimism => Some(10),
-        NetworkName::Bsc => Some(56),
-        NetworkName::PoaSokol => Some(77),
-        NetworkName::Chapel => Some(97),
-        NetworkName::PoaCore => Some(99),
-        NetworkName::Gnosis => Some(100),
-        NetworkName::Fuse => Some(122),
-        NetworkName::Matic => Some(137),
-        NetworkName::Fantom => Some(250),
-        NetworkName::Zksync2Testnet => Some(280),
-        NetworkName::Boba => Some(288),
-        NetworkName::OptimismGoerli => Some(420),
-        NetworkName::Clover => Some(1023),
-        NetworkName::Moonbeam => Some(1284),
-        NetworkName::Moonriver => Some(1285),
-        NetworkName::Mbase => Some(1287),
-        NetworkName::FantomTestnet => Some(4002),
-        NetworkName::ArbitrumOne => Some(42161),
-        NetworkName::ArbitrumGoerli => Some(421613),
-        NetworkName::Celo => Some(42220),
-        NetworkName::Fuji => Some(43113),
-        NetworkName::Avalanche => Some(43114),
-        NetworkName::CeloAlfajores => Some(44787),
-        NetworkName::Mumbai => Some(80001),
-        NetworkName::Aurora => Some(1313161554),
-        NetworkName::AuroraTestnet => Some(1313161555),
-        NetworkName::Harmony => Some(1666600000),
-        NetworkName::BaseTestnet => Some(84531),
-        NetworkName::PolygonZkevm => Some(1101),
-        NetworkName::ZksyncEra => Some(324),
-        NetworkName::Sepolia => Some(11155111),
+        Some(NetworkName::Mainnet) => 1,
+        Some(NetworkName::Goerli) => 5,
+        Some(NetworkName::Optimism) => 10,
+        Some(NetworkName::Bsc) => 56,
+        Some(NetworkName::PoaSokol) => 77,
+        Some(NetworkName::Chapel) => 97,
+        Some(NetworkName::PoaCore) => 99,
+        Some(NetworkName::Gnosis) => 100,
+        Some(NetworkName::Fuse) => 122,
+        Some(NetworkName::Matic) => 137,
+        Some(NetworkName::Fantom) => 250,
+        Some(NetworkName::Zksync2Testnet) => 280,
+        Some(NetworkName::Boba) => 288,
+        Some(NetworkName::OptimismGoerli) => 420,
+        Some(NetworkName::Clover) => 1023,
+        Some(NetworkName::Moonbeam) => 1284,
+        Some(NetworkName::Moonriver) => 1285,
+        Some(NetworkName::Mbase) => 1287,
+        Some(NetworkName::FantomTestnet) => 4002,
+        Some(NetworkName::ArbitrumOne) => 42161,
+        Some(NetworkName::ArbitrumGoerli) => 421613,
+        Some(NetworkName::Celo) => 42220,
+        Some(NetworkName::Fuji) => 43113,
+        Some(NetworkName::Avalanche) => 43114,
+        Some(NetworkName::CeloAlfajores) => 44787,
+        Some(NetworkName::Mumbai) => 80001,
+        Some(NetworkName::Aurora) => 1313161554,
+        Some(NetworkName::AuroraTestnet) => 1313161555,
+        Some(NetworkName::Harmony) => 1666600000,
+        Some(NetworkName::BaseTestnet) => 84531,
+        Some(NetworkName::PolygonZkevm) => 1101,
+        Some(NetworkName::ZksyncEra) => 324,
+        Some(NetworkName::Sepolia) => 11155111,
+        // placeholder chain ID of 0 for unknown networks for subgraph migration
+        None => 0,
     }
 }
