@@ -6,7 +6,7 @@ networks:
   - id: 1
     rpc_config: 
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network
-      unstable__sync_config:
+      sync_config:
         initial_block_interval: 10000
         backoff_multiplicative: 0.8
         acceleration_additive: 2000
@@ -25,7 +25,7 @@ networks:
   - id: 2
     rpc_config: 
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network
-      unstable__sync_config:
+      sync_config:
         initial_block_interval: 10000
         backoff_multiplicative: 0.8
         acceleration_additive: 2000

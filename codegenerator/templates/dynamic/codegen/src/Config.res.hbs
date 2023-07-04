@@ -86,30 +86,30 @@ let config: chainConfigs = [
     initialBlockInterval: EnvUtils.getIntEnvVar(
       ~envSafe,
       "UNSTABLE__SYNC_CONFIG_INITIAL_BLOCK_INTERVAL",
-      ~fallback={{chain_config.network_config.rpc_config.unstable__sync_config.initial_block_interval}},
+      ~fallback={{chain_config.network_config.rpc_config.sync_config.initial_block_interval}},
     ),
     // After an RPC error, how much to scale back the number of blocks requested at once
     backoffMultiplicative: EnvUtils.getFloatEnvVar(
       ~envSafe,
       "UNSTABLE__SYNC_CONFIG_BACKOFF_MULTIPLICATIVE",
-      ~fallback={{chain_config.network_config.rpc_config.unstable__sync_config.backoff_multiplicative}},
+      ~fallback={{chain_config.network_config.rpc_config.sync_config.backoff_multiplicative}},
     ),
     // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
     accelerationAdditive: EnvUtils.getIntEnvVar(
       ~envSafe,
       "UNSTABLE__SYNC_CONFIG_ACCELERATION_ADDITIVE",
-      ~fallback={{chain_config.network_config.rpc_config.unstable__sync_config.acceleration_additive}},
+      ~fallback={{chain_config.network_config.rpc_config.sync_config.acceleration_additive}},
     ),
     // Do not further increase the block interval past this limit
     intervalCeiling: EnvUtils.getIntEnvVar(
       ~envSafe,
       "UNSTABLE__SYNC_CONFIG_INTERVAL_CEILING",
-      ~fallback={{chain_config.network_config.rpc_config.unstable__sync_config.interval_ceiling}},
+      ~fallback={{chain_config.network_config.rpc_config.sync_config.interval_ceiling}},
     ),
     // After an error, how long to wait before retrying
-    backoffMillis: {{chain_config.network_config.rpc_config.unstable__sync_config.backoff_millis}},
+    backoffMillis: {{chain_config.network_config.rpc_config.sync_config.backoff_millis}},
     // How long to wait before cancelling an RPC request
-    queryTimeoutMillis:{{chain_config.network_config.rpc_config.unstable__sync_config.query_timeout_millis}},
+    queryTimeoutMillis:{{chain_config.network_config.rpc_config.sync_config.query_timeout_millis}},
   },
   contracts: [
   {{#each chain_config.contracts as | contract |}}

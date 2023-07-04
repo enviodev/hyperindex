@@ -39,7 +39,7 @@
                   "description": "URL of the RPC endpoint",
                   "type": "string"
                 },
-                "unstable__sync_config":{
+                "sync_config":{
                   "description": "Sync configuration that will used to configure the RPC request",
                   "type": "array",
                   "items":{
