@@ -13,6 +13,8 @@ use crate::{
 pub mod entity_parsing;
 pub mod event_parsing;
 
+pub mod defaults;
+
 type NetworkId = i32;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -84,7 +86,7 @@ pub struct Network {
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct SyncConfig {
+pub struct SyncConfigUnstable {
     #[serde(default = "default_initial_block_interval")]
     initial_block_interval: u32,
 
@@ -105,33 +107,33 @@ pub struct SyncConfig {
 }
 
 // default value functions for sync config
-// TODO: update for networks / rpc end points that may use different default values
 fn default_initial_block_interval() -> u32 {
-    10000
+    defaults::SYNC_CONFIG.initial_block_interval
 }
 
 fn default_backoff_multiplicative() -> f32 {
-    0.8
+    defaults::SYNC_CONFIG.backoff_multiplicative
 }
 
 fn default_acceleration_additive() -> u32 {
-    2000
+    defaults::SYNC_CONFIG.acceleration_additive
 }
 
 fn default_interval_ceiling() -> u32 {
-    10000
+    defaults::SYNC_CONFIG.interval_ceiling
 }
 
 fn default_backoff_millis() -> u32 {
-    5000
+    defaults::SYNC_CONFIG.backoff_millis
 }
 
 fn default_query_timeout_millis() -> u32 {
-    20000
+    defaults::SYNC_CONFIG.query_timeout_millis
 }
 
-fn default_sync_config() -> SyncConfig {
-    SyncConfig {
+#[allow(non_snake_case)]
+fn default_unstable__sync_config() -> SyncConfigUnstable {
+    SyncConfigUnstable {
         initial_block_interval: default_initial_block_interval(),
         backoff_multiplicative: default_backoff_multiplicative(),
         acceleration_additive: default_acceleration_additive(),
@@ -142,10 +144,11 @@ fn default_sync_config() -> SyncConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
 pub struct RpcConfig {
     url: String,
-    #[serde(default = "default_sync_config")]
-    sync_config: SyncConfig,
+    #[serde(default = "default_unstable__sync_config")]
+    unstable__sync_config: SyncConfigUnstable,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -424,7 +427,7 @@ mod tests {
 
         let contracts = vec![contract1.clone()];
 
-        let sync_config = super::SyncConfig{
+        let unstable__sync_config = super::SyncConfigUnstable{
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -435,7 +438,7 @@ mod tests {
         
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            sync_config: sync_config,
+            unstable__sync_config: unstable__sync_config,
         };
 
         let network1 = super::Network {
@@ -510,7 +513,7 @@ mod tests {
 
         let contracts1 = vec![contract1.clone()];
 
-        let sync_config = super::SyncConfig{
+        let unstable__sync_config = super::SyncConfigUnstable{
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -521,7 +524,7 @@ mod tests {
 
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            sync_config: sync_config
+            unstable__sync_config: unstable__sync_config
         };
 
         let network1 = super::Network {
@@ -540,7 +543,7 @@ mod tests {
 
         let contracts2 = vec![contract2];
 
-        let sync_config = super::SyncConfig{
+        let unstable__sync_config = super::SyncConfigUnstable{
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -551,7 +554,7 @@ mod tests {
 
         let rpc_config2 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            sync_config: sync_config
+            unstable__sync_config: unstable__sync_config
         };
 
         let network2 = super::Network {
