@@ -427,7 +427,7 @@ mod tests {
 
         let contracts = vec![contract1.clone()];
 
-        let unstable__sync_config = super::SyncConfigUnstable{
+        let sync_config = super::SyncConfigUnstable{
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -438,7 +438,7 @@ mod tests {
         
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            unstable__sync_config: unstable__sync_config,
+            unstable__sync_config: sync_config,
         };
 
         let network1 = super::Network {
@@ -513,7 +513,7 @@ mod tests {
 
         let contracts1 = vec![contract1.clone()];
 
-        let unstable__sync_config = super::SyncConfigUnstable{
+        let sync_config = super::SyncConfigUnstable{
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -524,7 +524,7 @@ mod tests {
 
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            unstable__sync_config: unstable__sync_config
+            unstable__sync_config: sync_config
         };
 
         let network1 = super::Network {
@@ -543,7 +543,7 @@ mod tests {
 
         let contracts2 = vec![contract2];
 
-        let unstable__sync_config = super::SyncConfigUnstable{
+        let sync_config = super::SyncConfigUnstable{
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -554,7 +554,7 @@ mod tests {
 
         let rpc_config2 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            unstable__sync_config: unstable__sync_config
+            unstable__sync_config: sync_config
         };
 
         let network2 = super::Network {

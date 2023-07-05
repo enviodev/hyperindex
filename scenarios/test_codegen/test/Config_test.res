@@ -3,7 +3,7 @@ open Mocha
 
 let configPathString = "./config.yaml"
 
-type unstable__sync_config = {
+type sync_config = {
   initial_block_interval: int,
   backoff_multiplicative: float,
   acceleration_additive: int,
@@ -14,7 +14,7 @@ type unstable__sync_config = {
 
 type rpc_config = {
   url: string,
-  unstable__sync_config: unstable__sync_config,
+  unstable__sync_config: sync_config,
 }
 type network_conf = {id: string, rpc_config: rpc_config}
 type config = {networks: array<network_conf>}
