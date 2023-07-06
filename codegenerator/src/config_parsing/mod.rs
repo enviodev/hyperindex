@@ -13,6 +13,8 @@ use crate::{
 pub mod entity_parsing;
 pub mod event_parsing;
 
+pub mod defaults;
+
 type NetworkId = i32;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -105,36 +107,48 @@ pub struct SyncConfigUnstable {
 }
 
 // default value functions for sync config
-// TODO: update for networks / rpc end points that may use different default values
 fn default_initial_block_interval() -> u32 {
-    10000
+    defaults::SYNC_CONFIG.initial_block_interval
 }
 
 fn default_backoff_multiplicative() -> f32 {
-    0.8
+    defaults::SYNC_CONFIG.backoff_multiplicative
 }
 
 fn default_acceleration_additive() -> u32 {
-    2000
+    defaults::SYNC_CONFIG.acceleration_additive
 }
 
 fn default_interval_ceiling() -> u32 {
-    10000
+    defaults::SYNC_CONFIG.interval_ceiling
 }
 
 fn default_backoff_millis() -> u32 {
-    5000
+    defaults::SYNC_CONFIG.backoff_millis
 }
 
 fn default_query_timeout_millis() -> u32 {
-    20000
+    defaults::SYNC_CONFIG.query_timeout_millis
+}
+
+#[allow(non_snake_case)]
+fn default_unstable__sync_config() -> SyncConfigUnstable {
+    SyncConfigUnstable {
+        initial_block_interval: default_initial_block_interval(),
+        backoff_multiplicative: default_backoff_multiplicative(),
+        acceleration_additive: default_acceleration_additive(),
+        interval_ceiling: default_interval_ceiling(),
+        backoff_millis: default_backoff_millis(),
+        query_timeout_millis: default_query_timeout_millis(),
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
 pub struct RpcConfig {
     url: String,
-    unstable__sync_config: Option<SyncConfigUnstable>,
+    #[serde(default = "default_unstable__sync_config")]
+    unstable__sync_config: SyncConfigUnstable,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq)]
@@ -231,7 +245,6 @@ impl<T: Clone> TryFrom<OptSingleOrList<T>> for NormalizedList<T> {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[allow(non_snake_case)] //Allow unstable__sync_config to be non_snake_case§
 pub struct Config {
     name: String,
     version: String,
@@ -425,7 +438,7 @@ mod tests {
         
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            unstable__sync_config: Some(sync_config),
+            unstable__sync_config: sync_config,
         };
 
         let network1 = super::Network {
@@ -511,7 +524,7 @@ mod tests {
 
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            unstable__sync_config: Some(sync_config)
+            unstable__sync_config: sync_config
         };
 
         let network1 = super::Network {
@@ -541,7 +554,7 @@ mod tests {
 
         let rpc_config2 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            unstable__sync_config: Some(sync_config)
+            unstable__sync_config: sync_config
         };
 
         let network2 = super::Network {
