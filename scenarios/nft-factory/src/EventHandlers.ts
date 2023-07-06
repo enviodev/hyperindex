@@ -1,21 +1,22 @@
 import {
-  NftFactoryContract_registerSimpleNftCreatedHandler,
-  NftFactoryContract_registerSimpleNftCreatedLoadEntities,
-  SimpleNftContract_registerTransferHandler,
-  SimpleNftContract_registerTransferLoadEntities,
+  NftFactoryContract_SimpleNftCreated_handler,
+  NftFactoryContract_SimpleNftCreated_loader,
+  SimpleNftContract_Transfer_handler,
+  SimpleNftContract_Transfer_loader,
+
 } from "../generated/src/Handlers.gen";
 
 import { nftcollectionEntity, tokenEntity } from "../generated/src/Types.gen";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
-NftFactoryContract_registerSimpleNftCreatedLoadEntities(
+NftFactoryContract_SimpleNftCreated_loader(
   ({ event, context }) => {
     context.contractRegistration.addSimpleNft(event.params.contractAddress)
   }
 );
 
-NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
+NftFactoryContract_SimpleNftCreated_handler(({ event, context }) => {
   let nftCollection: nftcollectionEntity = {
     id: event.params.contractAddress,
     contractAddress: event.params.contractAddress,
@@ -27,7 +28,7 @@ NftFactoryContract_registerSimpleNftCreatedHandler(({ event, context }) => {
   context.nftcollection.set(nftCollection);
 });
 
-SimpleNftContract_registerTransferLoadEntities(({ event, context }) => {
+SimpleNftContract_Transfer_loader(({ event, context }) => {
   context.user.userFromLoad(event.params.from, { loaders: undefined });
   context.user.userToLoad(event.params.to, { loaders: undefined });
   context.nftcollection.nftCollectionUpdatedLoad(event.srcAddress);
@@ -36,7 +37,7 @@ SimpleNftContract_registerTransferLoadEntities(({ event, context }) => {
   );
 });
 
-SimpleNftContract_registerTransferHandler(({ event, context }) => {
+SimpleNftContract_Transfer_handler(({ event, context }) => {
   let nftCollectionUpdated = context.nftcollection.nftCollectionUpdated();
   let token = {
     id: event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
@@ -53,7 +54,7 @@ SimpleNftContract_registerTransferHandler(({ event, context }) => {
         ...nftCollectionUpdated,
         currentSupply,
       };
-      context.nftcollection.update(nftCollection);
+      context.nftcollection.set(nftCollection);
     }
   } else {
     console.log(

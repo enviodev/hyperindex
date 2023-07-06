@@ -1,11 +1,11 @@
 open Types
 
-Handlers.ERC20Contract.registerApprovalLoadEntities((~event, ~context) => {
+Handlers.ERC20Contract.Approval.loader((~event, ~context) => {
   // loading the required accountEntity
   context.account.ownerAccountChangesLoad(event.params.owner->Ethers.ethAddressToString)
 })
 
-Handlers.ERC20Contract.registerApprovalHandler((~event, ~context) => {
+Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
   //  getting the owner accountEntity
   let ownerAccount = context.account.ownerAccountChanges()
 
@@ -36,13 +36,13 @@ Handlers.ERC20Contract.registerApprovalHandler((~event, ~context) => {
   }
 })
 
-Handlers.ERC20Contract.registerTransferLoadEntities((~event, ~context) => {
+Handlers.ERC20Contract.Transfer.loader((~event, ~context) => {
   // loading the required accountEntity
   context.account.senderAccountChangesLoad(event.params.from->Ethers.ethAddressToString)
   context.account.receiverAccountChangesLoad(event.params.to->Ethers.ethAddressToString)
 })
 
-Handlers.ERC20Contract.registerTransferHandler((~event, ~context) => {
+Handlers.ERC20Contract.Transfer.handler((~event, ~context) => {
   // getting the sender accountEntity
   let senderAccount = context.account.senderAccountChanges()
 

@@ -1,19 +1,19 @@
 import {
-  SimpleBankContract_registerAccountCreatedLoadEntities,
-  SimpleBankContract_registerAccountCreatedHandler,
-  SimpleBankContract_registerDepositMadeLoadEntities,
-  SimpleBankContract_registerDepositMadeHandler,
-  SimpleBankContract_registerWithdrawalMadeLoadEntities,
-  SimpleBankContract_registerWithdrawalMadeHandler,
+  SimpleBankContract_AccountCreated_loader,
+  SimpleBankContract_AccountCreated_handler,
+  SimpleBankContract_DepositMade_loader,
+  SimpleBankContract_DepositMade_handler,
+  SimpleBankContract_WithdrawalMade_loader,
+  SimpleBankContract_WithdrawalMade_handler,
 } from "../generated/src/Handlers.gen";
 
 import { bankEntity, accountEntity } from "../generated/src/Types.gen";
 
-SimpleBankContract_registerAccountCreatedLoadEntities(
+SimpleBankContract_AccountCreated_loader(
   ({ event, context }) => { }
 );
 
-SimpleBankContract_registerAccountCreatedHandler(({ event, context }) => {
+SimpleBankContract_AccountCreated_handler(({ event, context }) => {
   let { userAddress } = event.params;
   let account: accountEntity = {
     id: userAddress.toString(),
@@ -25,14 +25,14 @@ SimpleBankContract_registerAccountCreatedHandler(({ event, context }) => {
   context.account.set(account);
 });
 
-SimpleBankContract_registerDepositMadeLoadEntities(({ event, context }) => {
+SimpleBankContract_DepositMade_loader(({ event, context }) => {
   context.account.accountBalanceChangesLoad(
     event.params.userAddress.toString()
   );
   context.bank.totalBalanceChangesLoad(event.srcAddress.toString());
 });
 
-SimpleBankContract_registerDepositMadeHandler(({ event, context }) => {
+SimpleBankContract_DepositMade_handler(({ event, context }) => {
   let { userAddress, amount } = event.params;
 
   let previousAccountBalance =
@@ -63,18 +63,18 @@ SimpleBankContract_registerDepositMadeHandler(({ event, context }) => {
     totalBalance: nextBankBalance,
   };
 
-  context.account.update(account);
-  context.bank.update(bank);
+  context.account.set(account);
+  context.bank.set(bank);
 });
 
-SimpleBankContract_registerWithdrawalMadeLoadEntities(({ event, context }) => {
+SimpleBankContract_WithdrawalMade_loader(({ event, context }) => {
   context.account.accountBalanceChangesLoad(
     event.params.userAddress.toString()
   );
   context.bank.totalBalanceChangesLoad(event.srcAddress.toString());
 });
 
-SimpleBankContract_registerWithdrawalMadeHandler(({ event, context }) => {
+SimpleBankContract_WithdrawalMade_handler(({ event, context }) => {
   let { userAddress, amount } = event.params;
 
   let previousAccountBalance =
@@ -105,6 +105,6 @@ SimpleBankContract_registerWithdrawalMadeHandler(({ event, context }) => {
     totalBalance: nextBankBalance,
   };
 
-  context.account.update(account);
-  context.bank.update(bank);
+  context.account.set(account);
+  context.bank.set(bank);
 });

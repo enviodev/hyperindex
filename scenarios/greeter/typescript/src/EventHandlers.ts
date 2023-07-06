@@ -1,17 +1,17 @@
 import {
-  GreeterContract_registerNewGreetingLoadEntities,
-  GreeterContract_registerNewGreetingHandler,
-  GreeterContract_registerClearGreetingLoadEntities,
-  GreeterContract_registerClearGreetingHandler,
+  GreeterContract_NewGreeting_loader,
+  GreeterContract_NewGreeting_handler,
+  GreeterContract_ClearGreeting_loader,
+  GreeterContract_ClearGreeting_handler,
 } from "../generated/src/Handlers.gen";
 
 import { greetingEntity } from "../generated/src/Types.gen";
 
-GreeterContract_registerNewGreetingLoadEntities(({ event, context }) => {
+GreeterContract_NewGreeting_loader(({ event, context }) => {
   context.greeting.greetingWithChangesLoad(event.params.user.toString());
 });
 
-GreeterContract_registerNewGreetingHandler(({ event, context }) => {
+GreeterContract_NewGreeting_handler(({ event, context }) => {
   let currentGreeter = context.greeting.greetingWithChanges();
 
   if (currentGreeter != null) {
@@ -21,7 +21,7 @@ GreeterContract_registerNewGreetingHandler(({ event, context }) => {
       numberOfGreetings: currentGreeter.numberOfGreetings + 1,
     };
 
-    context.greeting.update(greetingObject);
+    context.greeting.set(greetingObject);
   } else {
     let greetingObject: greetingEntity = {
       id: event.params.user.toString(),
@@ -32,11 +32,11 @@ GreeterContract_registerNewGreetingHandler(({ event, context }) => {
   }
 });
 
-GreeterContract_registerClearGreetingLoadEntities(({ event, context }) => {
+GreeterContract_ClearGreeting_loader(({ event, context }) => {
   context.greeting.greetingWithChangesLoad(event.params.user.toString());
 });
 
-GreeterContract_registerClearGreetingHandler(({ event, context }) => {
+GreeterContract_ClearGreeting_handler(({ event, context }) => {
   let currentGreeter = context.greeting.greetingWithChanges();
 
   if (currentGreeter != null) {
@@ -46,7 +46,7 @@ GreeterContract_registerClearGreetingHandler(({ event, context }) => {
       numberOfGreetings: currentGreeter.numberOfGreetings,
     };
 
-    context.greeting.update(greetingObject);
+    context.greeting.set(greetingObject);
   } else {
   }
 });
