@@ -35,7 +35,7 @@ let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   event->addEventToRawEvents(~chainId, ~jsonSerializedParams, ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
 )
 
-  Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}Handler()(~event, ~context)
+  Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()(~event, ~context)
   }
 {{/each}}
 {{/each}}
@@ -119,7 +119,7 @@ let rec loadReadEntitiesInner = async (
       {{#each contract.events as | event |}}
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
           let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~chainId, ~event)
-          Handlers.{{contract.name.capitalized}}Contract.get{{event.name.capitalized}}LoadEntities()(~event, ~context=contextHelper.getLoaderContext())
+          Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader()(~event, ~context=contextHelper.getLoaderContext())
           let {logIndex, blockNumber} = event
           let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
           let context = contextHelper.getContext(

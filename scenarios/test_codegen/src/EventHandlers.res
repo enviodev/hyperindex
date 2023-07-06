@@ -1,10 +1,10 @@
 open Types
 
-Handlers.GravatarContract.registerNewGravatarLoadEntities((~event, ~context) => {
+Handlers.GravatarContract.NewGravatar.loader((~event, ~context) => {
   context.contractRegistration.addSimpleNft(event.srcAddress)
 })
 
-Handlers.GravatarContract.registerNewGravatarHandler((~event, ~context) => {
+Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {
   let gravatarObject: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
     owner: event.params.owner->Ethers.ethAddressToString,
@@ -16,14 +16,14 @@ Handlers.GravatarContract.registerNewGravatarHandler((~event, ~context) => {
   context.gravatar.set(gravatarObject)
 })
 
-Handlers.GravatarContract.registerUpdatedGravatarLoadEntities((~event, ~context) => {
+Handlers.GravatarContract.UpdatedGravatar.loader((~event, ~context) => {
   context.gravatar.gravatarWithChangesLoad(
     ~loaders={loadOwner: {}},
     event.params.id->Ethers.BigInt.toString,
   )
 })
 
-Handlers.GravatarContract.registerUpdatedGravatarHandler((~event, ~context) => {
+Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
   let updatesCount =
     context.gravatar.gravatarWithChanges()->Belt.Option.mapWithDefault(
       Ethers.BigInt.fromInt(1),
