@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process;
 use tokio::time::{timeout, Duration};
 
 use crate::{
@@ -176,11 +177,47 @@ pub async fn generate_config_from_subgraph_id(
     subgraph_id: &str,
     language: &Language,
 ) {
-    println!("Fetching subgraph manifest file");
-    let fetch_manifest_str = timeout(Duration::from_secs(20), fetch_ipfs_file(subgraph_id));
+    // maximum backoff period for fetching files from IPFS
+    let maximum_backoff = Duration::from_secs(32);
+    let fetch_manifest_str = async {
+        let mut refetch_delay = Duration::from_secs(2);
+        loop {
+            match timeout(refetch_delay, fetch_ipfs_file(subgraph_id)).await {
+                Ok(Ok(manifest_str)) => break Ok(manifest_str),
+                Ok(Err(err)) => {
+                    if refetch_delay >= maximum_backoff {
+                        eprintln!("Failed to fetch manifest: {}", err);
+                        eprintln!(
+                            "Migration cannot continue as fetching manifest from IPFS timed out."
+                        );
+                        return Err(err);
+                    }
+                    eprintln!(
+                        "Failed to fetch manifest: {}. Retrying in {} seconds...",
+                        err,
+                        refetch_delay.as_secs()
+                    );
+                }
+                Err(_) => {
+                    if refetch_delay >= maximum_backoff {
+                        eprintln!(
+                            "Migration cannot continue as fetching manifest from IPFS timed out."
+                        );
+                        // Exit the function after 5 timed out fetches for the manifest file
+                        process::exit(1);
+                    }
+                    eprintln!(
+                        "Fetching manifest timed out. Retrying in {} seconds...",
+                        refetch_delay.as_secs()
+                    );
+                }
+            }
+            tokio::time::sleep(refetch_delay).await;
+            refetch_delay *= 2;
+        }
+    };
 
-    // Starting the migration process
-    match fetch_manifest_str.await.unwrap() {
+    match fetch_manifest_str.await {
         Ok(manifest_str) => {
             // Convert manifest to YAML string
             let manifest_yaml = serde_yaml::to_string(&manifest_str).unwrap();
@@ -206,19 +243,52 @@ pub async fn generate_config_from_subgraph_id(
             let schema_file_path = &manifest.schema.file;
             let schema_id = &schema_file_path.value.as_str()[6..];
 
-            // Fetching schema file from IPFS and performing minor cleanup
-            println!("Fetching subgraph schema file");
-            let schema = fetch_ipfs_file(schema_id)
-                .await
-                .unwrap()
-                .replace("BigDecimal", "Float");
-            // Write the schema file
-            let mut schema_file_directory =
-                File::create(format!("{}schema.graphql", project_root_path.display()))
-                    .expect("Failed to create file");
-            schema_file_directory
-                .write_all(schema.as_bytes())
-                .expect("Failed to write to file");
+            let schema = async {
+                let mut refetch_delay = Duration::from_secs(2);
+                loop {
+                    match timeout(refetch_delay, fetch_ipfs_file(schema_id)).await {
+                        Ok(Ok(schema)) => break Ok(schema),
+                        Ok(Err(err)) => {
+                            if refetch_delay >= maximum_backoff {
+                                eprintln!("Failed to fetch schema: {}", err);
+                                eprintln!("Schema file needs to be imported manually.");
+                                return Err(err);
+                            }
+                            eprintln!(
+                                "Failed to fetch schema: {}. Retrying in {} seconds...",
+                                err,
+                                refetch_delay.as_secs()
+                            );
+                        }
+                        Err(_) => {
+                            if refetch_delay >= maximum_backoff {
+                                eprintln!("Failed to fetch schema.");
+                                eprintln!("Schema file needs to be imported manually.");
+                                // exit the loop and continue onto next lines of the code
+                                break Ok("".to_string());
+                            }
+                            eprintln!(
+                                "Fetching schema timed out. Retrying in {} seconds...",
+                                refetch_delay.as_secs()
+                            );
+                        }
+                    }
+                    tokio::time::sleep(refetch_delay).await;
+                    refetch_delay *= 2;
+                }
+            }
+            .await;
+
+            if let Ok(schema) = schema {
+                // Write the schema file
+                let mut schema_file_directory =
+                    File::create(format!("{}schema.graphql", project_root_path.display()))
+                        .expect("Failed to create file");
+                schema_file_directory
+                    .write_all(schema.as_bytes())
+                    .expect("Failed to write to file");
+                println!("Schema file written");
+            }
 
             // Generate network contract hashmap
             let network_hashmap = generate_network_contract_hashmap(&manifest_str).await;
@@ -282,41 +352,66 @@ pub async fn generate_config_from_subgraph_id(
                         let abi_file_path = &data_source.mapping.abis[0].file;
                         let abi_id: &str = &abi_file_path.value.as_str()[6..];
 
-                        let fetch_abi = timeout(Duration::from_secs(20), fetch_ipfs_file(abi_id));
-                        match fetch_abi.await {
-                            Ok(Ok(abi)) => {
-                                let abi_file_directory = project_root_path
-                                    .join("abis")
-                                    .join(format!("{}.json", data_source.name.to_string()));
-
-                                let file_path = Path::new(&abi_file_directory);
-
-                                // Create abi file directory if it doesn't exist
-                                if let Some(parent_dir) = file_path.parent() {
-                                    if !parent_dir.exists() {
-                                        fs::create_dir_all(parent_dir)
-                                            .expect("Failed to create directory");
+                        let abi: Result<String, reqwest::Error> = async {
+                            let mut refetch_delay = Duration::from_secs(2);
+                            let mut fetch_attempts = 0;
+                            loop {
+                                match timeout(refetch_delay, fetch_ipfs_file(abi_id)).await {
+                                    Ok(Ok(abi)) => break Ok(abi),
+                                    Ok(Err(err)) => {
+                                        fetch_attempts += 1;
+                                        if fetch_attempts >= 5 {
+                                            eprintln!("Failed to fetch ABI: {}", err);
+                                            eprintln!("ABI file needs to be imported manually.");
+                                            return Err(err);
+                                        }
+                                        eprintln!(
+                                            "Failed to fetch ABI: {}. Retrying in {} seconds...",
+                                            err,
+                                            refetch_delay.as_secs()
+                                        );
+                                    }
+                                    Err(_) => {
+                                        fetch_attempts += 1;
+                                        if fetch_attempts >= 5 {
+                                            eprintln!("Failed to fetch ABI.");
+                                            eprintln!("ABI file needs to be imported manually.");
+                                            // exit the loop and continue onto next lines of the code
+                                            break Ok("".to_string());
+                                        }
+                                        eprintln!(
+                                            "Fetching ABI timed out. Retrying in {} seconds...",
+                                            refetch_delay.as_secs()
+                                        );
                                     }
                                 }
-                                // Write abi file to directory
-                                let mut abi_file = File::create(&abi_file_directory)
-                                    .expect("Failed to create file");
-                                abi_file
-                                    .write_all(abi.as_bytes())
-                                    .expect("Failed to write ABI to file");
-                                println!("ABI written to file: {}", abi_file_directory.display());
+                                tokio::time::sleep(refetch_delay).await;
+                                refetch_delay *= 2;
                             }
-                            Ok(Err(error)) => {
-                                eprintln!("Failed to fetch ABI: {:?}", error);
-                                eprintln!("Please export contract ABI manually");
+                        }
+                        .await;
+
+                        if let Ok(abi) = abi {
+                            let abi_file_directory = project_root_path
+                                .join("abis")
+                                .join(format!("{}.json", data_source.name.to_string()));
+
+                            let file_path = Path::new(&abi_file_directory);
+
+                            // Create abi file directory if it doesn't exist
+                            if let Some(parent_dir) = file_path.parent() {
+                                if !parent_dir.exists() {
+                                    fs::create_dir_all(parent_dir)
+                                        .expect("Failed to create directory");
+                                }
                             }
-                            Err(_) => {
-                                eprintln!(
-                                    "Fetching ABI timed out for contract: {}",
-                                    data_source.name
-                                );
-                                eprintln!("Please export contract ABI manually");
-                            }
+                            // Write abi file to directory
+                            let mut abi_file =
+                                File::create(&abi_file_directory).expect("Failed to create file");
+                            abi_file
+                                .write_all(abi.as_bytes())
+                                .expect("Failed to write ABI to file");
+                            println!("ABI written to file: {}", abi_file_directory.display());
                         }
                     } else {
                         println!("Data source not found");
@@ -331,9 +426,10 @@ pub async fn generate_config_from_subgraph_id(
             // Write YAML string to a file
             std::fs::write("config.yaml", yaml_string).expect("Failed to write config.yaml");
         }
-        Err(error) => {
-            eprintln!("Failed to fetch manifest: {:?}", error);
-            eprintln!("Please migrate subgraph manually");
+
+        Err(err) => {
+            eprintln!("Failed to fetch manifest: {}", err);
+            eprintln!("Migration cannot continue as fetching manifest from IPFS timed out.");
         }
     }
 }
