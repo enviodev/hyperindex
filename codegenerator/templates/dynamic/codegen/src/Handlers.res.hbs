@@ -7,41 +7,37 @@ let getDefaultHandler: (string, ~event: 'a, ~context: 'b) => unit = (handlerName
 
 {{#each contracts as | contract |}}
 module {{contract.name.capitalized}}Contract = {
+
+  {{#each contract.events as | event |}}
+  
+  module {{event.name.capitalized}} = {
     %%private(
-      {{#each contract.events as | event |}}
-      let {{event.name.uncapitalized}}LoadEntities = ref(None)
+      let {{event.name.uncapitalized}}Loader = ref(None)
       let {{event.name.uncapitalized}}Handler = ref(None)
-      {{/each}}
-  )
+    )
 
-  {{#each contract.events as | event |}}
-  @genType
-  let register{{event.name.capitalized}}LoadEntities = (handler: (
-    ~event: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-    ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
+    @genType
+    let loader = (userLoader: (
+      ~event: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
+      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
+      ) => unit) => {
+      {{event.name.uncapitalized}}Loader := Some(userLoader)
+      }
+
+    @genType
+    let handler = (userHandler: (
+      ~event: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
+      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
     ) => unit) => {
-    {{event.name.uncapitalized}}LoadEntities := Some(handler)
+      {{event.name.uncapitalized}}Handler := Some(userHandler)
     }
-  {{/each}}
 
-  {{#each contract.events as | event |}}
-  @genType
-  let register{{event.name.capitalized}}Handler = (handler: (
-    ~event: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-    ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
-  ) => unit) => {
-    {{event.name.uncapitalized}}Handler := Some(handler)
+    let getLoader = () =>
+    {{event.name.uncapitalized}}Loader.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.capitalized}}Loader"))
+    
+    let getHandler = () => 
+    {{event.name.uncapitalized}}Handler.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.capitalized}}Handler"))
   }
-  {{/each}}
-
-  {{#each contract.events as | event |}}
-  let get{{event.name.capitalized}}LoadEntities = () =>
-  {{event.name.uncapitalized}}LoadEntities.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.capitalized}}LoadEntities"))
-  {{/each}}
-
-  {{#each contract.events as | event |}}
-  let get{{event.name.capitalized}}Handler = () => 
-  {{event.name.uncapitalized}}Handler.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.capitalized}}Handler"))
   {{/each}}
 }
 

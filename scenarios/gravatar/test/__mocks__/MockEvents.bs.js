@@ -37,35 +37,35 @@ var newGravatar3 = {
   imageUrl: "https://gravatar3.com"
 };
 
-var updatedGravatar1_id = BigInt(1001);
+var setGravatar1_id = BigInt(1001);
 
-var updatedGravatar1_owner = Ethers.ethers.getAddress("0x1230000000000000000000000000000000000000");
+var setGravatar1_owner = Ethers.ethers.getAddress("0x1230000000000000000000000000000000000000");
 
-var updatedGravatar1 = {
-  id: updatedGravatar1_id,
-  owner: updatedGravatar1_owner,
+var setGravatar1 = {
+  id: setGravatar1_id,
+  owner: setGravatar1_owner,
   displayName: "update1",
   imageUrl: "https://gravatar1.com"
 };
 
-var updatedGravatar2_id = BigInt(1002);
+var setGravatar2_id = BigInt(1002);
 
-var updatedGravatar2_owner = Ethers.ethers.getAddress("0x4560000000000000000000000000000000000000");
+var setGravatar2_owner = Ethers.ethers.getAddress("0x4560000000000000000000000000000000000000");
 
-var updatedGravatar2 = {
-  id: updatedGravatar2_id,
-  owner: updatedGravatar2_owner,
+var setGravatar2 = {
+  id: setGravatar2_id,
+  owner: setGravatar2_owner,
   displayName: "update2",
   imageUrl: "https://gravatar2.com"
 };
 
-var updatedGravatar3_id = BigInt(1003);
+var setGravatar3_id = BigInt(1003);
 
-var updatedGravatar3_owner = Ethers.ethers.getAddress("0x7890000000000000000000000000000000000000");
+var setGravatar3_owner = Ethers.ethers.getAddress("0x7890000000000000000000000000000000000000");
 
-var updatedGravatar3 = {
-  id: updatedGravatar3_id,
-  owner: updatedGravatar3_owner,
+var setGravatar3 = {
+  id: setGravatar3_id,
+  owner: setGravatar3_owner,
   displayName: "update3",
   imageUrl: "https://gravatar3.com"
 };
@@ -109,40 +109,40 @@ var newGravatarEventLog3 = {
   logIndex: 1
 };
 
-var updatedGravatarEventLog1_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
+var setGravatarEventLog1_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
 
-var updatedGravatarEventLog1 = {
-  params: updatedGravatar1,
+var setGravatarEventLog1 = {
+  params: setGravatar1,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: updatedGravatarEventLog1_srcAddress,
+  srcAddress: setGravatarEventLog1_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1
 };
 
-var updatedGravatarEventLog2_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
+var setGravatarEventLog2_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
 
-var updatedGravatarEventLog2 = {
-  params: updatedGravatar2,
+var setGravatarEventLog2 = {
+  params: setGravatar2,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: updatedGravatarEventLog2_srcAddress,
+  srcAddress: setGravatarEventLog2_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1
 };
 
-var updatedGravatarEventLog3_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
+var setGravatarEventLog3_srcAddress = Ethers.ethers.getAddress("0xabc0000000000000000000000000000000000000");
 
-var updatedGravatarEventLog3 = {
-  params: updatedGravatar3,
+var setGravatarEventLog3 = {
+  params: setGravatar3,
   blockNumber: 1,
   blockTimestamp: 1,
   blockHash: "deasne",
-  srcAddress: updatedGravatarEventLog3_srcAddress,
+  srcAddress: setGravatarEventLog3_srcAddress,
   transactionHash: "0xaaa",
   transactionIndex: 1,
   logIndex: 1
@@ -163,15 +163,15 @@ var eventBatch = [
   },
   {
     TAG: /* GravatarContract_UpdatedGravatar */1,
-    _0: updatedGravatarEventLog1
+    _0: setGravatarEventLog1
   },
   {
     TAG: /* GravatarContract_UpdatedGravatar */1,
-    _0: updatedGravatarEventLog2
+    _0: setGravatarEventLog2
   },
   {
     TAG: /* GravatarContract_UpdatedGravatar */1,
-    _0: updatedGravatarEventLog3
+    _0: setGravatarEventLog3
   }
 ];
 
@@ -193,17 +193,17 @@ var eventBatchWithContext = [
   },
   {
     TAG: /* GravatarContract_UpdatedGravatarWithContext */1,
-    _0: updatedGravatarEventLog1,
+    _0: setGravatarEventLog1,
     _1: ContextMock.mockUpdateGravatarContext
   },
   {
     TAG: /* GravatarContract_UpdatedGravatarWithContext */1,
-    _0: updatedGravatarEventLog2,
+    _0: setGravatarEventLog2,
     _1: ContextMock.mockUpdateGravatarContext
   },
   {
     TAG: /* GravatarContract_UpdatedGravatarWithContext */1,
-    _0: updatedGravatarEventLog3,
+    _0: setGravatarEventLog3,
     _1: ContextMock.mockUpdateGravatarContext
   }
 ];
@@ -211,15 +211,15 @@ var eventBatchWithContext = [
 exports.newGravatar1 = newGravatar1;
 exports.newGravatar2 = newGravatar2;
 exports.newGravatar3 = newGravatar3;
-exports.updatedGravatar1 = updatedGravatar1;
-exports.updatedGravatar2 = updatedGravatar2;
-exports.updatedGravatar3 = updatedGravatar3;
+exports.setGravatar1 = setGravatar1;
+exports.setGravatar2 = setGravatar2;
+exports.setGravatar3 = setGravatar3;
 exports.newGravatarEventLog1 = newGravatarEventLog1;
 exports.newGravatarEventLog2 = newGravatarEventLog2;
 exports.newGravatarEventLog3 = newGravatarEventLog3;
-exports.updatedGravatarEventLog1 = updatedGravatarEventLog1;
-exports.updatedGravatarEventLog2 = updatedGravatarEventLog2;
-exports.updatedGravatarEventLog3 = updatedGravatarEventLog3;
+exports.setGravatarEventLog1 = setGravatarEventLog1;
+exports.setGravatarEventLog2 = setGravatarEventLog2;
+exports.setGravatarEventLog3 = setGravatarEventLog3;
 exports.eventBatch = eventBatch;
 exports.eventBatchWithContext = eventBatchWithContext;
 /* newGravatar1 Not a pure module */

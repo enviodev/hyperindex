@@ -1,10 +1,10 @@
 open Types
 
-Handlers.GravatarContract.registerNewGravatarLoadEntities((~event as _, ~context as _) => {
+Handlers.GravatarContract.NewGravatar.loader((~event as _, ~context as _) => {
   ()
 })
 
-Handlers.GravatarContract.registerNewGravatarHandler((~event, ~context) => {
+Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {
   let gravatarObject: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
     owner: event.params.owner->Ethers.ethAddressToString,
@@ -16,11 +16,11 @@ Handlers.GravatarContract.registerNewGravatarHandler((~event, ~context) => {
   context.gravatar.set(gravatarObject)
 })
 
-Handlers.GravatarContract.registerUpdatedGravatarLoadEntities((~event, ~context) => {
+Handlers.GravatarContract.UpdatedGravatar.loader((~event, ~context) => {
   let _ = context.gravatar.gravatarWithChangesLoad(event.params.id->Ethers.BigInt.toString)
 })
 
-Handlers.GravatarContract.registerUpdatedGravatarHandler((~event, ~context) => {
+Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
   let updatesCount =
     context.gravatar.gravatarWithChanges()->Belt.Option.mapWithDefault(1, gravatar =>
       gravatar.updatesCount + 1
