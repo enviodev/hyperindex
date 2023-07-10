@@ -12,6 +12,7 @@ pub mod project_paths;
 
 pub mod capitalization;
 pub mod cli_args;
+pub mod links;
 
 pub mod commands;
 pub mod hbs_templating;

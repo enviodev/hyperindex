@@ -14,6 +14,7 @@ pub mod entity_parsing;
 pub mod event_parsing;
 
 pub mod defaults;
+use crate::links;
 
 type NetworkId = i32;
 
@@ -290,8 +291,9 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
 
     let deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
         format!(
-            "Failed to deserialize config with Error {}. Visit the docs for more information https://docs.envio.dev/docs/configuration-file",
-            err.to_string()
+            "Failed to deserialize config with Error {}. Visit the docs for more information {}",
+            err.to_string(),
+            links::DOC_CONFIGURATION_FILE
         )
     })?;
     Ok(deserialized_yaml)
