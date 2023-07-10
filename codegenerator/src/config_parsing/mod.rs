@@ -282,15 +282,15 @@ pub struct ChainConfigTemplate {
 pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box<dyn Error>> {
     let config = std::fs::read_to_string(&config_path).map_err(|err| {
         format!(
-            "Failed to resolve config path {} with Error {}",
-            &config_path.to_str().unwrap_or("unknown path"),
+            "Failed to resolve config path {0} with Error {1}. Make sure you're in the correct directory and that a config file with the name {0} exists",
+            &config_path.to_str().unwrap_or("unknown config file name path"),
             err.to_string()
         )
     })?;
 
     let deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
         format!(
-            "Failed to deserialize config with Error {}",
+            "Failed to deserialize config with Error {}. Visit the docs for more information https://docs.envio.dev/docs/configuration-file",
             err.to_string()
         )
     })?;
@@ -362,7 +362,6 @@ pub fn convert_config_to_chain_configs(
     Ok(chain_configs)
 }
 
-
 pub fn get_project_name_from_config(parsed_paths: &ParsedPaths) -> Result<String, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     Ok(config.name)
@@ -427,7 +426,7 @@ mod tests {
 
         let contracts = vec![contract1.clone()];
 
-        let sync_config = super::SyncConfigUnstable{
+        let sync_config = super::SyncConfigUnstable {
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -435,7 +434,7 @@ mod tests {
             backoff_millis: 5000,
             query_timeout_millis: 20000,
         };
-        
+
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
             unstable__sync_config: sync_config,
@@ -513,7 +512,7 @@ mod tests {
 
         let contracts1 = vec![contract1.clone()];
 
-        let sync_config = super::SyncConfigUnstable{
+        let sync_config = super::SyncConfigUnstable {
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -524,7 +523,7 @@ mod tests {
 
         let rpc_config1 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            unstable__sync_config: sync_config
+            unstable__sync_config: sync_config,
         };
 
         let network1 = super::Network {
@@ -543,7 +542,7 @@ mod tests {
 
         let contracts2 = vec![contract2];
 
-        let sync_config = super::SyncConfigUnstable{
+        let sync_config = super::SyncConfigUnstable {
             initial_block_interval: 10000,
             interval_ceiling: 10000,
             backoff_multiplicative: 0.8,
@@ -554,7 +553,7 @@ mod tests {
 
         let rpc_config2 = super::RpcConfig {
             url: String::from("https://eth.com"),
-            unstable__sync_config: sync_config
+            unstable__sync_config: sync_config,
         };
 
         let network2 = super::Network {
