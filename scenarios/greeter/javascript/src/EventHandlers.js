@@ -1,10 +1,10 @@
 let { GreeterContract } = require("../generated/src/Handlers.bs.js");
 
-GreeterContract.registerNewGreetingLoadEntities((event, context) => {
+GreeterContract.NewGreeting.loader((event, context) => {
   context.greeting.greetingWithChangesLoad(event.params.user.toString());
 });
 
-GreeterContract.registerNewGreetingHandler((event, context) => {
+GreeterContract.NewGreeting.handler((event, context) => {
   let existingGreeter = context.greeting.greetingWithChangesLoad;
 
   if (existingGreeter != undefined) {
@@ -22,11 +22,11 @@ GreeterContract.registerNewGreetingHandler((event, context) => {
   }
 });
 
-GreeterContract.registerClearGreetingLoadEntities((event, context) => {
+GreeterContract.ClearGreeting.loader((event, context) => {
   context.greeting.greetingWithChangesLoad(event.params.user.toString());
 });
 
-GreeterContract.registerClearGreetingHandler((event, context) => {
+GreeterContract.ClearGreeting.handler((event, context) => {
   let existingGreeter = context.greeting.greetingWithChangesLoad;
   if (existingGreeter !== undefined) {
     context.greeting.set({

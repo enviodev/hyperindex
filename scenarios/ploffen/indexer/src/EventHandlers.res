@@ -4,11 +4,11 @@ open Types
 // EVENT: Create Ploffen
 /////////////////////////
 
-Handlers.PloffenContract.registerCreatePloffenLoadEntities((~event, ~context) => {
+Handlers.PloffenContract.CreatePloffen.loader((~event, ~context) => {
   ()
 })
 
-Handlers.PloffenContract.registerCreatePloffenHandler((~event, ~context) => {
+Handlers.PloffenContract.CreatePloffen.handler((~event, ~context) => {
   let ploffenObject: ploffengameEntity = {
     id: "MASTER_GAME",
     gameToken: event.params.tokenGameAddress->Ethers.ethAddressToString,
@@ -28,12 +28,12 @@ Handlers.PloffenContract.registerCreatePloffenHandler((~event, ~context) => {
 // EVENT: Start Ploffen
 /////////////////////////
 
-Handlers.PloffenContract.registerStartPloffenLoadEntities((~event, ~context) => {
+Handlers.PloffenContract.StartPloffen.loader((~event, ~context) => {
   context.ploffengame.unstartedPloffenLoad("MASTER_GAME")
 })
 
 // Why are the event and context not underscored here?
-Handlers.PloffenContract.registerStartPloffenHandler((~event, ~context) => {
+Handlers.PloffenContract.StartPloffen.handler((~event, ~context) => {
   let unstartedPloffen = context.ploffengame.unstartedPloffen()
   switch unstartedPloffen {
   | Some(ploffen) => {
