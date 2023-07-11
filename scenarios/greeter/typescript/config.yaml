@@ -1,10 +1,10 @@
-name: greeter-typescript
+name: greetertypescript
 version: 0.0.0
 description: Greeter indexer
 repository: https://github.com/PaulRBerg/hardhat-template
 networks:
   - id: 1337
-    rpc_config: 
+    rpc_config:
       url: http://localhost:8545
     start_block: 0
     contracts:

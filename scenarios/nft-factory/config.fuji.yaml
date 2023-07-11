@@ -1,10 +1,10 @@
-name: nft-indexer-fuji
+name: nftindexerfuji
 version: 0.0.0
 description: NFT Factory
 repository: https://github.com/nft-factory
 networks:
   - id: 43113
-    rpc_config: 
+    rpc_config:
       url: https://endpoints.omniatech.io/v1/avax/fuji/public
     # rpc_url: https://api.avax-test.network/ext/bc/C/rpc
     start_block: 22009922

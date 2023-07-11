@@ -1,10 +1,10 @@
-name: erc20-indexer
+name: erc20indexer
 version: 1.0.0
 description: ERC-20 indexer
 repository: https://github.com/Envio/templates/ERC20
 networks:
   - id: 1337
-    rpc_config: 
+    rpc_config:
       url: http://localhost:8545
     start_block: 0
     contracts:
@@ -14,13 +14,13 @@ networks:
         handler: src/EventHandlers.js
         events:
           - event: "Approval"
-            requiredEntities: 
-            - name: "Account"
-              labels:
-                - "ownerAccountChanges"
+            requiredEntities:
+              - name: "Account"
+                labels:
+                  - "ownerAccountChanges"
           - event: "Transfer"
             requiredEntities:
-            - name: "Account"
-              labels:
-                - "senderAccountChanges"
-                - "receiverAccountChanges"
+              - name: "Account"
+                labels:
+                  - "senderAccountChanges"
+                  - "receiverAccountChanges"
