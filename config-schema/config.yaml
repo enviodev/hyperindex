@@ -1,10 +1,8 @@
 version: 0.0.0
 description: Example schema to show all the things
-repository: https://github.com/example/example
 networks:
   - id: 137
-    rpc_config: 
-      https://polygon-rpc.com
+    rpc_config: https://polygon-rpc.com
     start_block: 0
     contracts:
       - name: LensProtocolProfiles

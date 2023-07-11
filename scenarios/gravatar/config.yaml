@@ -1,7 +1,6 @@
 name: greetergravatar
 version: 0.0.0
 description: Gravatar for Ethereum
-repository: https://github.com/graphprotocol/example-subgraph
 networks:
   - id: 1337
     rpc_config:

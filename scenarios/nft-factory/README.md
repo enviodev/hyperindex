@@ -13,7 +13,6 @@ example config file from Gravatar scenario:
 ```yaml
 version: 0.0.0
 description: Gravatar for Ethereum
-repository: https://github.com/graphprotocol/example-subgraph
 networks:
   - id: 137
     rpc_config: 
@@ -38,7 +37,6 @@ networks:
 
 - version - version of the indexer
 - description - description of the project
-- repository - repository of the project
 - networks - configuration of the blockchain networks that the project is deployed on
   - id - chain identifier of the network
   - rpc_url - rpc url that will be used to subscribe to blockchain data on this network

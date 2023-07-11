@@ -1,10 +1,9 @@
 name: config2
 version: 0.0.0
 description: Gravatar for Ethereum
-repository: https://github.com/graphprotocol/example-subgraph
 networks:
   - id: 1
-    rpc_config: 
+    rpc_config:
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network
       unstable__sync_config:
         initial_block_interval: 10000
@@ -23,7 +22,7 @@ networks:
           - event: "NewGravatar"
           - event: "UpdatedGravatar"
   - id: 2
-    rpc_config: 
+    rpc_config:
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network
       unstable__sync_config:
         initial_block_interval: 10000

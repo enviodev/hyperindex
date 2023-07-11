@@ -13,10 +13,6 @@
       "description": "Description of the project",
       "type": "string"
     },
-    "repository": {
-      "description": "Repository of the project",
-      "type": "string"
-    },
     "networks": {
       "description": "Configuration of the blockchain networks that the project is deployed on",
       "type": "array",
@@ -167,5 +163,5 @@
       }
     }
   },
-  "required": ["version", "description", "repository", "networks"]
+  "required": ["version", "description", "networks"]
 }
