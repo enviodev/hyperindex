@@ -12,6 +12,7 @@ use crate::{
 
 pub mod entity_parsing;
 pub mod event_parsing;
+pub mod validation;
 
 pub mod defaults;
 use crate::links;
@@ -296,6 +297,11 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
             links::DOC_CONFIGURATION_FILE
         )
     })?;
+
+    if !validation::is_valid_postgres_db_name(deserialized_yaml.name.as_str()) {
+        return Err(format!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+    }
+
     Ok(deserialized_yaml)
 }
 

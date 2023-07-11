@@ -814,6 +814,7 @@ dependencies = [
  "inquire",
  "paste",
  "pathdiff",
+ "regex",
  "serde",
  "serde_json",
  "serde_yaml",
