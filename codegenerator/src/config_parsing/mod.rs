@@ -251,7 +251,6 @@ pub struct Config {
     name: String,
     version: String,
     description: String,
-    repository: String,
     pub schema: Option<String>,
     pub networks: Vec<Network>,
 }

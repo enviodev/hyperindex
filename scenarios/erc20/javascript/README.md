@@ -15,7 +15,6 @@ Example config file from ERC-20 scenario:
 ```yaml
 version: 1.0.0
 description: ERC-20 indexer
-repository: https://github.com/Envio/templates/ERC20
 networks:
   - id: 1337
     rpc_config: 
@@ -44,7 +43,6 @@ networks:
 
 - `version` - Version of the config schema used by the indexer
 - `description` - Description of the project
-- `repository` - Repository of the project
 - `networks` - Configuration of the blockchain networks that the project is deployed on
   - `id` - Chain identifier of the network
 - `rpc_config` - RPC Config that will be used to subscribe to blockchain data on this network

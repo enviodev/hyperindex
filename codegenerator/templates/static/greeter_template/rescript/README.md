@@ -13,9 +13,9 @@ These files are auto-generated according to the Greeter template by running `env
 Example config file from Greeter scenario:
 
 ```yaml
+name: greeter_indexer
 version: 1.0.0
 description: Greeter indexer
-repository: https://github.com/PaulRBerg/hardhat-template
 networks:
   - id: 1337
     rpc_config: 
@@ -44,7 +44,6 @@ networks:
 
 - `version` - Version of the config schema used by the indexer
 - `description` - Description of the project
-- `repository` - Repository of the project
 - `networks` - Configuration of the blockchain networks that the project is deployed on
   - `id` - Chain identifier of the network
 - `rpc_config` - RPC Config that will be used to subscribe to blockchain data on this network

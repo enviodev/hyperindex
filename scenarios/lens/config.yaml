@@ -1,7 +1,6 @@
 name: lens
 version: 1.0.0
 description: Lens Protocol (decentralized, non-custodial social graph)
-repository: https://github.com/lens-protocol/core
 networks:
   - id: 137
     rpc_config: https://polygon-rpc.com

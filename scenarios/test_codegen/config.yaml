@@ -1,10 +1,9 @@
 name: test_codegen
 version: 0.0.0
 description: Gravatar for Ethereum
-repository: https://github.com/graphprotocol/example-subgraph
 networks:
   - id: 1337
-    rpc_config: 
+    rpc_config:
       url: http://localhost:8545 # RPC URL that will be used to subscribe to blockchain data on this network
       unstable__sync_config:
         initial_block_interval: 10000
@@ -21,7 +20,7 @@ networks:
         handler: ./src/EventHandlers.bs.js
         events:
           - event: "TestEvent"
-            requiredEntities: 
+            requiredEntities:
               - name: "A"
                 labels:
                   - "testingA"

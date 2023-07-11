@@ -1,7 +1,6 @@
 name: simple_bank
 version: 0.0.0
 description: Simple Bank contract
-repository:
 networks:
   - id: 1337
     rpc_config:

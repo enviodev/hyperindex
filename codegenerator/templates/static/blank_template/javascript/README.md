@@ -13,9 +13,9 @@ These files are auto-generated according to the Greeter template by running `env
 Example config file from Greeter scenario:
 
 ```yaml
+name: MyAwesomeContractIndexer # Description of the project
 version: 0.0.1 # Version of the config schema used by the indexer
 description: My Awesome Contract # Description of the project
-repository: # Repository of the project
 networks: # Configuration of the blockchain networks that the project is deployed on
   - id: 1337 # Chain identifier of the network
     rpc_config: 
@@ -35,11 +35,10 @@ networks: # Configuration of the blockchain networks that the project is deploye
 ```
 
 **Field Descriptions**
-
+- `name` - NameOfTheIndexer
 - `version` - Version of the config schema used by the indexer
 - `description` - Description of the project
-- `repository` - Repository of the project
-- `networks` - Configuration of the blockchain networks that the project is deployed on
+- `netwrks` - Configuration of the blockchain networks that the project is deployed on
   - `id` - Chain identifier of the network
 - `rpc_config` - RPC Config that will be used to subscribe to blockchain data on this network
     - `url` -  URL of the RPC endpoint
