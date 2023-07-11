@@ -7,7 +7,7 @@ try {
   } catch {
   | _ => Logging.error("Unable to import the handler file for {{contract.name.capitalized
   }}. Expected a file at {{contract.handler.relative_to_generated_src
-  }}, make sure this file is compiling as well")
+  }}, make sure this file is parsing as well")
   }
 }
 {{/each}}
