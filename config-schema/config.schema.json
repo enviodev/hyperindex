@@ -163,5 +163,5 @@
       }
     }
   },
-  "required": ["version", "description", "repository", "networks"]
+  "required": ["version", "description", "networks"]
 }
