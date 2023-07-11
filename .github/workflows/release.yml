@@ -30,11 +30,11 @@ jobs:
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      
+
       - name: Declare commit hash variable
         id: vars
         shell: bash
-        run: | 
+        run: |
           echo "::set-output name=hash_short::$(git rev-parse --short HEAD)"
 
       - name: Compute release name and tag
@@ -250,8 +250,8 @@ jobs:
           pnpm build
           cp ../../README.md .
           npm publish --access public
-  
-  build-and-push: 
+
+  build-and-push:
     name: "build, publish and add docker container for deployment"
     needs:
       - "prepare"

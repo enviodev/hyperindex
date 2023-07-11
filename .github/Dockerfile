@@ -1,7 +1,8 @@
 
 #rescript base
 
-FROM --platform=linux/amd64 node:18.14.0-bullseye-slim
+FROM --platform=linux/amd64 node:18.16.1-bookworm-slim
+# FROM --platform=linux/amd64 node:20.4.0-bookworm-slim # Testing differen versions for 
 WORKDIR /app/base-template
 
 ENV PNPM_HOME /usr/local/binp
