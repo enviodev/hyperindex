@@ -33,8 +33,8 @@ networks:
         query_timeout_millis: 20000
     start_block: 0
     contracts:
-      - name: Contract1
-        abi_file_path: ../abis/Contract1.json
+      - name: Contract2
+        abi_file_path: ../abis/Contract2.json
         handler: ./src/EventHandler.js
         address: "0x1E645469f354BB4F5c8a05B3b30A929361cf77eC"
         events:

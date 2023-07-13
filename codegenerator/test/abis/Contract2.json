@@ -1,0 +1,56 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "name": "id",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "name": "owner",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "name": "displayName",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "name": "imageUrl",
+        "type": "string"
+      }
+    ],
+    "name": "NewGravatar",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "name": "id",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "name": "owner",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "name": "displayName",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "name": "imageUrl",
+        "type": "string"
+      }
+    ],
+    "name": "UpdatedGravatar",
+    "type": "event"
+  }
+]

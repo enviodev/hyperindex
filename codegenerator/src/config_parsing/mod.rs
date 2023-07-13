@@ -300,6 +300,20 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     if !validation::is_valid_postgres_db_name(deserialized_yaml.name.as_str()) {
         return Err(format!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
+    
+    // Retrieving contract names from config file as a vector of String
+    let mut contract_names = Vec::new();
+    
+    for network in &deserialized_yaml.networks {
+        for contract in &network.contracts {
+            contract_names.push(contract.name.clone());
+        }
+    }
+    
+    // Checking if contract names are valid
+    if !validation::are_contract_names_unique(&contract_names) {
+        return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+    }
 
     Ok(deserialized_yaml)
 }
@@ -360,6 +374,8 @@ pub fn convert_config_to_chain_configs(
             };
             contract_templates.push(contract_template);
         }
+        
+
         let chain_config = ChainConfigTemplate {
             network_config: network.clone(),
             contracts: contract_templates,
@@ -542,8 +558,8 @@ mod tests {
         let contract2 = super::ConfigContract {
             handler: "./src/EventHandler.js".to_string(),
             address: NormalizedList::from_single(address2.clone()),
-            name: String::from("Contract1"),
-            abi_file_path: Some(String::from("../abis/Contract1.json")),
+            name: String::from("Contract2"),
+            abi_file_path: Some(String::from("../abis/Contract2.json")),
             events: vec![event1.clone(), event2.clone()],
         };
 
@@ -598,7 +614,7 @@ mod tests {
             events: events.clone(),
         };
         let contract2 = super::ContractTemplate {
-            name: String::from("Contract1").to_capitalized_options(),
+            name: String::from("Contract2").to_capitalized_options(),
             abi: abi_parsed_string.clone(),
             addresses: vec![address2.clone()],
             events,

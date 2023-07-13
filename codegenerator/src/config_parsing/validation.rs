@@ -8,6 +8,21 @@ pub fn is_valid_postgres_db_name(name: &str) -> bool {
     re.is_match(name)
 }
 
+// Contracts must have unique names in the config file.
+// Contract names are not case-sensitive.
+// This is regardless of networks.
+pub fn are_contract_names_unique(contract_names: &[String]) -> bool {
+    let mut unique_names = std::collections::HashSet::new();
+
+    for name in contract_names {
+        let lowercase_name = name.to_lowercase();
+        if !unique_names.insert(lowercase_name) {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -29,5 +44,35 @@ mod tests {
         assert_eq!(is_not_valid_space, false);
         assert_eq!(is_not_valid_long, false);
         assert_eq!(is_not_special_chars, false);
+    }
+
+    #[test]
+    fn test_unique_contract_names() {
+        let contract_names = vec![
+            "Hello".to_string(),
+            "HelloWorld".to_string(),
+            "Hello_World".to_string(),
+            "Hello_World_123".to_string(),
+            "Hello_World_123_".to_string(),
+            "_Hello_World_123".to_string(),
+            "_Hello_World_123_".to_string(),
+        ];
+        let unique_contract_names = super::are_contract_names_unique(&contract_names);
+        assert_eq!(unique_contract_names, true);
+    }
+
+    #[test]
+    fn test_non_unique_contract_names() {
+        let contract_names = vec![
+            "Hello".to_string(),
+            "HelloWorld".to_string(),
+            "Hello-World".to_string(),
+            "Hello-world".to_string(),
+            "Hello_World_123_".to_string(),
+            "_Hello_World_123".to_string(),
+            "_Hello_World_123".to_string(),
+        ];
+        let non_unique_contract_names = super::are_contract_names_unique(&contract_names);
+        assert_eq!(non_unique_contract_names, false);
     }
 }
