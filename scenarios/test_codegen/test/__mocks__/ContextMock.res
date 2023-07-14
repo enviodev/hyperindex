@@ -7,7 +7,6 @@ let mockNewGravatarContext: NewGravatarEvent.context = {
     NewGravatarEvent.set: gravatarSet => {
       setMock->Sinon.callStub1(gravatarSet.id)
     },
-
     delete: _id => Js.log("inimplemented delete"),
   },
 }->Obj.magic
