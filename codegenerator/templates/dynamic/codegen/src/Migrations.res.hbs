@@ -124,23 +124,23 @@ type exitCode = Success | Failure
 // TODO: all the migration steps should run as a single transaction
 let runUpMigrations = async (shouldExit) => {
   let exitCode = ref(Success)
-  await RawEventsTable.createRawEventsTable()->Promise.catch(_err => {
+  await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.error(`Error creating raw events table`)->Promise.resolve
+    Logging.errorWithExn(err, `Error creating raw events table`)->Promise.resolve
   })
-  await DynamicContractRegistryTable.createDynamicContractRegistryTable()->Promise.catch(_err => {
+  await DynamicContractRegistryTable.createDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.error(`Error creating dynamic contracts table`)->Promise.resolve
+    Logging.errorWithExn(err,`Error creating dynamic contracts table`)->Promise.resolve
   })
 // TODO: catch and handle query errors
 {{#each entities as |entity|}}
-  await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()->Promise.catch(_err => {
+  await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()->Promise.catch(err => {
     exitCode := Failure
-    Logging.error(`Error creating {{entity.name.capitalized}} table`)->Promise.resolve
+    Logging.errorWithExn(err,`Error creating {{entity.name.capitalized}} table`)->Promise.resolve
   })
 {{/each}}
-  await TrackTables.trackAllTables()->Promise.catch(_err => {
-    Logging.error(`Error tracking tables`)->Promise.resolve
+  await TrackTables.trackAllTables()->Promise.catch(err => {
+    Logging.errorWithExn(err,`Error tracking tables`)->Promise.resolve
   })
   if shouldExit {
     process->exit(exitCode.contents)
@@ -154,20 +154,25 @@ let runDownMigrations = async (shouldExit) => {
   // await {{entity.name.capitalized}}.delete{{entity.name.capitalized}}Table()
   // {{/each}}
 
-  await RawEventsTable.dropRawEventsTable()->Promise.catch(_err => {
+  await RawEventsTable.dropRawEventsTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.error("Please ensure the postgres database is running")
-    Logging.error("Error dropping raw events table")->Promise.resolve
+    Logging.errorWithExn(
+      err,
+      {
+        "msg": "Please ensure the postgres database is running",
+        "detail": "Error dropping raw events table",
+      },
+    )->Promise.resolve
   })
-  await DynamicContractRegistryTable.dropDynamicContractRegistryTable()->Promise.catch(_err => {
+  await DynamicContractRegistryTable.dropDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.error("Error dropping dynamic contracts table")->Promise.resolve
+    Logging.errorWithExn(err,"Error dropping dynamic contracts table")->Promise.resolve
   })
 
   // NOTE: For now delete any remaining tables.
-  await deleteAllTables()->Promise.catch(_err => {
+  await deleteAllTables()->Promise.catch(err => {
     exitCode := Failure
-    Logging.error("Error dropping entity tables")->Promise.resolve
+    Logging.errorWithExn(err,"Error dropping entity tables")->Promise.resolve
   })
    if shouldExit {
     process->exit(exitCode.contents)

@@ -49,6 +49,23 @@ type chainConfig = {
         let baseLogLevel = getLogLevelConfig(~name="BASE_LOG_LEVEL", ~default=#trace)
         let defaultFileLogLevel = getLogLevelConfig(~name="FILE_LOG_LEVEL", ~default=#trace)
 
+        type logStrategyType = [#fileOnly | #consoleRaw | #consolePretty | #both]
+        let logStrategy = envSafe->EnvSafe.get(
+          ~name="LOG_STRATEGY",
+          ~struct=S.union([
+            S.literalVariant(String("file-only"), #fileOnly),
+            S.literalVariant(String("console-raw"), #consoleRaw),
+            S.literalVariant(String("console-pretty"), #consolePretty),
+            S.literalVariant(String("both-prettyconsole"), #both),
+            // Two default values are pretty print to the console only.
+            S.literalVariant(String(""), #consolePretty),
+            S.literalVariant(EmptyOption, #consolePretty),
+          ]),
+          (),
+        )
+        let useEcsFormat =
+          envSafe->EnvSafe.get(~name="LOG_ECS_FORMAT", ~struct=S.bool(), ~devFallback=false, ())
+
         let db: Postgres.poolConfig = {
         host: envSafe->EnvSafe.get(~name="PG_HOST", ~struct=S.string(), ~devFallback="localhost", ()),
         port: envSafe->EnvSafe.get(~name="PG_PORT", ~struct=S.int()->S.Int.port(), ~devFallback=5432, ()),
