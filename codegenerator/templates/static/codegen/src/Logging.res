@@ -68,7 +68,7 @@ let error = message => {
   logger.error(. message->createPinoMessage)
 }
 let errorWithExn = (error, message) => {
-  logger.errorWithExn(. error, message->createPinoMessage)
+  logger->Pino.errorWithExn(error, message->createPinoMessage)
 }
 
 let fatal = message => {
@@ -91,7 +91,7 @@ let childError = (logger, params: 'a) => {
   logger.error(. params->createPinoMessage)
 }
 let childErrorWithExn = (logger, error, params: 'a) => {
-  logger.errorWithExn(. error, params->createPinoMessage)
+  logger->Pino.errorWithExn(error, params->createPinoMessage)
 }
 let childFatal = (logger, params: 'a) => {
   logger.fatal(. params->createPinoMessage)
@@ -111,13 +111,15 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
 trace("By default - This trace message should only be seen in the log file.")
 debug("By default - This debug message should only be seen in the log file.")
 
+exception SomethingWrong({myMessage: string})
+
 Js.log2("this is a summary of the available log levels", logger->levels)
 Js.log(`Current log level: ${(logger->getLevel :> string)}`)
 trace("This is an trace message.")
 debug("This is a debug message.")
 info("This is an info message.")
 warn("This is a warning message.")
-error("This is an error message.")
+errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
 fatal(("This is a fatal message.", "another"))
 
 setLogLevel(#debug)
@@ -126,7 +128,7 @@ trace("This is an trace message. (should not be printed)")
 debug("This is a debug message.")
 info("This is an info message.")
 warn("This is a warning message.")
-error("This is an error message.")
+errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
 fatal("This is a fatal message.")
 
 setLogLevel(#info)
@@ -135,7 +137,7 @@ trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
 info("This is an info message.")
 warn("This is a warning message.")
-error("This is an error message.")
+errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
 fatal("This is a fatal message.")
 
 @send external userDebug: (Pino.t, 'a) => unit = "userDebug"
@@ -178,7 +180,7 @@ trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
 info("This is an info message. (should not be printed)")
 warn("This is a warning message.")
-error("This is an error message.")
+errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
 fatal("This is a fatal message.")
 
 setLogLevel(#error)
@@ -187,7 +189,7 @@ trace("This is an trace message. (should not be printed)")
 debug("This is a debug message. (should not be printed)")
 info("This is an info message. (should not be printed)")
 warn("This is a warning message. (should not be printed)")
-error("This is an error message.")
+errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
 fatal("This is a fatal message.")
 
 // Logging also works with objects of all shapes and sizes

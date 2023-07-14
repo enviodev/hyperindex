@@ -24,9 +24,9 @@ type t = {
   info: (. pinoMessageBlob) => unit,
   warn: (. pinoMessageBlob) => unit,
   error: (. pinoMessageBlob) => unit,
-  errorWithExn: (. exn, pinoMessageBlob) => unit,
   fatal: (. pinoMessageBlob) => unit,
 }
+@send external errorWithExn: (t, exn, pinoMessageBlob) => unit = "error"
 
 @module("pino") external make: pinoConfig => t = "default"
 
