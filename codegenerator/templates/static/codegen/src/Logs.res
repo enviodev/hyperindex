@@ -14,6 +14,7 @@ type userLogger = {
   info: string => unit,
   warn: string => unit,
   error: string => unit,
+  errorWithExn: (exn, string) => unit,
 }
 
 // NOTE: We have these functions below as an alternative since then we can pass in any type as a log.
@@ -27,7 +28,7 @@ external warn: (userLogger, 'pinoMessageBlob) => unit = "warn"
 @send
 external error: (userLogger, 'pinoMessageBlob) => unit = "error"
 @send
-external errorWithExn: (userLogger, exn, 'pinoMessageBlob) => unit = "error"
+external errorWithExn: (userLogger, exn, 'pinoMessageBlob) => unit = "errorWithExn"
 
 // NOTE: gentype doesn't generate type interfaces on `external`s so this is a hack to get gentype to work.
 @genType

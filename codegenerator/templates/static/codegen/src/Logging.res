@@ -111,3 +111,4 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
 @send external userInfo: (Pino.t, 'a) => unit = "userInfo"
 @send external userWarn: (Pino.t, 'a) => unit = "userWarn"
 @send external userError: (Pino.t, 'a) => unit = "userError"
+@send external userErrorWithExn: (Pino.t, exn, 'a) => unit = "userError"

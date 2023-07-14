@@ -12,6 +12,13 @@ let mockNewGravatarContext: NewGravatarEvent.context = {
 }->Obj.magic
 
 let mockUpdateGravatarContext: UpdatedGravatarEvent.context = {
+  "log": {
+    "debug": Js.log,
+    "info": Js.log,
+    "warn": Js.log,
+    "error": Js.log,
+    "errorWithExn": Js.log2
+  },
   "gravatar": {
     UpdatedGravatarEvent.gravatarWithChanges: () => Some(MockEntities.gravatarEntity1),
     set: gravatarSet => {

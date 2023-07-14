@@ -82,6 +82,7 @@ module {{contract.name.capitalized}}Contract = {
             debug: (message: string) => logger->Logging.userDebug(message),
             warn: (message: string) => logger->Logging.userWarn(message),
             error: (message: string) => logger->Logging.userError(message),
+            errorWithExn: (exn: exn, message: string) => logger->Logging.userErrorWithExn(exn, message),
           },
           {{#each ../../entities as | entity |}}
             {{entity.name.uncapitalized}}: {
