@@ -144,6 +144,7 @@ module {{event.name.capitalized}}Event = {
     {{/each}}
     @genType
     type context = {
+      log: Logs.userLogger,
       {{#each ../../entities as | entity |}}
         {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
       {{/each}}

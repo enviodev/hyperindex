@@ -1,3 +1,5 @@
+// NOTE: this is a file for SystemLogs, not UserLogs.
+// TODO: This file shouldn't be exposed to users in our external interface.
 open Pino
 
 type pinoTransportConfig
@@ -104,103 +106,8 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
   logger->child(params->createChildParams)
 }
 
-// // TODO: set ethers and postgres log levels in a similar way
-// // TODO: use environment varibles to set log levels
-/*
-// Testing usage:
-trace("By default - This trace message should only be seen in the log file.")
-debug("By default - This debug message should only be seen in the log file.")
-
-exception SomethingWrong({myMessage: string})
-
-Js.log2("this is a summary of the available log levels", logger->levels)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-trace("This is an trace message.")
-debug("This is a debug message.")
-info("This is an info message.")
-warn("This is a warning message.")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal(("This is a fatal message.", "another"))
-
-setLogLevel(#debug)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-trace("This is an trace message. (should not be printed)")
-debug("This is a debug message.")
-info("This is an info message.")
-warn("This is a warning message.")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal("This is a fatal message.")
-
-setLogLevel(#info)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-trace("This is an trace message. (should not be printed)")
-debug("This is a debug message. (should not be printed)")
-info("This is an info message.")
-warn("This is a warning message.")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal("This is a fatal message.")
-
+// NOTE: these functions are used for the user logging, but they are exposed to the user only via the context and the `Logs.res` file.
 @send external userDebug: (Pino.t, 'a) => unit = "userDebug"
 @send external userInfo: (Pino.t, 'a) => unit = "userInfo"
 @send external userWarn: (Pino.t, 'a) => unit = "userWarn"
 @send external userError: (Pino.t, 'a) => unit = "userError"
-setLogLevel(#userDebug)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-let childLogger = createChild(~params={"child": "userLogs debug"})
-// Js.log(childLogger)
-childLogger->userDebug({"message": "This is a user debug message."})
-childLogger->userInfo({"message": "This is a user info message."})
-childLogger->userWarn({"message": "This is a user warn message."})
-childLogger->userError({"message": "This is a user error message."})
-setLogLevel(#userInfo)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-let childLogger = createChild(~params={"child": "userLogs info"})
-childLogger->userDebug({"message": "This is a user debug message."})
-childLogger->userInfo({"message": "This is a user info message."})
-childLogger->userWarn({"message": "This is a user warn message."})
-childLogger->userError({"message": "This is a user error message."})
-setLogLevel(#userWarn)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-let childLogger = createChild(~params={"child": "userLogs warn"})
-childLogger->userDebug({"message": "This is a user debug message."})
-childLogger->userInfo({"message": "This is a user info message."})
-childLogger->userWarn({"message": "This is a user warn message."})
-childLogger->userError({"message": "This is a user error message."})
-setLogLevel(#userError)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-let childLogger = createChild(~params={"child": "userLogs error"})
-childLogger->userDebug({"message": "This is a user debug message."})
-childLogger->userInfo({"message": "This is a user info message."})
-childLogger->userWarn({"message": "This is a user warn message."})
-childLogger->userError({"message": "This is a user error message."})
-
-setLogLevel(#warn)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-trace("This is an trace message. (should not be printed)")
-debug("This is a debug message. (should not be printed)")
-info("This is an info message. (should not be printed)")
-warn("This is a warning message.")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal("This is a fatal message.")
-
-setLogLevel(#error)
-Js.log(`Current log level: ${(logger->getLevel :> string)}`)
-trace("This is an trace message. (should not be printed)")
-debug("This is a debug message. (should not be printed)")
-info("This is an info message. (should not be printed)")
-warn("This is a warning message. (should not be printed)")
-errorWithExn(SomethingWrong({myMessage: "example exception"}), "This is an error message.")
-fatal("This is a fatal message.")
-
-// Logging also works with objects of all shapes and sizes
-fatal({
-  "this": "is",
-  "a": "fatal",
-  "message": "object",
-  "with": {
-    "nested": "objects",
-    "and": {"arrays": ["of", "things"]},
-    "additionally": {"numbers": 0.5654},
-  },
-})
-*/
