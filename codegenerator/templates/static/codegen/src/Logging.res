@@ -6,7 +6,17 @@ type pinoTransportConfig
 
 let makePinoConfig: 'a => pinoTransportConfig = Obj.magic
 
-let pinoPretty = {"target": "pino-pretty", "level": Config.userLogLevel}->makePinoConfig
+let pinoPretty =
+  {
+    "target": "pino-pretty",
+    "level": Config.userLogLevel,
+    "options": {
+      "customLevels": {"userDebug":32,"userInfo":34,"userWarn":36,"userError":38},
+      // TODO: customColors is broken, have tried many variations - unable to get it to work: https://github.com/pinojs/pino-pretty#options
+      // "customColors": {"userDebug":"blue","userInfo":"green","userWarn":"yellow","userError":"red"},
+      "customColors": "userdebug:blue,userInfo:green,userWarn:yellow,userError:red",
+    },
+  }->makePinoConfig
 let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}->makePinoConfig
 let pinoFile = {
   "target": "pino/file",
@@ -23,6 +33,12 @@ let transport = Trasport.make({
   },
 })
 
+Js.log(    [
+      ("userDebug", 32),
+      ("userInfo", 34),
+      ("userWarn", 36),
+      ("userError", 38),
+    ]->Js.Dict.fromArray)
 let pinoOptions = if Config.useEcsFormat {
   {
     ...Pino.ECS.make(),
@@ -43,6 +59,8 @@ let pinoOptions = if Config.useEcsFormat {
     ]->Js.Dict.fromArray,
   }
 }
+Js.log("pinoOptions")
+Js.log(pinoOptions)
 let logger = makeWithOptionsAndTransport(pinoOptions, transport)
 
 let setLogLevel = (level: Pino.logLevel) => {
