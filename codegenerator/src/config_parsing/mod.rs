@@ -302,9 +302,9 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
 
     // Retrieving contract names from config file as a vector of String
     let mut contract_names = Vec::new();
+    let mut contract_addresses = Vec::new();
     let mut event_names = Vec::new();
     let mut entity_and_label_names = Vec::new();
-    let mut contract_addresses = Vec::new();
 
     for network in &deserialized_yaml.networks {
         for contract in &network.contracts {
