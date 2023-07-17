@@ -6,12 +6,25 @@ type pinoTransportConfig
 
 let makePinoConfig: 'a => pinoTransportConfig = Obj.magic
 
+let customLevels = [("userDebug", 32), ("userInfo", 34), ("userWarn", 36), ("userError", 38)]
+let builtinLevels = [
+  ("trace", 10),
+  ("debug", 20),
+  ("info", 30),
+  ("warn", 40),
+  ("error", 50),
+  ("fatal", 60),
+]
+
 let pinoPretty =
   {
     "target": "pino-pretty",
     "level": Config.userLogLevel,
+    // TODO: customColors is broken, have tried many variations - unable to get it to work: https://github.com/pinojs/pino-pretty#options
+    // "customColors": {"userDebug":"blue","userInfo":"green","userWarn":"yellow","userError":"red"},
+    "customColors": "userdebug:blue,userInfo:green,userWarn:yellow,userError:red",
     "options": {
-      "customLevels": {"userDebug":32,"userInfo":34,"userWarn":36,"userError":38},
+      "customLevels": customLevels->Js.Dict.fromArray,
       // TODO: customColors is broken, have tried many variations - unable to get it to work: https://github.com/pinojs/pino-pretty#options
       // "customColors": {"userDebug":"blue","userInfo":"green","userWarn":"yellow","userError":"red"},
       "customColors": "userdebug:blue,userInfo:green,userWarn:yellow,userError:red",
@@ -31,38 +44,23 @@ let transport = Trasport.make({
   | #consolePretty => [pinoPretty]
   | #both => [pinoFile, pinoPretty]
   },
+  "levels": builtinLevels->Belt.Array.concat(customLevels)->Js.Dict.fromArray,
 })
 
-Js.log(    [
-      ("userDebug", 32),
-      ("userInfo", 34),
-      ("userWarn", 36),
-      ("userError", 38),
-    ]->Js.Dict.fromArray)
 let pinoOptions = if Config.useEcsFormat {
   {
     ...Pino.ECS.make(),
-    customLevels: [
-      ("userDebug", 32),
-      ("userInfo", 34),
-      ("userWarn", 36),
-      ("userError", 38),
-    ]->Js.Dict.fromArray,
+    customLevels: customLevels->Js.Dict.fromArray,
   }
 } else {
   {
-    customLevels: [
-      ("userDebug", 32),
-      ("userInfo", 34),
-      ("userWarn", 36),
-      ("userError", 38),
-    ]->Js.Dict.fromArray,
+    customLevels: customLevels->Js.Dict.fromArray,
   }
 }
 Js.log("pinoOptions")
 Js.log(pinoOptions)
 let logger = makeWithOptionsAndTransport(pinoOptions, transport)
-
+Js.log2("Levels for logging", logger->Pino.levels)
 let setLogLevel = (level: Pino.logLevel) => {
   logger->setLevel(level)
 }
