@@ -35,7 +35,44 @@ let eventRouter = (event: Types.eventAndContext, ~chainId) => {
   event->addEventToRawEvents(~chainId, ~jsonSerializedParams, ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
 )
 
-  Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()(~event, ~context)
+  let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
+
+            try {
+              handler(~event, ~context)
+            } catch {
+            // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
+            | userCodeException =>
+              // TODO: we must add the network details of this event too!
+              let eventInfoString = `The details of the event that caused this issue:
+eventName: {{contract.name.capitalized
+}}.{{event.name.capitalized}}
+txHash: ${event.transactionHash}
+blockNumber: ${event.blockNumber->Belt.Int.toString}
+logIndex: ${event.logIndex->Belt.Int.toString}
+transactionIndex: ${event.transactionIndex->Belt.Int.toString}`
+              let errorMessage = switch userCodeException {
+              | Js.Exn.Error(obj) =>
+                switch Js.Exn.message(obj) {
+                | Some(m) => Some(`Caught a JS exception in your {{contract.name.capitalized
+}}Contract.{{event.name.capitalized
+}}.handler with this message: ${m}.
+
+Please fix this error to keep the indexer running smoothly.
+
+${eventInfoString}
+`)
+                | None => None
+                }
+              | _ => None
+              }->Belt.Option.getWithDefault(
+                `Unknown error in your {{contract.name.capitalized
+}}Contract.{{event.name.capitalized
+}}.handler, please review your code carefully and use the stack trace to help you find the issue.
+
+${eventInfoString}`,
+              )
+              context.log.errorWithExn(userCodeException, errorMessage)
+            }
   }
 {{/each}}
 {{/each}}
