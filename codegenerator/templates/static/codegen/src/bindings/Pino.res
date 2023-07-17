@@ -8,15 +8,13 @@ type logLevelBuiltin = [
 ]
 @genType
 type logLevelUser = [
-  // NOTE: pino does better when these are all lowercase - some parts of the code lower case logs.
-  | #udebug
+  | // NOTE: pino does better when these are all lowercase - some parts of the code lower case logs.
+  #udebug
   | #uinfo
   | #uwarn
   | #uerror
 ]
 type logLevel = [logLevelBuiltin | logLevelUser]
-
-type pinoConfig = {level: logLevel}
 
 type pinoMessageBlob
 type t = {
@@ -27,9 +25,7 @@ type t = {
   error: (. pinoMessageBlob) => unit,
   fatal: (. pinoMessageBlob) => unit,
 }
-@send external errorWithExn: (t, exn, pinoMessageBlob) => unit = "error"
-
-@module("pino") external make: pinoConfig => t = "default"
+@send external errorExn: (t, exn, pinoMessageBlob) => unit = "error"
 
 // Bind to the 'level' property getter
 @get external getLevel: t => logLevel = "level"
@@ -43,13 +39,24 @@ external levels: t => 'a = "levels"
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
 let createPinoMessage = (message): pinoMessageBlob => Obj.magic(message)
 
-module Trasport = {
+module Transport = {
   type t
+  type optionsObject
+  let makeTransportOptions: 'a => optionsObject = Obj.magic
+
+  // NOTE: this config is pretty polymorphic - so keeping this as all optional fields.
+  type rec transportTarget = {
+    target?: string,
+    targets?: array<transportTarget>,
+    options?: optionsObject,
+    levels?: Js.Dict.t<int>,
+    level?: logLevel,
+  }
   @module("pino")
-  external make: 'a => t = "transport"
+  external make: transportTarget => t = "transport"
 }
 
-@module("pino") external makeWithTransport: Trasport.t => t = "default"
+@module external makeWithTransport: Transport.t => t = "pino"
 
 type hooks = {logMethod: (array<string>, string, logLevel) => unit}
 
@@ -82,7 +89,8 @@ type options = {
   messageKey?: string,
 }
 
-@module("pino") external makeWithOptionsAndTransport: (options, Trasport.t) => t = "default"
+@module external make: options => t = "pino"
+@module external makeWithOptionsAndTransport: (options, Transport.t) => t = "pino"
 
 type childParams
 let createChildParams: 'a => childParams = Obj.magic
