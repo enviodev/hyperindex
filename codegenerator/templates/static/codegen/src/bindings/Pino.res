@@ -8,10 +8,11 @@ type logLevelBuiltin = [
 ]
 @genType
 type logLevelUser = [
-  | #userDebug
-  | #userInfo
-  | #userWarn
-  | #userError
+  // NOTE: pino does better when these are all lowercase - some parts of the code lower case logs.
+  | #udebug
+  | #uinfo
+  | #uwarn
+  | #uerror
 ]
 type logLevel = [logLevelBuiltin | logLevelUser]
 
