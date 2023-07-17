@@ -2,66 +2,83 @@
 // TODO: This file shouldn't be exposed to users in our external interface.
 open Pino
 
-type pinoTransportConfig
+let logLevels = [
+  // custom levels
+  ("udebug", 32),
+  ("uinfo", 34),
+  ("uwarn", 36),
+  ("uerror", 38),
+  // Default levels
+  ("trace", 10),
+  ("debug", 20),
+  ("info", 30),
+  ("warn", 40),
+  ("error", 50),
+  ("fatal", 60),
+]->Js.Dict.fromArray
 
-let makePinoConfig: 'a => pinoTransportConfig = Obj.magic
-
-let pinoPretty =
-  {
-    "target": "pino-pretty",
-    "level": Config.userLogLevel,
-    "options": {
-      "customLevels": {"userDebug":32,"userInfo":34,"userWarn":36,"userError":38},
-      // TODO: customColors is broken, have tried many variations - unable to get it to work: https://github.com/pinojs/pino-pretty#options
-      // "customColors": {"userDebug":"blue","userInfo":"green","userWarn":"yellow","userError":"red"},
-      "customColors": "userdebug:blue,userInfo:green,userWarn:yellow,userError:red",
-    },
-  }->makePinoConfig
-let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}->makePinoConfig
-let pinoFile = {
-  "target": "pino/file",
-  "options": {"destination": Config.logFilePath, "append": true, "mkdir": true},
-  "level": Config.defaultFileLogLevel,
-}->makePinoConfig
-
-let transport = Trasport.make({
-  "targets": switch Config.logStrategy {
-  | #fileOnly => [pinoFile]
-  | #consoleRaw => [pinoRaw]
-  | #consolePretty => [pinoPretty]
-  | #both => [pinoFile, pinoPretty]
-  },
-})
-
-Js.log(    [
-      ("userDebug", 32),
-      ("userInfo", 34),
-      ("userWarn", 36),
-      ("userError", 38),
-    ]->Js.Dict.fromArray)
-let pinoOptions = if Config.useEcsFormat {
-  {
-    ...Pino.ECS.make(),
-    customLevels: [
-      ("userDebug", 32),
-      ("userInfo", 34),
-      ("userWarn", 36),
-      ("userError", 38),
-    ]->Js.Dict.fromArray,
-  }
-} else {
-  {
-    customLevels: [
-      ("userDebug", 32),
-      ("userInfo", 34),
-      ("userWarn", 36),
-      ("userError", 38),
-    ]->Js.Dict.fromArray,
-  }
+let pinoPretty: Transport.transportTarget = {
+  target: "pino-pretty",
+  level: Config.userLogLevel,
+  options: {
+    "customLevels": logLevels,
+    /// NOTE: the lables have to be lower case! (pino pretty doesn't recognise them if there are upper case letters)
+    /// https://www.npmjs.com/package/colorette#supported-colors - these are available colors
+    "customColors": "fatal:bgRed,error:red,warn:yellow,info:green,udebug:bgBlue,uinfo:bgGreen,uwarn:bgYellow,uerror:bgRed,debug:blue,trace:gray",
+  }->Transport.makeTransportOptions,
 }
-Js.log("pinoOptions")
-Js.log(pinoOptions)
-let logger = makeWithOptionsAndTransport(pinoOptions, transport)
+// Currently unused - useful if using multiple transports.
+// let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}
+let pinoFile: Transport.transportTarget = {
+  target: "pino/file",
+  options: {
+    "destination": Config.logFilePath,
+    "append": true,
+    "mkdir": true,
+  }->Transport.makeTransportOptions,
+  level: Config.defaultFileLogLevel,
+}
+
+let logger = switch Config.logStrategy {
+| EcsFile =>
+  makeWithOptionsAndTransport(
+    {
+      ...Pino.ECS.make(),
+      customLevels: logLevels,
+    },
+    Transport.make(pinoFile),
+  )
+| EcsConsole =>
+  make({
+    ...Pino.ECS.make(),
+    customLevels: logLevels,
+  })
+| FileOnly =>
+  makeWithOptionsAndTransport(
+    {
+      customLevels: logLevels,
+    },
+    Transport.make(pinoFile),
+  )
+| ConsoleRaw =>
+  make({
+    customLevels: logLevels,
+  })
+| ConsolePretty =>
+  makeWithOptionsAndTransport(
+    {
+      customLevels: logLevels,
+    },
+    Transport.make(pinoPretty),
+  )
+| Both =>
+  makeWithOptionsAndTransport(
+    {
+      customLevels: logLevels,
+    },
+    Transport.make({targets: [pinoPretty, pinoFile]}),
+  )
+}
 
 let setLogLevel = (level: Pino.logLevel) => {
   logger->setLevel(level)
@@ -88,7 +105,7 @@ let error = message => {
   logger.error(. message->createPinoMessage)
 }
 let errorWithExn = (error, message) => {
-  logger->Pino.errorWithExn(error, message->createPinoMessage)
+  logger->Pino.errorExn(error, message->createPinoMessage)
 }
 
 let fatal = message => {
@@ -111,7 +128,7 @@ let childError = (logger, params: 'a) => {
   logger.error(. params->createPinoMessage)
 }
 let childErrorWithExn = (logger, error, params: 'a) => {
-  logger->Pino.errorWithExn(error, params->createPinoMessage)
+  logger->Pino.errorExn(error, params->createPinoMessage)
 }
 let childFatal = (logger, params: 'a) => {
   logger.fatal(. params->createPinoMessage)
@@ -125,8 +142,8 @@ let createChildFrom = (~logger: t, ~params: 'a) => {
 }
 
 // NOTE: these functions are used for the user logging, but they are exposed to the user only via the context and the `Logs.res` file.
-@send external userDebug: (Pino.t, 'a) => unit = "userDebug"
-@send external userInfo: (Pino.t, 'a) => unit = "userInfo"
-@send external userWarn: (Pino.t, 'a) => unit = "userWarn"
-@send external userError: (Pino.t, 'a) => unit = "userError"
-@send external userErrorWithExn: (Pino.t, exn, 'a) => unit = "userError"
+@send external udebug: (Pino.t, 'a) => unit = "udebug"
+@send external uinfo: (Pino.t, 'a) => unit = "uinfo"
+@send external uwarn: (Pino.t, 'a) => unit = "uwarn"
+@send external uerror: (Pino.t, 'a) => unit = "uerror"
+@send external uerrorWithExn: (Pino.t, exn, 'a) => unit = "uerror"
