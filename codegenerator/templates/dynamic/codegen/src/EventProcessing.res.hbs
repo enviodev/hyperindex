@@ -118,7 +118,7 @@ let rec loadReadEntitiesInner = async (
       {{#each contracts as | contract |}}
       {{#each contract.events as | event |}}
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
-          let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~chainId, ~event)
+          let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~chainId, ~event, ~logger)
           Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader()(~event, ~context=contextHelper.getLoaderContext())
           let {logIndex, blockNumber} = event
           let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)

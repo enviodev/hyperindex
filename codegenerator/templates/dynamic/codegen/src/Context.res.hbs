@@ -10,7 +10,16 @@ module {{contract.name.capitalized}}Contract = {
       getEntitiesToLoad: unit => array<Types.entityRead>,
       getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
-    let contextCreator: (~chainId: int, ~event: Types.eventLog<'a>) => contextCreatorFunctions = (~chainId, ~event) => {
+    let contextCreator: (
+      ~chainId: int,
+      ~event: Types.eventLog<'a>,
+      ~logger: Pino.t,
+    ) => contextCreatorFunctions = (~chainId, ~event, ~logger) => {
+      let logger =
+        logger->Logging.createChildFrom(
+          ~logger=_,
+          ~params={"userLog": "{{contract.name.capitalized}}.{{event.name.capitalized}}.context"},
+        )
       {{#each event.required_entities as | required_entity |}}
       {{#each required_entity.labels as |label| }}
       let optIdOf_{{label}} = ref(None)
@@ -68,6 +77,13 @@ module {{contract.name.capitalized}}Contract = {
         getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getContext: (~eventData) => ({
+          log: {
+            info: (message: string) => logger->Logging.uinfo(message),
+            debug: (message: string) => logger->Logging.udebug(message),
+            warn: (message: string) => logger->Logging.uwarn(message),
+            error: (message: string) => logger->Logging.uerror(message),
+            errorWithExn: (exn: exn, message: string) => logger->Logging.uerrorWithExn(exn, message),
+          },
           {{#each ../../entities as | entity |}}
             {{entity.name.uncapitalized}}: {
               set: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity = entity, ~dbOp = Types.Set, ~eventData)},

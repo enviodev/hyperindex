@@ -74,9 +74,7 @@ let newGravatarEventLog3: Types.eventLog<Types.GravatarContract.NewGravatarEvent
   logIndex: 1,
 }
 
-let setGravatarEventLog1: Types.eventLog<
-  Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
-> = {
+let setGravatarEventLog1: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
   params: setGravatar1,
   blockNumber: 1,
   blockTimestamp: 1,
@@ -87,9 +85,7 @@ let setGravatarEventLog1: Types.eventLog<
   logIndex: 1,
 }
 
-let setGravatarEventLog2: Types.eventLog<
-  Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
-> = {
+let setGravatarEventLog2: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
   params: setGravatar2,
   blockNumber: 1,
   blockTimestamp: 1,
@@ -100,9 +96,7 @@ let setGravatarEventLog2: Types.eventLog<
   logIndex: 1,
 }
 
-let setGravatarEventLog3: Types.eventLog<
-  Types.GravatarContract.UpdatedGravatarEvent.eventArgs,
-> = {
+let setGravatarEventLog3: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
   params: setGravatar3,
   blockNumber: 1,
   blockTimestamp: 1,
