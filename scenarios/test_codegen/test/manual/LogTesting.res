@@ -1,3 +1,4 @@
+open Pino
 open Logging
 
 // Testing usage:
