@@ -2,10 +2,6 @@
 // TODO: This file shouldn't be exposed to users in our external interface.
 open Pino
 
-type pinoTransportConfig
-
-let makePinoConfig: 'a => pinoTransportConfig = Obj.magic
-
 let logLevels = [
   // custom levels
   ("udebug", 32),
@@ -21,45 +17,69 @@ let logLevels = [
   ("fatal", 60),
 ]->Js.Dict.fromArray
 
-let pinoPretty = {
-  "target": "pino-pretty",
-  "level": Config.userLogLevel,
-  "customColors": "fatal:bgRed,error:red,warn:yellow,info:green,udebug:bgBlue,uinfo:bgGreen,uwarn:bgYellow,uerror:bgRed,debug:blue,trace:gray",
-  "options": {
+let pinoPretty: Transport.transportTarget = {
+  target: "pino-pretty",
+  level: Config.userLogLevel,
+  options: {
     "customLevels": logLevels,
     /// NOTE: the lables have to be lower case! (pino pretty doesn't recognise them if there are upper case letters)
     /// https://www.npmjs.com/package/colorette#supported-colors - these are available colors
     "customColors": "fatal:bgRed,error:red,warn:yellow,info:green,udebug:bgBlue,uinfo:bgGreen,uwarn:bgYellow,uerror:bgRed,debug:blue,trace:gray",
-  },
-}->makePinoConfig
-let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}->makePinoConfig
-let pinoFile = {
-  "target": "pino/file",
-  "options": {"destination": Config.logFilePath, "append": true, "mkdir": true},
-  "level": Config.defaultFileLogLevel,
-}->makePinoConfig
+  }->Transport.makeTransportOptions,
+}
+// Currently unused - useful if using multiple transports.
+// let pinoRaw = {"target": "pino/file", "level": Config.userLogLevel}
+let pinoFile: Transport.transportTarget = {
+  target: "pino/file",
+  options: {
+    "destination": Config.logFilePath,
+    "append": true,
+    "mkdir": true,
+  }->Transport.makeTransportOptions,
+  level: Config.defaultFileLogLevel,
+}
 
-let transport = Trasport.make({
-  "targets": switch Config.logStrategy {
-  | #fileOnly => [pinoFile]
-  | #consoleRaw => [pinoRaw]
-  | #consolePretty => [pinoPretty]
-  | #both => [pinoFile, pinoPretty]
-  },
-  "levels": logLevels,
-})
-
-let pinoOptions = if Config.useEcsFormat {
-  {
+let logger = switch Config.logStrategy {
+| EcsFile =>
+  makeWithOptionsAndTransport(
+    {
+      ...Pino.ECS.make(),
+      customLevels: logLevels,
+    },
+    Transport.make(pinoFile),
+  )
+| EcsConsole =>
+  make({
     ...Pino.ECS.make(),
     customLevels: logLevels,
-  }
-} else {
-  {
+  })
+| FileOnly =>
+  makeWithOptionsAndTransport(
+    {
+      customLevels: logLevels,
+    },
+    Transport.make(pinoFile),
+  )
+| ConsoleRaw =>
+  make({
     customLevels: logLevels,
-  }
+  })
+| ConsolePretty =>
+  makeWithOptionsAndTransport(
+    {
+      customLevels: logLevels,
+    },
+    Transport.make(pinoPretty),
+  )
+| Both =>
+  makeWithOptionsAndTransport(
+    {
+      customLevels: logLevels,
+    },
+    Transport.make({targets: [pinoPretty, pinoFile]}),
+  )
 }
-let logger = makeWithOptionsAndTransport(pinoOptions, transport)
+
 let setLogLevel = (level: Pino.logLevel) => {
   logger->setLevel(level)
 }
@@ -85,7 +105,7 @@ let error = message => {
   logger.error(. message->createPinoMessage)
 }
 let errorWithExn = (error, message) => {
-  logger->Pino.errorWithExn(error, message->createPinoMessage)
+  logger->Pino.errorExn(error, message->createPinoMessage)
 }
 
 let fatal = message => {
@@ -108,7 +128,7 @@ let childError = (logger, params: 'a) => {
   logger.error(. params->createPinoMessage)
 }
 let childErrorWithExn = (logger, error, params: 'a) => {
-  logger->Pino.errorWithExn(error, params->createPinoMessage)
+  logger->Pino.errorExn(error, params->createPinoMessage)
 }
 let childFatal = (logger, params: 'a) => {
   logger.fatal(. params->createPinoMessage)
