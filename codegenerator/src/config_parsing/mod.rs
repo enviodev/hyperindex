@@ -326,45 +326,18 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     if !validation::are_contract_names_unique(&contract_names) {
         return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
-
-    //  Check for any reserved words in contract names
-    let reserved_words_in_contract_names =
-        validation::check_reserved_words(&contract_names.join(" "));
-    if reserved_words_in_contract_names.len() > 0 {
+    
+    let mut config_names_for_codegen = Vec::new();
+    config_names_for_codegen.extend_from_slice(&contract_names);
+    config_names_for_codegen.extend_from_slice(&event_names);
+    config_names_for_codegen.extend_from_slice(&entity_and_label_names);
+    
+    let detected_reserved_words = validation::check_reserved_words(&config_names_for_codegen.join(" "));
+    if !detected_reserved_words.is_empty() {
         return Err(format!(
             "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
-            &config_path
-                .to_str()
-                .unwrap_or("unknown config file name path"),
-            reserved_words_in_contract_names.join(" ")
-        )
-        .into());
-    }
-
-    //  Check for any reserved words in event names
-    let reserved_words_in_event_names =
-        validation::check_reserved_words(&event_names.join(" "));
-    if reserved_words_in_event_names.len() > 0 {
-        return Err(format!(
-            "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
-            &config_path
-                .to_str()
-                .unwrap_or("unknown config file name path"),
-            reserved_words_in_event_names.join(" ")
-        )
-        .into());
-    }
-
-    //  Check for any reserved words in entity names and labels
-    let reserved_words_in_entity_and_label_names =
-        validation::check_reserved_words(&entity_and_label_names.join(" "));
-    if reserved_words_in_entity_and_label_names.len() > 0 {
-        return Err(format!(
-            "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
-            &config_path
-                .to_str()
-                .unwrap_or("unknown config file name path"),
-                reserved_words_in_entity_and_label_names.join(" ")
+            config_path.to_str().unwrap_or("unknown config file name path"),
+            detected_reserved_words.join(" ")
         )
         .into());
     }
