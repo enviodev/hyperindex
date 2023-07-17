@@ -119,7 +119,44 @@ let rec loadReadEntitiesInner = async (
       {{#each contract.events as | event |}}
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
           let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~chainId, ~event, ~logger)
-          Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader()(~event, ~context=contextHelper.getLoaderContext())
+
+          let context = contextHelper.getLoaderContext()
+
+          let loader = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader()
+
+            try {
+              loader(~event, ~context)
+            } catch {
+            // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
+            | userCodeException =>
+              // TODO: we must add the network details of this event too!
+              let eventInfoString = `The details of the event that caused this issue:
+eventName: {{contract.name.capitalized}}.{{event.name.capitalized}}
+txHash: ${event.transactionHash}
+blockNumber: ${event.blockNumber->Belt.Int.toString}
+logIndex: ${event.logIndex->Belt.Int.toString}
+transactionIndex: ${event.transactionIndex->Belt.Int.toString}`
+              let errorMessage = switch userCodeException {
+              | Js.Exn.Error(obj) =>
+                switch Js.Exn.message(obj) {
+                | Some(m) => Some(`Caught a JS exception in your {{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader with this message: ${m}.
+
+Please fix this error to keep the indexer running smoothly.
+
+${eventInfoString}
+`)
+                | None => None
+                }
+              | _ => None
+              }->Belt.Option.getWithDefault(
+                `Unknown error in your {{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader, please review your code carefully and use the stack trace to help you find the issue.
+
+${eventInfoString}`,
+              )
+              // NOTE: we could use the user `uerror` function instead rather than using a system error. This is debatable.
+              logger->Logging.childErrorWithExn(userCodeException, errorMessage)
+            }
+
           let {logIndex, blockNumber} = event
           let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
           let context = contextHelper.getContext(
