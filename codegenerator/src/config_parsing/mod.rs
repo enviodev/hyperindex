@@ -304,10 +304,12 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     let mut contract_names = Vec::new();
     let mut event_names = Vec::new();
     let mut entity_and_label_names = Vec::new();
+    let mut contract_addresses = Vec::new();
 
     for network in &deserialized_yaml.networks {
         for contract in &network.contracts {
             contract_names.push(contract.name.clone());
+            contract_addresses.push(contract.address.clone());
             for event in &contract.events {
                 event_names.push(event.event.get_name());
                 if let Some(required_entities) = &event.required_entities {
@@ -340,6 +342,19 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
             detected_reserved_words.join(" ")
         )
         .into());
+    }
+
+    // Checking if contract addresses are valid addresses
+    for a_contract_addressess in &contract_addresses {
+        if !validation::are_valid_ethereum_addresses(&a_contract_addressess.inner) {
+            return Err(format!(
+                "One of the contract addresses in the config file ({}) isn't valid",
+                &config_path
+                    .to_str()
+                    .unwrap_or("unknown config file name path")
+            )
+            .into());
+        }
     }
 
     Ok(deserialized_yaml)
