@@ -19,64 +19,13 @@ use crate::links;
 
 type NetworkId = i32;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct RequiredEntity {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Config {
     name: String,
-    labels: Vec<String>,
-}
-
-#[derive(Debug, PartialEq, Deserialize, Clone, Serialize)]
-#[serde(try_from = "String")]
-enum EventNameOrSig {
-    Name(String),
-    Event(EthAbiEvent),
-}
-
-impl TryFrom<String> for EventNameOrSig {
-    type Error = String;
-
-    fn try_from(event_string: String) -> Result<Self, Self::Error> {
-        let parse_event_sig = |sig: &str| -> Result<EthAbiEvent, Self::Error> {
-            match HumanReadableParser::parse_event(sig) {
-                Ok(event) => Ok(event),
-                Err(err) => Err(format!(
-                    "Unable to parse event signature {} due to the following error: {}",
-                    sig, err
-                )),
-            }
-        };
-
-        let trimmed = event_string.trim();
-
-        let name_or_sig = if trimmed.starts_with("event ") {
-            let parsed_event = parse_event_sig(trimmed)?;
-            EventNameOrSig::Event(parsed_event)
-        } else if trimmed.contains("(") {
-            let signature = format!("event {}", trimmed);
-            let parsed_event = parse_event_sig(&signature)?;
-            EventNameOrSig::Event(parsed_event)
-        } else {
-            EventNameOrSig::Name(trimmed.to_string())
-        };
-
-        Ok(name_or_sig)
-    }
-}
-
-impl EventNameOrSig {
-    pub fn get_name(&self) -> String {
-        match self {
-            EventNameOrSig::Name(name) => name.to_owned(),
-            EventNameOrSig::Event(event) => event.name.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct ConfigEvent {
-    event: EventNameOrSig,
-    required_entities: Option<Vec<RequiredEntity>>,
+    version: String,
+    description: String,
+    pub schema: Option<String>,
+    pub networks: Vec<Network>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -164,6 +113,66 @@ pub struct ConfigContract {
     events: Vec<ConfigEvent>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct ConfigEvent {
+    event: EventNameOrSig,
+    required_entities: Option<Vec<RequiredEntity>>,
+}
+
+#[derive(Debug, PartialEq, Deserialize, Clone, Serialize)]
+#[serde(try_from = "String")]
+enum EventNameOrSig {
+    Name(String),
+    Event(EthAbiEvent),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct RequiredEntity {
+    name: String,
+    labels: Vec<String>,
+}
+
+impl TryFrom<String> for EventNameOrSig {
+    type Error = String;
+
+    fn try_from(event_string: String) -> Result<Self, Self::Error> {
+        let parse_event_sig = |sig: &str| -> Result<EthAbiEvent, Self::Error> {
+            match HumanReadableParser::parse_event(sig) {
+                Ok(event) => Ok(event),
+                Err(err) => Err(format!(
+                    "Unable to parse event signature {} due to the following error: {}",
+                    sig, err
+                )),
+            }
+        };
+
+        let trimmed = event_string.trim();
+
+        let name_or_sig = if trimmed.starts_with("event ") {
+            let parsed_event = parse_event_sig(trimmed)?;
+            EventNameOrSig::Event(parsed_event)
+        } else if trimmed.contains("(") {
+            let signature = format!("event {}", trimmed);
+            let parsed_event = parse_event_sig(&signature)?;
+            EventNameOrSig::Event(parsed_event)
+        } else {
+            EventNameOrSig::Name(trimmed.to_string())
+        };
+
+        Ok(name_or_sig)
+    }
+}
+
+impl EventNameOrSig {
+    pub fn get_name(&self) -> String {
+        match self {
+            EventNameOrSig::Name(name) => name.to_owned(),
+            EventNameOrSig::Event(event) => event.name.clone(),
+        }
+    }
+}
+
 // We require this intermediate struct in order to allow the config to skip specifying "address".
 #[derive(Deserialize)]
 struct IntermediateConfigContract {
@@ -246,15 +255,6 @@ impl<T: Clone> TryFrom<OptSingleOrList<T>> for NormalizedList<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Config {
-    name: String,
-    version: String,
-    description: String,
-    pub schema: Option<String>,
-    pub networks: Vec<Network>,
-}
-
 // fn abi_path_to_abi<'de, D>(deserializer: D) -> Result<u64, D::Error>
 // where
 //     D: Deserializer<'de>,
@@ -266,18 +266,17 @@ pub struct Config {
 type StringifiedAbi = String;
 type EthAddress = String;
 
+#[derive(Debug, Serialize, PartialEq, Clone)]
+pub struct ChainConfigTemplate {
+    network_config: Network,
+    contracts: Vec<ContractTemplate>,
+}
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct ContractTemplate {
     name: CapitalizedOptions,
     abi: StringifiedAbi,
     addresses: Vec<EthAddress>,
     events: Vec<CapitalizedOptions>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct ChainConfigTemplate {
-    network_config: Network,
-    contracts: Vec<ContractTemplate>,
 }
 
 pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box<dyn Error>> {
@@ -318,17 +317,33 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     if !validation::are_contract_names_unique(&contract_names) {
         return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
-    
+
     //  Check for any reserved words in contract names
-    let detected_reserved_words_in_contract_names = validation::check_reserved_words(&contract_names.join(" "));
+    let detected_reserved_words_in_contract_names =
+        validation::check_reserved_words(&contract_names.join(" "));
     if detected_reserved_words_in_contract_names.len() > 0 {
-        return Err(format!("The config file ({}) cannot contain any reserved words. Reserved words are: {:?}", &config_path.to_str().unwrap_or("unknown config file name path"), detected_reserved_words_in_contract_names.join(" ")).into());
+        return Err(format!(
+            "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
+            &config_path
+                .to_str()
+                .unwrap_or("unknown config file name path"),
+            detected_reserved_words_in_contract_names.join(" ")
+        )
+        .into());
     }
-    
+
     //  Check for any reserved words in event names
-    let detected_reserved_words_in_event_names = validation::check_reserved_words(&event_names.join(" "));
+    let detected_reserved_words_in_event_names =
+        validation::check_reserved_words(&event_names.join(" "));
     if detected_reserved_words_in_event_names.len() > 0 {
-        return Err(format!("The config file ({}) cannot contain any reserved words. Reserved words are: {:?}", &config_path.to_str().unwrap_or("unknown config file name path"), detected_reserved_words_in_event_names.join(" ")).into());
+        return Err(format!(
+            "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
+            &config_path
+                .to_str()
+                .unwrap_or("unknown config file name path"),
+            detected_reserved_words_in_event_names.join(" ")
+        )
+        .into());
     }
 
     Ok(deserialized_yaml)
