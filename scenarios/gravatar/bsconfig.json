@@ -5,10 +5,6 @@
     {
       "dir": "src",
       "subdirs": true
-    },
-    {
-      "dir": "test",
-      "subdirs": true
     }
   ],
   "suffix": ".bs.js",
@@ -18,8 +14,9 @@
   },
   "bs-dependencies": [
     "generated",
-    "@ryyppy/rescript-promise",
-    "rescript-mocha"
+    "@ryyppy/rescript-promise"
   ],
-  "pinned-dependencies": ["generated"]
+  "pinned-dependencies": [
+    "generated"
+  ]
 }
