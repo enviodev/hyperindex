@@ -303,12 +303,21 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     // Retrieving contract names from config file as a vector of String
     let mut contract_names = Vec::new();
     let mut event_names = Vec::new();
+    let mut entity_and_label_names = Vec::new();
 
     for network in &deserialized_yaml.networks {
         for contract in &network.contracts {
             contract_names.push(contract.name.clone());
             for event in &contract.events {
                 event_names.push(event.event.get_name());
+                if let Some(required_entities) = &event.required_entities {
+                    for entity in required_entities {
+                        entity_and_label_names.push(entity.name.clone());
+                        for label in &entity.labels {
+                            entity_and_label_names.push(label.clone());
+                        }
+                    }
+                }
             }
         }
     }
@@ -319,29 +328,43 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     }
 
     //  Check for any reserved words in contract names
-    let detected_reserved_words_in_contract_names =
+    let reserved_words_in_contract_names =
         validation::check_reserved_words(&contract_names.join(" "));
-    if detected_reserved_words_in_contract_names.len() > 0 {
+    if reserved_words_in_contract_names.len() > 0 {
         return Err(format!(
             "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
             &config_path
                 .to_str()
                 .unwrap_or("unknown config file name path"),
-            detected_reserved_words_in_contract_names.join(" ")
+            reserved_words_in_contract_names.join(" ")
         )
         .into());
     }
 
     //  Check for any reserved words in event names
-    let detected_reserved_words_in_event_names =
+    let reserved_words_in_event_names =
         validation::check_reserved_words(&event_names.join(" "));
-    if detected_reserved_words_in_event_names.len() > 0 {
+    if reserved_words_in_event_names.len() > 0 {
         return Err(format!(
             "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
             &config_path
                 .to_str()
                 .unwrap_or("unknown config file name path"),
-            detected_reserved_words_in_event_names.join(" ")
+            reserved_words_in_event_names.join(" ")
+        )
+        .into());
+    }
+
+    //  Check for any reserved words in entity names and labels
+    let reserved_words_in_entity_and_label_names =
+        validation::check_reserved_words(&entity_and_label_names.join(" "));
+    if reserved_words_in_entity_and_label_names.len() > 0 {
+        return Err(format!(
+            "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
+            &config_path
+                .to_str()
+                .unwrap_or("unknown config file name path"),
+                reserved_words_in_entity_and_label_names.join(" ")
         )
         .into());
     }
