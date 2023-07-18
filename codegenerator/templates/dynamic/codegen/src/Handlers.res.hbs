@@ -1,7 +1,22 @@
-let getDefaultHandler: (string, ~event: 'a, ~context: 'b) => unit = (handlerName, ~event as _, ~context as _) => {
+type functionRegister = Loader | Handler
+
+let mapFunctionRegisterName = (functionRegister: functionRegister) => {
+  switch functionRegister {
+  | Loader => "Loader"
+  | Handler => "Handler"
+  }
+}
+
+let getDefaultLoaderHandler: (
+  ~functionRegister: functionRegister,
+  ~eventName: string,
+  ~event: 'a,
+  ~context: 'b,
+) => unit = (~functionRegister, ~eventName, ~event as _, ~context as _) => {
+  let functionName = mapFunctionRegisterName(functionRegister)
   Js.Console.warn(
     // TODO: link to our docs.
-    `${handlerName} was not registered, ignoring event. Please register a handler for this event using the register${handlerName}.`,
+    `Ignored ${eventName} event, as there is no ${functionName} registered. You need to implement a ${eventName}{functionName} method in your handler file.`,
   )
 }
 
@@ -33,10 +48,12 @@ module {{contract.name.capitalized}}Contract = {
     }
 
     let getLoader = () =>
-    {{event.name.uncapitalized}}Loader.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.capitalized}}Loader"))
+    {{event.name.uncapitalized}}Loader.contents->Belt.Option.getWithDefault(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Loader))
+
     
     let getHandler = () => 
-    {{event.name.uncapitalized}}Handler.contents->Belt.Option.getWithDefault(getDefaultHandler("{{event.name.capitalized}}Handler"))
+    {{event.name.uncapitalized}}Handler.contents->Belt.Option.getWithDefault(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler))
+     
   }
   {{/each}}
 }
