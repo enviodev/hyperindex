@@ -8,6 +8,20 @@ pub fn is_valid_postgres_db_name(name: &str) -> bool {
     re.is_match(name)
 }
 
+pub fn is_valid_ethereum_address(address: &str) -> bool {
+    let re = Regex::new(r"^0x[0-9a-fA-F]{40}$").unwrap();
+    re.is_match(address)
+}
+
+pub fn are_valid_ethereum_addresses(addresses: &[String]) -> bool {
+    for address in addresses {
+        if !is_valid_ethereum_address(address) {
+            return false;
+        }
+    }
+    true
+}
+
 // Contracts must have unique names in the config file.
 // Contract names are not case-sensitive.
 // This is regardless of networks.
@@ -44,6 +58,29 @@ mod tests {
         assert_eq!(is_not_valid_space, false);
         assert_eq!(is_not_valid_long, false);
         assert_eq!(is_not_special_chars, false);
+    }
+
+    #[test]
+    fn valid_ethereum_address() {
+        let pure_number_address =
+            super::is_valid_ethereum_address("0x1234567890123456789012345678901234567890");
+        let mixed_case_address =
+            super::is_valid_ethereum_address("0xabcdefABCDEF1234567890123456789012345678");
+        assert_eq!(pure_number_address, true);
+        assert_eq!(mixed_case_address, true);
+    }
+
+    #[test]
+    fn invalid_ethereum_address() {
+        let invalid_length_address =
+            super::is_valid_ethereum_address("0x123456789012345678901234567890123456789");
+        let invalid_characters =
+            super::is_valid_ethereum_address("0xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz");
+        let invalid_start =
+            super::is_valid_ethereum_address("123456789012345678901234567890123456789");
+        assert_eq!(invalid_length_address, false);
+        assert_eq!(invalid_characters, false);
+        assert_eq!(invalid_start, false);
     }
 
     #[test]
