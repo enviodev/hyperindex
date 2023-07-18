@@ -312,13 +312,15 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
         return Err(format!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 
-    // Retrieving contract names from config file as a vector of String
+    // Retrieving details from config file as a vectors of String
     let mut contract_names = Vec::new();
     let mut contract_addresses = Vec::new();
     let mut event_names = Vec::new();
     let mut entity_and_label_names = Vec::new();
+    let mut rpc_urls = Vec::new();
 
     for network in &deserialized_yaml.networks {
+        rpc_urls.push(network.rpc_config.url.clone());
         for contract in &network.contracts {
             contract_names.push(contract.name.clone());
             contract_addresses.push(contract.address.clone());
@@ -360,18 +362,10 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
             .into());
         }
     }
-
-    // Checking if contract addresses are valid addresses
-    for a_contract_addressess in &contract_addresses {
-        if !validation::are_valid_ethereum_addresses(&a_contract_addressess.inner) {
-            return Err(format!(
-                "One of the contract addresses in the config file ({}) isn't valid",
-                &config_path
-                    .to_str()
-                    .unwrap_or("unknown config file name path")
-            )
-            .into());
-        }
+    
+    // Checking if RPC URLs are valid
+    if !validation::validate_rpc_urls_from_config(&rpc_urls){
+        return Err(format!("The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 
     Ok(deserialized_yaml)

@@ -2,7 +2,6 @@ use regex::Regex;
 use std::collections::HashSet;
 
 use super::constants::RESERVED_WORDS;
-use std::net::IpAddr;
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
@@ -58,32 +57,23 @@ pub fn check_reserved_words(input_string: &str) -> Vec<String> {
 
     flagged_words
 }
+// Check if the given RPC URL is valid in terms of formatting.
+// For now, we only check if it starts with http:// or https://
 pub fn validate_rpc_url(url: &str) -> bool {
     // Check URL format
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return false;
     }
+    return true;
+}
 
-    // Extract domain or IP address
-    let domain_or_ip = if url.starts_with("http://") {
-        &url[7..]
-    } else {
-        &url[8..]
-    };
-
-    // Extract port number if present
-    let parts: Vec<&str> = domain_or_ip.split(':').collect();
-    let (host, _port) = if parts.len() == 2 {
-        (parts[0], parts[1])
-    } else {
-        (domain_or_ip, "80") // Default port number
-    };
-
-    // Validate IP address format
-    let is_ip_valid = host.parse::<IpAddr>().is_ok();
-
-    // Return true if URL is valid 
-    is_ip_valid
+pub fn validate_rpc_urls_from_config(urls: &[String]) -> bool {
+    for url in urls {
+        if !validate_rpc_url(url) {
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -182,10 +172,10 @@ mod tests {
         assert_eq!(flagged_words, empty_vec);
     }
     fn test_valid_rpc_urls() {
-        let valid_rpc_url_1 = "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
-        let valid_rpc_url_2 =
-            "https://api.example.org:8080";
-        let valid_rpc_url_3 = "http://192.168.0.1";
+        let valid_rpc_url_1 =
+            "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
+        let valid_rpc_url_2 = "https://api.example.org:8080";
+        let valid_rpc_url_3 = "https://eth.com/rpc-endpoint";
         let is_valid_url_1 = super::validate_rpc_url(valid_rpc_url_1);
         let is_valid_url_2 = super::validate_rpc_url(valid_rpc_url_2);
         let is_valid_url_3 = super::validate_rpc_url(valid_rpc_url_3);
@@ -197,8 +187,7 @@ mod tests {
     #[test]
     fn test_invalid_rpc_urls() {
         let invalid_rpc_url_missing_slash = "http:/example.com";
-        let invalid_rpc_url_other_protocol =
-            "ftp://example.com";
+        let invalid_rpc_url_other_protocol = "ftp://example.com";
 
         let is_invalid_missing_slash = super::validate_rpc_url(invalid_rpc_url_missing_slash);
         let is_invalid_other_protocol = super::validate_rpc_url(invalid_rpc_url_other_protocol);
