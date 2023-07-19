@@ -37,6 +37,10 @@ type chainConfig = {
         S.literalVariant(String("warn"), #warn),
         S.literalVariant(String("error"), #error),
         S.literalVariant(String("fatal"), #fatal),
+        S.literalVariant(String("udebug"), #udebug),
+        S.literalVariant(String("uinfo"), #uinfo),
+        S.literalVariant(String("uwarn"), #uwarn),
+        S.literalVariant(String("uerror"), #uerror),
         S.literalVariant(String(""), default),
         S.literalVariant(EmptyOption, default),
         ]),
@@ -45,26 +49,26 @@ type chainConfig = {
 
         let logFilePath =
         envSafe->EnvSafe.get(~name="LOG_FILE", ~struct=S.string(), ~devFallback="logs/envio.log", ())
-        let userLogLevel = getLogLevelConfig(~name="LOG_LEVEL", ~default=#warn)
+        let userLogLevel = getLogLevelConfig(~name="LOG_LEVEL", ~default=#info)
         let baseLogLevel = getLogLevelConfig(~name="BASE_LOG_LEVEL", ~default=#trace)
         let defaultFileLogLevel = getLogLevelConfig(~name="FILE_LOG_LEVEL", ~default=#trace)
 
-        type logStrategyType = [#fileOnly | #consoleRaw | #consolePretty | #both]
+        type logStrategyType = EcsFile | EcsConsole | FileOnly | ConsoleRaw | ConsolePretty | Both
         let logStrategy = envSafe->EnvSafe.get(
           ~name="LOG_STRATEGY",
           ~struct=S.union([
-            S.literalVariant(String("file-only"), #fileOnly),
-            S.literalVariant(String("console-raw"), #consoleRaw),
-            S.literalVariant(String("console-pretty"), #consolePretty),
-            S.literalVariant(String("both-prettyconsole"), #both),
+            S.literalVariant(String("ecs-file"), EcsFile),
+            S.literalVariant(String("ecs-console"), EcsConsole),
+            S.literalVariant(String("file-only"), FileOnly),
+            S.literalVariant(String("console-raw"), ConsoleRaw),
+            S.literalVariant(String("console-pretty"), ConsolePretty),
+            S.literalVariant(String("both-prettyconsole"), Both),
             // Two default values are pretty print to the console only.
-            S.literalVariant(String(""), #consolePretty),
-            S.literalVariant(EmptyOption, #consolePretty),
+            S.literalVariant(String(""), ConsolePretty),
+            S.literalVariant(EmptyOption, ConsolePretty),
           ]),
           (),
         )
-        let useEcsFormat =
-          envSafe->EnvSafe.get(~name="LOG_ECS_FORMAT", ~struct=S.bool(), ~devFallback=false, ())
 
         let db: Postgres.poolConfig = {
         host: envSafe->EnvSafe.get(~name="PG_HOST", ~struct=S.string(), ~devFallback="localhost", ()),

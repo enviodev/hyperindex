@@ -279,6 +279,16 @@ struct ContractTemplate {
     events: Vec<CapitalizedOptions>,
 }
 
+fn strip_to_letters(string: &str) -> String {
+    let mut pg_friendly_name = String::new();
+    for c in string.chars() {
+        if c.is_alphabetic() {
+            pg_friendly_name.push(c);
+        }
+    }
+    return pg_friendly_name;
+}
+
 pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box<dyn Error>> {
     let config = std::fs::read_to_string(&config_path).map_err(|err| {
         format!(
@@ -288,7 +298,7 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
         )
     })?;
 
-    let deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
+    let mut deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
         format!(
             "Failed to deserialize config with Error {}. Visit the docs for more information {}",
             err.to_string(),
@@ -296,7 +306,9 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
         )
     })?;
 
-    if !validation::is_valid_postgres_db_name(deserialized_yaml.name.as_str()) {
+    deserialized_yaml.name = (&deserialized_yaml.name);
+
+    if !validation::is_valid_postgres_db_name(&deserialized_yaml.name) {
         return Err(format!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 
@@ -334,6 +346,19 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
 
         // Checking that contract names do not include any reserved words
         validate_names_not_reserved(&contract_names, "Contracts".to_string())?;
+    }
+
+    // Checking if contract addresses are valid addresses
+    for a_contract_addressess in &contract_addresses {
+        if !validation::are_valid_ethereum_addresses(&a_contract_addressess.inner) {
+            return Err(format!(
+                "One of the contract addresses in the config file ({}) isn't valid",
+                &config_path
+                    .to_str()
+                    .unwrap_or("unknown config file name path")
+            )
+            .into());
+        }
     }
 
     // Checking if contract addresses are valid addresses
@@ -731,5 +756,18 @@ mod tests {
     fn deserializes_event_sig_invalid_panics() {
         let event_string = serde_json::to_string("MyEvent(uint69 myArg)").unwrap();
         serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
+    }
+
+    #[test]
+    fn valid_name_conversion() {
+        let name_with_space = super::strip_to_letters("My too lit to quit indexer");
+        let expected_name_with_space = "Mytoolittoquitindexer";
+        let name_with_special_chars = super::strip_to_letters("Myto@littoq$itindexer");
+        let expected_name_with_special_chars = "Mytolittoqitindexer";
+        let name_with_numbers = super::strip_to_letters("yes0123456789okay");
+        let expected_name_with_numbers = "yesokay";
+        assert_eq!(name_with_space, expected_name_with_space);
+        assert_eq!(name_with_special_chars, expected_name_with_special_chars);
+        assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
 }

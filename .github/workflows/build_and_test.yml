@@ -102,31 +102,11 @@ jobs:
         if: steps.changes.outputs.testChanges == 'true'
         run: cargo test --verbose
 
-      - name: gravatar codegen
-        if: steps.changes.outputs.testChanges == 'true'
-        working-directory: scenarios/gravatar
-        run: |
-          pnpm codegen
-
       - name: Setup Node.js
         if: steps.changes.outputs.testChanges == 'true'
         uses: actions/setup-node@v3
         with:
           node-version: 18.15.0
-
-      - name: gravatar build
-        if: steps.changes.outputs.testChanges == 'true'
-        working-directory: scenarios/gravatar
-        run: |
-          pnpm install
-          pnpm hardhat compile --verbose
-          pnpm build
-
-      - name: gravatar benchmark
-        if: steps.changes.outputs.testChanges == 'true'
-        working-directory: scenarios/gravatar
-        run: |
-          pnpm bench
 
       - name: test_codegen build
         if: steps.changes.outputs.testChanges == 'true'

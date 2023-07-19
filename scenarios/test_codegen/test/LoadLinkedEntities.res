@@ -85,6 +85,7 @@ describe("Linked Entity Loader Integration Test", () => {
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
       ~chainId=123,
       ~event=Obj.magic(),
+      ~logger=Logging.logger,
     )
 
     let loaderContext = context.getLoaderContext()
@@ -183,6 +184,7 @@ describe("Linked Entity Loader Integration Test", () => {
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
       ~chainId=123,
       ~event=Obj.magic(),
+      ~logger=Logging.logger,
     )
 
     let loaderContext = context.getLoaderContext()
