@@ -319,29 +319,21 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
                             entity_and_label_names.push(label.clone());
                         }
                     }
+                    // Checking that entity names and labels do not include any reserved words
+                    validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
                 }
             }
+            // Checking that event names do not include any reserved words
+            validate_names_not_reserved(&event_names, "Events".to_string())?;
         }
-    }
 
-    // Checking if contract names are valid
-    if !validation::are_contract_names_unique(&contract_names) {
-        return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
-    }
-    
-    let mut config_names_for_codegen = Vec::new();
-    config_names_for_codegen.extend_from_slice(&contract_names);
-    config_names_for_codegen.extend_from_slice(&event_names);
-    config_names_for_codegen.extend_from_slice(&entity_and_label_names);
-    
-    let detected_reserved_words = validation::check_reserved_words(&config_names_for_codegen.join(" "));
-    if !detected_reserved_words.is_empty() {
-        return Err(format!(
-            "The config file ({}) cannot contain any reserved words. Reserved words are: {:?}",
-            config_path.to_str().unwrap_or("unknown config file name path"),
-            detected_reserved_words.join(" ")
-        )
-        .into());
+        // Checking that contract names are non-unique
+        if !validation::are_contract_names_unique(&contract_names) {
+            return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+        }
+
+        // Checking that contract names do not include any reserved words
+        validate_names_not_reserved(&contract_names, "Contracts".to_string())?;
     }
 
     // Checking if contract addresses are valid addresses
@@ -358,6 +350,20 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     }
 
     Ok(deserialized_yaml)
+}
+
+pub fn validate_names_not_reserved(names_from_config: &Vec<String>, part_of_config: String) -> Result<(), Box<dyn std::error::Error>> {
+    let detected_reserved_words =
+        validation::check_reserved_words(&names_from_config.join(" "));
+    if !detected_reserved_words.is_empty() {
+        return Err(format!(
+            "The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",
+            detected_reserved_words.join(" "),
+            part_of_config
+        )
+        .into());
+    }
+    Ok(())
 }
 
 pub fn convert_config_to_chain_configs(

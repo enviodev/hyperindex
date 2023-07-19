@@ -51,7 +51,6 @@ pub fn check_reserved_words(input_string: &str) -> Vec<String> {
     for word in re.find_iter(input_string) {
         let word = word.as_str();
         if words_set.contains(word) {
-            println!("Found reserved word: {}", word);
             flagged_words.push(word.to_string());
         }
     }
