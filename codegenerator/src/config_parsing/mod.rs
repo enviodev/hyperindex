@@ -306,7 +306,7 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
         )
     })?;
 
-    deserialized_yaml.name = (&deserialized_yaml.name);
+    deserialized_yaml.name = strip_to_letters(&deserialized_yaml.name);
 
     if !validation::is_valid_postgres_db_name(&deserialized_yaml.name) {
         return Err(format!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
