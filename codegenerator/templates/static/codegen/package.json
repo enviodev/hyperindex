@@ -16,7 +16,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "@greenlabs/ppx-spice": "^0.1.14",
+    "@greenlabs/ppx-spice": "0.1.14",
     "gentype": "^4.5.0",
     "rescript": "^10.1.2"
   },
