@@ -14,15 +14,110 @@ pub mod entity_parsing;
 pub mod event_parsing;
 pub mod validation;
 
-pub mod defaults;
+pub mod constants;
 use crate::links;
 
 type NetworkId = i32;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct RequiredEntity {
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Config {
     name: String,
-    labels: Vec<String>,
+    version: String,
+    description: String,
+    pub schema: Option<String>,
+    pub networks: Vec<Network>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct Network {
+    pub id: NetworkId,
+    rpc_config: RpcConfig,
+    start_block: i32,
+    pub contracts: Vec<ConfigContract>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+pub struct SyncConfigUnstable {
+    #[serde(default = "default_initial_block_interval")]
+    initial_block_interval: u32,
+
+    #[serde(default = "default_backoff_multiplicative")]
+    backoff_multiplicative: f32,
+
+    #[serde(default = "default_acceleration_additive")]
+    acceleration_additive: u32,
+
+    #[serde(default = "default_interval_ceiling")]
+    interval_ceiling: u32,
+
+    #[serde(default = "default_backoff_millis")]
+    backoff_millis: u32,
+
+    #[serde(default = "default_query_timeout_millis")]
+    query_timeout_millis: u32,
+}
+
+// default value functions for sync config
+fn default_initial_block_interval() -> u32 {
+    constants::SYNC_CONFIG.initial_block_interval
+}
+
+fn default_backoff_multiplicative() -> f32 {
+    constants::SYNC_CONFIG.backoff_multiplicative
+}
+
+fn default_acceleration_additive() -> u32 {
+    constants::SYNC_CONFIG.acceleration_additive
+}
+
+fn default_interval_ceiling() -> u32 {
+    constants::SYNC_CONFIG.interval_ceiling
+}
+
+fn default_backoff_millis() -> u32 {
+    constants::SYNC_CONFIG.backoff_millis
+}
+
+fn default_query_timeout_millis() -> u32 {
+    constants::SYNC_CONFIG.query_timeout_millis
+}
+
+#[allow(non_snake_case)]
+fn default_unstable__sync_config() -> SyncConfigUnstable {
+    SyncConfigUnstable {
+        initial_block_interval: default_initial_block_interval(),
+        backoff_multiplicative: default_backoff_multiplicative(),
+        acceleration_additive: default_acceleration_additive(),
+        interval_ceiling: default_interval_ceiling(),
+        backoff_millis: default_backoff_millis(),
+        query_timeout_millis: default_query_timeout_millis(),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
+pub struct RpcConfig {
+    url: String,
+    #[serde(default = "default_unstable__sync_config")]
+    unstable__sync_config: SyncConfigUnstable,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct ConfigContract {
+    pub name: String,
+    // Eg for implementing a custom deserializer
+    //  #[serde(deserialize_with = "abi_path_to_abi")]
+    pub abi_file_path: Option<String>,
+    pub handler: String,
+    address: NormalizedList<String>,
+    events: Vec<ConfigEvent>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct ConfigEvent {
+    event: EventNameOrSig,
+    required_entities: Option<Vec<RequiredEntity>>,
 }
 
 #[derive(Debug, PartialEq, Deserialize, Clone, Serialize)]
@@ -30,6 +125,12 @@ struct RequiredEntity {
 enum EventNameOrSig {
     Name(String),
     Event(EthAbiEvent),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct RequiredEntity {
+    name: String,
+    labels: Vec<String>,
 }
 
 impl TryFrom<String> for EventNameOrSig {
@@ -70,98 +171,6 @@ impl EventNameOrSig {
             EventNameOrSig::Event(event) => event.name.clone(),
         }
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-struct ConfigEvent {
-    event: EventNameOrSig,
-    required_entities: Option<Vec<RequiredEntity>>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct Network {
-    pub id: NetworkId,
-    rpc_config: RpcConfig,
-    start_block: i32,
-    pub contracts: Vec<ConfigContract>,
-}
-
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct SyncConfigUnstable {
-    #[serde(default = "default_initial_block_interval")]
-    initial_block_interval: u32,
-
-    #[serde(default = "default_backoff_multiplicative")]
-    backoff_multiplicative: f32,
-
-    #[serde(default = "default_acceleration_additive")]
-    acceleration_additive: u32,
-
-    #[serde(default = "default_interval_ceiling")]
-    interval_ceiling: u32,
-
-    #[serde(default = "default_backoff_millis")]
-    backoff_millis: u32,
-
-    #[serde(default = "default_query_timeout_millis")]
-    query_timeout_millis: u32,
-}
-
-// default value functions for sync config
-fn default_initial_block_interval() -> u32 {
-    defaults::SYNC_CONFIG.initial_block_interval
-}
-
-fn default_backoff_multiplicative() -> f32 {
-    defaults::SYNC_CONFIG.backoff_multiplicative
-}
-
-fn default_acceleration_additive() -> u32 {
-    defaults::SYNC_CONFIG.acceleration_additive
-}
-
-fn default_interval_ceiling() -> u32 {
-    defaults::SYNC_CONFIG.interval_ceiling
-}
-
-fn default_backoff_millis() -> u32 {
-    defaults::SYNC_CONFIG.backoff_millis
-}
-
-fn default_query_timeout_millis() -> u32 {
-    defaults::SYNC_CONFIG.query_timeout_millis
-}
-
-#[allow(non_snake_case)]
-fn default_unstable__sync_config() -> SyncConfigUnstable {
-    SyncConfigUnstable {
-        initial_block_interval: default_initial_block_interval(),
-        backoff_multiplicative: default_backoff_multiplicative(),
-        acceleration_additive: default_acceleration_additive(),
-        interval_ceiling: default_interval_ceiling(),
-        backoff_millis: default_backoff_millis(),
-        query_timeout_millis: default_query_timeout_millis(),
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
-pub struct RpcConfig {
-    url: String,
-    #[serde(default = "default_unstable__sync_config")]
-    unstable__sync_config: SyncConfigUnstable,
-}
-
-#[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct ConfigContract {
-    pub name: String,
-    // Eg for implementing a custom deserializer
-    //  #[serde(deserialize_with = "abi_path_to_abi")]
-    pub abi_file_path: Option<String>,
-    pub handler: String,
-    address: NormalizedList<String>,
-    events: Vec<ConfigEvent>,
 }
 
 // We require this intermediate struct in order to allow the config to skip specifying "address".
@@ -246,15 +255,6 @@ impl<T: Clone> TryFrom<OptSingleOrList<T>> for NormalizedList<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Config {
-    name: String,
-    version: String,
-    description: String,
-    pub schema: Option<String>,
-    pub networks: Vec<Network>,
-}
-
 // fn abi_path_to_abi<'de, D>(deserializer: D) -> Result<u64, D::Error>
 // where
 //     D: Deserializer<'de>,
@@ -266,18 +266,17 @@ pub struct Config {
 type StringifiedAbi = String;
 type EthAddress = String;
 
+#[derive(Debug, Serialize, PartialEq, Clone)]
+pub struct ChainConfigTemplate {
+    network_config: Network,
+    contracts: Vec<ContractTemplate>,
+}
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct ContractTemplate {
     name: CapitalizedOptions,
     abi: StringifiedAbi,
     addresses: Vec<EthAddress>,
     events: Vec<CapitalizedOptions>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct ChainConfigTemplate {
-    network_config: Network,
-    contracts: Vec<ContractTemplate>,
 }
 
 fn strip_to_letters(string: &str) -> String {
@@ -316,17 +315,50 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     // Retrieving contract names from config file as a vector of String
     let mut contract_names = Vec::new();
     let mut contract_addresses = Vec::new();
+    let mut event_names = Vec::new();
+    let mut entity_and_label_names = Vec::new();
 
     for network in &deserialized_yaml.networks {
         for contract in &network.contracts {
             contract_names.push(contract.name.clone());
-            contract_addresses.push(contract.address.clone())
+            contract_addresses.push(contract.address.clone());
+            for event in &contract.events {
+                event_names.push(event.event.get_name());
+                if let Some(required_entities) = &event.required_entities {
+                    for entity in required_entities {
+                        entity_and_label_names.push(entity.name.clone());
+                        for label in &entity.labels {
+                            entity_and_label_names.push(label.clone());
+                        }
+                    }
+                    // Checking that entity names and labels do not include any reserved words
+                    validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
+                }
+            }
+            // Checking that event names do not include any reserved words
+            validate_names_not_reserved(&event_names, "Events".to_string())?;
         }
+
+        // Checking that contract names are non-unique
+        if !validation::are_contract_names_unique(&contract_names) {
+            return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+        }
+
+        // Checking that contract names do not include any reserved words
+        validate_names_not_reserved(&contract_names, "Contracts".to_string())?;
     }
 
-    // Checking if contract names are valid
-    if !validation::are_contract_names_unique(&contract_names) {
-        return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+    // Checking if contract addresses are valid addresses
+    for a_contract_addressess in &contract_addresses {
+        if !validation::are_valid_ethereum_addresses(&a_contract_addressess.inner) {
+            return Err(format!(
+                "One of the contract addresses in the config file ({}) isn't valid",
+                &config_path
+                    .to_str()
+                    .unwrap_or("unknown config file name path")
+            )
+            .into());
+        }
     }
 
     // Checking if contract addresses are valid addresses
@@ -343,6 +375,20 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
     }
 
     Ok(deserialized_yaml)
+}
+
+pub fn validate_names_not_reserved(names_from_config: &Vec<String>, part_of_config: String) -> Result<(), Box<dyn std::error::Error>> {
+    let detected_reserved_words =
+        validation::check_reserved_words(&names_from_config.join(" "));
+    if !detected_reserved_words.is_empty() {
+        return Err(format!(
+            "The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",
+            detected_reserved_words.join(" "),
+            part_of_config
+        )
+        .into());
+    }
+    Ok(())
 }
 
 pub fn convert_config_to_chain_configs(
