@@ -2,14 +2,14 @@ name: Greeter
 version: 0.0.0
 description: Greeter indexer
 networks:
-  - id: 1337
+  - id: 137 # Polygon
     rpc_config:
-      url: http://localhost:8545
-    start_block: 0
+      url: https://polygon.llamarpc.com # We recommend you change this to a dedicated RPC provider
+    start_block: 45336336
     contracts:
       - name: Greeter
         abi_file_path: abis/greeter-abi.json
-        address: "0x2B502ab6F783c2Ae96A75dc68cf82a77ce2637c2"
+        address: "0x9D02A17dE4E68545d3a58D3a20BbBE0399E05c9c"
         handler: ./src/EventHandlers.bs.js
         events:
           - event: "NewGreeting"

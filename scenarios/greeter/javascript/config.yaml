@@ -2,14 +2,14 @@ name: greeterjavascript
 version: 0.0.0
 description: Greeter indexer
 networks:
-  - id: 1337
+  - id: 137 # Polygon
     rpc_config:
-      url: http://localhost:8545
-    start_block: 0
+      url: https://polygon.llamarpc.com # We recommend you change this to a dedicated RPC provider
+    start_block: 45336336
     contracts:
       - name: Greeter
         abi_file_path: abis/greeter-abi.json
-        address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+        address: "0x9D02A17dE4E68545d3a58D3a20BbBE0399E05c9c"
         handler: ./src/EventHandlers.js
         events:
           - event: "NewGreeting"
@@ -22,3 +22,24 @@ networks:
               - name: "Greeting"
                 labels:
                   - "greetingWithChanges"
+  # Local development network config
+  # - id: 1337
+  #   rpc_config:
+  #     url: http://localhost:8545
+  #   start_block: 0
+  #   contracts:
+  #     - name: Greeter
+  #       abi_file_path: abis/greeter-abi.json
+  #       address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"
+  #       handler: ./src/EventHandlers.js
+  #       events:
+  #         - event: "NewGreeting"
+  #           requiredEntities:
+  #             - name: "Greeting"
+  #               labels:
+  #                 - "greetingWithChanges"
+  #         - event: "ClearGreeting"
+  #           requiredEntities:
+  #             - name: "Greeting"
+  #               labels:
+  #                 - "greetingWithChanges"
