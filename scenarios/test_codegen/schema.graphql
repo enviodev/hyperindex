@@ -34,6 +34,7 @@ type Token @entity {
 type A @entity {
   id: ID!
   b: B!
+  optionalBigInt: BigInt
 }
 type B @entity {
   id: ID!

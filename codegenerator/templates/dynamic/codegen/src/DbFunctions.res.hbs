@@ -98,10 +98,21 @@ module {{entity.name.capitalized}} = {
       eventId
     } = readRow
 
+    {{#each entity.params as | param |}}
+      {{#unless param.is_derived_from}}
+        {{#if (eq param.type_rescript_non_optional "Ethers.BigInt.t")}}
+        {{#if param.is_optional}}
+    let {{param.key}} = {{param.key}}->Belt.Option.flatMap(Ethers.BigInt.fromString)
+        {{else}}
+    let {{param.key}} = {{param.key}}->Ethers.BigInt.fromStringUnsafe // We know it will always be defined
+          {{/if}}
+        {{/if}}
+      {{/unless}}
+    {{/each}}
     {
       entity: {
         {{#each entity.params as | param |}}
-        {{#unless param.is_derived_from}}{{param.key}}: {{#if param.is_optional}}?{{/if}}({{param.key}}{{#if  (eq param.type_rescript_non_optional "Ethers.BigInt.t")}}->Ethers.BigInt.fromStringUnsafe{{/if}}),{{/unless}}
+        {{#unless param.is_derived_from}}{{#if param.is_optional}}?{{/if}}{{param.key}},{{/unless}}
         {{/each}}
       },
       eventData: {
