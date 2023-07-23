@@ -25,7 +25,7 @@ Install prerequisite tools:
 
 Install Envio:
 ```
-cargo install --path codegenerator`
+cargo install --path codegenerator
 ```
 
 
