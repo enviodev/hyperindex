@@ -120,35 +120,94 @@ impl PersistedState {
     }
 }
 
-pub fn check_user_file_diff_match(parsed_paths: &ParsedPaths) -> Result<bool, Box<dyn Error>> {
-    let persisted_state = PersistedState::get_from_generated_file(&parsed_paths.project_paths)?;
+pub enum RerunOptions {
+    CodegenAndSyncFromRpc,
+    CodegenAndResyncFromStoredEvents,
+    ResyncFromStoredEvents,
+    ContinueSync,
+}
+
+//Used to determin what action should be taken
+//based on changes a user has made to parts of their code
+struct PersistedStateDiff {
+    config_change: bool,
+    abi_change: bool,
+    schema_change: bool,
+    handler_change: bool,
+}
+
+impl PersistedStateDiff {
+    pub fn new() -> Self {
+        PersistedStateDiff {
+            config_change: false,
+            abi_change: false,
+            schema_change: false,
+            handler_change: false,
+        }
+    }
+
+    pub fn get_rerun_option(&self) -> RerunOptions {
+        match (
+            //Config or Abi change -> Codegen & rerun sync from RPC
+            (self.config_change || self.abi_change),
+            //Schema change -> Rerun codegen, resync from stored raw events
+            self.schema_change,
+            //Handlers change -> resync from stored raw events (no codegen)
+            self.handler_change,
+        ) {
+            (true, _, _) => RerunOptions::CodegenAndSyncFromRpc,
+            (false, true, _) => RerunOptions::CodegenAndResyncFromStoredEvents,
+            (false, false, true) => RerunOptions::ResyncFromStoredEvents,
+            (false, false, false) => RerunOptions::ContinueSync,
+        }
+    }
+}
+
+pub enum ExistingPersistedState {
+    NoFile,
+    ExistingFile(PersistedState),
+}
+
+pub fn check_user_file_diff_match(
+    existing_persisted_state: &ExistingPersistedState,
+    parsed_paths: &ParsedPaths,
+) -> Result<RerunOptions, Box<dyn Error>> {
+    //If there is no existing file, the whole process needs to
+    //be run so we can skip diff checking
+    let persisted_state = match existing_persisted_state {
+        ExistingPersistedState::NoFile => {
+            return Ok(RerunOptions::CodegenAndSyncFromRpc);
+        }
+        ExistingPersistedState::ExistingFile(f) => f,
+    };
+    let mut diff = PersistedStateDiff::new();
     let current_config_hash = HashString::from_file_path(&parsed_paths.project_paths.config)?;
     if persisted_state.config_hash != current_config_hash {
         println!("Change in config detected");
-        return Ok(false);
+        diff.config_change = true;
     }
     let current_schema_hash = HashString::from_file_path(&parsed_paths.schema_path)?;
     if persisted_state.schema_hash != current_schema_hash {
         println!("Change in schema detected");
-        return Ok(false);
+        diff.schema_change = true;
     }
     let current_handlers_hash = HashString::from_file_paths(parsed_paths.get_all_handler_paths())?;
     if persisted_state.handler_files_hash != current_handlers_hash {
         println!("Change in handlers detected");
-        return Ok(false);
+        diff.handler_change = true;
     }
     let current_abi_hash = HashString::from_file_paths(parsed_paths.get_all_abi_paths())?;
     if persisted_state.abi_files_hash != current_abi_hash {
         println!("Change in abis detected");
-        return Ok(false);
+        diff.abi_change = true;
     }
-    Ok(true)
+    Ok(diff.get_rerun_option())
 }
 
 pub fn persisted_state_file_exists(project_paths: &ProjectPaths) -> bool {
     let file_path = project_paths.generated.join(PERSISTED_STATE_FILE_NAME);
 
-    return fs::metadata(&file_path).is_ok()
+    return fs::metadata(&file_path).is_ok();
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -176,7 +235,7 @@ mod test {
         let hash = HashString::from_file_path(&config1_path).unwrap();
         assert_eq!(
             hash.inner(),
-            "70d77546796f25584e5b87fa851885990bc7870f02cf2b4afa9f64ef9a42b02a".to_string()
+            "f3e78a8ad23df0ba777a892ce10644d52bada831a87746eec7e5c08bf576d3fa".to_string()
         );
     }
     #[test]
@@ -186,7 +245,7 @@ mod test {
         let hash = HashString::from_file_paths(vec![&config1_path, &config2_path]).unwrap();
         assert_eq!(
             hash.inner(),
-            "95b678bf1e788f56a819f8f13b7ece20a91775095360d297f9fea5555ad0e39b".to_string()
+            "e310e8da429a573445af2fa163cc3fff1c39e6ac1225461aa7e9d0ecdf8e911f".to_string()
         );
     }
 }

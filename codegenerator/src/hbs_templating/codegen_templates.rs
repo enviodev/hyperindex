@@ -197,7 +197,6 @@ pub fn generate_templates(
     chain_configs: Vec<ChainConfigTemplate>,
     entity_types: Vec<EntityRecordTypeTemplate>,
     parsed_paths: &ParsedPaths,
-    sync_config: SyncConfigTemplate,
     project_name: String,
 ) -> Result<(), Box<dyn Error>> {
     static CODEGEN_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/codegen");
