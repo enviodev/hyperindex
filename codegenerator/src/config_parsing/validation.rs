@@ -171,24 +171,25 @@ mod tests {
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(flagged_words, empty_vec);
     }
+
+    #[test]
     fn test_valid_rpc_urls() {
         let valid_rpc_url_1 =
             "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
-        let valid_rpc_url_2 = "https://api.example.org:8080";
+        let valid_rpc_url_2 = "http://api.example.org:8080";
         let valid_rpc_url_3 = "https://eth.com/rpc-endpoint";
         let is_valid_url_1 = super::validate_rpc_url(valid_rpc_url_1);
         let is_valid_url_2 = super::validate_rpc_url(valid_rpc_url_2);
         let is_valid_url_3 = super::validate_rpc_url(valid_rpc_url_3);
         assert_eq!(is_valid_url_1, true);
-        // assert_eq!(is_valid_url_2, true);
-        // assert_eq!(is_valid_url_3, true);
+        assert_eq!(is_valid_url_2, true);
+        assert_eq!(is_valid_url_3, true);
     }
 
     #[test]
     fn test_invalid_rpc_urls() {
         let invalid_rpc_url_missing_slash = "http:/example.com";
         let invalid_rpc_url_other_protocol = "ftp://example.com";
-
         let is_invalid_missing_slash = super::validate_rpc_url(invalid_rpc_url_missing_slash);
         let is_invalid_other_protocol = super::validate_rpc_url(invalid_rpc_url_other_protocol);
         assert_eq!(is_invalid_missing_slash, false);
