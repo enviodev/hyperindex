@@ -22,6 +22,7 @@ serde_yaml = "0.9.19"
 regex = "1.5"
 reqwest = "0.11"
 tokio = { version = "1.28.2", features = ["macros", "rt-multi-thread", "time"] }
+anyhow = "1.0.72"
 
 # Default profile
 [profile.dev]

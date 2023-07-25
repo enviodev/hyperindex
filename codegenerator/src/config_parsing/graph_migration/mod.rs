@@ -1,12 +1,13 @@
+use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::process;
+use std::fs;
+use std::path::PathBuf;
+use tokio::task::JoinSet;
 use tokio::time::{timeout, Duration};
 
+use crate::project_paths::handler_paths::DEFAULT_SCHEMA_PATH;
 use crate::{
     cli_args::Language,
     config_parsing::{
@@ -15,6 +16,9 @@ use crate::{
 };
 
 mod chain_helpers;
+
+// maximum backoff period for fetching files from IPFS
+const MAXIMUM_BACKOFF: Duration = Duration::from_secs(32);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +31,7 @@ pub struct GraphManifest {
     pub templates: Option<Vec<Template>>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct FileID {
     #[serde(rename = "/")]
     pub value: String,
@@ -38,7 +42,7 @@ pub struct Schema {
     pub file: FileID,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct DataSource {
     pub kind: String,
     pub name: String,
@@ -55,7 +59,7 @@ pub struct Template {
     pub mapping: Mapping,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Source {
     pub address: String,
@@ -71,7 +75,7 @@ pub struct TemplateSource {
     pub start_block: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Mapping {
     pub kind: String,
@@ -85,25 +89,25 @@ pub struct Mapping {
     pub file: FileID,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct Abi {
     pub name: String,
     pub file: FileID,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct EventHandler {
     pub event: String,
     pub handler: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CallHandler {
     pub function: String,
     pub handler: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct BlockHandler {
     pub handler: String,
 }
@@ -171,271 +175,226 @@ async fn generate_network_contract_hashmap(manifest_raw: &str) -> HashMap<String
     network_contracts
 }
 
+async fn fetch_ipfs_file_with_retry(file_id: &str, file_name: &str) -> anyhow::Result<String> {
+    let mut refetch_delay = Duration::from_secs(2);
+
+    let fail_if_maximum_is_exceeded = |current_refetch_delay, err: &str| -> anyhow::Result<()> {
+        if current_refetch_delay >= MAXIMUM_BACKOFF {
+            eprintln!("Failed to fetch {}: {}", file_name, err);
+            eprintln!("{} file needs to be imported manually.", file_name);
+            return Err(anyhow!("Maximum backoff timeout exceeded"));
+        }
+        Ok(())
+    };
+    loop {
+        match timeout(refetch_delay, fetch_ipfs_file(file_id)).await {
+            Ok(Ok(file)) => break Ok(file),
+            Ok(Err(err)) => {
+                fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
+                eprintln!(
+                    "Failed to fetch {}: {}. Retrying in {} seconds...",
+                    file_name,
+                    &err,
+                    refetch_delay.as_secs()
+                );
+            }
+            Err(err) => {
+                fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
+                eprintln!(
+                    "Fetching {} timed out. Retrying in {} seconds...",
+                    file_name,
+                    refetch_delay.as_secs()
+                );
+            }
+        }
+        tokio::time::sleep(refetch_delay).await;
+        refetch_delay *= 2;
+    }
+}
+
+///Slice off "/ipfs/" from the path
+///Note this can panic the first 6 chars in the string slice are invalid utf8
+///However it will check for utf8 validity so there is no risk of junk values and path should
+///always start with /ipfs/ which is valid
+fn get_ipfs_id_from_file_path<'a>(file_path: &'a str) -> &'a str {
+    &file_path[6..]
+}
+
 // Function to generate config, schema and abis from subgraph ID
 pub async fn generate_config_from_subgraph_id(
     project_root_path: &PathBuf,
     subgraph_id: &str,
     language: &Language,
-) {
-    // maximum backoff period for fetching files from IPFS
-    let maximum_backoff = Duration::from_secs(32);
-    let fetch_manifest_str = async {
-        let mut refetch_delay = Duration::from_secs(2);
-        loop {
-            match timeout(refetch_delay, fetch_ipfs_file(subgraph_id)).await {
-                Ok(Ok(manifest_str)) => break Ok(manifest_str),
-                Ok(Err(err)) => {
-                    if refetch_delay >= maximum_backoff {
-                        eprintln!("Failed to fetch manifest: {}", err);
-                        eprintln!(
-                            "Migration cannot continue as fetching manifest from IPFS timed out."
-                        );
-                        return Err(err);
-                    }
-                    eprintln!(
-                        "Failed to fetch manifest: {}. Retrying in {} seconds...",
-                        err,
-                        refetch_delay.as_secs()
-                    );
-                }
-                Err(_) => {
-                    if refetch_delay >= maximum_backoff {
-                        eprintln!(
-                            "Migration cannot continue as fetching manifest from IPFS timed out."
-                        );
-                        // Exit the function after 5 timed out fetches for the manifest file
-                        process::exit(1);
-                    }
-                    eprintln!(
-                        "Fetching manifest timed out. Retrying in {} seconds...",
-                        refetch_delay.as_secs()
-                    );
-                }
-            }
-            tokio::time::sleep(refetch_delay).await;
-            refetch_delay *= 2;
-        }
+) -> anyhow::Result<()> {
+    const MANIFEST_FILE_NAME: &str = "manifest.yaml";
+    let manifest_file_string = fetch_ipfs_file_with_retry(subgraph_id, MANIFEST_FILE_NAME)
+        .await
+        .context("Failed to fetch manifest IPFS file")?;
+
+    //Ensure the root dir is created before writing files to it
+    fs::create_dir_all(project_root_path).context("Failed to create root dir")?;
+    // Write manifest YAML file to a file
+    // manifest file not required for Envio's indexing, but useful to save in project directory for debugging
+    let manifest_path = project_root_path.join(MANIFEST_FILE_NAME);
+    std::fs::write(manifest_path, &manifest_file_string)
+        .with_context(|| format!("Failed to write {}.", MANIFEST_FILE_NAME))?;
+
+    // Deserialize manifest file
+    let manifest = serde_yaml::from_str::<GraphManifest>(&manifest_file_string)
+        .with_context(|| format!("Failed to deserialize {}.", MANIFEST_FILE_NAME))?;
+
+    // Create config object to be populated
+    let mut config = Config {
+        version: "1.0.0".to_string(),
+        description: manifest.description.unwrap_or_else(|| "".to_string()),
+        repository: manifest.repository.unwrap_or_else(|| "".to_string()),
+        schema: None,
+        networks: vec![],
+        unstable_sync_config: None,
     };
 
-    match fetch_manifest_str.await {
-        Ok(manifest_str) => {
-            // Convert manifest to YAML string
-            let manifest_yaml = serde_yaml::to_string(&manifest_str).unwrap();
+    //Allow schema and abis to be fetched on different threads
+    let mut join_set = JoinSet::new();
 
-            // Write manifest YAML file to a file
-            // manifest file not required for Envio's indexing, but useful to save in project directory for debugging
-            std::fs::write("manifest.yaml", manifest_yaml).expect("Failed to write manifest.yaml");
+    // Fetching schema file path from config
+    let schema_ipfs_file_path = manifest.schema.file.value.clone();
 
-            // Deserialize manifest file
-            let manifest = serde_yaml::from_str::<GraphManifest>(&manifest_str).unwrap();
+    let schema_fs_path = project_root_path.join(DEFAULT_SCHEMA_PATH);
 
-            // Create config object to be populated
-            let mut config = Config {
-                version: "1.0.0".to_string(),
-                description: manifest.description.unwrap_or_else(|| "".to_string()),
-                repository: manifest.repository.unwrap_or_else(|| "".to_string()),
-                schema: None,
-                networks: vec![],
-                unstable_sync_config: None,
-            };
+    //spawn a thread for fetching schema
+    join_set.spawn(async move {
+        fetch_ipfs_file_and_write_to_system(schema_ipfs_file_path, schema_fs_path, "schema").await
+    });
 
-            // Fetching schema file path from config
-            let schema_file_path = &manifest.schema.file;
-            let schema_id = &schema_file_path.value.as_str()[6..];
+    // Generate network contract hashmap
+    let network_hashmap = generate_network_contract_hashmap(&manifest_file_string).await;
 
-            let schema = async {
-                let mut refetch_delay = Duration::from_secs(2);
-                loop {
-                    match timeout(refetch_delay, fetch_ipfs_file(schema_id)).await {
-                        Ok(Ok(schema)) => break Ok(schema),
-                        Ok(Err(err)) => {
-                            if refetch_delay >= maximum_backoff {
-                                eprintln!("Failed to fetch schema: {}", err);
-                                eprintln!("Schema file needs to be imported manually.");
-                                return Err(err);
-                            }
-                            eprintln!(
-                                "Failed to fetch schema: {}. Retrying in {} seconds...",
-                                err,
-                                refetch_delay.as_secs()
-                            );
-                        }
-                        Err(_) => {
-                            if refetch_delay >= maximum_backoff {
-                                eprintln!("Failed to fetch schema.");
-                                eprintln!("Schema file needs to be imported manually.");
-                                // exit the loop and continue onto next lines of the code
-                                break Ok("".to_string());
-                            }
-                            eprintln!(
-                                "Fetching schema timed out. Retrying in {} seconds...",
-                                refetch_delay.as_secs()
-                            );
-                        }
-                    }
-                    tokio::time::sleep(refetch_delay).await;
-                    refetch_delay *= 2;
+    for (network_name, contracts) in &network_hashmap {
+        // Create network object to be populated
+        let mut network = Network {
+            id: chain_helpers::get_graph_protocol_chain_id(
+                chain_helpers::deserialize_network_name(network_name),
+            ),
+            // TODO: update to the final rpc url
+            rpc_url: "https://example.com/rpc".to_string(),
+            start_block: 0,
+            contracts: vec![],
+        };
+        // Iterate through contracts to get contract name, abi file path, address and event names
+        for contract in contracts {
+            match manifest
+                .data_sources
+                .iter()
+                .find(|ds| &ds.source.abi == contract)
+                .cloned()
+            {
+                None => {
+                    println!("Data source not found");
                 }
-            }
-            .await;
+                Some(data_source) => {
+                    let mut contract = ConfigContract {
+                        name: data_source.name.to_string(),
+                        abi_file_path: Some(format!(
+                            "{}abis/{}.json",
+                            project_root_path.display(),
+                            data_source.name.to_string()
+                        )),
+                        address: NormalizedList::from_single(
+                            data_source.source.address.to_string(),
+                        ),
+                        handler: get_event_handler_directory(language),
+                        events: vec![],
+                    };
 
-            if let Ok(schema) = schema {
-                // Write the schema file
-                let mut schema_file_directory =
-                    File::create(format!("{}schema.graphql", project_root_path.display()))
-                        .expect("Failed to create file");
-                schema_file_directory
-                    .write_all(schema.as_bytes())
-                    .expect("Failed to write to file");
-                println!("Schema file written");
-            }
-
-            // Generate network contract hashmap
-            let network_hashmap = generate_network_contract_hashmap(&manifest_str).await;
-
-            for (network_name, contracts) in &network_hashmap {
-                // Create network object to be populated
-                let mut network = Network {
-                    id: chain_helpers::get_graph_protocol_chain_id(
-                        chain_helpers::deserialize_network_name(network_name),
-                    ),
-                    // TODO: update to the final rpc url
-                    rpc_url: "https://example.com/rpc".to_string(),
-                    start_block: 0,
-                    contracts: vec![],
-                };
-                // Iterate through contracts to get contract name, abi file path, address and event names
-                for contract in contracts {
-                    if let Some(data_source) = manifest
-                        .data_sources
-                        .iter()
-                        .find(|ds| &ds.source.abi == contract)
-                    {
-                        let mut contract = ConfigContract {
-                            name: data_source.name.to_string(),
-                            abi_file_path: Some(format!(
-                                "{}abis/{}.json",
-                                project_root_path.display(),
-                                data_source.name.to_string()
-                            )),
-                            address: NormalizedList::from_single(
-                                data_source.source.address.to_string(),
-                            ),
-                            handler: get_event_handler_directory(language),
-                            events: vec![],
-                        };
-                        // Fetching event names from config
-                        let event_handlers = &data_source.mapping.event_handlers;
-                        for event_handler in event_handlers {
-                            // Event signatures of the manifest file from theGraph can differ from smart contract event signature convention
-                            // therefore just extracting event name from event signature
-                            if let Some(start) = event_handler.event.as_str().find('(') {
-                                let event_name = &event_handler
-                                    .event
-                                    .as_str()
-                                    .chars()
-                                    .take(start)
-                                    .collect::<String>();
-                                let event = ConfigEvent {
-                                    event: EventNameOrSig::Name(event_name.to_string()),
-                                    required_entities: Some(vec![]),
-                                };
-
-                                // Pushing event to contract
-                                contract.events.push(event);
+                    // Fetching event names from config
+                    let event_handlers = &data_source.mapping.event_handlers;
+                    for event_handler in event_handlers {
+                        // Event signatures of the manifest file from theGraph can differ from smart contract event signature convention
+                        // therefore just extracting event name from event signature
+                        if let Some(start) = event_handler.event.as_str().find('(') {
+                            let event_name = &event_handler
+                                .event
+                                .as_str()
+                                .chars()
+                                .take(start)
+                                .collect::<String>();
+                            let event = ConfigEvent {
+                                event: EventNameOrSig::Name(event_name.to_string()),
+                                required_entities: Some(vec![]),
                             };
-                        }
-                        // Pushing contract to network
-                        network.contracts.push(contract.clone());
 
-                        // Fetching abi file path from config
-                        let abi_file_path = &data_source.mapping.abis[0].file;
-                        let abi_id: &str = &abi_file_path.value.as_str()[6..];
+                            // Pushing event to contract
+                            contract.events.push(event);
+                        };
+                    }
+                    // Pushing contract to network
+                    network.contracts.push(contract.clone());
 
-                        let abi: Result<String, reqwest::Error> = async {
-                            let mut refetch_delay = Duration::from_secs(2);
-                            let mut fetch_attempts = 0;
-                            loop {
-                                match timeout(refetch_delay, fetch_ipfs_file(abi_id)).await {
-                                    Ok(Ok(abi)) => break Ok(abi),
-                                    Ok(Err(err)) => {
-                                        fetch_attempts += 1;
-                                        if fetch_attempts >= 5 {
-                                            eprintln!("Failed to fetch ABI: {}", err);
-                                            eprintln!("ABI file needs to be imported manually.");
-                                            return Err(err);
-                                        }
-                                        eprintln!(
-                                            "Failed to fetch ABI: {}. Retrying in {} seconds...",
-                                            err,
-                                            refetch_delay.as_secs()
-                                        );
-                                    }
-                                    Err(_) => {
-                                        fetch_attempts += 1;
-                                        if fetch_attempts >= 5 {
-                                            eprintln!("Failed to fetch ABI.");
-                                            eprintln!("ABI file needs to be imported manually.");
-                                            // exit the loop and continue onto next lines of the code
-                                            break Ok("".to_string());
-                                        }
-                                        eprintln!(
-                                            "Fetching ABI timed out. Retrying in {} seconds...",
-                                            refetch_delay.as_secs()
-                                        );
-                                    }
-                                }
-                                tokio::time::sleep(refetch_delay).await;
-                                refetch_delay *= 2;
-                            }
-                        }
-                        .await;
+                    //Create the dir for all abis to be dropped in
+                    let abi_dir_path = project_root_path.join("abis");
+                    fs::create_dir_all(&abi_dir_path).context("Failed to create abis dir")?;
 
-                        if let Ok(abi) = abi {
-                            let abi_file_directory = project_root_path
-                                .join("abis")
-                                .join(format!("{}.json", data_source.name.to_string()));
-
-                            let file_path = Path::new(&abi_file_directory);
-
-                            // Create abi file directory if it doesn't exist
-                            if let Some(parent_dir) = file_path.parent() {
-                                if !parent_dir.exists() {
-                                    fs::create_dir_all(parent_dir)
-                                        .expect("Failed to create directory");
-                                }
-                            }
-                            // Write abi file to directory
-                            let mut abi_file =
-                                File::create(&abi_file_directory).expect("Failed to create file");
-                            abi_file
-                                .write_all(abi.as_bytes())
-                                .expect("Failed to write ABI to file");
-                            println!("ABI written to file: {}", abi_file_directory.display());
-                        }
-                    } else {
-                        println!("Data source not found");
+                    for data_source_abi in &data_source.mapping.abis {
+                        let abi_dir_path = abi_dir_path.clone();
+                        let abi_ipfs_file_path = data_source_abi.file.value.clone();
+                        let abi_file_path =
+                            abi_dir_path.join(format!("{}.json", data_source.name.to_string()));
+                        join_set.spawn(async move {
+                            fetch_ipfs_file_and_write_to_system(
+                                abi_ipfs_file_path,
+                                abi_file_path,
+                                "abi",
+                            )
+                            .await
+                        });
                     }
                 }
-                // Pushing network to config
-                config.networks.push(network);
-            }
-            // Convert config to YAML file
-            let yaml_string = serde_yaml::to_string(&config).unwrap();
-
-            // Write YAML string to a file
-            std::fs::write("config.yaml", yaml_string).expect("Failed to write config.yaml");
+            };
         }
-
-        Err(err) => {
-            eprintln!("Failed to fetch manifest: {}", err);
-            eprintln!("Migration cannot continue as fetching manifest from IPFS timed out.");
-        }
+        // Pushing network to config
+        config.networks.push(network);
     }
+    // Convert config to YAML file
+    let yaml_string = serde_yaml::to_string(&config).unwrap();
+
+    // Write YAML string to a file
+    std::fs::write("config.yaml", yaml_string).context("Failed to write config.yaml")?;
+
+    //Await all the fetch and write threads before finishing
+    while let Some(join) = join_set.join_next().await {
+        join.map_err(|_| anyhow!("Failed to join abi fetch thread"))??;
+    }
+
+    Ok(())
 }
+
+async fn fetch_ipfs_file_and_write_to_system(
+    ipfs_file_path: String,
+    fs_file_path: PathBuf,
+    context_name: &str,
+) -> anyhow::Result<()> {
+    let ipfs_id: &str = get_ipfs_id_from_file_path(&ipfs_file_path);
+
+    let file_string = fetch_ipfs_file_with_retry(ipfs_id, context_name)
+        .await
+        .with_context(|| format!("Failed to fetch {} IPFS file", context_name))?;
+
+    fs::write(&fs_file_path, file_string)
+        .with_context(|| format!("Failed to write {} IPFS file", context_name))?;
+    // Write abi file to directory
+    println!(
+        "{} written to file: {}",
+        context_name,
+        fs_file_path.display()
+    );
+
+    return Ok(());
+}
+
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
 mod test {
     use crate::cli_args::Language;
+    use crate::config_parsing::graph_migration::get_ipfs_id_from_file_path;
 
     use super::GraphManifest;
 
@@ -449,7 +408,9 @@ mod test {
         let cid: &str = "QmU5V3jy56KnFbxX2uZagvMwocYZASzy1inX828W2XWtTd";
         let language: Language = Language::Rescript;
         let project_root_path: std::path::PathBuf = std::path::PathBuf::from("./");
-        super::generate_config_from_subgraph_id(&project_root_path, cid, &language).await;
+        super::generate_config_from_subgraph_id(&project_root_path, cid, &language)
+            .await
+            .unwrap();
     }
 
     #[test]
@@ -471,6 +432,23 @@ mod test {
         }
     }
 
+    #[test]
+    fn ipfs_id_from_path() {
+        let path = "/ipfs/QmZ81YMckH8LxaLd9MnaGugvbvC9Mto3Ye3Vz4ydWE7npt";
+        let id = get_ipfs_id_from_file_path(path);
+
+        assert_eq!(id, "QmZ81YMckH8LxaLd9MnaGugvbvC9Mto3Ye3Vz4ydWE7npt");
+    }
+
+    #[test]
+    #[should_panic]
+    fn ipfs_id_from_path_non_unicode_panics() {
+        //Panics because slicing half way through a non asci character does not return valid utf8
+        //This should always be safe in our case because the first 6 chars should always be valid
+        //utf8
+        let non_unicode_string = "Hello世界!";
+        get_ipfs_id_from_file_path(non_unicode_string);
+    }
     // Ideas for unit tests
     // - test that the config file is generated correctly
     // - test that the schema file is generated correctly

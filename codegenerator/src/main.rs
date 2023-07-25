@@ -139,7 +139,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
 
                     generate_config_from_subgraph_id(&project_root_path, &cid, &args.language)
-                        .await;
+                        .await?;
                 }
             }
 
@@ -150,6 +150,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let project_paths = &parsed_paths.project_paths;
             commands::codegen::run_codegen(&parsed_paths)?;
             commands::codegen::run_post_codegen_command_sequence(&project_paths)
+            Ok(())
         }
 
         CommandType::Codegen(args) => {
