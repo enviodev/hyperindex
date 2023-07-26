@@ -153,7 +153,9 @@ impl<T: Serialize + Clone> Serialize for NormalizedList<T> {
     {
         self.inner.serialize(serializer)
     }
-impl TryFrom<String> for EventNameOrSig {
+}
+
+impl TryFrom<String> for  EventNameOrSig {
     type Error = String;
 
     fn try_from(event_string: String) -> Result<Self, Self::Error> {
@@ -442,7 +444,7 @@ pub fn convert_config_to_chain_configs(
                             Err(message)?
                         }
                     },
-                    EventNameOrSig::Event(abi_event) => abi_event,
+                    EventNameOrSig::Event(abi_event) => &abi_event,
                 };
 
                 reduced_abi
@@ -789,3 +791,4 @@ mod tests {
         assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
 }
+

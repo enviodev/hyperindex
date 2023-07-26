@@ -10,10 +10,7 @@ use envio::{
         LocalCommandTypes, LocalDockerSubcommands, ProjectPathsArgs,
     },
     commands,
-config_parsing::{self, entity_parsing, event_parsing, graph_migration::generate_config_from_subgraph_id},
-hbs_templating::codegen_templates::{
-    entities_to_map, generate_templates, EventRecordTypeTemplate,
-},
+    config_parsing::graph_migration::generate_config_from_subgraph_id,
     hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
     persisted_state::PersistedState,
     project_paths::{self, ParsedPaths},
@@ -149,7 +146,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             commands::codegen::run_codegen(&parsed_paths)?;
-            commands::codegen::run_post_codegen_command_sequence(&project_paths)
+            commands::codegen::run_post_codegen_command_sequence(&project_paths)?;
             Ok(())
         }
 
@@ -158,7 +155,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let project_paths = &parsed_paths.project_paths;
             commands::codegen::run_codegen(&parsed_paths)?;
             commands::codegen::run_post_codegen_command_sequence(project_paths)?;
-
             Ok(())
         }
 

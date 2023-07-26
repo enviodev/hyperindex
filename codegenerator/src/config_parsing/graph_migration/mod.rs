@@ -11,14 +11,12 @@ use crate::project_paths::handler_paths::DEFAULT_SCHEMA_PATH;
 use crate::{
     cli_args::Language,
     config_parsing::{
-        Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
+        default_unstable__sync_config, Config, ConfigContract, ConfigEvent, EventNameOrSig,
+        Network, NormalizedList, RpcConfig,
     },
 };
 
 mod chain_helpers;
-
-// maximum backoff period for fetching files from IPFS
-const MAXIMUM_BACKOFF: Duration = Duration::from_secs(32);
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -179,7 +177,7 @@ async fn fetch_ipfs_file_with_retry(file_id: &str, file_name: &str) -> anyhow::R
     let mut refetch_delay = Duration::from_secs(2);
 
     let fail_if_maximum_is_exceeded = |current_refetch_delay, err: &str| -> anyhow::Result<()> {
-        if current_refetch_delay >= MAXIMUM_BACKOFF {
+        if current_refetch_delay >= super::constants::MAXIMUM_BACKOFF {
             eprintln!("Failed to fetch {}: {}", file_name, err);
             eprintln!("{} file needs to be imported manually.", file_name);
             return Err(anyhow!("Maximum backoff timeout exceeded"));
@@ -245,12 +243,11 @@ pub async fn generate_config_from_subgraph_id(
 
     // Create config object to be populated
     let mut config = Config {
+        name: manifest.data_sources[0].name.clone(),
         version: "1.0.0".to_string(),
         description: manifest.description.unwrap_or_else(|| "".to_string()),
-        repository: manifest.repository.unwrap_or_else(|| "".to_string()),
         schema: None,
         networks: vec![],
-        unstable_sync_config: None,
     };
 
     //Allow schema and abis to be fetched on different threads
@@ -270,13 +267,17 @@ pub async fn generate_config_from_subgraph_id(
     let network_hashmap = generate_network_contract_hashmap(&manifest_file_string).await;
 
     for (network_name, contracts) in &network_hashmap {
+        let rpc_config = RpcConfig {
+            url: "https://example.com/rpc".to_string(),
+            unstable__sync_config: default_unstable__sync_config(),
+        };
         // Create network object to be populated
         let mut network = Network {
             id: chain_helpers::get_graph_protocol_chain_id(
                 chain_helpers::deserialize_network_name(network_name),
             ),
             // TODO: update to the final rpc url
-            rpc_url: "https://example.com/rpc".to_string(),
+            rpc_config: rpc_config,
             start_block: 0,
             contracts: vec![],
         };
