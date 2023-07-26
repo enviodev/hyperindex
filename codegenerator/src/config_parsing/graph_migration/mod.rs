@@ -395,12 +395,14 @@ async fn fetch_ipfs_file_and_write_to_system(
 mod test {
     use crate::cli_args::Language;
     use crate::config_parsing::graph_migration::get_ipfs_id_from_file_path;
+    use std::collections::HashMap;
 
     use super::GraphManifest;
 
     use super::chain_helpers;
     // mod chain_helpers;
 
+    // Integration test to see that a config file can be generated from a subgraph ID
     #[tokio::test]
     #[ignore = "Integration test that interacts with ipfs"]
     async fn test_generate_config_from_subgraph_id() {
@@ -413,12 +415,14 @@ mod test {
             .unwrap();
     }
 
+    // Unit test to see that a manifest file can be deserialized
     #[test]
     fn test_manifest_deserializes() {
         let manifest_file = std::fs::read_to_string("test/configs/graph-manifest.yaml").unwrap();
         serde_yaml::from_str::<GraphManifest>(&manifest_file).unwrap();
     }
 
+    // Unit test to see if the network name is deserialized correctly
     #[test]
     fn test_network_deserialization() {
         let manifest_file = std::fs::read_to_string("test/configs/graph-manifest.yaml").unwrap();
@@ -440,6 +444,7 @@ mod test {
         assert_eq!(id, "QmZ81YMckH8LxaLd9MnaGugvbvC9Mto3Ye3Vz4ydWE7npt");
     }
 
+    // Unit test to that the correct ipfrs id is returned from a path
     #[test]
     #[should_panic]
     fn ipfs_id_from_path_non_unicode_panics() {
@@ -449,13 +454,27 @@ mod test {
         let non_unicode_string = "Hello世界!";
         get_ipfs_id_from_file_path(non_unicode_string);
     }
-    // Ideas for unit tests
-    // - test that the config file is generated correctly
-    // - test that the schema file is generated correctly
-    // - test that the abi files are generated correctly
-    // - test that the event handler file is generated correctly
-    // - test that the config file is generated correctly for multiple networks
-    // - test that the config file is generated correctly for multiple contracts
-    // - test that the config file is generated correctly for multiple contracts and networks
-    // - test that the config file is generated correctly for multiple contracts and networks with multiple events
+
+    // Unit test to check that the correct event handler directory is returned based on the language
+    #[test]
+    fn test_get_event_handler_directory() {
+        let language_1: Language = Language::Rescript;
+        let language_2: Language = Language::Javascript;
+        let language_3: Language = Language::Typescript;
+        let event_handler_directory_1 = super::get_event_handler_directory(&language_1);
+        let event_handler_directory_2 = super::get_event_handler_directory(&language_2);
+        let event_handler_directory_3 = super::get_event_handler_directory(&language_3);
+        assert_eq!(event_handler_directory_1, "./src/EventHandlers.bs.js");
+        assert_eq!(event_handler_directory_2, "./src/EventHandlers.js");
+        assert_eq!(event_handler_directory_3, "src/EventHandlers.ts");
+    }
+    // Unit test to check that the correct network contract hashmap is generated
+    #[tokio::test]
+    async fn test_generate_network_contract_hashmap() {
+        let manifest_file = std::fs::read_to_string("test/configs/graph-manifest.yaml").unwrap();
+        let network_contracts = super::generate_network_contract_hashmap(&manifest_file).await;
+        let mut network_contracts_expected = HashMap::new();
+        network_contracts_expected.insert("mainnet".to_string(), vec!["FiatTokenV1".to_string()]);
+        assert_eq!(network_contracts, network_contracts_expected);
+    }
 }
