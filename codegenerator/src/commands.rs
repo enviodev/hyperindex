@@ -95,6 +95,7 @@ pub mod codegen {
 
         //Used to create project specific configuration during deployment
         let project_name = config_parsing::get_project_name_from_config(&parsed_paths)?;
+
         //NOTE: This structure is no longer used int event parsing since it has been refactored
         //to use an inline tuple type for parsed structs. However this is being left until it
         //is decided to completely remove the need for subrecords in which case the entire
@@ -115,9 +116,10 @@ pub mod codegen {
             contract_types,
             chain_config_templates,
             entity_types,
-            &project_paths,
+            &parsed_paths,
             project_name,
         )?;
+
         Ok(())
     }
 }

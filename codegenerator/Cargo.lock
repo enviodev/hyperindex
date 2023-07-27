@@ -450,7 +450,7 @@ dependencies = [
  "k256",
  "lazy_static",
  "serde",
- "sha2 0.10.6",
+ "sha2 0.10.7",
  "thiserror",
 ]
 
@@ -467,7 +467,7 @@ dependencies = [
  "once_cell",
  "pbkdf2 0.12.1",
  "rand",
- "sha2 0.10.6",
+ "sha2 0.10.7",
  "thiserror",
 ]
 
@@ -486,7 +486,7 @@ dependencies = [
  "ripemd",
  "serde",
  "serde_derive",
- "sha2 0.10.6",
+ "sha2 0.10.7",
  "sha3",
  "thiserror",
 ]
@@ -877,6 +877,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tokio",
+  "sha2 0.10.7",
 ]
 
 [[package]]
@@ -916,7 +917,7 @@ dependencies = [
  "scrypt",
  "serde",
  "serde_json",
- "sha2 0.10.6",
+ "sha2 0.10.7",
  "sha3",
  "thiserror",
  "uuid",
@@ -1179,7 +1180,7 @@ dependencies = [
  "ethers-core",
  "hex",
  "rand",
- "sha2 0.10.6",
+ "sha2 0.10.7",
  "thiserror",
  "tracing",
 ]
@@ -1865,7 +1866,7 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "once_cell",
- "sha2 0.10.6",
+ "sha2 0.10.7",
  "signature",
 ]
 
@@ -2232,7 +2233,7 @@ dependencies = [
  "digest 0.10.7",
  "hmac",
  "password-hash",
- "sha2 0.10.6",
+ "sha2 0.10.7",
 ]
 
 [[package]]
@@ -2292,7 +2293,7 @@ checksum = "745a452f8eb71e39ffd8ee32b3c5f51d03845f99786fa9b68db6ff509c505411"
 dependencies = [
  "once_cell",
  "pest",
- "sha2 0.10.6",
+ "sha2 0.10.7",
 ]
 
 [[package]]
@@ -2854,7 +2855,7 @@ dependencies = [
  "hmac",
  "pbkdf2 0.11.0",
  "salsa20",
- "sha2 0.10.6",
+ "sha2 0.10.7",
 ]
 
 [[package]]
@@ -3016,9 +3017,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.10.6"
+version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82e6b795fe2e3b1e845bafcb27aa35405c4d47cdfc92af5fc8d3002f76cebdc0"
+checksum = "479fb9d862239e610720565ca91403019f2f00410f1864c5aa7479b950a76ed8"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -3203,7 +3204,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha2 0.10.6",
+ "sha2 0.10.7",
  "thiserror",
  "url",
  "zip",

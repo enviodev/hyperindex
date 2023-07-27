@@ -6,7 +6,7 @@ let app = expressCjs()
 
 app->use(jsonMiddleware())
 
-let port = 3000
+let port = Config.healthCheckPort
 
 app->get("/_healthz", (_req, res) => {
   let _ = res->sendStatus(200)
