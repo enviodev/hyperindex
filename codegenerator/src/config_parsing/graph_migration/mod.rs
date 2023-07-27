@@ -244,7 +244,6 @@ pub async fn generate_config_from_subgraph_id(
     // Create config object to be populated
     let mut config = Config {
         name: manifest.data_sources[0].name.clone(),
-        version: "1.0.0".to_string(),
         description: manifest.description.unwrap_or_else(|| "".to_string()),
         schema: None,
         networks: vec![],
