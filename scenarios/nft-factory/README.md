@@ -11,7 +11,7 @@ The following files are required for the Indexer:
 example config file from Gravatar scenario:
 
 ```yaml
-version: 0.0.0
+name: Gravatar
 description: Gravatar for Ethereum
 networks:
   - id: 137

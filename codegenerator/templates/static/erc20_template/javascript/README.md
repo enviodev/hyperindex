@@ -14,7 +14,6 @@ Example config file from ERC-20 scenario:
 
 ```yaml
 name: erc-20
-version: 1.0.0
 description: ERC-20 indexer
 networks:
   - id: 1337

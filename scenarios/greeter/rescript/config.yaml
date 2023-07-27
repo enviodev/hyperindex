@@ -1,5 +1,4 @@
 name: greeterrescript
-version: 0.0.0
 description: Greeter indexer
 networks:
   - id: 1337

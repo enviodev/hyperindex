@@ -14,7 +14,6 @@ Example config file from Greeter scenario:
 
 ```yaml
 name: greeter_indexer
-version: 0.0.0
 description: Greeter indexer
 networks:
   - id: 1337

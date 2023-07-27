@@ -5,7 +5,7 @@ use std::{collections::HashMap, error::Error, path::PathBuf};
 
 use crate::{cli_args::ProjectPathsArgs, config_parsing::deserialize_config_from_yaml};
 
-const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
+pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub struct ContractUniqueId {
@@ -99,10 +99,12 @@ impl ParsedPaths {
             .to_str()
             .ok_or_else(|| "Handler path should be unicode".to_string())?
             .to_string();
+
         let absolute = absolute_path
             .to_str()
             .ok_or_else(|| "Handler path should be unicode".to_string())?
             .to_string();
+
         Ok(HandlerPathsTemplate {
             absolute,
             relative_to_generated_src,
@@ -131,6 +133,19 @@ impl ParsedPaths {
             }
         };
         Ok(abi_opt)
+    }
+
+    pub fn get_all_handler_paths(&self) -> Vec<&PathBuf> {
+        let mut paths = self.handler_paths.values().collect::<Vec<&PathBuf>>();
+        paths.sort();
+
+        paths
+    }
+
+    pub fn get_all_abi_paths(&self) -> Vec<&PathBuf> {
+        let mut paths = self.abi_paths.values().collect::<Vec<&PathBuf>>();
+        paths.sort();
+        paths
     }
 }
 

@@ -1,18 +1,19 @@
 import {
-  ERC20Contract_registerApprovalLoadEntities,
-  ERC20Contract_registerApprovalHandler,
-  ERC20Contract_registerTransferHandler,
-  ERC20Contract_registerTransferLoadEntities,
+  ERC20Contract_Approval_loader,
+  ERC20Contract_Approval_handler,
+  ERC20Contract_Transfer_loader,
+  ERC20Contract_Transfer_handler
+
 } from "../generated/src/Handlers.gen";
 
 import { accountEntity } from "../generated/src/Types.gen";
 
-ERC20Contract_registerApprovalLoadEntities(({ event, context }) => {
+ERC20Contract_Approval_loader(({ event, context }) => {
   // loading the required accountEntity
   context.account.ownerAccountChangesLoad(event.params.owner.toString());
 });
 
-ERC20Contract_registerApprovalHandler(({ event, context }) => {
+ERC20Contract_Approval_handler(({ event, context }) => {
   //  getting the owner accountEntity
   let ownerAccount = context.account.ownerAccountChanges();
 
@@ -25,7 +26,7 @@ ERC20Contract_registerApprovalHandler(({ event, context }) => {
     };
 
     // setting the accountEntity with the new transfer field value
-    context.account.update(accountObject);
+    context.account.set(accountObject);
   } else {
     // setting accountEntity object
     let accountObject: accountEntity = {
@@ -39,13 +40,13 @@ ERC20Contract_registerApprovalHandler(({ event, context }) => {
   }
 });
 
-ERC20Contract_registerTransferLoadEntities(({ event, context }) => {
+ERC20Contract_Transfer_loader(({ event, context }) => {
   // loading the required accountEntity
   context.account.senderAccountChangesLoad(event.params.from.toString());
   context.account.receiverAccountChangesLoad(event.params.to.toString());
 });
 
-ERC20Contract_registerTransferHandler(({ event, context }) => {
+ERC20Contract_Transfer_handler(({ event, context }) => {
   // getting the sender accountEntity
   let senderAccount = context.account.senderAccountChanges();
 
@@ -61,7 +62,7 @@ ERC20Contract_registerTransferHandler(({ event, context }) => {
     };
 
     // setting the accountEntity with the new transfer field value
-    context.account.update(accountObject);
+    context.account.set(accountObject);
   } else {
     // setting accountEntity object
     let accountObject: accountEntity = {
@@ -88,7 +89,7 @@ ERC20Contract_registerTransferHandler(({ event, context }) => {
     };
 
     // setting the accountEntity with the new transfer field value
-    context.account.update(accountObject);
+    context.account.set(accountObject);
   } else {
     // setting accountEntity object
     let accountObject: accountEntity = {

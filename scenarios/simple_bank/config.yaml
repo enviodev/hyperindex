@@ -1,5 +1,4 @@
 name: simple_bank
-version: 0.0.0
 description: Simple Bank contract
 networks:
   - id: 1337

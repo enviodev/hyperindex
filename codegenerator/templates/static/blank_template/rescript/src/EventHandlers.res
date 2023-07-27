@@ -25,11 +25,11 @@ User should import the auto-generated function names for loadEntities and handle
 
 open Types
 
-Handlers.MyAwesomeContract.registerMyAwesomeContractLoadEntities((~event, ~context) => {
+Handlers.MyAwesomeContractContract.AwesomeEvent.loader((~event, ~context) => {
     let _ = context.awesomeEvent.awesomeEntityChangesLoad()
 })
 
-Handlers.MyAwesomeContract.registerMyAwesomeContractHandler((~event, ~context) => {
+Handlers.MyAwesomeContractContract.AwesomeEvent.handler((~event, ~context) => {
     let awesomeEventObject = context.awesomeEvent.awesomeEntityChanges()
     context.awesomeEvent.set(awesomeEventObject)
 })

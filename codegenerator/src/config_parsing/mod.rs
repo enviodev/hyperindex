@@ -16,13 +16,13 @@ pub mod validation;
 
 pub mod constants;
 use crate::links;
+pub mod graph_migration;
 
 type NetworkId = i32;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     name: String,
-    version: String,
     description: String,
     pub schema: Option<String>,
     pub networks: Vec<Network>,
@@ -120,7 +120,7 @@ struct ConfigEvent {
     required_entities: Option<Vec<RequiredEntity>>,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Clone, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Clone)]
 #[serde(try_from = "String")]
 enum EventNameOrSig {
     Name(String),
@@ -133,7 +133,28 @@ struct RequiredEntity {
     labels: Vec<String>,
 }
 
-impl TryFrom<String> for EventNameOrSig {
+impl Serialize for EventNameOrSig{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            EventNameOrSig::Name(event_name) => serializer.serialize_str(event_name),
+            EventNameOrSig::Event(eth_abi_event) => eth_abi_event.serialize(serializer),
+        }
+    }
+}
+
+impl<T: Serialize + Clone> Serialize for NormalizedList<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.inner.serialize(serializer)
+    }
+}
+
+impl TryFrom<String> for  EventNameOrSig {
     type Error = String;
 
     fn try_from(event_string: String) -> Result<Self, Self::Error> {
@@ -229,20 +250,18 @@ impl<T: Clone> OptSingleOrList<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(try_from = "OptSingleOrList<T>")]
 struct NormalizedList<T: Clone> {
     inner: Vec<T>,
 }
 
 impl<T: Clone> NormalizedList<T> {
-    #[cfg(test)]
-    fn from(list: Vec<T>) -> Self {
+    pub fn from(list: Vec<T>) -> Self {
         NormalizedList { inner: list }
     }
 
-    #[cfg(test)]
-    fn from_single(val: T) -> Self {
+    pub fn from_single(val: T) -> Self {
         Self::from(vec![val])
     }
 }
@@ -334,7 +353,10 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
                         }
                     }
                     // Checking that entity names and labels do not include any reserved words
-                    validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
+                    validate_names_not_reserved(
+                        &entity_and_label_names,
+                        "Required Entities".to_string(),
+                    )?;
                 }
             }
             // Checking that event names do not include any reserved words
@@ -362,18 +384,20 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
             .into());
         }
     }
-    
+
     // Checking if RPC URLs are valid
-    if !validation::validate_rpc_urls_from_config(&rpc_urls){
+    if !validation::validate_rpc_urls_from_config(&rpc_urls) {
         return Err(format!("The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 
     Ok(deserialized_yaml)
 }
 
-pub fn validate_names_not_reserved(names_from_config: &Vec<String>, part_of_config: String) -> Result<(), Box<dyn std::error::Error>> {
-    let detected_reserved_words =
-        validation::check_reserved_words(&names_from_config.join(" "));
+pub fn validate_names_not_reserved(
+    names_from_config: &Vec<String>,
+    part_of_config: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let detected_reserved_words = validation::check_reserved_words(&names_from_config.join(" "));
     if !detected_reserved_words.is_empty() {
         return Err(format!(
             "The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",
@@ -418,7 +442,7 @@ pub fn convert_config_to_chain_configs(
                             Err(message)?
                         }
                     },
-                    EventNameOrSig::Event(abi_event) => abi_event,
+                    EventNameOrSig::Event(abi_event) => &abi_event,
                 };
 
                 reduced_abi
@@ -765,3 +789,4 @@ mod tests {
         assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
 }
+

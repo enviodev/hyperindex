@@ -14,7 +14,6 @@ Example config file from Greeter scenario:
 
 ```yaml
 name: NameOfTheIndexer
-version: 0.0.1 # Version of the config schema used by the indexer
 description: My Awesome Contract # Description of the project
 networks: # Configuration of the blockchain networks that the project is deployed on
   - id: 1337 # Chain identifier of the network

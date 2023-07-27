@@ -1,3 +1,5 @@
+use tokio::time::{Duration};
+
 pub struct SyncConfigDefaults {
     pub initial_block_interval: u32,
     pub backoff_multiplicative: f32,
@@ -101,3 +103,6 @@ pub const RESERVED_WORDS: &[&str] = &[
     "virtual",
     "when"
 ];
+
+// maximum backoff period for fetching files from IPFS
+pub const MAXIMUM_BACKOFF: Duration = Duration::from_secs(32);
