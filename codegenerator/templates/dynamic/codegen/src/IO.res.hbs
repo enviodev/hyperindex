@@ -13,9 +13,9 @@ module InMemoryStore = {
   }
 
   module RawEvents = {
-    let rawEventsDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.rawEventsEntity>>> = ref(
+    %%private(let rawEventsDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.rawEventsEntity>>> = ref(
       Js.Dict.empty(),
-    )
+    ))
 
     let getRawEvents = (~id: string) => {
       let row = Js.Dict.get(rawEventsDict.contents, id)
@@ -32,12 +32,16 @@ module InMemoryStore = {
         key,
         {eventData: {chainId: entity.chainId, eventId: entity.eventId}, entity, dbOp: Set},
       )
-    }   
+    }
+
+    let values = () => {
+      rawEventsDict.contents->Js.Dict.values
+    }
   }
   module DynamicContractRegistry = {
-      let dynamicContractRegistryDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.dynamicContractRegistryEntity>>> = ref(
+      %%private(let dynamicContractRegistryDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.dynamicContractRegistryEntity>>> = ref(
         Js.Dict.empty(),
-      )
+      ))
 
       let getDynamicContractRegistry = (~id: string) => {
         let row = Js.Dict.get(dynamicContractRegistryDict.contents, id)
@@ -62,14 +66,17 @@ module InMemoryStore = {
           {eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString}, entity, dbOp: Types.Set},
         )
       }
+      let values = () => {
+        dynamicContractRegistryDict.contents->Js.Dict.values
+      }
     }
 
 {{#each entities as | entity |}}
 
   module {{entity.name.capitalized}} = {
-    let {{entity.name.uncapitalized}}Dict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.{{entity.name.uncapitalized}}Entity>>> = ref(
+    %%private(let {{entity.name.uncapitalized}}Dict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.{{entity.name.uncapitalized}}Entity>>> = ref(
       Js.Dict.empty(),
-    )
+    ))
 
     let get{{entity.name.capitalized}} = (~id: string) => {
       let row = Js.Dict.get({{entity.name.uncapitalized}}Dict.contents, id)
@@ -85,6 +92,9 @@ module InMemoryStore = {
       })
 
       {{entity.name.uncapitalized}}Dict.contents->Js.Dict.set(entity.id, {eventData, entity, dbOp: entityCurrentCrud({{entity.name.uncapitalized}}CurrentCrud, dbOp)})
+    }
+    let values = () => {
+      {{entity.name.uncapitalized}}Dict.contents->Js.Dict.values
     }
     let resetStore = () => {
       {{entity.name.uncapitalized}}Dict := Js.Dict.empty()
@@ -195,7 +205,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 }
 
 let executeBatch = async sql => {
-  let rawEventsRows = InMemoryStore.RawEvents.rawEventsDict.contents->Js.Dict.values
+  let rawEventsRows = InMemoryStore.RawEvents.values()
 
   let setRawEventsPromise = sql => {
     // NOTE: This is commented out because raw events are always 'Set' operations. Likely that will stay the case even with reorgs protections in place since it'll just re-run the batch rather than edit a partially run batch.
@@ -216,7 +226,7 @@ let executeBatch = async sql => {
   }
 
   let dynamicContractRegistryRows =
-    InMemoryStore.DynamicContractRegistry.dynamicContractRegistryDict.contents->Js.Dict.values
+    InMemoryStore.DynamicContractRegistry.values()
 
   // // NOTE: currently deleting dynamic contracts in unimplemented
   // let deleteDynamicContractRegistryIdsPromise = sql => {
@@ -260,7 +270,7 @@ let executeBatch = async sql => {
   }
 
   {{#each entities as | entity |}}
-  let {{entity.name.uncapitalized}}Rows = InMemoryStore.{{entity.name.capitalized}}.{{entity.name.uncapitalized}}Dict.contents->Js.Dict.values
+  let {{entity.name.uncapitalized}}Rows = InMemoryStore.{{entity.name.capitalized}}.values()
 
   let delete{{entity.name.capitalized}}IdsPromise = (sql) => {
     let delete{{entity.name.capitalized}}Ids =
