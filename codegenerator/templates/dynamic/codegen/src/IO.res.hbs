@@ -66,33 +66,34 @@ module InMemoryStore = {
 
 {{#each entities as | entity |}}
 
-module {{entity.name.capitalized}} = {
-  let {{entity.name.uncapitalized}}Dict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.{{entity.name.uncapitalized}}Entity>>> = ref(
-    Js.Dict.empty(),
-  )
+  module {{entity.name.capitalized}} = {
+    let {{entity.name.uncapitalized}}Dict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.{{entity.name.uncapitalized}}Entity>>> = ref(
+      Js.Dict.empty(),
+    )
 
-  let get{{entity.name.capitalized}} = (~id: string) => {
-    let row = Js.Dict.get({{entity.name.uncapitalized}}Dict.contents, id)
-    row->Belt.Option.map(row => row.entity)
-  }
+    let get{{entity.name.capitalized}} = (~id: string) => {
+      let row = Js.Dict.get({{entity.name.uncapitalized}}Dict.contents, id)
+      row->Belt.Option.map(row => row.entity)
+    }
 
-  let set{{entity.name.capitalized}} = (~entity: Types.{{entity.name.uncapitalized}}Entity, ~dbOp: Types.dbOp, ~eventData: Types.eventData) => {
-    let {{entity.name.uncapitalized}}CurrentCrud = Js.Dict.get(
-      {{entity.name.uncapitalized}}Dict.contents,
-      entity.id,
-    )->Belt.Option.map(row => {
-      row.dbOp
-    })
+    let set{{entity.name.capitalized}} = (~entity: Types.{{entity.name.uncapitalized}}Entity, ~dbOp: Types.dbOp, ~eventData: Types.eventData) => {
+      let {{entity.name.uncapitalized}}CurrentCrud = Js.Dict.get(
+        {{entity.name.uncapitalized}}Dict.contents,
+        entity.id,
+      )->Belt.Option.map(row => {
+        row.dbOp
+      })
 
-
-
-    {{entity.name.uncapitalized}}Dict.contents->Js.Dict.set(entity.id, {eventData, entity, dbOp: entityCurrentCrud({{entity.name.uncapitalized}}CurrentCrud, dbOp)})
-  }
+      {{entity.name.uncapitalized}}Dict.contents->Js.Dict.set(entity.id, {eventData, entity, dbOp: entityCurrentCrud({{entity.name.uncapitalized}}CurrentCrud, dbOp)})
+    }
+    let resetStore = () => {
+      {{entity.name.uncapitalized}}Dict := Js.Dict.empty()
+    }
   }
   {{/each}}
   let resetStore = () => {
   {{#each entities as | entity |}}
-    {{entity.name.capitalized}}.{{entity.name.uncapitalized}}Dict := Js.Dict.empty()
+    {{entity.name.capitalized}}.resetStore()
   {{/each}}
   }
 }
