@@ -24,17 +24,17 @@ User should import the auto-generated function names for loadEntities and handle
 */
 
 import {
-  MyAwesomeContract_registerMyAwesomeEventLoadEntities,
-  MyAwesomeContract_registerMyAwesomeEventHandler,
+  MyAwesomeContractContract_AwesomeEvent_loader,
+  MyAwesomeContractContract_AwesomeEvent_handler,
 } from "../generated/src/Handlers.gen";
 
 import { awesomeEntity } from "../generated/src/Types.gen";
 
-MyAwesomeContract_registerMyAwesomeEventLoadEntities(({ event, context }) => {
+MyAwesomeContractContract_AwesomeEvent_loader(({ event, context }) => {
   let _ = context.awesomeEvent.awesomeEntityChangesLoad()
 });
 
-MyAwesomeContract_registerMyAwesomeEventHandler(({ event, context }) => {
+MyAwesomeContractContract_AwesomeEvent_handler(({ event, context }) => {
   let awesomeEventObject = context.awesomeEvent.awesomeEntityChanges();
   context.awesomeEvent.update(awesomeEventObject);
 });

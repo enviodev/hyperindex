@@ -1,10 +1,10 @@
 open Types
 
-Handlers.GreeterContract.registerNewGreetingLoadEntities((~event, ~context) => {
+Handlers.GreeterContract.NewGreeting.loader((~event, ~context) => {
   context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
 })
 
-Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
+Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
   let currentGreeterOpt = context.greeting.greetingWithChanges()
 
   switch currentGreeterOpt {
@@ -29,12 +29,12 @@ Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
   }
 })
 
-Handlers.GreeterContract.registerClearGreetingLoadEntities((~event, ~context) => {
+Handlers.GreeterContract.ClearGreeting.loader((~event, ~context) => {
   context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
   ()
 })
 
-Handlers.GreeterContract.registerClearGreetingHandler((~event, ~context) => {
+Handlers.GreeterContract.ClearGreeting.handler((~event, ~context) => {
   let currentGreeterOpt = context.greeting.greetingWithChanges()
 
   switch currentGreeterOpt {

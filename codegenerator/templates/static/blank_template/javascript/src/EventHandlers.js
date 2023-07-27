@@ -23,13 +23,13 @@ User should import the auto-generated function names for loadEntities and handle
 
 */
 
-let { MyAwesomeContract } = require("../generated/src/Handlers.bs.js");
+let {MyAwesomeContractContract } = require("../generated/src/Handlers.bs.js");
 
-MyAwesomeContract.registerAwesomeEventLoadEntities(({ event, context }) => {
+MyAwesomeContractContract.AwesomeEvent.loader(({ event, context }) => {
   let _ = context.awesomeEvent.awesomeEntityChangesLoad();
 });
 
-MyAwesomeContract.registerAwesomeEventHandler(({ event, context }) => {
+MyAwesomeContractContract.AwesomeEvent.handler(({ event, context }) => {
   let awesomeEventObject = context.awesomeEvent.awesomeEntityChanges();
   context.awesomeEvent.set(awesomeEventObject);
 });

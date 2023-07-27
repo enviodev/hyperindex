@@ -1,11 +1,11 @@
 let { ERC20Contract } = require("../generated/src/Handlers.bs.js");
 
-ERC20Contract.registerApprovalLoadEntities((event, context) => {
+ERC20Contract.Approval.loader((event, context) => {
   // loading the required accountEntity
   context.account.ownerAccountChangesLoad(event.params.owner);
 });
 
-ERC20Contract.registerApprovalHandler((event, context) => {
+ERC20Contract.Approval.handler((event, context) => {
   //  getting the owner accountEntity
   let ownerAccount = context.account.ownerAccountChanges();
 
@@ -32,13 +32,13 @@ ERC20Contract.registerApprovalHandler((event, context) => {
   }
 });
 
-ERC20Contract.registerTransferLoadEntities((event, context) => {
+ERC20Contract.Transfer.loader((event, context) => {
   // loading the required accountEntity
   context.account.senderAccountChangesLoad(event.params.from.toString());
   context.account.receiverAccountChangesLoad(event.params.to.toString());
 });
 
-ERC20Contract.registerTransferHandler((event, context) => {
+ERC20Contract.Transfer.handler((event, context) => {
   // getting the sender accountEntity
   let senderAccount = context.account.senderAccountChanges();
 
