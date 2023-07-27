@@ -21,7 +21,7 @@ These files are auto-generated according to a template by running `envio init` c
 Sample from config file from SimpleBank scenario:
 
 ```yaml
-version: 0.0.0
+name: Simple bank
 description: Simple Bank contract
 networks:
   - id: 1337
