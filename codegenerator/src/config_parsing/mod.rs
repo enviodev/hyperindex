@@ -23,7 +23,6 @@ type NetworkId = i32;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     name: String,
-    version: String,
     description: String,
     pub schema: Option<String>,
     pub networks: Vec<Network>,
@@ -354,7 +353,10 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
                         }
                     }
                     // Checking that entity names and labels do not include any reserved words
-                    validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
+                    validate_names_not_reserved(
+                        &entity_and_label_names,
+                        "Required Entities".to_string(),
+                    )?;
                 }
             }
             // Checking that event names do not include any reserved words
@@ -382,18 +384,20 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
             .into());
         }
     }
-    
+
     // Checking if RPC URLs are valid
-    if !validation::validate_rpc_urls_from_config(&rpc_urls){
+    if !validation::validate_rpc_urls_from_config(&rpc_urls) {
         return Err(format!("The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 
     Ok(deserialized_yaml)
 }
 
-pub fn validate_names_not_reserved(names_from_config: &Vec<String>, part_of_config: String) -> Result<(), Box<dyn std::error::Error>> {
-    let detected_reserved_words =
-        validation::check_reserved_words(&names_from_config.join(" "));
+pub fn validate_names_not_reserved(
+    names_from_config: &Vec<String>,
+    part_of_config: String,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let detected_reserved_words = validation::check_reserved_words(&names_from_config.join(" "));
     if !detected_reserved_words.is_empty() {
         return Err(format!(
             "The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",

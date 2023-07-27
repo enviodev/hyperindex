@@ -1,5 +1,4 @@
 name: nftindexer
-version: 0.0.0
 description: NFT Factory
 networks:
   - id: 1337

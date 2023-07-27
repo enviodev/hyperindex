@@ -13,7 +13,7 @@ These files are auto-generated according to the Greeter template by running `env
 Example config file from Greeter scenario:
 
 ```yaml
-version: 0.0.0
+name: Greeter
 description: Greeter indexer
 networks:
   - id: 1337

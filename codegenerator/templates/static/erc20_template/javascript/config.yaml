@@ -1,5 +1,4 @@
 name: erc20indexer
-version: 1.0.0
 description: ERC-20 indexer
 networks:
   - id: 1337

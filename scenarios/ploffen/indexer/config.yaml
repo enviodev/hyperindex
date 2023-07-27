@@ -1,5 +1,4 @@
 name: Ploffen
-version: 0.0.0
 description: Gravatar for Ethereum
 networks:
   - id: 1337

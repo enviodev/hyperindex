@@ -1,5 +1,4 @@
 name: lens
-version: 1.0.0
 description: Lens Protocol (decentralized, non-custodial social graph)
 networks:
   - id: 137

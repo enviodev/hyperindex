@@ -1,5 +1,4 @@
 name: greeterjavascript
-version: 0.0.0
 description: Greeter indexer
 networks:
   - id: 137 # Polygon
