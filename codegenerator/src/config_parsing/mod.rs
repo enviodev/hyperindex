@@ -16,6 +16,7 @@ pub mod validation;
 
 pub mod constants;
 use crate::links;
+pub mod graph_migration;
 
 type NetworkId = i32;
 
@@ -120,7 +121,7 @@ struct ConfigEvent {
     required_entities: Option<Vec<RequiredEntity>>,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Clone, Serialize)]
+#[derive(Debug, PartialEq, Deserialize, Clone)]
 #[serde(try_from = "String")]
 enum EventNameOrSig {
     Name(String),
@@ -133,7 +134,28 @@ struct RequiredEntity {
     labels: Vec<String>,
 }
 
-impl TryFrom<String> for EventNameOrSig {
+impl Serialize for EventNameOrSig{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            EventNameOrSig::Name(event_name) => serializer.serialize_str(event_name),
+            EventNameOrSig::Event(eth_abi_event) => eth_abi_event.serialize(serializer),
+        }
+    }
+}
+
+impl<T: Serialize + Clone> Serialize for NormalizedList<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.inner.serialize(serializer)
+    }
+}
+
+impl TryFrom<String> for  EventNameOrSig {
     type Error = String;
 
     fn try_from(event_string: String) -> Result<Self, Self::Error> {
@@ -229,20 +251,18 @@ impl<T: Clone> OptSingleOrList<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(try_from = "OptSingleOrList<T>")]
 struct NormalizedList<T: Clone> {
     inner: Vec<T>,
 }
 
 impl<T: Clone> NormalizedList<T> {
-    #[cfg(test)]
-    fn from(list: Vec<T>) -> Self {
+    pub fn from(list: Vec<T>) -> Self {
         NormalizedList { inner: list }
     }
 
-    #[cfg(test)]
-    fn from_single(val: T) -> Self {
+    pub fn from_single(val: T) -> Self {
         Self::from(vec![val])
     }
 }
@@ -418,7 +438,7 @@ pub fn convert_config_to_chain_configs(
                             Err(message)?
                         }
                     },
-                    EventNameOrSig::Event(abi_event) => abi_event,
+                    EventNameOrSig::Event(abi_event) => &abi_event,
                 };
 
                 reduced_abi
@@ -765,3 +785,4 @@ mod tests {
         assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
 }
+

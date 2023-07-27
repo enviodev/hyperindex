@@ -6,10 +6,11 @@ use clap::Parser;
 
 use envio::{
     cli_args::{
-        self, DbMigrateSubcommands, Language, LocalCommandTypes, LocalDockerSubcommands,
-        ProjectPathsArgs,
+        self, interactive_init::TemplateOrSubgraphID, DbMigrateSubcommands, Language,
+        LocalCommandTypes, LocalDockerSubcommands, ProjectPathsArgs,
     },
     commands,
+    config_parsing::graph_migration::generate_config_from_subgraph_id,
     hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
     persisted_state::{
         check_user_file_diff_match, persisted_state_file_exists, ExistingPersistedState,
@@ -47,7 +48,8 @@ static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/erc20_template/javascript");
 static INIT_TEMPLATES_SHARED_DIR: Dir<'_> = include_dir!("templates/dynamic/init_templates/shared");
 
-fn main() -> Result<(), Box<dyn Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
 
     match command_line_args.command {
@@ -67,8 +69,61 @@ fn main() -> Result<(), Box<dyn Error>> {
             );
 
             match args.template {
-                Template::Blank => {
-                    //Copy in the relevant language specific blank template files
+                TemplateOrSubgraphID::Template(template) => match template {
+                    Template::Blank => {
+                        //Copy in the relevant language specific blank template files
+                        match &args.language {
+                            Language::Rescript => {
+                                BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                            }
+                            Language::Typescript => {
+                                BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
+                            }
+                            Language::Javascript => {
+                                BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                            }
+                        }
+                        //Copy in the rest of the shared blank template files
+                        BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                        hbs_generator.generate_hbs_templates()?;
+                    }
+                    Template::Greeter => {
+                        //Copy in the relevant language specific greeter files
+                        match &args.language {
+                            Language::Rescript => {
+                                GREETER_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                            }
+                            Language::Typescript => {
+                                GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR
+                                    .extract(&project_root_path)?;
+                            }
+                            Language::Javascript => {
+                                GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR
+                                    .extract(&project_root_path)?;
+                            }
+                        }
+                        //Copy in the rest of the shared greeter files
+                        GREETER_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                    }
+                    Template::Erc20 => {
+                        //Copy in the relevant js flavor specific greeter files
+                        match &args.language {
+                            Language::Rescript => {
+                                ERC20_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                            }
+                            Language::Typescript => {
+                                ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
+                            }
+                            Language::Javascript => {
+                                ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                            }
+                        }
+                        //Copy in the rest of the shared greeter files
+                        ERC20_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+                    }
+                },
+                TemplateOrSubgraphID::SubgraphID(cid) => {
+                    //  Copy in the relevant js flavor specific subgraph migration files
                     match &args.language {
                         Language::Rescript => {
                             BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
@@ -80,41 +135,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                             BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
                         }
                     }
-                    //Copy in the rest of the shared blank template files
+                    //Copy in the rest of the shared subgraph migration files
                     BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
-                    hbs_generator.generate_hbs_templates()?;
-                }
-                Template::Greeter => {
-                    //Copy in the relevant language specific greeter files
-                    match &args.language {
-                        Language::Rescript => {
-                            GREETER_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
-                        }
-                        Language::Typescript => {
-                            GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
-                        }
-                        Language::Javascript => {
-                            GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
-                        }
-                    }
-                    //Copy in the rest of the shared greeter files
-                    GREETER_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
-                }
-                Template::Erc20 => {
-                    //Copy in the relevant js flavor specific greeter files
-                    match &args.language {
-                        Language::Rescript => {
-                            ERC20_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
-                        }
-                        Language::Typescript => {
-                            ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
-                        }
-                        Language::Javascript => {
-                            ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
-                        }
-                    }
-                    //Copy in the rest of the shared greeter files
-                    ERC20_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+
+                    generate_config_from_subgraph_id(&project_root_path, &cid, &args.language)
+                        .await?;
                 }
             }
 
@@ -124,7 +149,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             commands::codegen::run_codegen(&parsed_paths)?;
-            commands::codegen::run_post_codegen_command_sequence(&project_paths)
+            commands::codegen::run_post_codegen_command_sequence(&project_paths)?;
+            Ok(())
         }
 
         CommandType::Codegen(args) => {
@@ -132,7 +158,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             let project_paths = &parsed_paths.project_paths;
             commands::codegen::run_codegen(&parsed_paths)?;
             commands::codegen::run_post_codegen_command_sequence(project_paths)?;
-
             Ok(())
         }
 

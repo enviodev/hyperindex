@@ -1,0 +1,38 @@
+dataSources:
+  - kind: ethereum/contract
+    mapping:
+      abis:
+        - file:
+            /: /ipfs/QmXFxbbdQaLzqKYwr5hmp2WX3qrdW17KhBtdDQCu4NVenj
+          name: FiatTokenV1
+      apiVersion: 0.0.4
+      entities:
+        - User
+        - Minter
+        - UserCounter
+        - MinterCounter
+        - TransferCounter
+        - TotalSupply
+      eventHandlers:
+        - event: "Burn(indexed address,uint256)"
+          handler: handleBurn
+        - event: "Mint(indexed address,indexed address,uint256)"
+          handler: handleMint
+        - event: "Transfer(indexed address,indexed address,uint256)"
+          handler: handleTransfer
+      file:
+        /: /ipfs/Qma4SdxZ9BSPqjWfK3JM8UFsBKUNQydHpxvYaj1cLauNNh
+      kind: ethereum/events
+      language: wasm/assemblyscript
+    name: FiatTokenV1
+    network: mainnet
+    source:
+      abi: FiatTokenV1
+      address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+      startBlock: 6082465
+description: USDC
+repository: "https://github.com/centrehq/usdc-subgraph"
+schema:
+  file:
+    /: /ipfs/QmZ81YMckH8LxaLd9MnaGugvbvC9Mto3Ye3Vz4ydWE7npt
+specVersion: 0.0.2

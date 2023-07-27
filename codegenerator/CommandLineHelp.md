@@ -43,7 +43,7 @@ Initialize a project with a template
   Default value: `./`
 * `-t`, `--template <TEMPLATE>` — The file in the project containing config
 
-  Possible values: `blank`, `greeter`, `erc20`
+  Possible values: `blank`, `greeter`, `erc20`, `subgraph-migration-experimental`
 
 * `-l`, `--language <LANGUAGE>`
 
