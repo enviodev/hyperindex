@@ -5,8 +5,8 @@ use std::{
 };
 
 use crate::cli_args::{
-    ProjectPathsArgs, ToProjectPathsArgs, DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH,
-    DEFAULT_PROJECT_ROOT_PATH,
+    constants::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH},
+    ProjectPathsArgs, ToProjectPathsArgs,
 };
 
 pub mod handler_paths;

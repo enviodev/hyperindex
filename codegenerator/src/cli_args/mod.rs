@@ -1,10 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+pub mod constants;
 pub mod interactive_init;
-
-pub const DEFAULT_PROJECT_ROOT_PATH: &str = "./";
-pub const DEFAULT_GENERATED_PATH: &str = "generated/";
-pub const DEFAULT_CONFIG_PATH: &str = "config.yaml";
+pub mod validation;
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
@@ -40,7 +38,7 @@ pub struct StartArgs {
     #[arg(short = 'r', long, default_value_t = false)]
     pub restart: bool,
     ///The directory of the project
-    #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
+    #[arg(short, long, default_value_t=String::from(constants::DEFAULT_PROJECT_ROOT_PATH))]
     pub directory: String,
 }
 
@@ -74,15 +72,15 @@ pub enum DbMigrateSubcommands {
 #[derive(Args, Debug)]
 pub struct CodegenArgs {
     ///The directory of the project
-    #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
+    #[arg(short, long, default_value_t=String::from(constants::DEFAULT_PROJECT_ROOT_PATH))]
     pub directory: String,
 
     ///The directory within the project that generated code should output to
-    #[arg(short, long, default_value_t=String::from(DEFAULT_GENERATED_PATH))]
+    #[arg(short, long, default_value_t=String::from(constants::DEFAULT_GENERATED_PATH))]
     pub output_directory: String,
 
     ///The file in the project containing config.
-    #[arg(short, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
+    #[arg(short, long, default_value_t=String::from(constants::DEFAULT_CONFIG_PATH))]
     pub config: String,
 }
 
@@ -90,8 +88,12 @@ type SubgraphMigrationID = String;
 #[derive(Args, Debug)]
 pub struct InitArgs {
     ///The directory of the project
-    #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
-    pub directory: String,
+    // #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
+    #[arg(short, long)]
+    pub directory: Option<String>,
+
+    #[arg(short, long)]
+    pub name: Option<String>,
 
     ///The file in the project containing config.
     #[arg(short, long)]
@@ -132,9 +134,9 @@ pub struct ProjectPathsArgs {
 impl ProjectPathsArgs {
     pub fn default() -> Self {
         ProjectPathsArgs {
-            project_root: DEFAULT_PROJECT_ROOT_PATH.to_string(),
-            generated: DEFAULT_GENERATED_PATH.to_string(),
-            config: DEFAULT_CONFIG_PATH.to_string(),
+            project_root: constants::DEFAULT_PROJECT_ROOT_PATH.to_string(),
+            generated: constants::DEFAULT_GENERATED_PATH.to_string(),
+            config: constants::DEFAULT_CONFIG_PATH.to_string(),
         }
     }
 }
@@ -156,9 +158,9 @@ impl ToProjectPathsArgs for CodegenArgs {
 impl ToProjectPathsArgs for InitArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
-            project_root: self.directory.clone(),
-            generated: DEFAULT_GENERATED_PATH.to_string(),
-            config: DEFAULT_CONFIG_PATH.to_string(),
+            project_root: InitArgs::get_directory(&self),
+            generated: constants::DEFAULT_GENERATED_PATH.to_string(),
+            config: constants::DEFAULT_CONFIG_PATH.to_string(),
         }
     }
 }
@@ -166,8 +168,8 @@ impl ToProjectPathsArgs for StartArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
             project_root: self.directory.clone(),
-            generated: DEFAULT_GENERATED_PATH.to_string(),
-            config: DEFAULT_CONFIG_PATH.to_string(),
+            generated: constants::DEFAULT_GENERATED_PATH.to_string(),
+            config: constants::DEFAULT_CONFIG_PATH.to_string(),
         }
     }
 }
