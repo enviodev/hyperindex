@@ -7,7 +7,7 @@ use inquire::{Select, Text};
 use serde::{Deserialize, Serialize};
 
 use super::constants::DEFAULT_PROJECT_ROOT_PATH;
-use super::validation::is_valid_foldername_inquire_validation_result;
+use super::validation::{is_directory_new, is_valid_foldername_inquire_validation_result};
 
 pub enum TemplateOrSubgraphID {
     Template(InitTemplate),
@@ -56,9 +56,8 @@ impl InitArgs {
                     .with_placeholder(DEFAULT_PROJECT_ROOT_PATH)
                     // validate string is valid directory name
                     .with_validator(is_valid_foldername_inquire_validation_result)
+                    .with_validator(is_directory_new)
                     .prompt()?;
-
-                // todo: validate directory doesn't exist already
 
                 input_directory
             }
