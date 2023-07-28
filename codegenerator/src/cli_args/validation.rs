@@ -1,3 +1,4 @@
+use super::constants::DEFAULT_PROJECT_ROOT_PATH;
 use inquire::validator::Validation;
 use serde::ser::StdError;
 use std::fs;
@@ -17,6 +18,7 @@ pub fn is_valid_folder_name(name: &str) -> bool {
     true
 }
 
+// todo: consider returning invalid rather than error ?
 pub fn is_valid_foldername_inquire_validation_result(
     name: &str,
 ) -> Result<Validation, Box<(dyn StdError + Send + Sync + 'static)>> {
@@ -32,7 +34,7 @@ pub fn is_valid_foldername_inquire_validation_result(
 pub fn is_directory_new(
     directory: &str,
 ) -> Result<Validation, Box<(dyn StdError + Send + Sync + 'static)>> {
-    if fs::metadata(directory).is_ok() {
+    if fs::metadata(directory).is_ok() && directory != DEFAULT_PROJECT_ROOT_PATH {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!("Directory '{}' already exists.", directory),

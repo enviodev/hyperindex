@@ -56,6 +56,7 @@ impl InitArgs {
                     .with_placeholder(DEFAULT_PROJECT_ROOT_PATH)
                     // validate string is valid directory name
                     .with_validator(is_valid_foldername_inquire_validation_result)
+                    // validate the directory doesn't already exist
                     .with_validator(is_directory_new)
                     .prompt()?;
 
