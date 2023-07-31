@@ -30,6 +30,7 @@ static BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/blank_template/typescript");
 static BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/blank_template/javascript");
+static BLANK_TEMPLATE_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/blank_template");
 static GREETER_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
     include_dir!("templates/static/greeter_template/shared");
 static GREETER_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
@@ -59,9 +60,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let args = init_args.get_init_args_interactive()?;
             let project_root_path = PathBuf::from(&args.directory);
             // check that project_root_path exists
-            let project_dir = project_paths::path_utils::NewDir::new(project_root_path.clone())?;
 
-            let hbs_template = InitTemplates::new(project_dir.root_dir_name, &args.language);
+            let hbs_template = InitTemplates::new(args.name, &args.language);
             let hbs_generator = HandleBarsDirGenerator::new(
                 &INIT_TEMPLATES_SHARED_DIR,
                 &hbs_template,
@@ -86,6 +86,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         //Copy in the rest of the shared blank template files
                         BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
                         hbs_generator.generate_hbs_templates()?;
+                        let hbs_config_file = HandleBarsDirGenerator::new(
+                            &BLANK_TEMPLATE_DYNAMIC_DIR,
+                            &hbs_template,
+                            &project_root_path,
+                        );
+
+                        hbs_config_file.generate_hbs_templates()?;
                     }
                     Template::Greeter => {
                         //Copy in the relevant language specific greeter files

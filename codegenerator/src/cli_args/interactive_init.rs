@@ -6,6 +6,9 @@ use inquire::{Select, Text};
 
 use serde::{Deserialize, Serialize};
 
+use super::constants::DEFAULT_PROJECT_ROOT_PATH;
+use super::validation::{is_directory_new, is_valid_foldername_inquire_validation_result};
+
 pub enum TemplateOrSubgraphID {
     Template(InitTemplate),
     SubgraphID(String),
@@ -18,14 +21,48 @@ enum TemplateOrSubgraphPrompt {
 }
 
 pub struct InitInteractive {
+    pub name: String,
     pub directory: String,
     pub template: TemplateOrSubgraphID,
     pub language: Language,
 }
 
 impl InitArgs {
+    pub fn get_directory(&self) -> String {
+        if let Some(directory_str) = &self.directory {
+            return directory_str.to_string();
+        } else {
+            return DEFAULT_PROJECT_ROOT_PATH.to_string();
+        }
+    }
+
     pub fn get_init_args_interactive(&self) -> Result<InitInteractive, Box<dyn Error>> {
-        let directory = self.directory.clone();
+        let name: String = match &self.name {
+            Some(args_name) => args_name.clone(),
+            None => {
+                // todo input validation for name
+
+                let input_name = Text::new("Name your indexer: ").prompt()?;
+
+                input_name
+            }
+        };
+
+        let directory: String = match &self.directory {
+            Some(args_directory) => args_directory.clone(),
+            None => {
+                let input_directory = Text::new("Set the directory: ")
+                    .with_default(DEFAULT_PROJECT_ROOT_PATH)
+                    .with_placeholder(DEFAULT_PROJECT_ROOT_PATH)
+                    // validate string is valid directory name
+                    .with_validator(is_valid_foldername_inquire_validation_result)
+                    // validate the directory doesn't already exist
+                    .with_validator(is_directory_new)
+                    .prompt()?;
+
+                input_directory
+            }
+        };
 
         let template = match (&self.template, &self.subgraph_migration) {
             (None, None) => {
@@ -99,6 +136,7 @@ impl InitArgs {
         };
 
         Ok(InitInteractive {
+            name,
             directory,
             template,
             language,
