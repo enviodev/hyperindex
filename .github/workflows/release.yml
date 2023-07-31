@@ -273,13 +273,21 @@ jobs:
         id: buildx
         uses: docker/setup-buildx-action@master
 
-      - name: Cache Docker layers
+      - name: Cache Docker rescript layers
         uses: actions/cache@v2
         with:
           path: /tmp/.base-template-deployer-docker-cache
           key: ${{ runner.os }}-base-template-deployer-docker-cache-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-base-template-deployer-docker-cache-
+
+      - name: Cache Docker typescript layers
+        uses: actions/cache@v2
+        with:
+          path: /tmp/.base-template-deployer-docker-typescript-cache
+          key: ${{ runner.os }}-base-template-deployer-docker-typescript-cache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-base-template-deployer-docker-typescript-cache-
 
       - name: Log in to Docker Hub
         uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
@@ -300,6 +308,20 @@ jobs:
             ENVIO_VERSION=${{ needs.prepare.outputs.tag_name }}
           cache-from: type=local,src=/tmp/.base-template-deployer-docker-cache
           cache-to: type=local,dest=/tmp/.base-template-deployer-docker-cache-new
+
+      - name: Build & push type script docker image
+        uses: docker/build-push-action@v2
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          file: ./.github/Dockerfile.typescript #this parameter does not take into account the context above
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/envio-typescript-pnpm:${{ needs.prepare.outputs.release_name }}
+          # tags: ${{ secrets.DOCKER_USERNAME }}/envio:${{ needs.prepare.outputs.release_name }}
+          build-args: |
+            COMMIT_HASH_ARG= ${{ needs.prepare.outputs.commit_hash }}  #used for database name
+            ENVIO_VERSION=${{ needs.prepare.outputs.tag_name }}
+          cache-from: type=local,src=/tmp/.base-template-deployer-docker-typescript-cache
+          cache-to: type=local,dest=/tmp/.base-template-deployer-docker-typescript-cache-new
 
         # Temp fix
         # https://github.com/docker/build-push-action/issues/252

@@ -1,0 +1,18 @@
+
+#rescript base
+
+FROM --platform=linux/amd64 node:18.16.1-bookworm-slim
+# FROM --platform=linux/amd64 node:20.4.0-bookworm-slim # Testing differen versions for 
+WORKDIR /app/base-template
+
+ENV PNPM_HOME /usr/local/binp
+RUN npm install --global pnpm
+
+ARG ENVIO_VERSION
+RUN npm install --global envio@${ENVIO_VERSION}
+
+ARG COMMIT_HASH_ARG
+ENV COMMIT_HASH=${COMMIT_HASH_ARG}
+
+RUN envio init -t erc20 -l typescript
+
