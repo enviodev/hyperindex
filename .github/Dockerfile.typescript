@@ -5,10 +5,10 @@ FROM node:18.16.1-bookworm-slim
 # FROM --platform=linux/amd64 node:20.4.0-bookworm-slim # Testing differen versions for 
 WORKDIR /app/base-template
 
-RUN apt-get update && apt install -y openssl
-
 ENV PNPM_HOME /usr/local/binp
 RUN npm install --global pnpm
+
+RUN npm install --global openssl
 
 ARG ENVIO_VERSION
 RUN npm install --global envio@${ENVIO_VERSION}
