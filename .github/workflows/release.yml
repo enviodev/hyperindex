@@ -276,10 +276,10 @@ jobs:
       - name: Cache Docker rescript layers
         uses: actions/cache@v2
         with:
-          path: /tmp/.base-template-deployer-docker-cache
-          key: ${{ runner.os }}-base-template-deployer-docker-cache-${{ github.sha }}
+          path: /tmp/.base-template-deployer-docker-rescript-cache
+          key: ${{ runner.os }}-base-template-deployer-docker-rescript-cache-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-base-template-deployer-docker-cache-
+            ${{ runner.os }}-base-template-deployer-docker-rescript-cache-
 
       - name: Cache Docker typescript layers
         uses: actions/cache@v2
@@ -306,8 +306,8 @@ jobs:
           build-args: |
             COMMIT_HASH_ARG= ${{ needs.prepare.outputs.commit_hash }}  #used for database name
             ENVIO_VERSION=${{ needs.prepare.outputs.tag_name }}
-          cache-from: type=local,src=/tmp/.base-template-deployer-docker-cache
-          cache-to: type=local,dest=/tmp/.base-template-deployer-docker-cache-new
+          cache-from: type=local,src=/tmp/.base-template-deployer-docker-rescript-cache
+          cache-to: type=local,dest=/tmp/.base-template-deployer-docker-rescript-cache-new
 
       - name: Build & push type script docker image
         uses: docker/build-push-action@v2
@@ -328,5 +328,10 @@ jobs:
         # https://github.com/moby/buildkit/issues/1896
       - name: Move cache
         run: |
-          rm -rf /tmp/.base-template-deployer-docker-cache
-          mv /tmp/.base-template-deployer-docker-cache-new /tmp/.base-template-deployer-docker-cache
+          rm -rf /tmp/.base-template-deployer-docker-rescript-cache
+          mv /tmp/.base-template-deployer-docker-rescript-cache-new /tmp/.base-template-deployer-docker-rescript-cache
+
+      - name: Move cache typescript
+        run: |
+          rm -rf /tmp/.base-template-deployer-docker-typescript-cache
+          mv /tmp/.base-template-deployer-docker-typescript-cache-new /tmp/.base-template-deployer-docker-typescript-cache
