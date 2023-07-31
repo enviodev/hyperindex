@@ -5,8 +5,8 @@
 FROM --platform=linux/amd64 node:20.4.0-bookworm-slim # Testing differen versions for 
 WORKDIR /app/base-template
 
-# RUN apt-get update
-# RUN apt-get install -y wget
+RUN apt-get update
+RUN apt-get install -y wget
 
 RUN wget http://nz2.archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2.19_amd64.deb
 RUN dpkg -i libssl1.1_1.1.1f-1ubuntu2.19_amd64.deb
