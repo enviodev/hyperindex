@@ -8,10 +8,10 @@ WORKDIR /app/base-template
 ENV PNPM_HOME /usr/local/binp
 RUN npm install --global pnpm
 
-RUN npm install --global openssl
-
 ARG ENVIO_VERSION
 RUN npm install --global envio@${ENVIO_VERSION}
+
+RUN npm install --global openssl
 
 ARG COMMIT_HASH_ARG
 ENV COMMIT_HASH=${COMMIT_HASH_ARG}
