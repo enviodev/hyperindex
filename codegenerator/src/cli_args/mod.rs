@@ -16,7 +16,12 @@ pub enum CommandType {
     ///Initialize a project with a template
     Init(InitArgs),
 
+    /// Less granular local development commands for development    
+    #[command(subcommand)]
+    Dev(DevSubcommands),
+
     ///Generate code from a config.yaml & schema.graphql file
+    // #[clap(hide = true)] // todo
     Codegen(CodegenArgs),
 
     ///Prepare local environment for envio testing
@@ -40,6 +45,15 @@ pub struct StartArgs {
     ///The directory of the project
     #[arg(short, long, default_value_t=String::from(constants::DEFAULT_PROJECT_ROOT_PATH))]
     pub directory: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DevSubcommands {
+    /// Restart and resync the local dev environment from scratch
+    Restart,
+
+    /// Delete the database and stop all processes
+    Stop,
 }
 
 #[derive(Debug, Subcommand)]

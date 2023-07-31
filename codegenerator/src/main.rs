@@ -6,8 +6,9 @@ use clap::Parser;
 
 use envio::{
     cli_args::{
-        self, interactive_init::TemplateOrSubgraphID, DbMigrateSubcommands, Language,
-        LocalCommandTypes, LocalDockerSubcommands, ProjectPathsArgs,
+        self, interactive_init::TemplateOrSubgraphID, CommandLineArgs, CommandType,
+        DbMigrateSubcommands, DevSubcommands, Language, LocalCommandTypes, LocalDockerSubcommands,
+        ProjectPathsArgs, Template, ToProjectPathsArgs,
     },
     commands,
     config_parsing::graph_migration::generate_config_from_subgraph_id,
@@ -19,7 +20,6 @@ use envio::{
     project_paths::{ParsedPaths},
 };
 
-use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
 use include_dir::{include_dir, Dir};
 
 static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
@@ -168,6 +168,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
 
+        CommandType::Dev(dev_subcommands) => {
+            let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
+            let project_paths = &parsed_paths.project_paths;
+            match dev_subcommands {
+                DevSubcommands::Stop => {
+                    commands::docker::docker_compose_down_v(project_paths)?;
+                }
+                DevSubcommands::Restart => {
+                    commands::docker::docker_compose_down_v(project_paths)?;
+                    commands::docker::docker_compose_up_d(project_paths)?;
+                    commands::db_migrate::run_db_setup(project_paths)?;
+                }
+                _ => {
+                    commands::docker::docker_compose_up_d(project_paths)?;
+                    commands::db_migrate::run_db_setup(project_paths)?;
+                    commands::start::start_indexer(project_paths)?;
+                }
+            }
+
+            // todo: if docker is running then don't start docker and db-migrate
+            Ok(())
+        }
+
         CommandType::Start(start_args) => {
             let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
@@ -215,6 +238,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             commands::start::start_indexer(project_paths)?;
             Ok(())
         }
+
         CommandType::Local(local_commands) => {
             let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
@@ -243,6 +267,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         }
+
         CommandType::PrintAllHelp {} => {
             clap_markdown::print_help_markdown::<CommandLineArgs>();
             Ok(())
