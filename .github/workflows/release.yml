@@ -284,10 +284,10 @@ jobs:
       - name: Cache Docker typescript layers
         uses: actions/cache@v2
         with:
-          path: /tmp/.base-template-deployer-docker-typescript-cache
-          key: ${{ runner.os }}-base-template-deployer-docker-typescript-cache-${{ github.sha }}
+          path: /tmp/.base-template-deployer-docker-ts-cache
+          key: ${{ runner.os }}-base-template-deployer-docker-ts-cache-${{ github.sha }}
           restore-keys: |
-            ${{ runner.os }}-base-template-deployer-docker-typescript-cache-
+            ${{ runner.os }}-base-template-deployer-docker-ts-cache-
 
       - name: Log in to Docker Hub
         uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
@@ -320,8 +320,8 @@ jobs:
           build-args: |
             COMMIT_HASH_ARG= ${{ needs.prepare.outputs.commit_hash }}  #used for database name
             ENVIO_VERSION=${{ needs.prepare.outputs.tag_name }}
-          cache-from: type=local,src=/tmp/.base-template-deployer-docker-typescript-cache
-          cache-to: type=local,dest=/tmp/.base-template-deployer-docker-typescript-cache-new
+          cache-from: type=local,src=/tmp/.base-template-deployer-docker-ts-cache
+          cache-to: type=local,dest=/tmp/.base-template-deployer-docker-ts-cache-new
 
         # Temp fix
         # https://github.com/docker/build-push-action/issues/252
@@ -333,5 +333,5 @@ jobs:
 
       - name: Move cache typescript
         run: |
-          rm -rf /tmp/.base-template-deployer-docker-typescript-cache
-          mv /tmp/.base-template-deployer-docker-typescript-cache-new /tmp/.base-template-deployer-docker-typescript-cache
+          rm -rf /tmp/.base-template-deployer-docker-ts-cache
+          mv /tmp/.base-template-deployer-docker-ts-cache-new /tmp/.base-template-deployer-docker-ts-cache
