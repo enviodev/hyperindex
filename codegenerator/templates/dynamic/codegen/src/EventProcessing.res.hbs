@@ -71,7 +71,7 @@ ${eventInfoString}
 
 ${eventInfoString}`,
               )
-              context.log.errorWithExn(userCodeException, errorMessage)
+              context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
             }
   }
 {{/each}}
