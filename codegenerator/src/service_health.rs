@@ -32,15 +32,14 @@ pub async fn fetch_hasura_healthz_with_retry() -> anyhow::Result<bool> {
             }
             Ok(Err(err)) => {
                 fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
-                eprintln!(
-                    "Hasura is still starting up {}. Retrying in {} seconds...",
-                    &err,
+                println!(
+                    "Waiting for the docker services to become available. {} seconds.",
                     refetch_delay.as_secs()
                 );
             }
             Err(err) => {
                 fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
-                eprintln!(
+                println!(
                     "Fetching the services health timed out. Retrying in {} seconds...",
                     refetch_delay.as_secs()
                 );

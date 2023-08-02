@@ -6,9 +6,9 @@ use clap::Parser;
 
 use envio::{
     cli_args::{
-        self, interactive_init::TemplateOrSubgraphID, CommandLineArgs, CommandType,
-        DbMigrateSubcommands, DevSubcommands, Language, LocalCommandTypes, LocalDockerSubcommands,
-        ProjectPathsArgs, Template, ToProjectPathsArgs,
+        interactive_init::TemplateOrSubgraphID, CommandLineArgs, CommandType, DbMigrateSubcommands,
+        DevSubcommands, Language, LocalCommandTypes, LocalDockerSubcommands, ProjectPathsArgs,
+        Template, ToProjectPathsArgs,
     },
     commands,
     config_parsing::graph_migration::generate_config_from_subgraph_id,
@@ -17,7 +17,8 @@ use envio::{
         check_user_file_diff_match, persisted_state_file_exists, ExistingPersistedState,
         PersistedState, RerunOptions,
     },
-    project_paths::{ParsedPaths},
+    project_paths::ParsedPaths,
+    service_health,
 };
 
 use include_dir::{include_dir, Dir};
@@ -168,6 +169,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
 
+        // todo: go through Jono's commands to validate what he's trying to achieve with the persisted state
+        // todo: make the subcommands with clap optional
         CommandType::Dev(dev_subcommands) => {
             let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
@@ -178,16 +181,34 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 DevSubcommands::Restart => {
                     commands::docker::docker_compose_down_v(project_paths)?;
                     commands::docker::docker_compose_up_d(project_paths)?;
-                    commands::db_migrate::run_db_setup(project_paths)?;
+                    let hasura_ready_result =
+                        service_health::fetch_hasura_healthz_with_retry().await;
+                    match hasura_ready_result {
+                        Ok(_) => {
+                            commands::db_migrate::run_db_setup(project_paths)?;
+                            commands::start::start_indexer(project_paths)?;
+                        }
+                        Err(e) => {
+                            println!("Failed to connect to hasura: {}", e);
+                        }
+                    }
                 }
-                _ => {
+                DevSubcommands::Dev => {
                     commands::docker::docker_compose_up_d(project_paths)?;
-                    commands::db_migrate::run_db_setup(project_paths)?;
-                    commands::start::start_indexer(project_paths)?;
+                    let hasura_ready_result =
+                        service_health::fetch_hasura_healthz_with_retry().await;
+                    match hasura_ready_result {
+                        Ok(_) => {
+                            commands::db_migrate::run_db_setup(project_paths)?;
+                            commands::start::start_indexer(project_paths)?;
+                        }
+                        Err(e) => {
+                            println!("Failed to connect to hasura: {}", e);
+                        }
+                    }
                 }
             }
 
-            // todo: if docker is running then don't start docker and db-migrate
             Ok(())
         }
 

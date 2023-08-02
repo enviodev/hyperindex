@@ -49,6 +49,9 @@ pub struct StartArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum DevSubcommands {
+    ///Start the dev
+    Dev,
+
     /// Restart and resync the local dev environment from scratch
     Restart,
 
