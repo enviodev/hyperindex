@@ -73,6 +73,7 @@ jobs:
           fi
           matrix=$(echo "$matrix" | jq -c '.') # put it on a single line (compact)
           echo "::set-output name=matrix::${matrix}"
+          echo "The tag_name is ${{ steps.release_info.outputs.tag_name }}"
 
       - name: Build changelog
         id: build_changelog
@@ -103,7 +104,6 @@ jobs:
       - name: Set new version in Cargo.toml
         working-directory: codegenerator
         run: |
-          echo "The tag_name is ${{ needs.prepare.outputs.tag_name }}"
           awk -v version="${VERSION:1}" '/^version = "/ {$0 = "version = \"" version "\""} 1' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
         env:
           VERSION: ${{ needs.prepare.outputs.tag_name }}
