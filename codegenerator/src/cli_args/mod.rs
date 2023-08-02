@@ -16,9 +16,8 @@ pub enum CommandType {
     ///Initialize a project with a template
     Init(InitArgs),
 
-    /// Less granular local development commands for development    
-    #[command(subcommand)]
-    Dev(DevSubcommands),
+    /// Less granular local development commands for development        
+    Dev(DevCommands),
 
     ///Generate code from a config.yaml & schema.graphql file
     // #[clap(hide = true)] // todo
@@ -47,11 +46,14 @@ pub struct StartArgs {
     pub directory: String,
 }
 
+#[derive(Debug, Args)]
+pub struct DevCommands {
+    #[command(subcommand)]
+    pub subcommands: Option<DevSubcommands>,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum DevSubcommands {
-    ///Start the dev
-    Dev,
-
     /// Restart and resync the local dev environment from scratch
     Restart,
 

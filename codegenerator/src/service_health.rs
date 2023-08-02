@@ -7,7 +7,7 @@ const BACKOFF_INCREMENT: Duration = Duration::from_secs(1);
 const HASURA_ENDPOINT: &str = "http://localhost:8080/"; // todo: is this available somewhere
 
 // Function to fetch the health of the Hasura service
-async fn fetch_hasura_healthz() -> Result<String, reqwest::Error> {
+pub async fn fetch_hasura_healthz() -> Result<String, reqwest::Error> {
     let client = reqwest::Client::new();
     let url = format!("{}healthz", HASURA_ENDPOINT);
     let response = client.get(&url).send().await?;
