@@ -5,7 +5,6 @@ on:
     tags:
       - "v*.*.*"
     branches:
-      - wsd/versioning-minor-fix
       - main
       # The following two branch names can be used to force build a version for development and sharing a patch.
       - "*force-npm-publish*"
@@ -41,7 +40,7 @@ jobs:
       - name: Compute release name and tag
         id: release_info
         run: |
-          if [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?(\.[a-zA-Z0-9]+)?)$ ]]; then
+          if [[ "${GITHUB_REF_NAME}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?(\.[a-zA-Z0-9]+)?) ]]; then
             echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
             echo "::set-output name=release_name::${GITHUB_REF_NAME}"
             echo "::set-output name=is_tagged::true"
