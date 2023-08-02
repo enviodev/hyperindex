@@ -16,7 +16,7 @@ use envio::{
         check_user_file_diff_match, persisted_state_file_exists, ExistingPersistedState,
         PersistedState, RerunOptions,
     },
-    project_paths::{self, ParsedPaths},
+    project_paths::{ParsedPaths},
 };
 
 use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
