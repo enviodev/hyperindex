@@ -64,8 +64,7 @@ describe("E2E Db check", () => {
 
   // TODO: work out why this test works locally, but not in pipeline!
   it("Validate inmemory store state", () => {
-    let inMemoryStore = IO.InMemoryStore.Gravatar.gravatarDict.contents
-    let inMemoryStoreRows = inMemoryStore->Js.Dict.values
+    let inMemoryStoreRows = IO.InMemoryStore.Gravatar.values()
 
     Assert.deep_equal(
       inMemoryStoreRows,
