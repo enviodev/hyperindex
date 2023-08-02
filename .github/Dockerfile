@@ -20,5 +20,5 @@ RUN npm install --global envio@${ENVIO_VERSION}
 ARG COMMIT_HASH_ARG
 ENV COMMIT_HASH=${COMMIT_HASH_ARG}
 
-RUN envio init --name erc20indexer -t erc20 -l rescript
+RUN envio init -d. --name erc20indexer -t erc20 -l rescript
 
