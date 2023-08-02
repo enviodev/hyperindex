@@ -5,6 +5,7 @@ on:
     tags:
       - "v*.*.*"
     branches:
+      - wsd/versioning-minor-fix
       - main
       # The following two branch names can be used to force build a version for development and sharing a patch.
       - "*force-npm-publish*"
@@ -102,6 +103,7 @@ jobs:
       - name: Set new version in Cargo.toml
         working-directory: codegenerator
         run: |
+          echo "The tag_name is ${{ needs.prepare.outputs.tag_name }}"
           awk -v version="${VERSION:1}" '/^version = "/ {$0 = "version = \"" version "\""} 1' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
         env:
           VERSION: ${{ needs.prepare.outputs.tag_name }}
