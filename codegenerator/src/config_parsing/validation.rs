@@ -155,18 +155,18 @@ mod tests {
     #[test]
     fn test_check_reserved_words() {
         let yaml_string =
-            "This is a YAML string with reserved words like break, import, and match.";
+            "This is a YAML string with reserved words like break, import, match and symbol.";
         let flagged_words = super::check_reserved_words(yaml_string);
         assert_eq!(
             flagged_words,
-            vec!["with", "break", "import", "and", "match"]
+            vec!["string", "with", "break", "import", "match", "and", "symbol"]
         );
     }
 
     #[test]
     fn test_check_no_reserved_words() {
         let yaml_string =
-            "This is a YAML string without reserved words but has words like avocado plus mayo.";
+            "This is a YAML without reserved words but has words like avocado plus mayo.";
         let flagged_words = super::check_reserved_words(yaml_string);
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(flagged_words, empty_vec);
