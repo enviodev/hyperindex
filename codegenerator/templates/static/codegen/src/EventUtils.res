@@ -44,6 +44,12 @@ let unpackEventIndex = (packedEventIndex: Ethers.BigInt.t) => {
   }
 }
 
+//takes an eventIndex record and returnts a packed event index
+@live //used in TS tests
+let packEventIndexFromRecord = (eventIndex: eventIndex) => {
+  packEventIndex(~blockNumber=eventIndex.blockNumber, ~logIndex=eventIndex.logIndex)
+}
+
 //Returns unique string id for an event using its chain id combined with event id
 //Used in IO for the key in the in mem rawEvents table
 let getEventIdKeyString = (~chainId: int, ~eventId: string) => {

@@ -11,9 +11,7 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
-    MockEvents.eventBatchWithContext->Belt.Array.forEach(
-      event => event->EventProcessing.eventRouter(~chainId=MockConfig.mockChainConfig.chainId),
-    )
+    MockEvents.eventRouterBatch->Belt.Array.forEach(event => event->EventProcessing.eventRouter)
   })
 
   after(() => {
@@ -45,16 +43,19 @@ describe("E2E Db check", () => {
       Migrations.sql,
       [MockEntities.mockInMemRow1, MockEntities.mockInMemRow2],
     )
-    let blockLoader = LazyLoader.make(
-      ~loaderFn=EventFetching.getUnwrappedBlock(Hardhat.hardhatProvider),
-      (),
+
+    let arbitraryMaxQueueSize = 100
+    let mockChainManager = ChainManager.make(
+      ~configs=Config.config,
+      ~maxQueueSize=arbitraryMaxQueueSize,
     )
-    await MockEvents.eventPromises->EventProcessing.processEventBatch(
-      ~chainConfig=MockConfig.mockChainConfig,
+
+    await EventProcessing.processEventBatch(
       // Give a conservatively wide range of blocks
-      ~blocksProcessed={from: 1, to: 10},
-      ~blockLoader,
+      // ~blocksProcessed={from: 1, to: 10},
+      ~eventBatch=MockEvents.eventBatchItems,
       ~logger=Logging.logger,
+      ~chainManager=mockChainManager,
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
