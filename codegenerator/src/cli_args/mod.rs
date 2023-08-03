@@ -16,7 +16,7 @@ pub enum CommandType {
     ///Initialize a project with a template
     Init(InitArgs),
 
-    /// Less granular local development commands for development        
+    /// Development commands for starting, stopping, and restarting the local environment        
     Dev(DevCommands),
 
     ///Generate code from a config.yaml & schema.graphql file

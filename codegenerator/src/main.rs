@@ -169,8 +169,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
 
-        // todo: go through Jono's commands to validate what he's trying to achieve with the persisted state
-        // todo: make the subcommands with clap optional
         CommandType::Dev(dev_subcommands) => {
             let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
@@ -187,7 +185,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             match hasura_ready_result {
                                 Ok(_) => {
                                     commands::codegen::run_codegen(&parsed_paths)?;
-                                    // todo: check this does nothing if its not rescript?
                                     commands::codegen::run_post_codegen_command_sequence(
                                         &parsed_paths.project_paths,
                                     )?;
