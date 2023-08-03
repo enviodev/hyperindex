@@ -2,7 +2,7 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use crate::config_parsing::{strip_to_letters, Config};
+use crate::config_parsing::Config;
 
 use super::constants::RESERVED_WORDS;
 
@@ -101,9 +101,7 @@ pub fn validate_deserialized_config_yaml(
     config_path: &PathBuf,
     deserialized_yaml: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let deserialized_yaml_name = strip_to_letters(&deserialized_yaml.name);
-
-    if !is_valid_postgres_db_name(&deserialized_yaml_name) {
+    if !is_valid_postgres_db_name(&deserialized_yaml.name) {
         return Err(format!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 

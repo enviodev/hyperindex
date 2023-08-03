@@ -317,13 +317,15 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
         )
     })?;
 
-    let deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
+    let mut deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
         format!(
             "Failed to deserialize config with Error {}. Visit the docs for more information {}",
             err.to_string(),
             links::DOC_CONFIGURATION_FILE
         )
     })?;
+
+    deserialized_yaml.name = strip_to_letters(&deserialized_yaml.name);
 
     // Validating the config file
     validation::validate_deserialized_config_yaml(config_path, &deserialized_yaml)?;
