@@ -75,7 +75,7 @@ let rec loadNext = (am: asyncMap<'a>, k: int): unit => {
     am.loadedKeys->SDSL.PriorityQueue.push(k)
 
     // Delete the oldest key if the cache is overly full
-    if am.loadedKeys["length"] > am._cacheSize {
+    if am.loadedKeys->SDSL.PriorityQueue.length > am._cacheSize {
       switch am.loadedKeys->SDSL.PriorityQueue.pop {
       | None => ()
       | Some(old) => am.externalPromises->deleteKey(old->Belt.Int.toString)

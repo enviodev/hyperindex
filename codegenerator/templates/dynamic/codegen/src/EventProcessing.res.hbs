@@ -26,7 +26,8 @@ let addEventToRawEvents = (event: Types.eventLog<'a>, ~chainId, ~jsonSerializedP
 
   IO.InMemoryStore.RawEvents.setRawEvents(~entity=rawEvent)
 }
-let eventRouter = (event: Types.eventAndContext, ~chainId) => {
+let eventRouter = (item: Types.eventRouterEventAndContext) => {
+  let {event, chainId} = item
   switch event {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
@@ -44,9 +45,8 @@ let eventRouter = (event: Types.eventAndContext, ~chainId) => {
             | userCodeException =>
               // TODO: we must add the network details of this event too!
               let eventInfoString = `The details of the event that caused this issue:
-eventName: {{contract.name.capitalized
-}}.{{event.name.capitalized}}
-txHash: ${event.transactionHash}
+              eventName: {{contract.name.capitalized}}.{{event.name.capitalized}}
+              txHash: ${event.transactionHash}
 blockNumber: ${event.blockNumber->Belt.Int.toString}
 logIndex: ${event.logIndex->Belt.Int.toString}
 transactionIndex: ${event.transactionIndex->Belt.Int.toString}`
@@ -80,6 +80,8 @@ ${eventInfoString}`,
 }
 
 type readEntitiesResult = {
+  timestamp: int,
+  chainId: int,
   blockNumber: int,
   logIndex: int,
   entityReads: array<Types.entityRead>,
@@ -87,71 +89,79 @@ type readEntitiesResult = {
 }
 
 type rec readEntitiesResultPromise = {
+  timestamp: int,
+  chainId: int,
   blockNumber: int,
   logIndex: int,
-  promise: promise<(
-    array<Types.entityRead>,
-    Types.eventAndContext,
-    option<array<readEntitiesResultPromise>>,
-  )>,
+  data: (array<Types.entityRead>, Types.eventAndContext, option<array<readEntitiesResultPromise>>),
 }
 
 let rec loadReadEntitiesInner = async (
-  eventBatch: array<EventFetching.eventBatchPromise>,
-  ~chainConfig: Config.chainConfig,
-  ~blocksProcessed: EventFetching.blocksProcessed,
-  ~blockLoader,
+  ~eventBatch: array<EventFetching.eventBatchQueueItem>,
   ~logger,
+  ~chainManager: ChainManager.t,
 ): array<readEntitiesResultPromise> => {
   // Recursively load entities
   let loadNestedReadEntities = async (
-    ~blockNumber,
     ~logIndex,
     ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
+    ~fromBlock,
+    ~currentBatchLastEventIndex: EventUtils.multiChainEventIndex,
+    ~chainFetcher: ChainFetcher.t,
   ): array<readEntitiesResultPromise> => {
-    let addressInterfaceMapping = Js.Dict.empty()
-
-    let eventFilters = dynamicContracts->Belt.Array.flatMap(contract => {
-      EventFetching.getSingleContractEventFilters(
-        ~contractAddress=contract.contractAddress,
-        ~chainConfig,
-        ~addressInterfaceMapping,
+    let eventBatchPromises =
+      await chainFetcher->ChainFetcher.addDynamicContractAndFetchMissingEvents(
+        ~fromBlock,
+        ~dynamicContracts,
+        ~fromLogIndex=logIndex + 1,
       )
-    })
 
-    let (fetchedEvents, nestedBlocksProcessed, _) = await EventFetching.getContractEventsOnFilters(
-      ~eventFilters,
-      ~addressInterfaceMapping,
-      ~fromBlock=blockNumber,
-      ~toBlock=blocksProcessed.to,
-      ~minFromBlockLogIndex=logIndex + 1,
-      ~initialBlockInterval=blocksProcessed.to - blockNumber + 1,
-      ~chainConfig=chainConfig,
-      ~blockLoader,
-      ~logger,
-      (),
-    )
+    let eventsForCurrentBatch = []
+    for i in 0 to eventBatchPromises->Belt.Array.length - 1 {
+      let item = eventBatchPromises[i]
+      let {timestamp, chainId, blockNumber, logIndex} = item
 
-    await fetchedEvents->loadReadEntitiesInner(
-      ~chainConfig,
-      ~blockLoader,
-      ~blocksProcessed=nestedBlocksProcessed,
-      ~logger,
-    )
+      let eventIndex: EventUtils.multiChainEventIndex = {
+        timestamp,
+        chainId,
+        blockNumber,
+        logIndex,
+      }
+
+      // If the event is earlier than the last event of the current batch, then add it to the current batch
+      if EventUtils.isEarlierEvent(eventIndex, currentBatchLastEventIndex) {
+        eventsForCurrentBatch->Js.Array2.push(item)->ignore
+      } else {
+        // Otherwise, add it to the arbitrary events queue for later batches
+        chainManager->ChainManager.addItemToArbitraryEvents(item)
+      }
+    }
+
+    await loadReadEntitiesInner(~eventBatch=eventsForCurrentBatch, ~logger, ~chainManager)
   }
 
   let baseResults: array<readEntitiesResultPromise> = []
 
-  let chainId = chainConfig.chainId
+  let lastItemInBatch = eventBatch[eventBatch->Belt.Array.length - 1]
+  let currentBatchLastEventIndex: EventUtils.multiChainEventIndex = {
+    timestamp: lastItemInBatch.timestamp,
+    chainId: lastItemInBatch.chainId,
+    blockNumber: lastItemInBatch.blockNumber,
+    logIndex: lastItemInBatch.logIndex,
+  }
 
   for i in 0 to eventBatch->Belt.Array.length - 1 {
-    let {blockNumber, logIndex, eventPromise} = eventBatch[i]
+    let {timestamp, chainId, blockNumber, logIndex, event} = eventBatch[i]
+
+    let chainFetcher = chainManager->ChainManager.getChainFetcher(~chainId)
+
     baseResults
     ->Js.Array2.push({
+      timestamp,
+      chainId,
       blockNumber,
       logIndex,
-      promise: eventPromise->Promise.then(async event =>
-        switch event {
+      data: switch event {
       {{#each contracts as | contract |}}
       {{#each contract.events as | event |}}
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
@@ -206,7 +216,15 @@ ${eventInfoString}`,
             contextHelper.getEntitiesToLoad(),
             Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
             if Belt.Array.length(dynamicContracts) > 0 {
-              Some(await loadNestedReadEntities(~blockNumber, ~logIndex, ~dynamicContracts))
+              Some(
+                await loadNestedReadEntities(
+                  ~logIndex,
+                  ~dynamicContracts,
+                  ~fromBlock=blockNumber,
+                  ~chainFetcher,
+                  ~currentBatchLastEventIndex,
+                ),
+              )
             } else {
               None
             },
@@ -214,8 +232,9 @@ ${eventInfoString}`,
         }
       {{/each}}
       {{/each}}
-      })
-    })->ignore
+      },
+    })
+    ->ignore
   }
 
   baseResults
@@ -226,9 +245,11 @@ type rec nestedResult = {
   nested: option<array<nestedResult>>,
 }
 // Given a read entities promise, unwrap just the top level result
-let unwrap = async (p: readEntitiesResultPromise): readEntitiesResult => {
-  let (er, ec, _) = await p.promise
+let unwrap = (p: readEntitiesResultPromise): readEntitiesResult => {
+  let (er, ec, _) = p.data
   {
+    timestamp: p.timestamp,
+    chainId: p.chainId,
     blockNumber: p.blockNumber,
     logIndex: p.logIndex,
     entityReads: er,
@@ -238,10 +259,10 @@ let unwrap = async (p: readEntitiesResultPromise): readEntitiesResult => {
 
 // Recursively await the promises to get their results
 let rec recurseEntityPromises = async (p: readEntitiesResultPromise): nestedResult => {
-  let (_, _, nested) = await p.promise
+  let (_, _, nested) = p.data
 
   {
-    result: await unwrap(p),
+    result: unwrap(p),
     nested: switch nested {
     | None => None
     | Some(xs) => Some(await xs->Belt.Array.map(recurseEntityPromises)->Promise.all)
@@ -250,7 +271,13 @@ let rec recurseEntityPromises = async (p: readEntitiesResultPromise): nestedResu
 }
 
 // This function is used to sort results according to their order in the chain
-let resultPosition = ({blockNumber, logIndex}: readEntitiesResult) => (blockNumber, logIndex)
+let resultPosition = ({timestamp, chainId, blockNumber, logIndex}: readEntitiesResult) =>
+  EventUtils.getEventComparator({
+    timestamp,
+    chainId,
+    blockNumber,
+    logIndex,
+  })
 
 // Given the recursively awaited results, flatten them down into a single list using chain order
 let rec flattenNested = (xs: array<nestedResult>): array<readEntitiesResult> => {
@@ -263,24 +290,24 @@ let rec flattenNested = (xs: array<nestedResult>): array<readEntitiesResult> => 
 }
 
 let loadReadEntities = async (
-  eventBatch: array<EventFetching.eventBatchPromise>,
-  ~chainConfig: Config.chainConfig,
-  ~blockLoader,
-  ~blocksProcessed: EventFetching.blocksProcessed,
+  ~eventBatch: array<EventFetching.eventBatchQueueItem>,
+  ~chainManager: ChainManager.t,
   ~logger: Pino.t,
-): array<Types.eventAndContext> => {
-  let batch =
-    await eventBatch->loadReadEntitiesInner(~chainConfig, ~blocksProcessed, ~blockLoader, ~logger)
+): array<Types.eventRouterEventAndContext> => {
+  let batch = await loadReadEntitiesInner(~eventBatch, ~logger, ~chainManager: ChainManager.t)
 
   let nestedResults = await batch->Belt.Array.map(recurseEntityPromises)->Promise.all
   let mergedResults = flattenNested(nestedResults)
 
   // Project the result record into a tuple, so that we can unzip the two payloads.
-  let resultToPair = ({entityReads, eventAndContext}) => (entityReads, eventAndContext)
+  let resultToPair = ({entityReads, eventAndContext, chainId}): (
+    array<Types.entityRead>,
+    Types.eventRouterEventAndContext,
+  ) => (entityReads, {chainId, event: eventAndContext})
 
   let (readEntitiesGrouped, contexts): (
     array<array<Types.entityRead>>,
-    array<Types.eventAndContext>,
+    array<Types.eventRouterEventAndContext>,
   ) =
     mergedResults->Belt.Array.map(resultToPair)->Belt.Array.unzip
 
@@ -292,20 +319,24 @@ let loadReadEntities = async (
 }
 
 let processEventBatch = async (
-  eventBatch: array<EventFetching.eventBatchPromise>,
-  ~chainConfig,
-  ~blocksProcessed: EventFetching.blocksProcessed,
-  ~blockLoader,
+  ~eventBatch: array<EventFetching.eventBatchQueueItem>,
+  ~chainManager: ChainManager.t,
   ~logger: Pino.t,
 ) => {
   IO.InMemoryStore.resetStore()
 
-  let eventBatchAndContext =
-    await eventBatch->loadReadEntities(~chainConfig, ~blockLoader, ~blocksProcessed, ~logger)
+  let eventBatchAndContext = await loadReadEntities(~eventBatch, ~chainManager, ~logger)
 
-  eventBatchAndContext->Belt.Array.forEach(event =>
-    event->eventRouter(~chainId=chainConfig.chainId)
-  )
+  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter)
 
   await DbFunctions.sql->IO.executeBatch
+}
+
+let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t, ~logger): unit => {
+  while true {
+    let nextBatch =
+      await chainManager->ChainManager.createBatch(~minBatchSize=1, ~maxBatchSize=2000)
+    await processEventBatch(~eventBatch=nextBatch, ~chainManager, ~logger)
+  }
+  Obj.magic()
 }

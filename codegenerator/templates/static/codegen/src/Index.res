@@ -15,11 +15,7 @@ app->get("/_healthz", (_req, res) => {
 let _ = app->listen(port)
 
 let main = () => {
- 
- EventSyncing.startSyncingAllEvents()
-  ->Promise.then(_ => EventSubscription.startWatchingEvents())
-  ->ignore
-  
+  EventSyncing.startSyncingAllEvents()->ignore
 }
 
 main()
