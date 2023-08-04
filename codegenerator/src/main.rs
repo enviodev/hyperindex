@@ -252,8 +252,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 }
                 Some(dev_subcommand) => match dev_subcommand {
                     DevSubcommands::Restart => {
-                        commands::docker::docker_compose_down_v(project_paths)?;
-                        commands::docker::docker_compose_up_d(project_paths)?;
                         let hasura_ready_result =
                             service_health::fetch_hasura_healthz_with_retry().await;
                         match hasura_ready_result {
