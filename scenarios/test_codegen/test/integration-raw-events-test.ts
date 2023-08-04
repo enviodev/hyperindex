@@ -19,7 +19,7 @@ import { make, startFetchers } from "generated/src/ChainManager.bs";
 import { startProcessingEventsOnQueue } from "generated/src/EventProcessing.bs";
 import { createChild } from "generated/src/Logging.bs";
 
-require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
+// require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
 describe("Raw Events Integration", () => {
   const sql = createSql();
@@ -56,7 +56,7 @@ describe("Raw Events Integration", () => {
     };
   };
 
-  before(async function () {
+  before(async function() {
     this.timeout(30 * 1000);
     await runMigrationsNoLogs();
     console.log("deploying Nft Factory");
@@ -105,7 +105,10 @@ describe("Raw Events Integration", () => {
 
     console.log("processing events after mint");
     const ARB_QUEUE_SIZE = 100;
-    const chainManager = make([localChainConfig], ARB_QUEUE_SIZE);
+    const chainManager = make(
+      { [localChainConfig.chainId]: localChainConfig },
+      ARB_QUEUE_SIZE
+    );
     const logger = createChild("test child");
     startFetchers(chainManager);
     startProcessingEventsOnQueue(chainManager, logger);
@@ -120,12 +123,12 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async function () {
+  it.only("RawEvents table contains rows after indexer runs", async function() {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
-  it("Entities have metrics and relate to their raw events", async function () {
+  it("Entities have metrics and relate to their raw events", async function() {
     let joinedMetricsRows = await sql`
     SELECT t.db_write_timestamp AS t_write, t.event_chain_id, t.event_id, r.block_timestamp, r.db_write_timestamp AS r_write
     FROM public.token AS t
@@ -135,7 +138,7 @@ describe("Raw Events Integration", () => {
     expect(joinedMetricsRows.count).to.be.gt(0);
   });
 
-  it("should ensure Entites are created correctly", async function () {
+  it("should ensure Entites are created correctly", async function() {
     let rowsNftcollection = await sql`SELECT * FROM public.nftcollection`;
     expect(rowsNftcollection.count).to.be.gt(0);
     let rowsUsers = await sql`SELECT * FROM public.user`;
@@ -144,7 +147,7 @@ describe("Raw Events Integration", () => {
     expect(rowsToken.count).to.be.gt(0);
   });
 
-  it("should have 1 row in the dynamic_contract_registry table", async function () {
+  it("should have 1 row in the dynamic_contract_registry table", async function() {
     let rowsDCR = await sql`SELECT * FROM public.dynamic_contract_registry`;
     console.log(rowsDCR);
     expect(rowsDCR.count).to.be.eq(1);

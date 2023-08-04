@@ -4,7 +4,7 @@ import {
   unpackEventIndex,
 } from "../generated/src/EventUtils.bs";
 
-require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
+// require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
 type eventIdRecord = { blockNumber: number; logIndex: number };
 

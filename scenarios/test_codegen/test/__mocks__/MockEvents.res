@@ -116,7 +116,7 @@ let eventBatch: array<Types.event> = [
   GravatarContract_UpdatedGravatar(setGravatarEventLog3),
 ]
 
-let eventBatchChainId = 1
+let eventBatchChainId = 1337
 
 let eventBatchItems = eventBatch->Belt.Array.map((e): EventFetching.eventBatchQueueItem => {
   switch e {

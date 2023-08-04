@@ -1,7 +1,7 @@
 open Types
 
 Handlers.GravatarContract.NewGravatar.loader((~event, ~context) => {
-  context.contractRegistration.addSimpleNft(event.srcAddress)
+  ()
 })
 
 Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {

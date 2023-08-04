@@ -107,8 +107,9 @@ let rec loadReadEntitiesInner = async (
     ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
     ~fromBlock,
     ~currentBatchLastEventIndex: EventUtils.multiChainEventIndex,
-    ~chainFetcher: ChainFetcher.t,
+    ~chainId: int,
   ): array<readEntitiesResultPromise> => {
+    let chainFetcher = chainManager->ChainManager.getChainFetcher(~chainId)
     let eventBatchPromises =
       await chainFetcher->ChainFetcher.addDynamicContractAndFetchMissingEvents(
         ~fromBlock,
@@ -152,8 +153,6 @@ let rec loadReadEntitiesInner = async (
 
   for i in 0 to eventBatch->Belt.Array.length - 1 {
     let {timestamp, chainId, blockNumber, logIndex, event} = eventBatch[i]
-
-    let chainFetcher = chainManager->ChainManager.getChainFetcher(~chainId)
 
     baseResults
     ->Js.Array2.push({
@@ -221,7 +220,7 @@ ${eventInfoString}`,
                   ~logIndex,
                   ~dynamicContracts,
                   ~fromBlock=blockNumber,
-                  ~chainFetcher,
+                  ~chainId,
                   ~currentBatchLastEventIndex,
                 ),
               )
@@ -338,5 +337,4 @@ let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t, ~logger
       await chainManager->ChainManager.createBatch(~minBatchSize=1, ~maxBatchSize=2000)
     await processEventBatch(~eventBatch=nextBatch, ~chainManager, ~logger)
   }
-  Obj.magic()
 }

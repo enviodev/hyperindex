@@ -4,7 +4,7 @@ import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 import chai, { expect } from "chai";
 import chaiAsPromised from "chai-as-promised";
 
-require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
+// require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 chai.use(chaiAsPromised);
 
 describe("Raw Events Table Migrations", () => {
