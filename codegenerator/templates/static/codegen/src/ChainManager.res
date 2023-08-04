@@ -1,4 +1,3 @@
-
 type t = {
   chainFetchers: Js.Dict.t<ChainFetcher.t>,
   //The priority queue should only house the latest event from each chain
@@ -92,7 +91,9 @@ exception UndefinedChain(Types.chainId)
 
 let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
   switch self.chainFetchers->Js.Dict.get(chainId->Belt.Int.toString) {
-  | None => UndefinedChain(chainId)->raise
+  | None =>
+    Logging.error(`Undefined chain ${chainId->Belt.Int.toString} in chain manager`)
+    UndefinedChain(chainId)->raise
   | Some(fetcher) => fetcher
   }
 }
@@ -129,17 +130,22 @@ let popBatchItem = (self: t): option<EventFetching.eventBatchQueueItem> => {
   //If there is item on the arbitray events queue, pop the relevant item from
   //the chain fetcher queue
   | None => popNextItem()
-  | Some(arbItem) =>
+  | Some(peekedArbItem) =>
     //If there is an item on the arbitrary events queue, compare it to the next
     //item from the chain fetchers
     let arbItemIsEarlier = chainFetcherPeekComparitorEarliestEvent(
-      ChainFetcher.Item(arbItem),
+      ChainFetcher.Item(peekedArbItem),
       nextItemFromBuffer,
     )
 
     //If the arbitrary item is earlier, return that
     if arbItemIsEarlier {
-      Some(arbItem)
+      Some(
+        //safely pop the item since we have already checked there's one at the front
+        self.arbitraryEventPriorityQueue
+        ->SDSL.PriorityQueue.pop
+        ->Belt.Option.getUnsafe,
+      )
     } else {
       //Else pop the next item from chain fetchers
       popNextItem()
@@ -187,17 +193,18 @@ let rec popAndAwaitBatchItem: t => promise<EventFetching.eventBatchQueueItem> = 
   //If there is item on the arbitray events queue, pop the relevant item from
   //the chain fetcher queue
   | None => await popNextItemAndAwait()
-  | Some(arbItem) =>
+  | Some(peekedArbItem) =>
     //If there is an item on the arbitrary events queue, compare it to the next
     //item from the chain fetchers
     let arbItemIsEarlier = chainFetcherPeekComparitorEarliestEvent(
-      ChainFetcher.Item(arbItem),
+      ChainFetcher.Item(peekedArbItem),
       nextItemFromBuffer,
     )
 
     //If the arbitrary item is earlier, return that
     if arbItemIsEarlier {
-      arbItem
+      //safely pop the item since we have already checked there's one at the front
+      self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.pop->Belt.Option.getUnsafe
     } else {
       //Else pop the next item from chain fetchers
       await popNextItemAndAwait()
