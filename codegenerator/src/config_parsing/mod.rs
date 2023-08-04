@@ -133,7 +133,7 @@ struct RequiredEntity {
     labels: Vec<String>,
 }
 
-impl Serialize for EventNameOrSig{
+impl Serialize for EventNameOrSig {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -154,7 +154,7 @@ impl<T: Serialize + Clone> Serialize for NormalizedList<T> {
     }
 }
 
-impl TryFrom<String> for  EventNameOrSig {
+impl TryFrom<String> for EventNameOrSig {
     type Error = String;
 
     fn try_from(event_string: String) -> Result<Self, Self::Error> {
@@ -327,86 +327,10 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box
 
     deserialized_yaml.name = strip_to_letters(&deserialized_yaml.name);
 
-    if !validation::is_valid_postgres_db_name(&deserialized_yaml.name) {
-        return Err(format!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
-    }
-
-    // Retrieving details from config file as a vectors of String
-    let mut contract_names = Vec::new();
-    let mut contract_addresses = Vec::new();
-    let mut event_names = Vec::new();
-    let mut entity_and_label_names = Vec::new();
-    let mut rpc_urls = Vec::new();
-
-    for network in &deserialized_yaml.networks {
-        rpc_urls.push(network.rpc_config.url.clone());
-        for contract in &network.contracts {
-            contract_names.push(contract.name.clone());
-            contract_addresses.push(contract.address.clone());
-            for event in &contract.events {
-                event_names.push(event.event.get_name());
-                if let Some(required_entities) = &event.required_entities {
-                    for entity in required_entities {
-                        entity_and_label_names.push(entity.name.clone());
-                        for label in &entity.labels {
-                            entity_and_label_names.push(label.clone());
-                        }
-                    }
-                    // Checking that entity names and labels do not include any reserved words
-                    validate_names_not_reserved(
-                        &entity_and_label_names,
-                        "Required Entities".to_string(),
-                    )?;
-                }
-            }
-            // Checking that event names do not include any reserved words
-            validate_names_not_reserved(&event_names, "Events".to_string())?;
-        }
-
-        // Checking that contract names are non-unique
-        if !validation::are_contract_names_unique(&contract_names) {
-            return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
-        }
-
-        // Checking that contract names do not include any reserved words
-        validate_names_not_reserved(&contract_names, "Contracts".to_string())?;
-    }
-
-    // Checking if contract addresses are valid addresses
-    for a_contract_addressess in &contract_addresses {
-        if !validation::are_valid_ethereum_addresses(&a_contract_addressess.inner) {
-            return Err(format!(
-                "One of the contract addresses in the config file ({}) isn't valid",
-                &config_path
-                    .to_str()
-                    .unwrap_or("unknown config file name path")
-            )
-            .into());
-        }
-    }
-
-    // Checking if RPC URLs are valid
-    if !validation::validate_rpc_urls_from_config(&rpc_urls) {
-        return Err(format!("The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")).into());
-    }
+    // Validating the config file
+    validation::validate_deserialized_config_yaml(config_path, &deserialized_yaml)?;
 
     Ok(deserialized_yaml)
-}
-
-pub fn validate_names_not_reserved(
-    names_from_config: &Vec<String>,
-    part_of_config: String,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let detected_reserved_words = validation::check_reserved_words(&names_from_config.join(" "));
-    if !detected_reserved_words.is_empty() {
-        return Err(format!(
-            "The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",
-            detected_reserved_words.join(" "),
-            part_of_config
-        )
-        .into());
-    }
-    Ok(())
 }
 
 pub fn convert_config_to_chain_configs(
@@ -789,4 +713,3 @@ mod tests {
         assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
 }
-

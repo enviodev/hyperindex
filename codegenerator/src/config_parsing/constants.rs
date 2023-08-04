@@ -1,4 +1,4 @@
-use tokio::time::{Duration};
+use tokio::time::Duration;
 
 pub struct SyncConfigDefaults {
     pub initial_block_interval: u32,
@@ -101,7 +101,29 @@ pub const RESERVED_WORDS: &[&str] = &[
     "type",
     "val",
     "virtual",
-    "when"
+    "when",
+    // Typescript Reserved Words
+    "any",
+    "boolean",
+    "constructor",
+    "declare",
+    "from",
+    "get",
+    "implements",
+    "interface",
+    "let",
+    "module",
+    "number",
+    "of",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "require",
+    "set",
+    "static",
+    "string",
+    "symbol",
 ];
 
 // maximum backoff period for fetching files from IPFS
