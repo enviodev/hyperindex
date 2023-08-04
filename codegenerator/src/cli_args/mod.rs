@@ -20,10 +20,10 @@ pub enum CommandType {
     Dev(DevCommands),
 
     ///Generate code from a config.yaml & schema.graphql file
-    // #[clap(hide = true)] // todo
     Codegen(CodegenArgs),
 
     ///Prepare local environment for envio testing
+    #[clap(hide = true)]
     #[command(subcommand)]
     Local(LocalCommandTypes),
 
