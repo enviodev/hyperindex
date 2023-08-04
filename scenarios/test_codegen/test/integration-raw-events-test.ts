@@ -112,18 +112,18 @@ describe("Raw Events Integration", () => {
     const logger = createChild("test child");
     startFetchers(chainManager);
     startProcessingEventsOnQueue(chainManager, logger);
-    //Wait 2s for processing to occur it no longer finishes with a resolve
+    //Wait 0.5s for processing to occur it no longer finishes with a resolve
     await new Promise((res) =>
       setTimeout(() => {
         res(null);
-      }, 5000)
+      }, 500)
     );
   });
   after(async () => {
     await runMigrationsNoLogs();
   });
 
-  it.only("RawEvents table contains rows after indexer runs", async function() {
+  it("RawEvents table contains rows after indexer runs", async function() {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
@@ -162,7 +162,10 @@ describe("Raw Events Integration", () => {
     mintSimpleNft(Users.User1, simpleNftContractAddress, 1);
     const localChainConfig = getlocalChainConfig(nftFactoryContractAddress);
     const ARB_QUEUE_SIZE = 100;
-    const chainManager = make([localChainConfig], ARB_QUEUE_SIZE);
+    const chainManager = make(
+      { [localChainConfig.chainId]: localChainConfig },
+      ARB_QUEUE_SIZE
+    );
     const logger = createChild("test child");
     startFetchers(chainManager);
     startProcessingEventsOnQueue(chainManager, logger);
@@ -171,7 +174,7 @@ describe("Raw Events Integration", () => {
     await new Promise((res) =>
       setTimeout(() => {
         res(null);
-      }, 2000)
+      }, 500)
     );
 
     let afterRawEventsRows = await sql`SELECT * FROM public.raw_events`;
