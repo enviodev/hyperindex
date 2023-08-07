@@ -7,12 +7,12 @@ const BACKOFF_INCREMENT: Duration = Duration::from_secs(1);
 const HASURA_ENDPOINT: &str = "http://localhost:8080/"; // todo: is this available somewhere
 
 // Function to fetch the health of the Hasura service
-pub async fn fetch_hasura_healthz() -> Result<String, reqwest::Error> {
+pub async fn fetch_hasura_healthz() -> Result<bool, reqwest::Error> {
     let client = reqwest::Client::new();
-    let url = format!("{}healthz", HASURA_ENDPOINT);
+    let url = format!("{}/hasura/healthz?strict=true", HASURA_ENDPOINT);
     let response = client.get(&url).send().await?;
-    let content_raw = response.text().await?;
-    Ok(content_raw)
+    let is_success = response.status().is_success();
+    Ok(is_success)
 }
 
 pub async fn fetch_hasura_healthz_with_retry() -> anyhow::Result<bool> {
@@ -31,7 +31,14 @@ pub async fn fetch_hasura_healthz_with_retry() -> anyhow::Result<bool> {
     loop {
         match timeout(refetch_delay, fetch_hasura_healthz()).await {
             Ok(Ok(success)) => {
-                break Ok(success.contains("OK"));
+                if success {
+                    break Ok(success);
+                } else {
+                    fail_if_maximum_is_exceeded(
+                        refetch_delay,
+                        "Hasura strict healthz check failed",
+                    )?;
+                }
             }
             Ok(Err(err)) => {
                 fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
