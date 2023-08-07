@@ -52,7 +52,7 @@ pub struct DevCommands {
     pub subcommands: Option<DevSubcommands>,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, PartialEq, Eq)]
 pub enum DevSubcommands {
     /// Restart and resync the local dev environment from scratch
     Restart,
