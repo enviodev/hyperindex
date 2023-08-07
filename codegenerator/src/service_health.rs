@@ -25,6 +25,9 @@ pub async fn fetch_hasura_healthz_with_retry() -> anyhow::Result<bool> {
         }
         Ok(())
     };
+
+    let mut first_run = true;
+
     loop {
         match timeout(refetch_delay, fetch_hasura_healthz()).await {
             Ok(Ok(success)) => {
@@ -32,6 +35,11 @@ pub async fn fetch_hasura_healthz_with_retry() -> anyhow::Result<bool> {
             }
             Ok(Err(err)) => {
                 fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
+                if !first_run {
+                    print!("\x1B[1A\x1B[2K");
+                } else {
+                    first_run = false;
+                }
                 println!(
                     "Waiting for the docker services to become available. {} seconds.",
                     refetch_delay.as_secs()
