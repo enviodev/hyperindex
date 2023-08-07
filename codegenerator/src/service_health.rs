@@ -15,6 +15,11 @@ pub async fn fetch_hasura_healthz() -> Result<bool, reqwest::Error> {
     Ok(is_success)
 }
 
+fn delete_last_println() {
+    const ERASE_ANSI_ESCAPE_CODE: &str = "\x1B[1A\x1B[2K";
+    print!("{ERASE_ANSI_ESCAPE_CODE}");
+}
+
 pub async fn fetch_hasura_healthz_with_retry() -> anyhow::Result<bool> {
     let mut refetch_delay = BACKOFF_INCREMENT;
 
@@ -43,7 +48,7 @@ pub async fn fetch_hasura_healthz_with_retry() -> anyhow::Result<bool> {
             Ok(Err(err)) => {
                 fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
                 if !first_run {
-                    print!("\x1B[1A\x1B[2K");
+                    delete_last_println();
                 } else {
                     first_run = false;
                 }

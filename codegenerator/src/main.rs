@@ -175,6 +175,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             match dev_subcommands.subcommands {
                 None => {
                     // if hasura healhz check returns not found assume docker isnt running and start it up {
+                    let hasura_is_healthy = service_health::fetch_hasura_healthz().await.map_or(false, |isOk|isOk)
                     match service_health::fetch_hasura_healthz().await {
                         Err(_) => {
                             println!("Hasura is already running");
