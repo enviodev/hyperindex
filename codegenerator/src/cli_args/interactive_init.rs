@@ -14,7 +14,6 @@ pub enum TemplateOrSubgraphID {
     SubgraphID(String),
 }
 #[derive(Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
 enum TemplateOrSubgraphPrompt {
     Template,
     SubgraphMigration,
@@ -68,7 +67,7 @@ impl InitArgs {
             (None, None) => {
                 use TemplateOrSubgraphPrompt::{SubgraphMigration, Template};
                 //start prompt to determine whether user is migration from subgraph or starting from a template
-                let user_response_options = vec![SubgraphMigration, Template]
+                let user_response_options = vec![Template, SubgraphMigration]
                     .iter()
                     .map(|template| {
                         serde_json::to_string(template).expect("Enum should be serializable")
