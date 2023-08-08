@@ -306,22 +306,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+#[cfg(test)]
 mod test {
 
     use super::*;
     use tempfile::tempdir;
+    use strum::IntoEnumIterator;
 
     fn generate_init_args_combinations() -> Vec<InitArgs> {
         let mut combinations = Vec::new();
 
         // Use nested loops or iterators to generate all possible combinations of InitArgs.
         
-        for language in &[
-            Language::Rescript,
-            Language::Typescript,
-            Language::Javascript,
-        ] {
-            for template in &[Template::Greeter, Template::Erc20, Template::Blank] {
+        for language in Language::iter() {
+            for template in Template::iter() {
                 let init_args = InitArgs {
                     // Set other fields here
                     language: Some(language.clone()),

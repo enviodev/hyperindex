@@ -912,6 +912,8 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.7",
+ "strum",
+ "strum_macros",
  "tempfile",
  "tokio",
 ]
