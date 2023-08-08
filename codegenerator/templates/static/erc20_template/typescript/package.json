@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "scripts": {
     "clean": "tsc --clean",
-    "build": "rm -rf ./build && tsc --build",
+    "build": "tsc --build",
     "watch": "tsc --watch",
     "start": "tsc --build && node build/generated/src/Index.bs.js"
   },
