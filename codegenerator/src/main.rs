@@ -51,7 +51,7 @@ static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/erc20_template/javascript");
 static INIT_TEMPLATES_SHARED_DIR: Dir<'_> = include_dir!("templates/dynamic/init_templates/shared");
 
-async fn run_init_args(init_args: InitArgs) -> Result<(), Box<dyn Error>> {
+async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
     let args = init_args.get_init_args_interactive()?;
@@ -159,7 +159,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     match command_line_args.command {
         CommandType::Init(init_args) => {
-            run_init_args(init_args).await?;
+            run_init_args(&init_args).await?;
             Ok(())
         }
 
@@ -309,35 +309,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
 mod test {
 
     use super::*;
-    use std::fs::File;
-    use std::io::{self, Write};
     use tempfile::tempdir;
 
     fn generate_init_args_combinations() -> Vec<InitArgs> {
         let mut combinations = Vec::new();
 
         // Use nested loops or iterators to generate all possible combinations of InitArgs.
-        // You can loop over all possible values for each field in InitArgs.
-
+        
         for language in &[
             Language::Rescript,
             Language::Typescript,
             Language::Javascript,
         ] {
-            for template in &[
-                Template::Blank,
-                Template::Greeter,
-                Template::Erc20,
-                // Add other TemplateOrSubgraphID options here
-            ] {
-                // Add other variations of InitArgs here as needed
-
+            for template in &[Template::Greeter, Template::Erc20, Template::Blank] {
                 let init_args = InitArgs {
                     // Set other fields here
                     language: Some(language.clone()),
                     template: Some(template.clone()),
                     directory: None,
-                    name: None,
+                    name: Some("test".to_string()),
                     subgraph_migration: None, // ...
                 };
 
@@ -348,18 +338,21 @@ mod test {
         combinations
     }
 
-    #[test]
-    fn test_temporary_dir() {
-        // Create a directory inside of `std::env::temp_dir()`
-        let tmp_dir = tempdir().unwrap();
+    #[tokio::test]
+    async fn test_all_init_combinations() {
+        let combinations = generate_init_args_combinations();
 
-        let file_path = tmp_dir.path().join("my-temporary-note.txt");
-        let mut tmp_file = File::create(file_path).unwrap();
-        writeln!(tmp_file, "Brian was here. Briefly.").unwrap();
+        for mut init_args in combinations {
+            let temp_dir = tempdir().unwrap();
 
-        // `tmp_dir` goes out of scope, the directory as well as
-        // `tmp_file` will be deleted here.
-        drop(tmp_file);
-        tmp_dir.close().unwrap();
+            init_args.directory = Some(temp_dir.path().to_str().unwrap().to_string());
+            
+            let result = run_init_args(&init_args).await;
+
+            // Assert that the result is Ok
+            assert!(result.is_ok(), "Failed for combination: {:?}", init_args);
+            temp_dir.close().unwrap();
+        }
     }
+
 }

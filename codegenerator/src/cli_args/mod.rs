@@ -128,6 +128,7 @@ pub struct InitArgs {
     pub language: Option<Language>,
 }
 
+// If you add a new template, please ensure that it is added to the generate_init_args_combinations() function for testing
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
 ///Template to work off
 pub enum Template {
