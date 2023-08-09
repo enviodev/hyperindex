@@ -17,7 +17,29 @@ module {{contract.name.capitalized}} = {
   let convert{{event.name.capitalized}}LogDescription = (log: Ethers.logDescription<'a>): Ethers.logDescription<
     Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
   > => {
-    log->Obj.magic
+    //Convert from the ethersLog type with indexs as keys to named key value object
+    let ethersLog: 
+      Ethers.logDescription<
+        Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.ethersEventArgs
+      >
+      = log->Obj.magic
+    let {args, name, signature, topic} = ethersLog
+    let {
+        {{#each event.params as | param |}}
+          {{param.key}}{{#unless @last}},{{/unless}}
+        {{/each}}
+        } = args
+
+      {
+        name,
+        signature,
+        topic,
+        args: {
+        {{#each event.params as | param |}}
+          {{param.key}},
+        {{/each}}
+        }
+      }
   }
 
   let convert{{event.name.capitalized}}Log = async (
