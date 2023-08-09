@@ -17,6 +17,7 @@ pub mod links;
 pub mod commands;
 pub mod hbs_templating;
 pub mod persisted_state;
+pub mod service_health;
 
 use crate::project_paths::path_utils::normalize_path;
 

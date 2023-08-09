@@ -2,12 +2,14 @@ use std::error::Error;
 
 use std::path::PathBuf;
 
+use anyhow::{anyhow, Context};
 use clap::Parser;
 
 use envio::{
     cli_args::{
-        self, interactive_init::TemplateOrSubgraphID, DbMigrateSubcommands, Language,
-        LocalCommandTypes, LocalDockerSubcommands, ProjectPathsArgs,
+        interactive_init::TemplateOrSubgraphID, CommandLineArgs, CommandType, DbMigrateSubcommands,
+        DevSubcommands, Language, LocalCommandTypes, LocalDockerSubcommands, ProjectPathsArgs,
+        Template, ToProjectPathsArgs,
     },
     commands,
     config_parsing::graph_migration::generate_config_from_subgraph_id,
@@ -16,10 +18,10 @@ use envio::{
         check_user_file_diff_match, persisted_state_file_exists, ExistingPersistedState,
         PersistedState, RerunOptions,
     },
-    project_paths::{ParsedPaths},
+    project_paths::ParsedPaths,
+    service_health::{self, HasuraHealth},
 };
 
-use cli_args::{CommandLineArgs, CommandType, Template, ToProjectPathsArgs};
 use include_dir::{include_dir, Dir};
 
 static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
@@ -168,53 +170,105 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
 
-        CommandType::Start(start_args) => {
-            let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
+        CommandType::Dev(dev_subcommands) => {
+            let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
 
-            let existing_persisted_state = if persisted_state_file_exists(&project_paths) {
-                let persisted_state = PersistedState::get_from_generated_file(project_paths)?;
-                ExistingPersistedState::ExistingFile(persisted_state)
-            } else {
-                ExistingPersistedState::NoFile
-            };
+            match dev_subcommands.subcommands {
+                None | Some(DevSubcommands::Restart) => {
+                    // if hasura healhz check returns not found assume docker isnt running and start it up {
+                    let hasura_health_check_is_error =
+                        service_health::fetch_hasura_healthz().await.is_err();
 
-            match check_user_file_diff_match(&existing_persisted_state, &parsed_paths)? {
-                RerunOptions::CodegenAndSyncFromRpc => {
-                    commands::codegen::run_codegen(&parsed_paths)?;
-                    commands::codegen::run_post_codegen_command_sequence(
-                        &parsed_paths.project_paths,
-                    )?;
-                    commands::db_migrate::run_db_setup(project_paths)?;
-                }
-                RerunOptions::CodegenAndResyncFromStoredEvents => {
-                    //TODO: Implement command for rerunning from stored events
-                    //and action from this match arm
-                    commands::codegen::run_codegen(&parsed_paths)?;
-                    commands::codegen::run_post_codegen_command_sequence(
-                        &parsed_paths.project_paths,
-                    )?;
-                    commands::db_migrate::run_db_setup(project_paths)?;
-                }
-                RerunOptions::ResyncFromStoredEvents => {
-                    //TODO: Implement command for rerunning from stored events
-                    //and action from this match arm
-                    commands::db_migrate::run_db_setup(project_paths)?;
-                }
-                RerunOptions::ContinueSync => {
-                    let has_run_db_migrations = match existing_persisted_state {
-                        ExistingPersistedState::NoFile => false,
-                        ExistingPersistedState::ExistingFile(ps) => ps.has_run_db_migrations,
-                    };
-                    if start_args.restart || !has_run_db_migrations {
-                        commands::db_migrate::run_db_setup(project_paths)?;
+                    if hasura_health_check_is_error {
+                        //Run docker commands to spin up container
+                        commands::docker::docker_compose_up_d(project_paths)?;
                     }
+
+                    let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
+
+                    match hasura_health {
+                        HasuraHealth::Unhealthy(err_message) => {
+                            Err(anyhow!(err_message)).context("Failed to start hasura")?;
+                        }
+                        HasuraHealth::Healthy => {
+                            {
+                                let existing_persisted_state =
+                                    if persisted_state_file_exists(&project_paths) {
+                                        let persisted_state =
+                                            PersistedState::get_from_generated_file(project_paths)?;
+                                        ExistingPersistedState::ExistingFile(persisted_state)
+                                    } else {
+                                        ExistingPersistedState::NoFile
+                                    };
+
+                                match check_user_file_diff_match(
+                                    &existing_persisted_state,
+                                    &parsed_paths,
+                                )? {
+                                    RerunOptions::CodegenAndSyncFromRpc => {
+                                        commands::codegen::run_codegen(&parsed_paths)?;
+                                        commands::codegen::run_post_codegen_command_sequence(
+                                            &parsed_paths.project_paths,
+                                        )?;
+                                        commands::db_migrate::run_db_setup(project_paths)?;
+                                        commands::start::start_indexer(project_paths)?;
+                                    }
+                                    RerunOptions::CodegenAndResyncFromStoredEvents => {
+                                        //TODO: Implement command for rerunning from stored events
+                                        //and action from this match arm
+                                        commands::codegen::run_codegen(&parsed_paths)?;
+                                        commands::codegen::run_post_codegen_command_sequence(
+                                            &parsed_paths.project_paths,
+                                        )?;
+                                        commands::db_migrate::run_db_setup(project_paths)?;
+                                        commands::start::start_indexer(project_paths)?;
+                                    }
+                                    RerunOptions::ResyncFromStoredEvents => {
+                                        //TODO: Implement command for rerunning from stored events
+                                        //and action from this match arm
+                                        commands::db_migrate::run_db_setup(project_paths)?; // does this need to be run?
+                                        commands::start::start_indexer(project_paths)?;
+                                    }
+                                    RerunOptions::ContinueSync => {
+                                        let is_restart = dev_subcommands.subcommands
+                                            == Some(DevSubcommands::Restart);
+
+                                        let has_run_db_migrations = match existing_persisted_state {
+                                            ExistingPersistedState::NoFile => false,
+                                            ExistingPersistedState::ExistingFile(ps) => {
+                                                ps.has_run_db_migrations
+                                            }
+                                        };
+
+                                        if !has_run_db_migrations || is_restart {
+                                            commands::db_migrate::run_db_setup(project_paths)?;
+                                        }
+                                        commands::start::start_indexer(project_paths)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Some(DevSubcommands::Stop) => {
+                    commands::docker::docker_compose_down_v(project_paths)?;
                 }
             }
 
+            Ok(())
+        }
+
+        CommandType::Start(start_args) => {
+            let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
+            let project_paths = &parsed_paths.project_paths;
+            if start_args.restart {
+                commands::db_migrate::run_db_setup(project_paths)?;
+            }
             commands::start::start_indexer(project_paths)?;
             Ok(())
         }
+
         CommandType::Local(local_commands) => {
             let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
@@ -243,6 +297,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
             Ok(())
         }
+
         CommandType::PrintAllHelp {} => {
             clap_markdown::print_help_markdown::<CommandLineArgs>();
             Ok(())
