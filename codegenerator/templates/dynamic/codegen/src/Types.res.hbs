@@ -101,10 +101,13 @@ type eventLog<'a> = {
 module {{contract.name.capitalized}}Contract = {
 {{#each contract.events as | event |}}
 module {{event.name.capitalized}}Event = {
+  //Note: each parameter is using a binding of its index to help with binding in ethers
+  //This handles both unamed params and also named params that clash with reserved keywords
+  //eg. if an event param is called "values" it will clash since eventArgs will have a '.values()' iterator
   @spice @genType
   type eventArgs = {
     {{#each event.params as | param |}}
-    {{param.key}} : {{param.type_rescript}},
+    @as("{{@index}}")  {{param.key}} : {{param.type_rescript}},
     {{/each}}
   }
     {{#each ../../entities as | entity |}}
