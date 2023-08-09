@@ -37,28 +37,28 @@ module {{contract.name.capitalized}} = {
       }
   }
 
-  let convert{{event.name.capitalized}}Log = async (
+  let convert{{event.name.capitalized}}Log = (
     logDescription: Ethers.logDescription<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
     ~log: Ethers.log,
-    ~blockPromise: promise<Ethers.JsonRpcProvider.block>,
+    ~blockTimestamp: int,
   ) => {
     let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
       {{#each event.params as | param |}}
         {{param.key}}: logDescription.args.{{param.key}},
       {{/each}}
     }
-    let block = await blockPromise
 
     let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
       params,
-      blockNumber: block.number,
-      blockTimestamp: block.timestamp,
+      blockNumber: log.blockNumber,
+      blockTimestamp,
       blockHash: log.blockHash,
       srcAddress: log.address,
       transactionHash: log.transactionHash,
       transactionIndex: log.transactionIndex,
       logIndex: log.logIndex,
     }
+
     Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}({{event.name.uncapitalized}}Log)
   }
 
@@ -66,3 +66,24 @@ module {{contract.name.capitalized}} = {
 }
 
 {{/each}}
+
+let parseEvent = (~interface, ~log, ~contractAddressMapping, ~logger, ~blockTimestamp) => {
+  let logDescription = interface->Ethers.Interface.parseLog(~log)
+
+  switch eventStringToEvent(
+    logDescription.name,
+    contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
+      ~contractAddress=log.address,
+      ~logger,
+    ),
+  ) {
+  {{#each contracts as |contract|}}
+  {{#each contract.events as |event|}}
+    | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
+        logDescription
+        ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
+        ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp)
+  {{/each}}
+  {{/each}}
+  }
+}

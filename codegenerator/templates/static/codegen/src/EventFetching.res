@@ -1,3 +1,4 @@
+
 exception QueryTimout(string)
 
 let getUnwrappedBlock = (provider, blockNumber) =>
@@ -178,12 +179,11 @@ let convertLogs = (
   logs
   ->Belt.Array.map(log => {
     let blockPromise = blockLoader->LazyLoader.get(log.blockNumber)
+    let timestampPromise = blockPromise->Promise.thenResolve(block => block.timestamp)
 
     //get a specific interface type
     //interface type parses the log
     let optInterface = addressInterfaceMapping->Js.Dict.get(log.address->Obj.magic)
-
-    let timestampPromise = blockPromise->Promise.thenResolve(block => block.timestamp)
 
     switch optInterface {
     | None => None
@@ -193,29 +193,9 @@ let convertLogs = (
         chainId,
         blockNumber: log.blockNumber,
         logIndex: log.logIndex,
-        eventPromise: {
-          let logDescription = interface->Ethers.Interface.parseLog(~log)
-
-          switch Converters.eventStringToEvent(
-            logDescription.name,
-            contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
-              ~contractAddress=log.address,
-              ~logger,
-            ),
-          ) {
-            {{#each contracts as |contract|}}
-            {{#each contract.events as |event|}}
-              | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
-                let convertedEvent =
-                  logDescription
-                  ->Converters.{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
-                  ->Converters.{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockPromise)
-
-                convertedEvent
-            {{/each}}
-            {{/each}}
-          }
-        }
+        eventPromise: timestampPromise->Promise.thenResolve(blockTimestamp => {
+          Converters.parseEvent(~log, ~blockTimestamp, ~interface, ~contractAddressMapping, ~logger)
+        }),
       })
     }
   })
