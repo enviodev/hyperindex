@@ -9,7 +9,7 @@ var Belt_Option = require("rescript/lib/js/belt_Option.js");
 var Caml_exceptions = require("rescript/lib/js/caml_exceptions.js");
 
 Curry._1(Handlers.GravatarContract.NewGravatar.loader, (function ($$event, context) {
-        Curry._1(context.contractRegistration.addSimpleNft, $$event.srcAddress);
+        
       }));
 
 Curry._1(Handlers.GravatarContract.NewGravatar.handler, (function ($$event, context) {

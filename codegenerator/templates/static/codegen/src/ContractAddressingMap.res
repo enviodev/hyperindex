@@ -1,7 +1,7 @@
 type contractName = string
-type chainId = int
 
-// Mappings per chain
+exception UndefinedContractName(contractName, Types.chainId)
+exception UndefinedContractAddress(Ethers.ethAddress)
 
 // Currently this mapping append only, so we don't need to worry about
 // protecting static addresses from de-registration.
@@ -11,12 +11,12 @@ type mapping = {
   addressesByName: Js.Dict.t<Belt.Set.String.t>,
 }
 
-let addAddress = (map: mapping, name: string, address: string) => {
-  map.nameByAddress->Js.Dict.set(address, name)
+let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
+  map.nameByAddress->Js.Dict.set(address->Ethers.ethAddressToString, name)
 
   let oldAddresses =
     map.addressesByName->Js.Dict.get(name)->Belt.Option.getWithDefault(Belt.Set.String.empty)
-  let newAddresses = oldAddresses->Belt.Set.String.add(address)
+  let newAddresses = oldAddresses->Belt.Set.String.add(address->Ethers.ethAddressToString)
   map.addressesByName->Js.Dict.set(name, newAddresses)
 }
 
@@ -33,29 +33,49 @@ let make = () => {
   addressesByName: Js.Dict.empty(),
 }
 
-// Mappings across all the chains
+// Insert the static address into the Contract <-> Address bi-mapping
+let registerStaticAddresses = (mapping, ~chainConfig: Config.chainConfig, ~logger: Pino.t) => {
+  chainConfig.contracts->Belt.Array.forEach(contract => {
+    contract.addresses->Belt.Array.forEach(address => {
+      Logging.childTrace(
+        logger,
+        {
+          "msg": "adding contract address",
+          "contractName": contract.name,
+          "address": address,
+        },
+      )
 
-type chainMappings = private Js.Dict.t<mapping>
-
-let getChainRegistry = (map: chainMappings, ~chainId: int) => {
-  Js.Dict.get(Obj.magic(map), Belt.Int.toString(chainId))
+      mapping->addAddress(~name=contract.name, ~address)
+    })
+  })
 }
 
-let addChainAddress = (
-  map: chainMappings,
-  ~chainId: int,
-  ~contractName: string,
+let getContractNameFromAddress = (
+  mapping,
   ~contractAddress: Ethers.ethAddress,
+  ~logger: Pino.t,
 ) => {
-  let key = Belt.Int.toString(chainId)
-  let inner = switch Js.Dict.get(Obj.magic(map), key) {
-  | Some(value) => value
-  | None =>
-    let empty = make()
-    Js.Dict.set(Obj.magic(map), key, empty)
-    empty
+  switch mapping->getName(contractAddress->Ethers.ethAddressToString) {
+  | None => {
+      logger->Logging.childError(
+        `contract address ${contractAddress->Ethers.ethAddressToString}  was not found in address store`,
+      )
+
+      UndefinedContractAddress(contractAddress)->raise
+    }
+
+  | Some(contractName) => contractName
   }
-  addAddress(inner, contractName, Ethers.ethAddressToString(contractAddress))
 }
 
-let makeChainMappings = (): chainMappings => Obj.magic(Js.Dict.empty())
+let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Obj.magic
+
+let getAddressesFromContractName = (mapping, ~contractName) => {
+  switch mapping->getAddresses(contractName) {
+  | Some(addresses) => addresses
+  | None => Belt.Set.String.empty
+  }
+  ->Belt.Set.String.toArray
+  ->stringsToAddresses
+}

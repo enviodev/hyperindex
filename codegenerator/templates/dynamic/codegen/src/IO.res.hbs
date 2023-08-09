@@ -17,16 +17,8 @@ module InMemoryStore = {
       Js.Dict.empty(),
     ))
 
-    let getRawEvents = (~id: string) => {
-      let row = Js.Dict.get(rawEventsDict.contents, id)
-      row->Belt.Option.map(row => row.entity)
-    }
-
     let setRawEvents = (~entity: Types.rawEventsEntity) => {
-      let key = EventUtils.getEventIdKeyString(
-        ~chainId=entity.chainId,
-        ~eventId=entity.eventId,
-      )
+      let key = EventUtils.getEventIdKeyString(~chainId=entity.chainId, ~eventId=entity.eventId)
 
       rawEventsDict.contents->Js.Dict.set(
         key,
@@ -38,38 +30,32 @@ module InMemoryStore = {
       rawEventsDict.contents->Js.Dict.values
     }
   }
+
   module DynamicContractRegistry = {
       %%private(let dynamicContractRegistryDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.dynamicContractRegistryEntity>>> = ref(
         Js.Dict.empty(),
       ))
 
-      let getDynamicContractRegistry = (~id: string) => {
-        let row = Js.Dict.get(dynamicContractRegistryDict.contents, id)
-        row->Belt.Option.map(row => row.entity)
-      }
+    let setDynamicContractRegistry = (~entity: Types.dynamicContractRegistryEntity) => {
+      let key = EventUtils.getContractAddressKeyString(
+        ~chainId=entity.chainId,
+        ~contractAddress=entity.contractAddress,
+      )
 
-      let setDynamicContractRegistry = (~entity: Types.dynamicContractRegistryEntity) => {
-        let key = EventUtils.getContractAddressKeyString(
-          ~chainId=entity.chainId,
-          ~contractAddress=entity.contractAddress,
-        )
-      /// NOTE: currently deleting dynamic contracts in unimplemented,so the dbOp/dbOperation type is always 'Set'
-      // let dynamicContractRegistryCurrentCrud =
-      //   dynamicContractRegistryDict.contents
-      //   ->Js.Dict.get(key)
-      //   ->Belt.Option.map(row => {
-      //     row.dbOp
-      //   })
+      dynamicContractRegistryDict.contents->Js.Dict.set(
+        key,
+        {
+          eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString},
+          entity,
+          dbOp: Types.Set,
+        },
+      )
 
-        dynamicContractRegistryDict.contents->Js.Dict.set(
-          key,
-          {eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString}, entity, dbOp: Types.Set},
-        )
-      }
-      let values = () => {
-        dynamicContractRegistryDict.contents->Js.Dict.values
-      }
     }
+    let values = () => {
+      dynamicContractRegistryDict.contents->Js.Dict.values
+    }
+  }
 
 {{#each entities as | entity |}}
 

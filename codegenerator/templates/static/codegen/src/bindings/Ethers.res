@@ -223,22 +223,30 @@ module Network = {
 module JsonRpcProvider = {
   type t
 
-  type rpcOptions = { staticNetwork: Network.t}
+  type rpcOptions = {staticNetwork: Network.t}
 
   @module("ethers") @scope("ethers") @new
-  external makeWithOptions: (~rpcUrl: string, ~chainId: option<Network.t>, ~options: rpcOptions) => t = "JsonRpcProvider"
-  let makeStatic: (~rpcUrl: string, ~chainId: int) => t = (~rpcUrl , ~chainId) => {
+  external makeWithOptions: (
+    ~rpcUrl: string,
+    ~chainId: option<Network.t>,
+    ~options: rpcOptions,
+  ) => t = "JsonRpcProvider"
+  let makeStatic: (~rpcUrl: string, ~chainId: int) => t = (~rpcUrl, ~chainId) => {
     let network = Network.fromChainId(~chainId)
-    makeWithOptions(~rpcUrl , ~chainId = Some(network), ~options ={staticNetwork: network})
+    makeWithOptions(~rpcUrl, ~chainId=Some(network), ~options={staticNetwork: network})
   }
 
   @send
   external getLogs: (t, ~filter: Filter.t) => promise<array<log>> = "getLogs"
 
-  type blockStr = [#block]
-  @send external onWithBlockNoReturn: (t, blockStr, int => unit) => unit = "on"
+  type listenerEvent = [#block]
+  @send external onEventListener: (t, listenerEvent, int => unit) => unit = "on"
 
-  let onBlock = (t, callback: int => unit) => t->onWithBlockNoReturn(#block, callback)
+  @send external offAllEventListeners: (t, listenerEvent) => unit = "off"
+
+  let onBlock = (t, callback: int => unit) => t->onEventListener(#block, callback)
+
+  let removeOnBlockEventListener = t => t->offAllEventListeners(#block)
 
   @send
   external getBlockNumber: t => promise<int> = "getBlockNumber"

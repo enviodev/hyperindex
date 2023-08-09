@@ -1,10 +1,5 @@
 exception QueryTimout(string)
 
-type blocksProcessed = {
-  from: int,
-  to: int,
-}
-
 let getUnwrappedBlock = (provider, blockNumber) =>
   provider
   ->Ethers.JsonRpcProvider.getBlock(blockNumber)
@@ -22,15 +17,19 @@ let getSingleContractEventFilters = (
   ~contractAddress,
   ~chainConfig: Config.chainConfig,
   ~addressInterfaceMapping,
+  ~contractAddressMapping,
+  ~logger,
 ) => {
-  let contractName = Converters.ContractNameAddressMappings.getContractNameFromAddress(
-    ~chainId=chainConfig.chainId,
-    ~contractAddress,
-  )
+  let contractName =
+    contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
+      ~contractAddress,
+      ~logger,
+    )
+
   let contractConfig = switch chainConfig.contracts->Js.Array2.find(contract =>
     contract.name == contractName
   ) {
-  | None => Converters.UndefinedContractName(contractName, chainConfig.chainId)->raise
+  | None => ContractAddressingMap.UndefinedContractName(contractName, chainConfig.chainId)->raise
   | Some(contractConfig) => contractConfig
   }
 
@@ -54,14 +53,14 @@ let getAllEventFilters = (
   ~addressInterfaceMapping,
   ~chainConfig: Config.chainConfig,
   ~provider,
+  ~contractAddressMapping: ContractAddressingMap.mapping,
 ) => {
   let eventFilters = []
 
   chainConfig.contracts->Belt.Array.forEach(contract => {
-    Converters.ContractNameAddressMappings.getAddressesFromContractName(
-      ~chainId=chainConfig.chainId,
-      ~contractName=contract.name,
-    )->Belt.Array.forEach(address => {
+    contractAddressMapping
+    ->ContractAddressingMap.getAddressesFromContractName(~contractName=contract.name)
+    ->Belt.Array.forEach(address => {
       let contractEthers = Ethers.Contract.make(~address, ~abi=contract.abi, ~provider)
       addressInterfaceMapping->Js.Dict.set(
         address->Ethers.ethAddressToString,
@@ -82,7 +81,13 @@ let getAllEventFilters = (
   eventFilters
 }
 
-let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlock, ~logger: Pino.t) => {
+let makeCombinedEventFilterQuery = (
+  ~provider,
+  ~eventFilters,
+  ~fromBlock,
+  ~toBlock,
+  ~logger: Pino.t,
+) => {
   open Ethers.BlockTag
 
   let combinedFilter =
@@ -125,18 +130,29 @@ let makeCombinedEventFilterQuery = (~provider, ~eventFilters, ~fromBlock, ~toBlo
 }
 
 type eventBatchPromise = {
+  timestampPromise: promise<int>,
+  chainId: int,
   blockNumber: int,
   logIndex: int,
   eventPromise: promise<Types.event>,
 }
 
+type eventBatchQueueItem = {
+  timestamp: int,
+  chainId: int,
+  blockNumber: int,
+  logIndex: int,
+  event: Types.event,
+}
+
 let convertLogs = (
   logs: array<Ethers.log>,
-  ~blockLoader,
+  ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
+  ~contractAddressMapping: ContractAddressingMap.mapping,
   ~addressInterfaceMapping,
   ~chainId,
   ~logger,
-) => {
+): array<eventBatchPromise> => {
   logger->Logging.childTrace({
     "msg": "Handling of logs",
     "numberLogs": logs->Belt.Array.length,
@@ -150,10 +166,14 @@ let convertLogs = (
     //interface type parses the log
     let optInterface = addressInterfaceMapping->Js.Dict.get(log.address->Obj.magic)
 
+    let timestampPromise = blockPromise->Promise.thenResolve(block => block.timestamp)
+
     switch optInterface {
     | None => None
     | Some(interface) =>
       Some({
+        timestampPromise,
+        chainId,
         blockNumber: log.blockNumber,
         logIndex: log.logIndex,
         eventPromise: {
@@ -161,9 +181,9 @@ let convertLogs = (
 
           switch Converters.eventStringToEvent(
             logDescription.name,
-            Converters.ContractNameAddressMappings.getContractNameFromAddress(
+            contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
               ~contractAddress=log.address,
-              ~chainId,
+              ~logger,
             ),
           ) {
             {{#each contracts as |contract|}}
@@ -198,6 +218,7 @@ let queryEventsWithCombinedFilter = async (
   ~blockLoader,
   ~provider,
   ~chainId,
+  ~contractAddressMapping,
   ~logger: Pino.t,
   (),
 ): array<eventBatchPromise> => {
@@ -216,11 +237,24 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  logs->convertLogs(~blockLoader, ~addressInterfaceMapping, ~chainId, ~logger)
+  logs->convertLogs(
+    ~blockLoader,
+    ~addressInterfaceMapping,
+    ~contractAddressMapping,
+    ~chainId,
+    ~logger,
+  )
 }
+
+type eventBatchQuery = {
+  eventBatchPromises: array<eventBatchPromise>,
+  finalExecutedBlockInterval: int,
+}
+
 let getContractEventsOnFilters = async (
   ~eventFilters,
   ~addressInterfaceMapping,
+  ~contractAddressMapping,
   ~fromBlock,
   ~toBlock,
   ~initialBlockInterval,
@@ -229,7 +263,7 @@ let getContractEventsOnFilters = async (
   ~blockLoader,
   ~logger,
   (),
-) => {
+): eventBatchQuery => {
   let sc = chainConfig.syncConfig
 
   let fromBlockRef = ref(fromBlock)
@@ -239,7 +273,7 @@ let getContractEventsOnFilters = async (
   let events = ref([])
   while shouldContinueProcess() {
     logger->Logging.childTrace("continuing to process...")
-    let rec executeQuery = (~blockInterval): Promise.t<(array<eventBatchPromise>, int)> => {
+    let rec executeQuery = (~blockInterval): promise<(array<eventBatchPromise>, int)> => {
       //If the query hangs for longer than this, reject this promise to reduce the block interval
       let queryTimoutPromise =
         Time.resolvePromiseAfterDelay(~delayMilliseconds=sc.queryTimeoutMillis)->Promise.then(() =>
@@ -254,14 +288,15 @@ let getContractEventsOnFilters = async (
       let nextToBlock = Pervasives.min(upperBoundToBlock, toBlock)
       let eventsPromise =
         queryEventsWithCombinedFilter(
+          ~contractAddressMapping,
           ~addressInterfaceMapping,
           ~eventFilters,
           ~fromBlock=fromBlockRef.contents,
           ~toBlock=nextToBlock,
           ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
-          ~provider = chainConfig.provider,
+          ~provider=chainConfig.provider,
           ~blockLoader,
-          ~chainId = chainConfig.chainId,
+          ~chainId=chainConfig.chainId,
           ~logger,
           (),
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))
@@ -307,5 +342,9 @@ let getContractEventsOnFilters = async (
       "numEvents": intervalEvents->Array.length,
     })
   }
-  (events.contents, {from: fromBlock, to: fromBlockRef.contents - 1}, currentBlockInterval.contents)
+
+  {
+    eventBatchPromises: events.contents,
+    finalExecutedBlockInterval: currentBlockInterval.contents,
+  }
 }

@@ -21,9 +21,9 @@ type asyncMap<'a> = {
   // The keys currently being loaded
   inProgress: Belt.MutableSet.Int.t,
   // Keys  for items that we have not started loading yet.
-  loaderQueue: PriorityQueue.t<int>,
+  loaderQueue: SDSL.PriorityQueue.t<int>,
   // Keys for items that have been loaded already. Used to evict the oldest keys from cache.
-  loadedKeys: PriorityQueue.t<int>,
+  loadedKeys: SDSL.PriorityQueue.t<int>,
   // The function used to load the result.
   loaderFn: int => promise<'a>,
 }
@@ -34,7 +34,7 @@ let make = (
   ~loaderPoolSize: int=10,
   ~retryDelayMillis=5_000,
   ~timeoutMillis=30_000,
-  ()
+  (),
 ) => {
   _cacheSize: cacheSize,
   _loaderPoolSize: loaderPoolSize,
@@ -43,8 +43,8 @@ let make = (
   externalPromises: Js.Dict.empty(),
   resolvers: Js.Dict.empty(),
   inProgress: Belt.MutableSet.Int.make(),
-  loaderQueue: PriorityQueue.makeAsc(),
-  loadedKeys: PriorityQueue.makeAsc(),
+  loaderQueue: SDSL.PriorityQueue.makeAsc(),
+  loadedKeys: SDSL.PriorityQueue.makeAsc(),
   loaderFn,
 }
 
@@ -54,9 +54,7 @@ let deleteKey: (Js.Dict.t<'a>, string) => unit = (_obj, _k) => %raw(`delete _obj
 let timeoutAfter = timeoutMillis =>
   Time.resolvePromiseAfterDelay(~delayMilliseconds=timeoutMillis)->Promise.then(() =>
     Promise.reject(
-      LoaderTimeout(
-        `Query took longer than ${Belt.Int.toString(timeoutMillis / 1000)} seconds`,
-      ),
+      LoaderTimeout(`Query took longer than ${Belt.Int.toString(timeoutMillis / 1000)} seconds`),
     )
   )
 
@@ -74,18 +72,18 @@ let rec loadNext = (am: asyncMap<'a>, k: int): unit => {
     am.inProgress->Belt.MutableSet.Int.remove(k)
 
     // Track that we've loaded this key
-    am.loadedKeys->PriorityQueue.push(k)
+    am.loadedKeys->SDSL.PriorityQueue.push(k)
 
     // Delete the oldest key if the cache is overly full
-    if am.loadedKeys["length"] > am._cacheSize {
-      switch am.loadedKeys->PriorityQueue.pop {
+    if am.loadedKeys->SDSL.PriorityQueue.length > am._cacheSize {
+      switch am.loadedKeys->SDSL.PriorityQueue.pop {
       | None => ()
       | Some(old) => am.externalPromises->deleteKey(old->Belt.Int.toString)
       }
     }
 
     // Load the next one, if there is anything in the queue
-    switch am.loaderQueue->PriorityQueue.pop {
+    switch am.loaderQueue->SDSL.PriorityQueue.pop {
     | None => ()
     | Some(next) => loadNext(am, next)
     }
@@ -119,7 +117,7 @@ let get = (am: asyncMap<'a>, k: int): promise<'a> => {
         loadNext(am, k)
       } else {
         // Queue the loader
-        am.loaderQueue->PriorityQueue.push(k)
+        am.loaderQueue->SDSL.PriorityQueue.push(k)
       }
 
       promise

@@ -11,9 +11,7 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
-    MockEvents.eventBatchWithContext->Belt.Array.forEach(
-      event => event->EventProcessing.eventRouter(~chainId=MockConfig.mockChainConfig.chainId),
-    )
+    MockEvents.eventRouterBatch->Belt.Array.forEach(event => event->EventProcessing.eventRouter)
   })
 
   after(() => {
@@ -40,21 +38,27 @@ describe("E2E Mock Event Batch", () => {
 
 describe("E2E Db check", () => {
   before_promise(async () => {
-    Js.log("1")
+    RegisterHandlers.registerAllHandlers()
+
     let _ = await DbFunctions.Gravatar.batchSetGravatar(
       Migrations.sql,
       [MockEntities.mockInMemRow1, MockEntities.mockInMemRow2],
     )
-    let blockLoader = LazyLoader.make(
-      ~loaderFn=EventFetching.getUnwrappedBlock(Hardhat.hardhatProvider),
-      (),
+
+    let arbitraryMaxQueueSize = 100
+
+    //Note this is not a matching config for the mock events
+    //Unneeded for this test since the chain manager does not need
+    //to fetch nested events from dynamic contracts
+    let mockChainManager = ChainManager.make(
+      ~configs=Config.config,
+      ~maxQueueSize=arbitraryMaxQueueSize,
     )
-    await MockEvents.eventPromises->EventProcessing.processEventBatch(
-      ~chainConfig=MockConfig.mockChainConfig,
-      // Give a conservatively wide range of blocks
-      ~blocksProcessed={from: 1, to: 10},
-      ~blockLoader,
+
+    await EventProcessing.processEventBatch(
+      ~eventBatch=MockEvents.eventBatchItems,
       ~logger=Logging.logger,
+      ~chainManager=mockChainManager,
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
@@ -62,7 +66,6 @@ describe("E2E Db check", () => {
     // await EventProcessing.processEventBatch(MockEvents.eventBatch, ~context=Context.getContext())
   })
 
-  // TODO: work out why this test works locally, but not in pipeline!
   it("Validate inmemory store state", () => {
     let inMemoryStoreRows = IO.InMemoryStore.Gravatar.values()
 

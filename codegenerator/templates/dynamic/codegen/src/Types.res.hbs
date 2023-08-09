@@ -32,15 +32,6 @@ type entityRead =
 | {{entity.name.capitalized}}Read(id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}})
 {{/each}}
 
-
-let entitySerialize = (entity: entityRead) => {
-  switch entity {
-  {{#each entities as | entity |}}
-  | {{entity.name.capitalized}}Read(id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, _{{/if}}) => `{{entity.name.uncapitalized}}${id}`
-  {{/each}}
-  }
-}
-
 type rawEventsEntity = {
   @as("chain_id") chainId: int,
   @as("event_id") eventId: string,
@@ -193,6 +184,11 @@ type eventAndContext =
 {{/each}}
 {{/each}}
 
+type eventRouterEventAndContext = {
+  chainId: int,
+  event: eventAndContext,
+}
+
 @spice
 type eventName =
 {{#each contracts as | contract |}}
@@ -208,3 +204,5 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{/each}}
   {{/each}}
 }
+
+type chainId = int

@@ -5,7 +5,6 @@ import { expect } from "chai";
 //CODEGEN
 import { nftFactoryAbi, simpleNftAbi } from "../generated/src/Abis.bs";
 import { registerAllHandlers } from "../generated/src/RegisterHandlers.bs";
-import { processAllEvents } from "../generated/src/EventSyncing.bs";
 
 //HELPERS
 import {
@@ -16,9 +15,11 @@ import {
 import { deployContracts } from "./helpers/setupNodeAndContracts.js";
 
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
-import { ContractNameAddressMappings } from "generated/src/Converters.bs";
+import { make, startFetchers } from "generated/src/ChainManager.bs";
+import { startProcessingEventsOnQueue } from "generated/src/EventProcessing.bs";
+import { createChild } from "generated/src/Logging.bs";
 
-require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
+// require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
 describe("Raw Events Integration", () => {
   const sql = createSql();
@@ -46,7 +47,7 @@ describe("Raw Events Integration", () => {
       ],
       syncConfig: {
         initialBlockInterval: 10000,
-        backoffMultiplicative:10000,
+        backoffMultiplicative: 10000,
         accelerationAdditive: 10000,
         intervalCeiling: 10000,
         backoffMillis: 10000,
@@ -103,7 +104,20 @@ describe("Raw Events Integration", () => {
     console.log("Successfully processed events");
 
     console.log("processing events after mint");
-    await processAllEvents(localChainConfig);
+    const ARB_QUEUE_SIZE = 100;
+    const chainManager = make(
+      { [localChainConfig.chainId]: localChainConfig },
+      ARB_QUEUE_SIZE
+    );
+    const logger = createChild("test child");
+    startFetchers(chainManager);
+    startProcessingEventsOnQueue(chainManager, logger);
+    //Wait 0.5s for processing to occur it no longer finishes with a resolve
+    await new Promise((res) =>
+      setTimeout(() => {
+        res(null);
+      }, 500)
+    );
   });
   after(async () => {
     await runMigrationsNoLogs();
@@ -143,18 +157,25 @@ describe("Raw Events Integration", () => {
     let beforeRawEventsRows = await sql`SELECT * FROM public.raw_events`;
     //TODO: fix this test, This indicates this test is ineffective but the structure is what we want to test
     // below show that the contract address store is still populated with the contract
-    console.log(
-      "new contract",
-      ContractNameAddressMappings.getContractNameFromAddress(
-        1337,
-        "0x93606B31d10C407F13D9702eC4E0290Fd7E32852"
-      )
-    );
+    console.log("new contract");
 
     mintSimpleNft(Users.User1, simpleNftContractAddress, 1);
     const localChainConfig = getlocalChainConfig(nftFactoryContractAddress);
+    const ARB_QUEUE_SIZE = 100;
+    const chainManager = make(
+      { [localChainConfig.chainId]: localChainConfig },
+      ARB_QUEUE_SIZE
+    );
+    const logger = createChild("test child");
+    startFetchers(chainManager);
+    startProcessingEventsOnQueue(chainManager, logger);
 
-    await processAllEvents(localChainConfig);
+    //Wait 2s for processing to occur
+    await new Promise((res) =>
+      setTimeout(() => {
+        res(null);
+      }, 500)
+    );
 
     let afterRawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(afterRawEventsRows.count).to.be.gt(beforeRawEventsRows.count);

@@ -51,12 +51,6 @@ module {{contract.name.capitalized}}Contract = {
             addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
 
             IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(~entity=dynamicContractRegistration)
-
-             Converters.ContractNameAddressMappings.addContractAddress(
-              ~chainId,
-              ~contractAddress,
-              ~contractName="{{contract_inner.name.capitalized}}",
-            )
           },
         {{/each}}
         },

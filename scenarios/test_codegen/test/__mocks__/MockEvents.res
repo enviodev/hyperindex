@@ -116,21 +116,27 @@ let eventBatch: array<Types.event> = [
   GravatarContract_UpdatedGravatar(setGravatarEventLog3),
 ]
 
-let eventPromises = eventBatch->Belt.Array.map((e): EventFetching.eventBatchPromise =>
+let eventBatchChainId = 1337
+
+let eventBatchItems = eventBatch->Belt.Array.map((e): EventFetching.eventBatchQueueItem => {
   switch e {
   | GravatarContract_NewGravatar(el) => {
+      timestamp: el.blockTimestamp,
+      chainId: eventBatchChainId,
       blockNumber: el.blockNumber,
       logIndex: el.logIndex,
-      eventPromise: Promise.resolve(e),
+      event: e,
     }
   | GravatarContract_UpdatedGravatar(el) => {
+      timestamp: el.blockTimestamp,
+      chainId: eventBatchChainId,
       blockNumber: el.blockNumber,
       logIndex: el.logIndex,
-      eventPromise: Promise.resolve(e),
+      event: e,
     }
   | _ => Js.Exn.raiseError("I couldn't figure out how to make this method polymorphic")
   }
-)
+})
 
 let eventBatchWithContext: array<Types.eventAndContext> = [
   GravatarContract_NewGravatarWithContext(newGravatarEventLog1, ContextMock.mockNewGravatarContext),
@@ -149,3 +155,10 @@ let eventBatchWithContext: array<Types.eventAndContext> = [
     ContextMock.mockUpdateGravatarContext,
   ),
 ]
+
+let eventRouterBatch: array<
+  Types.eventRouterEventAndContext,
+> = eventBatchWithContext->Belt.Array.map((event): Types.eventRouterEventAndContext => {
+  chainId: eventBatchChainId,
+  event,
+})

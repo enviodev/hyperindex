@@ -1,13 +1,24 @@
-type eventIndex = {
+type multiChainEventIndex = {
+  timestamp: int,
+  chainId: int,
   blockNumber: int,
   logIndex: int,
 }
 
-/**takes an eventLog record and returns an eventIndex record */
-let eventLogToEventIndexRecord = (eventLog: Types.eventLog<'a>) => {
-  let blockNumber = eventLog.blockNumber
-  let logIndex = eventLog.logIndex
-  {blockNumber, logIndex}
+//Comparator used when ordering multichain events
+let getEventComparator = (multiChainEventIndex: multiChainEventIndex) => {
+  let {timestamp, chainId, blockNumber, logIndex} = multiChainEventIndex
+  (timestamp, chainId, blockNumber, logIndex)
+}
+
+//Function used to determine if one event is earlier than another
+let isEarlierEvent = (event1: multiChainEventIndex, event2: multiChainEventIndex) => {
+  event1->getEventComparator < event2->getEventComparator
+}
+
+type eventIndex = {
+  blockNumber: int,
+  logIndex: int,
 }
 
 // takes blockNumber, logIndex and packs them into a number with
@@ -20,6 +31,9 @@ let packEventIndex = (~blockNumber, ~logIndex) => {
   blockNumber->Ethers.BigInt.Bitwise.logor(logIndex)
 }
 
+//Currently not used but keeping in utils
+//using @live flag for dead code analyser
+@live
 let unpackEventIndex = (packedEventIndex: Ethers.BigInt.t) => {
   let blockNumber = packedEventIndex->Ethers.BigInt.Bitwise.shift_right(16->Ethers.BigInt.fromInt)
   let logIndexMask = 65535->Ethers.BigInt.fromInt
@@ -31,6 +45,7 @@ let unpackEventIndex = (packedEventIndex: Ethers.BigInt.t) => {
 }
 
 //takes an eventIndex record and returnts a packed event index
+@live //used in TS tests
 let packEventIndexFromRecord = (eventIndex: eventIndex) => {
   packEventIndex(~blockNumber=eventIndex.blockNumber, ~logIndex=eventIndex.logIndex)
 }
@@ -49,4 +64,13 @@ let getContractAddressKeyString = (~chainId: int, ~contractAddress: Ethers.ethAd
   let key = chainIdStr ++ "_" ++ contractAddress->Ethers.ethAddressToString
 
   key
+}
+
+let waitForNextBlock = async (provider: Ethers.JsonRpcProvider.t) => {
+  await Promise.make((resolve, _reject) => {
+    provider->Ethers.JsonRpcProvider.onBlock(blockNumber => {
+      provider->Ethers.JsonRpcProvider.removeOnBlockEventListener
+      resolve(. blockNumber)
+    })
+  })
 }

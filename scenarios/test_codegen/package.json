@@ -40,7 +40,6 @@
     "ethers": "^6.4.0",
     "hardhat": "^2.13.1",
     "mocha": "^10.2.0",
-    "mocha-reporter": "^0.1.1",
     "rescript": "^10.1.2",
     "rescript-mocha": "^0.9.0",
     "sinon": "^15.0.4",
