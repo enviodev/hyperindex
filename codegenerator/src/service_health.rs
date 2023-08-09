@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use tokio::time::{timeout, Duration};
 
 // NOTE: This assumes the hasura graphql availability means the postgres database is also available

@@ -2,6 +2,7 @@ use std::error::Error;
 
 use std::path::PathBuf;
 
+use anyhow::{anyhow, Context};
 use clap::Parser;
 
 use envio::{
@@ -188,8 +189,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     match hasura_health {
                         HasuraHealth::Unhealthy(err_message) => {
-                            //TODO: Handle case
-                            println!("{}", err_message);
+                            Err(anyhow!(err_message)).context("Failed to start hasura")?;
                         }
                         HasuraHealth::Healthy => {
                             {
