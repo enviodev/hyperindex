@@ -150,7 +150,7 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
     let project_paths = &parsed_paths.project_paths;
     commands::codegen::run_codegen(&parsed_paths)?;
-    commands::codegen::run_post_codegen_command_sequence(&project_paths)?;
+    commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
     Ok(())
 }
 #[tokio::main]
@@ -167,7 +167,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             commands::codegen::run_codegen(&parsed_paths)?;
-            commands::codegen::run_post_codegen_command_sequence(project_paths)?;
+            commands::codegen::run_post_codegen_command_sequence(project_paths).await?;
             Ok(())
         }
 
@@ -253,7 +253,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 Some(DevSubcommands::Stop) => {
-                    commands::docker::docker_compose_down_v(project_paths)?;
+                    commands::docker::docker_compose_down_v(project_paths).await?;
                 }
             }
 
@@ -264,7 +264,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             if start_args.restart {
-                commands::db_migrate::run_db_setup(project_paths)?;
+                commands::db_migrate::run_db_setup(project_paths).await?;
             }
             commands::start::start_indexer(project_paths)?;
             Ok(())
@@ -276,23 +276,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
             match local_commands {
                 LocalCommandTypes::Docker(subcommand) => match subcommand {
                     LocalDockerSubcommands::Up => {
-                        commands::docker::docker_compose_up_d(project_paths)?;
+                        commands::docker::docker_compose_up_d(project_paths).await?;
                     }
                     LocalDockerSubcommands::Down => {
-                        commands::docker::docker_compose_down_v(project_paths)?;
+                        commands::docker::docker_compose_down_v(project_paths).await?;
                     }
                 },
                 LocalCommandTypes::DbMigrate(subcommand) => match subcommand {
                     DbMigrateSubcommands::Up => {
-                        commands::db_migrate::run_up_migrations(project_paths)?;
+                        commands::db_migrate::run_up_migrations(project_paths).await?;
                     }
 
                     DbMigrateSubcommands::Down => {
-                        commands::db_migrate::run_drop_schema(project_paths)?;
+                        commands::db_migrate::run_drop_schema(project_paths).await?;
                     }
 
                     DbMigrateSubcommands::Setup => {
-                        commands::db_migrate::run_db_setup(project_paths)?;
+                        commands::db_migrate::run_db_setup(project_paths).await?;
                     }
                 },
             }
@@ -336,30 +336,57 @@ mod test {
         combinations
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_all_init_combinations() {
         let combinations = generate_init_args_combinations();
 
         //Allow envio init commands to run on different threads
-        let mut join_set = JoinSet::new();
+        // TODO -> fix the 'unhappy' case where the init commands fail,
+        // at the moment the child processes running in the codegen are not aborted correctly causing strange errors
+
+        // let mut join_set = JoinSet::new();
 
         for mut init_args in combinations {
             //spawn a thread for fetching schema
-            join_set.spawn(async move {
-                let temp_dir = tempdir().unwrap();
-                init_args.directory = Some(temp_dir.path().to_str().unwrap().to_string());
-                
-                run_init_args(&init_args).await;
-                println!("Finished for combination: {:?}", init_args);
+            // join_set.spawn(async move {
+            let temp_dir = tempdir().unwrap();
+            init_args.directory = Some(temp_dir.path().to_str().unwrap().to_string());
+            println!("Running with init args: {:?}", init_args);
 
-                temp_dir.close().unwrap()
-            });
+            match run_init_args(&init_args).await {
+                Err(_) => {
+                    println!("Failed to run with init args: {:?}", init_args);
+                    temp_dir.close().unwrap();
+                    panic!("Failed to run with init args: {:?}", init_args)
+                }
+                Ok(_) => {
+                    println!("Finished for combination: {:?}", init_args);
+                    temp_dir.close().unwrap();
+                }
+            };
+            // });
         }
 
-        //Await all the envio init and write threads before finishing
-        while let Some(join) = join_set.join_next().await {           
-            // Assert that the result is Ok
-            assert!(join.is_ok(), "Failed for combination");
+        // //Await all the envio init and write threads before finishing
+        // while let Some(join) = join_set.join_next().await {
+        //     println!("err: {:?}, ok {:?}", join.is_err(), join.is_ok());
+        //     // Assert that the result is Ok
+        //     // assert!(join.is_ok(), "Failed for combination");
+        //     let is_ok = join.is_ok();
+
+        //     if !is_ok {
+        //         // join_set.shutdown().await;
+        //         assert!(false);
+        //         break;
+        //     } else {
+        //         assert!(true)
+        //     }
+        // }
+    }
+    #[test]
+    fn test_while_loop() {
+        loop {
+            assert!(false, "only break once");
         }
     }
 }
