@@ -17,6 +17,8 @@ NftFactoryContract_SimpleNftCreated_loader(
 );
 
 NftFactoryContract_SimpleNftCreated_handler(({ event, context }) => {
+  context.log.error("There's an error")
+  context.log.errorWithExn(Error("Test error message"), "This is a test error")
   let nftCollection: nftcollectionEntity = {
     id: event.params.contractAddress,
     contractAddress: event.params.contractAddress,

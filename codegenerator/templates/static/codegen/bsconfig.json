@@ -9,7 +9,9 @@
   ],
   "gentypeconfig": {
     "language": "typescript",
-    "shims": {},
+    "shims": {
+      "Js": "Js"
+    },
     "generatedFileExtension": ".gen.ts",
     "module": "commonjs",
     "debug": {

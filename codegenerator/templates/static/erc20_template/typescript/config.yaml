@@ -8,8 +8,8 @@ networks:
     contracts:
       - name: ERC20
         abi_file_path: abis/ERC20.json
-        address: ["0xc3761EB917CD790B30dAD99f6Cc5b4Ff93C4F9eA"]
-        handler: src/EventHandlers.js
+        address: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"]
+        handler: build/src/EventHandlers.js
         events:
           - event: "Approval"
             requiredEntities:

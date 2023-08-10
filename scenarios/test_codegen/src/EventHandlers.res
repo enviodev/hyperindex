@@ -51,9 +51,9 @@ Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
     "type": "error",
     "data": {"blockHash": event.blockHash},
   })
-  exception ExmapleException(string)
+  exception ExampleException(string)
   context.log->Logs.errorWithExn(
-    ExmapleException("some error processing the event"),
+    ExampleException("some error processing the event")->Js.Exn.asJsExn,
     {
       "msg": "We are processing the event",
       "type": "error",
