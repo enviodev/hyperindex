@@ -32,12 +32,6 @@ module.exports = {
     ganache: {
       url: "http://localhost:8545",
     },
-    mumbai: {
-      // url: "https://rpc.goerli.eth.gateway.fm",
-      // url: "https://rpc.ankr.com/eth_goerli",
-      url: "https://endpoints.omniatech.io/v1/eth/goerli/public",
-      accounts: accounts('goerli'), // To specify this via mnemonic use `MNEMONIC_GOERLI="your mnemonic"`
-    },
     goerli: {
       // url: "https://rpc.goerli.eth.gateway.fm",
       // url: "https://rpc.ankr.com/eth_goerli",
