@@ -17,7 +17,7 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
 
   console.log("user1");
   console.log(user1.address);
-  
+
   const name = "DAI";
   const symbol = "DAI";
   console.log("Name and symbol set");
@@ -34,7 +34,7 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
   console.log("Contract verification command");
   console.log("----------------------------------");
   console.log(
-    `npx hardhat verify --network ${networkToUse} --contract contracts/ERC20.sol:ERC20 ${ERC20Contract.address}  `
+    `ETHERSCAN_KEY=<your-key> NETWORK=${networkToUse} pnpm verify`
   );
   console.log("");
 }

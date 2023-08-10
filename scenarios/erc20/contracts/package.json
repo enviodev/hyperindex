@@ -18,7 +18,7 @@
     "task:transfer": "npx hardhat transfer --user-from-index 1 --user-to-index 2 --amount 1",
     "task:end-to-end": "npx hardhat mint --user-from-index 5 --amount 100 && npx hardhat approve --user-from-index 5 --amount 50 && npx hardhat transfer --user-from-index 5 --user-to-index 1 --amount 30",
     "hardhat-node": "npx hardhat node",
-    "verify": "hardhat verify --network goerli --contract contracts/ERC20.sol:ERC20 0x61cce07e4cad3bf797667f8fd14d2a7d1582038e"
+    "verify": "hardhat verify --network ${NETWORK} --contract contracts/ERC20.sol:ERC20 ${CONTRACT_ADDRESS} 'DAI' 'DAI'"
   },
   "dependencies": {
     "@ethersproject/hash": "^5.7.0",
