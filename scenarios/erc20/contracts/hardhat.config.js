@@ -2,6 +2,7 @@ require("hardhat-deploy");
 require("@nomiclabs/hardhat-ethers");
 require("hardhat-abi-exporter");
 require("./tasks");
+require("@nomicfoundation/hardhat-verify");
 
 function getMnemonic(networkName) {
   if (networkName) {
@@ -49,5 +50,10 @@ module.exports = {
     clear: true,
     flat: true,
     spacing: 2,
+  },
+  etherscan: {
+    apiKey: {
+      goerli: process.env.ETHERSCAN_KEY
+    }
   }
 };
