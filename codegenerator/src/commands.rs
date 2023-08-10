@@ -1,7 +1,8 @@
 pub mod rescript {
-    use std::{error::Error, path::PathBuf, process::Command};
+    use std::{error::Error, path::PathBuf};
+    use tokio::process::Command;
 
-    pub fn clean(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("npx")
             .arg("rescript")
             .arg("clean")
@@ -9,9 +10,10 @@ pub mod rescript {
             .current_dir(&path)
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
-    pub fn format(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    pub async fn format(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         //npx should work with any node package manager
         Ok(Command::new("npx")
             .arg("rescript")
@@ -20,9 +22,10 @@ pub mod rescript {
             .current_dir(&path)
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
-    pub fn build(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         //npx should work with any node package manager
         Ok(Command::new("npx")
             .arg("rescript")
@@ -31,7 +34,8 @@ pub mod rescript {
             .current_dir(&path)
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
 }
 
