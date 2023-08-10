@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -402,6 +403,17 @@ pub fn convert_config_to_chain_configs(
 pub fn get_project_name_from_config(parsed_paths: &ParsedPaths) -> Result<String, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     Ok(config.name)
+}
+
+pub fn is_rescript(handler_path: &HashMap<ContractUniqueId, PathBuf>) -> bool {
+    for handler_path in handler_path.values() {
+        if let Some(path_str) = handler_path.clone().into_os_string().into_string().ok() {
+            if path_str.ends_with(".bs.js") {
+                return true;
+            }
+        }
+    }
+    false
 }
 #[cfg(test)]
 mod tests {
