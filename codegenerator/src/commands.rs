@@ -1,6 +1,44 @@
+pub mod rescript {
+    use std::{error::Error, path::PathBuf, process::Command};
+
+    pub fn clean(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        Ok(Command::new("npx")
+            .arg("rescript")
+            .arg("clean")
+            .arg("-with-deps")
+            .current_dir(&path)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            .spawn()?
+            .wait()?)
+    }
+    pub fn format(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        //npx should work with any node package manager
+        Ok(Command::new("npx")
+            .arg("rescript")
+            .arg("format")
+            .arg("-all")
+            .current_dir(&path)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            .spawn()?
+            .wait()?)
+    }
+    pub fn build(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        //npx should work with any node package manager
+        Ok(Command::new("npx")
+            .arg("rescript")
+            .arg("build")
+            .arg("-with-deps")
+            .current_dir(&path)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            .spawn()?
+            .wait()?)
+    }
+}
+
 pub mod codegen {
 
     use crate::{
+        commands::rescript,
         config_parsing::{self, entity_parsing, event_parsing},
         hbs_templating::codegen_templates::{
             entities_to_map, generate_templates, EventRecordTypeTemplate,
@@ -32,46 +70,17 @@ pub mod codegen {
     pub async fn rescript_clean(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        Ok(Command::new("npx")
-            .arg("rescript")
-            .arg("clean")
-            .arg("-with-deps")
-            .current_dir(&project_paths.generated)
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?)
+        rescript::clean(&project_paths.generated)
     }
     pub async fn rescript_format(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        //npx should work with any node package manager
-        Ok(Command::new("npx")
-            .arg("rescript")
-            .arg("format")
-            .arg("-all")
-            .current_dir(&project_paths.generated)
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?)
+        rescript::format(&project_paths.generated)
     }
     pub async fn rescript_build(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        //npx should work with any node package manager
-        Ok(Command::new("npx")
-            .arg("rescript")
-            .arg("build")
-            .arg("-with-deps")
-            .current_dir(&project_paths.generated)
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?)
+        rescript::build(&project_paths.generated)
     }
 
     pub async fn run_post_codegen_command_sequence(
