@@ -23,6 +23,8 @@ pub mod codegen {
             .arg("install")
             .arg("--no-frozen-lockfile")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?)
@@ -35,6 +37,8 @@ pub mod codegen {
             .arg("clean")
             .arg("-with-deps")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?)
@@ -48,6 +52,8 @@ pub mod codegen {
             .arg("format")
             .arg("-all")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?)
@@ -61,6 +67,8 @@ pub mod codegen {
             .arg("build")
             .arg("-with-deps")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?)
@@ -145,6 +153,8 @@ pub mod start {
             .arg("run")
             .arg("start")
             .current_dir(&project_paths.project_root)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?)
@@ -165,6 +175,8 @@ pub mod docker {
             .arg("up")
             .arg("-d")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?)
@@ -177,6 +189,8 @@ pub mod docker {
             .arg("down")
             .arg("-v")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?)
@@ -194,6 +208,8 @@ pub mod db_migrate {
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).runUpMigrations(true)")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?;
@@ -210,6 +226,8 @@ pub mod db_migrate {
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).runDownMigrations(true)")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?;
@@ -225,6 +243,8 @@ pub mod db_migrate {
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).setupDb()")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
             .wait()
             .await?;
