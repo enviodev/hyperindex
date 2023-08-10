@@ -153,7 +153,7 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
 
     if args.language == Language::Rescript {
-        commands::rescript::build(&project_paths.project_root)?;
+        commands::rescript::build(&project_paths.project_root).await?;
     }
     Ok(())
 }
@@ -212,7 +212,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     &parsed_paths,
                                 )? && is_rescript(&parsed_paths.handler_paths)
                                 {
-                                    commands::rescript::build(&project_paths.project_root)?;
+                                    commands::rescript::build(&project_paths.project_root).await?;
                                 }
 
                                 match check_user_file_diff_match(

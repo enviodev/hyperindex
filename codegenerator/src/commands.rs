@@ -74,17 +74,17 @@ pub mod codegen {
     pub async fn rescript_clean(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        rescript::clean(&project_paths.generated)
+        rescript::clean(&project_paths.generated).await
     }
     pub async fn rescript_format(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        rescript::format(&project_paths.generated)
+        rescript::format(&project_paths.generated).await
     }
     pub async fn rescript_build(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        rescript::build(&project_paths.generated)
+        rescript::build(&project_paths.generated).await
     }
 
     pub async fn run_post_codegen_command_sequence(
