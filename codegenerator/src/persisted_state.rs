@@ -15,14 +15,25 @@ use crate::project_paths::{ParsedPaths, ProjectPaths};
 pub struct HashString(String);
 
 impl HashString {
-    fn from_file_paths(file_paths: Vec<&PathBuf>) -> Result<Self, Box<dyn Error>> {
+    fn from_file_paths(
+        file_paths: Vec<&PathBuf>,
+        file_must_exist: bool,
+    ) -> Result<Self, Box<dyn Error>> {
         // Read file contents into a buffer
         let mut buffer = Vec::new();
 
         for file_path in file_paths {
-            // Open the file
-            let mut file = File::open(file_path)?;
-            file.read_to_end(&mut buffer)?;
+            // Open the file if we expect the file to exist at the stage of codegen
+            if file_must_exist {
+                let mut file = File::open(file_path)?;
+                file.read_to_end(&mut buffer)?;
+            }
+            // Exception made specifically for event handlers which may not exist at codegen yet
+            else {
+                if let Ok(mut file) = File::open(file_path) {
+                    file.read_to_end(&mut buffer)?;
+                }
+            }
         }
 
         // Create a hash of the file contents
@@ -35,7 +46,7 @@ impl HashString {
     }
 
     fn from_file_path(file_path: &PathBuf) -> Result<Self, Box<dyn Error>> {
-        Self::from_file_paths(vec![file_path])
+        Self::from_file_paths(vec![file_path], true)
     }
 
     #[cfg(test)]
@@ -66,8 +77,11 @@ impl PersistedState {
             has_run_db_migrations: false,
             config_hash: HashString::from_file_path(&parsed_paths.project_paths.config)?,
             schema_hash: HashString::from_file_path(&parsed_paths.schema_path)?,
-            handler_files_hash: HashString::from_file_paths(parsed_paths.get_all_handler_paths())?,
-            abi_files_hash: HashString::from_file_paths(parsed_paths.get_all_abi_paths())?,
+            handler_files_hash: HashString::from_file_paths(
+                parsed_paths.get_all_handler_paths(),
+                false,
+            )?,
+            abi_files_hash: HashString::from_file_paths(parsed_paths.get_all_abi_paths(), true)?,
         })
     }
 
@@ -191,12 +205,13 @@ pub fn check_user_file_diff_match(
         println!("Change in schema detected");
         diff.schema_change = true;
     }
-    let current_handlers_hash = HashString::from_file_paths(parsed_paths.get_all_handler_paths())?;
+    let current_handlers_hash =
+        HashString::from_file_paths(parsed_paths.get_all_handler_paths(), false)?;
     if persisted_state.handler_files_hash != current_handlers_hash {
         println!("Change in handlers detected");
         diff.handler_change = true;
     }
-    let current_abi_hash = HashString::from_file_paths(parsed_paths.get_all_abi_paths())?;
+    let current_abi_hash = HashString::from_file_paths(parsed_paths.get_all_abi_paths(), true)?;
     if persisted_state.abi_files_hash != current_abi_hash {
         println!("Change in abis detected");
         diff.abi_change = true;
@@ -229,6 +244,7 @@ mod test {
     use super::HashString;
     const CONFIG_1: &str = "test/configs/config1.yaml";
     const CONFIG_2: &str = "test/configs/config2.yaml";
+    const EMPTY_HANDLER: &str = "test/configs/empty_handlers.res";
     #[test]
     fn file_hash_single() {
         let config1_path = PathBuf::from(CONFIG_1);
@@ -242,10 +258,27 @@ mod test {
     fn file_hash_multiple() {
         let config1_path = PathBuf::from(CONFIG_1);
         let config2_path = PathBuf::from(CONFIG_2);
-        let hash = HashString::from_file_paths(vec![&config1_path, &config2_path]).unwrap();
+        let hash = HashString::from_file_paths(vec![&config1_path, &config2_path], true).unwrap();
         assert_eq!(
             hash.inner(),
             "891cfba3644d82f1bf39d629c336bca1929520034a490cb7640495163566dde5".to_string()
         );
+    }
+
+    #[test]
+    fn file_hash_empty() {
+        let empty_handler_path = PathBuf::from(EMPTY_HANDLER);
+        let hash = HashString::from_file_paths(vec![&empty_handler_path], false).unwrap();
+        assert_eq!(
+            hash.inner(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string()
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn fail_hash_empty_fail() {
+        let empty_handler_path = PathBuf::from(EMPTY_HANDLER);
+        HashString::from_file_paths(vec![&empty_handler_path], true).unwrap();
     }
 }
