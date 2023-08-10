@@ -9,13 +9,14 @@ pub mod codegen {
         project_paths::ParsedPaths,
     };
     use std::fs;
-    use std::{error::Error, process::Command};
+    use std::error::Error;
+    use tokio::process::Command;
 
     use crate::project_paths::ProjectPaths;
     use include_dir::{include_dir, Dir};
     static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
 
-    pub fn pnpm_install(
+    pub async fn pnpm_install(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("pnpm")
@@ -23,7 +24,7 @@ pub mod codegen {
             .arg("--no-frozen-lockfile")
             .current_dir(&project_paths.generated)
             .spawn()?
-            .wait()?)
+            .wait())
     }
     pub fn rescript_clean(
         project_paths: &ProjectPaths,
@@ -48,7 +49,7 @@ pub mod codegen {
             .spawn()?
             .wait()?)
     }
-    pub fn rescript_build(
+    pub async fn rescript_build(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         //npx should work with any node package manager
@@ -58,7 +59,8 @@ pub mod codegen {
             .arg("-with-deps")
             .current_dir(&project_paths.generated)
             .spawn()?
-            .wait()?)
+            .wait()?
+            .await)
     }
 
     pub fn run_post_codegen_command_sequence(

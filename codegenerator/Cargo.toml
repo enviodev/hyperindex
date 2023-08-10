@@ -24,7 +24,7 @@ reqwest = "0.11"
 strum = "0.25"
 strum_macros = "0.25"
 tempfile = "3.2.0"
-tokio = { version = "1.28.2", features = ["macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.28.2", features = ["macros", "process", "rt-multi-thread", "time"] }
 anyhow = "1.0.72"
 sha2 = "0.10.7"
 

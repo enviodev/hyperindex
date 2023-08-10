@@ -308,16 +308,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 #[cfg(test)]
 mod test {
-
     use super::*;
-    use tempfile::tempdir;
     use strum::IntoEnumIterator;
+    use tempfile::tempdir;
+    use tokio::task::JoinSet;
 
     fn generate_init_args_combinations() -> Vec<InitArgs> {
         let mut combinations = Vec::new();
 
         // Use nested loops or iterators to generate all possible combinations of InitArgs.
-        
+
         for language in Language::iter() {
             for template in Template::iter() {
                 let init_args = InitArgs {
@@ -340,17 +340,26 @@ mod test {
     async fn test_all_init_combinations() {
         let combinations = generate_init_args_combinations();
 
+        //Allow envio init commands to run on different threads
+        let mut join_set = JoinSet::new();
+
         for mut init_args in combinations {
-            let temp_dir = tempdir().unwrap();
+            //spawn a thread for fetching schema
+            join_set.spawn(async move {
+                let temp_dir = tempdir().unwrap();
+                init_args.directory = Some(temp_dir.path().to_str().unwrap().to_string());
+                
+                run_init_args(&init_args).await;
+                println!("Finished for combination: {:?}", init_args);
 
-            init_args.directory = Some(temp_dir.path().to_str().unwrap().to_string());
-            
-            let result = run_init_args(&init_args).await;
+                temp_dir.close().unwrap()
+            });
+        }
 
+        //Await all the envio init and write threads before finishing
+        while let Some(join) = join_set.join_next().await {           
             // Assert that the result is Ok
-            assert!(result.is_ok(), "Failed for combination: {:?}", init_args);
-            temp_dir.close().unwrap();
+            assert!(join.is_ok(), "Failed for combination");
         }
     }
-
 }
