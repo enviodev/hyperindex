@@ -183,7 +183,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     if hasura_health_check_is_error {
                         //Run docker commands to spin up container
-                        commands::docker::docker_compose_up_d(project_paths)?;
+                        commands::docker::docker_compose_up_d(project_paths).await?;
                     }
 
                     let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
@@ -211,9 +211,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         commands::codegen::run_codegen(&parsed_paths)?;
                                         commands::codegen::run_post_codegen_command_sequence(
                                             &parsed_paths.project_paths,
-                                        )?;
-                                        commands::db_migrate::run_db_setup(project_paths)?;
-                                        commands::start::start_indexer(project_paths)?;
+                                        )
+                                        .await?;
+                                        commands::db_migrate::run_db_setup(project_paths).await?;
+                                        commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::CodegenAndResyncFromStoredEvents => {
                                         //TODO: Implement command for rerunning from stored events
@@ -221,15 +222,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         commands::codegen::run_codegen(&parsed_paths)?;
                                         commands::codegen::run_post_codegen_command_sequence(
                                             &parsed_paths.project_paths,
-                                        )?;
-                                        commands::db_migrate::run_db_setup(project_paths)?;
-                                        commands::start::start_indexer(project_paths)?;
+                                        )
+                                        .await?;
+                                        commands::db_migrate::run_db_setup(project_paths).await?;
+                                        commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::ResyncFromStoredEvents => {
                                         //TODO: Implement command for rerunning from stored events
                                         //and action from this match arm
-                                        commands::db_migrate::run_db_setup(project_paths)?; // does this need to be run?
-                                        commands::start::start_indexer(project_paths)?;
+                                        commands::db_migrate::run_db_setup(project_paths).await?; // does this need to be run?
+                                        commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::ContinueSync => {
                                         let is_restart = dev_subcommands.subcommands
@@ -243,9 +245,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         };
 
                                         if !has_run_db_migrations || is_restart {
-                                            commands::db_migrate::run_db_setup(project_paths)?;
+                                            commands::db_migrate::run_db_setup(project_paths)
+                                                .await?;
                                         }
-                                        commands::start::start_indexer(project_paths)?;
+                                        commands::start::start_indexer(project_paths).await?;
                                     }
                                 }
                             }
@@ -266,7 +269,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if start_args.restart {
                 commands::db_migrate::run_db_setup(project_paths).await?;
             }
-            commands::start::start_indexer(project_paths)?;
+            commands::start::start_indexer(project_paths).await?;
             Ok(())
         }
 
@@ -382,11 +385,5 @@ mod test {
         //         assert!(true)
         //     }
         // }
-    }
-    #[test]
-    fn test_while_loop() {
-        loop {
-            assert!(false, "only break once");
-        }
     }
 }
