@@ -1,14 +1,14 @@
 name: erc20indexer
 description: ERC-20 indexer
 networks:
-  - id: 1 # Ethereum Mainnet
+  - id: 5 # Goerli Testnet
     rpc_config:
-      url: https://eth.llamarpc.com # We recommend you change this to a dedicated RPC provider
-    start_block: 16800000
+      url: https://rpc.ankr.com/eth_goerli # We recommend you change this to a dedicated RPC provider
+    start_block: 9493714
     contracts:
       - name: ERC20
         abi_file_path: abis/ERC20.json
-        address: ["0xc3761EB917CD790B30dAD99f6Cc5b4Ff93C4F9eA"]
+        address: ["0x61cce07e4cad3bf797667f8fd14d2a7d1582038e"]
         handler: ./src/EventHandlers.bs.js
         events:
           - event: "Approval"

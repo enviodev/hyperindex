@@ -2,3 +2,4 @@ node_modules/
 deployments/
 artifacts/
 cache/
+!deployments/goerli/ERC20.json
