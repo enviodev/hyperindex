@@ -1,10 +1,10 @@
 name: ERC20
 description: ERC-20 indexer
 networks:
-  - id: 1337
+  - id: 1 # Ethereum Mainnet
     rpc_config:
-      url: http://localhost:8545
-    start_block: 0
+      url: https://eth.llamarpc.com # We recommend you change this to a dedicated RPC provider
+    start_block: 16800000
     contracts:
       - name: ERC20
         abi_file_path: abis/erc20.json
