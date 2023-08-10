@@ -24,11 +24,6 @@ module {{contract.name.capitalized}} = {
       >
       = log->Obj.magic
     let {args, name, signature, topic} = ethersLog
-    let {
-        {{#each event.params as | param |}}
-          {{param.key}}{{#unless @last}},{{/unless}}
-        {{/each}}
-        } = args
 
       {
         name,
@@ -36,7 +31,7 @@ module {{contract.name.capitalized}} = {
         topic,
         args: {
         {{#each event.params as | param |}}
-          {{param.key}},
+          {{param.key}}: args.{{param.key}},
         {{/each}}
         }
       }
