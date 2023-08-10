@@ -1,5 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+use strum_macros::EnumIter;
 pub mod constants;
 pub mod interactive_init;
 pub mod validation;
@@ -128,7 +129,7 @@ pub struct InitArgs {
     pub language: Option<Language>,
 }
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter)]
 ///Template to work off
 pub enum Template {
     Blank,
@@ -136,7 +137,7 @@ pub enum Template {
     Erc20,
 }
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize)]
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter)]
 ///Which language do you want to write in?
 pub enum Language {
     Javascript,

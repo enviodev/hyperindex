@@ -51,7 +51,7 @@ static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
     include_dir!("templates/static/erc20_template/javascript");
 static INIT_TEMPLATES_SHARED_DIR: Dir<'_> = include_dir!("templates/dynamic/init_templates/shared");
 
-async fn run_init_args(init_args: InitArgs) -> Result<(), Box<dyn Error>> {
+async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
     let args = init_args.get_init_args_interactive()?;
@@ -150,7 +150,7 @@ async fn run_init_args(init_args: InitArgs) -> Result<(), Box<dyn Error>> {
     let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
     let project_paths = &parsed_paths.project_paths;
     commands::codegen::run_codegen(&parsed_paths)?;
-    commands::codegen::run_post_codegen_command_sequence(&project_paths)?;
+    commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
     Ok(())
 }
 #[tokio::main]
@@ -159,7 +159,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     match command_line_args.command {
         CommandType::Init(init_args) => {
-            run_init_args(init_args).await?;
+            run_init_args(&init_args).await?;
             Ok(())
         }
 
@@ -167,7 +167,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             commands::codegen::run_codegen(&parsed_paths)?;
-            commands::codegen::run_post_codegen_command_sequence(project_paths)?;
+            commands::codegen::run_post_codegen_command_sequence(project_paths).await?;
             Ok(())
         }
 
@@ -183,7 +183,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                     if hasura_health_check_is_error {
                         //Run docker commands to spin up container
-                        commands::docker::docker_compose_up_d(project_paths)?;
+                        commands::docker::docker_compose_up_d(project_paths).await?;
                     }
 
                     let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
@@ -211,9 +211,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         commands::codegen::run_codegen(&parsed_paths)?;
                                         commands::codegen::run_post_codegen_command_sequence(
                                             &parsed_paths.project_paths,
-                                        )?;
-                                        commands::db_migrate::run_db_setup(project_paths)?;
-                                        commands::start::start_indexer(project_paths)?;
+                                        )
+                                        .await?;
+                                        commands::db_migrate::run_db_setup(project_paths).await?;
+                                        commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::CodegenAndResyncFromStoredEvents => {
                                         //TODO: Implement command for rerunning from stored events
@@ -221,15 +222,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         commands::codegen::run_codegen(&parsed_paths)?;
                                         commands::codegen::run_post_codegen_command_sequence(
                                             &parsed_paths.project_paths,
-                                        )?;
-                                        commands::db_migrate::run_db_setup(project_paths)?;
-                                        commands::start::start_indexer(project_paths)?;
+                                        )
+                                        .await?;
+                                        commands::db_migrate::run_db_setup(project_paths).await?;
+                                        commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::ResyncFromStoredEvents => {
                                         //TODO: Implement command for rerunning from stored events
                                         //and action from this match arm
-                                        commands::db_migrate::run_db_setup(project_paths)?; // does this need to be run?
-                                        commands::start::start_indexer(project_paths)?;
+                                        commands::db_migrate::run_db_setup(project_paths).await?; // does this need to be run?
+                                        commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::ContinueSync => {
                                         let is_restart = dev_subcommands.subcommands
@@ -243,9 +245,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         };
 
                                         if !has_run_db_migrations || is_restart {
-                                            commands::db_migrate::run_db_setup(project_paths)?;
+                                            commands::db_migrate::run_db_setup(project_paths)
+                                                .await?;
                                         }
-                                        commands::start::start_indexer(project_paths)?;
+                                        commands::start::start_indexer(project_paths).await?;
                                     }
                                 }
                             }
@@ -253,7 +256,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 Some(DevSubcommands::Stop) => {
-                    commands::docker::docker_compose_down_v(project_paths)?;
+                    commands::docker::docker_compose_down_v(project_paths).await?;
                 }
             }
 
@@ -264,9 +267,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             if start_args.restart {
-                commands::db_migrate::run_db_setup(project_paths)?;
+                commands::db_migrate::run_db_setup(project_paths).await?;
             }
-            commands::start::start_indexer(project_paths)?;
+            commands::start::start_indexer(project_paths).await?;
             Ok(())
         }
 
@@ -276,23 +279,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
             match local_commands {
                 LocalCommandTypes::Docker(subcommand) => match subcommand {
                     LocalDockerSubcommands::Up => {
-                        commands::docker::docker_compose_up_d(project_paths)?;
+                        commands::docker::docker_compose_up_d(project_paths).await?;
                     }
                     LocalDockerSubcommands::Down => {
-                        commands::docker::docker_compose_down_v(project_paths)?;
+                        commands::docker::docker_compose_down_v(project_paths).await?;
                     }
                 },
                 LocalCommandTypes::DbMigrate(subcommand) => match subcommand {
                     DbMigrateSubcommands::Up => {
-                        commands::db_migrate::run_up_migrations(project_paths)?;
+                        commands::db_migrate::run_up_migrations(project_paths).await?;
                     }
 
                     DbMigrateSubcommands::Down => {
-                        commands::db_migrate::run_drop_schema(project_paths)?;
+                        commands::db_migrate::run_drop_schema(project_paths).await?;
                     }
 
                     DbMigrateSubcommands::Setup => {
-                        commands::db_migrate::run_db_setup(project_paths)?;
+                        commands::db_migrate::run_db_setup(project_paths).await?;
                     }
                 },
             }
@@ -306,38 +309,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
+#[cfg(test)]
 mod test {
-
     use super::*;
-    use std::fs::File;
-    use std::io::{self, Write};
+    use strum::IntoEnumIterator;
     use tempfile::tempdir;
+    use tokio::task::JoinSet;
 
     fn generate_init_args_combinations() -> Vec<InitArgs> {
         let mut combinations = Vec::new();
 
         // Use nested loops or iterators to generate all possible combinations of InitArgs.
-        // You can loop over all possible values for each field in InitArgs.
 
-        for language in &[
-            Language::Rescript,
-            Language::Typescript,
-            Language::Javascript,
-        ] {
-            for template in &[
-                Template::Blank,
-                Template::Greeter,
-                Template::Erc20,
-                // Add other TemplateOrSubgraphID options here
-            ] {
-                // Add other variations of InitArgs here as needed
-
+        for language in Language::iter() {
+            for template in Template::iter() {
                 let init_args = InitArgs {
                     // Set other fields here
                     language: Some(language.clone()),
                     template: Some(template.clone()),
                     directory: None,
-                    name: None,
+                    name: Some("test".to_string()),
                     subgraph_migration: None, // ...
                 };
 
@@ -348,18 +339,40 @@ mod test {
         combinations
     }
 
-    #[test]
-    fn test_temporary_dir() {
-        // Create a directory inside of `std::env::temp_dir()`
-        let tmp_dir = tempdir().unwrap();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_all_init_combinations() {
+        let combinations = generate_init_args_combinations();
 
-        let file_path = tmp_dir.path().join("my-temporary-note.txt");
-        let mut tmp_file = File::create(file_path).unwrap();
-        writeln!(tmp_file, "Brian was here. Briefly.").unwrap();
+        let mut join_set = JoinSet::new();
 
-        // `tmp_dir` goes out of scope, the directory as well as
-        // `tmp_file` will be deleted here.
-        drop(tmp_file);
-        tmp_dir.close().unwrap();
+        for mut init_args in combinations {
+            //spawn a thread for fetching schema
+            join_set.spawn(async move {
+                let temp_dir = tempdir().unwrap();
+                init_args.directory = Some(temp_dir.path().to_str().unwrap().to_string());
+                println!("Running with init args: {:?}", init_args);
+
+                match run_init_args(&init_args).await {
+                    Err(_) => {
+                        println!("Failed to run with init args: {:?}", init_args);
+                        temp_dir.close().unwrap();
+                        panic!("Failed to run with init args: {:?}", init_args)
+                    }
+                    Ok(_) => {
+                        println!("Finished for combination: {:?}", init_args);
+                        temp_dir.close().unwrap();
+                    }
+                };
+            });
+        }
+
+        //Await all the envio init and write threads before finishing
+        while let Some(join) = join_set.join_next().await {
+            if join.is_err() {
+                join_set.shutdown().await;
+                join.unwrap();
+                assert!(false);
+            }
+        }
     }
 }

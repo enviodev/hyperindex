@@ -8,24 +8,28 @@ pub mod codegen {
         linked_hashmap::{LinkedHashMap, RescriptRecordHierarchyLinkedHashMap, RescriptRecordKey},
         project_paths::ParsedPaths,
     };
+    use std::error::Error;
     use std::fs;
-    use std::{error::Error, process::Command};
+    use tokio::process::Command;
 
     use crate::project_paths::ProjectPaths;
     use include_dir::{include_dir, Dir};
     static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
 
-    pub fn pnpm_install(
+    pub async fn pnpm_install(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("pnpm")
             .arg("install")
             .arg("--no-frozen-lockfile")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
-    pub fn rescript_clean(
+    pub async fn rescript_clean(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("npx")
@@ -33,10 +37,13 @@ pub mod codegen {
             .arg("clean")
             .arg("-with-deps")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
-    pub fn rescript_format(
+    pub async fn rescript_format(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         //npx should work with any node package manager
@@ -45,10 +52,13 @@ pub mod codegen {
             .arg("format")
             .arg("-all")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
-    pub fn rescript_build(
+    pub async fn rescript_build(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         //npx should work with any node package manager
@@ -57,24 +67,27 @@ pub mod codegen {
             .arg("build")
             .arg("-with-deps")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
 
-    pub fn run_post_codegen_command_sequence(
+    pub async fn run_post_codegen_command_sequence(
         project_paths: &ProjectPaths,
     ) -> Result<(), Box<dyn Error>> {
         println!("installing packages... ");
-        pnpm_install(project_paths)?;
+        pnpm_install(project_paths).await?;
 
         println!("clean build directory");
-        rescript_clean(project_paths)?;
+        rescript_clean(project_paths).await?;
 
         println!("formatting code");
-        rescript_format(project_paths)?;
+        rescript_format(project_paths).await?;
 
         println!("building code");
-        rescript_build(project_paths)?;
+        rescript_build(project_paths).await?;
 
         Ok(())
     }
@@ -126,11 +139,12 @@ pub mod codegen {
 
 pub mod start {
 
-    use std::{error::Error, process::Command};
+    use std::error::Error;
+    use tokio::process::Command;
 
     use crate::project_paths::ProjectPaths;
 
-    pub fn start_indexer(
+    pub async fn start_indexer(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         //TODO: put the start script in the generated package.json
@@ -139,17 +153,21 @@ pub mod start {
             .arg("run")
             .arg("start")
             .current_dir(&project_paths.project_root)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
 }
 pub mod docker {
 
-    use std::{error::Error, process::Command};
+    use std::error::Error;
+    use tokio::process::Command;
 
     use crate::project_paths::ProjectPaths;
 
-    pub fn docker_compose_up_d(
+    pub async fn docker_compose_up_d(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("docker")
@@ -157,10 +175,13 @@ pub mod docker {
             .arg("up")
             .arg("-d")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
-    pub fn docker_compose_down_v(
+    pub async fn docker_compose_down_v(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         Ok(Command::new("docker")
@@ -168,23 +189,30 @@ pub mod docker {
             .arg("down")
             .arg("-v")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?)
+            .wait()
+            .await?)
     }
 }
 
 pub mod db_migrate {
 
-    use std::{error::Error, process::Command};
+    use std::error::Error;
+    use tokio::process::Command;
 
     use crate::{persisted_state::PersistedState, project_paths::ProjectPaths};
-    pub fn run_up_migrations(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
+    pub async fn run_up_migrations(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
         let exit = Command::new("node")
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).runUpMigrations(true)")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?;
+            .wait()
+            .await?;
 
         if exit.success() {
             let has_run_db_migrations = true;
@@ -193,13 +221,16 @@ pub mod db_migrate {
         Ok(())
     }
 
-    pub fn run_drop_schema(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
+    pub async fn run_drop_schema(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
         let exit = Command::new("node")
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).runDownMigrations(true)")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?;
+            .wait()
+            .await?;
         if exit.success() {
             let has_run_db_migrations = false;
             PersistedState::set_has_run_db_migrations(project_paths, has_run_db_migrations)?;
@@ -207,13 +238,16 @@ pub mod db_migrate {
         Ok(())
     }
 
-    pub fn run_db_setup(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
+    pub async fn run_db_setup(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
         let exit = Command::new("node")
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).setupDb()")
             .current_dir(&project_paths.generated)
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            //the child process
             .spawn()?
-            .wait()?;
+            .wait()
+            .await?;
         if exit.success() {
             let has_run_db_migrations = true;
             PersistedState::set_has_run_db_migrations(project_paths, has_run_db_migrations)?;

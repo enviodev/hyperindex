@@ -912,6 +912,8 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.10.7",
+ "strum",
+ "strum_macros",
  "tempfile",
  "tokio",
 ]
@@ -3418,6 +3420,7 @@ dependencies = [
  "mio",
  "num_cpus",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys",
