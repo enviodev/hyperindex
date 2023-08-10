@@ -4,6 +4,7 @@ require("hardhat-abi-exporter");
 require("./tasks");
 require("@nomicfoundation/hardhat-verify");
 
+// Source: https://github.com/wighawag/tutorial-hardhat-deploy#deploying-to-remote-networks
 function getMnemonic(networkName) {
   if (networkName) {
     const mnemonic = process.env['MNEMONIC_' + networkName.toUpperCase()];
