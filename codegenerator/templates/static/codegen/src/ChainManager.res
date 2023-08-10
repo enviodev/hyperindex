@@ -1,5 +1,5 @@
 type t = {
-  chainFetchers: Js.Dict.t<ChainFetcher.t>,
+  chainFetchers: Js.Dict.t<ChainFetcher.t<ChainWorker.RpcWorker.t>>,
   //The priority queue should only house the latest event from each chain
   //And potentially extra events that are pushed on by newly registered dynamic
   //contracts which missed being fetched by they chainFetcher
@@ -69,7 +69,14 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
     configs
     ->Js.Dict.entries
     ->Belt.Array.map(((key, chainConfig)) => {
-      (key, ChainFetcher.make(~chainConfig, ~maxQueueSize))
+      (
+        key,
+        ChainFetcher.make(
+          ~chainConfig,
+          ~maxQueueSize,
+          ~chainWorker=(ChainWorker.RpcWorker.make(chainConfig), module(ChainWorker.RpcWorker)),
+        ),
+      )
     })
     ->Js.Dict.fromArray
   {
@@ -89,7 +96,7 @@ let startFetchers = (self: t) => {
 
 exception UndefinedChain(Types.chainId)
 
-let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
+let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t<'workerType> => {
   switch self.chainFetchers->Js.Dict.get(chainId->Belt.Int.toString) {
   | None =>
     Logging.error(`Undefined chain ${chainId->Belt.Int.toString} in chain manager`)
@@ -236,3 +243,4 @@ let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array
 let addItemToArbitraryEvents = (self: t, item: EventFetching.eventBatchQueueItem) => {
   self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.push(item)->ignore
 }
+

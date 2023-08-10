@@ -18,6 +18,7 @@ let insertCallbackAwaitPromise = (queue: SDSL.Queue.t<unit => unit>): promise<un
     queue->SDSL.Queue.push(() => resolve(. ()))->ignore
   })
 }
+
 let handlePopBackLogCallbacks = (self: t, ~numberOfItems: int) => {
   //Optimize iteration by only iterating the minimum between number
   //of awaiting pop callbacks and how maany values were added that can
