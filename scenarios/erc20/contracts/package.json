@@ -6,9 +6,13 @@
   "license": "MIT",
   "scripts": {
     "compile": "hardhat compile",
-    "deploy-erc20": "rm -r -f deployments && hardhat deploy",
+    "deploy-erc20": "rm -rf deployments && hardhat deploy",
+    "hardhat-deploy-goerli": "hardhat deploy --network 'goerli'",
     "test": "npx hardhat test",
-    "hardhat": "hardhat",
+    "task:approve-live": "npx hardhat approve-live --user-from-index 1 --amount 10 --network 'goerli'",
+    "task:mint-live": "npx hardhat mint-live --user-from-index 1 --amount 1 --network 'goerli'",
+    "task:transfer-live": "npx hardhat transfer-live --user-from-index 1 --user-to-index 2 --amount 1 --network 'goerli'",
+    "task:end-to-end-live": "npx hardhat mint-live --user-from-index 5 --amount 100  --network 'goerli' && npx hardhat approve-live --user-from-index 5 --amount 50 --network 'goerli' && npx hardhat transfer-live --user-from-index 5 --user-to-index 1 --amount 30 --network 'goerli'",
     "task:approve": "npx hardhat approve --user-from-index 1 --amount 10",
     "task:mint": "npx hardhat mint --user-from-index 1 --amount 1",
     "task:transfer": "npx hardhat transfer --user-from-index 1 --user-to-index 2 --amount 1",
@@ -16,6 +20,8 @@
     "hardhat-node": "npx hardhat node"
   },
   "dependencies": {
+    "@ethersproject/hash": "^5.7.0",
+    "@ethersproject/web": "^5.7.1",
     "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
     "@openzeppelin/contracts": "^4.9.2",
     "ethers": "^6.3.0",

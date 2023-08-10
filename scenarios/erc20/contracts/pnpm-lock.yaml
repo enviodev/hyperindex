@@ -1,6 +1,16 @@
 lockfileVersion: '6.0'
 
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
 dependencies:
+  '@ethersproject/hash':
+    specifier: ^5.7.0
+    version: 5.7.0
+  '@ethersproject/web':
+    specifier: ^5.7.1
+    version: 5.7.1
   '@nomiclabs/hardhat-ethers':
     specifier: ^3.0.0-beta.0
     version: 3.0.0-beta.0(ethers@6.3.0)(hardhat@2.14.0)
