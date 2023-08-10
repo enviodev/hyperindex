@@ -295,7 +295,7 @@ pub async fn generate_config_from_subgraph_id(
                     let mut contract = ConfigContract {
                         name: data_source.name.to_string(),
                         abi_file_path: Some(format!(
-                            "{}abis/{}.json",
+                            "{}/abis/{}.json",
                             project_root_path.display(),
                             data_source.name.to_string()
                         )),
