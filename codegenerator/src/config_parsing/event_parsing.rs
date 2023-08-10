@@ -70,12 +70,11 @@ fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
         EthAbiParamType::Tuple(abi_types) => {
             let rescript_types: Vec<String> = abi_types
                 .iter()
-                .enumerate()
-                .map(|(i, abi_type)| {
-                    let key = format!("@as({}) _{}", i, i);
-
+                .map(|abi_type| {
                     let ethereum_param = EthereumEventParam {
-                        name: &key,
+                        // Note the name doesn't matter since it's creating tuple without keys
+                        //   it is only included so that the type is the same for recursion.
+                        name: "",
                         abi_type: &abi_type,
                     };
 
@@ -102,11 +101,22 @@ fn get_event_template_from_ethereum_abi_event(
     let params = abi_event
         .inputs
         .iter()
-        .map(|input| EventParamTypeTemplate {
-            key: input.name.to_owned(),
-            type_rescript: abi_type_to_rescript_string(
-                &EthereumEventParam::from_ethereum_abi_param(input),
-            ),
+        .enumerate()
+        .map(|(index, input)| {
+            let key = if input.name.is_empty() {
+                // In the event that key is empty string
+                //   make the key _ + index, eg. _0, _1
+                // This will be rescript compatable
+                format!("_{}", index.to_string())
+            } else {
+                input.name.to_string()
+            };
+            EventParamTypeTemplate {
+                key,
+                type_rescript: abi_type_to_rescript_string(
+                    &EthereumEventParam::from_ethereum_abi_param(input),
+                ),
+            }
         })
         .collect();
 
