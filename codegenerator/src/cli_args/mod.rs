@@ -137,7 +137,7 @@ pub enum Template {
     Erc20,
 }
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter)]
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, PartialEq, Eq)]
 ///Which language do you want to write in?
 pub enum Language {
     Javascript,

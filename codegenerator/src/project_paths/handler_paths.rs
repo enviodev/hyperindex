@@ -19,10 +19,11 @@ pub struct HandlerPathsTemplate {
     relative_to_generated_src: String,
 }
 
+#[derive(Debug)]
 pub struct ParsedPaths {
     pub project_paths: ProjectPaths,
     pub schema_path: PathBuf,
-    handler_paths: HashMap<ContractUniqueId, PathBuf>,
+    pub handler_paths: HashMap<ContractUniqueId, PathBuf>,
     abi_paths: HashMap<ContractUniqueId, PathBuf>,
 }
 

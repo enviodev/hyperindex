@@ -219,6 +219,21 @@ pub fn check_user_file_diff_match(
     Ok(diff.get_rerun_option())
 }
 
+pub fn handler_file_has_changed(
+    existing_persisted_state: &ExistingPersistedState,
+    parsed_paths: &ParsedPaths,
+) -> Result<bool, Box<dyn Error>> {
+    let persisted_state = match existing_persisted_state {
+        ExistingPersistedState::NoFile => {
+            return Ok(false);
+        }
+        ExistingPersistedState::ExistingFile(f) => f,
+    };
+    let current_handlers_hash =
+        HashString::from_file_paths(parsed_paths.get_all_handler_paths(), false)?;
+    Ok(persisted_state.handler_files_hash != current_handlers_hash)
+}
+
 pub fn persisted_state_file_exists(project_paths: &ProjectPaths) -> bool {
     let file_path = project_paths.generated.join(PERSISTED_STATE_FILE_NAME);
 

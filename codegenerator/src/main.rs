@@ -12,11 +12,11 @@ use envio::{
         ProjectPathsArgs, Template, ToProjectPathsArgs,
     },
     commands,
-    config_parsing::graph_migration::generate_config_from_subgraph_id,
+    config_parsing::{graph_migration::generate_config_from_subgraph_id, is_rescript},
     hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
     persisted_state::{
-        check_user_file_diff_match, persisted_state_file_exists, ExistingPersistedState,
-        PersistedState, RerunOptions,
+        check_user_file_diff_match, handler_file_has_changed, persisted_state_file_exists,
+        ExistingPersistedState, PersistedState, RerunOptions,
     },
     project_paths::ParsedPaths,
     service_health::{self, HasuraHealth},
@@ -151,6 +151,10 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     let project_paths = &parsed_paths.project_paths;
     commands::codegen::run_codegen(&parsed_paths)?;
     commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
+
+    if args.language == Language::Rescript {
+        commands::rescript::build(&project_paths.project_root)?;
+    }
     Ok(())
 }
 #[tokio::main]
@@ -202,6 +206,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     } else {
                                         ExistingPersistedState::NoFile
                                     };
+
+                                if handler_file_has_changed(
+                                    &existing_persisted_state,
+                                    &parsed_paths,
+                                )? && is_rescript(&parsed_paths.handler_paths)
+                                {
+                                    commands::rescript::build(&project_paths.project_root)?;
+                                }
 
                                 match check_user_file_diff_match(
                                     &existing_persisted_state,
