@@ -163,7 +163,10 @@ describe("Raw Events Integration", () => {
     expect(latestBlockNumber).to.be.eq(5);
   });
 
-  // it("reprocesses only new blocks after new events", async function () {
+  // 
+  //TODO- this is a valid test but needs some refactoring for the latest envio function signatures?
+  // consider if these tests are worth maintaining?
+  //it("reprocesses only new blocks after new events", async function () {
   //   const mintTxs = [
   //     { user: Users.User1, quantity: 3 },
   //     { user: Users.User2, quantity: 6 },
