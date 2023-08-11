@@ -56,20 +56,20 @@ describe("Linked Entity Loader Integration Test", () => {
 
     /// Setup DB
     let aEntities: array<Types.aEntity> = [
-      {id: "a1", b: "b1"},
-      {id: "a2", b: "b2"},
-      {id: "a3", b: "b3"},
-      {id: "a4", b: "b4"},
-      {id: "a5", b: "bWontLoad"},
-      {id: "a6", b: "bWontLoad"},
-      {id: "aWontLoad", b: "bWontLoad"},
+      {optionalBigInt: None, id: "a1", b: "b1"},
+      {optionalBigInt: None, id: "a2", b: "b2"},
+      {optionalBigInt: None, id: "a3", b: "b3"},
+      {optionalBigInt: None, id: "a4", b: "b4"},
+      {optionalBigInt: None, id: "a5", b: "bWontLoad"},
+      {optionalBigInt: None, id: "a6", b: "bWontLoad"},
+      {optionalBigInt: None, id: "aWontLoad", b: "bWontLoad"},
     ]
     let bEntities: array<Types.bEntity> = [
-      {id: "b1", a: ["a2", "a3", "a4"], c: "c1"},
-      {id: "b2", a: [], c: "c2"},
-      {id: "b3", a: []},
-      {id: "b4", a: [], c: "c3"},
-      {id: "bWontLoad", a: []},
+      {id: "b1", a: ["a2", "a3", "a4"], c: Some("c1")},
+      {id: "b2", a: [], c: Some("c2")},
+      {id: "b3", a: [], c: None},
+      {id: "b4", a: [], c: Some("c3")},
+      {id: "bWontLoad", a: [], c: None},
     ]
     let cEntities: array<Types.cEntity> = [
       {id: "c1", a: "aWontLoad"},
@@ -165,15 +165,15 @@ describe("Linked Entity Loader Integration Test", () => {
 
     /// Setup DB
     let aEntities: array<Types.aEntity> = [
-      {id: "a1", b: "b1"},
-      {id: "a2", b: "b1"},
-      {id: "a3", b: "b1"},
-      {id: "a4", b: "b1"},
-      {id: "aWontLoad", b: "bWontLoad"},
+      {id: "a1", b: "b1", optionalBigInt: None},
+      {id: "a2", b: "b1", optionalBigInt: None},
+      {id: "a3", b: "b1", optionalBigInt: None},
+      {id: "a4", b: "b1", optionalBigInt: None},
+      {id: "aWontLoad", b: "bWontLoad", optionalBigInt: None},
     ]
     let bEntities: array<Types.bEntity> = [
-      {id: "b1", a: ["a2", "a3", "a4"], c: "c1"},
-      {id: "bWontLoad", a: []},
+      {id: "b1", a: ["a2", "a3", "a4"], c: Some("c1")},
+      {id: "bWontLoad", a: [], c: None},
     ]
     let cEntities: array<Types.cEntity> = [{id: "c1", a: "aWontLoad"}]
 
