@@ -57,6 +57,10 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     let args = init_args.get_init_args_interactive()?;
     let project_root_path = PathBuf::from(&args.directory);
     // check that project_root_path exists
+    if !project_root_path.exists() {
+        //create the directory if it doesn't exist
+        std::fs::create_dir_all(&project_root_path)?;
+    }
 
     let hbs_template = InitTemplates::new(args.name, &args.language);
     let hbs_generator = HandleBarsDirGenerator::new(
