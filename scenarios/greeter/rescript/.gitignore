@@ -30,3 +30,4 @@ artifacts
 cache
 
 generated
+*.bs.js

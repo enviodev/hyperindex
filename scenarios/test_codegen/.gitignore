@@ -32,3 +32,4 @@ build
 *.bs.js
 generated
 logs
+build
