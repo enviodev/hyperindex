@@ -54,26 +54,27 @@ static INIT_TEMPLATES_SHARED_DIR: Dir<'_> = include_dir!("templates/dynamic/init
 async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
-    let args = init_args.get_init_args_interactive()?;
-    let project_root_path = PathBuf::from(&args.directory);
+    let parsed_init_args = init_args.get_init_args_interactive()?;
+    let project_root_path = PathBuf::from(&parsed_init_args.directory);
     // check that project_root_path exists
     if !project_root_path.exists() {
         //create the directory if it doesn't exist
         std::fs::create_dir_all(&project_root_path)?;
     }
 
-    let hbs_template = InitTemplates::new(args.name, &args.language);
+    let hbs_template =
+        InitTemplates::new(parsed_init_args.name.clone(), &parsed_init_args.language);
     let hbs_generator = HandleBarsDirGenerator::new(
         &INIT_TEMPLATES_SHARED_DIR,
         &hbs_template,
         &project_root_path,
     );
 
-    match args.template {
+    match &parsed_init_args.template {
         TemplateOrSubgraphID::Template(template) => match template {
             Template::Blank => {
                 //Copy in the relevant language specific blank template files
-                match &args.language {
+                match &parsed_init_args.language {
                     Language::Rescript => {
                         BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                     }
@@ -97,7 +98,7 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
             }
             Template::Greeter => {
                 //Copy in the relevant language specific greeter files
-                match &args.language {
+                match &parsed_init_args.language {
                     Language::Rescript => {
                         GREETER_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                     }
@@ -113,7 +114,7 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
             }
             Template::Erc20 => {
                 //Copy in the relevant js flavor specific greeter files
-                match &args.language {
+                match &parsed_init_args.language {
                     Language::Rescript => {
                         ERC20_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                     }
@@ -130,7 +131,7 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
         },
         TemplateOrSubgraphID::SubgraphID(cid) => {
             //  Copy in the relevant js flavor specific subgraph migration files
-            match &args.language {
+            match &parsed_init_args.language {
                 Language::Rescript => {
                     BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
                 }
@@ -144,14 +145,15 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
             //Copy in the rest of the shared subgraph migration files
             BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
 
-            generate_config_from_subgraph_id(&project_root_path, &cid, &args.language).await?;
+            generate_config_from_subgraph_id(&project_root_path, &cid, &parsed_init_args.language)
+                .await?;
         }
     }
 
     println!("Project template ready");
     println!("Running codegen");
 
-    let parsed_paths = ParsedPaths::new(init_args.to_project_paths_args())?;
+    let parsed_paths = ParsedPaths::new(parsed_init_args.to_project_paths_args())?;
     let project_paths = &parsed_paths.project_paths;
     commands::codegen::run_codegen(&parsed_paths)?;
     commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
