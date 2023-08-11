@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - test-codegen-output-main # Branch to help test this pipeline
+      # NOTE: this won't run on release branches at the moment.
     paths:
       - "codegenerator/**"
       - "scenarios/test_codegen/**"
