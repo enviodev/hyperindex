@@ -187,15 +187,6 @@ impl ToProjectPathsArgs for InitInteractive {
     }
 }
 
-impl ToProjectPathsArgs for InitArgs {
-    fn to_project_paths_args(&self) -> ProjectPathsArgs {
-        ProjectPathsArgs {
-            project_root: InitArgs::get_directory(&self),
-            generated: constants::DEFAULT_GENERATED_PATH.to_string(),
-            config: constants::DEFAULT_CONFIG_PATH.to_string(),
-        }
-    }
-}
 impl ToProjectPathsArgs for StartArgs {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
