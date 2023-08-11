@@ -37,7 +37,10 @@ pub fn is_directory_new(
     if fs::metadata(directory).is_ok() && directory != DEFAULT_PROJECT_ROOT_PATH {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("Directory '{}' already exists.", directory),
+            format!(
+                "Directory '{}' already exists. Please use a new directory.",
+                directory
+            ),
         )));
     }
 
