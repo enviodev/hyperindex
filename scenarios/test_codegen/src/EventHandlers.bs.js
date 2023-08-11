@@ -7,6 +7,7 @@ var Ethers = require("generated/src/bindings/Ethers.bs.js");
 var Handlers = require("generated/src/Handlers.bs.js");
 var Belt_Option = require("rescript/lib/js/belt_Option.js");
 var Caml_exceptions = require("rescript/lib/js/caml_exceptions.js");
+var Caml_js_exceptions = require("rescript/lib/js/caml_js_exceptions.js");
 
 Curry._1(Handlers.GravatarContract.NewGravatar.loader, (function ($$event, context) {
         
@@ -61,11 +62,11 @@ Curry._1(Handlers.GravatarContract.UpdatedGravatar.handler, (function ($$event, 
                 blockHash: $$event.blockHash
               }
             });
-        var ExmapleException = /* @__PURE__ */Caml_exceptions.create("ExmapleException");
-        Logs.errorWithExn(context.log, {
-              RE_EXN_ID: ExmapleException,
-              _1: "some error processing the event"
-            }, {
+        var ExampleException = /* @__PURE__ */Caml_exceptions.create("ExampleException");
+        Logs.errorWithExn(context.log, Caml_js_exceptions.as_js_exn({
+                  RE_EXN_ID: ExampleException,
+                  _1: "some error processing the event"
+                }), {
               msg: "We are processing the event",
               type: "error",
               data: {

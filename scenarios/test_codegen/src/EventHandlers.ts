@@ -83,7 +83,8 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       id: event.params.from,
       address: event.params.from,
       tokens: userFromTokens,
-      updatesCountOnUserForTesting: loadedUserFrom?.updatesCountOnUserForTesting || 0
+      updatesCountOnUserForTesting: loadedUserFrom?.updatesCountOnUserForTesting || 0,
+      gravatar: null
     };
     context.user.set(userFrom);
   }
@@ -102,7 +103,8 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       id: event.params.to,
       address: event.params.to,
       tokens: userToTokens,
-      updatesCountOnUserForTesting: loadedUserTo?.updatesCountOnUserForTesting || 0
+      updatesCountOnUserForTesting: loadedUserTo?.updatesCountOnUserForTesting || 0,
+      gravatar: null
     };
     context.user.set(userTo);
   }
