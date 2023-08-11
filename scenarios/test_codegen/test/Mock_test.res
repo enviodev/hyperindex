@@ -57,7 +57,6 @@ describe("E2E Db check", () => {
 
     await EventProcessing.processEventBatch(
       ~eventBatch=MockEvents.eventBatchItems,
-      ~logger=Logging.logger,
       ~chainManager=mockChainManager,
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
