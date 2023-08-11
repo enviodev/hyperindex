@@ -155,7 +155,7 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     commands::codegen::run_codegen(&parsed_paths)?;
     commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
 
-    if args.language == Language::Rescript {
+    if parsed_init_args.language == Language::Rescript {
         commands::rescript::build(&project_paths.project_root).await?;
     }
     Ok(())
