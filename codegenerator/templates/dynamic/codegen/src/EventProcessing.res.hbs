@@ -331,9 +331,20 @@ let loadReadEntities = async (
 let processEventBatch = async (
   ~eventBatch: array<EventFetching.eventBatchQueueItem>,
   ~chainManager: ChainManager.t,
-  ~logger: Pino.t,
 ) => {
   IO.InMemoryStore.resetStore()
+
+  let logger = Logging.createChild(
+    ~params={
+      "context": "batch",
+      // Used to uniquely identify each batch.
+      "from_block_index": eventBatch
+      ->Belt.Array.get(0)
+      ->Belt.Option.map(({blockNumber, logIndex}) =>
+        `${blockNumber->Belt.Int.toString}-${logIndex->Belt.Int.toString}`
+      ),
+    },
+  )
 
   let eventBatchAndContext = await loadReadEntities(~eventBatch, ~chainManager, ~logger)
 
@@ -342,10 +353,11 @@ let processEventBatch = async (
   await DbFunctions.sql->IO.executeBatch
 }
 
-let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t, ~logger): unit => {
+let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t): unit => {
   while true {
     let nextBatch =
       await chainManager->ChainManager.createBatch(~minBatchSize=1, ~maxBatchSize=2000)
-    await processEventBatch(~eventBatch=nextBatch, ~chainManager, ~logger)
+
+    await processEventBatch(~eventBatch=nextBatch, ~chainManager)
   }
 }

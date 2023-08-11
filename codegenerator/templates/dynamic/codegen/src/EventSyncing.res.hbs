@@ -1,11 +1,18 @@
 let startSyncingAllEvents = () => {
   let chainManager: ChainManager.t = ChainManager.make(~configs=Config.config, ~maxQueueSize=10000)
-  let logger = Logging.createChild(~params={"event_processor": "main"})
 
-  logger->Logging.childInfo("Starting chain fetchers.")
-  chainManager->ChainManager.startFetchers->ignore
+  Logging.info("Starting chain fetchers.")
+  chainManager->ChainManager.startFetchers
 
-  logger->Logging.childInfo("Starting main event processer.")
+  Logging.info("Starting main event processer.")
 
-  EventProcessing.startProcessingEventsOnQueue(~chainManager, ~logger)->ignore
+  EventProcessing.startProcessingEventsOnQueue(~chainManager)
+  ->Js.Promise2.catch(err => {
+    Logging.error({
+      "err": err,
+      "msg": `We have hit a top level while error catcher processing events on the queue. Please notify the team on discord.`,
+    })->Js.Promise.resolve
+  })
+  ->ignore
 }
+

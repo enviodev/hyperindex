@@ -15,7 +15,8 @@ app->get("/_healthz", (_req, res) => {
 let _ = app->listen(port)
 
 let main = () => {
-  EventSyncing.startSyncingAllEvents()->ignore
+  EventSyncing.startSyncingAllEvents()
 }
 
 main()
+
