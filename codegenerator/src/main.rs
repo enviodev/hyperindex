@@ -56,11 +56,8 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     //if they haven't already been
     let parsed_init_args = init_args.get_init_args_interactive()?;
     let project_root_path = PathBuf::from(&parsed_init_args.directory);
-    // check that project_root_path exists
-    if !project_root_path.exists() {
-        //create the directory if it doesn't exist
-        std::fs::create_dir_all(&project_root_path)?;
-    }
+    // The cli errors if the folder exists, the user must provide a new folder to proceed which we create below
+    std::fs::create_dir_all(&project_root_path)?;
 
     let hbs_template =
         InitTemplates::new(parsed_init_args.name.clone(), &parsed_init_args.language);
