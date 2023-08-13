@@ -13,7 +13,7 @@
       "watch": "rescript build -w -with-deps",
     {{/if}}
       "codegen": "envio codegen",
-      "start": "envio start"
+      "start": "{{#if is_rescript}}pnpm build &&{{/if}} node generated/src/Index.bs.js"
   },
   {{#if is_rescript}}
   "devDependencies": {

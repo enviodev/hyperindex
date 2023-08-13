@@ -1,45 +1,15 @@
-use envio::utils::run_init_args;
-
 fn main() {
     println!("main");
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use envio::cli_args::{InitArgs, Language, Template};
+    use envio::utils::run_init_args;
+    use std::time::Duration;
     use strum::IntoEnumIterator;
     use tokio::task::JoinSet;
     use tokio::time::timeout;
-
-    use std::fs;
-    use std::io;
-    use std::path::Path;
-    use std::time::Duration;
-
-    fn delete_contents_of_folder<P: AsRef<std::path::Path>>(path: P) -> io::Result<()> {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_dir() {
-                fs::remove_dir_all(path)?;
-            } else {
-                fs::remove_file(path)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn clear_path_if_it_exists(path_str: &str) -> io::Result<()> {
-        let path = Path::new(path_str);
-
-        // Now you can use various methods provided by the Path type
-        if path.exists() {
-            delete_contents_of_folder(path_str)
-        } else {
-            Ok(())
-        }
-    }
 
     use std::fs;
     use std::io;
