@@ -5,25 +5,6 @@ use std::path::PathBuf;
 use anyhow::{anyhow, Context};
 use clap::Parser;
 
-use envio::{
-    cli_args::{
-        interactive_init::TemplateOrSubgraphID, CommandLineArgs, CommandType, DbMigrateSubcommands,
-        DevSubcommands, InitArgs, Language, LocalCommandTypes, LocalDockerSubcommands,
-        ProjectPathsArgs, Template, ToProjectPathsArgs,
-    },
-    commands,
-    config_parsing::{graph_migration::generate_config_from_subgraph_id, is_rescript},
-    hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
-    persisted_state::{
-        check_user_file_diff_match, handler_file_has_changed, persisted_state_file_exists,
-        ExistingPersistedState, PersistedState, RerunOptions,
-    },
-    project_paths::ParsedPaths,
-    service_health::{self, HasuraHealth},
-};
-
-use include_dir::{include_dir, Dir};
-
 static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
     include_dir!("templates/static/blank_template/shared");
 static BLANK_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
@@ -160,6 +141,26 @@ async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     }
     Ok(())
 }
+
+use envio::{
+    cli_args::{
+        interactive_init::TemplateOrSubgraphID, CommandLineArgs, CommandType, DbMigrateSubcommands,
+        DevSubcommands, InitArgs, Language, LocalCommandTypes, LocalDockerSubcommands,
+        ProjectPathsArgs, Template, ToProjectPathsArgs,
+    },
+    commands,
+    config_parsing::{graph_migration::generate_config_from_subgraph_id, is_rescript},
+    hbs_templating::{hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates},
+    persisted_state::{
+        check_user_file_diff_match, handler_file_has_changed, persisted_state_file_exists,
+        ExistingPersistedState, PersistedState, RerunOptions,
+    },
+    project_paths::ParsedPaths,
+    service_health::{self, HasuraHealth},
+};
+
+use include_dir::{include_dir, Dir};
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let command_line_args = CommandLineArgs::parse();
