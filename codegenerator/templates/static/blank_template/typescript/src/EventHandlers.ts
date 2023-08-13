@@ -28,13 +28,29 @@ import {
   MyAwesomeContractContract_AwesomeEvent_handler,
 } from "../generated/src/Handlers.gen";
 
-import { awesomeEntity } from "../generated/src/Types.gen";
+
+import { awesomeEntityEntity } from "../generated/src/Types.gen";
 
 MyAwesomeContractContract_AwesomeEvent_loader(({ event, context }) => {
-  let _ = context.awesomeEvent.awesomeEntityChangesLoad()
+  context.awesomeEntity.awesomeEntityChangesLoad(event.params.identifier)
 });
 
 MyAwesomeContractContract_AwesomeEvent_handler(({ event, context }) => {
-  let awesomeEventObject = context.awesomeEvent.awesomeEntityChanges();
-  context.awesomeEvent.update(awesomeEventObject);
+  let awesomeEventObject = context.awesomeEntity.awesomeEntityChanges();
+  if (!!awesomeEventObject) {
+    const updatedEntity = {
+      id: awesomeEventObject.id,
+      awesomeAddress: event.params.awesomeAddress,
+      awesomeTotal: event.params.awesomeValue + awesomeEventObject.awesomeTotal
+    }
+    context.awesomeEntity.set(updatedEntity);
+  } else {
+    const awesomeEntityObject = {
+      id: event.params.identifier,
+      awesomeAddress: event.params.awesomeAddress,
+      awesomeTotal: event.params.awesomeValue
+    }
+    context.awesomeEntity.set(awesomeEntityObject);
+  }
 });
+

@@ -17,7 +17,7 @@
       "subdirs": true
     },
     {
-      "dir": "generated",
+      "dir": "generated/src",
       "subdirs": true
     }
   ],
@@ -31,7 +31,8 @@
     "rescript-envsafe",
     "rescript-struct",
     "@greenlabs/ppx-spice",
-    "rescript-express"
+    "rescript-express",
+    "@glennsl/rescript-fetch"
   ],
   "ppx-flags": [
     "@greenlabs/ppx-spice/ppx"
