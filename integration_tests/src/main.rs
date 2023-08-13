@@ -10,11 +10,38 @@ mod test {
     use super::*;
     use envio::cli_args::{InitArgs, Language, Template};
     use strum::IntoEnumIterator;
-    use tempfile::tempdir;
     use tokio::task::JoinSet;
 
+    use std::fs;
+    use std::io;
+    use std::path::Path;
+
+    fn delete_contents_of_folder<P: AsRef<std::path::Path>>(path: P) -> io::Result<()> {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_path_if_it_exists(path_str: &str) -> io::Result<()> {
+        let path = Path::new(path_str);
+
+        // Now you can use various methods provided by the Path type
+        if path.exists() {
+            delete_contents_of_folder(path_str)
+        } else {
+            Ok(())
+        }
+    }
+
     fn generate_init_args_combinations() -> Vec<InitArgs> {
-        let mut combinations = Vec::new();
+        let mut combinations: Vec<InitArgs> = Vec::new();
 
         // Use nested loops or iterators to generate all possible combinations of InitArgs.
 
@@ -24,15 +51,28 @@ mod test {
                     // Set other fields here
                     language: Some(language.clone()),
                     template: Some(template.clone()),
-                    directory: None,
+                    directory: Some(format!(
+                        "./integration_test_output/{}/{}",
+                        template, language
+                    )),
                     name: Some("test".to_string()),
                     subgraph_migration: None, // ...
                 };
-
                 combinations.push(init_args);
             }
         }
 
+        // NOTE: you can use the below code to test a specific scenario in isolation.
+        // TODO: Work out why the Erc20 fails, but still passes the test. https://github.com/Float-Capital/indexer/issues/676
+        // let mut combinations: Vec<InitArgs> = Vec::new();
+        // let one_to_test = InitArgs {
+        //     directory: Some(String::from("./integration_test_output/Erc20/Rescript")),
+        //     name: Some(String::from("test")),
+        //     template: Some(Template::Erc20),
+        //     subgraph_migration: None,
+        //     language: Some(Language::Rescript),
+        // };
+        // combinations.push(one_to_test);
         combinations
     }
 
@@ -42,22 +82,24 @@ mod test {
 
         let mut join_set = JoinSet::new();
 
-        for mut init_args in combinations {
+        for init_args in combinations {
             //spawn a thread for fetching schema
             join_set.spawn(async move {
-                let temp_dir = tempdir().unwrap();
-                init_args.directory = Some(temp_dir.path().to_str().unwrap().to_string());
+                let dir = init_args
+                    .directory
+                    .as_ref()
+                    // Here we panic if it is None, because we need this for the tests.
+                    .expect("Directory is None!");
+                clear_path_if_it_exists(&dir).expect("unable to clear directories");
                 println!("Running with init args: {:?}", init_args);
 
                 match run_init_args(&init_args).await {
                     Err(_) => {
                         println!("Failed to run with init args: {:?}", init_args);
-                        temp_dir.close().unwrap();
                         panic!("Failed to run with init args: {:?}", init_args)
                     }
                     Ok(_) => {
                         println!("Finished for combination: {:?}", init_args);
-                        temp_dir.close().unwrap();
                     }
                 };
             });

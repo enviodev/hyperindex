@@ -23,14 +23,28 @@ User should import the auto-generated function names for loadEntities and handle
 
 */
 
-open Types
-
 Handlers.MyAwesomeContractContract.AwesomeEvent.loader((~event, ~context) => {
-    let _ = context.awesomeEvent.awesomeEntityChangesLoad()
+  let _ = context.awesomeEntity.awesomeEntityChangesLoad(event.params.identifier)
 })
 
 Handlers.MyAwesomeContractContract.AwesomeEvent.handler((~event, ~context) => {
-    let awesomeEventObject = context.awesomeEvent.awesomeEntityChanges()
-    context.awesomeEvent.set(awesomeEventObject)
-})
+  switch context.awesomeEntity.awesomeEntityChanges() {
+  | Some({id, awesomeTotal}) =>
+    let updatedObject: Types.awesomeEntityEntity = {
+      id,
+      awesomeTotal: awesomeTotal->Ethers.BigInt.add(event.params.awesomeValue),
+      awesomeAddress: event.params.awesomeAddress->Ethers.ethAddressToString,
+    }
 
+    context.awesomeEntity.set(updatedObject)
+
+  | None =>
+    let awesomeEntityObject: Types.awesomeEntityEntity = {
+      id: event.params.identifier,
+      awesomeTotal: event.params.awesomeValue,
+      awesomeAddress: event.params.awesomeAddress->Ethers.ethAddressToString,
+    }
+
+    context.awesomeEntity.set(awesomeEntityObject)
+  }
+})
