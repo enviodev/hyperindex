@@ -7,4 +7,11 @@ edition = "2021"
 
 [dependencies]
 envio = { path = "../codegenerator" }
-
+strum = "0.25"
+tempfile = "3.2.0"
+tokio = { version = "1.28.2", features = [
+  "macros",
+  "process",
+  "rt-multi-thread",
+  "time",
+] }

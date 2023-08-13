@@ -21,8 +21,11 @@ pub mod service_health;
 
 use crate::project_paths::path_utils::normalize_path;
 
+// pub mod utils;
+// pub use crate::utils::run_init_args;
+//
 pub mod utils;
-pub use crate::utils::run_init_args;
+pub use utils::run_init_args;
 
 pub struct HandleBarsDirGenerator<'a, T: Serialize> {
     handlebars: handlebars::Handlebars<'a>,
