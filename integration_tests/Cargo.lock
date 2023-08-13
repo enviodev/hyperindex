@@ -915,7 +915,6 @@ dependencies = [
  "sha2 0.10.7",
  "strum",
  "strum_macros",
- "tempfile",
  "tokio",
 ]
 
@@ -1856,6 +1855,9 @@ name = "integration_tests"
 version = "0.1.0"
 dependencies = [
  "envio",
+ "strum",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

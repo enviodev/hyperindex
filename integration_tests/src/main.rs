@@ -1,12 +1,14 @@
-use envio::run_init_args;
+use envio::utils::run_init_args;
+// ::InitArgs;
 
-fn main () {
+fn main() {
     println!("main");
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
+    use envio::cli_args::{InitArgs, Language, Template};
     use strum::IntoEnumIterator;
     use tempfile::tempdir;
     use tokio::task::JoinSet;
