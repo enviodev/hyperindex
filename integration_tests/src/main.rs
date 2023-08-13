@@ -41,6 +41,34 @@ mod test {
         }
     }
 
+    use std::fs;
+    use std::io;
+    use std::path::Path;
+
+    fn delete_contents_of_folder<P: AsRef<std::path::Path>>(path: P) -> io::Result<()> {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn clear_path_if_it_exists(path_str: &str) -> io::Result<()> {
+        let path = Path::new(path_str);
+
+        // Now you can use various methods provided by the Path type
+        if path.exists() {
+            delete_contents_of_folder(path_str)
+        } else {
+            Ok(())
+        }
+    }
+
     fn generate_init_args_combinations() -> Vec<InitArgs> {
         let mut combinations: Vec<InitArgs> = Vec::new();
 
