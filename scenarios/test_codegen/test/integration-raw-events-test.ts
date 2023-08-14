@@ -111,7 +111,7 @@ describe("Raw Events Integration", () => {
     );
     const logger = createChild("test child");
     startFetchers(chainManager);
-    startProcessingEventsOnQueue(chainManager, logger);
+    startProcessingEventsOnQueue(chainManager);
     //Wait 0.5s for processing to occur it no longer finishes with a resolve
     await new Promise((res) =>
       setTimeout(() => {
@@ -166,9 +166,8 @@ describe("Raw Events Integration", () => {
       { [localChainConfig.chainId]: localChainConfig },
       ARB_QUEUE_SIZE
     );
-    const logger = createChild("test child");
     startFetchers(chainManager);
-    startProcessingEventsOnQueue(chainManager, logger);
+    startProcessingEventsOnQueue(chainManager);
 
     //Wait 2s for processing to occur
     await new Promise((res) =>
