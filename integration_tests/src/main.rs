@@ -1,5 +1,4 @@
 use envio::utils::run_init_args;
-// ::InitArgs;
 
 fn main() {
     println!("main");
