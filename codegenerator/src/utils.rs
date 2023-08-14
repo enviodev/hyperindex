@@ -51,6 +51,7 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
 
     let hbs_template =
         InitTemplates::new(parsed_init_args.name.clone(), &parsed_init_args.language);
+
     let hbs_generator = HandleBarsDirGenerator::new(
         &INIT_TEMPLATES_SHARED_DIR,
         &hbs_template,
@@ -74,7 +75,7 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
                 }
                 //Copy in the rest of the shared blank template files
                 BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
-                hbs_generator.generate_hbs_templates()?;
+
                 let hbs_config_file = HandleBarsDirGenerator::new(
                     &BLANK_TEMPLATE_DYNAMIC_DIR,
                     &hbs_template,
@@ -137,16 +138,27 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
         }
     }
 
+    hbs_generator.generate_hbs_templates()?;
+
     println!("Project template ready");
     println!("Running codegen");
 
     let parsed_paths = ParsedPaths::new(parsed_init_args.to_project_paths_args())?;
     let project_paths = &parsed_paths.project_paths;
     commands::codegen::run_codegen(&parsed_paths)?;
-    commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
+
+    let post_codegen_exit =
+        commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
+
+    if !post_codegen_exit.success() {
+        return Err("Failed to complete post codegen command sequence")?;
+    }
 
     if parsed_init_args.language == Language::Rescript {
-        commands::rescript::build(&project_paths.project_root).await?;
+        let res_build_exit = commands::rescript::build(&project_paths.project_root).await?;
+        if !res_build_exit.success() {
+            return Err("Failed to build rescript")?;
+        }
     }
     Ok(())
 }

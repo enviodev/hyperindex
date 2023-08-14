@@ -8,6 +8,7 @@ pub mod rescript {
             .arg("clean")
             .arg("-with-deps")
             .current_dir(&path)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
             .wait()
@@ -20,6 +21,7 @@ pub mod rescript {
             .arg("format")
             .arg("-all")
             .current_dir(&path)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
             .wait()
@@ -32,6 +34,7 @@ pub mod rescript {
             .arg("build")
             .arg("-with-deps")
             .current_dir(&path)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
             .wait()
@@ -65,6 +68,7 @@ pub mod codegen {
             .arg("install")
             .arg("--no-frozen-lockfile")
             .current_dir(&project_paths.generated)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             //the child process
             .spawn()?
@@ -89,20 +93,29 @@ pub mod codegen {
 
     pub async fn run_post_codegen_command_sequence(
         project_paths: &ProjectPaths,
-    ) -> Result<(), Box<dyn Error>> {
+    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         println!("installing packages... ");
-        pnpm_install(project_paths).await?;
+        let exit1 = pnpm_install(project_paths).await?;
+        if !exit1.success() {
+            return Ok(exit1);
+        }
 
         println!("clean build directory");
-        rescript_clean(project_paths).await?;
+        let exit2 = rescript_clean(project_paths).await?;
+        if !exit2.success() {
+            return Ok(exit2);
+        }
 
         println!("formatting code");
-        rescript_format(project_paths).await?;
+        let exit3 = rescript_format(project_paths).await?;
+        if !exit3.success() {
+            return Ok(exit3);
+        }
 
         println!("building code");
-        rescript_build(project_paths).await?;
+        let last_exit = rescript_build(project_paths).await?;
 
-        Ok(())
+        Ok(last_exit)
     }
 
     pub fn run_codegen(parsed_paths: &ParsedPaths) -> Result<(), Box<dyn Error>> {
@@ -166,6 +179,7 @@ pub mod start {
             .arg("run")
             .arg("start")
             .current_dir(&project_paths.project_root)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             //the child process
             .spawn()?
@@ -188,6 +202,7 @@ pub mod docker {
             .arg("up")
             .arg("-d")
             .current_dir(&project_paths.generated)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             //the child process
             .spawn()?
@@ -202,6 +217,7 @@ pub mod docker {
             .arg("down")
             .arg("-v")
             .current_dir(&project_paths.generated)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             //the child process
             .spawn()?
@@ -221,6 +237,7 @@ pub mod db_migrate {
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).runUpMigrations(true)")
             .current_dir(&project_paths.generated)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             //the child process
             .spawn()?
@@ -239,6 +256,7 @@ pub mod db_migrate {
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).runDownMigrations(true)")
             .current_dir(&project_paths.generated)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             //the child process
             .spawn()?
@@ -256,6 +274,7 @@ pub mod db_migrate {
             .arg("-e")
             .arg("require(`./src/Migrations.bs.js`).setupDb()")
             .current_dir(&project_paths.generated)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             //the child process
             .spawn()?
