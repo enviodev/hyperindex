@@ -1,5 +1,3 @@
-use std::error::Error;
-
 use super::{InitArgs, Language, Template as InitTemplate};
 
 use inquire::{Select, Text};
@@ -35,7 +33,7 @@ impl InitArgs {
         }
     }
 
-    pub fn get_init_args_interactive(&self) -> Result<InitInteractive, Box<dyn Error>> {
+    pub fn get_init_args_interactive(&self) -> anyhow::Result<InitInteractive> {
         let name: String = match &self.name {
             Some(args_name) => args_name.clone(),
             None => {
