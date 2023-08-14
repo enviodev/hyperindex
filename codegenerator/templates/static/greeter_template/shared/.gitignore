@@ -28,6 +28,6 @@ lib/*
 benchmarks/
 artifacts
 cache
-
+build
 generated
 *.bs.js

@@ -29,6 +29,5 @@ build/
 benchmarks/
 artifacts
 cache
-
 generated
 *.bs.js
