@@ -10,10 +10,12 @@ mod test {
     use envio::cli_args::{InitArgs, Language, Template};
     use strum::IntoEnumIterator;
     use tokio::task::JoinSet;
+    use tokio::time::timeout;
 
     use std::fs;
     use std::io;
     use std::path::Path;
+    use std::time::Duration;
 
     fn delete_contents_of_folder<P: AsRef<std::path::Path>>(path: P) -> io::Result<()> {
         for entry in fs::read_dir(path)? {
@@ -92,14 +94,25 @@ mod test {
                 clear_path_if_it_exists(&dir).expect("unable to clear directories");
                 println!("Running with init args: {:?}", init_args);
 
-                match run_init_args(&init_args).await {
-                    Err(_) => {
-                        println!("Failed to run with init args: {:?}", init_args);
-                        panic!("Failed to run with init args: {:?}", init_args)
-                    }
-                    Ok(_) => {
-                        println!("Finished for combination: {:?}", init_args);
-                    }
+                //5 minute timeout
+                let timeout_duration: Duration = Duration::from_secs(5 * 60);
+
+                match timeout(timeout_duration, run_init_args(&init_args)).await {
+                    Err(e) => panic!(
+                        "Timed out after elapsed {} on running init args: {:?}",
+                        e, init_args
+                    ),
+                    Ok(res) => match res {
+                        Err(e) => {
+                            panic!(
+                                "Failed to run with init args: {:?}, due to error: {:?}",
+                                init_args, e
+                            )
+                        }
+                        Ok(()) => {
+                            println!("Finished for combination: {:?}", init_args);
+                        }
+                    },
                 };
             });
         }
