@@ -19,7 +19,7 @@ GreeterContract_NewGreeting_handler(({ event, context }) => {
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: currentGreeter.numberOfGreetings + 1,
-      greetings: [...currentGreeter.greetings, latestGreeting],
+      greetings: [...currentGreeter.greetings, event.params.greeting],
     };
 
     context.greeting.set(greetingObject);
@@ -28,7 +28,7 @@ GreeterContract_NewGreeting_handler(({ event, context }) => {
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
-      greetings: [latestGreeting],
+      greetings: [event.params.greeting],
     };
     context.greeting.set(greetingObject);
   }
