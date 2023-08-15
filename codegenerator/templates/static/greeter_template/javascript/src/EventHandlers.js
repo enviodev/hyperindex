@@ -9,19 +9,21 @@ GreeterContract.NewGreeting.handler((event, context) => {
   let latestGreeting = event.params.greeting;
   let numberOfGreetings = event.params.numberOfGreetings;
 
-  let existingGreeter = context.greeting.greetingWithChangesLoad;
+  let existingGreeter = context.greeting.greetingWithChanges();
 
   if (existingGreeter != undefined) {
     context.greeting.set({
       id: user.toString(),
       latestGreeting: latestGreeting,
       numberOfGreetings: existingGreeter.numberOfGreetings + 1,
+      greetings: [...existingGreeter.greetings, latestGreeting],
     });
   } else {
     context.greeting.set({
       id: user.toString(),
       latestGreeting: latestGreeting,
       numberOfGreetings: 1,
+      greetings: [latestGreeting],
     });
   }
 });
@@ -31,12 +33,13 @@ GreeterContract.ClearGreeting.loader((event, context) => {
 });
 
 GreeterContract.ClearGreeting.handler((event, context) => {
-  let existingGreeter = context.greeting.greetingWithChangesLoad;
+  let existingGreeter = context.greeting.greetingWithChanges();
   if (existingGreeter !== undefined) {
     context.greeting.set({
       id: user.toString(),
       latestGreeting: "",
       numberOfGreetings: existingGreeter.numberOfGreetings + 1,
+      greetings: existingGreeter.greetings,
     });
   }
 });
