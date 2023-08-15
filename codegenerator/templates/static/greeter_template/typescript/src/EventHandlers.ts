@@ -19,6 +19,7 @@ GreeterContract_NewGreeting_handler(({ event, context }) => {
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: currentGreeter.numberOfGreetings + 1,
+      greetings: [...currentGreeter.greetings, latestGreeting],
     };
 
     context.greeting.set(greetingObject);
@@ -27,6 +28,7 @@ GreeterContract_NewGreeting_handler(({ event, context }) => {
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
+      greetings: [latestGreeting],
     };
     context.greeting.set(greetingObject);
   }
@@ -44,9 +46,9 @@ GreeterContract_ClearGreeting_handler(({ event, context }) => {
       id: event.params.user.toString(),
       latestGreeting: "",
       numberOfGreetings: currentGreeter.numberOfGreetings,
+      greetings: currentGreeter.greetings,
     };
 
     context.greeting.set(greetingObject);
-  } else {
   }
 });
