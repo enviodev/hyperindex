@@ -65,8 +65,10 @@ let getContractAddressKeyString = (~chainId: int, ~contractAddress: Ethers.ethAd
 
   key
 }
-
+// TODO: utilities like this should be moved to the particular chain worker.
 let waitForNextBlock = async (provider: Ethers.JsonRpcProvider.t) => {
+  // TODO: think how to handle the case where this fails? The way this is written now there is no `_reject`, nor any timeout
+  //       (maybe for each chain there should be a max wait time, 2 minutes for ethereum, 30 seconds for arbitrum etc, and then it retries?)
   await Promise.make((resolve, _reject) => {
     provider->Ethers.JsonRpcProvider.onBlock(blockNumber => {
       provider->Ethers.JsonRpcProvider.removeOnBlockEventListener

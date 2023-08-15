@@ -13,6 +13,23 @@ let getUnwrappedBlock = (provider, blockNumber) =>
     }
   )
 
+let rec getUnwrappedBlockWithBackoff = async (~provider, ~blockNumber, ~backoffMsOnFailure) =>
+  switch await getUnwrappedBlock(provider, blockNumber) {
+  | exception err =>
+    Logging.warn({
+      "err": err,
+      "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
+      "type": "EXPONENTIAL_BACKOFF",
+    })
+    await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
+    await getUnwrappedBlockWithBackoff(
+      ~provider,
+      ~blockNumber,
+      ~backoffMsOnFailure=backoffMsOnFailure * 2,
+    )
+  | result => result
+  }
+
 let getSingleContractEventFilters = (
   ~contractAddress,
   ~chainConfig: Config.chainConfig,
