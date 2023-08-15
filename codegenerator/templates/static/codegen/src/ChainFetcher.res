@@ -25,10 +25,18 @@ let make = (
 
 //Public methods
 let startFetchingEvents = async (self: t<'chainWorker>) => {
-  self.chainWorker->ChainWorker.startFethcingEventsOnWorker(
+  switch await self.chainWorker->ChainWorker.startFethcingEventsOnWorker(
     ~logger=self.logger,
     ~fetchedEventQueue=self.fetchedEventQueue,
-  )
+  ) {
+  | exception err =>
+    self.logger->Logging.childError({
+      "err": err,
+      "msg": `error while running chainWorker on chain ${self.chainConfig.chainId->Belt.Int.toString}`,
+    })
+    Error(err)
+  | _ => Ok()
+  }
 }
 
 //Pops the front item on the fetchedEventQueue and awaits an item if there is none

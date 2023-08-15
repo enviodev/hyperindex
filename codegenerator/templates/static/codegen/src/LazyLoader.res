@@ -4,6 +4,8 @@ type blockNumber = int
 
 let s = Belt.MutableSet.Int.make()
 
+// NOTE: any additional metadata that would be useful for debugging issues or displaying to users can be added here
+type asyncMapMetadata = {suggestedFix: string, asyncTaskName: string, caller: string}
 type asyncMap<'a> = {
   // The number of loaded results to keep cached. (For block loading this should be our maximum block interval)
   _cacheSize: int,
@@ -26,6 +28,8 @@ type asyncMap<'a> = {
   loadedKeys: SDSL.PriorityQueue.t<int>,
   // The function used to load the result.
   loaderFn: int => promise<'a>,
+  // Details for debugging, tracing, and loging issues
+  metadata: asyncMapMetadata,
 }
 
 let make = (
@@ -33,7 +37,8 @@ let make = (
   ~cacheSize: int=10_000,
   ~loaderPoolSize: int=10,
   ~retryDelayMillis=5_000,
-  ~timeoutMillis=30_000,
+  ~timeoutMillis=300_000, // After 5 minutes (unclear what is best to do here - crash or just keep printing the error)
+  ~metadata,
   (),
 ) => {
   _cacheSize: cacheSize,
@@ -46,6 +51,7 @@ let make = (
   loaderQueue: SDSL.PriorityQueue.makeAsc(),
   loadedKeys: SDSL.PriorityQueue.makeAsc(),
   loaderFn,
+  metadata,
 }
 
 let deleteKey: (Js.Dict.t<'a>, string) => unit = (_obj, _k) => %raw(`delete _obj[_k]`)
@@ -58,13 +64,13 @@ let timeoutAfter = timeoutMillis =>
     )
   )
 
-let rec loadNext = (am: asyncMap<'a>, k: int): unit => {
+let rec loadNext = async (am: asyncMap<'a>, k: int) => {
   let key = k->Belt.Int.toString
   // Track that we are loading it now
   am.inProgress->Belt.MutableSet.Int.add(k)
 
-  Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
-  ->Promise.thenResolve(val => {
+  let awaitTaskPrommiseAndLoadNextWithTimeout = async () => {
+    let val = await Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
     // Resolve the external promise
     am.resolvers->Js.Dict.get(key)->Belt.Option.map(r => r(. val))->ignore
 
@@ -85,18 +91,24 @@ let rec loadNext = (am: asyncMap<'a>, k: int): unit => {
     // Load the next one, if there is anything in the queue
     switch am.loaderQueue->SDSL.PriorityQueue.pop {
     | None => ()
-    | Some(next) => loadNext(am, next)
+    | Some(next) => await loadNext(am, next)
     }
-  })
-  ->Promise.catch(e => {
-    // If there's a failure, retry it
-    // TODO: Make sure this actually works (e.g. disconnect network)
-    // TODO: Propagate failure after long enough time?
-    // TODO: Add timeouts on individual requests
-    Js.Global.setTimeout(_ => loadNext(am, k), am._retryDelayMillis)->ignore
-    Promise.reject(e)
-  })
-  ->ignore
+  }
+
+  await (
+    switch await awaitTaskPrommiseAndLoadNextWithTimeout() {
+    | _ => Promise.resolve()
+    | exception err =>
+      Logging.error({
+        "err": err,
+        "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+            ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
+        "metadata": am.metadata,
+      })
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=am._retryDelayMillis)
+      awaitTaskPrommiseAndLoadNextWithTimeout()
+    }
+  )
 }
 
 let get = (am: asyncMap<'a>, k: int): promise<'a> => {
@@ -114,7 +126,7 @@ let get = (am: asyncMap<'a>, k: int): promise<'a> => {
 
       //   Do we have a free loader in the pool?
       if am.inProgress->Belt.MutableSet.Int.size < am._loaderPoolSize {
-        loadNext(am, k)
+        loadNext(am, k)->ignore
       } else {
         // Queue the loader
         am.loaderQueue->SDSL.PriorityQueue.push(k)
