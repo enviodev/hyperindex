@@ -144,14 +144,6 @@ jobs:
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
-      - name: temp debug step
-        run: |
-          ls
-          pwd
-          cat Cargo.toml
-          echo "Version"
-          echo ${{ needs.prepare.outputs.tag_name }}
-
       - name: Build binaries
         uses: actions-rs/cargo@v1
         env:
