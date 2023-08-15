@@ -1,0 +1,58 @@
+open RescriptMocha
+open Mocha
+open ContractInterfaceManager
+
+describe("Test ContractInterfaceManager", () => {
+  it("Full config contractInterfaceManager gets all topics and addresses for filters", () => {
+    let logger = Logging.logger
+    let chainConfig = Config.config->Js.Dict.values->Array.get(0)
+    let contractAddressMapping = ContractAddressingMap.make()
+    contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
+
+    let contractInterfaceManager = make(~contractAddressMapping, ~chainConfig)
+
+    let {topics, addresses} = contractInterfaceManager->getAllTopicsAndAddresses
+
+    Assert.equal(
+      addresses->Array.length,
+      2,
+      ~message="Expected same amount of addresses as contract adderesses in config",
+    )
+
+    Assert.equal(
+      topics->Array.length,
+      4,
+      ~message="Expected same amount of topics as number of events in config",
+    )
+  })
+
+  it("Single address config gets all topics and addresses for filters", () => {
+    let chainConfig = Config.config->Js.Dict.values->Array.get(0)
+    let contractAddress =
+      "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe
+
+    let singleContractIM = makeFromSingleContract(
+      ~contractAddress,
+      ~contractName="Gravatar",
+      ~chainConfig,
+    )
+    let {addresses, topics} = singleContractIM->getAllTopicsAndAddresses
+    Assert.equal(
+      addresses->Array.length,
+      1,
+      ~message="Expected same amount of addresses as contract adderesses in config",
+    )
+
+    Assert.equal(
+      addresses[0],
+      contractAddress,
+      ~message="Expected contract address to be the same as passed in",
+    )
+
+    Assert.equal(
+      topics->Array.length,
+      3,
+      ~message="Expected same amount of topics as number of events in config",
+    )
+  })
+})
