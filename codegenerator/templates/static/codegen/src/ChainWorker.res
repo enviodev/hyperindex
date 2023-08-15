@@ -157,7 +157,7 @@ module RpcWorker: ChainWorker = {
       ~loaderFn=blockNumber =>
         EventFetching.getUnwrappedBlockWithBackoff(
           ~provider=chainConfig.provider,
-          ~backoffMsOnFailure=100,
+          ~backoffMsOnFailure=1000,
           ~blockNumber,
         ),
       ~metadata={
@@ -267,7 +267,10 @@ module RpcWorker: ChainWorker = {
         ~contractAddressMapping,
       )
 
-      let getContractEventsOnFilters = EventFetching.getContractEventsOnFilters(
+      let {
+        eventBatchPromises,
+        finalExecutedBlockInterval,
+      } = await EventFetching.getContractEventsOnFilters(
         ~eventFilters,
         ~addressInterfaceMapping,
         ~contractAddressMapping,
@@ -278,25 +281,8 @@ module RpcWorker: ChainWorker = {
         ~chainConfig,
         ~blockLoader,
         ~logger,
+        (),
       )
-
-      let rec getContractEventsOnFiltersWithBackoff = async (~backoffMsOnFailure) =>
-        switch await getContractEventsOnFilters() {
-        | exception err =>
-          logger->Logging.childWarn({
-            "err": err,
-            "msg": `Issue while running fetching batch of events from the RPC. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
-            "type": "EXPONENTIAL_BACKOFF",
-          })
-          await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
-          await getContractEventsOnFiltersWithBackoff(~backoffMsOnFailure=backoffMsOnFailure * 2)
-        | result => result
-        }
-
-      let {
-        eventBatchPromises,
-        finalExecutedBlockInterval,
-      } = await getContractEventsOnFiltersWithBackoff(~backoffMsOnFailure=1000)
 
       for i in 0 to eventBatchPromises->Belt.Array.length - 1 {
         let {timestampPromise, chainId, blockNumber, logIndex, eventPromise} = eventBatchPromises[i]
