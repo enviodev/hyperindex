@@ -54,14 +54,14 @@ fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
         EthAbiParamType::FixedBytes(_) => String::from("string"),
         EthAbiParamType::Array(abi_type) => {
             let sub_param = EthereumEventParam {
-                abi_type: &abi_type,
+                abi_type,
                 name: param.name,
             };
             format!("array<{}>", abi_type_to_rescript_string(&sub_param))
         }
         EthAbiParamType::FixedArray(abi_type, _) => {
             let sub_param = EthereumEventParam {
-                abi_type: &abi_type,
+                abi_type,
                 name: param.name,
             };
 
@@ -75,12 +75,12 @@ fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
                         // Note the name doesn't matter since it's creating tuple without keys
                         //   it is only included so that the type is the same for recursion.
                         name: "",
-                        abi_type: &abi_type,
+                        abi_type,
                     };
 
-                    let type_rescript = abi_type_to_rescript_string(&ethereum_param);
+                    
 
-                    type_rescript
+                    abi_type_to_rescript_string(&ethereum_param)
                 })
                 .collect();
 
@@ -107,7 +107,7 @@ fn get_event_template_from_ethereum_abi_event(
                 // In the event that key is empty string
                 //   make the key _ + index, eg. _0, _1
                 // This will be rescript compatable
-                format!("_{}", index.to_string())
+                format!("_{}", index)
             } else {
                 input.name.to_string()
             };
@@ -126,8 +126,7 @@ fn get_event_template_from_ethereum_abi_event(
             .map(|required_entity| {
                 let entity_fields_of_required_entity_all = entity_fields_of_required_entity_map
                     .get(&required_entity.name)
-                    .cloned()
-                    .unwrap_or_else(Vec::new);
+                    .cloned().unwrap_or_default();
 
                 //Template needs access to both the full list and filtered for
                 //required entities that are not using a "@derivedFrom" directive
@@ -143,13 +142,13 @@ fn get_event_template_from_ethereum_abi_event(
         None => Vec::new(),
     };
 
-    let event_type = EventTemplate {
+    
+
+    EventTemplate {
         name,
         params,
         required_entities,
-    };
-
-    event_type
+    }
 }
 
 fn get_contract_type_from_config_contract(
@@ -208,7 +207,7 @@ fn get_contract_type_from_config_contract(
 
         let event_type = get_event_template_from_ethereum_abi_event(
             config_event,
-            &abi_event,
+            abi_event,
             entity_fields_of_required_entity_map,
         );
         event_types.push(event_type);

@@ -57,7 +57,7 @@ pub struct NewDir {
 
 impl NewDir {
     pub fn new(path: PathBuf) -> Result<Self, String> {
-        let path_str = path.to_str().unwrap_or_else(|| "bad_path");
+        let path_str = path.to_str().unwrap_or("bad_path");
         fs::create_dir_all(&path).map_err(|e| {
             format!(
                 "Failed to create directory at {} due to error: {}",
@@ -77,9 +77,9 @@ impl NewDir {
                 dir_name
                     .to_str()
                     .map(|str| str.to_string())
-                    .ok_or_else(|| &err_message)
+                    .ok_or(&err_message)
             })
-            .ok_or_else(|| &err_message)??;
+            .ok_or(&err_message)??;
 
         Ok(NewDir {
             path,

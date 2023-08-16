@@ -27,9 +27,9 @@ pub struct InitInteractive {
 impl InitArgs {
     pub fn get_directory(&self) -> String {
         if let Some(directory_str) = &self.directory {
-            return directory_str.to_string();
+            directory_str.to_string()
         } else {
-            return DEFAULT_PROJECT_ROOT_PATH.to_string();
+            DEFAULT_PROJECT_ROOT_PATH.to_string()
         }
     }
 
@@ -39,25 +39,25 @@ impl InitArgs {
             None => {
                 // todo input validation for name
 
-                let input_name = Text::new("Name your indexer: ").prompt()?;
+                
 
-                input_name
+                Text::new("Name your indexer: ").prompt()?
             }
         };
 
         let directory: String = match &self.directory {
             Some(args_directory) => args_directory.clone(),
             None => {
-                let input_directory = Text::new("Set the directory: ")
+                
+
+                Text::new("Set the directory: ")
                     .with_default(DEFAULT_PROJECT_ROOT_PATH)
                     .with_placeholder(DEFAULT_PROJECT_ROOT_PATH)
                     // validate string is valid directory name
                     .with_validator(is_valid_foldername_inquire_validation_result)
                     // validate the directory doesn't already exist
                     .with_validator(is_directory_new)
-                    .prompt()?;
-
-                input_directory
+                    .prompt()?
             }
         };
 
@@ -127,8 +127,8 @@ impl InitArgs {
                 let input_language =
                     Select::new("Which language would you like to use?", options).prompt()?;
 
-                let chosen_language = serde_json::from_str(&input_language)?;
-                chosen_language
+                
+                serde_json::from_str(&input_language)?
             }
         };
 

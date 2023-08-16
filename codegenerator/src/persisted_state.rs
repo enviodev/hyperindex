@@ -29,10 +29,8 @@ impl HashString {
                 file.read_to_end(&mut buffer)?;
             }
             // Exception made specifically for event handlers which may not exist at codegen yet
-            else {
-                if let Ok(mut file) = File::open(file_path) {
-                    file.read_to_end(&mut buffer)?;
-                }
+            else if let Ok(mut file) = File::open(file_path) {
+                file.read_to_end(&mut buffer)?;
             }
         }
 
@@ -126,7 +124,7 @@ impl PersistedState {
         has_run_db_migrations: bool,
     ) -> Result<(), String> {
         let mut persisted_state = Self::get_from_generated_file(project_paths)?;
-        if !(persisted_state.has_run_db_migrations == has_run_db_migrations) {
+        if persisted_state.has_run_db_migrations != has_run_db_migrations {
             persisted_state.has_run_db_migrations = has_run_db_migrations;
             return persisted_state.write_to_generated_file(project_paths);
         }
@@ -237,7 +235,7 @@ pub fn handler_file_has_changed(
 pub fn persisted_state_file_exists(project_paths: &ProjectPaths) -> bool {
     let file_path = project_paths.generated.join(PERSISTED_STATE_FILE_NAME);
 
-    return fs::metadata(&file_path).is_ok();
+    fs::metadata(file_path).is_ok()
 }
 
 #[derive(Serialize, Deserialize, Debug)]

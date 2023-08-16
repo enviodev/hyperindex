@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         HasuraHealth::Healthy => {
                             {
                                 let existing_persisted_state =
-                                    if persisted_state_file_exists(&project_paths) {
+                                    if persisted_state_file_exists(project_paths) {
                                         let persisted_state =
                                             PersistedState::get_from_generated_file(project_paths)?;
                                         ExistingPersistedState::ExistingFile(persisted_state)

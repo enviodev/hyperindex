@@ -17,12 +17,12 @@ pub fn get_entity_record_types_from_schema(
         format!(
             "Failed to read schema file at {} with Error: {}",
             &parsed_paths.schema_path.to_str().unwrap_or("unknown file"),
-            err.to_string()
+            err
         )
     })?;
 
     let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
-        .map_err(|err| format!("Failed to parse schema with Error: {}", err.to_string()))?;
+        .map_err(|err| format!("Failed to parse schema with Error: {}", err))?;
     let mut schema_object_types = Vec::new();
     let mut entities_set: HashSet<String> = HashSet::new();
 
@@ -245,14 +245,14 @@ fn gql_type_to_postgres_type(
         },
         Type::NonNullType(gql_type) => format!(
             "{} NOT NULL",
-            gql_type_to_postgres_type(&gql_type, entities_set)?
+            gql_type_to_postgres_type(gql_type, entities_set)?
         ),
     };
     Ok(composed_type_name)
 }
 
 fn gql_type_is_optional(gql_type: &Type<String>) -> bool {
-    return !matches!(gql_type, Type::NonNullType(_));
+    !matches!(gql_type, Type::NonNullType(_))
 }
 
 fn gql_type_to_postgres_relational_type(
@@ -275,9 +275,9 @@ fn gql_type_to_postgres_relational_type(
         Type::NamedType(_) => None,
         Type::ListType(gql_type) => {
             match gql_type_to_postgres_relational_type(
-                &field_name,
-                &gql_type,
-                &entities_set,
+                field_name,
+                gql_type,
+                entities_set,
                 derived_from_field_key,
             ) {
                 Some(mut relational_type) => {
@@ -291,9 +291,9 @@ fn gql_type_to_postgres_relational_type(
         }
         Type::NonNullType(gql_type) => {
             match gql_type_to_postgres_relational_type(
-                &field_name,
-                &gql_type,
-                &entities_set,
+                field_name,
+                gql_type,
+                entities_set,
                 derived_from_field_key,
             ) {
                 Some(mut relational_type) => {
@@ -351,7 +351,7 @@ fn gql_type_to_rescript_type_with_container_wrapper(
         (Type::ListType(gql_type), NullableContainer::NotNullable) => format!(
             "array<{}>",
             gql_type_to_rescript_type_with_container_wrapper(
-                &gql_type,
+                gql_type,
                 NullableContainer::Nullable,
                 entities_set
             )?
@@ -359,19 +359,16 @@ fn gql_type_to_rescript_type_with_container_wrapper(
         (Type::ListType(gql_type), NullableContainer::Nullable) => format!(
             "option<array<{}>>",
             gql_type_to_rescript_type_with_container_wrapper(
-                &gql_type,
+                gql_type,
                 NullableContainer::Nullable,
                 entities_set
             )?
         ),
-        (Type::NonNullType(gql_type), _) => format!(
-            "{}",
-            gql_type_to_rescript_type_with_container_wrapper(
-                &gql_type,
+        (Type::NonNullType(gql_type), _) => (gql_type_to_rescript_type_with_container_wrapper(
+                gql_type,
                 NullableContainer::NotNullable,
                 entities_set
-            )?
-        ),
+            )?).to_string(),
     };
     Ok(composed_type_name)
 }
@@ -406,8 +403,8 @@ fn gql_type_to_capitalized_entity_name(
         Type::NamedType(named_type) => entities_set
             .contains(named_type)
             .then(|| named_type.to_owned().to_capitalized_options()),
-        Type::ListType(gql_type) => gql_type_to_capitalized_entity_name(&gql_type, entities_set),
-        Type::NonNullType(gql_type) => gql_type_to_capitalized_entity_name(&gql_type, entities_set),
+        Type::ListType(gql_type) => gql_type_to_capitalized_entity_name(gql_type, entities_set),
+        Type::NonNullType(gql_type) => gql_type_to_capitalized_entity_name(gql_type, entities_set),
     }
 }
 
@@ -611,17 +608,17 @@ mod tests {
         let test_named_entity = Type::NamedType(test_entity_string);
         // NamedType:
         let is_optional = gql_type_is_optional(&test_named_entity);
-        assert_eq!(is_optional, true);
+        assert!(is_optional);
 
         // ListType:
         let test_list_type = Type::ListType(Box::new(test_named_entity));
         let is_optional = gql_type_is_optional(&test_list_type);
-        assert_eq!(is_optional, true);
+        assert!(is_optional);
 
         // NonNullType
         let gql_array_non_null_type = Type::NonNullType(Box::new(test_list_type));
         let is_optional = gql_type_is_optional(&gql_array_non_null_type);
-        assert_eq!(is_optional, false);
+        assert!(!is_optional);
     }
 
     fn gql_type_to_postgres_type_test_helper(gql_field_str: &str) -> String {

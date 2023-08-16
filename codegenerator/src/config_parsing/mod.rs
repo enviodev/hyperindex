@@ -174,7 +174,7 @@ impl TryFrom<String> for EventNameOrSig {
         let name_or_sig = if trimmed.starts_with("event ") {
             let parsed_event = parse_event_sig(trimmed)?;
             EventNameOrSig::Event(parsed_event)
-        } else if trimmed.contains("(") {
+        } else if trimmed.contains('(') {
             let signature = format!("event {}", trimmed);
             let parsed_event = parse_event_sig(&signature)?;
             EventNameOrSig::Event(parsed_event)
@@ -306,22 +306,22 @@ fn strip_to_letters(string: &str) -> String {
             pg_friendly_name.push(c);
         }
     }
-    return pg_friendly_name;
+    pg_friendly_name
 }
 
 pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> Result<Config, Box<dyn Error>> {
-    let config = std::fs::read_to_string(&config_path).map_err(|err| {
+    let config = std::fs::read_to_string(config_path).map_err(|err| {
         format!(
             "Failed to resolve config path {0} with Error {1}. Make sure you're in the correct directory and that a config file with the name {0} exists",
             &config_path.to_str().unwrap_or("unknown config file name path"),
-            err.to_string()
+            err
         )
     })?;
 
     let mut deserialized_yaml: Config = serde_yaml::from_str(&config).map_err(|err| {
         format!(
             "Failed to deserialize config with Error {}. Visit the docs for more information {}",
-            err.to_string(),
+            err,
             links::DOC_CONFIGURATION_FILE
         )
     })?;
@@ -360,14 +360,14 @@ pub fn convert_config_to_chain_configs(
                             let format_err = |err| -> String {
                                 format!("event \"{}\" cannot be parsed the provided abi for contract {} due to error: {:?}", config_event_name, contract.name, err)
                             };
-                            contract_abi.event(&config_event_name).map_err(format_err)?
+                            contract_abi.event(config_event_name).map_err(format_err)?
                         }
                         None => {
                             let message = format!("Please add abi_file_path for contract {} to your config to parse event {} or define the signature in the config", contract.name, config_event_name);
                             Err(message)?
                         }
                     },
-                    EventNameOrSig::Event(abi_event) => &abi_event,
+                    EventNameOrSig::Event(abi_event) => abi_event,
                 };
 
                 reduced_abi
@@ -407,7 +407,7 @@ pub fn get_project_name_from_config(parsed_paths: &ParsedPaths) -> Result<String
 
 pub fn is_rescript(handler_path: &HashMap<ContractUniqueId, PathBuf>) -> bool {
     for handler_path in handler_path.values() {
-        if let Some(path_str) = handler_path.clone().into_os_string().into_string().ok() {
+        if let Ok(path_str) = handler_path.clone().into_os_string().into_string() {
             if path_str.ends_with(".bs.js") {
                 return true;
             }

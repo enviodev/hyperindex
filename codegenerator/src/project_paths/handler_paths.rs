@@ -34,11 +34,11 @@ impl ParsedPaths {
         let config_directory = project_paths
             .config
             .parent()
-            .ok_or_else(|| "Unexpected config file should have a parent directory")?;
+            .ok_or("Unexpected config file should have a parent directory")?;
         let parsed_config = deserialize_config_from_yaml(&project_paths.config)?;
         let schema_path_relative_opt = parsed_config
             .schema
-            .map(|schema_path| PathBuf::from(schema_path));
+            .map(PathBuf::from);
 
         let schema_path_joined = match schema_path_relative_opt {
             Some(schema_path_relative) => config_directory.join(schema_path_relative),
@@ -92,11 +92,11 @@ impl ParsedPaths {
 
         let absolute_path = self
             .handler_paths
-            .get(&contract_unique_id)
+            .get(contract_unique_id)
             .ok_or_else(|| "invalid contract configuration".to_string())?;
 
-        let relative_to_generated_src = diff_paths(absolute_path, &generated_src)
-            .ok_or_else(|| "could not find handler path relative to generated")?
+        let relative_to_generated_src = diff_paths(absolute_path, generated_src)
+            .ok_or("could not find handler path relative to generated")?
             .to_str()
             .ok_or_else(|| "Handler path should be unicode".to_string())?
             .to_string();
@@ -116,7 +116,7 @@ impl ParsedPaths {
         &self,
         contract_unique_id: &ContractUniqueId,
     ) -> Result<Option<ethers::abi::Contract>, Box<dyn Error>> {
-        let abi_path_opt = self.abi_paths.get(&contract_unique_id);
+        let abi_path_opt = self.abi_paths.get(contract_unique_id);
 
         let abi_opt = match abi_path_opt {
             None => None,
@@ -125,7 +125,7 @@ impl ParsedPaths {
                     format!(
                         "Failed to read abi at {}, with the following error {}",
                         abi_path.to_str().unwrap_or("no_path"),
-                        e.to_string()
+                        e
                     )
                 })?;
 

@@ -57,7 +57,7 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
 
                     if is_hbs_file {
                         // let get_path_str = |path: AsRef<Path>>| path.to_str().unwrap_or_else(|| "bad path");
-                        let path_str = path.to_str().ok_or_else(|| {
+                        let path_str = path.to_str().ok_or({
                             "Could not cast path to str in generate_hbs_templates"
                         })?;
                         //Get the parent of the file src/MyTemplate.res.hbs -> src/
@@ -86,7 +86,7 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                         //Setup output directory
                         let output_dir_path =
                             normalize_path(self.output_dir.join(parent).as_path());
-                        let output_dir_path_str = output_dir_path.to_str().ok_or_else(|| {
+                        let output_dir_path_str = output_dir_path.to_str().ok_or({
                             "Could not cast output path to str in generate_hbs_templates"
                         })?;
 
@@ -107,13 +107,13 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                         })?;
                     }
                 }
-                DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recursive(self, &dir)?,
+                DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recursive(self, dir)?,
             }
         }
         Ok(())
     }
     pub fn generate_hbs_templates(&self) -> Result<(), String> {
-        Self::generate_hbs_templates_internal_recursive(&self, self.templates_dir)
+        Self::generate_hbs_templates_internal_recursive(self, self.templates_dir)
     }
 }
 

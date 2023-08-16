@@ -52,7 +52,7 @@ mod tests {
     fn valid_folder_name() {
         let valid_name = "my_folder";
         let is_valid = super::is_valid_folder_name(valid_name);
-        assert_eq!(is_valid, true);
+        assert!(is_valid);
     }
     #[test]
     fn invalid_folder_name() {
@@ -64,8 +64,8 @@ mod tests {
         let is_invalid_colon = super::is_valid_folder_name(invalid_name_colon);
         let is_invalid_empty = super::is_valid_folder_name(invalid_name_empty);
 
-        assert_eq!(is_invalid_star, false);
-        assert_eq!(is_invalid_colon, false);
-        assert_eq!(is_invalid_empty, false);
+        assert!(!is_invalid_star);
+        assert!(!is_invalid_colon);
+        assert!(!is_invalid_empty);
     }
 }

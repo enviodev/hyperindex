@@ -214,7 +214,7 @@ async fn fetch_ipfs_file_with_retry(file_id: &str, file_name: &str) -> anyhow::R
 ///Note this can panic the first 6 chars in the string slice are invalid utf8
 ///However it will check for utf8 validity so there is no risk of junk values and path should
 ///always start with /ipfs/ which is valid
-fn get_ipfs_id_from_file_path<'a>(file_path: &'a str) -> &'a str {
+fn get_ipfs_id_from_file_path(file_path: &str) -> &str {
     &file_path[6..]
 }
 
@@ -244,7 +244,7 @@ pub async fn generate_config_from_subgraph_id(
     // Create config object to be populated
     let mut config = Config {
         name: manifest.data_sources[0].name.clone(),
-        description: manifest.description.unwrap_or_else(|| "".to_string()),
+        description: manifest.description.unwrap_or_default(),
         schema: None,
         networks: vec![],
     };
@@ -276,7 +276,7 @@ pub async fn generate_config_from_subgraph_id(
                 chain_helpers::deserialize_network_name(network_name),
             ),
             // TODO: update to the final rpc url
-            rpc_config: rpc_config,
+            rpc_config,
             start_block: 0,
             contracts: vec![],
         };
@@ -297,7 +297,7 @@ pub async fn generate_config_from_subgraph_id(
                         abi_file_path: Some(format!(
                             "{}/abis/{}.json",
                             project_root_path.display(),
-                            data_source.name.to_string()
+                            data_source.name
                         )),
                         address: NormalizedList::from_single(
                             data_source.source.address.to_string(),
@@ -338,7 +338,7 @@ pub async fn generate_config_from_subgraph_id(
                         let abi_dir_path = abi_dir_path.clone();
                         let abi_ipfs_file_path = data_source_abi.file.value.clone();
                         let abi_file_path =
-                            abi_dir_path.join(format!("{}.json", data_source.name.to_string()));
+                            abi_dir_path.join(format!("{}.json", data_source.name));
                         join_set.spawn(async move {
                             fetch_ipfs_file_and_write_to_system(
                                 abi_ipfs_file_path,
@@ -388,7 +388,7 @@ async fn fetch_ipfs_file_and_write_to_system(
         fs_file_path.display()
     );
 
-    return Ok(());
+    Ok(())
 }
 
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test

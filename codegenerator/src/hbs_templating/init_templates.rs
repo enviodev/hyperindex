@@ -69,7 +69,7 @@ mod test {
         let valid_version_numbers = vec!["0.0.0", "999.999.999", "0.0.1", "10.2.3"];
 
         for vn in valid_version_numbers {
-            assert_eq!(super::is_valid_release_version_number(vn), true);
+            assert!(super::is_valid_release_version_number(vn));
         }
     }
 
@@ -88,7 +88,7 @@ mod test {
             "1.1.1.",
         ];
         for vn in invalid_version_numbers {
-            assert_eq!(super::is_valid_release_version_number(vn), false);
+            assert!(!super::is_valid_release_version_number(vn));
         }
     }
 }

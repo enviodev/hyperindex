@@ -67,7 +67,7 @@ fn validate_rpc_url(url: &str) -> bool {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return false;
     }
-    return true;
+    true
 }
 
 // Check if all RPC URLs in the config file are valid.
@@ -173,7 +173,7 @@ mod tests {
     fn valid_postgres_db_name() {
         let valid_name = "_helloPotter";
         let is_valid = super::is_valid_postgres_db_name(valid_name);
-        assert_eq!(is_valid, true);
+        assert!(is_valid);
     }
 
     #[test]
@@ -185,9 +185,9 @@ mod tests {
         let is_not_valid_space = super::is_valid_postgres_db_name(invalid_name_space);
         let is_not_valid_long = super::is_valid_postgres_db_name(invalid_name_long);
         let is_not_special_chars = super::is_valid_postgres_db_name(invalid_name_special_char);
-        assert_eq!(is_not_valid_space, false);
-        assert_eq!(is_not_valid_long, false);
-        assert_eq!(is_not_special_chars, false);
+        assert!(!is_not_valid_space);
+        assert!(!is_not_valid_long);
+        assert!(!is_not_special_chars);
     }
 
     #[test]
@@ -196,8 +196,8 @@ mod tests {
             super::is_valid_ethereum_address("0x1234567890123456789012345678901234567890");
         let mixed_case_address =
             super::is_valid_ethereum_address("0xabcdefABCDEF1234567890123456789012345678");
-        assert_eq!(pure_number_address, true);
-        assert_eq!(mixed_case_address, true);
+        assert!(pure_number_address);
+        assert!(mixed_case_address);
     }
 
     #[test]
@@ -208,9 +208,9 @@ mod tests {
             super::is_valid_ethereum_address("0xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz");
         let invalid_start =
             super::is_valid_ethereum_address("123456789012345678901234567890123456789");
-        assert_eq!(invalid_length_address, false);
-        assert_eq!(invalid_characters, false);
-        assert_eq!(invalid_start, false);
+        assert!(!invalid_length_address);
+        assert!(!invalid_characters);
+        assert!(!invalid_start);
     }
 
     #[test]
@@ -225,7 +225,7 @@ mod tests {
             "_Hello_World_123_".to_string(),
         ];
         let unique_contract_names = super::are_contract_names_unique(&contract_names);
-        assert_eq!(unique_contract_names, true);
+        assert!(unique_contract_names);
     }
 
     #[test]
@@ -240,7 +240,7 @@ mod tests {
             "_Hello_World_123".to_string(),
         ];
         let non_unique_contract_names = super::are_contract_names_unique(&contract_names);
-        assert_eq!(non_unique_contract_names, false);
+        assert!(!non_unique_contract_names);
     }
 
     #[test]
@@ -272,9 +272,9 @@ mod tests {
         let is_valid_url_1 = super::validate_rpc_url(valid_rpc_url_1);
         let is_valid_url_2 = super::validate_rpc_url(valid_rpc_url_2);
         let is_valid_url_3 = super::validate_rpc_url(valid_rpc_url_3);
-        assert_eq!(is_valid_url_1, true);
-        assert_eq!(is_valid_url_2, true);
-        assert_eq!(is_valid_url_3, true);
+        assert!(is_valid_url_1);
+        assert!(is_valid_url_2);
+        assert!(is_valid_url_3);
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod tests {
         let invalid_rpc_url_other_protocol = "ftp://example.com";
         let is_invalid_missing_slash = super::validate_rpc_url(invalid_rpc_url_missing_slash);
         let is_invalid_other_protocol = super::validate_rpc_url(invalid_rpc_url_other_protocol);
-        assert_eq!(is_invalid_missing_slash, false);
-        assert_eq!(is_invalid_other_protocol, false);
+        assert!(!is_invalid_missing_slash);
+        assert!(!is_invalid_other_protocol);
     }
 }

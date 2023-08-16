@@ -133,7 +133,7 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
             //Copy in the rest of the shared subgraph migration files
             BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
 
-            generate_config_from_subgraph_id(&project_root_path, &cid, &parsed_init_args.language)
+            generate_config_from_subgraph_id(&project_root_path, cid, &parsed_init_args.language)
                 .await?;
         }
     }
@@ -148,7 +148,7 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     commands::codegen::run_codegen(&parsed_paths)?;
 
     let post_codegen_exit =
-        commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
+        commands::codegen::run_post_codegen_command_sequence(project_paths).await?;
 
     if !post_codegen_exit.success() {
         return Err("Failed to complete post codegen command sequence")?;

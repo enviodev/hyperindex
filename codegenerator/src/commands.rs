@@ -7,7 +7,7 @@ pub mod rescript {
             .arg("rescript")
             .arg("clean")
             .arg("-with-deps")
-            .current_dir(&path)
+            .current_dir(path)
             .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
@@ -20,7 +20,7 @@ pub mod rescript {
             .arg("rescript")
             .arg("format")
             .arg("-all")
-            .current_dir(&path)
+            .current_dir(path)
             .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
@@ -33,7 +33,7 @@ pub mod rescript {
             .arg("rescript")
             .arg("build")
             .arg("-with-deps")
-            .current_dir(&path)
+            .current_dir(path)
             .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
             .spawn()?
@@ -122,18 +122,18 @@ pub mod codegen {
         let project_paths = &parsed_paths.project_paths;
         fs::create_dir_all(&project_paths.generated)?;
 
-        let entity_types = entity_parsing::get_entity_record_types_from_schema(&parsed_paths)?;
+        let entity_types = entity_parsing::get_entity_record_types_from_schema(parsed_paths)?;
 
         let contract_types = event_parsing::get_contract_types_from_config(
-            &parsed_paths,
+            parsed_paths,
             &entities_to_map(entity_types.clone()),
         )?;
 
         let chain_config_templates =
-            config_parsing::convert_config_to_chain_configs(&parsed_paths)?;
+            config_parsing::convert_config_to_chain_configs(parsed_paths)?;
 
         //Used to create project specific configuration during deployment
-        let project_name = config_parsing::get_project_name_from_config(&parsed_paths)?;
+        let project_name = config_parsing::get_project_name_from_config(parsed_paths)?;
 
         //NOTE: This structure is no longer used int event parsing since it has been refactored
         //to use an inline tuple type for parsed structs. However this is being left until it
@@ -155,7 +155,7 @@ pub mod codegen {
             contract_types,
             chain_config_templates,
             entity_types,
-            &parsed_paths,
+            parsed_paths,
             project_name,
         )?;
 
