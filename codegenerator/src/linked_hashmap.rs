@@ -81,6 +81,8 @@ enum HashMapKeyInsert<K> {
 }
 
 impl<T: Clone + PartialEq + HasName> RescriptRecordHierarchyLinkedHashMap<T> {
+    // TODO: https://rust-lang.github.io/rust-clippy/master/index.html#/new_without_default
+
     pub fn new() -> RescriptRecordHierarchyLinkedHashMap<T> {
         RescriptRecordHierarchyLinkedHashMap {
             head_key: None,

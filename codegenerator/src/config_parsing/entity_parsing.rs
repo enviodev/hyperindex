@@ -365,10 +365,11 @@ fn gql_type_to_rescript_type_with_container_wrapper(
             )?
         ),
         (Type::NonNullType(gql_type), _) => (gql_type_to_rescript_type_with_container_wrapper(
-                gql_type,
-                NullableContainer::NotNullable,
-                entities_set
-            )?).to_string(),
+            gql_type,
+            NullableContainer::NotNullable,
+            entities_set,
+        )?)
+        .to_string(),
     };
     Ok(composed_type_name)
 }
@@ -635,12 +636,10 @@ mod tests {
         let mut gql_type: Option<Type<String>> = None;
 
         schema.definitions.iter().for_each(|def| {
-            if let Definition::TypeDefinition(type_def) = def {
-                if let TypeDefinition::Object(obj_def) = type_def {
-                    obj_def.fields.iter().for_each(|field| {
-                        gql_type = Some(field.field_type.clone());
-                    })
-                }
+            if let Definition::TypeDefinition(TypeDefinition::Object(obj_def)) = def {
+                obj_def.fields.iter().for_each(|field| {
+                    gql_type = Some(field.field_type.clone());
+                })
             }
         });
         super::gql_type_to_postgres_type(&gql_type.unwrap(), &hash_set).unwrap()

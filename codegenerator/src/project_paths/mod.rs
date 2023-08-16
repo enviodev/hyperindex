@@ -44,20 +44,6 @@ impl ProjectPaths {
             config,
         })
     }
-
-    pub fn default() -> ProjectPaths {
-        let project_root = PathBuf::from(DEFAULT_PROJECT_ROOT_PATH);
-
-        let generated: PathBuf = project_root.join(DEFAULT_GENERATED_PATH);
-
-        let config: PathBuf = project_root.join(DEFAULT_CONFIG_PATH);
-
-        ProjectPaths {
-            project_root,
-            generated,
-            config,
-        }
-    }
 }
 
 impl ToProjectPathsArgs for ProjectPaths {

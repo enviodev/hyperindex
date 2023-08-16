@@ -1,6 +1,6 @@
 use regex::Regex;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::Path;
 
 use crate::config_parsing::Config;
 
@@ -82,7 +82,7 @@ fn validate_rpc_urls_from_config(urls: &[String]) -> bool {
 
 // Check if all names in the config file are valid.
 fn validate_names_not_reserved(
-    names_from_config: &Vec<String>,
+    names_from_config: &[String],
     part_of_config: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let detected_reserved_words = check_reserved_words(&names_from_config.join(" "));
@@ -98,7 +98,7 @@ fn validate_names_not_reserved(
 }
 
 pub fn validate_deserialized_config_yaml(
-    config_path: &PathBuf,
+    config_path: &Path,
     deserialized_yaml: &Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if !is_valid_postgres_db_name(&deserialized_yaml.name) {

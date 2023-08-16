@@ -95,10 +95,7 @@ pub struct EntityParamTypeTemplate {
 
 impl HasIsDerivedFrom for EntityRelationalTypesTemplate {
     fn get_is_derived_from(&self) -> bool {
-        match self.derived_from_field_key {
-            None => false,
-            Some(_) => true,
-        }
+        self.derived_from_field_key.is_some()
     }
 }
 
