@@ -20,6 +20,7 @@ module BigInt = {
   @val external fromStringUnsafe: string => t = "BigInt"
   let fromString = str => Misc.unsafeToOption(() => str->fromStringUnsafe)
   @send external toString: t => string = "toString"
+  let toInt = (b: t): option<int> => b->toString->Belt.Int.fromString
 
   //silence unused var warnings for raw bindings
   @@warning("-27")
@@ -125,7 +126,8 @@ module BlockTag = {
 }
 
 module EventFilter = {
-  type topic
+  @spice
+  type topic = string
   type t = {
     address: ethAddress,
     topics: array<topic>,
@@ -189,12 +191,18 @@ type log = {
   //Note: this is the index of the log in the transaction and should be used whenever we use "logIndex"
   address: ethAddress,
   data: string,
-  topics: array<string>,
+  topics: array<EventFilter.topic>,
   transactionHash: txHash,
   transactionIndex: int,
   //Note: this logIndex is the index of the log in the block, not the transaction
   @as("index") logIndex: int,
 }
+
+type minimumParseableLogData = {topics: array<EventFilter.topic>, data: string}
+
+//Can safely convert from log to minimumParseableLogData since it contains
+//both data points required
+let logToMinimumParseableLogData: log => minimumParseableLogData = Obj.magic
 
 type logDescription<'a> = {
   args: 'a,
@@ -270,11 +278,39 @@ module JsonRpcProvider = {
   external getBlock: (t, int) => promise<Js.nullable<block>> = "getBlock"
 }
 
+module EventFragment = {
+  //Note there are more properties and methods to bind to
+  type t = {
+    name: string,
+    anonymous: bool,
+    topicHash: EventFilter.topic,
+  }
+}
+
 module Interface = {
   type t
   @module("ethers") @scope("ethers") @new external make: (~abi: abi) => t = "Interface"
-  @send external parseLog: (t, ~log: log) => logDescription<'a> = "parseLog"
+  @send
+  external parseLogUnsafe: (t, ~log: minimumParseableLogData) => Js.Nullable.t<logDescription<'a>> =
+    "parseLog"
+
+  type parseLogError = EventNotFound | ParseError(exn)
+
+  let parseLog = (interface: t, ~log: log): Belt.Result.t<logDescription<'a>, parseLogError> => {
+    try {
+      let parsed = interface->parseLogUnsafe(~log=log->logToMinimumParseableLogData)
+      switch parsed->Js.Nullable.toOption {
+      | Some(val) => Ok(val)
+      | None => Error(EventNotFound)
+      }
+    } catch {
+    | e => Error(ParseError(e))
+    }
+  }
+
   @send external parseLogJson: (t, ~log: log) => logDescription<Js.Json.t> = "parseLog"
+
+  @send external forEachEvent: (t, (EventFragment.t, int) => unit) => unit = "forEachEvent"
 }
 
 module Contract = {

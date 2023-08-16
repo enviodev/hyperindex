@@ -1,19 +1,20 @@
 type eventType = EventFetching.eventBatchQueueItem
 
-type t<'workerType> = {
+type t = {
   logger: Pino.t,
   fetchedEventQueue: ChainEventQueue.t,
   chainConfig: Config.chainConfig,
-  chainWorker: ('workerType, module(ChainWorker.ChainWorker with type t = 'workerType)),
+  chainWorker: ChainWorker.chainWorker,
 }
 
 //CONSTRUCTION
 let make = (
   ~chainConfig: Config.chainConfig,
   ~maxQueueSize,
-  ~chainWorker: ('chainWorker, module(ChainWorker.ChainWorker with type t = 'chainWorker)),
-): t<'chainWorker> => {
+  ~chainWorkerTypeSelected: ChainWorker.workerTypeSelected,
+): t => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chainId})
+  let chainWorker = chainWorkerTypeSelected->ChainWorker.make(~chainConfig)
 
   {
     fetchedEventQueue: ChainEventQueue.make(~maxQueueSize),
@@ -24,8 +25,8 @@ let make = (
 }
 
 //Public methods
-let startFetchingEvents = async (self: t<'chainWorker>) => {
-  switch await self.chainWorker->ChainWorker.startFethcingEventsOnWorker(
+let startFetchingEvents = async (self: t) => {
+  switch self.chainWorker->ChainWorker.startFetchingEvents(
     ~logger=self.logger,
     ~fetchedEventQueue=self.fetchedEventQueue,
   ) {
@@ -40,19 +41,19 @@ let startFetchingEvents = async (self: t<'chainWorker>) => {
 }
 
 //Pops the front item on the fetchedEventQueue and awaits an item if there is none
-let popAndAwaitQueueItem = async (self: t<'chainWorker>): eventType => {
+let popAndAwaitQueueItem = async (self: t): eventType => {
   await self.fetchedEventQueue->ChainEventQueue.popSingleAndAwaitItem
 }
 
 //Pops the front item on the fetchedEventQueue
-let popQueueItem = (self: t<'chainWorker>): option<eventType> => {
+let popQueueItem = (self: t): option<eventType> => {
   self.fetchedEventQueue->ChainEventQueue.popSingle
 }
 
 //Registers the new contract
 //fetches all the unfetched events
 let addDynamicContractAndFetchMissingEvents = (
-  self: t<'chainWorker>,
+  self: t,
   ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
   ~fromBlock,
   ~fromLogIndex,
@@ -69,7 +70,7 @@ type latestFetchedBlockTimestamp = int
 type eventQueuePeek =
   NoItem(latestFetchedBlockTimestamp, Types.chainId) | Item(EventFetching.eventBatchQueueItem)
 
-let peekFrontItemOfQueue = (self: t<'chainWorker>): eventQueuePeek => {
+let peekFrontItemOfQueue = (self: t): eventQueuePeek => {
   let optFront = self.fetchedEventQueue->ChainEventQueue.peekFront
 
   switch optFront {
@@ -80,6 +81,6 @@ let peekFrontItemOfQueue = (self: t<'chainWorker>): eventQueuePeek => {
   }
 }
 
-let addNewRangeQueriedCallback = (self: t<'chainWorker>) => {
+let addNewRangeQueriedCallback = (self: t) => {
   ChainWorker.addNewRangeQueriedCallback(self.chainWorker)
 }

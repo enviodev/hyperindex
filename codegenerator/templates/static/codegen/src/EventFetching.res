@@ -1,4 +1,3 @@
-
 exception QueryTimout(string)
 
 let getUnwrappedBlock = (provider, blockNumber) =>
@@ -31,88 +30,15 @@ let rec getUnwrappedBlockWithBackoff = async (~provider, ~blockNumber, ~backoffM
   | result => result
   }
 
-let getSingleContractEventFilters = (
-  ~contractAddress,
-  ~chainConfig: Config.chainConfig,
-  ~addressInterfaceMapping,
-  ~contractAddressMapping,
-  ~logger,
-) => {
-  let contractName =
-    contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
-      ~contractAddress,
-      ~logger,
-    )
-
-  let contractConfig = switch chainConfig.contracts->Js.Array2.find(contract =>
-    contract.name == contractName
-  ) {
-  | None => ContractAddressingMap.UndefinedContractName(contractName, chainConfig.chainId)->raise
-  | Some(contractConfig) => contractConfig
-  }
-
-  let contractEthers = Ethers.Contract.make(
-    ~address=contractAddress,
-    ~abi=contractConfig.abi,
-    ~provider=chainConfig.provider,
-  )
-
-  addressInterfaceMapping->Js.Dict.set(
-    contractAddress->Ethers.ethAddressToString,
-    contractEthers->Ethers.Contract.getInterface,
-  )
-
-  contractConfig.events->Belt.Array.map(eventName => {
-    contractEthers->Ethers.Contract.getEventFilter(~eventName=Types.eventNameToString(eventName))
-  })
-}
-
-let getAllEventFilters = (
-  ~addressInterfaceMapping,
-  ~chainConfig: Config.chainConfig,
-  ~provider,
-  ~contractAddressMapping: ContractAddressingMap.mapping,
-) => {
-  let eventFilters = []
-
-  chainConfig.contracts->Belt.Array.forEach(contract => {
-    contractAddressMapping
-    ->ContractAddressingMap.getAddressesFromContractName(~contractName=contract.name)
-    ->Belt.Array.forEach(address => {
-      let contractEthers = Ethers.Contract.make(~address, ~abi=contract.abi, ~provider)
-      addressInterfaceMapping->Js.Dict.set(
-        address->Ethers.ethAddressToString,
-        contractEthers->Ethers.Contract.getInterface,
-      )
-
-      contract.events->Belt.Array.forEach(
-        eventName => {
-          let eventFilter =
-            contractEthers->Ethers.Contract.getEventFilter(
-              ~eventName=Types.eventNameToString(eventName),
-            )
-          let _ = eventFilters->Js.Array2.push(eventFilter)
-        },
-      )
-    })
-  })
-  eventFilters
-}
-
 let makeCombinedEventFilterQuery = (
   ~provider,
-  ~eventFilters,
+  ~contractInterfaceManager: ContractInterfaceManager.t,
   ~fromBlock,
   ~toBlock,
   ~logger: Pino.t,
 ) => {
-  open Ethers.BlockTag
-
   let combinedFilter =
-    eventFilters->Ethers.CombinedFilter.combineEventFilters(
-      ~fromBlock=BlockNumber(fromBlock)->blockTagFromVariant,
-      ~toBlock=BlockNumber(toBlock)->blockTagFromVariant,
-    )
+    contractInterfaceManager->ContractInterfaceManager.getCombinedEthersFilter(~fromBlock, ~toBlock)
 
   let numBlocks = toBlock - fromBlock + 1
 
@@ -163,11 +89,12 @@ type eventBatchQueueItem = {
   event: Types.event,
 }
 
+exception RpcEventParsing(Converters.parseEventError)
+
 let convertLogs = (
   logs: array<Ethers.log>,
   ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
-  ~contractAddressMapping: ContractAddressingMap.mapping,
-  ~addressInterfaceMapping,
+  ~contractInterfaceManager: ContractInterfaceManager.t,
   ~chainId,
   ~logger,
 ): array<eventBatchPromise> => {
@@ -176,30 +103,27 @@ let convertLogs = (
     "numberLogs": logs->Belt.Array.length,
   })
 
-  logs
-  ->Belt.Array.map(log => {
+  logs->Belt.Array.map(log => {
     let blockPromise = blockLoader->LazyLoader.get(log.blockNumber)
     let timestampPromise = blockPromise->Promise.thenResolve(block => block.timestamp)
 
-    //get a specific interface type
-    //interface type parses the log
-    let optInterface = addressInterfaceMapping->Js.Dict.get(log.address->Obj.magic)
-
-    switch optInterface {
-    | None => None
-    | Some(interface) =>
-      Some({
-        timestampPromise,
-        chainId,
-        blockNumber: log.blockNumber,
-        logIndex: log.logIndex,
-        eventPromise: timestampPromise->Promise.thenResolve(blockTimestamp => {
-          Converters.parseEvent(~log, ~blockTimestamp, ~interface, ~contractAddressMapping, ~logger)
-        }),
-      })
+    {
+      timestampPromise,
+      chainId,
+      blockNumber: log.blockNumber,
+      logIndex: log.logIndex,
+      eventPromise: timestampPromise->Promise.thenResolve(blockTimestamp => {
+        let parsed = Converters.parseEvent(~log, ~blockTimestamp, ~contractInterfaceManager)
+        switch parsed {
+        | Error(e) =>
+          let ex = RpcEventParsing(e)
+          logger->Logging.childErrorWithExn(ex, "Failed to parse event from RPC. Double c")
+          ex->raise
+        | Ok(val) => val
+        }
+      }),
     }
   })
-  ->Belt.Array.keepMap(opt => opt)
 }
 
 let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) => {
@@ -207,21 +131,19 @@ let applyConditionalFunction = (value: 'a, condition: bool, callback: 'a => 'b) 
 }
 
 let queryEventsWithCombinedFilter = async (
-  ~addressInterfaceMapping,
-  ~eventFilters,
+  ~contractInterfaceManager,
   ~fromBlock,
   ~toBlock,
   ~minFromBlockLogIndex=0,
   ~blockLoader,
   ~provider,
   ~chainId,
-  ~contractAddressMapping,
   ~logger: Pino.t,
   (),
 ): array<eventBatchPromise> => {
   let combinedFilterRes = await makeCombinedEventFilterQuery(
     ~provider,
-    ~eventFilters,
+    ~contractInterfaceManager,
     ~fromBlock,
     ~toBlock,
     ~logger,
@@ -234,13 +156,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  logs->convertLogs(
-    ~blockLoader,
-    ~addressInterfaceMapping,
-    ~contractAddressMapping,
-    ~chainId,
-    ~logger,
-  )
+  logs->convertLogs(~blockLoader, ~contractInterfaceManager, ~chainId, ~logger)
 }
 
 type eventBatchQuery = {
@@ -249,9 +165,7 @@ type eventBatchQuery = {
 }
 
 let getContractEventsOnFilters = async (
-  ~eventFilters,
-  ~addressInterfaceMapping,
-  ~contractAddressMapping,
+  ~contractInterfaceManager,
   ~fromBlock,
   ~toBlock,
   ~initialBlockInterval,
@@ -285,9 +199,7 @@ let getContractEventsOnFilters = async (
       let nextToBlock = Pervasives.min(upperBoundToBlock, toBlock)
       let eventsPromise =
         queryEventsWithCombinedFilter(
-          ~contractAddressMapping,
-          ~addressInterfaceMapping,
-          ~eventFilters,
+          ~contractInterfaceManager,
           ~fromBlock=fromBlockRef.contents,
           ~toBlock=nextToBlock,
           ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,

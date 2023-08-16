@@ -51,12 +51,18 @@ let registerStaticAddresses = (mapping, ~chainConfig: Config.chainConfig, ~logge
   })
 }
 
-let getContractNameFromAddress = (
+let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress): option<
+  contractName,
+> => {
+  mapping->getName(contractAddress->Ethers.ethAddressToString)
+}
+
+let getContractNameFromAddressUnsafe = (
   mapping,
   ~contractAddress: Ethers.ethAddress,
   ~logger: Pino.t,
 ) => {
-  switch mapping->getName(contractAddress->Ethers.ethAddressToString) {
+  switch mapping->getContractNameFromAddress(~contractAddress) {
   | None => {
       logger->Logging.childError(
         `contract address ${contractAddress->Ethers.ethAddressToString}  was not found in address store`,

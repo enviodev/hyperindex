@@ -32,3 +32,46 @@ let mergeSorted = (f: 'a => 'b, xs: array<'a>, ys: array<'a>) => {
     result
   }
 }
+
+type promiseWithHandles<'a> = {
+  pendingPromise: promise<'a>,
+  resolve: 'a => promise<'a>,
+  reject: exn => promise<'a>,
+}
+
+let createPromiseWithHandles = () => {
+  //Create a placeholder resovle
+  let resolveRef = ref(None)
+  let rejectRef = ref(None)
+
+  let pendingPromise = Promise.make((resolve, reject) => {
+    resolveRef := Some(resolve)
+    rejectRef := Some(reject)
+  })
+
+  let resolve = (val: 'a) => {
+    switch resolveRef.contents {
+    | None => Promise.resolve(val)
+    | Some(res) => {
+        res(. val)
+        pendingPromise
+      }
+    }
+  }
+
+  let reject = (exn: exn) => {
+    switch rejectRef.contents {
+    | None => Promise.reject(exn)
+    | Some(rej) => {
+        rej(. exn)
+        pendingPromise
+      }
+    }
+  }
+
+  {
+    pendingPromise,
+    resolve,
+    reject,
+  }
+}

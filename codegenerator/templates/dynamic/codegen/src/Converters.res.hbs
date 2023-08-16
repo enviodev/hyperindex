@@ -67,23 +67,39 @@ module {{contract.name.capitalized}} = {
 
 {{/each}}
 
-let parseEvent = (~interface, ~log, ~contractAddressMapping, ~logger, ~blockTimestamp) => {
-  let logDescription = interface->Ethers.Interface.parseLog(~log)
+type parseEventError =
+  ParseError(Ethers.Interface.parseLogError) | UnregisteredContract(Ethers.ethAddress)
 
-  switch eventStringToEvent(
-    logDescription.name,
-    contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
+let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result.t<
+  Types.event,
+  _,
+> => {
+  let logDescriptionResult = contractInterfaceManager->ContractInterfaceManager.parseLog(~log)
+  switch logDescriptionResult {
+  | Error(e) =>
+    switch e {
+    | EthersParseError(parseError) => ParseError(parseError)
+    | UndefinedInterface(contractAddress) => UnregisteredContract(contractAddress)
+    }->Error
+
+  | Ok(logDescription) =>
+    switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
       ~contractAddress=log.address,
-      ~logger,
-    ),
-  ) {
-  {{#each contracts as |contract|}}
-  {{#each contract.events as |event|}}
-    | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
-        logDescription
-        ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
-        ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp)
-  {{/each}}
-  {{/each}}
+    ) {
+    | None => Error(UnregisteredContract(log.address))
+    | Some(eventName) =>
+      let event = switch eventStringToEvent(logDescription.name, eventName) {
+      {{#each contracts as |contract|}}
+      {{#each contract.events as |event|}}
+        | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
+            logDescription
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp)
+      {{/each}}
+      {{/each}}
+      }
+
+      Ok(event)
+    }
   }
 }

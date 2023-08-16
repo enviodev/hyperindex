@@ -1,5 +1,5 @@
 type t = {
-  chainFetchers: Js.Dict.t<ChainFetcher.t<ChainWorker.RpcWorker.t>>,
+  chainFetchers: Js.Dict.t<ChainFetcher.t>,
   //The priority queue should only house the latest event from each chain
   //And potentially extra events that are pushed on by newly registered dynamic
   //contracts which missed being fetched by they chainFetcher
@@ -64,6 +64,17 @@ let determineNextEvent = (chainFetchersPeeks: array<ChainFetcher.eventQueuePeek>
   }
 }
 
+%%private(let envSafe = EnvSafe.make())
+
+let envWorkerTypeString = EnvUtils.getStringEnvVar(~envSafe, ~fallback="rpc", "WORKER_TYPE")
+
+let envWorkerTypeSelected = switch envWorkerTypeString->Js.String2.toLowerCase {
+| "skar" => ChainWorker.SkarSelected
+| "rpc"
+| _ =>
+  RpcSelected
+}
+
 let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
   let chainFetchers =
     configs
@@ -74,7 +85,7 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
         ChainFetcher.make(
           ~chainConfig,
           ~maxQueueSize,
-          ~chainWorker=(ChainWorker.RpcWorker.make(chainConfig), module(ChainWorker.RpcWorker)),
+          ~chainWorkerTypeSelected=envWorkerTypeSelected,
         ),
       )
     })
@@ -96,7 +107,7 @@ let startFetchers = (self: t) => {
 
 exception UndefinedChain(Types.chainId)
 
-let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t<'workerType> => {
+let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
   switch self.chainFetchers->Js.Dict.get(chainId->Belt.Int.toString) {
   | None =>
     Logging.error(`Undefined chain ${chainId->Belt.Int.toString} in chain manager`)
@@ -243,4 +254,3 @@ let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array
 let addItemToArbitraryEvents = (self: t, item: EventFetching.eventBatchQueueItem) => {
   self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.push(item)->ignore
 }
-
