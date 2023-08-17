@@ -332,6 +332,7 @@ let processEventBatch = async (
   ~eventBatch: array<EventFetching.eventBatchQueueItem>,
   ~chainManager: ChainManager.t,
 ) => {
+  let timeRef = Hrtime.makeTimer()
   IO.InMemoryStore.resetStore()
 
   let logger = Logging.createChild(
@@ -348,9 +349,22 @@ let processEventBatch = async (
 
   let eventBatchAndContext = await loadReadEntities(~eventBatch, ~chainManager, ~logger)
 
+  let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
   eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter)
 
+  let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
   await DbFunctions.sql->IO.executeBatch
+
+  let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+  logger->Logging.childTrace({
+    "message": "Finished processing batch",
+    "batch size": eventBatch->Array.length,
+    "loader time elapsed": elapsedAfterLoad,
+    "handlers time elapsed": elapsedTimeAfterProcess - elapsedAfterLoad,
+    "write time elapsed": elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
+  })
 }
 
 let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t): unit => {
