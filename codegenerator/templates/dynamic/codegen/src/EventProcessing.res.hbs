@@ -370,7 +370,10 @@ let processEventBatch = async (
 let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t): unit => {
   while true {
     let nextBatch =
-      await chainManager->ChainManager.createBatch(~minBatchSize=1, ~maxBatchSize=2000)
+      await chainManager->ChainManager.createBatch(
+        ~minBatchSize=1,
+        ~maxBatchSize=Env.maxProcessBatchSize,
+      )
 
     await processEventBatch(~eventBatch=nextBatch, ~chainManager)
   }

@@ -703,7 +703,6 @@ module RpcWorker: ChainWorker = {
   let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
 }
 
-type workerTypeSelected = RpcSelected | SkarSelected
 type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t)
 
 module PolyMorphicChainWorkerFunctions = {
@@ -826,7 +825,7 @@ let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
   }
 }
 
-let make = (selectedWorker: workerTypeSelected, ~chainConfig) => {
+let make = (selectedWorker: Env.workerTypeSelected, ~chainConfig) => {
   switch selectedWorker {
   | RpcSelected => Rpc(RpcWorker.make(chainConfig))
   | SkarSelected => Skar(SkarWorker.make(chainConfig))

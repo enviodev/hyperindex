@@ -64,17 +64,6 @@ let determineNextEvent = (chainFetchersPeeks: array<ChainFetcher.eventQueuePeek>
   }
 }
 
-%%private(let envSafe = EnvSafe.make())
-
-let envWorkerTypeString = EnvUtils.getStringEnvVar(~envSafe, ~fallback="rpc", "WORKER_TYPE")
-
-let envWorkerTypeSelected = switch envWorkerTypeString->Js.String2.toLowerCase {
-| "skar" => ChainWorker.SkarSelected
-| "rpc"
-| _ =>
-  RpcSelected
-}
-
 let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
   let chainFetchers =
     configs
@@ -85,7 +74,7 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
         ChainFetcher.make(
           ~chainConfig,
           ~maxQueueSize,
-          ~chainWorkerTypeSelected=envWorkerTypeSelected,
+          ~chainWorkerTypeSelected=Env.workerTypeSelected,
         ),
       )
     })

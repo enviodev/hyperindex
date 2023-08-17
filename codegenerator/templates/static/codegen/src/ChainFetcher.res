@@ -11,7 +11,7 @@ type t = {
 let make = (
   ~chainConfig: Config.chainConfig,
   ~maxQueueSize,
-  ~chainWorkerTypeSelected: ChainWorker.workerTypeSelected,
+  ~chainWorkerTypeSelected: Env.workerTypeSelected,
 ): t => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chainId})
   let chainWorker = chainWorkerTypeSelected->ChainWorker.make(~chainConfig)
