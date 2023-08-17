@@ -118,6 +118,7 @@ jobs:
       #Note: this is broken on Windows
       - name: Set new version in Cargo.toml
         working-directory: codegenerator
+        shell: bash
         run: |
           awk -v version="${VERSION:1}" '/^version = "/ {$0 = "version = \"" version "\""} 1' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
         env:
