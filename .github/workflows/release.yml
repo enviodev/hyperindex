@@ -159,7 +159,7 @@ jobs:
       - name: Archive binaries
         id: artifacts
         env:
-          PLATFORM_NAME: ${{ matrix.job.platfor--tag betam }}
+          PLATFORM_NAME: ${{ matrix.job.platform }}
           TARGET: ${{ matrix.job.target }}
           ARCH: ${{ matrix.job.arch }}
           VERSION_NAME: ${{ needs.prepare.outputs.tag_name }}
