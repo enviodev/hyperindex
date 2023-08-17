@@ -115,7 +115,6 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v3
 
-      #Note: this is broken on Windows
       - name: Set new version in Cargo.toml
         working-directory: codegenerator
         shell: bash
