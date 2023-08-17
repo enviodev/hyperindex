@@ -5,7 +5,6 @@ use std::{
 };
 
 use crate::cli_args::{
-    constants::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH},
     ProjectPathsArgs, ToProjectPathsArgs,
 };
 

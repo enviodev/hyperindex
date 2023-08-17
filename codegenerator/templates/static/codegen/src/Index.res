@@ -16,6 +16,16 @@ app->get("/healthz", (_req, res) => {
 
 let _ = app->listen(port)
 
+PromClient.collectDefaultMetrics()
+
+app->get("/metrics", (_req, res) => {
+  res->set("Content-Type", PromClient.defaultRegister->PromClient.getContentType)
+  let _ =
+    PromClient.defaultRegister
+    ->PromClient.metrics
+    ->Promise.thenResolve(metrics => res->endWithData(metrics))
+})
+
 let main = () => {
   EventSyncing.startSyncingAllEvents()
 }
