@@ -23,6 +23,7 @@ jobs:
       tag_name: ${{ steps.release_info.outputs.tag_name }}
       release_name: ${{ steps.release_info.outputs.release_name }}
       is_tagged: ${{ steps.release_info.outputs.is_tagged }}
+      release_info: ${{ steps.release_info.outputs.release_info }}
       matrix: ${{ steps.set_matrix.outputs.matrix }}
       changelog: ${{ steps.build_changelog.outputs.changelog }}
       commit_hash: ${{ steps.vars.outputs.hash_short }}
@@ -46,6 +47,7 @@ jobs:
             echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
             echo "::set-output name=release_name::${GITHUB_REF_NAME}"
             echo "::set-output name=is_tagged::true"
+            echo "::set-output name=release_type::next"
           elif [[ "${GITHUB_REF_NAME}" =~ ^release-([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             version=v${BASH_REMATCH[1]}
             timestamp=$(date +'%Y%m%d%H%M%S')
@@ -53,12 +55,14 @@ jobs:
             echo "::set-output name=tag_name::${version}-${timestamp}-${short_commit}"
             echo "::set-output name=release_name::${version}-${timestamp}-${short_commit}"
             echo "::set-output name=is_tagged::false"
+            echo "::set-output name=release_type::dev"
           else
             timestamp=$(date +'%Y%m%d%H%M%S')
             short_commit=${{ steps.vars.outputs.hash_short }}
             echo "::set-output name=tag_name::v0.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
             echo "::set-output name=release_name::v0.0.0-${GITHUB_REF_NAME}-${timestamp}-${short_commit}"
             echo "::set-output name=is_tagged::false"
+            echo "::set-output name=release_type::dev"
           fi
 
       - name: Set matrix
@@ -155,7 +159,7 @@ jobs:
       - name: Archive binaries
         id: artifacts
         env:
-          PLATFORM_NAME: ${{ matrix.job.platform }}
+          PLATFORM_NAME: ${{ matrix.job.platfor--tag betam }}
           TARGET: ${{ matrix.job.target }}
           ARCH: ${{ matrix.job.arch }}
           VERSION_NAME: ${{ needs.prepare.outputs.tag_name }}
@@ -265,12 +269,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           version: ${{ needs.prepare.outputs.tag_name }}
+          RELEASE_TYPE: ${{ needs.prepare.outputs.release_type}}
         run: |
           envsubst < ./package.json.tmpl > "package.json"
           pnpm install --no-frozen-lockfile
           pnpm build
           cp ../../README.md .
-          npm publish --access public
+          npm publish --access public --tag ${RELEASE_TYPE}
 
   build-and-push:
     name: "build, publish and add docker container for deployment"
