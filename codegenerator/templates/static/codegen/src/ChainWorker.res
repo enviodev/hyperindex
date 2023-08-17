@@ -107,7 +107,8 @@ module SkarWorker: ChainWorker = {
     let fromBlock = ref(startBlock)
 
     let checkReadyToContinue = async () => {
-      if fromBlock.contents > currentHeight.contents {
+      if fromBlock.contents >= currentHeight.contents {
+        logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
         //If the block we want to query from is greater than the current height,
         //poll for until the archive height is greater than the from block and set
         //current height to the new height
