@@ -15,7 +15,7 @@
       "clean": "rescript clean -with-deps",
       "build": "rescript build -with-deps",
       "watch": "rescript build -w -with-deps",
-      "start": "pnpm build && node generated/src/Index.bs.js"
+      "start": "rescript build -with-deps && node generated/src/Index.bs.js"
       {{/if}}
   },
   {{#if is_rescript}}
