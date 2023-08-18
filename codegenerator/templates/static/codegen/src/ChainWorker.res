@@ -105,13 +105,13 @@ module SkarWorker: ChainWorker = {
     let fromBlock = ref(startBlock)
 
     let checkReadyToContinue = async () => {
-      if fromBlock.contents >= currentHeight.contents {
+      if fromBlock.contents > currentHeight.contents {
         //If the block we want to query from is greater than the current height,
         //poll for until the archive height is greater than the from block and set
         //current height to the new height
         currentHeight :=
           (
-            await SkarQueryBuilder.HeightQuery.pollForHeightGreaterThan(
+            await SkarQueryBuilder.HeightQuery.pollForHeightGtOrEq(
               ~blockNumber=fromBlock.contents,
               ~logger,
             )
@@ -166,6 +166,7 @@ module SkarWorker: ChainWorker = {
         self.latestFetchedBlockNumber = latestBlockNumbersPromise
 
         //Loop through items, add them to the queue
+        // TODO: this could add the whole batch to the queue if the queue is smaller than the max size, rather than using the same kind of logic on each item that is required for pushing items only with timestamps.
         for i in 0 to page.items->Array.length - 1 {
           let item = page.items[i]
           //parse item

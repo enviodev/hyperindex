@@ -222,14 +222,14 @@ module HeightQuery = {
 
     height.contents
   }
-
+ 
   //Poll for a height greater than the given blocknumber.
   //Used for waiting until there is a new block to index
-  let pollForHeightGreaterThan = async (~blockNumber, ~logger) => {
+  let pollForHeightGtOrEq = async (~blockNumber, ~logger) => {
     let pollHeight = ref(await getHeightWithRetry(~logger))
     let pollIntervalMillis = 100
 
-    while pollHeight.contents <= blockNumber {
+    while pollHeight.contents < blockNumber {
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=pollIntervalMillis)
       pollHeight := (await getHeightWithRetry(~logger))
     }
