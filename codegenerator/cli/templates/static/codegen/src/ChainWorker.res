@@ -28,7 +28,7 @@ module type ChainWorker = {
   ) => promise<array<Types.eventBatchQueueItem>>
 }
 
-module SkarWorker: ChainWorker = {
+module MakeHyperSyncWoker = (HyperSync: HyperSync.S): ChainWorker => {
   type t = {
     mutable latestFetchedBlockNumber: promise<int>, // promise allows locking of this field while a batch has been fetched but still being added
     mutable latestFetchedBlockTimestamp: int,
@@ -59,7 +59,7 @@ module SkarWorker: ChainWorker = {
       newRangeQueriedCallBacks: SDSL.Queue.make(),
       contractAddressMapping,
       chainConfig,
-      serverUrl: SkarQueryBuilder.skarEndpoint,
+      serverUrl: Env.hypersyncEndpoint,
     }
   }
 
@@ -70,7 +70,7 @@ module SkarWorker: ChainWorker = {
   ) => {
     logger->Logging.childTrace("Starting event fetching on Skar worker")
 
-    let {chainConfig, contractAddressMapping} = self
+    let {chainConfig, contractAddressMapping, serverUrl} = self
     let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
       ~chainId=chainConfig.chainId,
     )
@@ -101,10 +101,9 @@ module SkarWorker: ChainWorker = {
       )
     )
 
-    let initialHeightRes = await Skar.getArchiveHeight(~serverUrl=self.serverUrl)
-    let initialHeightUnsafe = initialHeightRes->Belt.Result.getExn
+    let initialHeight = await HyperSync.getHeightWithRetry(~serverUrl=self.serverUrl, ~logger)
 
-    let currentHeight = ref(initialHeightUnsafe)
+    let currentHeight = ref(initialHeight)
     let fromBlock = ref(startBlock)
 
     let checkReadyToContinue = async () => {
@@ -115,7 +114,8 @@ module SkarWorker: ChainWorker = {
         //current height to the new height
         currentHeight :=
           (
-            await SkarQueryBuilder.HeightQuery.pollForHeightGtOrEq(
+            await HyperSync.pollForHeightGtOrEq(
+              ~serverUrl=self.serverUrl,
               ~blockNumber=fromBlock.contents,
               ~logger,
             )
@@ -143,12 +143,16 @@ module SkarWorker: ChainWorker = {
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
       //fetch batch
-      let page = await SkarQueryBuilder.LogsQuery.queryLogsPage(
-        ~fromBlock=fromBlock.contents,
-        ~toBlock=currentHeight.contents,
-        ~addresses,
-        ~topics=topLevelTopics,
-      )
+      let pageUnsafe =
+        (
+          await HyperSync.queryLogsPage(
+            ~serverUrl,
+            ~fromBlock=fromBlock.contents,
+            ~toBlock=currentHeight.contents,
+            ~addresses,
+            ~topics=topLevelTopics,
+          )
+        )->Belt.Result.getExn
 
       let elapsedTimeFetchingPage =
         startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -156,13 +160,14 @@ module SkarWorker: ChainWorker = {
       logger->Logging.childTrace({
         "message": "Retrieved event page from server",
         "fromBlock": fromBlock.contents,
-        "toBlock": page.nextBlock - 1,
-        "number of logs": page.items->Array.length,
+        "toBlock": pageUnsafe.nextBlock - 1,
+        "number of logs": pageUnsafe.items->Array.length,
       })
 
       //Start query for heighest block queried to get latest timestamp
-      let heighestBlockQueried = page.archiveHeight - 1
-      let heighestBlockQueriedPagePromise = SkarQueryBuilder.BlockTimestampQuery.queryBlockTimestampsPage(
+      let heighestBlockQueried = pageUnsafe.archiveHeight - 1
+      let heighestBlockQueriedPagePromise = HyperSync.queryBlockTimestampsPage(
+        ~serverUrl,
         ~fromBlock=heighestBlockQueried,
         ~toBlock=heighestBlockQueried,
       )
@@ -188,7 +193,7 @@ module SkarWorker: ChainWorker = {
 
         let parsingTimeRef = Hrtime.makeTimer()
         //Parse page items into queue items
-        let parsedQueueItems = page.items->Belt.Array.map(item => {
+        let parsedQueueItems = pageUnsafe.items->Belt.Array.map(item => {
           let parsedUnsafe =
             Converters.parseEvent(
               ~log=item.log,
@@ -233,7 +238,7 @@ module SkarWorker: ChainWorker = {
 
         //Used in failure case of query
         let fallbackUpdateLatestFetchedValuesToLastInBatch = () => {
-          let lastItemInBatch = page.items->Belt.Array.get(page.items->Array.length)
+          let lastItemInBatch = pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Array.length)
           lastItemInBatch
           ->Belt.Option.map(item => {
             //Set the latest fetched timestamp to the last item in the batch timestamp
@@ -244,20 +249,21 @@ module SkarWorker: ChainWorker = {
           ->ignore
 
           //We know the latest fetched block number since it will be the one before nextBlock
-          self.latestFetchedBlockNumber = latestBlockNumbersResolve(page.nextBlock - 1)
+          self.latestFetchedBlockNumber = latestBlockNumbersResolve(pageUnsafe.nextBlock - 1)
         }
 
         switch heighestBlockQueriedPage {
         | Ok(page) =>
           //Expected only 1 item but just taking last in case things change and we return
           //a range
-          let lastBlockInRangeQueried = page.items->Belt.Array.get(page.items->Array.length)
+          let lastBlockInRangeQueried =
+            pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Array.length)
 
           switch lastBlockInRangeQueried {
-          | Some(block) =>
+          | Some(item) =>
             //Set the latest fetched data to the queried block
-            self.latestFetchedBlockTimestamp = block.timestamp
-            self.latestFetchedBlockNumber = latestBlockNumbersResolve(block.blockNumber)
+            self.latestFetchedBlockTimestamp = item.blockTimestamp
+            self.latestFetchedBlockNumber = latestBlockNumbersResolve(item.log.blockNumber)
           | None => fallbackUpdateLatestFetchedValuesToLastInBatch()
           }
         | Error(err) => fallbackUpdateLatestFetchedValuesToLastInBatch()
@@ -268,8 +274,8 @@ module SkarWorker: ChainWorker = {
         self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
 
         //set height and next from block
-        currentHeight := page.archiveHeight
-        fromBlock := page.nextBlock
+        currentHeight := pageUnsafe.archiveHeight
+        fromBlock := pageUnsafe.nextBlock
 
         let totalTimeElapsed =
           startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -302,6 +308,7 @@ module SkarWorker: ChainWorker = {
     ~fromLogIndex,
     ~logger,
   ): array<Types.eventBatchQueueItem> => {
+    let {serverUrl} = self
     let {pendingPromise, resolve} = Utils.createPromiseWithHandles()
 
     //Perform registering and updatiing "hasNewDynamicContractRegistrations" inside a lock
@@ -365,14 +372,18 @@ module SkarWorker: ChainWorker = {
       let topLevelTopics = [topics]
 
       //fetch batch
-      let page = await SkarQueryBuilder.LogsQuery.queryLogsPage(
-        ~fromBlock=fromBlockRef.contents,
-        ~toBlock,
-        ~addresses,
-        ~topics=topLevelTopics,
-      )
+      let pageUnsafe =
+        (
+          await HyperSync.queryLogsPage(
+            ~serverUrl,
+            ~fromBlock=fromBlockRef.contents,
+            ~toBlock,
+            ~addresses,
+            ~topics=topLevelTopics,
+          )
+        )->Belt.Result.getExn
 
-      page.items->Belt.Array.forEach(item => {
+      pageUnsafe.items->Belt.Array.forEach(item => {
         //Logs in the same block as the log that called for dynamic contract registration
         //should not be included if they occurred before the contract registering log
         let logIsNotBeforeContractRegisteringLog = !(
@@ -399,12 +410,15 @@ module SkarWorker: ChainWorker = {
         }
       })
 
-      fromBlockRef := page.nextBlock
+      fromBlockRef := pageUnsafe.nextBlock
     }
 
     queueItems
   }
 }
+
+module SkarWorker = MakeHyperSyncWoker(HyperSync.SkarHyperSync)
+module EthArchiveWorker = MakeHyperSyncWoker(HyperSync.EthArchiveHyperSync)
 
 module RawEventsWorker: ChainWorker = {
   type t = {
@@ -578,6 +592,7 @@ module RpcWorker: ChainWorker = {
     ~fetchedEventQueue: ChainEventQueue.t,
   ) => {
     let {chainConfig, contractAddressMapping, blockLoader} = self
+
     let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
       ~chainId=chainConfig.chainId,
     )
@@ -791,7 +806,7 @@ module RpcWorker: ChainWorker = {
   let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
 }
 
-type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t) | RawEvents(RawEventsWorker.t)
+type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t) | EthArchive(EthArchiveWorker.t) | RawEvents(RawEventsWorker.t)
 
 module PolyMorphicChainWorkerFunctions = {
   /* Why use thes polymorphic functions rather than calling function directly on
@@ -868,12 +883,14 @@ module PolyMorphicChainWorkerFunctions = {
   type chainWorkerMod =
     | RpcWorkerMod(chainWorkerModTuple<RpcWorker.t>)
     | SkarWorkerMod(chainWorkerModTuple<SkarWorker.t>)
+    | EthArchiveWorkerMod(chainWorkerModTuple<EthArchiveWorker.t>)
     | RawEventsWorkerMod(chainWorkerModTuple<RawEventsWorker.t>)
 
   let chainWorkerToChainMod = (worker: chainWorker) => {
     switch worker {
     | Rpc(w) => RpcWorkerMod((w, module(RpcWorker)))
     | Skar(w) => SkarWorkerMod((w, module(SkarWorker)))
+    | EthArchive(w) => EthArchiveWorkerMod((w, module(EthArchiveWorker)))
     | RawEvents(w) => RawEventsWorkerMod((w, module(RawEventsWorker)))
     }
   }
@@ -885,6 +902,7 @@ let startFetchingEvents = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->startFetchingEvents
   | SkarWorkerMod(w) => w->startFetchingEvents
+  | EthArchiveWorkerMod(w) => w->startFetchingEvents
   | RawEventsWorkerMod(w) => w->startFetchingEvents
   }
 }
@@ -895,6 +913,7 @@ let addNewRangeQueriedCallback = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->addNewRangeQueriedCallback
   | SkarWorkerMod(w) => w->addNewRangeQueriedCallback
+  | EthArchiveWorkerMod(w) => w->addNewRangeQueriedCallback
   | RawEventsWorkerMod(w) => w->addNewRangeQueriedCallback
   }
 }
@@ -905,6 +924,7 @@ let getLatestFetchedBlockTimestamp = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   | SkarWorkerMod(w) => w->getLatestFetchedBlockTimestamp
+  | EthArchiveWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   | RawEventsWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   }
 }
@@ -915,6 +935,7 @@ let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   | SkarWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
+  | EthArchiveWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   | RawEventsWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   }
 }
@@ -923,6 +944,7 @@ let make = (selectedWorker: Env.workerTypeSelected, ~chainConfig) => {
   switch selectedWorker {
   | RpcSelected => Rpc(RpcWorker.make(chainConfig))
   | SkarSelected => Skar(SkarWorker.make(chainConfig))
+  | EthArchiveSelected => EthArchive(EthArchiveWorker.make(chainConfig))
   | RawEventsSelected => RawEvents(RawEventsWorker.make(chainConfig))
   }
 }

@@ -1,8 +1,7 @@
-
 @spice
 type unchecksummedEthAddress = string
 
-module SkarQuery = {
+module QueryTypes = {
   @spice
   type blockFieldSelection = {
     parentHash?: bool,
@@ -92,7 +91,8 @@ module SkarQuery = {
     transactions?: array<transactionParams>,
   }
 }
-module SkarResponse = {
+
+module ResponseTypes = {
   @spice
   type blockData = {
     parentHash?: string,
@@ -159,58 +159,36 @@ module SkarResponse = {
   }
 
   @spice
-  type t = {
+  type queryResponse = {
     data: array<array<data>>,
     archiveHeight: int,
     nextBlock: int,
     totalTime: int,
   }
+
+  @spice
+  type heightResponse = {height: int}
 }
 
-type skarQueryError = Deserialize(string) | Other
-
-let executeSkarQuery = async (~serverUrl, ~postQueryBody: SkarQuery.postQueryBody): result<
-  SkarResponse.t,
-  skarQueryError,
+let executeEthArchiveQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBody): promise<
+  result<ResponseTypes.queryResponse, QueryHelpers.queryError>,
 > => {
-  let queryEndpoint = serverUrl ++ "/query"
-  try {
-    open Fetch
-    //Not encoding with spice since all param types are js primitives
-    let body = postQueryBody->Js.Json.stringifyAny->Belt.Option.getExn->Body.string
-
-    let res = await fetch(
-      queryEndpoint,
-      {method: #POST, headers: Headers.fromObject({"Content-type": "application/json"}), body},
-    )
-
-    let data = await res->Response.json
-
-    switch data->SkarResponse.t_decode {
-    | Error(e) => Error(Deserialize(e.message))
-    | Ok(v) => Ok(v)
-    }
-  } catch {
-  | _ => Error(Other)
-  }
+  QueryHelpers.executeFetchRequest(
+    ~endpoint=serverUrl ++ "/query",
+    ~method=#POST,
+    ~bodyAndEncoder=(postQueryBody, QueryTypes.postQueryBody_encode),
+    ~responseDecoder=ResponseTypes.queryResponse_decode,
+    (),
+  )
 }
 
-@spice
-type heightResponse = {height: int}
+let getArchiveHeight = async (~serverUrl): result<int, QueryHelpers.queryError> => {
+  let res = await QueryHelpers.executeFetchRequest(
+    ~endpoint=serverUrl ++ "/height",
+    ~method=#GET,
+    ~responseDecoder=ResponseTypes.heightResponse_decode,
+    (),
+  )
 
-let getArchiveHeight = async (~serverUrl) => {
-  try {
-    open Fetch
-    let heightEndpoint = serverUrl ++ "/height"
-    let res = await fetch(heightEndpoint, {method: #GET})
-
-    let data = await res->Response.json
-
-    switch data->heightResponse_decode {
-    | Error(e) => Error(Deserialize(e.message))
-    | Ok(v) => Ok(v.height)
-    }
-  } catch {
-  | _ => Error(Other)
-  }
+  res->Belt.Result.map(res => res.height)
 }
