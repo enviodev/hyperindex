@@ -97,7 +97,7 @@ type rec readEntitiesResultPromise = {
 }
 
 let rec loadReadEntitiesInner = async (
-  ~eventBatch: array<EventFetching.eventBatchQueueItem>,
+  ~eventBatch: array<Types.eventBatchQueueItem>,
   ~logger,
   ~chainManager: ChainManager.t,
 ): array<readEntitiesResultPromise> => {
@@ -300,7 +300,7 @@ let rec flattenNested = (xs: array<nestedResult>): array<readEntitiesResult> => 
 }
 
 let loadReadEntities = async (
-  ~eventBatch: array<EventFetching.eventBatchQueueItem>,
+  ~eventBatch: array<Types.eventBatchQueueItem>,
   ~chainManager: ChainManager.t,
   ~logger: Pino.t,
 ): array<Types.eventRouterEventAndContext> => {
@@ -329,7 +329,7 @@ let loadReadEntities = async (
 }
 
 let processEventBatch = async (
-  ~eventBatch: array<EventFetching.eventBatchQueueItem>,
+  ~eventBatch: array<Types.eventBatchQueueItem>,
   ~chainManager: ChainManager.t,
 ) => {
   let timeRef = Hrtime.makeTimer()

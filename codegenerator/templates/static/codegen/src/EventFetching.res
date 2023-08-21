@@ -81,14 +81,6 @@ type eventBatchPromise = {
   eventPromise: promise<Types.event>,
 }
 
-type eventBatchQueueItem = {
-  timestamp: int,
-  chainId: int,
-  blockNumber: int,
-  logIndex: int,
-  event: Types.event,
-}
-
 exception RpcEventParsing(Converters.parseEventError)
 
 let convertLogs = (

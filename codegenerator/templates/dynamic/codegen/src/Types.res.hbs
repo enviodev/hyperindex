@@ -219,3 +219,11 @@ let eventNameToString = (eventName: eventName) => switch eventName {
 }
 
 type chainId = int
+
+type eventBatchQueueItem = {
+  timestamp: int,
+  chainId: int,
+  blockNumber: int,
+  logIndex: int,
+  event: event,
+}

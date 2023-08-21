@@ -1,4 +1,4 @@
-type eventType = EventFetching.eventBatchQueueItem
+type eventType = Types.eventBatchQueueItem
 
 type t = {
   logger: Pino.t,
@@ -57,7 +57,7 @@ let addDynamicContractAndFetchMissingEvents = (
   ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
   ~fromBlock,
   ~fromLogIndex,
-): promise<array<EventFetching.eventBatchQueueItem>> => {
+): promise<array<Types.eventBatchQueueItem>> => {
   self.chainWorker->ChainWorker.addDynamicContractAndFetchMissingEvents(
     ~dynamicContracts,
     ~fromBlock,
@@ -68,7 +68,7 @@ let addDynamicContractAndFetchMissingEvents = (
 
 type latestFetchedBlockTimestamp = int
 type eventQueuePeek =
-  NoItem(latestFetchedBlockTimestamp, Types.chainId) | Item(EventFetching.eventBatchQueueItem)
+  NoItem(latestFetchedBlockTimestamp, Types.chainId) | Item(Types.eventBatchQueueItem)
 
 let peekFrontItemOfQueue = (self: t): eventQueuePeek => {
   let optFront = self.fetchedEventQueue->ChainEventQueue.peekFront
