@@ -1,3 +1,5 @@
+// TODO: move to `eventFetching`
+
 type t = {
   chainFetchers: Js.Dict.t<ChainFetcher.t>,
   //The priority queue should only house the latest event from each chain
@@ -105,10 +107,11 @@ let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
   }
 }
 
-//Synchronus operation that returns an optional value and will not wait
-//for a value to be on the queue
-//TODO: investigate can this function + Async version below be combined to share
-//logic
+//TODO: investigate can this function + Async version below be combined to share logic
+/**
+Synchronus operation that returns an optional value and will not wait
+for a value to be on the queue
+*/
 let popBatchItem = (self: t): option<EventFetching.eventBatchQueueItem> => {
   //Peek all next fetched event queue items on all chain fetchers
   let peekChainFetcherFrontItems =
@@ -160,8 +163,10 @@ let popBatchItem = (self: t): option<EventFetching.eventBatchQueueItem> => {
   }
 }
 
-//Async pop function that will wait for an item to be available before returning
 //TODO: investigate combining logic with the above synchronus version of this function
+/**
+Async pop function that will wait for an item to be available before returning
+*/
 let rec popAndAwaitBatchItem: t => promise<EventFetching.eventBatchQueueItem> = async (
   self: t,
 ): EventFetching.eventBatchQueueItem => {

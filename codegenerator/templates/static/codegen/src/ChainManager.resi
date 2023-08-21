@@ -1,0 +1,17 @@
+// TODO: move to `eventFetching`
+
+type t = {
+  chainFetchers: Js.Dict.t<ChainFetcher.t>,
+  arbitraryEventPriorityQueue: SDSL.PriorityQueue.t<EventFetching.eventBatchQueueItem>,
+}
+type nextEventErr = NoItemsInArray
+
+let make: (~configs: Config.chainConfigs, ~maxQueueSize: int) => t
+let startFetchers: t => unit
+let getChainFetcher: (t, ~chainId: int) => ChainFetcher.t
+let createBatch: (
+  t,
+  ~minBatchSize: int,
+  ~maxBatchSize: int,
+) => promise<array<EventFetching.eventBatchQueueItem>>
+let addItemToArbitraryEvents: (t, EventFetching.eventBatchQueueItem) => unit

@@ -1,3 +1,4 @@
+// TODO: move to `eventFetching`
 
 type t = {
   pushBacklogCallbacks: SDSL.Queue.t<unit => unit>,

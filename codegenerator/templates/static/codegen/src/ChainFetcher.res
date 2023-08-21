@@ -1,3 +1,4 @@
+// TODO: move to `eventFetching`
 type eventType = EventFetching.eventBatchQueueItem
 
 type t = {
@@ -40,18 +41,24 @@ let startFetchingEvents = async (self: t) => {
   }
 }
 
-//Pops the front item on the fetchedEventQueue and awaits an item if there is none
-let popAndAwaitQueueItem = async (self: t): eventType => {
+/**
+Pops the front item on the fetchedEventQueue and awaits an item if there is none
+*/
+let popAndAwaitQueueItem = async (self: t): EventFetching.eventBatchQueueItem => {
   await self.fetchedEventQueue->ChainEventQueue.popSingleAndAwaitItem
 }
 
-//Pops the front item on the fetchedEventQueue
-let popQueueItem = (self: t): option<eventType> => {
+/**
+Pops the front item on the fetchedEventQueue
+*/
+let popQueueItem = (self: t): option<EventFetching.eventBatchQueueItem> => {
   self.fetchedEventQueue->ChainEventQueue.popSingle
 }
 
-//Registers the new contract
-//fetches all the unfetched events
+/**
+Registers the new contract
+fetches all the unfetched events
+*/
 let addDynamicContractAndFetchMissingEvents = (
   self: t,
   ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
