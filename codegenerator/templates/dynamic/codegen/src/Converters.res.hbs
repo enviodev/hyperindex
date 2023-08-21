@@ -87,8 +87,8 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result
       ~contractAddress=log.address,
     ) {
     | None => Error(UnregisteredContract(log.address))
-    | Some(eventName) =>
-      let event = switch eventStringToEvent(logDescription.name, eventName) {
+    | Some(contractName) =>
+      let event = switch eventStringToEvent(logDescription.name, contractName) {
       {{#each contracts as |contract|}}
       {{#each contract.events as |event|}}
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
