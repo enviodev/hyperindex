@@ -22,13 +22,32 @@ type eventIndex = {
 }
 
 // takes blockNumber, logIndex and packs them into a number with
-//32 bits, 8bits and 8 bits respectively
+//32 bits, 16 bits and 16 bits respectively
 let packEventIndex = (~blockNumber, ~logIndex) => {
   let blockNumber = blockNumber->Ethers.BigInt.fromInt
   let logIndex = logIndex->Ethers.BigInt.fromInt
   let blockNumber = Ethers.BigInt.Bitwise.shift_left(blockNumber, 16->Ethers.BigInt.fromInt)
 
   blockNumber->Ethers.BigInt.Bitwise.logor(logIndex)
+}
+
+//Currently not used but keeping in utils
+//using @live flag for dead code analyser
+@live
+let packMultiChainEventIndex = (~timestamp, ~chainId, ~blockNumber, ~logIndex) => {
+  let timestamp = timestamp->Ethers.BigInt.fromInt
+  let chainId = chainId->Ethers.BigInt.fromInt
+  let blockNumber = blockNumber->Ethers.BigInt.fromInt
+  let logIndex = logIndex->Ethers.BigInt.fromInt
+
+  let timestamp = Ethers.BigInt.Bitwise.shift_left(timestamp, 48->Ethers.BigInt.fromInt)
+  let chainId = Ethers.BigInt.Bitwise.shift_left(chainId, 16->Ethers.BigInt.fromInt)
+  let blockNumber = Ethers.BigInt.Bitwise.shift_left(blockNumber, 16->Ethers.BigInt.fromInt)
+
+  timestamp
+  ->Ethers.BigInt.Bitwise.logor(chainId)
+  ->Ethers.BigInt.Bitwise.logor(blockNumber)
+  ->Ethers.BigInt.Bitwise.logor(logIndex)
 }
 
 //Currently not used but keeping in utils
