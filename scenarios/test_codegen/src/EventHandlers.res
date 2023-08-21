@@ -1,6 +1,6 @@
 open Types
 
-Handlers.GravatarContract.NewGravatar.loader((~event, ~context) => {
+Handlers.GravatarContract.NewGravatar.loader((~event as _, ~context as _) => {
   ()
 })
 
