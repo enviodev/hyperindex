@@ -183,6 +183,7 @@ module {{event.name.capitalized}}Event = {
 }
 {{/each}}
 
+@deriving(accessors)
 type event =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
