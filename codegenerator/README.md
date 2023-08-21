@@ -18,6 +18,7 @@ Envio is a reliable real-time indexing solution designed to simplify the ingesti
 - [Contribution & Support](#contribution-&-support)
 
 *Note: Envio is built for javascript, typescirpt and rescript. However in this readme we will only use typescript for examples. Refer to the [documentation website](https://docs.envio.dev) for full docs.*
+
 ## [Quickstart](https://docs.envio.dev/docs/quickstart)
 
 For a slightly larger tutorial please see the [Greeter contract tutorial](https://docs.envio.dev/docs/greeter-tutorial).
@@ -37,7 +38,7 @@ npm i -g envio
 To view the available CLI commands:
 
 ```bash
-npx envio --help
+envio --help
 ```
 
 ## Usage
@@ -46,10 +47,9 @@ npx envio --help
 - `envio`
 - `envio init` - Auto-generates configuration, GraphQL schema, and event handlers based on the Greeter template.
 - `envio codegen` - Generates code after setting configuration and schema files.
-- `envio start`
-- `envio local docker up`
-- `envio local docker down`
-- `envio local db-migrate setup`
+- `envio start` - Start the indexer.
+- `envio dev resart` - Restart and resync the local dev environment from scratch.
+- `envio dev stop` - Delete the database and stop all processes
 
 For a detailed breakdown of commands, refer to the [documentation](https://docs.envio.dev/docs/cli-commands).
 
@@ -72,6 +72,7 @@ Loader functions are responsible for loading specific entities (defined in `sche
 ```typescript
 <ContractName>Contract_ < EventName > _loader;
 ```
+**NOTE**: the syntax is slightly different for javascript and rescript. See [loader docs](https://docs.envio.dev/docs/event-handlers#loader-function).
 
 ### Handler Function
 
@@ -80,6 +81,7 @@ Handler functions modify the entities loaded by the loader function. They incorp
 ```typescript
 <ContractName>Contract_ < EventName > _handler;
 ```
+**NOTE**: the syntax is slightly different for javascript and rescript. See [handler docs](https://docs.envio.dev/docs/event-handlers#handler-function).
 
 For a comprehensive guide on Event Handlers, please refer to the [provided documentation](https://docs.envio.dev/docs/event-handlers).
 
