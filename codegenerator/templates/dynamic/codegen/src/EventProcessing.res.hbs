@@ -336,6 +336,8 @@ let processEventBatch = async (
   let timeRef = Hrtime.makeTimer()
   IO.InMemoryStore.resetStore()
 
+  let startTime = Js.Date.now()
+
   let logger = Logging.createChild(
     ~params={
       "context": "batch",

@@ -1,26 +1,32 @@
-let eventProcessedCounter = PromClient.Counter.makeCounter({
-  "name": "automation_service_number_event_processed_counter",
-  "help": "Number of events that have been processed by the indexer",
-  "labelNames": ["chainId"],
-})
-
-let eventRouterProcessingTimeSpent = PromClient.Counter.makeCounter({
-  "name": "event_router_processing_time_spent",
-  "help": "Number of events that have been processed by the indexer",
+let loadEntitiesDurationCounter = PromClient.Counter.makeCounter({
+  "name": "load_entities_processing_time_spent",
+  "help": "Duration spend on loading entities",
   "labelNames": [],
 })
 
-let incrementEventProcessedCounter = (~chainId) => {
-  eventProcessedCounter
-  ->PromClient.Counter.labels({
-    "chainId": chainId,
-  })
-  ->PromClient.Counter.inc
+let eventRouterDurationCounter = PromClient.Counter.makeCounter({
+  "name": "event_router_processing_time_spent",
+  "help": "Duration spend on event routing",
+  "labelNames": [],
+})
+
+let executeBatchDurationCounter = PromClient.Counter.makeCounter({
+  "name": "execute_batch_processing_time_spent",
+  "help": "Duration spend on executing batch",
+  "labelNames": [],
+})
+
+let incrementLoadEntityDurationCounter = (~startTime, ~endTime) => {
+  let duration = endTime - startTime
+  loadEntitiesDurationCounter->PromClient.Counter.incMany(duration)
 }
 
-let incrementEventRouterProcessingTimeSpent = (~amount) => {
-  eventRouterProcessingTimeSpent
-  ->PromClient.Counter.incMany(amount)
+let incrementEventRouterDurationCounter = (~startTime, ~endTime) => {
+  let duration = endTime - startTime
+  eventRouterDurationCounter->PromClient.Counter.incMany(duration)
 }
 
-
+let incrementExecuteBatchDurationCounter = (~startTime, ~endTime) => {
+  let duration = endTime - startTime
+  executeBatchDurationCounter->PromClient.Counter.incMany(duration)
+}
