@@ -67,6 +67,8 @@ module SkarWorker: ChainWorker = {
     ~logger: Pino.t,
     ~fetchedEventQueue: ChainEventQueue.t,
   ) => {
+    logger->Logging.childTrace("Starting event fetching on Skar worker")
+
     let {chainConfig, contractAddressMapping} = self
     let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
       ~chainId=chainConfig.chainId,
@@ -105,7 +107,8 @@ module SkarWorker: ChainWorker = {
     let fromBlock = ref(startBlock)
 
     let checkReadyToContinue = async () => {
-      if fromBlock.contents > currentHeight.contents {
+      if fromBlock.contents >= currentHeight.contents {
+        logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
         //If the block we want to query from is greater than the current height,
         //poll for until the archive height is greater than the from block and set
         //current height to the new height
@@ -136,6 +139,8 @@ module SkarWorker: ChainWorker = {
       //to indexed parameters
       let topLevelTopics = [topics]
 
+      let startFetchingBatchTimeRef = Hrtime.makeTimer()
+
       //fetch batch
       let page = await SkarQueryBuilder.LogsQuery.queryLogsPage(
         ~fromBlock=fromBlock.contents,
@@ -143,6 +148,16 @@ module SkarWorker: ChainWorker = {
         ~addresses,
         ~topics=topLevelTopics,
       )
+
+      let elapsedTimeFetchingPage =
+        startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+      logger->Logging.childTrace({
+        "message": "Retrieved event page from server",
+        "fromBlock": fromBlock.contents,
+        "toBlock": page.nextBlock - 1,
+        "number of logs": page.items->Array.length,
+      })
 
       //Start query for heighest block queried to get latest timestamp
       let heighestBlockQueried = page.archiveHeight - 1
@@ -155,6 +170,11 @@ module SkarWorker: ChainWorker = {
         //If there are new dynamic contract registrations
         //discard this batch and redo the query with new address
         self.hasNewDynamicContractRegistrations = Promise.resolve(false)
+
+        logger->Logging.childTrace({
+          "message": "Dropping invalid batch due to new dynamic contract registration",
+          "page fetch time elapsed (ms)": elapsedTimeFetchingPage,
+        })
       } else {
         //Lock the latest fetched blockNumber until it gets
         //set with the timestamp later.
@@ -165,11 +185,9 @@ module SkarWorker: ChainWorker = {
         } = Utils.createPromiseWithHandles()
         self.latestFetchedBlockNumber = latestBlockNumbersPromise
 
-        //Loop through items, add them to the queue
-        // TODO: this could add the whole batch to the queue if the queue is smaller than the max size, rather than using the same kind of logic on each item that is required for pushing items only with timestamps.
-        for i in 0 to page.items->Array.length - 1 {
-          let item = page.items[i]
-          //parse item
+        let parsingTimeRef = Hrtime.makeTimer()
+        //Parse page items into queue items
+        let parsedQueueItems = page.items->Belt.Array.map(item => {
           let parsedUnsafe =
             Converters.parseEvent(
               ~log=item.log,
@@ -184,6 +202,17 @@ module SkarWorker: ChainWorker = {
             logIndex: item.log.logIndex,
             event: parsedUnsafe,
           }
+          queueItem
+        })
+
+        let parsingTimeElapsed =
+          parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+        let queuePushingTimeRef = Hrtime.makeTimer()
+
+        //Loop through items, add them to the queue
+        for i in 0 to parsedQueueItems->Array.length - 1 {
+          let queueItem = parsedQueueItems[i]
 
           //Add item to the queue
           await fetchedEventQueue->ChainEventQueue.awaitQueueSpaceAndPushItem(queueItem)
@@ -194,6 +223,9 @@ module SkarWorker: ChainWorker = {
           //items off without running callbacks
           self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
         }
+
+        let queuePushingTimeElapsed =
+          queuePushingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
         //set latestFetchedBlockNumber and latestFetchedBlockTimestamp
         let heighestBlockQueriedPage = await heighestBlockQueriedPagePromise
@@ -237,6 +269,21 @@ module SkarWorker: ChainWorker = {
         //set height and next from block
         currentHeight := page.archiveHeight
         fromBlock := page.nextBlock
+
+        let totalTimeElapsed =
+          startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+        logger->Logging.childTrace({
+          "message": "Finished page range",
+          "fromBlock": fromBlock.contents,
+          "toBlock": await self.latestFetchedBlockNumber,
+          "total time elapsed (ms)": totalTimeElapsed,
+          "page fetch time (ms)": elapsedTimeFetchingPage,
+          "parsing time (ms)": parsingTimeElapsed,
+          "average parse time per log (ms)": parsingTimeElapsed->Belt.Int.toFloat /.
+            parsedQueueItems->Array.length->Belt.Int.toFloat,
+          "push to queue time (ms)": queuePushingTimeElapsed,
+        })
       }
     }
   }
@@ -299,6 +346,14 @@ module SkarWorker: ChainWorker = {
 
     let fromBlockRef = ref(fromBlock)
     let toBlock = await self.latestFetchedBlockNumber
+
+    logger->Logging.childTrace({
+      "message": "Registering dynamic contracts",
+      "contracts": dynamicContracts,
+      "fromBlock": fromBlock,
+      "fromLogIndex": fromLogIndex,
+      "toBlock": toBlock,
+    })
 
     while fromBlockRef.contents < toBlock {
       let {addresses, topics} =
@@ -649,7 +704,6 @@ module RpcWorker: ChainWorker = {
   let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
 }
 
-type workerTypeSelected = RpcSelected | SkarSelected
 type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t)
 
 module PolyMorphicChainWorkerFunctions = {
@@ -772,7 +826,7 @@ let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
   }
 }
 
-let make = (selectedWorker: workerTypeSelected, ~chainConfig) => {
+let make = (selectedWorker: Env.workerTypeSelected, ~chainConfig) => {
   switch selectedWorker {
   | RpcSelected => Rpc(RpcWorker.make(chainConfig))
   | SkarSelected => Skar(SkarWorker.make(chainConfig))

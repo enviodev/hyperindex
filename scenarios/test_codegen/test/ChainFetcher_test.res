@@ -8,7 +8,7 @@ let {
 } = module(RescriptMocha.Promise)
 
 describe("Chain Fetcher", () => {
-  it_promise("Awaits item to be pushed to queue before resolveing", async () => {
+  it_promise("No test yet", async () => {
     ()
   })
 })

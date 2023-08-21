@@ -64,17 +64,6 @@ let determineNextEvent = (chainFetchersPeeks: array<ChainFetcher.eventQueuePeek>
   }
 }
 
-%%private(let envSafe = EnvSafe.make())
-
-let envWorkerTypeString = EnvUtils.getStringEnvVar(~envSafe, ~fallback="rpc", "WORKER_TYPE")
-
-let envWorkerTypeSelected = switch envWorkerTypeString->Js.String2.toLowerCase {
-| "skar" => ChainWorker.SkarSelected
-| "rpc"
-| _ =>
-  RpcSelected
-}
-
 let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
   let chainFetchers =
     configs
@@ -85,7 +74,7 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
         ChainFetcher.make(
           ~chainConfig,
           ~maxQueueSize,
-          ~chainWorkerTypeSelected=envWorkerTypeSelected,
+          ~chainWorkerTypeSelected=Env.workerTypeSelected,
         ),
       )
     })
@@ -233,6 +222,8 @@ let rec popAndAwaitBatchItem: t => promise<EventFetching.eventBatchQueueItem> = 
 let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array<
   EventFetching.eventBatchQueueItem,
 > => {
+  let refTime = Hrtime.makeTimer()
+
   let batch = []
   while batch->Belt.Array.length < minBatchSize {
     let item = await self->popAndAwaitBatchItem
@@ -247,6 +238,26 @@ let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array
     | Some(item) => batch->Js.Array2.push(item)->ignore
     }
   }
+  let fetchedEventsBuffer =
+    self.chainFetchers
+    ->Js.Dict.values
+    ->Belt.Array.map(fetcher => (
+      fetcher.chainConfig.chainId->Belt.Int.toString,
+      fetcher.fetchedEventQueue.queue->SDSL.Queue.size,
+    ))
+    ->Belt.Array.concat([
+      ("arbitrary", self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.length),
+    ])
+    ->Js.Dict.fromArray
+
+  let timeElapsed = refTime->Hrtime.timeSince->Hrtime.toMillis
+
+  Logging.trace({
+    "message": "New batch created for processing",
+    "batch size": batch->Array.length,
+    "buffers": fetchedEventsBuffer,
+    "time taken (ms)": timeElapsed,
+  })
 
   batch
 }

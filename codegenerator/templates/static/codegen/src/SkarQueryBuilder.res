@@ -1,11 +1,4 @@
-%%private(let envSafe = EnvSafe.make())
-
-let subsquidEthArchiveServerUrl = "https://eth.archive.subsquid.io"
-let skarEndpoint = EnvUtils.getStringEnvVar(
-  ~envSafe,
-  ~fallback=subsquidEthArchiveServerUrl,
-  "SKAR_ENDPOINT",
-)
+let skarEndpoint = Env.skarEndpoint
 
 type skarPage<'item> = {
   items: array<'item>,
