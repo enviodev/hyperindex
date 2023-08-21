@@ -1,5 +1,4 @@
 // TODO: move to `eventFetching`
-type eventType = EventFetching.eventBatchQueueItem
 
 type t = {
   logger: Pino.t,

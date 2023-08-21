@@ -1,20 +1,14 @@
-// TODO: move to `eventFetching`
-
 type t = {
   logger: Pino.t,
   fetchedEventQueue: ChainEventQueue.t,
   chainConfig: Config.chainConfig,
   chainWorker: ChainWorker.chainWorker,
 }
-/**
-Some docs are here
-*/
 let make: (
   ~chainConfig: Config.chainConfig,
   ~maxQueueSize: int,
-  ~chainWorkerTypeSelected: ChainWorker.workerTypeSelected,
+  ~chainWorkerTypeSelected: Env.workerTypeSelected,
 ) => t
-
 let startFetchingEvents: t => promise<result<unit, exn>>
 /**
 Pops the front item on the fetchedEventQueue and awaits an item if there is none.
@@ -27,7 +21,6 @@ let addDynamicContractAndFetchMissingEvents: (
   ~fromBlock: int,
   ~fromLogIndex: int,
 ) => promise<array<EventFetching.eventBatchQueueItem>>
-
 type latestFetchedBlockTimestamp = int
 type eventQueuePeek =
   | NoItem(latestFetchedBlockTimestamp, Types.chainId)
