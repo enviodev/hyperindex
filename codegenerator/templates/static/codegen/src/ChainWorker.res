@@ -407,11 +407,31 @@ module SkarWorker: ChainWorker = {
 }
 
 module RawEventsWorker: ChainWorker = {
-  type t = int
+  type t = {
+    mutable latestFetchedBlockTimestamp: int,
+    chainId: int,
+    newRangeQueriedCallBacks: SDSL.Queue.t<unit => unit>,
+    contractAddressMapping: ContractAddressingMap.mapping,
+  }
 
-  let make = chainConfig => {
-    Js.log(chainConfig)
-    987654321
+  let make = (chainConfig: Config.chainConfig) => {
+    let contractAddressMapping = ContractAddressingMap.make()
+    let logger = Logging.createChild(
+      ~params={
+        "chainId": chainConfig.chainId,
+        "workerType": "rpc",
+        "loggerFor": "Used only in logging regestration of static contract addresses",
+      },
+    )
+    //Add all contracts and addresses from config
+    //Dynamic contracts are checked in DB on start
+    contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
+    {
+      latestFetchedBlockTimestamp: 0,
+      chainId: chainConfig.chainId,
+      newRangeQueriedCallBacks: SDSL.Queue.make(),
+      contractAddressMapping,
+    }
   }
 
   let startFetchingEvents = async (
@@ -419,12 +439,66 @@ module RawEventsWorker: ChainWorker = {
     ~logger: Pino.t,
     ~fetchedEventQueue: ChainEventQueue.t,
   ) => {
-    Js.log("I am running the raw worker")
-    ()
+    let eventIdRef = ref(0->Ethers.BigInt.fromInt)
+
+    //TODO: make configurable
+    let pageLimitSize = 50_000
+
+    //chainId
+    let hasMoreRawEvents = ref(true)
+
+    while hasMoreRawEvents.contents {
+      let page =
+        await DbFunctions.sql->DbFunctions.RawEvents.getRawEventsPageGtOrEqEventId(
+          ~chainId=self.chainId,
+          ~eventId=eventIdRef.contents,
+          ~limit=pageLimitSize,
+        )
+
+      let parsedEventsUnsafe =
+        page->Belt.Array.map(Converters.parseRawEvent)->Utils.mapArrayOfResults->Belt.Result.getExn
+
+      for i in 0 to parsedEventsUnsafe->Belt.Array.length - 1 {
+        let parsedEvent = parsedEventsUnsafe[i]
+
+        let queueItem: Types.eventBatchQueueItem = {
+          timestamp: parsedEvent.timestamp,
+          chainId: self.chainId,
+          blockNumber: parsedEvent.blockNumber,
+          logIndex: parsedEvent.logIndex,
+          event: parsedEvent.event,
+        }
+
+        await fetchedEventQueue->ChainEventQueue.awaitQueueSpaceAndPushItem(queueItem)
+
+        //Loop through any callbacks on the queue waiting for confirmation of a new
+        //range queried and run callbacks needs to happen after each item is added
+        //else this we could be blocked from adding items to the queue and from popping
+        //items off without running callbacks
+        self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
+      }
+
+      let lastItemInPage = page->Belt.Array.get(page->Belt.Array.length - 1)
+
+      switch lastItemInPage {
+      | None => hasMoreRawEvents := false
+      | Some(item) =>
+        let lastEventId = item.eventId->Ethers.BigInt.fromStringUnsafe
+        eventIdRef := lastEventId->Ethers.BigInt.add(1->Ethers.BigInt.fromInt)
+        self.latestFetchedBlockTimestamp = item.blockTimestamp
+      }
+    }
+
+    //Loop through any callbacks on the queue waiting for confirmation of a new
+    //range queried and run callbacks
+    self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
   }
 
-  let addNewRangeQueriedCallback = (self: t) => Promise.resolve()
-  let getLatestFetchedBlockTimestamp = (self: t) => 1
+  let addNewRangeQueriedCallback = (self: t): promise<unit> => {
+    self.newRangeQueriedCallBacks->ChainEventQueue.insertCallbackAwaitPromise
+  }
+
+  let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
 
   let addDynamicContractAndFetchMissingEvents = async (
     self: t,
@@ -432,7 +506,18 @@ module RawEventsWorker: ChainWorker = {
     ~fromBlock,
     ~fromLogIndex,
     ~logger,
-  ): array<Types.eventBatchQueueItem> => {[]}
+  ): array<Types.eventBatchQueueItem> => {
+    dynamicContracts->Belt.Array.forEach(({contractAddress, contractType}) => {
+      self.contractAddressMapping->ContractAddressingMap.addAddress(
+        ~address=contractAddress,
+        ~name=contractType,
+      )
+    })
+
+    //Return empty array since raw events worker has already retrieved
+    //dynamically registered contracts
+    []
+  }
 }
 
 module RpcWorker: ChainWorker = {
@@ -698,6 +783,7 @@ module RpcWorker: ChainWorker = {
     })
     ->Promise.all
   }
+
   let addNewRangeQueriedCallback = (self: t): promise<unit> => {
     self.newRangeQueriedCallBacks->ChainEventQueue.insertCallbackAwaitPromise
   }
@@ -705,7 +791,7 @@ module RpcWorker: ChainWorker = {
   let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
 }
 
-type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t)
+type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t) | RawEvents(RawEventsWorker.t)
 
 module PolyMorphicChainWorkerFunctions = {
   /* Why use thes polymorphic functions rather than calling function directly on
@@ -782,11 +868,13 @@ module PolyMorphicChainWorkerFunctions = {
   type chainWorkerMod =
     | RpcWorkerMod(chainWorkerModTuple<RpcWorker.t>)
     | SkarWorkerMod(chainWorkerModTuple<SkarWorker.t>)
+    | RawEventsWorkerMod(chainWorkerModTuple<RawEventsWorker.t>)
 
   let chainWorkerToChainMod = (worker: chainWorker) => {
     switch worker {
     | Rpc(w) => RpcWorkerMod((w, module(RpcWorker)))
     | Skar(w) => SkarWorkerMod((w, module(SkarWorker)))
+    | RawEvents(w) => RawEventsWorkerMod((w, module(RawEventsWorker)))
     }
   }
 }
@@ -797,6 +885,7 @@ let startFetchingEvents = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->startFetchingEvents
   | SkarWorkerMod(w) => w->startFetchingEvents
+  | RawEventsWorkerMod(w) => w->startFetchingEvents
   }
 }
 
@@ -806,6 +895,7 @@ let addNewRangeQueriedCallback = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->addNewRangeQueriedCallback
   | SkarWorkerMod(w) => w->addNewRangeQueriedCallback
+  | RawEventsWorkerMod(w) => w->addNewRangeQueriedCallback
   }
 }
 
@@ -815,6 +905,7 @@ let getLatestFetchedBlockTimestamp = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   | SkarWorkerMod(w) => w->getLatestFetchedBlockTimestamp
+  | RawEventsWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   }
 }
 
@@ -824,6 +915,7 @@ let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   | SkarWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
+  | RawEventsWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   }
 }
 
@@ -831,5 +923,6 @@ let make = (selectedWorker: Env.workerTypeSelected, ~chainConfig) => {
   switch selectedWorker {
   | RpcSelected => Rpc(RpcWorker.make(chainConfig))
   | SkarSelected => Skar(SkarWorker.make(chainConfig))
+  | RawEventsSelected => RawEvents(RawEventsWorker.make(chainConfig))
   }
 }
