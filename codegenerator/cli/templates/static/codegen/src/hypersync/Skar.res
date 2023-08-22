@@ -3,70 +3,76 @@ type unchecksummedEthAddress = string
 
 module QueryTypes = {
   @spice
-  type blockFieldOptions = [
-    | #parent_hash
-    | #sha3Uncles
-    | #miner
-    | #state_root
-    | #transactions_root
-    | #receipts_root
-    | #logs_bloom
-    | #difficulty
-    | #number
-    | #gas_limit
-    | #gas_used
-    | #timestamp
-    | #extra_data
-    | #mix_hash
-    | #nonce
-    | #total_difficulty
-    | #base_fee_per_gas
-    | #size
-    | #hash
-  ]
+  type blockFieldOptions =
+    | @spice.as("number") Number
+    | @spice.as("hash") Hash
+    | @spice.as("parent_hash") ParentHash
+    | @spice.as("nonce") Nonce
+    | @spice.as("sha3_uncles") Sha3Uncles
+    | @spice.as("logs_bloom") LogsBloom
+    | @spice.as("transactions_root") TransactionsRoot
+    | @spice.as("state_root") StateRoot
+    | @spice.as("receipts_root") ReceiptsRoot
+    | @spice.as("miner") Miner
+    | @spice.as("difficulty") Difficulty
+    | @spice.as("total_difficulty") TotalDifficulty
+    | @spice.as("extra_data") ExtraData
+    | @spice.as("size") Size
+    | @spice.as("gas_limit") GasLimit
+    | @spice.as("gas_used") GasUsed
+    | @spice.as("timestamp") Timestamp
+    | @spice.as("uncles") Uncles
+    | @spice.as("base_fee_per_gas") BaseFeePerGas
 
   @spice
   type blockFieldSelection = array<blockFieldOptions>
 
   @spice
-  type transactionFieldOptions = [
-    | #"type"
-    | #nonce
-    | #to
-    | #gas
-    | #value
-    | #input
-    | #max_priority_fee_per_gas
-    | #max_fee_per_gas
-    | #y_parity
-    | #chain_id
-    | #v
-    | #r
-    | #s
-    | #from
-    | #block_hash
-    | #block_number
-    | #index
-    | #gas_price
-    | #hash
-    | #status
-  ]
+  type transactionFieldOptions =
+    | @spice.as("block_hash") BlockHash
+    | @spice.as("block_number") BlockNumber
+    | @spice.as("from") From
+    | @spice.as("gas") Gas
+    | @spice.as("gas_price") GasPrice
+    | @spice.as("hash") Hash
+    | @spice.as("input") Input
+    | @spice.as("nonce") Nonce
+    | @spice.as("to") To
+    | @spice.as("transaction_index") TransactionIndex
+    | @spice.as("value") Value
+    | @spice.as("v") V
+    | @spice.as("r") R
+    | @spice.as("s") S
+    | @spice.as("max_priority_fee_per_gas") MaxPriorityFeePerGas
+    | @spice.as("max_fee_per_gas") MaxFeePerGas
+    | @spice.as("chain_id") ChainId
+    | @spice.as("cumulative_gas_used") CumulativeGasUsed
+    | @spice.as("effective_gas_price") EffectiveGasPrice
+    | @spice.as("gas_used") GasUsed
+    | @spice.as("contract_address") ContractAddress
+    | @spice.as("logs_bloom") LogsBloom
+    | @spice.as("type") Type
+    | @spice.as("root") Root
+    | @spice.as("status") Status
+    | @spice.as("sighash") Sighash
 
   @spice
   type transactionFieldSelection = array<transactionFieldOptions>
 
   @spice
-  type logFieldOptions = [
-    | #address
-    | #block_hash
-    | #block_number
-    | #data
-    | #index
-    | #removed
-    | #topics
-    | #transaction_hash
-    | #transaction_index
-  ]
+  type logFieldOptions =
+    | @spice.as("removed") Removed
+    | @spice.as("log_index") LogIndex
+    | @spice.as("transaction_index") TransactionIndex
+    | @spice.as("transaction_hash") TransactionHash
+    | @spice.as("block_hash") BlockHash
+    | @spice.as("block_number") BlockNumber
+    | @spice.as("address") Address
+    | @spice.as("data") Data
+    | @spice.as("topic0") Topic0
+    | @spice.as("topic1") Topic1
+    | @spice.as("topic2") Topic2
+    | @spice.as("topic3") Topic3
 
   @spice
   type logFieldSelection = array<logFieldOptions>
@@ -82,14 +88,12 @@ module QueryTypes = {
   type logParams = {
     address?: array<Ethers.ethAddress>,
     topics: array<array<Ethers.EventFilter.topic>>,
-    @spice.key("field_selection") fieldSelection: fieldSelection,
   }
 
   @spice
   type transactionParams = {
     address?: array<Ethers.ethAddress>,
     sighash?: array<string>,
-    @spice.key("field_selection") fieldSelection: fieldSelection,
   }
 
   @spice
@@ -98,78 +102,99 @@ module QueryTypes = {
     @spice.key("to_block") toBlockExclusive?: int,
     logs?: array<logParams>,
     transactions?: array<transactionParams>,
+    @spice.key("field_selection") fieldSelection: fieldSelection,
   }
 }
 
 module ResponseTypes = {
+  //Note all fields marked as "nullable" are not explicitly null since
+  //the are option fields and nulls will be deserialized to option when
+  //in an optional field with spice
   @spice
   type blockData = {
-    @spice.key("parent_hash") parentHash?: string,
-    @spice.key("sha3_uncles") sha3Uncles?: string,
-    miner?: unchecksummedEthAddress,
-    @spice.key("state_root") stateRoot?: string,
-    @spice.key("transactions_root") transactionsRoot?: string,
-    @spice.key("receipts_root") receiptsRoot?: string,
-    @spice.key("logs_bloom") logsBloom?: string,
-    difficulty?: Ethers.BigInt.t,
     number?: int,
+    hash?: string,
+    @spice.key("parent_hash") parentHash?: string,
+    nonce?: int, //nullable
+    @spice.key("sha3_uncles") sha3Uncles?: string,
+    @spice.key("logs_bloom") logsBloom?: string,
+    @spice.key("transactions_root") transactionsRoot?: string,
+    @spice.key("state_root") stateRoot?: string,
+    @spice.key("receipts_root") receiptsRoot?: string,
+    miner?: unchecksummedEthAddress,
+    difficulty?: Ethers.BigInt.t, //nullable
+    @spice.key("total_difficulty") totalDifficulty?: Ethers.BigInt.t, //nullable
+    @spice.key("extra_data") extraData?: string,
+    size?: Ethers.BigInt.t,
     @spice.key("gas_limit") gasLimit?: Ethers.BigInt.t,
     @spice.key("gas_used") gasUsed?: Ethers.BigInt.t,
     timestamp?: Ethers.BigInt.t,
-    @spice.key("extra_data") extraData?: string,
-    @spice.key("mix_hash") mixHash?: string,
-    nonce?: int,
-    @spice.key("total_difficulty") totalDifficulty?: Ethers.BigInt.t,
-    @spice.key("base_fee_per_gas") baseFeePerGas?: Ethers.BigInt.t,
-    size?: Ethers.BigInt.t,
-    hash?: string,
+    @spice.key("unclus") uncles?: string, //nullable
+    @spice.key("base_fee_per_gas") baseFeePerGas?: Ethers.BigInt.t, //nullable
   }
 
+  //Note all fields marked as "nullable" are not explicitly null since
+  //the are option fields and nulls will be deserialized to option when
+  //in an optional field with spice
   @spice
   type transactionData = {
-    @spice.key("type") type_?: int,
-    nonce?: int,
-    to?: unchecksummedEthAddress,
-    gas?: Ethers.BigInt.t,
-    value?: Ethers.BigInt.t,
-    input?: string,
-    @spice.key("max_priority_fee_per_gas") maxPriorityFeePerGas?: Ethers.BigInt.t,
-    @spice.key("max_fee_per_gas") maxFeePerGas?: Ethers.BigInt.t,
-    chainId?: int,
-    v?: string,
-    r?: string,
-    s?: string,
-    from?: unchecksummedEthAddress,
     @spice.key("block_hash") blockHash?: string,
     @spice.key("block_number") blockNumber?: int,
-    index?: int,
-    @spice.key("gas_price") gasPrice?: Ethers.BigInt.t,
+    from?: unchecksummedEthAddress, //nullable
+    gas?: Ethers.BigInt.t,
+    @spice.key("gas_price") gasPrice?: Ethers.BigInt.t, //nullable
     hash?: string,
+    input?: string,
+    nonce?: int,
+    to?: unchecksummedEthAddress, //nullable
+    @spice.key("transaction_index") transactionIndex?: int,
+    value?: Ethers.BigInt.t,
+    v?: string, //nullable
+    r?: string, //nullable
+    s?: string, //nullable
+    @spice.key("max_priority_fee_per_gas") maxPriorityFeePerGas?: Ethers.BigInt.t, //nullable
+    @spice.key("max_fee_per_gas") maxFeePerGas?: Ethers.BigInt.t, //nullable
+    @spice.key("chain_id") chainId?: int, //nullable
+    @spice.key("cumulative_gas_used") cumulativeGasUsed?: Ethers.BigInt.t,
+    @spice.key("effective_gas_price") effectiveGasPrice?: Ethers.BigInt.t,
+    @spice.key("gas_used") gasUsed?: Ethers.BigInt.t,
+    @spice.key("contract_address") contractAddress?: unchecksummedEthAddress, //nullable
+    @spice.key("logs_bloom") logsBoom?: string,
+    @spice.key("type") type_?: int, //nullable
+    @spice.key("root") root?: string, //nullable
+    @spice.key("status") status?: int, //nullable
+    @spice.key("sighash") sighash?: string, //nullable
   }
 
+  //Note all fields marked as "nullable" are not explicitly null since
+  //the are option fields and nulls will be deserialized to option when
+  //in an optional field with spice
   @spice
   type logData = {
-    address?: unchecksummedEthAddress,
+    removed?: bool, //nullable
+    @spice.key("log_index") index?: int,
+    @spice.key("transaction_index") transactionIndex?: int,
+    @spice.key("transaction_hash") transactionHash?: string,
     @spice.key("block_hash") blockHash?: string,
     @spice.key("block_number") blockNumber?: int,
+    address?: unchecksummedEthAddress,
     data?: string,
-    index?: int,
-    removed?: bool,
-    topics?: array<string>,
-    @spice.key("transaction_hash") transactionHash?: string,
-    @spice.key("transaction_index") transactionIndex?: int,
+    topic0?: Ethers.EventFilter.topic, //nullable
+    topic1?: Ethers.EventFilter.topic, //nullable
+    topic2?: Ethers.EventFilter.topic, //nullable
+    topic3?: Ethers.EventFilter.topic, //nullable
   }
 
   @spice
   type data = {
-    block?: blockData,
+    blocks?: array<blockData>,
     transactions?: array<transactionData>,
     logs?: array<logData>,
   }
 
   @spice
   type queryResponse = {
-    data: array<array<data>>,
+    data: array<data>,
     @spice.key("archive_height") archiveHeight: int,
     @spice.key("next_block") nextBlock: int,
     @spice.key("total_execution_time") totalTime: int,

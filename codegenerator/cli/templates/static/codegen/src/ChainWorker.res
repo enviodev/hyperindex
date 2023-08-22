@@ -143,16 +143,19 @@ module MakeHyperSyncWoker = (HyperSync: HyperSync.S): ChainWorker => {
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
       //fetch batch
-      let pageUnsafe =
-        (
-          await HyperSync.queryLogsPage(
-            ~serverUrl,
-            ~fromBlock=fromBlock.contents,
-            ~toBlock=currentHeight.contents,
-            ~addresses,
-            ~topics=topLevelTopics,
-          )
-        )->Belt.Result.getExn
+      let pageUnsafe = switch await HyperSync.queryLogsPage(
+        ~serverUrl,
+        ~fromBlock=fromBlock.contents,
+        ~toBlock=currentHeight.contents,
+        ~addresses,
+        ~topics=topLevelTopics,
+      ) {
+      | Error(e) =>
+        let msg = e->HyperSyncTypes.queryErrorToMsq
+        logger->Logging.childError(msg)
+        Js.Exn.raiseError(msg)
+      | Ok(v) => v
+      }
 
       let elapsedTimeFetchingPage =
         startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -273,10 +276,6 @@ module MakeHyperSyncWoker = (HyperSync: HyperSync.S): ChainWorker => {
         //If there ar no items in the page
         self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
 
-        //set height and next from block
-        currentHeight := pageUnsafe.archiveHeight
-        fromBlock := pageUnsafe.nextBlock
-
         let totalTimeElapsed =
           startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
@@ -291,6 +290,10 @@ module MakeHyperSyncWoker = (HyperSync: HyperSync.S): ChainWorker => {
             parsedQueueItems->Array.length->Belt.Int.toFloat,
           "push to queue time (ms)": queuePushingTimeElapsed,
         })
+
+        //set height and next from block
+        currentHeight := pageUnsafe.archiveHeight
+        fromBlock := pageUnsafe.nextBlock
       }
     }
   }

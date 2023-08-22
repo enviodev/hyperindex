@@ -86,11 +86,44 @@ module LogsQuery = {
                   let pageItem: HyperSyncTypes.logsQueryPageItem = {log, blockTimestamp}
                   Ok(pageItem)
 
-                | _ => Error(HyperSyncTypes.UnexpectedMissingParams)
+                | _ =>
+                  let missingParams =
+                    [
+                      block.timestamp->Belt.Option.map(_ => "log.timestamp"),
+                      log.address->Belt.Option.map(_ => "log.address"),
+                      log.blockHash->Belt.Option.map(_ => "log.blockHash-"),
+                      log.blockNumber->Belt.Option.map(_ => "log.blockNumber"),
+                      log.data->Belt.Option.map(_ => "log.data"),
+                      log.index->Belt.Option.map(_ => "log.index"),
+                      log.transactionHash->Belt.Option.map(_ => "log.transactionHash"),
+                      log.transactionIndex->Belt.Option.map(_ => "log.transactionIndex"),
+                      log.topics->Belt.Option.map(_ => "log.topics"),
+                      log.removed->Belt.Option.map(_ => "log.removed"),
+                    ]->Belt.Array.keepMap(v => v)
+                  Error(
+                    HyperSyncTypes.UnexpectedMissingParams({
+                      queryName: "queryLogsPage EthArchive",
+                      missingParams,
+                    }),
+                  )
                 }
               },
             )
-          | _ => [Error(HyperSyncTypes.UnexpectedMissingParams)]
+          | _ =>
+            let missingParams =
+              [
+                item.block->Belt.Option.map(_ => "blocks"),
+                item.logs->Belt.Option.map(_ => "logs"),
+              ]->Belt.Array.keepMap(v => v)
+
+            [
+              Error(
+                HyperSyncTypes.UnexpectedMissingParams({
+                  queryName: "queryLogsPage EthArchive",
+                  missingParams,
+                }),
+              ),
+            ]
           }
         })
       )
@@ -157,7 +190,24 @@ module BlockTimestampQuery = {
               ),
             )
 
-          | _ => Error(HyperSyncTypes.UnexpectedMissingParams)
+          | _ =>
+            let missingParams =
+              [
+                item.block->Belt.Option.map(_ => "block"),
+                item.block
+                ->Belt.Option.flatMap(block => block.number)
+                ->Belt.Option.map(_ => "block.number"),
+                item.block
+                ->Belt.Option.flatMap(block => block.timestamp)
+                ->Belt.Option.map(_ => "block.timestamp"),
+              ]->Belt.Array.keepMap(p => p)
+
+            Error(
+              HyperSyncTypes.UnexpectedMissingParams({
+                queryName: "queryBlockTimestampsPage EthArchive",
+                missingParams,
+              }),
+            )
           }
         )
       )
