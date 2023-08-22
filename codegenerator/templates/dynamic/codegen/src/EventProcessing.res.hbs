@@ -336,8 +336,6 @@ let processEventBatch = async (
   let timeRef = Hrtime.makeTimer()
   IO.InMemoryStore.resetStore()
 
-  let startTime = Js.Date.now()
-
   let logger = Logging.createChild(
     ~params={
       "context": "batch",
@@ -349,6 +347,8 @@ let processEventBatch = async (
       ),
     },
   )
+
+  let startTimeLoadEntities  = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
   let eventBatchAndContext = await loadReadEntities(~eventBatch, ~chainManager, ~logger)
 
@@ -368,6 +368,21 @@ let processEventBatch = async (
     "handlers time elapsed": elapsedTimeAfterProcess - elapsedAfterLoad,
     "write time elapsed": elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
   })
+
+  {{!-- Prometheus.incrementLoadEntityDurationCounter(
+    ~startTime=startTimeLoadEntities,
+    ~endTime=endTimeLoadEntities,
+  ) --}}
+
+  Prometheus.incrementEventRouterDurationCounter(
+    ~startTime=elapsedAfterLoad,
+    ~endTime=elapsedTimeAfterProcess,
+  )
+
+  Prometheus.incrementExecuteBatchDurationCounter(
+    ~startTime=elapsedTimeAfterProcess,
+    ~endTime=elapsedTimeAfterDbWrite,
+  )
 }
 
 let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t): unit => {
