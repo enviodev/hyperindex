@@ -47,7 +47,8 @@ jobs:
             echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
             echo "::set-output name=release_name::${GITHUB_REF_NAME}"
             echo "::set-output name=is_tagged::true"
-            echo "::set-output name=release_type::next"
+            # echo "::set-output name=release_type::next" # NOTE: we currently go directly into prod when a tag is released - using 'next' would give us time to review before upgrading the tag.
+            echo "::set-output name=release_type::latest"
           elif [[ "${GITHUB_REF_NAME}" =~ ^release-([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             version=v${BASH_REMATCH[1]}
             timestamp=$(date +'%Y%m%d%H%M%S')
@@ -272,9 +273,12 @@ jobs:
           RELEASE_TYPE: ${{ needs.prepare.outputs.release_type}}
         run: |
           envsubst < ./package.json.tmpl > "package.json"
+          cat package.json # Leave this here for the sake of debugging bad builds.
           pnpm install --no-frozen-lockfile
           pnpm build
+          cat lib/index.js # Leave this here for the sake of debugging bad builds.
           cp ../../README.md .
+          echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}
 
   build-and-push:
