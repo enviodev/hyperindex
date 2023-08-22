@@ -3,11 +3,11 @@ type t = {
   pushBacklogCallbacks: SDSL.Queue.t<unit => unit>,
   popBacklogCallbacks: SDSL.Queue.t<unit => unit>,
   maxQueueSize: int,
-  queue: SDSL.Queue.t<EventFetching.eventBatchQueueItem>,
+  queue: SDSL.Queue.t<Types.eventBatchQueueItem>,
 }
 let make: (~maxQueueSize: int) => t
 let insertCallbackAwaitPromise: SDSL.Queue.t<unit => unit> => promise<unit>
-let awaitQueueSpaceAndPushItem: (t, EventFetching.eventBatchQueueItem) => promise<unit>
-let popSingleAndAwaitItem: t => promise<EventFetching.eventBatchQueueItem>
-let popSingle: t => option<EventFetching.eventBatchQueueItem>
-let peekFront: t => option<EventFetching.eventBatchQueueItem>
+let awaitQueueSpaceAndPushItem: (t, Types.eventBatchQueueItem) => promise<unit>
+let popSingleAndAwaitItem: t => promise<Types.eventBatchQueueItem>
+let popSingle: t => option<Types.eventBatchQueueItem>
+let peekFront: t => option<Types.eventBatchQueueItem>

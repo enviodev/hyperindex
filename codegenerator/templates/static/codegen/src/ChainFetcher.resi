@@ -13,17 +13,17 @@ let startFetchingEvents: t => promise<result<unit, exn>>
 /**
 Pops the front item on the fetchedEventQueue and awaits an item if there is none.
 */
-let popAndAwaitQueueItem: t => promise<EventFetching.eventBatchQueueItem>
-let popQueueItem: t => option<EventFetching.eventBatchQueueItem>
+let popAndAwaitQueueItem: t => promise<Types.eventBatchQueueItem>
+let popQueueItem: t => option<Types.eventBatchQueueItem>
 let addDynamicContractAndFetchMissingEvents: (
   t,
   ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
   ~fromBlock: int,
   ~fromLogIndex: int,
-) => promise<array<EventFetching.eventBatchQueueItem>>
+) => promise<array<Types.eventBatchQueueItem>>
 type latestFetchedBlockTimestamp = int
 type eventQueuePeek =
   | NoItem(latestFetchedBlockTimestamp, Types.chainId)
-  | Item(EventFetching.eventBatchQueueItem)
+  | Item(Types.eventBatchQueueItem)
 let peekFrontItemOfQueue: t => eventQueuePeek
 let addNewRangeQueriedCallback: t => promise<unit>

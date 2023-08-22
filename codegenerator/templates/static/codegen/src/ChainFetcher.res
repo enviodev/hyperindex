@@ -42,14 +42,14 @@ let startFetchingEvents = async (self: t) => {
 /**
 Pops the front item on the fetchedEventQueue and awaits an item if there is none
 */
-let popAndAwaitQueueItem = async (self: t): EventFetching.eventBatchQueueItem => {
+let popAndAwaitQueueItem = async (self: t): Types.eventBatchQueueItem => {
   await self.fetchedEventQueue->ChainEventQueue.popSingleAndAwaitItem
 }
 
 /**
 Pops the front item on the fetchedEventQueue
 */
-let popQueueItem = (self: t): option<EventFetching.eventBatchQueueItem> => {
+let popQueueItem = (self: t): option<Types.eventBatchQueueItem> => {
   self.fetchedEventQueue->ChainEventQueue.popSingle
 }
 
