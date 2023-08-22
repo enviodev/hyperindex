@@ -122,12 +122,14 @@ type exitCode = Success | Failure
 @send external exit: (t, exitCode) => unit = "exit"
 
 // TODO: all the migration steps should run as a single transaction
-let runUpMigrations = async (shouldExit) => {
+let runUpMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
   let exitCode = ref(Success)
-  await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
-    exitCode := Failure
-    Logging.errorWithExn(err, `Error creating raw events table`)->Promise.resolve
-  })
+    if shouldDropRawEvents {
+      await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
+        exitCode := Failure
+        Logging.errorWithExn(err, `Error creating raw events table`)->Promise.resolve
+      })
+    }
   await DynamicContractRegistryTable.createDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err,`Error creating dynamic contracts table`)->Promise.resolve
@@ -148,13 +150,14 @@ let runUpMigrations = async (shouldExit) => {
   exitCode.contents
 }
 
-let runDownMigrations = async (shouldExit) => {
+let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
   let exitCode = ref(Success)
   // {{#each entities as |entity|}}
   // await {{entity.name.capitalized}}.delete{{entity.name.capitalized}}Table()
   // {{/each}}
 
-  await RawEventsTable.dropRawEventsTable()->Promise.catch(err => {
+  if shouldDropRawEvents {
+    await RawEventsTable.dropRawEventsTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(
       err,
@@ -164,6 +167,8 @@ let runDownMigrations = async (shouldExit) => {
       },
     )->Promise.resolve
   })
+  }
+
   await DynamicContractRegistryTable.dropDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err,"Error dropping dynamic contracts table")->Promise.resolve
@@ -180,15 +185,15 @@ let runDownMigrations = async (shouldExit) => {
   exitCode.contents
 }
 
-let setupDb = async () => {
+let setupDb = async (~shouldDropRawEvents) => {
   // TODO: we should make a hash of the schema file (that gets stored in the DB) and either drop the tables and create new ones or keep this migration.
   //       for now we always run the down migration.
   // if (process.env.MIGRATE === "force" || hash_of_schema_file !== hash_of_current_schema)
-  let exitCodeDown = await runDownMigrations(false)
+  let exitCodeDown = await runDownMigrations(~shouldExit=false, ~shouldDropRawEvents)
   // else
   //   await clearDb()
 
-  let exitCodeUp = await runUpMigrations(false)
+  let exitCodeUp = await runUpMigrations(~shouldExit=false, ~shouldDropRawEvents)
 
   let exitCode = switch (exitCodeDown, exitCodeUp) {
       | (Success, Success) => Success

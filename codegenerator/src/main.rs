@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             &parsed_paths.project_paths,
                                         )
                                         .await?;
-                                        commands::db_migrate::run_db_setup(project_paths).await?;
+                                        commands::db_migrate::run_db_setup(project_paths, true).await?;
                                         commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::CodegenAndResyncFromStoredEvents => {
@@ -98,13 +98,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             &parsed_paths.project_paths,
                                         )
                                         .await?;
-                                        commands::db_migrate::run_db_setup(project_paths).await?;
+                                        commands::db_migrate::run_db_setup(project_paths, false).await?;
                                         commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::ResyncFromStoredEvents => {
                                         //TODO: Implement command for rerunning from stored events
                                         //and action from this match arm
-                                        commands::db_migrate::run_db_setup(project_paths).await?; // does this need to be run?
+                                        commands::db_migrate::run_db_setup(project_paths, false).await?; // does this need to be run?
                                         commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::ContinueSync => {
@@ -119,7 +119,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         };
 
                                         if !has_run_db_migrations || is_restart {
-                                            commands::db_migrate::run_db_setup(project_paths)
+                                            commands::db_migrate::run_db_setup(project_paths, true)
                                                 .await?;
                                         }
                                         open::that("http://localhost:8080")?;
@@ -142,7 +142,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             if start_args.restart {
-                commands::db_migrate::run_db_setup(project_paths).await?;
+                commands::db_migrate::run_db_setup(project_paths, true).await?;
             }
             commands::start::start_indexer(project_paths).await?;
             Ok(())
@@ -170,7 +170,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
 
                     DbMigrateSubcommands::Setup => {
-                        commands::db_migrate::run_db_setup(project_paths).await?;
+                        commands::db_migrate::run_db_setup(project_paths, true).await?;
                     }
                 },
             }
