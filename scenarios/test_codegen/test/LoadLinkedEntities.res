@@ -56,9 +56,10 @@ describe("Linked Entity Loader Integration Test", () => {
 
     /// Setup DB
     let a1: Types.aEntity = {optionalBigInt: None, id: "a1", b: "b1"}
+    let a2: Types.aEntity = {optionalBigInt: None, id: "a2", b: "b2"}
     let aEntities: array<Types.aEntity> = [
       a1,
-      {optionalBigInt: None, id: "a2", b: "b2"},
+      a2,
       {optionalBigInt: None, id: "a3", b: "b3"},
       {optionalBigInt: None, id: "a4", b: "b4"},
       {optionalBigInt: None, id: "a5", b: "bWontLoad"},
@@ -104,12 +105,12 @@ describe("Linked Entity Loader Integration Test", () => {
     let testingA = handlerContext.a.all
 
     Assert.deep_equal(
-      testingA->Js.Dict.keys,
-      ["a1", "a2"],
-      ~message="testingA should have correct keys",
+      testingA,
+      [Some(a1), Some(a2), None],
+      ~message="testingA should have correct items",
     )
 
-    let optA1 = testingA->Js.Dict.get("a1")
+    let optA1 = testingA->Belt.Array.getUnsafe(0)
     Assert.deep_equal(optA1, Some(a1), ~message="Incorrect entity loaded")
 
     // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
@@ -209,9 +210,9 @@ describe("Linked Entity Loader Integration Test", () => {
     let handlerContext = context.getContext(~eventData=testEventData, ())
     let testingA = handlerContext.a.all
 
-    Assert.deep_equal(testingA->Js.Dict.keys, ["a1"], ~message="testingA should have correct keys")
+    Assert.deep_equal(testingA, [Some(a1)], ~message="testingA should have correct entities")
 
-    let optA1 = testingA->Js.Dict.get("a1")
+    let optA1 = testingA->Belt.Array.getUnsafe(0)
     Assert.deep_equal(optA1, Some(a1), ~message="Incorrect entity loaded")
 
     // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
