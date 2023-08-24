@@ -62,7 +62,7 @@ Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
   )
 
   let updatesCount =
-    context.gravatar.gravatarWithChanges()->Belt.Option.mapWithDefault(
+    context.gravatar.gravatarWithChanges->Belt.Option.mapWithDefault(
       Ethers.BigInt.fromInt(1),
       gravatar => gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1)),
     )

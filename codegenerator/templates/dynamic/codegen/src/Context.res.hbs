@@ -6,6 +6,7 @@ module {{contract.name.capitalized}}Contract = {
 
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
+      //
       getContext: (~eventData: Types.eventData) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
       getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
@@ -66,11 +67,25 @@ module {{contract.name.capitalized}}Contract = {
         },
       {{/each}}
       }
-      {
-        getEntitiesToLoad: () => entitiesToLoad,
-        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
-        getLoaderContext: () => loaderContext,
-        getContext: (~eventData) => ({
+
+      let getHandlerContext: (
+        ~eventData: Types.eventData,
+      ) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context = (~eventData) => {
+          {{#each ../../entities as | entity |}}
+              {{#each event.required_entities as | required_entity |}}
+                {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+                  {{#each required_entity.labels as |label| }}
+                  let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
+                    | Some(id) => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+                    | None =>
+                      Logging.error(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
+                      None
+                    }
+                  {{/each}}
+                {{/if}}
+              {{/each}}
+          {{/each}}
+        {
           log: {
             info: (message: string) => logger->Logging.uinfo(message),
             debug: (message: string) => logger->Logging.udebug(message),
@@ -85,7 +100,7 @@ module {{contract.name.capitalized}}Contract = {
               {{#each event.required_entities as | required_entity |}}
                 {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
                   {{#each required_entity.labels as |label| }}
-                  {{label}}: () => optIdOf_{{label}}.contents->Belt.Option.flatMap(id => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)),
+                  {{label}}: {{label}}_{{required_entity.name.capitalized}},
                   {{/each}}
                 {{/if}}
               {{/each}}
@@ -125,7 +140,13 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
             {{/each}}
             },
           {{/each}}
-        })
+        }
+      }
+      {
+        getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
+        getLoaderContext: () => loaderContext,
+        getContext: getHandlerContext,
       }
     }
   }
