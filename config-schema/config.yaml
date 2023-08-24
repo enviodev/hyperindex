@@ -13,7 +13,5 @@ networks:
           - event: "UpdatedGravatar"
             requiredEntities:
               - name: Gravatar
-                labels:
-                  - "gravatarWithChanges"
           - event: "NewGravatar"
             requiredEntities: []

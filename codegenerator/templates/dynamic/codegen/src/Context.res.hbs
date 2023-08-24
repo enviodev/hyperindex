@@ -84,6 +84,10 @@ module {{contract.name.capitalized}}Contract = {
       {{/each}}
       {{/if}}
       
+          load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => 
+          {
+            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
+          },
         },
       {{/each}}
       }
@@ -142,6 +146,7 @@ module {{contract.name.capitalized}}Contract = {
                   {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
                   {{/each}}
                   {{/if}}
+                  get: (id: Types.id) =>  IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id),
                 {{/if}}
               {{/each}}
               {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}

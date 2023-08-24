@@ -29,8 +29,6 @@ networks: # Configuration of the blockchain networks that the project is deploye
           - event: AwesomeEvent #  Name of the event (must match the name in the ABI)
             requiredEntities: # An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)
               - name: AwesomeEntity # The name of the required entity (must match an entity defined in `schema.graphql`)
-                labels: # A user defined label that corresponds to this entity load
-                  - awesomeEntityChanges
 ```
 
 **Field Descriptions**
@@ -51,7 +49,6 @@ networks: # Configuration of the blockchain networks that the project is deploye
       - `name` - Name of the event (must match the name in the ABI)
       - `required_entities` - An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)
         - `name` - The name of the required entity (must match an entity defined in `schema.graphql`)
-        - `label` - A user defined label that corresponds to this entity load
 
 ### Schema Definition
 
@@ -100,12 +97,9 @@ events: # Configuration for each event emitted by this contract that the indexer
   - event: AwesomeEvent #  Name of the event (must match the name in the ABI)
     requiredEntities: # An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)
       - name: AwesomeEntity # The name of the required entity (must match an entity defined in `schema.graphql`)
-        labels: # A user defined label that corresponds to this entity load
-          - awesomeEntityChanges
 ```
 
 - The register function `registerNewGreetingLoadEntities` follows a naming convention for all events: `register<EventName>LoadEntities`.
-- Within the function that is being registered the user must define the criteria for loading the `awesomeEntityChanges` entity which corresponds to the label defined in the config.
 - This is made available to the user through the load entity context defined as `contextUpdator`.
 - In the case of the above example the `awesomeEntityChanges` loads a `AwesomeEntity` entity that corresponds to the id received from the event.
 
@@ -119,7 +113,7 @@ MyAwesomeContract.registerAwesomeEventHandler(({ event, context }) => {
 ```
 
 - The handler functions also follow a naming convention for all events in the form of: `register<EventName>Handler`.
-- Once the user has defined their `loadEntities` function, they are then able to retrieve the loaded entity information via the labels defined in the `config.yaml` file.
+- Once the user has defined their `loadEntities` function, they are then able to retrieve the loaded entity information in the handler via .get().
 - In the above example, if a `AwesomeEntity` entity is found matching the load criteria in the `loadEntities` function, it will be available via `awesomeEntityChanges`.
 - This is made available to the user through the handler context defined simply as `context`.
 - This `context` is the gateway by which the user can interact with the indexer and the underlying database.

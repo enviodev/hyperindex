@@ -132,14 +132,7 @@
                             "name": {
                               "description": "The name of the required entity (must match an entity defined in `schema.graphql`)",
                               "type": "string"
-                            },
-                            "labels": {
-                              "description": "A user defined label that corresponds to this entity load",
-                              "type": "array",
-                              "items": {
-                                "type": "string"
-                              }
-                            }
+                            }                         
                           },
                           "required": ["name"]
                         }

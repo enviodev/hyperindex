@@ -134,6 +134,7 @@ module {{event.name.capitalized}}Event = {
         {{array_label}}: array<option<{{required_entity.name.uncapitalized}}Entity>>,
         {{/each}}
         {{/if}}
+        get: id => option<{{required_entity.name.uncapitalized}}Entity>,
       {{/if}}
 
     {{/each}}
@@ -174,6 +175,7 @@ module {{event.name.capitalized}}Event = {
       {{array_label}}Load: (array<id>{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
       {{/each}}
       {{/if}}
+      load: (id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
     }
     {{/each}}
 
