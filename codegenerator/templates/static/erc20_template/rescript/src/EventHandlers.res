@@ -2,7 +2,7 @@ open Types
 
 Handlers.ERC20Contract.Approval.loader((~event, ~context) => {
   // loading the required accountEntity
-  context.account.load(event.params.owner->Ethers.ethAddressToString)
+  context.account.ownerAccountChangesLoad(event.params.owner->Ethers.ethAddressToString)
 })
 
 Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
@@ -38,8 +38,8 @@ Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
 
 Handlers.ERC20Contract.Transfer.loader((~event, ~context) => {
   // loading the required accountEntity
-  context.account.load(event.params.from->Ethers.ethAddressToString)
-  context.account.load(event.params.to->Ethers.ethAddressToString)
+  context.account.senderAccountChangesLoad(event.params.from->Ethers.ethAddressToString)
+  context.account.receiverAccountChangesLoad(event.params.to->Ethers.ethAddressToString)
 })
 
 Handlers.ERC20Contract.Transfer.handler((~event, ~context) => {

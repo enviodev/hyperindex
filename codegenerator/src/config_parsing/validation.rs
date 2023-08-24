@@ -131,7 +131,7 @@ pub fn validate_deserialized_config_yaml(
                     }
                     // Checking that entity names do not include any reserved words
                     validate_names_not_reserved(
-                        &required_entity_names,
+                        &entity_and_label_names,
                         "Required Entities".to_string(),
                     )?;
                 }

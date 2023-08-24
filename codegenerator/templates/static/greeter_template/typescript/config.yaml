@@ -9,11 +9,15 @@ networks:
       - name: Greeter
         abi_file_path: abis/greeter-abi.json
         address: "0x9D02A17dE4E68545d3a58D3a20BbBE0399E05c9c"
-        handler: src/EventHandlers.js
+        handler: src/EventHandlers.ts
         events:
           - event: "NewGreeting"
             requiredEntities:
               - name: "Greeting"
+                labels:
+                  - "greetingWithChanges"
           - event: "ClearGreeting"
             requiredEntities:
               - name: "Greeting"
+                labels:
+                  - "greetingWithChanges"

@@ -14,6 +14,11 @@ networks:
           - event: "Approval"
             requiredEntities:
               - name: "Account"
+                labels:
+                  - "ownerAccountChanges"
           - event: "Transfer"
             requiredEntities:
               - name: "Account"
+                labels:
+                  - "senderAccountChanges"
+                  - "receiverAccountChanges"

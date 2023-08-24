@@ -9,11 +9,16 @@ networks:
       - name: ERC20
         abi_file_path: abis/ERC20.json
         address: ["0x61cce07e4cad3bf797667f8fd14d2a7d1582038e"]
-        handler: src/EventHandlers.js
+        handler: src/EventHandlers.ts
         events:
           - event: "Approval"
             requiredEntities:
               - name: "Account"
+                labels:
+                  - "ownerAccountChanges"
           - event: "Transfer"
             requiredEntities:
               - name: "Account"
+                labels:
+                  - "senderAccountChanges"
+                  - "receiverAccountChanges"
