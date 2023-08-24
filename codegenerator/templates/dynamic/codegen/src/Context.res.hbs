@@ -78,7 +78,8 @@ module {{contract.name.capitalized}}Contract = {
           {{array_label}}Load: (ids: array<Types.id>{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
             optIdArrayOf_{{array_label}} := Some(ids)
 
-            let _ = Belt.Array.concat(entitiesToLoad, ids->Belt.Array.map(id => Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}})))
+            let _ =
+              ids->Belt.Array.map(id => entitiesToLoad->Js.Array2.push(Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}})))
           },
       {{/each}}
       {{/if}}
