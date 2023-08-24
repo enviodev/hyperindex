@@ -100,7 +100,7 @@ describe("Linked Entity Loader Integration Test", () => {
     await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
 
     let handlerContext = context.getContext(~eventData=testEventData)
-    let optTestingA = handlerContext.a.testingA()
+    let optTestingA = handlerContext.a.testingA
 
     Assert.not_equal(optTestingA, None, ~message="testingA should not be None")
 
@@ -199,7 +199,7 @@ describe("Linked Entity Loader Integration Test", () => {
     await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
 
     let handlerContext = context.getContext(~eventData=testEventData)
-    let optTestingA = handlerContext.a.testingA()
+    let optTestingA = handlerContext.a.testingA
 
     Assert.not_equal(optTestingA, None, ~message="testingA should not be None")
 
