@@ -1,7 +1,7 @@
 open Types
 
 Handlers.GreeterContract.NewGreeting.loader((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
+  context.greeting.load(event.params.user->Ethers.ethAddressToString)
 })
 
 Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
@@ -32,7 +32,7 @@ Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
 })
 
 Handlers.GreeterContract.ClearGreeting.loader((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
+  context.greeting.load(event.params.user->Ethers.ethAddressToString)
   ()
 })
 

@@ -10,7 +10,7 @@ import { accountEntity } from "../generated/src/Types.gen";
 
 ERC20Contract_Approval_loader(({ event, context }) => {
   // loading the required accountEntity
-  context.account.ownerAccountChangesLoad(event.params.owner.toString());
+  context.account.load(event.params.owner.toString());
 });
 
 ERC20Contract_Approval_handler(({ event, context: { account } }) => {
@@ -43,8 +43,8 @@ ERC20Contract_Approval_handler(({ event, context: { account } }) => {
 
 ERC20Contract_Transfer_loader(({ event, context }) => {
   // loading the required accountEntity
-  context.account.senderAccountChangesLoad(event.params.from.toString());
-  context.account.receiverAccountChangesLoad(event.params.to.toString());
+  context.account.load(event.params.from.toString());
+  context.account.load(event.params.to.toString());
 });
 
 ERC20Contract_Transfer_handler(({ event, context: { account, log } }) => {

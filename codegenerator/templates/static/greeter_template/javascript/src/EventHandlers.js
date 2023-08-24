@@ -1,7 +1,7 @@
 let { GreeterContract } = require("../generated/src/Handlers.bs.js");
 
 GreeterContract.NewGreeting.loader((event, context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.greeting.load(event.params.user.toString());
 });
 
 GreeterContract.NewGreeting.handler((event, context) => {
@@ -29,7 +29,7 @@ GreeterContract.NewGreeting.handler((event, context) => {
 });
 
 GreeterContract.ClearGreeting.loader((event, context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.greeting.load(event.params.user.toString());
 });
 
 GreeterContract.ClearGreeting.handler((event, context) => {

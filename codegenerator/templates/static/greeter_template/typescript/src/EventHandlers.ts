@@ -8,7 +8,7 @@ import {
 import { greetingEntity } from "../generated/src/Types.gen";
 
 GreeterContract_NewGreeting_loader(({ event, context }) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.greeting.load(event.params.user.toString());
 });
 
 GreeterContract_NewGreeting_handler(({ event, context }) => {
@@ -35,7 +35,7 @@ GreeterContract_NewGreeting_handler(({ event, context }) => {
 });
 
 GreeterContract_ClearGreeting_loader(({ event, context }) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.greeting.load(event.params.user.toString());
 });
 
 GreeterContract_ClearGreeting_handler(({ event, context }) => {
