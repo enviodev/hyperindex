@@ -29,8 +29,6 @@ networks: # Configuration of the blockchain networks that the project is deploye
           - event: AwesomeEvent #  Name of the event (must match the name in the ABI)
             requiredEntities: # An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)
               - name: AwesomeEntity # The name of the required entity (must match an entity defined in `schema.graphql`)
-                labels: # A user defined label that corresponds to this entity load
-                  - awesomeEntityChanges
 ```
 
 **Field Descriptions**
@@ -52,7 +50,6 @@ networks: # Configuration of the blockchain networks that the project is deploye
       - `name` - Name of the event (must match the name in the ABI)
       - `required_entities` - An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)
         - `name` - The name of the required entity (must match an entity defined in `schema.graphql`)
-        - `label` - A user defined label that corresponds to this entity load
 
 ### Schema Definition
 
@@ -98,8 +95,6 @@ Inspecting the config of the `AwesomeEvent` event from the above example config 
     - event: AwesomeEvent #  Name of the event (must match the name in the ABI)
       requiredEntities: # An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)
         - name: AwesomeEntity # The name of the required entity (must match an entity defined in `schema.graphql`)
-          labels: # A user defined label that corresponds to this entity load
-            - awesomeEntityChanges
 ```
 
 - The register function `registerNewGreetingLoadEntities` follows a naming convention for all events: `register<EventName>LoadEntities`. 

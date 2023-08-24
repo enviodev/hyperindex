@@ -29,7 +29,7 @@ networks:
             requiredEntities: # if this field isn't specified it should default to include all entities
               - name: "Gravatar"
                 labels:
-                  - "gravatarWithChanges"
+                  - gravatarWithChanges
       - name: NftFactory
         abi_file_path: abis/NftFactory.json
         address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
@@ -45,12 +45,5 @@ networks:
           - event: "Transfer"
             requiredEntities:
               - name: "User"
-                labels:
-                  - "userFrom"
-                  - "userTo"
               - name: Nftcollection
-                labels:
-                  - "nftCollectionUpdated"
               - name: Token
-                labels:
-                  - "existingTransferredToken"

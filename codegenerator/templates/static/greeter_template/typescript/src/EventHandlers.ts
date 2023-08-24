@@ -12,7 +12,7 @@ GreeterContract_NewGreeting_loader(({ event, context }) => {
 });
 
 GreeterContract_NewGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.greeting.greetingWithChanges();
+  let currentGreeter = context.greeting.greetingWithChanges;
 
   if (currentGreeter != null) {
     let greetingObject: greetingEntity = {
@@ -39,7 +39,7 @@ GreeterContract_ClearGreeting_loader(({ event, context }) => {
 });
 
 GreeterContract_ClearGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.greeting.greetingWithChanges();
+  let currentGreeter = context.greeting.greetingWithChanges;
 
   if (currentGreeter != null) {
     let greetingObject: greetingEntity = {

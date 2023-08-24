@@ -88,10 +88,6 @@ module {{contract.name.capitalized}}Contract = {
           {
             let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
           },
-          load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => 
-          {
-            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
-          },
         },
       {{/each}}
       }

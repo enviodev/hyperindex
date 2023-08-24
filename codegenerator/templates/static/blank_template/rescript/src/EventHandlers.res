@@ -24,11 +24,11 @@ User should import the auto-generated function names for loadEntities and handle
 */
 
 Handlers.MyAwesomeContractContract.AwesomeEvent.loader((~event, ~context) => {
-  let _ = context.awesomeEntity.awesomeEntityChangesLoad(event.params.identifier)
+  let _ = context.awesomeEntity.load(event.params.awesomeEventEntityId)
 })
 
 Handlers.MyAwesomeContractContract.AwesomeEvent.handler((~event, ~context) => {
-  switch context.awesomeEntity.awesomeEntityChanges() {
+  switch context.awesomeEntity.get(event.params.awesomeEventEntityId) {
   | Some({id, awesomeTotal}) =>
     let updatedObject: Types.awesomeEntityEntity = {
       id,
