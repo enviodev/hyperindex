@@ -21,8 +21,8 @@ networks:
           - event: "TestEvent"
             requiredEntities:
               - name: "A"
-                labels:
-                  - "testingA"
+                arrayLabels:
+                  - "all"
           - event: "NewGravatar"
             requiredEntities: [] # empty signifies no requirements
           - event: "UpdatedGravatar"

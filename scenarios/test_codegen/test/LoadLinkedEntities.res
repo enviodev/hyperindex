@@ -89,7 +89,6 @@ describe("Linked Entity Loader Integration Test", () => {
     )
 
     let loaderContext = context.getLoaderContext()
-
     let _aLoader = loaderContext.a.testingALoad(
       "a1",
       ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {loadA: {}}}}}},

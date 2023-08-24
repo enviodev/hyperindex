@@ -129,9 +129,11 @@ enum EventNameOrSig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
 struct RequiredEntity {
     name: String,
-    labels: Vec<String>,
+    labels: Option<Vec<String>>,
+    array_labels: Option<Vec<String>>,
 }
 
 impl Serialize for EventNameOrSig {

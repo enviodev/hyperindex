@@ -124,9 +124,16 @@ module {{event.name.capitalized}}Event = {
     type {{entity.name.uncapitalized}}EntityHandlerContext = {
     {{#each event.required_entities as | required_entity |}}
       {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+        {{#if required_entity.labels}}
         {{#each required_entity.labels as |label| }}
         {{label}}: option<{{required_entity.name.uncapitalized}}Entity>,
         {{/each}}
+        {{/if}}
+        {{#if required_entity.array_labels}}
+        {{#each required_entity.array_labels as |array_label| }}
+        {{array_label}}: Js.Dict.t<{{required_entity.name.uncapitalized}}Entity>,
+        {{/each}}
+        {{/if}}
       {{/if}}
 
     {{/each}}
@@ -157,9 +164,16 @@ module {{event.name.capitalized}}Event = {
     {{#each event.required_entities as | required_entity |}}
     @genType
     type {{required_entity.name.uncapitalized}}EntityLoaderContext = {
+      {{#if required_entity.labels}}
       {{#each required_entity.labels as | label |}}
       {{label}}Load: (id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
       {{/each}}
+      {{/if}}
+      {{#if required_entity.array_labels}}
+      {{#each required_entity.array_labels as | array_label |}}
+      {{array_label}}Load: (array<id>{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
+      {{/each}}
+      {{/if}}
     }
     {{/each}}
 
