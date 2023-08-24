@@ -1,26 +1,27 @@
 {{#each contracts as | contract |}}
 module {{contract.name.capitalized}}Contract = {
 {{#each contract.events as | event |}}
-  module {{event.name.capitalized}}Event = {
-    type context = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context
+module {{event.name.capitalized}}Event = {
+type context = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context
 
-    type contextCreatorFunctions = {
-      getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
-      //
-      getContext: (~eventData: Types.eventData) => unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
-      getEntitiesToLoad: unit => array<Types.entityRead>,
-      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
+type contextCreatorFunctions = {
+getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
+//
+getContext: (~eventData: Types.eventData) => unit =>
+Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
+getEntitiesToLoad: unit => array<Types.entityRead>,
+  getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
     let contextCreator: (
-      ~chainId: int,
-      ~event: Types.eventLog<'a>,
+    ~chainId: int,
+    ~event: Types.eventLog<'a>,
       ~logger: Pino.t,
-    ) => contextCreatorFunctions = (~chainId, ~event, ~logger) => {
+      ) => contextCreatorFunctions = (~chainId, ~event, ~logger) => {
       let logger =
-        logger->Logging.createChildFrom(
-          ~logger=_,
-          ~params={"userLog": "{{contract.name.capitalized}}.{{event.name.capitalized}}.context"},
-        )
+      logger->Logging.createChildFrom(
+      ~logger=_,
+      ~params={"userLog": "{{contract.name.capitalized}}.{{event.name.capitalized}}.context"},
+      )
       {{#each event.required_entities as | required_entity |}}
       {{#if required_entity.labels}}
       {{#each required_entity.labels as |label| }}
@@ -28,173 +29,201 @@ module {{contract.name.capitalized}}Contract = {
       {{/each}}
       {{/if}}
       {{#if required_entity.array_labels}}
-        {{#each required_entity.array_labels as |array_label|}}
-          let optIdArrayOf_{{array_label}} = ref(None)
-        {{/each}}
+      {{#each required_entity.array_labels as |array_label|}}
+      let optIdArrayOf_{{array_label}} = ref(None)
+      {{/each}}
       {{/if}}
       {{/each}}
 
       let entitiesToLoad: array<Types.entityRead> = []
 
-      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
+        let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
 
-      @warning("-16")
-      let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext = {
-        contractRegistration: {
-        {{#each ../../contracts as |contract_inner| }}
-          //TODO only add contracts we've registered for the event in the config
-          add{{contract_inner.name.capitalized}}: (contractAddress: Ethers.ethAddress) => 
+          @warning("-16")
+          let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext =
           {
-            let eventId = EventUtils.packEventIndex(
-              ~blockNumber=event.blockNumber,
-              ~logIndex=event.logIndex,
-            )
-            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
-              chainId,
-              eventId,
-              contractAddress,
-              contractType: "{{contract_inner.name.capitalized}}",
-            }
+          contractRegistration: {
+          {{#each ../../contracts as |contract_inner| }}
+          //TODO only add contracts we've registered for the event in the config
+          add{{contract_inner.name.capitalized}}: (contractAddress: Ethers.ethAddress) =>
+          {
+          let eventId = EventUtils.packEventIndex(
+          ~blockNumber=event.blockNumber,
+          ~logIndex=event.logIndex,
+          )
+          let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+          chainId,
+          eventId,
+          contractAddress,
+          contractType: "{{contract_inner.name.capitalized}}",
+          }
 
-            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+          addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
 
-            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(~entity=dynamicContractRegistration)
+          IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(~entity=dynamicContractRegistration)
           },
-        {{/each}}
-        },
-      {{#each event.required_entities as | required_entity |}}
-        {{required_entity.name.uncapitalized}}: {
-      {{#if required_entity.labels}}
-      {{#each required_entity.labels as |label| }}
-          {{label}}Load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
-            optIdOf_{{label}} := Some(id)
-
-            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
+          {{/each}}
           },
-      {{/each}}
-      {{/if}}
-      {{#if required_entity.array_labels}}
-      {{#each required_entity.array_labels as |array_label| }}
-          {{array_label}}Load: (ids: array<Types.id>{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
+          {{#each event.required_entities as | required_entity |}}
+          {{required_entity.name.uncapitalized}}: {
+          {{#if required_entity.labels}}
+          {{#each required_entity.labels as |label| }}
+          {{label}}Load: (id: Types.id{{#if
+          required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
+          optIdOf_{{label}} := Some(id)
+
+          let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if
+          required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
+          },
+          {{/each}}
+          {{/if}}
+          {{#if required_entity.array_labels}}
+          {{#each required_entity.array_labels as |array_label| }}
+          {{array_label}}Load: (ids: array<Types.id>{{#if
+            required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
             optIdArrayOf_{{array_label}} := Some(ids)
 
             let _ =
-              ids->Belt.Array.map(id => entitiesToLoad->Js.Array2.push(Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}})))
-          },
-      {{/each}}
-      {{/if}}
-      
-          load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => 
-          {
-            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
-          },
-        },
-      {{/each}}
-      }
-
-      let getHandlerContext: (
-        ~eventData: Types.eventData,
-      ) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context = (~eventData) => {
-          {{#each ../../entities as | entity |}}
-            {{#each event.required_entities as | required_entity |}}
-              {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
-                {{#if required_entity.labels}}
-                  {{#each required_entity.labels as |label| }}
-                  let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
-                    | Some(id) => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
-                    | None =>
-                      Logging.error(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
-                      None
-                    }
-                  {{/each}}
-                {{/if}}
-                {{#if required_entity.array_labels}}
-                  {{#each required_entity.array_labels as |array_label| }}
-                  let {{array_label}}_{{required_entity.name.capitalized}} = switch optIdArrayOf_{{array_label}}.contents {
-                    | Some(ids) =>
-                      ids->Belt.Array.map(id => IO.InMemoryStore.A.getA(~id))
-                    | None =>
-                      Logging.error(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
-                      []
-                    }
-                  {{/each}}
-                {{/if}}
-              {{/if}}
+            ids->Belt.Array.map(id =>
+            entitiesToLoad->Js.Array2.push(Types.{{required_entity.name.capitalized}}Read(id{{#if
+            required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}})))
+            },
             {{/each}}
-          {{/each}}
-        {
-          log: {
+            {{/if}}
+
+            load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}},
+            ~loaders={}{{/if}}) =>
+            {
+            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if
+            required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
+            },
+            },
+            {{/each}}
+            }
+
+            let getHandlerContext: (
+            ~eventData: Types.eventData,
+            ) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context = (~eventData) => {
+            {{#each ../../entities as | entity |}}
+            {{#each event.required_entities as | required_entity |}}
+            {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+            {{#if required_entity.labels}}
+            {{#each required_entity.labels as |label| }}
+            let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
+            | Some(id) =>
+            IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+            | None =>
+            Logging.error(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not
+            used please add it to your loader function or remove it from your config.yaml file to avoid unexpected
+            behaviour. This is a runtime validation check.`)
+            None
+            }
+            {{/each}}
+            {{/if}}
+            {{#if required_entity.array_labels}}
+            {{#each required_entity.array_labels as |array_label| }}
+            let {{array_label}}_{{required_entity.name.capitalized}} = switch optIdArrayOf_{{array_label}}.contents {
+            | Some(ids) =>
+            ids->Belt.Array.map(id => IO.InMemoryStore.A.getA(~id))
+            | None =>
+            Logging.error(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}""
+            was not used please add it to your loader function or remove it from your config.yaml file to avoid
+            unexpected behaviour. This is a runtime validation check.`)
+            []
+            }
+            {{/each}}
+            {{/if}}
+            {{/if}}
+            {{/each}}
+            {{/each}}
+            {
+            log: {
             info: (message: string) => logger->Logging.uinfo(message),
             debug: (message: string) => logger->Logging.udebug(message),
             warn: (message: string) => logger->Logging.uwarn(message),
             error: (message: string) => logger->Logging.uerror(message),
             errorWithExn: (exn: option<Js.Exn.t>, message: string) => logger->Logging.uerrorWithExn(exn, message),
-          },
-          {{#each ../../entities as | entity |}}
-            {{entity.name.uncapitalized}}: {
-              set: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity = entity, ~dbOp = Types.Set, ~eventData)},
-              delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
+              },
+              {{#each ../../entities as | entity |}}
+              {{entity.name.uncapitalized}}: {
+              set: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity =
+              entity, ~dbOp = Types.Set, ~eventData)},
+              delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with
+              ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
-                {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
-                  {{#if required_entity.labels}}
-                  {{#each required_entity.labels as |label| }}
-                  {{label}}: {{label}}_{{required_entity.name.capitalized}},
-                  {{/each}}
-                  {{/if}}
-                  {{#if required_entity.array_labels}}
-                  {{#each required_entity.array_labels as |array_label| }}
-                  {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
-                  {{/each}}
-                  {{/if}}
-                  get: (id: Types.id) =>  IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id),
-                {{/if}}
+              {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+              {{#if required_entity.labels}}
+              {{#each required_entity.labels as |label| }}
+              {{label}}: {{label}}_{{required_entity.name.capitalized}},
+              {{/each}}
+              {{/if}}
+              {{#if required_entity.array_labels}}
+              {{#each required_entity.array_labels as |array_label| }}
+              {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
+              {{/each}}
+              {{/if}}
+              get: (id: Types.id) =>
+              IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id),
+              {{/if}}
               {{/each}}
               {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
               get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}} => {
-                {{#if entity_field.is_array}}
-                  let {{entity_field.relational_key.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Array.map(entityId => {
-                    let optEntity = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id=entityId)
+              {{#if entity_field.is_array}}
+              let {{entity_field.relational_key.uncapitalized}}Array =
+              {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Array.map(entityId => {
+              let optEntity =
+              IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id=entityId)
 
-                    switch optEntity {
-                  | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
-                  | None =>
-                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
-Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
-`)
-            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
-            "NOT_IMPLEMENTED_YET"->Obj.magic
-          }})
-          {{entity_field.relational_key.uncapitalized}}Array
-                {{else}}
-                {{#if entity_field.is_optional}}
-                  let opt{{entity_field.relational_key.capitalized}} = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Option.map(entityFieldId => IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id=entityFieldId))
-                {{else}}
-                  let opt{{entity_field.relational_key.capitalized}} = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id={{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}})
-                {{/if}}
-                  switch opt{{entity_field.relational_key.capitalized}} {
-                  | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
-                  | None =>
-                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
-Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
-`)
-            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
-            "NOT_IMPLEMENTED_YET"->Obj.magic
-          }
+              switch optEntity {
+              | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
+              | None =>
+              Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found.
+              Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+              Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the
+              Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+              `)
+              // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with
+              this ID from the database.
+              "NOT_IMPLEMENTED_YET"->Obj.magic
+              }})
+              {{entity_field.relational_key.uncapitalized}}Array
+              {{else}}
+              {{#if entity_field.is_optional}}
+              let opt{{entity_field.relational_key.capitalized}} =
+              {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Option.map(entityFieldId
+              =>
+              IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id=entityFieldId))
+              {{else}}
+              let opt{{entity_field.relational_key.capitalized}} =
+              IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id={{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}})
               {{/if}}
-            },
-            {{/each}}
-            },
-          {{/each}}
-        }
-      }
-      {
-        getEntitiesToLoad: () => entitiesToLoad,
-        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
-        getLoaderContext: () => loaderContext,
-        getContext: (~eventData) => {() => getHandlerContext(~eventData)},
-      }
-    }
-  }
-{{/each}}
-}
-{{/each}}
+              switch opt{{entity_field.relational_key.capitalized}} {
+              | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
+              | None =>
+              Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found.
+              Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+              Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the
+              Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+              `)
+              // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with
+              this ID from the database.
+              "NOT_IMPLEMENTED_YET"->Obj.magic
+              }
+              {{/if}}
+              },
+              {{/each}}
+              },
+              {{/each}}
+              }
+              }
+              {
+              getEntitiesToLoad: () => entitiesToLoad,
+              getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
+              getLoaderContext: () => loaderContext,
+              getContext: (~eventData) => {() => getHandlerContext(~eventData)},
+              }
+              }
+              }
+              {{/each}}
+              }
+              {{/each}}
