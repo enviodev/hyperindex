@@ -13,6 +13,7 @@
     "res:start": "node generated/src/Index.bs.js",
     "res:watch": "rescript build -w -with-deps",
     "test": "rescript build -with-deps && pnpm db-setup && nyc mocha",
+    "test-plain": "rescript build -with-deps && pnpm db-setup && pnpm mocha",
     "test:log": "DEBUG=true npm test",
     "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen",
     "docker-up": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- local docker up",
