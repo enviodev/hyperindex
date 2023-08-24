@@ -100,33 +100,33 @@ describe("Linked Entity Loader Integration Test", () => {
     await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
 
     let handlerContext = context.getContext(~eventData=testEventData)
-    let optTestingA = handlerContext.a.testingA
+    let optTestingA = handlerContext().a.testingA
 
     Assert.not_equal(optTestingA, None, ~message="testingA should not be None")
 
     let testingA = optTestingA->Belt.Option.getExn
 
-    let b1 = handlerContext.a.getB(testingA)
+    let b1 = handlerContext().a.getB(testingA)
 
     Assert.equal(b1.id, testingA.b, ~message="b1.id should equal testingA.b")
 
-    let c1 = handlerContext.b.getC(b1)
+    let c1 = handlerContext().b.getC(b1)
     Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
 
-    let aArray = handlerContext.b.getA(b1)
+    let aArray = handlerContext().b.getA(b1)
 
     aArray->Belt.Array.forEach(
       a => {
-        let b = handlerContext.a.getB(a)
+        let b = handlerContext().a.getB(a)
 
         Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
 
-        let optC = handlerContext.b.getC(b)
+        let optC = handlerContext().b.getC(b)
         Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c")
 
         let _ = optC->Belt.Option.map(
           c => {
-            let a = handlerContext.c.getA(c)
+            let a = handlerContext().c.getA(c)
 
             Assert.equal(a.id, c.a, ~message="a.id should equal c.a")
           },
@@ -199,31 +199,31 @@ describe("Linked Entity Loader Integration Test", () => {
     await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
 
     let handlerContext = context.getContext(~eventData=testEventData)
-    let optTestingA = handlerContext.a.testingA
+    let optTestingA = handlerContext().a.testingA
 
     Assert.not_equal(optTestingA, None, ~message="testingA should not be None")
 
     let testingA = optTestingA->Belt.Option.getExn
 
-    let b1 = handlerContext.a.getB(testingA)
+    let b1 = handlerContext().a.getB(testingA)
 
     Assert.equal(b1.id, testingA.b, ~message="b1.id should equal testingA.b")
 
-    let c1 = handlerContext.b.getC(b1)
+    let c1 = handlerContext().b.getC(b1)
 
     Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
 
-    let aArray = handlerContext.b.getA(b1)
+    let aArray = handlerContext().b.getA(b1)
 
     aArray->Belt.Array.forEach(
       a => {
-        let b = handlerContext.a.getB(a)
+        let b = handlerContext().a.getB(a)
 
         Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
 
         aArray->Belt.Array.forEach(
           a => {
-            let b = handlerContext.a.getB(a)
+            let b = handlerContext().a.getB(a)
 
             Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
           },

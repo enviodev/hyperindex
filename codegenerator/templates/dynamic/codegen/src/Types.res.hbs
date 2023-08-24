@@ -193,7 +193,7 @@ type event =
 type eventAndContext =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>, {{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context)
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>, unit => {{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context)
 {{/each}}
 {{/each}}
 
