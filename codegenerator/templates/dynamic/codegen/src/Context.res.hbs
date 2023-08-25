@@ -182,7 +182,12 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
           {{entity_field.relational_key.uncapitalized}}Array
                 {{else}}
                 {{#if entity_field.is_optional}}
-                  let opt{{entity_field.relational_key.capitalized}} = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Option.map(entityFieldId => IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id=entityFieldId))
+                 switch {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}} {
+                  | Some({{entity_field.relational_key.uncapitalized}}_field) =>
+                    // TODO: we aren't handling the case where the code is an optional array. Maybe we should enforce that at the compile step, and force users to use an empty array instead.
+                    let opt{{entity_field.relational_key.capitalized}} = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id={{entity_field.relational_key.uncapitalized}}_field)
+
+                    (
                 {{else}}
                   let opt{{entity_field.relational_key.capitalized}} = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id={{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}})
                 {{/if}}
@@ -195,6 +200,10 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
             // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
             "NOT_IMPLEMENTED_YET"->Obj.magic
           }
+          {{#if entity_field.is_optional}})->Some
+          | None => None
+          }
+          {{/if}}
               {{/if}}
             },
             {{/each}}
