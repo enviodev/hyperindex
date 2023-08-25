@@ -1,13 +1,13 @@
 /*
-*Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
-*/
+ *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
+ */
 
 Handlers.MyAwesomeContractContract.AwesomeEvent.loader((~event, ~context) => {
-  let _ = context.awesomeEntity.load(event.params.awesomeEventEntityId)
+  let _ = context.awesomeEntity.load(event.params.identifier)
 })
 
 Handlers.MyAwesomeContractContract.AwesomeEvent.handler((~event, ~context) => {
-  switch context.awesomeEntity.get(event.params.awesomeEventEntityId) {
+  switch context.awesomeEntity.get(event.params.identifier) {
   | Some({id, awesomeTotal}) =>
     let updatedObject: Types.awesomeEntityEntity = {
       id,

@@ -129,8 +129,7 @@ pub mod codegen {
             &entities_to_map(entity_types.clone()),
         )?;
 
-        let chain_config_templates =
-            config_parsing::convert_config_to_chain_configs(parsed_paths)?;
+        let chain_config_templates = config_parsing::convert_config_to_chain_configs(parsed_paths)?;
 
         //Used to create project specific configuration during deployment
         let project_name = config_parsing::get_project_name_from_config(parsed_paths)?;
