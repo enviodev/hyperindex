@@ -42,7 +42,7 @@ SimpleNftContract_Transfer_loader(({ event, context }) => {
 });
 
 SimpleNftContract_Transfer_handler(({ event, context }) => {
-  let nftCollectionUpdated = context.nftcollection.nftCollectionUpdated();
+  let nftCollectionUpdated = context.nftcollection.nftCollectionUpdated;
   let token = {
     id: event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
     tokenId: event.params.tokenId,
@@ -50,7 +50,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
     owner: event.params.to,
   };
   if (nftCollectionUpdated) {
-    let existingToken = context.token.existingTransferredToken();
+    let existingToken = context.token.existingTransferredToken;
     if (!existingToken) {
       let currentSupply = Number(nftCollectionUpdated.currentSupply) + 1;
 
@@ -68,7 +68,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
   }
 
   if (event.params.from !== zeroAddress) {
-    let loadedUserFrom = context.user.userFrom();
+    let loadedUserFrom = context.user.userFrom;
     let userFromTokensOpt: Array<string> = loadedUserFrom?.tokens ?? [];
     let userFromTokens: Array<string> = [];
     if (typeof userFromTokensOpt !== "string") {
@@ -90,7 +90,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
   }
 
   if (event.params.to !== zeroAddress) {
-    let loadedUserTo = context.user.userTo();
+    let loadedUserTo = context.user.userTo;
 
     let userToTokensOpt: Array<string> = loadedUserTo?.tokens ?? [];
     let userToTokens: Array<string> = [token.id];

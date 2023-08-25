@@ -6,7 +6,8 @@ module {{contract.name.capitalized}}Contract = {
 
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
-      getContext: (~eventData: Types.eventData) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
+      //
+      getContext: (~eventData: Types.eventData) => unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
       getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
@@ -21,9 +22,16 @@ module {{contract.name.capitalized}}Contract = {
           ~params={"userLog": "{{contract.name.capitalized}}.{{event.name.capitalized}}.context"},
         )
       {{#each event.required_entities as | required_entity |}}
+      {{#if required_entity.labels}}
       {{#each required_entity.labels as |label| }}
       let optIdOf_{{label}} = ref(None)
       {{/each}}
+      {{/if}}
+      {{#if required_entity.array_labels}}
+        {{#each required_entity.array_labels as |array_label|}}
+          let optIdArrayOf_{{array_label}} = ref(None)
+        {{/each}}
+      {{/if}}
       {{/each}}
 
       let entitiesToLoad: array<Types.entityRead> = []
@@ -56,6 +64,7 @@ module {{contract.name.capitalized}}Contract = {
         },
       {{#each event.required_entities as | required_entity |}}
         {{required_entity.name.uncapitalized}}: {
+      {{#if required_entity.labels}}
       {{#each required_entity.labels as |label| }}
           {{label}}Load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
             optIdOf_{{label}} := Some(id)
@@ -63,14 +72,53 @@ module {{contract.name.capitalized}}Contract = {
             let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
           },
       {{/each}}
+      {{/if}}
+      {{#if required_entity.array_labels}}
+      {{#each required_entity.array_labels as |array_label| }}
+          {{array_label}}Load: (ids: array<Types.id>{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
+            optIdArrayOf_{{array_label}} := Some(ids)
+
+            let _ =
+              ids->Belt.Array.map(id => entitiesToLoad->Js.Array2.push(Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}})))
+          },
+      {{/each}}
+      {{/if}}
+      
         },
       {{/each}}
       }
-      {
-        getEntitiesToLoad: () => entitiesToLoad,
-        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
-        getLoaderContext: () => loaderContext,
-        getContext: (~eventData) => ({
+
+      let getHandlerContext: (
+        ~eventData: Types.eventData,
+      ) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context = (~eventData) => {
+          {{#each ../../entities as | entity |}}
+            {{#each event.required_entities as | required_entity |}}
+              {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+                {{#if required_entity.labels}}
+                  {{#each required_entity.labels as |label| }}
+                  let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
+                    | Some(id) => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+                    | None =>
+                      Logging.error(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
+                      None
+                    }
+                  {{/each}}
+                {{/if}}
+                {{#if required_entity.array_labels}}
+                  {{#each required_entity.array_labels as |array_label| }}
+                  let {{array_label}}_{{required_entity.name.capitalized}} = switch optIdArrayOf_{{array_label}}.contents {
+                    | Some(ids) =>
+                      ids->Belt.Array.map(id => IO.InMemoryStore.A.getA(~id))
+                    | None =>
+                      Logging.error(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
+                      []
+                    }
+                  {{/each}}
+                {{/if}}
+              {{/if}}
+            {{/each}}
+          {{/each}}
+        {
           log: {
             info: (message: string) => logger->Logging.uinfo(message),
             debug: (message: string) => logger->Logging.udebug(message),
@@ -84,9 +132,16 @@ module {{contract.name.capitalized}}Contract = {
               delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
                 {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+                  {{#if required_entity.labels}}
                   {{#each required_entity.labels as |label| }}
-                  {{label}}: () => optIdOf_{{label}}.contents->Belt.Option.flatMap(id => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)),
+                  {{label}}: {{label}}_{{required_entity.name.capitalized}},
                   {{/each}}
+                  {{/if}}
+                  {{#if required_entity.array_labels}}
+                  {{#each required_entity.array_labels as |array_label| }}
+                  {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
+                  {{/each}}
+                  {{/if}}
                 {{/if}}
               {{/each}}
               {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
@@ -125,7 +180,13 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
             {{/each}}
             },
           {{/each}}
-        })
+        }
+      }
+      {
+        getEntitiesToLoad: () => entitiesToLoad,
+        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
+        getLoaderContext: () => loaderContext,
+        getContext: (~eventData) => {() => getHandlerContext(~eventData)},
       }
     }
   }

@@ -139,20 +139,29 @@ let eventBatchItems = eventBatch->Belt.Array.map((e): EventFetching.eventBatchQu
 })
 
 let eventBatchWithContext: array<Types.eventAndContext> = [
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog1, ContextMock.mockNewGravatarContext),
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog2, ContextMock.mockNewGravatarContext),
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog3, ContextMock.mockNewGravatarContext),
+  GravatarContract_NewGravatarWithContext(
+    newGravatarEventLog1,
+    () => ContextMock.mockNewGravatarContext,
+  ),
+  GravatarContract_NewGravatarWithContext(
+    newGravatarEventLog2,
+    () => ContextMock.mockNewGravatarContext,
+  ),
+  GravatarContract_NewGravatarWithContext(
+    newGravatarEventLog3,
+    () => ContextMock.mockNewGravatarContext,
+  ),
   GravatarContract_UpdatedGravatarWithContext(
     setGravatarEventLog1,
-    ContextMock.mockUpdateGravatarContext,
+    () => ContextMock.mockUpdateGravatarContext,
   ),
   GravatarContract_UpdatedGravatarWithContext(
     setGravatarEventLog2,
-    ContextMock.mockUpdateGravatarContext,
+    () => ContextMock.mockUpdateGravatarContext,
   ),
   GravatarContract_UpdatedGravatarWithContext(
     setGravatarEventLog3,
-    ContextMock.mockUpdateGravatarContext,
+    () => ContextMock.mockUpdateGravatarContext,
   ),
 ]
 
