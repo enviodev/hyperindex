@@ -26,6 +26,6 @@ let mockUpdateGravatarContext: UpdatedGravatarEvent.context = {
     },
     delete: _id => Js.log("inimplemented delete"),
     getOwner: Obj.magic,
-    get: _id => Some(MockEntities.gravatarEntity1)
+    get: _id => Some(MockEntities.gravatarEntity1),
   },
 }->Obj.magic

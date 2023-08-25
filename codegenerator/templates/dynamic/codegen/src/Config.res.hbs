@@ -156,7 +156,7 @@ let config: chainConfigs = [
         {{/each}}
         ]->Js.Dict.fromArray
 
-let expressPort = envSafe->EnvSafe.get(~name="EXPRESS_PORT", ~struct=S.int()->S.Int.port(), ~devFallback=9898, ())
+let metricsPort = envSafe->EnvSafe.get(~name="METRICS_PORT", ~struct=S.int()->S.Int.port(), ~devFallback=9898, ())
 
 // You need to close the envSafe after you're done with it so that it immediately tells you about your misconfigured environment on startup.
 envSafe->EnvSafe.close()
