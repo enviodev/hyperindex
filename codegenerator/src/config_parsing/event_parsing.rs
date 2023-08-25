@@ -78,8 +78,6 @@ fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
                         abi_type,
                     };
 
-                    
-
                     abi_type_to_rescript_string(&ethereum_param)
                 })
                 .collect();
@@ -126,7 +124,8 @@ fn get_event_template_from_ethereum_abi_event(
             .map(|required_entity| {
                 let entity_fields_of_required_entity_all = entity_fields_of_required_entity_map
                     .get(&required_entity.name)
-                    .cloned().unwrap_or_default();
+                    .cloned()
+                    .unwrap_or_default();
 
                 //Template needs access to both the full list and filtered for
                 //required entities that are not using a "@derivedFrom" directive
@@ -135,14 +134,13 @@ fn get_event_template_from_ethereum_abi_event(
                 RequiredEntityTemplate {
                     name: required_entity.name.to_capitalized_options(),
                     labels: required_entity.labels.clone(),
+                    array_labels: required_entity.array_labels.clone(),
                     entity_fields_of_required_entity,
                 }
             })
             .collect(),
         None => Vec::new(),
     };
-
-    
 
     EventTemplate {
         name,
@@ -342,7 +340,8 @@ mod tests {
             event: EventNameOrSig::Name(event_name.clone()),
             required_entities: Some(vec![RequiredEntity {
                 name: String::from("Gravatar"),
-                labels: vec![String::from("gravatarWithChanges")],
+                labels: Some(vec![String::from("gravatarWithChanges")]),
+                array_labels: None,
             }]),
         };
 
@@ -363,7 +362,8 @@ mod tests {
             ],
             required_entities: vec![RequiredEntityTemplate {
                 name: String::from("Gravatar").to_capitalized_options(),
-                labels: vec![String::from("gravatarWithChanges")],
+                labels: Some(vec![String::from("gravatarWithChanges")]),
+                array_labels: None,
                 entity_fields_of_required_entity: FilteredTemplateLists::empty(),
             }],
         };

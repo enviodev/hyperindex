@@ -122,6 +122,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             commands::db_migrate::run_db_setup(project_paths)
                                                 .await?;
                                         }
+                                        open::that("http://localhost:8080")?;
                                         commands::start::start_indexer(project_paths).await?;
                                     }
                                 }

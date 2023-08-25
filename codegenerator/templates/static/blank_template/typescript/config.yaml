@@ -9,10 +9,8 @@ networks: # Configuration of the blockchain networks that the project is deploye
       - name: MyAwesomeContract # User-defined contract name
         abi_file_path: abis/MyAwesomeContract.json # File location of the contract ABI
         address: "0x0000000000000000000000000000000000000000" # An array of addresses that the contract is deployed to on the network
-        handler: src/EventHandlers.js # Location of the file that handles the events emitted by this contract
+        handler: src/EventHandlers.ts # Location of the file that handles the events emitted by this contract
         events: # Configuration for each event emitted by this contract that the indexer will listen for
           - event: AwesomeEvent #  Name of the event (must match the name in the ABI)
             requiredEntities: # An array of entities that need to loaded and made accessible within the handler function (an empty array indicates that no entities are required)
               - name: AwesomeEntity # The name of the required entity (must match an entity defined in `schema.graphql`)
-                labels: # A user defined label that corresponds to this entity load
-                  - awesomeEntityChanges

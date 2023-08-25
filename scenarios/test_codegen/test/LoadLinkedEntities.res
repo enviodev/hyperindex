@@ -55,9 +55,11 @@ describe("Linked Entity Loader Integration Test", () => {
     }
 
     /// Setup DB
+    let a1: Types.aEntity = {optionalBigInt: None, id: "a1", b: "b1"}
+    let a2: Types.aEntity = {optionalBigInt: None, id: "a2", b: "b2"}
     let aEntities: array<Types.aEntity> = [
-      {optionalBigInt: None, id: "a1", b: "b1"},
-      {optionalBigInt: None, id: "a2", b: "b2"},
+      a1,
+      a2,
       {optionalBigInt: None, id: "a3", b: "b3"},
       {optionalBigInt: None, id: "a4", b: "b4"},
       {optionalBigInt: None, id: "a5", b: "bWontLoad"},
@@ -89,9 +91,9 @@ describe("Linked Entity Loader Integration Test", () => {
     )
 
     let loaderContext = context.getLoaderContext()
-
-    let _aLoader = loaderContext.a.testingALoad(
-      "a1",
+    let idsToLoad = ["a1", "a2", "a7" /* a7 doesn't exist */]
+    let _aLoader = loaderContext.a.allLoad(
+      idsToLoad,
       ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {loadA: {}}}}}},
     )
 
@@ -99,16 +101,22 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
 
-    let handlerContext = context.getContext(~eventData=testEventData)
-    let optTestingA = handlerContext.a.testingA()
+    let handlerContext = context.getContext(~eventData=testEventData, ())
+    let testingA = handlerContext.a.all
 
-    Assert.not_equal(optTestingA, None, ~message="testingA should not be None")
+    Assert.deep_equal(
+      testingA,
+      [Some(a1), Some(a2), None],
+      ~message="testingA should have correct items",
+    )
 
-    let testingA = optTestingA->Belt.Option.getExn
+    let optA1 = testingA->Belt.Array.getUnsafe(0)
+    Assert.deep_equal(optA1, Some(a1), ~message="Incorrect entity loaded")
 
-    let b1 = handlerContext.a.getB(testingA)
+    // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
+    let b1 = handlerContext.a.getB(a1)
 
-    Assert.equal(b1.id, testingA.b, ~message="b1.id should equal testingA.b")
+    Assert.equal(b1.id, a1.b, ~message="b1.id should equal testingA.b")
 
     let c1 = handlerContext.b.getC(b1)
     Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
@@ -164,8 +172,9 @@ describe("Linked Entity Loader Integration Test", () => {
     }
 
     /// Setup DB
+    let a1: Types.aEntity = {id: "a1", b: "b1", optionalBigInt: None}
     let aEntities: array<Types.aEntity> = [
-      {id: "a1", b: "b1", optionalBigInt: None},
+      a1,
       {id: "a2", b: "b1", optionalBigInt: None},
       {id: "a3", b: "b1", optionalBigInt: None},
       {id: "a4", b: "b1", optionalBigInt: None},
@@ -189,8 +198,8 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let loaderContext = context.getLoaderContext()
 
-    loaderContext.a.testingALoad(
-      "a1",
+    loaderContext.a.allLoad(
+      ["a1"],
       ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {}, loadA: {loadB: {loadC: {}}}}}}},
     )
 
@@ -198,16 +207,18 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
 
-    let handlerContext = context.getContext(~eventData=testEventData)
-    let optTestingA = handlerContext.a.testingA()
+    let handlerContext = context.getContext(~eventData=testEventData, ())
+    let testingA = handlerContext.a.all
 
-    Assert.not_equal(optTestingA, None, ~message="testingA should not be None")
+    Assert.deep_equal(testingA, [Some(a1)], ~message="testingA should have correct entities")
 
-    let testingA = optTestingA->Belt.Option.getExn
+    let optA1 = testingA->Belt.Array.getUnsafe(0)
+    Assert.deep_equal(optA1, Some(a1), ~message="Incorrect entity loaded")
 
-    let b1 = handlerContext.a.getB(testingA)
+    // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
+    let b1 = handlerContext.a.getB(a1)
 
-    Assert.equal(b1.id, testingA.b, ~message="b1.id should equal testingA.b")
+    Assert.equal(b1.id, a1.b, ~message="b1.id should equal testingA.b")
 
     let c1 = handlerContext.b.getC(b1)
 

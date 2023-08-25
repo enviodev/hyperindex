@@ -130,7 +130,8 @@ impl HasIsDerivedFrom for RequiredEntityEntityFieldTemplate {
 #[derive(Serialize, Debug, PartialEq)]
 pub struct RequiredEntityTemplate {
     pub name: CapitalizedOptions,
-    pub labels: Vec<String>,
+    pub labels: Option<Vec<String>>,
+    pub array_labels: Option<Vec<String>>,
     pub entity_fields_of_required_entity: FilteredTemplateLists<RequiredEntityEntityFieldTemplate>,
 }
 

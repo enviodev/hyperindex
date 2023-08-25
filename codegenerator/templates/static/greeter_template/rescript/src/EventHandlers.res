@@ -5,7 +5,7 @@ Handlers.GreeterContract.NewGreeting.loader((~event, ~context) => {
 })
 
 Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges()
+  let currentGreeterOpt = context.greeting.greetingWithChanges
 
   switch currentGreeterOpt {
   | Some(existingGreeter) => {
@@ -37,7 +37,7 @@ Handlers.GreeterContract.ClearGreeting.loader((~event, ~context) => {
 })
 
 Handlers.GreeterContract.ClearGreeting.handler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges()
+  let currentGreeterOpt = context.greeting.greetingWithChanges
 
   switch currentGreeterOpt {
   | Some(existingGreeter) => {

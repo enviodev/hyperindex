@@ -26,3 +26,6 @@ graph TD
 ```
 
 Notes: The EventProcessor doesn't rely on the ChainManager directly, this is known as Inversion of Control (IoC); the benefit is that larger changes can be made to the ChainManager and its subcomponents without worry that they will effect EventProcessor if the adaptor remains intact. The Dependency Rule says that the direction of source code dependencies is inwards whene the inner most part are the core business rules. 
+
+Inside the `startFetchers` function, it calls out to a ChainFetcher for each process to manage the process of fetching events from that chain.
+

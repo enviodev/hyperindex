@@ -18,8 +18,8 @@ Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {
 
 Handlers.GravatarContract.UpdatedGravatar.loader((~event, ~context) => {
   context.gravatar.gravatarWithChangesLoad(
-    ~loaders={loadOwner: {}},
     event.params.id->Ethers.BigInt.toString,
+    ~loaders={loadOwner: {}},
   )
 })
 
@@ -62,14 +62,10 @@ Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
   )
 
   let updatesCount =
-    context.gravatar.gravatarWithChanges()->Belt.Option.mapWithDefault(
+    context.gravatar.gravatarWithChanges->Belt.Option.mapWithDefault(
       Ethers.BigInt.fromInt(1),
       gravatar => gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1)),
     )
-  // Js.log("HANDLER I CARE ABOUT! context")
-  // Js.log(context)
-  // Js.log("context.log")
-  // Js.log(context.log)
 
   let gravatar: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
