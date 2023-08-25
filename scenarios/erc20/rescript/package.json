@@ -2,7 +2,7 @@
   "name": "erc20",
   "version": "0.1.0",
   "scripts": {
-    "codegen": "cargo run --manifest-path ../../../codegenerator/Cargo.toml -- codegen",
+    "codegen": "cargo run --manifest-path ../../../codegenerator/cli/Cargo.toml -- codegen",
     "clean": "rescript clean -with-deps",
     "build": "rescript build -with-deps",
     "start": "pnpm build && node generated/src/Index.bs.js",

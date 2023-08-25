@@ -8,7 +8,7 @@
     "start": "tsc --build && node build/generated/src/Index.bs.js",
     "deploy": "hardhat deploy",
     "compile": "hardhat compile",
-    "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen",
+    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "all": "cd ../.. && docker compose down -v && docker compose up -d && cd scenarios/simple_bank && cd contracts && rm -f -r deployments && pnpm hardhat deploy && pnpm hardhat export-abi && cd .. && pnpm codegen && pnpm start",
     "view-results": "./generated/register_tables_with_hasura.sh && open http://localhost:8080/console",
     "test-user-1": "cd contracts && pnpm task:user-1",

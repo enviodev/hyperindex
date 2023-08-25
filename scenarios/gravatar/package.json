@@ -6,7 +6,7 @@
     "build": "rescript build -with-deps",
     "start": "node generated/src/Index.bs.js",
     "watch": "rescript build -w -with-deps",
-    "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen"
+    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen"
   },
   "keywords": [
     "ReScript"

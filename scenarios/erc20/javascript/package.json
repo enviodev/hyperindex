@@ -2,7 +2,7 @@
   "name": "greeter",
   "version": "0.1.0",
   "scripts": {
-    "codegen": "cargo run --manifest-path ../../../codegenerator/Cargo.toml -- codegen",
+    "codegen": "cargo run --manifest-path ../../../codegenerator/cli/Cargo.toml -- codegen",
     "start": "node generated/src/Index.bs.js"
   },
   "dependencies": {
