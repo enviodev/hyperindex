@@ -32,6 +32,7 @@ module {{contract.name.capitalized}}Contract = {
           let optIdArrayOf_{{array_label}} = ref(None)
         {{/each}}
       {{/if}}
+      let optSetOfIds_{{required_entity.name.uncapitalized}}: Set.t<Types.id> = Set.make()
       {{/each}}
 
       let entitiesToLoad: array<Types.entityRead> = []
@@ -86,6 +87,7 @@ module {{contract.name.capitalized}}Contract = {
       
           load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => 
           {
+            let _ = optSetOfIds_{{required_entity.name.uncapitalized}}->Set.add(id)
             let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
           },
         },
@@ -146,7 +148,15 @@ module {{contract.name.capitalized}}Contract = {
                   {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
                   {{/each}}
                   {{/if}}
-                  get: (id: Types.id) =>  IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id),
+                  get: (id: Types.id) => {
+                    if !(optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
+                      Logging.error(
+                        `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
+                      )
+                    }
+                    // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
+                    IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+                 },
                 {{/if}}
               {{/each}}
               {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
