@@ -329,13 +329,34 @@ let loadReadEntities = async (
   contexts
 }
 
+let registerProcessEventBatchMetrics = (
+  ~logger,
+  ~batchSize,
+  ~loadDuration,
+  ~handlerDuration,
+  ~dbWriteDuration,
+) => {
+  logger->Logging.childTrace({
+    "message": "Finished processing batch",
+    "batch_size": batchSize,
+    "loader_time_elapsed": loadDuration,
+    "handlers_time_elapsed": handlerDuration,
+    "write_time_elapsed": dbWriteDuration,
+  })
+
+  Prometheus.incrementLoadEntityDurationCounter(~duration=loadDuration)
+
+  Prometheus.incrementEventRouterDurationCounter(~duration=handlerDuration)
+
+  Prometheus.incrementExecuteBatchDurationCounter(~duration=dbWriteDuration)
+
+  Prometheus.incrementEventsProcessedCounter(~number=batchSize)
+}
+
 let processEventBatch = async (
   ~eventBatch: array<Types.eventBatchQueueItem>,
   ~chainManager: ChainManager.t,
 ) => {
-  let timeRef = Hrtime.makeTimer()
-  IO.InMemoryStore.resetStore()
-
   let logger = Logging.createChild(
     ~params={
       "context": "batch",
@@ -348,7 +369,8 @@ let processEventBatch = async (
     },
   )
 
-  let startTimeLoadEntities  = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+  let timeRef = Hrtime.makeTimer()
+  IO.InMemoryStore.resetStore()
 
   let eventBatchAndContext = await loadReadEntities(~eventBatch, ~chainManager, ~logger)
 
@@ -361,27 +383,12 @@ let processEventBatch = async (
 
   let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-  logger->Logging.childTrace({
-    "message": "Finished processing batch",
-    "batch size": eventBatch->Array.length,
-    "loader time elapsed": elapsedAfterLoad,
-    "handlers time elapsed": elapsedTimeAfterProcess - elapsedAfterLoad,
-    "write time elapsed": elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
-  })
-
-  {{!-- Prometheus.incrementLoadEntityDurationCounter(
-    ~startTime=startTimeLoadEntities,
-    ~endTime=endTimeLoadEntities,
-  ) --}}
-
-  Prometheus.incrementEventRouterDurationCounter(
-    ~startTime=elapsedAfterLoad,
-    ~endTime=elapsedTimeAfterProcess,
-  )
-
-  Prometheus.incrementExecuteBatchDurationCounter(
-    ~startTime=elapsedTimeAfterProcess,
-    ~endTime=elapsedTimeAfterDbWrite,
+  registerProcessEventBatchMetrics(
+    ~logger,
+    ~batchSize=eventBatch->Array.length,
+    ~loadDuration=elapsedAfterLoad,
+    ~handlerDuration=elapsedTimeAfterProcess - elapsedAfterLoad,
+    ~dbWriteDuration=elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
   )
 }
 

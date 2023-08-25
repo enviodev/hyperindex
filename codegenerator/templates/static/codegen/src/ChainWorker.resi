@@ -1,3 +1,4 @@
+// TODO: move to `eventFetching` folder
 type chainId = int
 type exn += UndefinedChainConfig(chainId)
 

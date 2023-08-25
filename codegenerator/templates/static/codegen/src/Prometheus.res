@@ -16,17 +16,24 @@ let executeBatchDurationCounter = PromClient.Counter.makeCounter({
   "labelNames": [],
 })
 
-let incrementLoadEntityDurationCounter = (~startTime, ~endTime) => {
-  let duration = endTime - startTime
+let eventsProcessedCounter = PromClient.Counter.makeCounter({
+  "name": "events_processed",
+  "help": "Total number of events processed",
+  "labelNames": [],
+})
+
+let incrementLoadEntityDurationCounter = (~duration) => {
   loadEntitiesDurationCounter->PromClient.Counter.incMany(duration)
 }
 
-let incrementEventRouterDurationCounter = (~startTime, ~endTime) => {
-  let duration = endTime - startTime
+let incrementEventRouterDurationCounter = (~duration) => {
   eventRouterDurationCounter->PromClient.Counter.incMany(duration)
 }
 
-let incrementExecuteBatchDurationCounter = (~startTime, ~endTime) => {
-  let duration = endTime - startTime
+let incrementExecuteBatchDurationCounter = (~duration) => {
   executeBatchDurationCounter->PromClient.Counter.incMany(duration)
+}
+
+let incrementEventsProcessedCounter = (~number) => {
+  eventsProcessedCounter->PromClient.Counter.incMany(number)
 }
