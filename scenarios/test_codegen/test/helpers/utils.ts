@@ -22,10 +22,6 @@ export const runMigrationsNoExit = async () => {
   await runUpMigrations(false);
 };
 
-export const runMigrationsNoExitKeepRawEventsTable = async () => {
-  await runDownMigrations(false, false);
-  await runUpMigrations(false);
-};
 export const runFunctionNoLogs = async (func: () => any) => {
   disableConsoleLog();
   await func();
@@ -33,8 +29,6 @@ export const runFunctionNoLogs = async (func: () => any) => {
 };
 
 export const runMigrationsNoLogs = () => runFunctionNoLogs(runMigrationsNoExit);
-
-export const runMigrationsNoLogsKeepRawEventsTable = () => runFunctionNoLogs(runMigrationsNoExit);
 
 export enum EventVariants {
   NftFactoryContract_SimpleNftCreatedEvent,

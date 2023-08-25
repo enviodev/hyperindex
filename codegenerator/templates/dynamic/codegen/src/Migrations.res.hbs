@@ -115,6 +115,13 @@ let deleteAllTables:unit => promise<unit> = async () => {
   await %raw("sql.unsafe`DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;`")
 }
 
+let deleteAllTablesExceptRawEvents: unit => promise<unit> = async () => {
+  // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
+
+  @warning("-21")
+  await (%raw("sql.unsafe`CREATE SCHEMA temp;CREATE TABLE temp.raw_events AS SELECT * FROM public.raw_events WITH DATA;DROP SCHEMA public CASCADE;CREATE SCHEMA public;CREATE TABLE public.raw_events AS SELECT * FROM temp.raw_events WITH DATA;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;DROP SCHEMA temp CASCADE;`"))
+}
+
 type t
 @module external process: t = "process"
 
@@ -154,29 +161,23 @@ let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
   // await {{entity.name.capitalized}}.delete{{entity.name.capitalized}}Table()
   // {{/each}}
 
-  if shouldDropRawEvents {
-    await RawEventsTable.dropRawEventsTable()->Promise.catch(err => {
-    exitCode := Failure
-    Logging.errorWithExn(
-      err,
-      {
-        "msg": "Please ensure the postgres database is running",
-        "detail": "Error dropping raw events table",
-      },
-    )->Promise.resolve
-  })
-  }
-
   await DynamicContractRegistryTable.dropDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err,"Error dropping dynamic contracts table")->Promise.resolve
   })
 
   // NOTE: For now delete any remaining tables.
-  await deleteAllTables()->Promise.catch(err => {
-    exitCode := Failure
-    Logging.errorWithExn(err,"Error dropping entity tables")->Promise.resolve
-  })
+  if shouldDropRawEvents {
+    await deleteAllTables()->Promise.catch(err => {
+      exitCode := Failure
+      Logging.errorWithExn(err, "Error dropping entity tables")->Promise.resolve
+    })
+  } else {
+    await deleteAllTablesExceptRawEvents()->Promise.catch(err => {
+      exitCode := Failure
+      Logging.errorWithExn(err, "Error dropping entity tables except for raw events")->Promise.resolve
+    })
+  }
    if shouldExit {
     process->exit(exitCode.contents)
   }
