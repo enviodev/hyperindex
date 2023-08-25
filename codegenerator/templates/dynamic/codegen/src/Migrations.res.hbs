@@ -21,7 +21,7 @@ module RawEventsTable = {
     @warning("-21")
     let _ = await (
       %raw("sql`
-      CREATE TABLE public.raw_events (
+      CREATE TABLE IF NOT EXISTS public.raw_events (
         chain_id INTEGER NOT NULL,
         event_id NUMERIC NOT NULL,
         block_number INTEGER NOT NULL,
@@ -122,14 +122,12 @@ type exitCode = Success | Failure
 @send external exit: (t, exitCode) => unit = "exit"
 
 // TODO: all the migration steps should run as a single transaction
-let runUpMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
+let runUpMigrations = async (~shouldExit) => {
   let exitCode = ref(Success)
-    if shouldDropRawEvents {
       await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
         exitCode := Failure
         Logging.errorWithExn(err, `Error creating raw events table`)->Promise.resolve
       })
-    }
   await DynamicContractRegistryTable.createDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err,`Error creating dynamic contracts table`)->Promise.resolve
@@ -193,7 +191,7 @@ let setupDb = async (~shouldDropRawEvents) => {
   // else
   //   await clearDb()
 
-  let exitCodeUp = await runUpMigrations(~shouldExit=false, ~shouldDropRawEvents)
+  let exitCodeUp = await runUpMigrations(~shouldExit=false)
 
   let exitCode = switch (exitCodeDown, exitCodeUp) {
       | (Success, Success) => Success
