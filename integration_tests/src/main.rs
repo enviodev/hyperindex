@@ -39,39 +39,37 @@ mod test {
         }
     }
 
+    fn create_and_push_init_args(
+        combinations: &mut Vec<InitArgs>,
+        language: &Language,
+        template: &Template,
+    ) {
+        let init_args = InitArgs {
+            language: Some(language.clone()),
+            template: Some(template.clone()),
+            directory: Some(format!(
+                "./integration_test_output/{}/{}",
+                template, language
+            )),
+            name: Some("test".to_string()),
+            subgraph_migration: None, // ...
+        };
+        combinations.push(init_args);
+    }
+
     fn generate_init_args_combinations() -> Vec<InitArgs> {
         let mut combinations: Vec<InitArgs> = Vec::new();
 
         // Use nested loops or iterators to generate all possible combinations of InitArgs.
-
         for language in Language::iter() {
             for template in Template::iter() {
-                let init_args = InitArgs {
-                    // Set other fields here
-                    language: Some(language.clone()),
-                    template: Some(template.clone()),
-                    directory: Some(format!(
-                        "./integration_test_output/{}/{}",
-                        template, language
-                    )),
-                    name: Some("test".to_string()),
-                    subgraph_migration: None, // ...
-                };
-                combinations.push(init_args);
+                create_and_push_init_args(&mut combinations, &language, &template);
             }
         }
 
         // NOTE: you can use the below code to test a specific scenario in isolation.
-        // TODO: Work out why the Erc20 fails, but still passes the test. https://github.com/Float-Capital/indexer/issues/676
-        // let mut combinations: Vec<InitArgs> = Vec::new();
-        // let one_to_test = InitArgs {
-        //     directory: Some(String::from("./integration_test_output/Erc20/Rescript")),
-        //     name: Some(String::from("test")),
-        //     template: Some(Template::Erc20),
-        //     subgraph_migration: None,
-        //     language: Some(Language::Rescript),
-        // };
-        // combinations.push(one_to_test);
+        // create_and_push_init_args(&mut combinations, &Language::Rescript, &Template::Blank);
+
         combinations
     }
 
