@@ -19,7 +19,9 @@
   "bs-dependencies": [
     "generated",
     "@ryyppy/rescript-promise",
-    "rescript-mocha"
+    "rescript-mocha",
+    "@greenlabs/ppx-spice"
   ],
-  "pinned-dependencies": ["generated"]
+  "pinned-dependencies": ["generated"],
+  "ppx-flags": ["@greenlabs/ppx-spice/ppx"]
 }

@@ -25,7 +25,7 @@ module type ChainWorker = {
     ~fromBlock: int,
     ~fromLogIndex: int,
     ~logger: Pino.t,
-  ) => promise<array<EventFetching.eventBatchQueueItem>>
+  ) => promise<array<Types.eventBatchQueueItem>>
 }
 
 module SkarWorker: ChainWorker = {
@@ -196,7 +196,7 @@ module SkarWorker: ChainWorker = {
               ~contractInterfaceManager,
             )->Belt.Result.getExn
 
-          let queueItem: EventFetching.eventBatchQueueItem = {
+          let queueItem: Types.eventBatchQueueItem = {
             timestamp: item.blockTimestamp,
             chainId: chainConfig.chainId,
             blockNumber: item.log.blockNumber,
@@ -301,7 +301,7 @@ module SkarWorker: ChainWorker = {
     ~fromBlock,
     ~fromLogIndex,
     ~logger,
-  ): array<EventFetching.eventBatchQueueItem> => {
+  ): array<Types.eventBatchQueueItem> => {
     let {pendingPromise, resolve} = Utils.createPromiseWithHandles()
 
     //Perform registering and updatiing "hasNewDynamicContractRegistrations" inside a lock
@@ -343,7 +343,7 @@ module SkarWorker: ChainWorker = {
       ->ContractInterfaceManager.combineInterfaceManagers
 
     //to be populated in queries
-    let queueItems: array<EventFetching.eventBatchQueueItem> = []
+    let queueItems: array<Types.eventBatchQueueItem> = []
 
     let fromBlockRef = ref(fromBlock)
     let toBlock = await self.latestFetchedBlockNumber
@@ -387,7 +387,7 @@ module SkarWorker: ChainWorker = {
               ~contractInterfaceManager,
             )->Belt.Result.getExn
 
-          let queueItem: EventFetching.eventBatchQueueItem = {
+          let queueItem: Types.eventBatchQueueItem = {
             timestamp: item.blockTimestamp,
             chainId: self.chainConfig.chainId,
             blockNumber: item.log.blockNumber,
@@ -432,7 +432,7 @@ module RawEventsWorker: ChainWorker = {
     ~fromBlock,
     ~fromLogIndex,
     ~logger,
-  ): array<EventFetching.eventBatchQueueItem> => {[]}
+  ): array<Types.eventBatchQueueItem> => {[]}
 }
 
 module RpcWorker: ChainWorker = {
@@ -589,7 +589,7 @@ module RpcWorker: ChainWorker = {
       for i in 0 to eventBatchPromises->Belt.Array.length - 1 {
         let {timestampPromise, chainId, blockNumber, logIndex, eventPromise} = eventBatchPromises[i]
 
-        let queueItem: EventFetching.eventBatchQueueItem = {
+        let queueItem: Types.eventBatchQueueItem = {
           timestamp: await timestampPromise,
           chainId,
           blockNumber,
@@ -641,7 +641,7 @@ module RpcWorker: ChainWorker = {
     ~fromBlock,
     ~fromLogIndex,
     ~logger,
-  ): array<EventFetching.eventBatchQueueItem> => {
+  ): array<Types.eventBatchQueueItem> => {
     let {
       chainConfig,
       contractAddressMapping,
@@ -689,7 +689,7 @@ module RpcWorker: ChainWorker = {
       blockNumber,
       logIndex,
       eventPromise,
-    }): EventFetching.eventBatchQueueItem => {
+    }): Types.eventBatchQueueItem => {
       timestamp: await timestampPromise,
       chainId,
       blockNumber,
@@ -771,7 +771,7 @@ module PolyMorphicChainWorkerFunctions = {
     ~fromBlock,
     ~fromLogIndex,
     ~logger,
-  ): promise<array<EventFetching.eventBatchQueueItem>> => {
+  ): promise<array<Types.eventBatchQueueItem>> => {
     let (worker, workerMod) = chainWorkerModTuple
     let module(M) = workerMod
     //Note: Only defining f so my syntax highlighting doesn't break -> Jono

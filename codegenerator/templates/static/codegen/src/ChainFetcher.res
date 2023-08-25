@@ -1,4 +1,3 @@
-// TODO: move to `eventFetching`
 
 type t = {
   logger: Pino.t,
@@ -43,14 +42,14 @@ let startFetchingEvents = async (self: t) => {
 /**
 Pops the front item on the fetchedEventQueue and awaits an item if there is none
 */
-let popAndAwaitQueueItem = async (self: t): EventFetching.eventBatchQueueItem => {
+let popAndAwaitQueueItem = async (self: t): Types.eventBatchQueueItem => {
   await self.fetchedEventQueue->ChainEventQueue.popSingleAndAwaitItem
 }
 
 /**
 Pops the front item on the fetchedEventQueue
 */
-let popQueueItem = (self: t): option<EventFetching.eventBatchQueueItem> => {
+let popQueueItem = (self: t): option<Types.eventBatchQueueItem> => {
   self.fetchedEventQueue->ChainEventQueue.popSingle
 }
 
@@ -63,7 +62,7 @@ let addDynamicContractAndFetchMissingEvents = (
   ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
   ~fromBlock,
   ~fromLogIndex,
-): promise<array<EventFetching.eventBatchQueueItem>> => {
+): promise<array<Types.eventBatchQueueItem>> => {
   self.chainWorker->ChainWorker.addDynamicContractAndFetchMissingEvents(
     ~dynamicContracts,
     ~fromBlock,
@@ -74,7 +73,7 @@ let addDynamicContractAndFetchMissingEvents = (
 
 type latestFetchedBlockTimestamp = int
 type eventQueuePeek =
-  NoItem(latestFetchedBlockTimestamp, Types.chainId) | Item(EventFetching.eventBatchQueueItem)
+  NoItem(latestFetchedBlockTimestamp, Types.chainId) | Item(Types.eventBatchQueueItem)
 
 let peekFrontItemOfQueue = (self: t): eventQueuePeek => {
   let optFront = self.fetchedEventQueue->ChainEventQueue.peekFront

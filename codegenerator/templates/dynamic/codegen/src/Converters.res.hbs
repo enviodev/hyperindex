@@ -87,8 +87,8 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result
       ~contractAddress=log.address,
     ) {
     | None => Error(UnregisteredContract(log.address))
-    | Some(eventName) =>
-      let event = switch eventStringToEvent(logDescription.name, eventName) {
+    | Some(contractName) =>
+      let event = switch eventStringToEvent(logDescription.name, contractName) {
       {{#each contracts as |contract|}}
       {{#each contract.events as |event|}}
         | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
@@ -102,4 +102,66 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result
       Ok(event)
     }
   }
+}
+
+
+let decodeRawEventWith = (
+  rawEvent: Types.rawEventsEntity,
+  ~decoder: Spice.decoder<'a>,
+  ~variantAccessor: Types.eventLog<'a> => Types.event,
+): Spice.result<Types.eventBatchQueueItem> => {
+  switch rawEvent.params->Js.Json.parseExn {
+  | exception exn =>
+    let message =
+      exn
+      ->Js.Exn.asJsExn
+      ->Belt.Option.flatMap(jsexn => jsexn->Js.Exn.message)
+      ->Belt.Option.getWithDefault("No message on exn")
+
+    Spice.error(`Failed at JSON.parse. Error: ${message}`, rawEvent.params->Obj.magic)
+  | v => Ok(v)
+  }
+  ->Belt.Result.flatMap(json => {
+    json->decoder
+  })
+  ->Belt.Result.map(params => {
+    let event = {
+      blockNumber: rawEvent.blockNumber,
+      blockTimestamp: rawEvent.blockTimestamp,
+      blockHash: rawEvent.blockHash,
+      srcAddress: rawEvent.srcAddress,
+      transactionHash: rawEvent.transactionHash,
+      transactionIndex: rawEvent.transactionIndex,
+      logIndex: rawEvent.logIndex,
+      params,
+    }->variantAccessor
+
+    let queueItem: Types.eventBatchQueueItem = {
+      timestamp: rawEvent.blockTimestamp,
+      chainId: rawEvent.chainId,
+      blockNumber: rawEvent.blockNumber,
+      logIndex: rawEvent.logIndex,
+      event,
+    }
+
+    queueItem
+  })
+}
+
+let parseRawEvent = (rawEvent: Types.rawEventsEntity): Spice.result<Types.eventBatchQueueItem> => {
+  rawEvent.eventType
+  ->Types.eventName_decode
+  ->Belt.Result.flatMap(eventName => {
+    switch eventName {
+  {{#each contracts as |contract|}}
+  {{#each contract.events as |event|}}
+      | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
+      rawEvent->decodeRawEventWith(
+        ~decoder=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_decode,
+        ~variantAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}},
+      )
+  {{/each}}
+  {{/each}}
+    }
+  })
 }

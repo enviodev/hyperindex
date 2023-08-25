@@ -15,6 +15,20 @@ module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
   FROM public.raw_events
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
 
+module.exports.getRawEventsPageGtOrEqEventId = (
+  sql,
+  chainId,
+  eventId,
+  limit
+) => sql`
+  SELECT *
+  FROM public.raw_events
+  WHERE "chain_id" = ${chainId}
+  AND "event_id" >= ${eventId}
+  ORDER BY "event_id" ASC
+  LIMIT ${limit}
+`;
+
 const batchSetRawEventsCore = (sql, entityDataArray) => {
   return sql`
     INSERT INTO public.raw_events

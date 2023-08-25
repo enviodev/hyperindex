@@ -17,7 +17,7 @@ module type ChainWorker = {
     ~fromBlock: int,
     ~fromLogIndex: int,
     ~logger: Pino.t,
-  ) => promise<array<EventFetching.eventBatchQueueItem>>
+  ) => promise<array<Types.eventBatchQueueItem>>
 }
 
 module SkarWorker: ChainWorker
@@ -39,5 +39,5 @@ let addDynamicContractAndFetchMissingEvents: (
   ~fromBlock: int,
   ~fromLogIndex: int,
   ~logger: Pino.t,
-) => promise<array<EventFetching.eventBatchQueueItem>>
+) => promise<array<Types.eventBatchQueueItem>>
 let make: (Env.workerTypeSelected, ~chainConfig: Config.chainConfig) => chainWorker

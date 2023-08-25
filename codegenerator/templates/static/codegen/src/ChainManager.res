@@ -5,18 +5,15 @@ type t = {
   //The priority queue should only house the latest event from each chain
   //And potentially extra events that are pushed on by newly registered dynamic
   //contracts which missed being fetched by they chainFetcher
-  arbitraryEventPriorityQueue: SDSL.PriorityQueue.t<EventFetching.eventBatchQueueItem>,
+  arbitraryEventPriorityQueue: SDSL.PriorityQueue.t<Types.eventBatchQueueItem>,
 }
 
-let getComparitorFromItem = (queueItem: EventFetching.eventBatchQueueItem) => {
+let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
   let {timestamp, chainId, blockNumber, logIndex} = queueItem
   EventUtils.getEventComparator({timestamp, chainId, blockNumber, logIndex})
 }
 
-let priorityQueueComparitor = (
-  a: EventFetching.eventBatchQueueItem,
-  b: EventFetching.eventBatchQueueItem,
-) => {
+let priorityQueueComparitor = (a: Types.eventBatchQueueItem, b: Types.eventBatchQueueItem) => {
   if a->getComparitorFromItem < b->getComparitorFromItem {
     -1
   } else {
@@ -107,12 +104,12 @@ let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
   }
 }
 
-//TODO: investigate can this function + Async version below be combined to share logic
-/**
-Synchronus operation that returns an optional value and will not wait
-for a value to be on the queue
-*/
-let popBatchItem = (self: t): option<EventFetching.eventBatchQueueItem> => {
+//Synchronus operation that returns an optional value and will not wait
+//for a value to be on the queue
+//TODO: investigate can this function + Async version below be combined to share
+//logic
+let popBatchItem = (self: t): option<Types.eventBatchQueueItem> => {
+
   //Peek all next fetched event queue items on all chain fetchers
   let peekChainFetcherFrontItems =
     self.chainFetchers
@@ -164,12 +161,13 @@ let popBatchItem = (self: t): option<EventFetching.eventBatchQueueItem> => {
 }
 
 //TODO: investigate combining logic with the above synchronus version of this function
+
 /**
 Async pop function that will wait for an item to be available before returning
 */
-let rec popAndAwaitBatchItem: t => promise<EventFetching.eventBatchQueueItem> = async (
+let rec popAndAwaitBatchItem: t => promise<Types.eventBatchQueueItem> = async (
   self: t,
-): EventFetching.eventBatchQueueItem => {
+): Types.eventBatchQueueItem => {
   //Peek all next fetched event queue items on all chain fetchers
   let peekChainFetcherFrontItems =
     self.chainFetchers
@@ -225,7 +223,7 @@ let rec popAndAwaitBatchItem: t => promise<EventFetching.eventBatchQueueItem> = 
 }
 
 let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array<
-  EventFetching.eventBatchQueueItem,
+  Types.eventBatchQueueItem,
 > => {
   let refTime = Hrtime.makeTimer()
 
@@ -267,6 +265,6 @@ let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array
   batch
 }
 
-let addItemToArbitraryEvents = (self: t, item: EventFetching.eventBatchQueueItem) => {
+let addItemToArbitraryEvents = (self: t, item: Types.eventBatchQueueItem) => {
   self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.push(item)->ignore
 }

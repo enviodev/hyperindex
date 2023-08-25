@@ -118,7 +118,7 @@ let eventBatch: array<Types.event> = [
 
 let eventBatchChainId = 1337
 
-let eventBatchItems = eventBatch->Belt.Array.map((e): EventFetching.eventBatchQueueItem => {
+let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem => {
   switch e {
   | GravatarContract_NewGravatar(el) => {
       timestamp: el.blockTimestamp,

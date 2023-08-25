@@ -2,7 +2,7 @@
 
 type t = {
   chainFetchers: Js.Dict.t<ChainFetcher.t>,
-  arbitraryEventPriorityQueue: SDSL.PriorityQueue.t<EventFetching.eventBatchQueueItem>,
+  arbitraryEventPriorityQueue: SDSL.PriorityQueue.t<Types.eventBatchQueueItem>,
 }
 type nextEventErr = NoItemsInArray
 
@@ -13,5 +13,5 @@ let createBatch: (
   t,
   ~minBatchSize: int,
   ~maxBatchSize: int,
-) => promise<array<EventFetching.eventBatchQueueItem>>
-let addItemToArbitraryEvents: (t, EventFetching.eventBatchQueueItem) => unit
+) => promise<array<Types.eventBatchQueueItem>>
+let addItemToArbitraryEvents: (t, Types.eventBatchQueueItem) => unit
