@@ -28,7 +28,24 @@ pub mod rescript {
             .await?)
     }
     pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        //npx should work with any node package manager
+        // Make suer that the top level repo is installed
+        let status = Command::new("pnpm")
+            .arg("install")
+            .current_dir(&path)
+            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
+            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+            .spawn()?
+            .wait()
+            .await?;
+
+        // Check if the first command was successful
+        if !status.success() {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "pnpm install command failed",
+            )));
+        }
+
         Ok(Command::new("npx")
             .arg("rescript")
             .arg("build")
