@@ -92,7 +92,9 @@ module {{entity.name.capitalized}} = {
   @spice
   type {{entity.name.uncapitalized}}ReadRow = {
   {{#each entity.params as |param|}}
-     {{param.key}} : {{param.type_rescript}},
+    {{#unless param.is_derived_from}}
+      {{param.key}} : {{param.type_rescript}},
+    {{/unless}}
   {{/each}}
   @spice.key("event_chain_id") chainId: int,
   @spice.key("event_id") eventId: Ethers.BigInt.t,
@@ -102,7 +104,7 @@ module {{entity.name.capitalized}} = {
     let readRow = switch readRowJson->{{entity.name.uncapitalized}}ReadRow_decode {
         | Ok(v) => Ok(v)
         | Error(e) =>
-          Logging.error(e)
+          Logging.error({"err":e, "msg": "Unable to parse row from database of entity {{entity.name.uncapitalized}} using spice", "raw_unparsed_object": readRowJson })
           Error(e)
       }->Belt.Result.getExn
 

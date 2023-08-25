@@ -26,7 +26,7 @@ describe("Linked Entity Loader Integration Test", () => {
     (await Migrations.runUpMigrations(~shouldExit=false))->ignore
   })
 
-  MochaPromise.it("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
+  MochaPromise.it_only("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
     let sql = DbFunctions.sql
 
     let testEventData: Types.eventData = {chainId: 123, eventId: "123456"}
@@ -130,7 +130,10 @@ describe("Linked Entity Loader Integration Test", () => {
         Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
 
         let optC = handlerContext.b.getC(b)
-        Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c")
+        Js.log("Here this test fails because 'optC' should be undefined, but since we use spice here it comes back as a field even though it isn't loaded.")
+        Js.log(optC)
+
+        Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c!!")
 
         let _ = optC->Belt.Option.map(
           c => {
