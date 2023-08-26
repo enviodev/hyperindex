@@ -149,13 +149,18 @@ module {{contract.name.capitalized}}Contract = {
                   {{/each}}
                   {{/if}}
                   get: (id: Types.id) => {
-                    if !(optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
+                    if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
+                      IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+                    } else {
                       Logging.error(
                         `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
                       )
+
+                      // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
+                      IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+
+                      // TODO: add a further step to syncronously try fetch this from the DB if it isn't in the in-memory store - similar to this PR: https://github.com/Float-Capital/indexer/pull/759
                     }
-                    // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
-                    IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
                  },
                 {{/if}}
               {{/each}}
