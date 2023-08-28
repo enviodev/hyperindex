@@ -113,7 +113,6 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let rec{{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
     entityId: string,
     {{#if entity.relational_params.filtered_not_derived_from.[0]}}{{entity.name.uncapitalized}}Load: Types.{{entity.name.uncapitalized}}LoaderConfig,{{/if}}
-    layer: int,
   ) => {
     if (!loadLayer.contents) {
       // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
@@ -136,16 +135,16 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
             {{#if (eq relational_param.relationship_type "array")}}
               let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Array.map(
                     {{relational_param.relational_key.uncapitalized}}Id =>
-                {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+                {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}})
               )
             {{else}}
               {{#if relational_param.is_optional}}
                 let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Option.map(
                   {{relational_param.relational_key.uncapitalized}}Id =>
-                    {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+                    {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}})
                 )
               {{else}}
-                let _ = {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}}layer + 1)
+                let _ = {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}})
               {{/if}}
             {{/if}}
           })
@@ -160,7 +159,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
         switch readEntity {
     {{#each entities as | entity |}}
     | {{entity.name.capitalized}}Read(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}) =>
-      {{entity.name.uncapitalized}}LinkedEntityLoader(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}, 0)
+      {{entity.name.uncapitalized}}LinkedEntityLoader(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}Load{{/if}})
     {{/each}}
     }
   })
