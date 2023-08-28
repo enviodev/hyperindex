@@ -11,11 +11,11 @@ import {
 import { awesomeEntityEntity } from "../generated/src/Types.gen";
 
 MyAwesomeContractContract_AwesomeEvent_loader(({ event, context }) => {
-  context.awesomeEntity.load(event.params.awesomeEventEntityId)
+  context.awesomeEntity.load(event.params.identifier)
 });
 
 MyAwesomeContractContract_AwesomeEvent_handler(({ event, context }) => {
-  let awesomeEventObject = context.awesomeEntity.get(event.params.awesomeEventEntityId);
+  let awesomeEventObject = context.awesomeEntity.get(event.params.identifier);
   if (!!awesomeEventObject) {
     const updatedEntity = {
       id: awesomeEventObject.id,
