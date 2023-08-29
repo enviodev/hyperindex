@@ -4,10 +4,12 @@ exception UndefinedChainConfig(chainId)
 exception IncorrectSyncSource(Config.syncSource)
 
 @@warning("-27")
-module type ChainWorker = {
+module type S = {
   type t
 
-  let make: Config.chainConfig => t
+  let make: (~caughtUpToHeadHook: t => promise<unit>=?, Config.chainConfig) => t
+
+  let stopFetchingEvents: t => promise<unit>
 
   let startFetchingEvents: (
     t,
@@ -29,15 +31,19 @@ module type ChainWorker = {
 }
 @@warnings("+27")
 
-module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
-  type t = {
+module MakeHyperSyncWorker = (HyperSync: HyperSync.S): S => {
+  type rec t = {
     mutable latestFetchedBlockNumber: promise<int>, // promise allows locking of this field while a batch has been fetched but still being added
     mutable latestFetchedBlockTimestamp: int,
     mutable hasNewDynamicContractRegistrations: promise<bool>, //promise allows us to use this field as a lock
+    mutable shouldContinueFetching: bool,
+    mutable isFetching: bool,
+    mutable hasStoppedFetchingCallBack: unit => unit,
     newRangeQueriedCallBacks: SDSL.Queue.t<unit => unit>,
     contractAddressMapping: ContractAddressingMap.mapping,
     chainConfig: Config.chainConfig,
     serverUrl: string,
+    caughtUpToHeadHook: t => promise<unit>,
   }
 
   module Helpers = {
@@ -76,7 +82,26 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
       }
   }
 
-  let make = (chainConfig: Config.chainConfig): t => {
+  let stopFetchingEvents = (self: t) => {
+    //set the shouldContinueFetching to false
+    self.shouldContinueFetching = false
+
+    //set a resolve callback for when it's actually stopped
+    if !self.isFetching {
+      Promise.resolve()
+    } else {
+      Promise.make((resolve, _reject) => {
+        self.hasStoppedFetchingCallBack = () => resolve(. ())
+      })
+    }
+  }
+
+  let make = (~caughtUpToHeadHook=?, chainConfig: Config.chainConfig): t => {
+    let caughtUpToHeadHook = switch caughtUpToHeadHook {
+    | None => (_self: t) => Promise.resolve()
+    | Some(hook) => hook
+    }
+
     let contractAddressMapping = ContractAddressingMap.make()
     let logger = Logging.createChild(
       ~params={
@@ -108,10 +133,14 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
       latestFetchedBlockNumber: Promise.resolve(0),
       latestFetchedBlockTimestamp: 0,
       hasNewDynamicContractRegistrations: Promise.resolve(false),
+      shouldContinueFetching: true,
+      isFetching: false,
+      hasStoppedFetchingCallBack: () => (),
       newRangeQueriedCallBacks: SDSL.Queue.make(),
       contractAddressMapping,
       chainConfig,
       serverUrl,
+      caughtUpToHeadHook,
     }
   }
 
@@ -173,11 +202,10 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
             )
           )
       }
+      true
     }
 
-    while true {
-      //Check to see there is a new batch to query
-      await checkReadyToContinue()
+    while (await checkReadyToContinue()) && self.shouldContinueFetching {
 
       //Instantiate each time to add new registered contract addresses
       let contractInterfaceManager = ContractInterfaceManager.make(
@@ -354,6 +382,8 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
         fromBlock := pageUnsafe.nextBlock
       }
     }
+    
+    self.hasStoppedFetchingCallBack()
   }
 
   let addNewRangeQueriedCallback = (self: t): promise<unit> => {
@@ -491,7 +521,7 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
 module SkarWorker = MakeHyperSyncWorker(HyperSync.SkarHyperSync)
 module EthArchiveWorker = MakeHyperSyncWorker(HyperSync.EthArchiveHyperSync)
 
-module RawEventsWorker: ChainWorker = {
+module RawEventsWorker: S = {
   type t = {
     mutable latestFetchedBlockTimestamp: int,
     chainId: int,
@@ -499,7 +529,11 @@ module RawEventsWorker: ChainWorker = {
     contractAddressMapping: ContractAddressingMap.mapping,
   }
 
-  let make = (chainConfig: Config.chainConfig) => {
+  let stopFetchingEvents = (self: t) => {
+    Promise.resolve()
+  }
+
+  let make = (~caughtUpToHeadHook=?, chainConfig: Config.chainConfig) => {
     let contractAddressMapping = ContractAddressingMap.make()
     let logger = Logging.createChild(
       ~params={
@@ -606,19 +640,42 @@ module RawEventsWorker: ChainWorker = {
   }
 }
 
-module RpcWorker: ChainWorker = {
-  type t = {
+module RpcWorker: S = {
+  type rec t = {
     mutable currentBlockInterval: int,
     mutable currentlyFetchingToBlock: int,
     mutable latestFetchedBlockTimestamp: int,
+    mutable shouldContinueFetching: bool,
+    mutable isFetching: bool,
+    mutable hasStoppedFetchingCallBack: unit => unit,
     newRangeQueriedCallBacks: SDSL.Queue.t<unit => unit>,
     contractAddressMapping: ContractAddressingMap.mapping,
     blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
     chainConfig: Config.chainConfig,
     rpcConfig: Config.rpcConfig,
+    caughtUpToHeadHook: t => promise<unit>,
   }
 
-  let make = (chainConfig: Config.chainConfig): t => {
+  let stopFetchingEvents = (self: t) => {
+    //set the shouldContinueFetching to false
+    self.shouldContinueFetching = false
+
+    //set a resolve callback for when it's actually stopped
+    if !self.isFetching {
+      Promise.resolve()
+    } else {
+      Promise.make((resolve, _reject) => {
+        self.hasStoppedFetchingCallBack = () => resolve(. ())
+      })
+    }
+  }
+
+  let make = (~caughtUpToHeadHook=?, chainConfig: Config.chainConfig): t => {
+    let caughtUpToHeadHook = switch caughtUpToHeadHook {
+    | None => (_self: t) => Promise.resolve()
+    | Some(hook) => hook
+    }
+
     let contractAddressMapping = ContractAddressingMap.make()
     let logger = Logging.createChild(
       ~params={
@@ -665,11 +722,15 @@ module RpcWorker: ChainWorker = {
       currentlyFetchingToBlock: 0,
       currentBlockInterval: rpcConfig.syncConfig.initialBlockInterval,
       latestFetchedBlockTimestamp: 0,
+      shouldContinueFetching: true,
+      isFetching: false,
+      hasStoppedFetchingCallBack: () => (),
       newRangeQueriedCallBacks: SDSL.Queue.make(),
       contractAddressMapping,
       blockLoader,
       chainConfig,
       rpcConfig,
+      caughtUpToHeadHook,
     }
   }
 
@@ -679,6 +740,8 @@ module RpcWorker: ChainWorker = {
     ~logger: Pino.t,
     ~fetchedEventQueue: ChainEventQueue.t,
   ) => {
+    self.shouldContinueFetching = true
+    self.isFetching = true
     let {rpcConfig, chainConfig, contractAddressMapping, blockLoader} = self
 
     let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
@@ -727,19 +790,22 @@ module RpcWorker: ChainWorker = {
 
     let isNewBlocksToFetch = () => fromBlockRef.contents <= currentBlock.contents
 
-    let rec checkShouldContinue = async () => {
+    let rec checkShouldContinue = async (): bool => {
       //If there are no new blocks to fetch, poll the provider for
       //a new block until it arrives
       if !isNewBlocksToFetch() {
+        self.caughtUpToHeadHook(self)->ignore
+
         let newBlock = await provider->EventUtils.waitForNextBlock
         currentBlock := newBlock
 
-        await checkShouldContinue()
+        let _ = await checkShouldContinue()
       }
+
+      true
     }
 
-    while true {
-      await checkShouldContinue()
+    while (await checkShouldContinue()) && self.shouldContinueFetching {
       let blockInterval = self.currentBlockInterval
       let targetBlock = Pervasives.min(
         currentBlock.contents,
@@ -825,8 +891,7 @@ module RpcWorker: ChainWorker = {
       }
     }
 
-    //Registers the new contract
-    //fetches all the unfetched events
+    self.hasStoppedFetchingCallBack()
   }
 
   let addDynamicContractAndFetchMissingEvents = async (
@@ -942,10 +1007,7 @@ module PolyMorphicChainWorkerFunctions = {
   on the underlying worker module.
  */
 
-  type chainWorkerModTuple<'workerType> = (
-    'workerType,
-    module(ChainWorker with type t = 'workerType),
-  )
+  type chainWorkerModTuple<'workerType> = ('workerType, module(S with type t = 'workerType))
 
   let startFetchingEvents = (
     type workerType,

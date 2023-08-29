@@ -1,9 +1,11 @@
 type chainId = int
 type exn += UndefinedChainConfig(chainId)
 
-module type ChainWorker = {
+module type S = {
   type t
-  let make: Config.chainConfig => t
+  let make: (~caughtUpToHeadHook: t => promise<unit>=?, Config.chainConfig) => t
+
+  let stopFetchingEvents: t => promise<unit>
   let startFetchingEvents: (
     t,
     ~logger: Pino.t,
@@ -20,10 +22,10 @@ module type ChainWorker = {
   ) => promise<array<Types.eventBatchQueueItem>>
 }
 
-module SkarWorker: ChainWorker
-module RawEventsWorker: ChainWorker
-module RpcWorker: ChainWorker
-module EthArchiveWorker: ChainWorker
+module RpcWorker: S
+module SkarWorker: S
+module EthArchiveWorker: S
+module RawEventsWorker: S
 
 type chainWorker =
   | Rpc(RpcWorker.t)
