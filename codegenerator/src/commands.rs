@@ -287,10 +287,10 @@ pub mod db_migrate {
         Ok(())
     }
 
-    pub async fn run_db_setup(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
+    pub async fn run_db_setup(project_paths: &ProjectPaths, should_drop_raw_events: bool) -> Result<(), Box<dyn Error>> {
         let exit = Command::new("node")
             .arg("-e")
-            .arg("require(`./src/Migrations.bs.js`).setupDb()")
+            .arg(format!("require(`./src/Migrations.bs.js`).setupDb({})", should_drop_raw_events))
             .current_dir(&project_paths.generated)
             .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
             .kill_on_drop(true) //needed so that dropped threads calling this will also drop
@@ -298,7 +298,7 @@ pub mod db_migrate {
             .spawn()?
             .wait()
             .await?;
-        if exit.success() {
+        if exit.success() { 
             let has_run_db_migrations = true;
             PersistedState::set_has_run_db_migrations(project_paths, has_run_db_migrations)?;
         }

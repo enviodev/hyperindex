@@ -1,3 +1,4 @@
+
 import {
   runDownMigrations,
   runUpMigrations,
@@ -17,8 +18,8 @@ export const enableConsoleLog = () => {
 };
 
 export const runMigrationsNoExit = async () => {
-  await runDownMigrations();
-  await runUpMigrations();
+  await runDownMigrations(false, true);
+  await runUpMigrations(false);
 };
 
 export const runFunctionNoLogs = async (func: () => any) => {
