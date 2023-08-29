@@ -75,3 +75,11 @@ let createPromiseWithHandles = () => {
     reject,
   }
 }
+
+let mapArrayOfResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
+  results->Belt.Array.reduce(Ok([]), (accum, nextItem) => {
+    accum->Belt.Result.flatMap(currentOkItems => {
+      nextItem->Belt.Result.map(item => Belt.Array.concat(currentOkItems, [item]))
+    })
+  })
+}

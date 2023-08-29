@@ -25,7 +25,7 @@ module SkarWorker: ChainWorker
 module RawEventsWorker: ChainWorker
 module RpcWorker: ChainWorker
 
-type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t)
+type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t) | RawEvents(RawEventsWorker.t)
 
 let startFetchingEvents: (
   chainWorker,

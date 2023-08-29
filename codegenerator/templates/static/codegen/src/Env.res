@@ -1,13 +1,13 @@
-
 %%private(let envSafe = EnvSafe.make())
 
-type workerTypeSelected = RpcSelected | SkarSelected
+type workerTypeSelected = RpcSelected | SkarSelected | RawEventsSelected
 
 let workerTypeSelected = switch EnvUtils.getStringEnvVar(
   ~envSafe,
   ~fallback="rpc",
   "WORKER_TYPE",
 )->Js.String2.toLowerCase {
+| "raw_events" => RawEventsSelected
 | "skar" => SkarSelected
 | "rpc"
 | _ =>
