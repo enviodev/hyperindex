@@ -28,6 +28,7 @@ pub mod rescript {
             .await?)
     }
     pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        // TODO: make a separate function for `pnpm install` and compose them rather
         // Make suer that the top level repo is installed
         let status = Command::new("pnpm")
             .arg("install")
@@ -38,6 +39,7 @@ pub mod rescript {
             .wait()
             .await?;
 
+        // TODO: re-evaluate the necessity for this check when better error-handling standards and guidelines have been created for this project.
         // Check if the first command was successful
         if !status.success() {
             return Err(Box::new(std::io::Error::new(
