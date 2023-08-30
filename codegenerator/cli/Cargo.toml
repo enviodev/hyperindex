@@ -1,0 +1,50 @@
+[package]
+name = "envio"
+version = "0.0.1-dev"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.2.2", features = ["derive", "env"] }
+clap-markdown = { version = "0.1.0" }
+dialoguer = "0.8"
+ethers = "2.0.4"
+graphql-parser = "0.4.0"
+handlebars = "4.3.6"
+include_dir = "0.7.3"
+inquire = "0.6.1"
+paste = "1.0.12"
+pathdiff = "0.2.1"
+serde = { version = "1.0.159", features = ["derive"] }
+serde_json = "1.0.95"
+serde_yaml = "0.9.19"
+regex = "1.5"
+reqwest = "0.11"
+strum = "0.25"
+strum_macros = "0.25"
+tokio = { version = "1.28.2", features = [
+  "macros",
+  "process",
+  "rt-multi-thread",
+  "time",
+] }
+anyhow = "1.0.72"
+sha2 = "0.10.7"
+open = "5.0.0"
+
+# NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
+#       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored
+#   It should be possible to use a linked version of openssl, but after hours of trying I (Jason) was unsuccessful.
+[target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
+openssl = { version = "0.10.56", features = ["vendored"] }
+
+# Default profile
+[profile.dev]
+opt-level = 0
+debug = true
+
+# Release profile - must run with `cargo build --release` to use this profile
+[profile.release]
+opt-level = 3
+debug = false

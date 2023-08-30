@@ -15,31 +15,33 @@ use crate::project_paths::ParsedPaths;
 use include_dir::{include_dir, Dir};
 
 static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("templates/static/blank_template/shared");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/shared");
 static BLANK_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/blank_template/rescript");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/rescript");
 static BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/blank_template/typescript");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/typescript");
 static BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/blank_template/javascript");
-static BLANK_TEMPLATE_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/blank_template");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/javascript");
+static BLANK_TEMPLATE_DYNAMIC_DIR: Dir<'_> =
+    include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/blank_template");
 static GREETER_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("templates/static/greeter_template/shared");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/shared");
 static GREETER_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/greeter_template/rescript");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/rescript");
 static GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/greeter_template/typescript");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/typescript");
 static GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/greeter_template/javascript");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/javascript");
 static ERC20_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("templates/static/erc20_template/shared");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/erc20_template/shared");
 static ERC20_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/erc20_template/rescript");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/erc20_template/rescript");
 static ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/erc20_template/typescript");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/erc20_template/typescript");
 static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("templates/static/erc20_template/javascript");
-static INIT_TEMPLATES_SHARED_DIR: Dir<'_> = include_dir!("templates/dynamic/init_templates/shared");
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/erc20_template/javascript");
+static INIT_TEMPLATES_SHARED_DIR: Dir<'_> =
+    include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/init_templates/shared");
 
 pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
     //get_init_args_interactive opens an interactive cli for required args to be selected

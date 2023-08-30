@@ -78,7 +78,8 @@ pub mod codegen {
 
     use crate::project_paths::ProjectPaths;
     use include_dir::{include_dir, Dir};
-    static CODEGEN_STATIC_DIR: Dir<'_> = include_dir!("templates/static/codegen");
+    static CODEGEN_STATIC_DIR: Dir<'_> =
+        include_dir!("$CARGO_MANIFEST_DIR/templates/static/codegen");
 
     pub async fn pnpm_install(
         project_paths: &ProjectPaths,

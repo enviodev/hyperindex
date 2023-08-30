@@ -12,8 +12,8 @@
     "gen:build": "(cd generated && rescript build)",
     "gen:watch": "(cd generated && rescript build -w)",
     "start": "ts-node generated/src/Index.bs.js",
-    "codegen-fuji": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen -c config.fuji.yaml",
-    "codegen": "cargo run --manifest-path ../../codegenerator/Cargo.toml -- codegen"
+    "codegen-fuji": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen -c config.fuji.yaml",
+    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen"
   },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",

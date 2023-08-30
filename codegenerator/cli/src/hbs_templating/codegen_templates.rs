@@ -197,7 +197,8 @@ pub fn generate_templates(
     parsed_paths: &ParsedPaths,
     project_name: String,
 ) -> Result<(), Box<dyn Error>> {
-    static CODEGEN_DYNAMIC_DIR: Dir<'_> = include_dir!("templates/dynamic/codegen");
+    static CODEGEN_DYNAMIC_DIR: Dir<'_> =
+        include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/codegen");
     let mut handlebars = handlebars::Handlebars::new();
     handlebars.set_strict_mode(true);
     handlebars.register_escape_fn(handlebars::no_escape);
