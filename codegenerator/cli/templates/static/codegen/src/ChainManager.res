@@ -73,7 +73,12 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
         ChainFetcher.make(
           ~chainConfig,
           ~maxQueueSize,
-          ~chainWorkerTypeSelected=Env.workerTypeSelected,
+          ~chainWorkerTypeSelected=switch (Env.workerTypeSelected, chainConfig.syncSource) {
+          | (RawEventsSelected, _) => RawEventsSelected
+          | (_, Rpc(_)) => RpcSelected
+          | (_, Skar(_)) => SkarSelected
+          | (_, EthArchive(_)) => EthArchiveSelected
+          },
         ),
       )
     })
@@ -109,7 +114,6 @@ let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
 //TODO: investigate can this function + Async version below be combined to share
 //logic
 let popBatchItem = (self: t): option<Types.eventBatchQueueItem> => {
-
   //Peek all next fetched event queue items on all chain fetchers
   let peekChainFetcherFrontItems =
     self.chainFetchers

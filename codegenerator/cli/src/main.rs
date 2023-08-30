@@ -87,7 +87,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             &parsed_paths.project_paths,
                                         )
                                         .await?;
-                                        commands::db_migrate::run_db_setup(project_paths, true).await?;
+                                        commands::db_migrate::run_db_setup(project_paths, true)
+                                            .await?;
                                         commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::CodegenAndResyncFromStoredEvents => {
@@ -98,13 +99,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                             &parsed_paths.project_paths,
                                         )
                                         .await?;
-                                        commands::db_migrate::run_db_setup(project_paths, false).await?;
+                                        commands::db_migrate::run_db_setup(project_paths, false)
+                                            .await?;
                                         commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::ResyncFromStoredEvents => {
                                         //TODO: Implement command for rerunning from stored events
                                         //and action from this match arm
-                                        commands::db_migrate::run_db_setup(project_paths, false).await?; // does this need to be run?
+                                        commands::db_migrate::run_db_setup(project_paths, false)
+                                            .await?; // does this need to be run?
                                         commands::start::start_indexer(project_paths).await?;
                                     }
                                     RerunOptions::ContinueSync => {

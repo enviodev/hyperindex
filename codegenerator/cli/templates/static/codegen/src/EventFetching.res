@@ -162,12 +162,13 @@ let getContractEventsOnFilters = async (
   ~toBlock,
   ~initialBlockInterval,
   ~minFromBlockLogIndex=0,
-  ~chainConfig: Config.chainConfig,
+  ~chainId,
+  ~rpcConfig: Config.rpcConfig,
   ~blockLoader,
   ~logger,
   (),
 ): eventBatchQuery => {
-  let sc = chainConfig.syncConfig
+  let sc = rpcConfig.syncConfig
 
   let fromBlockRef = ref(fromBlock)
   let shouldContinueProcess = () => fromBlockRef.contents <= toBlock
@@ -195,9 +196,9 @@ let getContractEventsOnFilters = async (
           ~fromBlock=fromBlockRef.contents,
           ~toBlock=nextToBlock,
           ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
-          ~provider=chainConfig.provider,
+          ~provider=rpcConfig.provider,
           ~blockLoader,
-          ~chainId=chainConfig.chainId,
+          ~chainId,
           ~logger,
           (),
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))

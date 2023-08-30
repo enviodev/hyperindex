@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use regex::Regex;
 use std::collections::HashSet;
 use std::path::Path;
@@ -5,6 +6,7 @@ use std::path::Path;
 use crate::config_parsing::Config;
 
 use super::constants::RESERVED_WORDS;
+use super::SyncSourceConfig;
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
@@ -84,15 +86,14 @@ fn validate_rpc_urls_from_config(urls: &[String]) -> bool {
 fn validate_names_not_reserved(
     names_from_config: &[String],
     part_of_config: String,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     let detected_reserved_words = check_reserved_words(&names_from_config.join(" "));
     if !detected_reserved_words.is_empty() {
-        return Err(format!(
+        return Err(anyhow!(
             "The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",
             detected_reserved_words.join(" "),
             part_of_config
-        )
-        .into());
+        ));
     }
     Ok(())
 }
@@ -100,9 +101,9 @@ fn validate_names_not_reserved(
 pub fn validate_deserialized_config_yaml(
     config_path: &Path,
     deserialized_yaml: &Config,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> anyhow::Result<()> {
     if !is_valid_postgres_db_name(&deserialized_yaml.name) {
-        return Err(format!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+        return Err(anyhow!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 
     // Retrieving details from config file as a vectors of String
@@ -113,7 +114,12 @@ pub fn validate_deserialized_config_yaml(
     let mut rpc_urls = Vec::new();
 
     for network in &deserialized_yaml.networks {
-        rpc_urls.push(network.rpc_config.url.clone());
+        if let Some(sync_source) = &network.sync_source {
+            match sync_source.clone() {
+                SyncSourceConfig::RpcConfig(rpc_config) => rpc_urls.push(rpc_config.url.clone()),
+                SyncSourceConfig::HypersyncConfig(hypersync_config) => (), //TODO: add validation
+            }
+        }
         for contract in &network.contracts {
             contract_names.push(contract.name.clone());
             contract_addresses.push(contract.address.clone());
@@ -142,7 +148,7 @@ pub fn validate_deserialized_config_yaml(
 
         // Checking that contract names are non-unique
         if !are_contract_names_unique(&contract_names) {
-            return Err(format!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+            return Err(anyhow!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")));
         }
 
         // Checking that contract names do not include any reserved words
@@ -152,19 +158,18 @@ pub fn validate_deserialized_config_yaml(
     // Checking if contract addresses are valid addresses
     for a_contract_addressess in &contract_addresses {
         if !are_valid_ethereum_addresses(&a_contract_addressess.inner) {
-            return Err(format!(
+            return Err(anyhow!(
                 "One of the contract addresses in the config file ({}) isn't valid",
                 &config_path
                     .to_str()
                     .unwrap_or("unknown config file name path")
-            )
-            .into());
+            ));
         }
     }
 
     // Checking if RPC URLs are valid
     if !validate_rpc_urls_from_config(&rpc_urls) {
-        return Err(format!("The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+        return Err(anyhow!("The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")));
     }
 
     Ok(())

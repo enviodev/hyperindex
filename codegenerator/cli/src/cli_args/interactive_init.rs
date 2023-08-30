@@ -39,8 +39,6 @@ impl InitArgs {
             None => {
                 // todo input validation for name
 
-                
-
                 Text::new("Name your indexer: ").prompt()?
             }
         };
@@ -48,8 +46,6 @@ impl InitArgs {
         let directory: String = match &self.directory {
             Some(args_directory) => args_directory.clone(),
             None => {
-                
-
                 Text::new("Set the directory: ")
                     .with_default(DEFAULT_PROJECT_ROOT_PATH)
                     .with_placeholder(DEFAULT_PROJECT_ROOT_PATH)
@@ -127,7 +123,6 @@ impl InitArgs {
                 let input_language =
                     Select::new("Which language would you like to use?", options).prompt()?;
 
-                
                 serde_json::from_str(&input_language)?
             }
         };

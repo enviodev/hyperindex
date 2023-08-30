@@ -1,0 +1,9 @@
+name: config4
+description: Gravatar for Ethereum
+networks:
+  - id: 2 #ID does not exist and no config provided
+    start_block: 0
+    contracts: []
+  - id: 1564830818 #SKALECalypso only on eth archive
+    start_block: 0
+    contracts: []

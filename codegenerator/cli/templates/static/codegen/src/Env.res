@@ -1,7 +1,6 @@
 %%private(let envSafe = EnvSafe.make())
 
-type workerTypeSelected = RpcSelected | SkarSelected | EthArchiveSelected| RawEventsSelected
-
+type workerTypeSelected = RpcSelected | SkarSelected | EthArchiveSelected | RawEventsSelected
 
 let workerTypeSelected = switch EnvUtils.getStringEnvVar(
   ~envSafe,
@@ -20,9 +19,3 @@ let workerTypeSelected = switch EnvUtils.getStringEnvVar(
 
 let maxEventFetchedQueueSize = EnvUtils.getIntEnvVar(~envSafe, ~fallback=500_000, "MAX_QUEUE_SIZE")
 let maxProcessBatchSize = EnvUtils.getIntEnvVar(~envSafe, ~fallback=50_000, "MAX_BATCH_SIZE")
-let subsquidMainnetEthArchiveServerUrl = "https://eth.archive.subsquid.io"
-let hypersyncEndpoint = EnvUtils.getStringEnvVar(
-  ~envSafe,
-  ~fallback=subsquidMainnetEthArchiveServerUrl,
-  "HYPERSYNC_ENDPOINT",
-)

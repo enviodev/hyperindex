@@ -4,9 +4,7 @@ use std::{
     path::{Component, PathBuf},
 };
 
-use crate::cli_args::{
-    ProjectPathsArgs, ToProjectPathsArgs,
-};
+use crate::cli_args::{ProjectPathsArgs, ToProjectPathsArgs};
 
 pub mod handler_paths;
 pub use handler_paths::ParsedPaths;

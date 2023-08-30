@@ -2,6 +2,7 @@
 // TODO: add back warnings when ready!
 type chainId = int
 exception UndefinedChainConfig(chainId)
+exception IncorrectSyncSource(Config.syncSource)
 
 @@warning("-27")
 module type ChainWorker = {
@@ -52,6 +53,21 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
     //Dynamic contracts are checked in DB on start
     contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
 
+    let serverUrl = switch chainConfig.syncSource {
+    | EthArchive(serverUrl)
+    | Skar(serverUrl) => serverUrl
+    | syncSource =>
+      let exn = IncorrectSyncSource(syncSource)
+      logger->Logging.childErrorWithExn(
+        exn,
+        {
+          "msg": "Passed incorrect sync source to a hypersync worker",
+          "syncSource": syncSource,
+        },
+      )
+      exn->raise
+    }
+
     {
       latestFetchedBlockNumber: Promise.resolve(0),
       latestFetchedBlockTimestamp: 0,
@@ -59,7 +75,7 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
       newRangeQueriedCallBacks: SDSL.Queue.make(),
       contractAddressMapping,
       chainConfig,
-      serverUrl: Env.hypersyncEndpoint,
+      serverUrl,
     }
   }
 
@@ -549,6 +565,7 @@ module RpcWorker: ChainWorker = {
     contractAddressMapping: ContractAddressingMap.mapping,
     blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
     chainConfig: Config.chainConfig,
+    rpcConfig: Config.rpcConfig,
   }
 
   let make = (chainConfig: Config.chainConfig): t => {
@@ -565,10 +582,24 @@ module RpcWorker: ChainWorker = {
     //Dynamic contracts are checked in DB on start
     contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
 
+    let rpcConfig = switch chainConfig.syncSource {
+    | Rpc(rpcConfig) => rpcConfig
+    | syncSource =>
+      let exn = IncorrectSyncSource(syncSource)
+      logger->Logging.childErrorWithExn(
+        exn,
+        {
+          "msg": "Parsed sync source to an rpc worker",
+          "syncSource": syncSource,
+        },
+      )
+      exn->raise
+    }
+
     let blockLoader = LazyLoader.make(
       ~loaderFn=blockNumber =>
         EventFetching.getUnwrappedBlockWithBackoff(
-          ~provider=chainConfig.provider,
+          ~provider=rpcConfig.provider,
           ~backoffMsOnFailure=1000,
           ~blockNumber,
         ),
@@ -582,12 +613,13 @@ module RpcWorker: ChainWorker = {
 
     {
       currentlyFetchingToBlock: 0,
-      currentBlockInterval: chainConfig.syncConfig.initialBlockInterval,
+      currentBlockInterval: rpcConfig.syncConfig.initialBlockInterval,
       latestFetchedBlockTimestamp: 0,
       newRangeQueriedCallBacks: SDSL.Queue.make(),
       contractAddressMapping,
       blockLoader,
       chainConfig,
+      rpcConfig,
     }
   }
 
@@ -597,7 +629,7 @@ module RpcWorker: ChainWorker = {
     ~logger: Pino.t,
     ~fetchedEventQueue: ChainEventQueue.t,
   ) => {
-    let {chainConfig, contractAddressMapping, blockLoader} = self
+    let {rpcConfig, chainConfig, contractAddressMapping, blockLoader} = self
 
     let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
       ~chainId=chainConfig.chainId,
@@ -629,8 +661,8 @@ module RpcWorker: ChainWorker = {
       )
     )
 
-    let sc = chainConfig.syncConfig
-    let provider = chainConfig.provider
+    let sc = rpcConfig.syncConfig
+    let provider = rpcConfig.provider
 
     let fromBlockRef = ref(startBlock)
 
@@ -686,7 +718,8 @@ module RpcWorker: ChainWorker = {
         ~toBlock=targetBlock,
         ~initialBlockInterval=blockInterval,
         ~minFromBlockLogIndex=0,
-        ~chainConfig,
+        ~rpcConfig,
+        ~chainId=chainConfig.chainId,
         ~blockLoader,
         ~logger,
         (),
@@ -750,6 +783,7 @@ module RpcWorker: ChainWorker = {
   ): array<Types.eventBatchQueueItem> => {
     let {
       chainConfig,
+      rpcConfig,
       contractAddressMapping,
       currentBlockInterval,
       blockLoader,
@@ -783,7 +817,8 @@ module RpcWorker: ChainWorker = {
       ~toBlock=currentlyFetchingToBlock, //Fetch up till the block that the worker has not included this address
       ~initialBlockInterval=currentBlockInterval,
       ~minFromBlockLogIndex=fromLogIndex,
-      ~chainConfig,
+      ~rpcConfig,
+      ~chainId=chainConfig.chainId,
       ~blockLoader,
       ~logger,
       (),
@@ -812,7 +847,11 @@ module RpcWorker: ChainWorker = {
   let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
 }
 
-type chainWorker = Rpc(RpcWorker.t) | Skar(SkarWorker.t) | EthArchive(EthArchiveWorker.t) | RawEvents(RawEventsWorker.t)
+type chainWorker =
+  | Rpc(RpcWorker.t)
+  | Skar(SkarWorker.t)
+  | EthArchive(EthArchiveWorker.t)
+  | RawEvents(RawEventsWorker.t)
 
 module PolyMorphicChainWorkerFunctions = {
   /* Why use thes polymorphic functions rather than calling function directly on

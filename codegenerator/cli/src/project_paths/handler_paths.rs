@@ -7,6 +7,7 @@ use crate::{cli_args::ProjectPathsArgs, config_parsing::deserialize_config_from_
 
 pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 
+use anyhow::Context;
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub struct ContractUniqueId {
     pub network_id: i32,
@@ -36,9 +37,7 @@ impl ParsedPaths {
             .parent()
             .ok_or("Unexpected config file should have a parent directory")?;
         let parsed_config = deserialize_config_from_yaml(&project_paths.config)?;
-        let schema_path_relative_opt = parsed_config
-            .schema
-            .map(PathBuf::from);
+        let schema_path_relative_opt = parsed_config.schema.map(PathBuf::from);
 
         let schema_path_joined = match schema_path_relative_opt {
             Some(schema_path_relative) => config_directory.join(schema_path_relative),
@@ -115,19 +114,16 @@ impl ParsedPaths {
     pub fn get_contract_abi(
         &self,
         contract_unique_id: &ContractUniqueId,
-    ) -> Result<Option<ethers::abi::Contract>, Box<dyn Error>> {
+    ) -> anyhow::Result<Option<ethers::abi::Contract>> {
         let abi_path_opt = self.abi_paths.get(contract_unique_id);
 
         let abi_opt = match abi_path_opt {
             None => None,
             Some(abi_path) => {
-                let abi_file = std::fs::read_to_string(abi_path).map_err(|e| {
-                    format!(
-                        "Failed to read abi at {}, with the following error {}",
-                        abi_path.to_str().unwrap_or("no_path"),
-                        e
-                    )
-                })?;
+                let abi_file = std::fs::read_to_string(abi_path).context(format!(
+                    "Failed to read abi at {}",
+                    abi_path.to_str().unwrap_or("no_path"),
+                ))?;
 
                 let abi: ethers::abi::Contract = serde_json::from_str(&abi_file)?;
                 Some(abi)

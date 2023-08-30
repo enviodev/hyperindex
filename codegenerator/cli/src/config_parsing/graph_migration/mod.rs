@@ -11,8 +11,7 @@ use crate::project_paths::handler_paths::DEFAULT_SCHEMA_PATH;
 use crate::{
     cli_args::Language,
     config_parsing::{
-        default_unstable__sync_config, Config, ConfigContract, ConfigEvent, EventNameOrSig,
-        Network, NormalizedList, RpcConfig,
+        Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
     },
 };
 
@@ -266,17 +265,13 @@ pub async fn generate_config_from_subgraph_id(
     let network_hashmap = generate_network_contract_hashmap(&manifest_file_string).await;
 
     for (network_name, contracts) in &network_hashmap {
-        let rpc_config = RpcConfig {
-            url: "https://example.com/rpc".to_string(),
-            unstable__sync_config: default_unstable__sync_config(),
-        };
         // Create network object to be populated
         let mut network = Network {
             id: chain_helpers::get_graph_protocol_chain_id(
                 chain_helpers::deserialize_network_name(network_name),
             ),
             // TODO: update to the final rpc url
-            rpc_config,
+            sync_source: None,
             start_block: 0,
             contracts: vec![],
         };
@@ -337,8 +332,7 @@ pub async fn generate_config_from_subgraph_id(
                     for data_source_abi in &data_source.mapping.abis {
                         let abi_dir_path = abi_dir_path.clone();
                         let abi_ipfs_file_path = data_source_abi.file.value.clone();
-                        let abi_file_path =
-                            abi_dir_path.join(format!("{}.json", data_source.name));
+                        let abi_file_path = abi_dir_path.join(format!("{}.json", data_source.name));
                         join_set.spawn(async move {
                             fetch_ipfs_file_and_write_to_system(
                                 abi_ipfs_file_path,

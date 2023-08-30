@@ -35,9 +35,7 @@ pub async fn fetch_hasura_healthz_with_retry() -> HasuraHealth {
                 if success {
                     break HasuraHealth::Healthy;
                 } else if refetch_delay >= MAXIMUM_BACKOFF {
-                    return HasuraHealth::Unhealthy(
-                        "Maximum backoff timeout exceeded".to_string(),
-                    );
+                    return HasuraHealth::Unhealthy("Maximum backoff timeout exceeded".to_string());
                 }
             }
             Ok(Err(err)) => {

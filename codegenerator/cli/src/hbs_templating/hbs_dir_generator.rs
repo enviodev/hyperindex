@@ -41,9 +41,9 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
 
                     if is_hbs_file {
                         // let get_path_str = |path: AsRef<Path>>| path.to_str().unwrap_or_else(|| "bad path");
-                        let path_str = path.to_str().ok_or({
-                            "Could not cast path to str in generate_hbs_templates"
-                        })?;
+                        let path_str = path
+                            .to_str()
+                            .ok_or("Could not cast path to str in generate_hbs_templates")?;
                         //Get the parent of the file src/MyTemplate.res.hbs -> src/
                         let parent = path
                             .parent()
