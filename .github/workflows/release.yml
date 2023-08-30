@@ -254,7 +254,7 @@ jobs:
     runs-on: ubuntu-22.04
     defaults:
       run:
-        working-directory: codegenerator/npm/envio
+        working-directory: codegenerator/cli/npm/envio
     steps:
       - name: Checkout
         uses: actions/checkout@v3
