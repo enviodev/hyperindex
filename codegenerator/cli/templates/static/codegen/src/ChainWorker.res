@@ -28,7 +28,7 @@ module type ChainWorker = {
   ) => promise<array<Types.eventBatchQueueItem>>
 }
 
-module MakeHyperSyncWoker = (HyperSync: HyperSync.S): ChainWorker => {
+module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
   type t = {
     mutable latestFetchedBlockNumber: promise<int>, // promise allows locking of this field while a batch has been fetched but still being added
     mutable latestFetchedBlockTimestamp: int,
@@ -420,8 +420,8 @@ module MakeHyperSyncWoker = (HyperSync: HyperSync.S): ChainWorker => {
   }
 }
 
-module SkarWorker = MakeHyperSyncWoker(HyperSync.SkarHyperSync)
-module EthArchiveWorker = MakeHyperSyncWoker(HyperSync.EthArchiveHyperSync)
+module SkarWorker = MakeHyperSyncWorker(HyperSync.SkarHyperSync)
+module EthArchiveWorker = MakeHyperSyncWorker(HyperSync.EthArchiveHyperSync)
 
 module RawEventsWorker: ChainWorker = {
   type t = {
