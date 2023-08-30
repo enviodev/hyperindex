@@ -375,16 +375,19 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
       let topLevelTopics = [topics]
 
       //fetch batch
-      let pageUnsafe =
-        (
-          await HyperSync.queryLogsPage(
-            ~serverUrl,
-            ~fromBlock=fromBlockRef.contents,
-            ~toBlock,
-            ~addresses,
-            ~topics=topLevelTopics,
-          )
-        )->Belt.Result.getExn
+      let pageUnsafe = switch await HyperSync.queryLogsPage(
+        ~serverUrl,
+        ~fromBlock=fromBlockRef.contents,
+        ~toBlock,
+        ~addresses,
+        ~topics=topLevelTopics,
+      ) {
+      | Error(e) =>
+        let msg = e->HyperSyncTypes.queryErrorToMsq
+        logger->Logging.childError(msg)
+        Js.Exn.raiseError(msg)
+      | Ok(v) => v
+      }
 
       pageUnsafe.items->Belt.Array.forEach(item => {
         //Logs in the same block as the log that called for dynamic contract registration
