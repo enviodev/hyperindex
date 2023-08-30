@@ -31,8 +31,8 @@ let executeFetchRequest = async (
     | Ok(v) => Ok(v)
     }
   } catch {
-  | FailedToFetch(exn) => Error(Other(exn))
-  | FailedToParseJson(exn) => Error(Other(exn))
+  | FailedToFetch(exn) => Error(FailedToFetch(exn))
+  | FailedToParseJson(exn) => Error(FailedToParseJson(exn))
   | exn => Error(Other(exn))
   }
 }
