@@ -107,15 +107,15 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
             | _ =>
               let missingParams =
                 [
-                  blockTimestampOpt->Belt.Option.map(_ => "log.timestamp"),
-                  log.address->Belt.Option.map(_ => "log.address"),
-                  log.blockHash->Belt.Option.map(_ => "log.blockHash-"),
-                  log.blockNumber->Belt.Option.map(_ => "log.blockNumber"),
-                  log.data->Belt.Option.map(_ => "log.data"),
-                  log.index->Belt.Option.map(_ => "log.index"),
-                  log.transactionHash->Belt.Option.map(_ => "log.transactionHash"),
-                  log.transactionIndex->Belt.Option.map(_ => "log.transactionIndex"),
-                  log.removed->Belt.Option.map(_ => "log.removed"),
+                  blockTimestampOpt->Utils.optionMapNone("log.timestamp"),
+                  log.address->Utils.optionMapNone("log.address"),
+                  log.blockHash->Utils.optionMapNone("log.blockHash-"),
+                  log.blockNumber->Utils.optionMapNone("log.blockNumber"),
+                  log.data->Utils.optionMapNone("log.data"),
+                  log.index->Utils.optionMapNone("log.index"),
+                  log.transactionHash->Utils.optionMapNone("log.transactionHash"),
+                  log.transactionIndex->Utils.optionMapNone("log.transactionIndex"),
+                  log.removed->Utils.optionMapNone("log.removed"),
                 ]->Belt.Array.keepMap(v => v)
               Error(
                 HyperSyncTypes.UnexpectedMissingParams({
@@ -128,8 +128,8 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
         | _ =>
           let missingParams =
             [
-              item.blocks->Belt.Option.map(_ => "blocks"),
-              item.logs->Belt.Option.map(_ => "logs"),
+              item.blocks->Utils.optionMapNone("blocks"),
+              item.logs->Utils.optionMapNone("logs"),
             ]->Belt.Array.keepMap(v => v)
 
           [
@@ -213,8 +213,8 @@ module BlockTimestampQuery: HyperSyncTypes.BlockTimestampQuery = {
               | _ =>
                 let missingParams =
                   [
-                    block.number->Belt.Option.map(_ => "block.number"),
-                    block.timestamp->Belt.Option.map(_ => "block.timestamp"),
+                    block.number->Utils.optionMapNone("block.number"),
+                    block.timestamp->Utils.optionMapNone("block.timestamp"),
                   ]->Belt.Array.keepMap(p => p)
 
                 Error(

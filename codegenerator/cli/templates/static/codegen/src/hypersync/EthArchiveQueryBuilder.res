@@ -89,16 +89,16 @@ module LogsQuery = {
                 | _ =>
                   let missingParams =
                     [
-                      block.timestamp->Belt.Option.map(_ => "log.timestamp"),
-                      log.address->Belt.Option.map(_ => "log.address"),
-                      log.blockHash->Belt.Option.map(_ => "log.blockHash-"),
-                      log.blockNumber->Belt.Option.map(_ => "log.blockNumber"),
-                      log.data->Belt.Option.map(_ => "log.data"),
-                      log.index->Belt.Option.map(_ => "log.index"),
-                      log.transactionHash->Belt.Option.map(_ => "log.transactionHash"),
-                      log.transactionIndex->Belt.Option.map(_ => "log.transactionIndex"),
-                      log.topics->Belt.Option.map(_ => "log.topics"),
-                      log.removed->Belt.Option.map(_ => "log.removed"),
+                      block.timestamp->Utils.optionMapNone("log.timestamp"),
+                      log.address->Utils.optionMapNone("log.address"),
+                      log.blockHash->Utils.optionMapNone("log.blockHash-"),
+                      log.blockNumber->Utils.optionMapNone("log.blockNumber"),
+                      log.data->Utils.optionMapNone("log.data"),
+                      log.index->Utils.optionMapNone("log.index"),
+                      log.transactionHash->Utils.optionMapNone("log.transactionHash"),
+                      log.transactionIndex->Utils.optionMapNone("log.transactionIndex"),
+                      log.topics->Utils.optionMapNone("log.topics"),
+                      log.removed->Utils.optionMapNone("log.removed"),
                     ]->Belt.Array.keepMap(v => v)
                   Error(
                     HyperSyncTypes.UnexpectedMissingParams({
@@ -112,8 +112,8 @@ module LogsQuery = {
           | _ =>
             let missingParams =
               [
-                item.block->Belt.Option.map(_ => "blocks"),
-                item.logs->Belt.Option.map(_ => "logs"),
+                item.block->Utils.optionMapNone("blocks"),
+                item.logs->Utils.optionMapNone("logs"),
               ]->Belt.Array.keepMap(v => v)
 
             [
@@ -193,13 +193,13 @@ module BlockTimestampQuery = {
           | _ =>
             let missingParams =
               [
-                item.block->Belt.Option.map(_ => "block"),
+                item.block->Utils.optionMapNone("block"),
                 item.block
                 ->Belt.Option.flatMap(block => block.number)
-                ->Belt.Option.map(_ => "block.number"),
+                ->Utils.optionMapNone("block.number"),
                 item.block
                 ->Belt.Option.flatMap(block => block.timestamp)
-                ->Belt.Option.map(_ => "block.timestamp"),
+                ->Utils.optionMapNone("block.timestamp"),
               ]->Belt.Array.keepMap(p => p)
 
             Error(

@@ -83,3 +83,10 @@ let mapArrayOfResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> 
     })
   })
 }
+
+let optionMapNone = (opt: option<'a>, val: 'b): option<'b> => {
+  switch opt {
+  | None => Some(val)
+  | Some(_) => None
+  }
+}
