@@ -28,8 +28,22 @@ describe("Raw Events Integration", () => {
   let nftFactoryContractAddress: string;
   const getlocalChainConfig = (nftFactoryContractAddress: string) => {
     const { provider } = hre.ethers;
+
     return {
-      provider,
+      syncSource: {
+        TAG: /* Rpc */ 0,
+        _0: {
+          provider,
+          syncConfig: {
+            initialBlockInterval: 10000,
+            backoffMultiplicative: 10000,
+            accelerationAdditive: 10000,
+            intervalCeiling: 10000,
+            backoffMillis: 10000,
+            queryTimeoutMillis: 10000,
+          },
+        },
+      },
       startBlock: 1,
       chainId: 1337,
       contracts: [
@@ -46,18 +60,10 @@ describe("Raw Events Integration", () => {
           events: [EventVariants.SimpleNftContract_TransferEvent],
         },
       ],
-      syncConfig: {
-        initialBlockInterval: 10000,
-        backoffMultiplicative: 10000,
-        accelerationAdditive: 10000,
-        intervalCeiling: 10000,
-        backoffMillis: 10000,
-        queryTimeoutMillis: 10000,
-      },
     };
   };
 
-  before(async function () {
+  before(async function() {
     this.timeout(30 * 1000);
     await runMigrationsNoLogs();
     console.log("deploying Nft Factory");
@@ -124,12 +130,12 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async function () {
+  it("RawEvents table contains rows after indexer runs", async function() {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
-  it("Entities have metrics and relate to their raw events", async function () {
+  it("Entities have metrics and relate to their raw events", async function() {
     let joinedMetricsRows = await sql`
     SELECT t.db_write_timestamp AS t_write, t.event_chain_id, t.event_id, r.block_timestamp, r.db_write_timestamp AS r_write
     FROM public.token AS t
@@ -139,7 +145,7 @@ describe("Raw Events Integration", () => {
     expect(joinedMetricsRows.count).to.be.gt(0);
   });
 
-  it("should ensure Entites are created correctly", async function () {
+  it("should ensure Entites are created correctly", async function() {
     let rowsNftcollection = await sql`SELECT * FROM public.nftcollection`;
     expect(rowsNftcollection.count).to.be.gt(0);
     let rowsUsers = await sql`SELECT * FROM public.user`;
@@ -148,7 +154,7 @@ describe("Raw Events Integration", () => {
     expect(rowsToken.count).to.be.gt(0);
   });
 
-  it("should have 1 row in the dynamic_contract_registry table", async function () {
+  it("should have 1 row in the dynamic_contract_registry table", async function() {
     let rowsDCR = await sql`SELECT * FROM public.dynamic_contract_registry`;
     console.log(rowsDCR);
     expect(rowsDCR.count).to.be.eq(1);
@@ -181,13 +187,13 @@ describe("Raw Events Integration", () => {
     expect(afterRawEventsRows.count).to.be.gt(beforeRawEventsRows.count);
   });
 
-  it("RawEvents table does contains rows after migration keeping raw events table", async function () {
+  it("RawEvents table does contains rows after migration keeping raw events table", async function() {
     await runDownMigrations(false, false);
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
-  it("RawEvents table does not exist after migration dropping raw events table", async function () {
+  it("RawEvents table does not exist after migration dropping raw events table", async function() {
     await runDownMigrations(false, true);
     let rawEventsRows = await sql`
         SELECT EXISTS (

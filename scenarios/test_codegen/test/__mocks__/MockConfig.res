@@ -1,15 +1,17 @@
 let mockChainConfig: Config.chainConfig = {
-  provider: Hardhat.hardhatProvider,
+  syncSource: Rpc({
+    provider: Hardhat.hardhatProvider,
+    syncConfig: {
+      initialBlockInterval: 10000,
+      backoffMultiplicative: 10000.0,
+      accelerationAdditive: 10000,
+      intervalCeiling: 10000,
+      backoffMillis: 10000,
+      queryTimeoutMillis: 10000,
+    },
+  }),
   startBlock: 1,
   chainId: 1337,
-  syncConfig: {
-    initialBlockInterval: 10000,
-    backoffMultiplicative: 10000.0,
-    accelerationAdditive: 10000,
-    intervalCeiling: 10000,
-    backoffMillis: 10000,
-    queryTimeoutMillis: 10000,
-  },
   contracts: [
     {
       name: "Gravatar",

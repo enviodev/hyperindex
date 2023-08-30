@@ -14,12 +14,12 @@ let resetPostgresClient: unit => unit = () => {
 describe("E2E Integration Test", () => {
   MochaPromise.before(async () => {
     resetPostgresClient()
-    (await Migrations.runDownMigrations(~shouldExit=false,~shouldDropRawEvents=true))->ignore
+    (await Migrations.runDownMigrations(~shouldExit=false, ~shouldDropRawEvents=true))->ignore
     (await Migrations.runUpMigrations(~shouldExit=false))->ignore
   })
 
   MochaPromise.after(async () => {
-    (await Migrations.runDownMigrations(~shouldExit=false,~shouldDropRawEvents=true))->ignore
+    (await Migrations.runDownMigrations(~shouldExit=false, ~shouldDropRawEvents=true))->ignore
     (await Migrations.runUpMigrations(~shouldExit=false))->ignore
   })
 
@@ -28,17 +28,19 @@ describe("E2E Integration Test", () => {
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
     let provider = Hardhat.hardhatProvider
     let localChainConfig: Config.chainConfig = {
-      provider,
+      syncSource: Rpc({
+        provider,
+        syncConfig: {
+          initialBlockInterval: 10000,
+          backoffMultiplicative: 10000.0,
+          accelerationAdditive: 10000,
+          intervalCeiling: 10000,
+          backoffMillis: 10000,
+          queryTimeoutMillis: 10000,
+        },
+      }),
       startBlock: 0,
       chainId: 1337,
-      syncConfig: {
-        initialBlockInterval: 10000,
-        backoffMultiplicative: 10000.0,
-        accelerationAdditive: 10000,
-        intervalCeiling: 10000,
-        backoffMillis: 10000,
-        queryTimeoutMillis: 10000,
-      },
       contracts: [
         {
           name: "GravatarRegistry",

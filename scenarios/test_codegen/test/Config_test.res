@@ -23,47 +23,51 @@ let configYaml: config = ConfigUtils.loadConfigYaml(~codegenConfigPath=configPat
 let firstNetworkConfig = configYaml.networks[0]
 
 let generatedChainConfig = Js.Dict.unsafeGet(Config.config, firstNetworkConfig.id)
+let generatedSyncConfig = switch generatedChainConfig.syncSource {
+| Rpc({syncConfig}) => syncConfig
+| _ => Js.Exn.raiseError("Expected an rpc config")
+}
 
 describe("Sync Config Test", () => {
   it("initial_block_interval", () => {
     Assert.deep_equal(
       firstNetworkConfig.rpc_config.unstable__sync_config.initial_block_interval,
-      generatedChainConfig.syncConfig.initialBlockInterval,
+      generatedSyncConfig.initialBlockInterval,
     )
   })
   it("backoff_multiplicative", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deep_equal(
       firstNetworkConfig.rpc_config.unstable__sync_config.backoff_multiplicative,
-      generatedChainConfig.syncConfig.backoffMultiplicative,
+      generatedSyncConfig.backoffMultiplicative,
     )
   })
   it("acceleration_additive", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deep_equal(
       firstNetworkConfig.rpc_config.unstable__sync_config.acceleration_additive,
-      generatedChainConfig.syncConfig.accelerationAdditive,
+      generatedSyncConfig.accelerationAdditive,
     )
   })
   it("interval_ceiling", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deep_equal(
       firstNetworkConfig.rpc_config.unstable__sync_config.interval_ceiling,
-      generatedChainConfig.syncConfig.intervalCeiling,
+      generatedSyncConfig.intervalCeiling,
     )
   })
   it("backoff_millis", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deep_equal(
       firstNetworkConfig.rpc_config.unstable__sync_config.backoff_millis,
-      generatedChainConfig.syncConfig.backoffMillis,
+      generatedSyncConfig.backoffMillis,
     )
   })
   it("query_timeout_millis", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deep_equal(
       firstNetworkConfig.rpc_config.unstable__sync_config.query_timeout_millis,
-      generatedChainConfig.syncConfig.queryTimeoutMillis,
+      generatedSyncConfig.queryTimeoutMillis,
     )
   })
 })
