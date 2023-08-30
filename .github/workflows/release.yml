@@ -48,8 +48,8 @@ jobs:
             echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
             echo "::set-output name=release_name::${GITHUB_REF_NAME}"
             echo "::set-output name=is_tagged::true"
-            # echo "::set-output name=release_type::next" # NOTE: we currently go directly into prod when a tag is released - using 'next' would give us time to review before upgrading the tag.
-            echo "::set-output name=release_type::latest"
+            echo "::set-output name=release_type::next" # NOTE: we currently go directly into prod when a tag is released - using 'next' would give us time to review before upgrading the tag.
+           # echo "::set-output name=release_type::latest"
           elif [[ "${GITHUB_REF_NAME}" =~ ^release-([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             version=v${BASH_REMATCH[1]}
             timestamp=$(date +'%Y%m%d%H%M%S')
