@@ -83,7 +83,6 @@ let logger = switch Config.logStrategy {
 let setLogLevel = (level: Pino.logLevel) => {
   logger->setLevel(level)
 }
-setLogLevel(Config.baseLogLevel)
 
 let trace = message => {
   logger.trace(. message->createPinoMessage)
