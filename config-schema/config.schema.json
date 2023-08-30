@@ -27,7 +27,7 @@
           "rpc_config": {
             "description": "RPC configuration will be used to subscribe to blockchain data on this network",
             "type": "array",
-            "items":{
+            "items": {
               "type": "object",
               "additionalProperties": false,
               "properties": {
@@ -35,10 +35,10 @@
                   "description": "URL of the RPC endpoint",
                   "type": "string"
                 },
-                "unstable__sync_config":{
+                "unstable__sync_config": {
                   "description": "Sync configuration that will used to configure the RPC request",
                   "type": "array",
-                  "items":{
+                  "items": {
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
@@ -67,7 +67,7 @@
                         "type": "integer"
                       }
                     }
-                  }    
+                  }
                 }
               }
             }
@@ -132,13 +132,17 @@
                             "name": {
                               "description": "The name of the required entity (must match an entity defined in `schema.graphql`)",
                               "type": "string"
-                            }                         
+                            }
                           },
-                          "required": ["name"]
+                          "required": [
+                            "name"
+                          ]
                         }
                       }
                     },
-                    "required": ["name"]
+                    "required": [
+                      "name"
+                    ]
                   }
                 }
               },
@@ -152,9 +156,18 @@
             }
           }
         },
-        "required": ["id", "rpc_url", "start_block", "contracts"]
+        "required": [
+          "id",
+          "rpc_url",
+          "start_block",
+          "contracts"
+        ]
       }
     }
   },
-  "required": ["version", "description", "networks"]
+  "required": [
+    "version",
+    "description",
+    "networks"
+  ]
 }
