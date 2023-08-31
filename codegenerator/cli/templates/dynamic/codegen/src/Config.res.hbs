@@ -50,7 +50,6 @@ type chainConfig = {
         let logFilePath =
         envSafe->EnvSafe.get(~name="LOG_FILE", ~struct=S.string(), ~devFallback="logs/envio.log", ())
         let userLogLevel = getLogLevelConfig(~name="LOG_LEVEL", ~default=#info)
-        let baseLogLevel = getLogLevelConfig(~name="BASE_LOG_LEVEL", ~default=#trace)
         let defaultFileLogLevel = getLogLevelConfig(~name="FILE_LOG_LEVEL", ~default=#trace)
 
         type logStrategyType = EcsFile | EcsConsole | FileOnly | ConsoleRaw | ConsolePretty | Both
