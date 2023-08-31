@@ -19,7 +19,8 @@
     "docker-up": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker up",
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
     "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",
-    "envio": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml --"
+    "envio": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml --",
+    "start": "node ./generated/src/Index.bs.js"
   },
   "keywords": [
     "ReScript"
