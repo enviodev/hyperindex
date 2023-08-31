@@ -85,8 +85,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 )
                                 .await?;
                                 commands::db_migrate::run_db_setup(project_paths, true).await?;
+
+                                const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
                                 commands::start::start_indexer(
                                     project_paths,
+                                    SHOULD_SYNC_FROM_RAW_EVENTS,
                                     docker_started_on_run,
                                 )
                                 .await?;
@@ -100,8 +103,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 )
                                 .await?;
                                 commands::db_migrate::run_db_setup(project_paths, false).await?;
+
+                                const SHOULD_SYNC_FROM_RAW_EVENTS: bool = true;
                                 commands::start::start_indexer(
                                     project_paths,
+                                    SHOULD_SYNC_FROM_RAW_EVENTS,
                                     docker_started_on_run,
                                 )
                                 .await?;
@@ -110,8 +116,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
                                 commands::db_migrate::run_db_setup(project_paths, false).await?; // does this need to be run?
+                                const SHOULD_SYNC_FROM_RAW_EVENTS: bool = true;
                                 commands::start::start_indexer(
                                     project_paths,
+                                    SHOULD_SYNC_FROM_RAW_EVENTS,
                                     docker_started_on_run,
                                 )
                                 .await?;
@@ -126,12 +134,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
                                 if !has_run_db_migrations || docker_started_on_run {
                                     commands::db_migrate::run_db_setup(project_paths, true).await?;
+
+                                    const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
+                                    commands::start::start_indexer(
+                                        project_paths,
+                                        SHOULD_SYNC_FROM_RAW_EVENTS,
+                                        docker_started_on_run,
+                                    )
+                                    .await?;
                                 }
-                                commands::start::start_indexer(
-                                    project_paths,
-                                    docker_started_on_run,
-                                )
-                                .await?;
                             }
                         }
                     }
@@ -154,7 +165,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if start_args.restart {
                 commands::db_migrate::run_db_setup(project_paths, true).await?;
             }
-            commands::start::start_indexer(project_paths, false).await?;
+            const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
+            const SHOULD_OPEN_HASURA: bool = false;
+            commands::start::start_indexer(
+                project_paths,
+                SHOULD_SYNC_FROM_RAW_EVENTS,
+                SHOULD_OPEN_HASURA,
+            )
+            .await?;
             Ok(())
         }
 

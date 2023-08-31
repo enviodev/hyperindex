@@ -1,3 +1,6 @@
+use anyhow::Context;
+use std::path::Path;
+
 pub mod rescript {
     use std::{error::Error, path::PathBuf};
     use tokio::process::Command;
@@ -212,32 +215,60 @@ pub mod codegen {
     }
 }
 
-pub mod start {
+async fn execute_command(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+) -> anyhow::Result<std::process::ExitStatus> {
+    Ok(tokio::process::Command::new(cmd)
+        .args(&args)
+        .current_dir(current_dir)
+        .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
+        .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+        //the child process
+        .spawn()
+        .context(format!(
+            "Failed to spawn command {} {} at {} as child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?
+        .wait()
+        .await
+        .context(format!(
+            "Failed to exit command {} {} at {} from child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?)
+}
 
-    use std::error::Error;
-    use tokio::process::Command;
+pub mod start {
 
     use crate::project_paths::ProjectPaths;
 
+    use super::execute_command;
+
     pub async fn start_indexer(
         project_paths: &ProjectPaths,
+        should_use_raw_events_worker: bool,
         should_open_hasura: bool,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    ) -> anyhow::Result<std::process::ExitStatus> {
         if should_open_hasura {
             open::that("http://localhost:8080")?;
         }
         //TODO: put the start script in the generated package.json
         //and run from there.
-        Ok(Command::new("npm")
-            .arg("run")
-            .arg("start")
-            .current_dir(&project_paths.project_root)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?)
+        let cmd = "npm";
+        let mut args = vec!["run", "start"];
+        if should_use_raw_events_worker {
+            args.push("--");
+            args.push("--sync-from-raw-events");
+        }
+
+        let current_dir = &project_paths.project_root;
+
+        execute_command(cmd, args, current_dir).await
     }
 }
 pub mod docker {
