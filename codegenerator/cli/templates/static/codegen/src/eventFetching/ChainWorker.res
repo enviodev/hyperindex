@@ -206,7 +206,6 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): S => {
     }
 
     while (await checkReadyToContinue()) && self.shouldContinueFetching {
-
       //Instantiate each time to add new registered contract addresses
       let contractInterfaceManager = ContractInterfaceManager.make(
         ~chainConfig,
@@ -382,7 +381,7 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): S => {
         fromBlock := pageUnsafe.nextBlock
       }
     }
-    
+
     self.hasStoppedFetchingCallBack()
   }
 
@@ -1113,11 +1112,22 @@ let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
   }
 }
 
-let make = (selectedWorker: Env.workerTypeSelected, ~chainConfig) => {
+type caughtUpToHeadCallback<'worker> = option<'worker => promise<unit>>
+type workerSelectionWithCallback =
+  | RpcSelectedWithCallback(caughtUpToHeadCallback<RpcWorker.t>)
+  | SkarSelectedWithCallback(caughtUpToHeadCallback<SkarWorker.t>)
+  | EthArchiveSelectedWithCallback(caughtUpToHeadCallback<EthArchiveWorker.t>)
+  | RawEventsSelectedWithCallback(caughtUpToHeadCallback<RawEventsWorker.t>)
+
+let make = (selectedWorker: workerSelectionWithCallback, ~chainConfig) => {
   switch selectedWorker {
-  | RpcSelected => Rpc(RpcWorker.make(chainConfig))
-  | SkarSelected => Skar(SkarWorker.make(chainConfig))
-  | EthArchiveSelected => EthArchive(EthArchiveWorker.make(chainConfig))
-  | RawEventsSelected => RawEvents(RawEventsWorker.make(chainConfig))
+  | RpcSelectedWithCallback(caughtUpToHeadHook) =>
+    Rpc(RpcWorker.make(~caughtUpToHeadHook?, chainConfig))
+  | SkarSelectedWithCallback(caughtUpToHeadHook) =>
+    Skar(SkarWorker.make(~caughtUpToHeadHook?, chainConfig))
+  | EthArchiveSelectedWithCallback(caughtUpToHeadHook) =>
+    EthArchive(EthArchiveWorker.make(~caughtUpToHeadHook?, chainConfig))
+  | RawEventsSelectedWithCallback(caughtUpToHeadHook) =>
+    RawEvents(RawEventsWorker.make(~caughtUpToHeadHook?, chainConfig))
   }
 }

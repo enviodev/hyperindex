@@ -2,29 +2,48 @@ type t = {
   logger: Pino.t,
   fetchedEventQueue: ChainEventQueue.t,
   chainConfig: Config.chainConfig,
-  chainWorker: ChainWorker.chainWorker,
+  chainWorker: ref<ChainWorker.chainWorker>,
 }
 
 //CONSTRUCTION
-let make = (
-  ~chainConfig: Config.chainConfig,
-  ~maxQueueSize,
-  ~chainWorkerTypeSelected: Env.workerTypeSelected,
-): t => {
+let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawEvents: bool): t => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chainId})
-  let chainWorker = chainWorkerTypeSelected->ChainWorker.make(~chainConfig)
+
+  //Dangerous! Ref is not defined yet but will be defined in the next step
+  let chainWorkerRef = ref(None->Obj.magic)
+
+  let chainConfigWorkerNoCallback = {
+    let noneCallback = None
+    switch chainConfig.syncSource {
+    | Rpc(_) => ChainWorker.RpcSelectedWithCallback(noneCallback)
+    | Skar(_) => ChainWorker.SkarSelectedWithCallback(noneCallback)
+    | EthArchive(_) => ChainWorker.EthArchiveSelectedWithCallback(noneCallback)
+    }
+  }
+
+  let chainWorkerWithCallback = if shouldSyncFromRawEvents {
+    let finishedSyncCallback = async (worker: ChainWorker.RawEventsWorker.t) => {
+      await worker->ChainWorker.RawEventsWorker.stopFetchingEvents
+      chainWorkerRef := chainConfigWorkerNoCallback->ChainWorker.make(~chainConfig)
+    }
+    ChainWorker.RawEventsSelectedWithCallback(Some(finishedSyncCallback))
+  } else {
+    chainConfigWorkerNoCallback
+  }
+
+  chainWorkerRef := chainWorkerWithCallback->ChainWorker.make(~chainConfig)
 
   {
     fetchedEventQueue: ChainEventQueue.make(~maxQueueSize),
     logger,
     chainConfig,
-    chainWorker,
+    chainWorker: chainWorkerRef,
   }
 }
 
 //Public methods
 let startFetchingEvents = async (self: t) => {
-  switch self.chainWorker->ChainWorker.startFetchingEvents(
+  switch self.chainWorker.contents->ChainWorker.startFetchingEvents(
     ~logger=self.logger,
     ~fetchedEventQueue=self.fetchedEventQueue,
   ) {
@@ -62,7 +81,7 @@ let addDynamicContractAndFetchMissingEvents = (
   ~fromBlock,
   ~fromLogIndex,
 ): promise<array<Types.eventBatchQueueItem>> => {
-  self.chainWorker->ChainWorker.addDynamicContractAndFetchMissingEvents(
+  self.chainWorker.contents->ChainWorker.addDynamicContractAndFetchMissingEvents(
     ~dynamicContracts,
     ~fromBlock,
     ~fromLogIndex,
@@ -79,12 +98,13 @@ let peekFrontItemOfQueue = (self: t): eventQueuePeek => {
 
   switch optFront {
   | None =>
-    let latestFetchedBlockTimestamp = self.chainWorker->ChainWorker.getLatestFetchedBlockTimestamp
+    let latestFetchedBlockTimestamp =
+      self.chainWorker.contents->ChainWorker.getLatestFetchedBlockTimestamp
     NoItem(latestFetchedBlockTimestamp, self.chainConfig.chainId)
   | Some(item) => Item(item)
   }
 }
 
 let addNewRangeQueriedCallback = (self: t) => {
-  ChainWorker.addNewRangeQueriedCallback(self.chainWorker)
+  ChainWorker.addNewRangeQueriedCallback(self.chainWorker.contents)
 }

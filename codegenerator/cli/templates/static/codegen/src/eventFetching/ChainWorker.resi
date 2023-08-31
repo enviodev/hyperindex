@@ -47,5 +47,11 @@ let addDynamicContractAndFetchMissingEvents: (
   ~fromLogIndex: int,
   ~logger: Pino.t,
 ) => promise<array<Types.eventBatchQueueItem>>
-let make: (Env.workerTypeSelected, ~chainConfig: Config.chainConfig) => chainWorker
 
+type workerSelectionWithCallback =
+  | RpcSelectedWithCallback(option<RpcWorker.t => promise<unit>>)
+  | SkarSelectedWithCallback(option<SkarWorker.t => promise<unit>>)
+  | EthArchiveSelectedWithCallback(option<EthArchiveWorker.t => promise<unit>>)
+  | RawEventsSelectedWithCallback(option<RawEventsWorker.t => promise<unit>>)
+
+let make: (workerSelectionWithCallback, ~chainConfig: Config.chainConfig) => chainWorker
