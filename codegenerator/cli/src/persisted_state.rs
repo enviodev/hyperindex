@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::{
     error::Error,
     fmt::{self, Display},
@@ -91,38 +92,26 @@ impl PersistedState {
         project_paths.generated.join(PERSISTED_STATE_FILE_NAME)
     }
 
-    pub fn get_from_generated_file(project_paths: &ProjectPaths) -> Result<Self, String> {
+    pub fn get_from_generated_file(project_paths: &ProjectPaths) -> anyhow::Result<Self> {
         let file_path = Self::get_generated_file_path(project_paths);
-        let file_str = std::fs::read_to_string(file_path).map_err(|e| {
-            format!(
-                "Unable to find {} due to error: {}",
-                PERSISTED_STATE_FILE_NAME, e
-            )
-        })?;
+        let file_str = std::fs::read_to_string(file_path)
+            .context(format!("Unable to find {}", PERSISTED_STATE_FILE_NAME,))?;
 
-        serde_json::from_str(&file_str).map_err(|e| {
-            format!(
-                "Unable to parse {} due to error: {}",
-                PERSISTED_STATE_FILE_NAME, e
-            )
-        })
+        serde_json::from_str(&file_str)
+            .context(format!("Unable to parse {}", PERSISTED_STATE_FILE_NAME,))
     }
 
-    fn write_to_generated_file(&self, project_paths: &ProjectPaths) -> Result<(), String> {
+    fn write_to_generated_file(&self, project_paths: &ProjectPaths) -> anyhow::Result<()> {
         let file_path = Self::get_generated_file_path(project_paths);
         let contents = self.to_json_string();
-        std::fs::write(file_path, contents).map_err(|e| {
-            format!(
-                "Unable to write {} due to error: {}",
-                PERSISTED_STATE_FILE_NAME, e
-            )
-        })
+        std::fs::write(file_path, contents)
+            .context(format!("Unable to write {}", PERSISTED_STATE_FILE_NAME))
     }
 
     pub fn set_has_run_db_migrations(
         project_paths: &ProjectPaths,
         has_run_db_migrations: bool,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         let mut persisted_state = Self::get_from_generated_file(project_paths)?;
         if persisted_state.has_run_db_migrations != has_run_db_migrations {
             persisted_state.has_run_db_migrations = has_run_db_migrations;

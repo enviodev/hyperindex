@@ -17,7 +17,6 @@ Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {
 })
 
 Handlers.GravatarContract.UpdatedGravatar.loader((~event, ~context) => {
-  Js.log("hello")
   context.gravatar.gravatarWithChangesLoad(
     event.params.id->Ethers.BigInt.toString,
     ~loaders={loadOwner: {}},
