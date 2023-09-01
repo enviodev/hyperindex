@@ -9,6 +9,8 @@ type t
 let operatorUrl = envSafe->EnvSafe.get(~name="ENVIO_OPERATOR_URL", ~struct=S.string(), ~devFallback="svc/envio-operator", ())
 let operatorPort = envSafe->EnvSafe.get(~name="ENVIO_OPERATOR_PORT", ~struct=S.int()->S.Int.port(), ~devFallback=8081, ())
 let commitHash = envSafe->EnvSafe.get(~name="COMMIT_HASH", ~struct=S.string(), ~devFallback="latest", ())
+let organisationId = envSafe->EnvSafe.get(~name="ORGANISATION_ID", ~struct=S.string(), ~devFallback="", ())
+let indexerId = envSafe->EnvSafe.get(~name="INDEXER_ID", ~struct=S.string(), ~devFallback="", ())
 let createDatabase = async () => {
 open Fetch
 // TODO: add the orginisation/user ID to this to allow multiple people to have the same project name and avoid confusion! 
@@ -18,7 +20,8 @@ let response = await fetch(
       method: #POST,
       body: `{
                 "commitHash": "${commitHash}",
-                "indexerId": "{{project_name}}"
+                "indexerId": "${indexerId}",
+                "organisationId": "${organisationId}"
               }`->Body.string,
       headers: Headers.fromObject({
         "Content-type": "application/json",
