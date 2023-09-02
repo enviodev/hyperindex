@@ -14,7 +14,7 @@ let getDefaultLoaderHandler: (
   ~context: 'b,
 ) => unit = (~functionRegister, ~eventName, ~event as _, ~context as _) => {
   let functionName = mapFunctionRegisterName(functionRegister)
-  Js.Console.warn(
+  context.log.warn(
     // TODO: link to our docs.
     `Ignored ${eventName} event, as there is no ${functionName} registered. You need to implement a ${eventName}${functionName} method in your handler file.`,
   )
