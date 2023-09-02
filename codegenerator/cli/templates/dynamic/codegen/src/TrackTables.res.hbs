@@ -44,8 +44,11 @@ let trackTable = async (~tableName: string) => {
 
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
-
-  Logging.trace({"msg": "Table Tracked", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  if statusCode != 200 {
+    Logging.error({"msg": `There was an issue tracking the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`, "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  } else {
+    Logging.trace({"msg": "Table Tracked", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  }
 }
 
 let createSelectPermissions = async (~tableName: string) => {
@@ -73,8 +76,11 @@ let createSelectPermissions = async (~tableName: string) => {
 
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
-
-  Logging.trace({"msg": "Hasura select permissions created", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  if statusCode != 200 {
+    Logging.error({"msg": `There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`, "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  } else {
+    Logging.trace({"msg": "Hasura select permissions created", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  }
 }
 
 let createEntityRelationship = async (
@@ -102,8 +108,11 @@ let createEntityRelationship = async (
 
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
-
-  Logging.trace({"msg": "Hasura derived field permissions created", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  if statusCode != 200 {
+    Logging.error({"msg": `There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`, "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  } else {
+    Logging.trace({"msg": "Hasura derived field permissions created", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+  }
 }
 
 let trackAllTables = async () => {
