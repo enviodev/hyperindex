@@ -105,7 +105,7 @@ module {{contract.name.capitalized}}Contract = {
                   let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
                     | Some(id) => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
                     | None =>
-                      Logging.error(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
+                      Logging.warn(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
                       None
                     }
                   {{/each}}
@@ -116,7 +116,7 @@ module {{contract.name.capitalized}}Contract = {
                     | Some(ids) =>
                       ids->Belt.Array.map(id => IO.InMemoryStore.A.getA(~id))
                     | None =>
-                      Logging.error(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
+                      Logging.warn(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
                       []
                     }
                   {{/each}}
@@ -152,7 +152,7 @@ module {{contract.name.capitalized}}Contract = {
                     if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
                       IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
                     } else {
-                      Logging.error(
+                      Logging.warn(
                         `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
                       )
 
