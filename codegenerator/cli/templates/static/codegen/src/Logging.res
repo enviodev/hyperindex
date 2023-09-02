@@ -19,7 +19,7 @@ let logLevels = [
 
 let pinoPretty: Transport.transportTarget = {
   target: "pino-pretty",
-  level: Config.userLogLevel,
+  level: Config.userLogLevel, // NOTE: - this log level only is used if this transport is running in its own worker (ie there are multiple transports), otherwise it is overridden by the top level config.
   options: {
     "customLevels": logLevels,
     /// NOTE: the lables have to be lower case! (pino pretty doesn't recognise them if there are upper case letters)
@@ -51,23 +51,27 @@ let logger = switch Config.logStrategy {
 | EcsConsole =>
   make({
     ...Pino.ECS.make(),
+    level: Config.userLogLevel,
     customLevels: logLevels,
   })
 | FileOnly =>
   makeWithOptionsAndTransport(
     {
       customLevels: logLevels,
+      level: Config.defaultFileLogLevel,
     },
     Transport.make(pinoFile),
   )
 | ConsoleRaw =>
   make({
     customLevels: logLevels,
+    level: Config.userLogLevel,
   })
 | ConsolePretty =>
   makeWithOptionsAndTransport(
     {
       customLevels: logLevels,
+      level: Config.userLogLevel, // Here this log level overrides the pino pretty log level config (since there is only 1 transport.)
     },
     Transport.make(pinoPretty),
   )
@@ -75,6 +79,7 @@ let logger = switch Config.logStrategy {
   makeWithOptionsAndTransport(
     {
       customLevels: logLevels,
+      level: #trace, // This log level needs to be trace so that the pino pretty and file printing can have any log level.
     },
     Transport.make({targets: [pinoPretty, pinoFile]}),
   )
