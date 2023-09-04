@@ -20,7 +20,10 @@ pub enum CommandType {
     Init(InitArgs),
 
     /// Development commands for starting, stopping, and restarting the local environment        
-    Dev(DevCommands),
+    Dev,
+
+    /// Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
+    Stop,
 
     ///Generate code from a config.yaml & schema.graphql file
     Codegen(CodegenArgs),
@@ -34,7 +37,7 @@ pub enum CommandType {
     Start(StartArgs),
 
     ///Print help into a markdown file
-    ///Command to run: cargo run -- print-all-help > CommandLineHelp.md
+    ///Command to run: cargo run --bin envio -- print-all-help > CommandLineHelp.md
     #[clap(hide = true)]
     PrintAllHelp,
 }
@@ -47,21 +50,6 @@ pub struct StartArgs {
     ///The directory of the project
     #[arg(short, long, default_value_t=String::from(constants::DEFAULT_PROJECT_ROOT_PATH))]
     pub directory: String,
-}
-
-#[derive(Debug, Args)]
-pub struct DevCommands {
-    #[command(subcommand)]
-    pub subcommands: Option<DevSubcommands>,
-}
-
-#[derive(Debug, Subcommand, PartialEq, Eq)]
-pub enum DevSubcommands {
-    /// Restart and resync the local dev environment from scratch
-    Restart,
-
-    /// Delete the database and stop all processes
-    Stop,
 }
 
 #[derive(Debug, Subcommand)]

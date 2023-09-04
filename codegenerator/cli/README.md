@@ -4,12 +4,13 @@ A fast, reliable, customizable indexing blockchain solution.
 
 Envio is a reliable real-time indexing solution designed to simplify the ingestion of events from EVM-compatible chains and transform this data into custom GraphQL APIs. These APIs play a pivotal role in enabling seamless user experiences in blockchain application front-ends. With Envio, the emphasis is on refining the developer's experience when using an indexer, ensuring the service is swift, secure, and trustworthy.
 
-*Note: For a thorough understanding and to dive deeper into each feature, refer to the original [documentation website](https://docs.envio.dev).*
+_Note: For a thorough understanding and to dive deeper into each feature, refer to the original [documentation website](https://docs.envio.dev)._
 
 ## Table of Contents
 
 <!-- TODO: features summary will be nice to add -->
 <!-- - [Features](#features) -->
+
 - [Quickstart](#quickstart)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -17,14 +18,16 @@ Envio is a reliable real-time indexing solution designed to simplify the ingesti
 - [Logging](#logging)
 - [Contribution & Support](#contribution-&-support)
 
-*Note: Envio is built for javascript, typescirpt and rescript. However in this readme we will only use typescript for examples. Refer to the [documentation website](https://docs.envio.dev) for full docs.*
+_Note: Envio is built for javascript, typescirpt and rescript. However in this readme we will only use typescript for examples. Refer to the [documentation website](https://docs.envio.dev) for full docs._
 
 ## [Quickstart](https://docs.envio.dev/docs/quickstart)
 
 For a slightly larger tutorial please see the [Greeter contract tutorial](https://docs.envio.dev/docs/greeter-tutorial).
 
 ## [Installation](https://docs.envio.dev/docs/installation)
+
 ### Prerequisites
+
 - [Node.js](https://nodejs.org/en/download/current)
 - [pnpm](https://pnpm.io/installation) on [npm](https://www.npmjs.com/get-npm)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/)
@@ -44,12 +47,13 @@ envio --help
 ## Usage
 
 **Important Commands Overview:**
+
 - `envio`
 - `envio init` - Auto-generates configuration, GraphQL schema, and event handlers based on the Greeter template.
 - `envio codegen` - Generates code after setting configuration and schema files.
 - `envio start` - Start the indexer.
-- `envio dev resart` - Restart and resync the local dev environment from scratch.
-- `envio dev stop` - Delete the database and stop all processes
+- `envio dev` - Starts all the processes required for local development of the indexer.
+- `envio stop` - Delete the database and stop all processes
 
 For a detailed breakdown of commands, refer to the [documentation](https://docs.envio.dev/docs/cli-commands).
 
@@ -62,6 +66,7 @@ npx envio codegen
 ```
 
 Custom code to make it easy to retrieve and process events from our contract is generated. More specifically every event necessitates the registration of two core functions from our generated code:
+
 - Loader function
 - Handler function
 
@@ -72,6 +77,7 @@ Loader functions are responsible for loading specific entities (defined in `sche
 ```typescript
 <ContractName>Contract_ < EventName > _loader;
 ```
+
 **NOTE**: the syntax is slightly different for javascript and rescript. See [loader docs](https://docs.envio.dev/docs/event-handlers#loader-function).
 
 ### Handler Function
@@ -81,6 +87,7 @@ Handler functions modify the entities loaded by the loader function. They incorp
 ```typescript
 <ContractName>Contract_ < EventName > _handler;
 ```
+
 **NOTE**: the syntax is slightly different for javascript and rescript. See [handler docs](https://docs.envio.dev/docs/event-handlers#handler-function).
 
 For a comprehensive guide on Event Handlers, please refer to the [provided documentation](https://docs.envio.dev/docs/event-handlers).
@@ -90,6 +97,7 @@ For a comprehensive guide on Event Handlers, please refer to the [provided docum
 Logging is integral for tracking the progress and debugging issues in the indexer. Envio utilizes the [pino](https://github.com/pinojs/pino/) logging library, which can be integrated with tools like [kibana](https://www.elastic.co/what-is/kibana) to extract metrics and insights.
 
 For user-level logging, context-based functions are provided:
+
 - `<context>.log.debug`
 - `<context>.log.info`
 - `<context>.log.warn`
@@ -102,7 +110,7 @@ Further details about developer logging, including log levels, can be found in t
 
 🔧 This product under active development. Please always refer to the main documentation for the latest updates.
 
-For support and updates, follow Envio on [Twitter](https://twitter.com/envio_indexer) or join the [Discord community](https://discord.gg/DhfFhzuJQh). 
+For support and updates, follow Envio on [Twitter](https://twitter.com/envio_indexer) or join the [Discord community](https://discord.gg/DhfFhzuJQh).
 
 If you have specific suggestions or requirements, kindly reach out and contribute to the development of Envio.
 

@@ -5,7 +5,7 @@ use clap::Parser;
 
 use envio::{
     cli_args::{
-        CommandLineArgs, CommandType, DbMigrateSubcommands, DevSubcommands, LocalCommandTypes,
+        CommandLineArgs, CommandType, DbMigrateSubcommands, LocalCommandTypes,
         LocalDockerSubcommands, ProjectPathsArgs, ToProjectPathsArgs,
     },
     commands,
@@ -37,107 +37,96 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
 
-        CommandType::Dev(dev_subcommands) => {
+        CommandType::Dev => {
             let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
 
-            match dev_subcommands.subcommands {
-                None | Some(DevSubcommands::Restart) => {
-                    // if hasura healhz check returns not found assume docker isnt running and start it up {
-                    let hasura_health_check_is_error =
-                        service_health::fetch_hasura_healthz().await.is_err();
+            // if hasura healhz check returns not found assume docker isnt running and start it up {
+            let hasura_health_check_is_error =
+                service_health::fetch_hasura_healthz().await.is_err();
 
-                    if hasura_health_check_is_error {
-                        //Run docker commands to spin up container
-                        commands::docker::docker_compose_up_d(project_paths).await?;
-                    }
+            if hasura_health_check_is_error {
+                //Run docker commands to spin up container
+                commands::docker::docker_compose_up_d(project_paths).await?;
+            }
 
-                    let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
+            let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
 
-                    match hasura_health {
-                        HasuraHealth::Unhealthy(err_message) => {
-                            Err(anyhow!(err_message)).context("Failed to start hasura")?;
+            match hasura_health {
+                HasuraHealth::Unhealthy(err_message) => {
+                    Err(anyhow!(err_message)).context("Failed to start hasura")?;
+                }
+                HasuraHealth::Healthy => {
+                    {
+                        let existing_persisted_state = if persisted_state_file_exists(project_paths)
+                        {
+                            let persisted_state =
+                                PersistedState::get_from_generated_file(project_paths)?;
+                            ExistingPersistedState::ExistingFile(persisted_state)
+                        } else {
+                            ExistingPersistedState::NoFile
+                        };
+
+                        if handler_file_has_changed(&existing_persisted_state, &parsed_paths)?
+                            && is_rescript(&parsed_paths.handler_paths)
+                        {
+                            commands::rescript::build(&project_paths.project_root).await?;
                         }
-                        HasuraHealth::Healthy => {
-                            {
-                                let existing_persisted_state =
-                                    if persisted_state_file_exists(project_paths) {
-                                        let persisted_state =
-                                            PersistedState::get_from_generated_file(project_paths)?;
-                                        ExistingPersistedState::ExistingFile(persisted_state)
-                                    } else {
-                                        ExistingPersistedState::NoFile
-                                    };
 
-                                if handler_file_has_changed(
-                                    &existing_persisted_state,
-                                    &parsed_paths,
-                                )? && is_rescript(&parsed_paths.handler_paths)
-                                {
-                                    commands::rescript::build(&project_paths.project_root).await?;
+                        match check_user_file_diff_match(&existing_persisted_state, &parsed_paths)?
+                        {
+                            RerunOptions::CodegenAndSyncFromRpc => {
+                                commands::codegen::run_codegen(&parsed_paths)?;
+                                commands::codegen::run_post_codegen_command_sequence(
+                                    &parsed_paths.project_paths,
+                                )
+                                .await?;
+                                commands::db_migrate::run_db_setup(project_paths, true).await?;
+                                commands::start::start_indexer(project_paths).await?;
+                            }
+                            RerunOptions::CodegenAndResyncFromStoredEvents => {
+                                //TODO: Implement command for rerunning from stored events
+                                //and action from this match arm
+                                commands::codegen::run_codegen(&parsed_paths)?;
+                                commands::codegen::run_post_codegen_command_sequence(
+                                    &parsed_paths.project_paths,
+                                )
+                                .await?;
+                                commands::db_migrate::run_db_setup(project_paths, false).await?;
+                                commands::start::start_indexer(project_paths).await?;
+                            }
+                            RerunOptions::ResyncFromStoredEvents => {
+                                //TODO: Implement command for rerunning from stored events
+                                //and action from this match arm
+                                commands::db_migrate::run_db_setup(project_paths, false).await?; // does this need to be run?
+                                commands::start::start_indexer(project_paths).await?;
+                            }
+                            RerunOptions::ContinueSync => {
+                                let has_run_db_migrations = match existing_persisted_state {
+                                    ExistingPersistedState::NoFile => false,
+                                    ExistingPersistedState::ExistingFile(ps) => {
+                                        ps.has_run_db_migrations
+                                    }
+                                };
+
+                                if !has_run_db_migrations {
+                                    commands::db_migrate::run_db_setup(project_paths, true).await?;
                                 }
-
-                                match check_user_file_diff_match(
-                                    &existing_persisted_state,
-                                    &parsed_paths,
-                                )? {
-                                    RerunOptions::CodegenAndSyncFromRpc => {
-                                        commands::codegen::run_codegen(&parsed_paths)?;
-                                        commands::codegen::run_post_codegen_command_sequence(
-                                            &parsed_paths.project_paths,
-                                        )
-                                        .await?;
-                                        commands::db_migrate::run_db_setup(project_paths, true)
-                                            .await?;
-                                        commands::start::start_indexer(project_paths).await?;
-                                    }
-                                    RerunOptions::CodegenAndResyncFromStoredEvents => {
-                                        //TODO: Implement command for rerunning from stored events
-                                        //and action from this match arm
-                                        commands::codegen::run_codegen(&parsed_paths)?;
-                                        commands::codegen::run_post_codegen_command_sequence(
-                                            &parsed_paths.project_paths,
-                                        )
-                                        .await?;
-                                        commands::db_migrate::run_db_setup(project_paths, false)
-                                            .await?;
-                                        commands::start::start_indexer(project_paths).await?;
-                                    }
-                                    RerunOptions::ResyncFromStoredEvents => {
-                                        //TODO: Implement command for rerunning from stored events
-                                        //and action from this match arm
-                                        commands::db_migrate::run_db_setup(project_paths, false)
-                                            .await?; // does this need to be run?
-                                        commands::start::start_indexer(project_paths).await?;
-                                    }
-                                    RerunOptions::ContinueSync => {
-                                        let is_restart = dev_subcommands.subcommands
-                                            == Some(DevSubcommands::Restart);
-
-                                        let has_run_db_migrations = match existing_persisted_state {
-                                            ExistingPersistedState::NoFile => false,
-                                            ExistingPersistedState::ExistingFile(ps) => {
-                                                ps.has_run_db_migrations
-                                            }
-                                        };
-
-                                        if !has_run_db_migrations || is_restart {
-                                            commands::db_migrate::run_db_setup(project_paths, true)
-                                                .await?;
-                                        }
-                                        open::that("http://localhost:8080")?;
-                                        commands::start::start_indexer(project_paths).await?;
-                                    }
-                                }
+                                open::that("http://localhost:8080")?;
+                                commands::start::start_indexer(project_paths).await?;
                             }
                         }
                     }
                 }
-                Some(DevSubcommands::Stop) => {
-                    commands::docker::docker_compose_down_v(project_paths).await?;
-                }
             }
 
+            Ok(())
+        }
+        CommandType::Stop => {
+            let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
+            let project_paths = &parsed_paths.project_paths;
+
+            commands::docker::docker_compose_down_v(project_paths).await?;
             Ok(())
         }
 
