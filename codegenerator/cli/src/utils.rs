@@ -147,7 +147,7 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
 
     let parsed_paths = ParsedPaths::new(parsed_init_args.to_project_paths_args())?;
     let project_paths = &parsed_paths.project_paths;
-    commands::codegen::run_codegen(&parsed_paths)?;
+    commands::codegen::run_codegen(&parsed_paths).await?;
 
     let post_codegen_exit =
         commands::codegen::run_post_codegen_command_sequence(project_paths).await?;

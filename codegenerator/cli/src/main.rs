@@ -15,7 +15,7 @@ use envio::{
         ExistingPersistedState, PersistedState, RerunOptions,
     },
     project_paths::ParsedPaths,
-    service_health::{self, HasuraHealth},
+    service_health::{self, EndpointHealth},
     utils::run_init_args,
 };
 
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         CommandType::Codegen(args) => {
             let parsed_paths = ParsedPaths::new(args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
-            commands::codegen::run_codegen(&parsed_paths)?;
+            commands::codegen::run_codegen(&parsed_paths).await?;
             commands::codegen::run_post_codegen_command_sequence(project_paths).await?;
             Ok(())
         }
@@ -53,10 +53,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
 
             match hasura_health {
-                HasuraHealth::Unhealthy(err_message) => {
+                EndpointHealth::Unhealthy(err_message) => {
                     Err(anyhow!(err_message)).context("Failed to start hasura")?;
                 }
-                HasuraHealth::Healthy => {
+                EndpointHealth::Healthy => {
                     {
                         let existing_persisted_state = if persisted_state_file_exists(project_paths)
                         {
@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         match check_user_file_diff_match(&existing_persisted_state, &parsed_paths)?
                         {
                             RerunOptions::CodegenAndSyncFromRpc => {
-                                commands::codegen::run_codegen(&parsed_paths)?;
+                                commands::codegen::run_codegen(&parsed_paths).await?;
                                 commands::codegen::run_post_codegen_command_sequence(
                                     &parsed_paths.project_paths,
                                 )
@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             RerunOptions::CodegenAndResyncFromStoredEvents => {
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
-                                commands::codegen::run_codegen(&parsed_paths)?;
+                                commands::codegen::run_codegen(&parsed_paths).await?;
                                 commands::codegen::run_post_codegen_command_sequence(
                                     &parsed_paths.project_paths,
                                 )

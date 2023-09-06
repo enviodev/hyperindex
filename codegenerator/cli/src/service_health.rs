@@ -19,12 +19,13 @@ fn delete_last_println() {
     print!("{ERASE_ANSI_ESCAPE_CODE}");
 }
 
-pub enum HasuraHealth {
+#[derive(Debug)]
+pub enum EndpointHealth {
     Healthy,
     Unhealthy(String),
 }
 
-pub async fn fetch_hasura_healthz_with_retry() -> HasuraHealth {
+pub async fn fetch_hasura_healthz_with_retry() -> EndpointHealth {
     let mut refetch_delay = BACKOFF_INCREMENT;
 
     let mut first_run = true;
@@ -33,14 +34,16 @@ pub async fn fetch_hasura_healthz_with_retry() -> HasuraHealth {
         match timeout(refetch_delay, fetch_hasura_healthz()).await {
             Ok(Ok(success)) => {
                 if success {
-                    break HasuraHealth::Healthy;
+                    break EndpointHealth::Healthy;
                 } else if refetch_delay >= MAXIMUM_BACKOFF {
-                    return HasuraHealth::Unhealthy("Maximum backoff timeout exceeded".to_string());
+                    return EndpointHealth::Unhealthy(
+                        "Maximum backoff timeout exceeded".to_string(),
+                    );
                 }
             }
             Ok(Err(err)) => {
                 if refetch_delay >= MAXIMUM_BACKOFF {
-                    return HasuraHealth::Unhealthy(format!(
+                    return EndpointHealth::Unhealthy(format!(
                         "Maximum backoff timeout exceeded: Error: {}",
                         err
                     ));
@@ -57,7 +60,7 @@ pub async fn fetch_hasura_healthz_with_retry() -> HasuraHealth {
             }
             Err(err) => {
                 if refetch_delay >= MAXIMUM_BACKOFF {
-                    return HasuraHealth::Unhealthy(format!(
+                    return EndpointHealth::Unhealthy(format!(
                         "Maximum backoff timeout exceeded: Error: {}",
                         err
                     ));
@@ -70,5 +73,20 @@ pub async fn fetch_hasura_healthz_with_retry() -> HasuraHealth {
         }
         tokio::time::sleep(refetch_delay).await;
         refetch_delay += BACKOFF_INCREMENT;
+    }
+}
+
+pub async fn fetch_hypersync_health(hypersync_endpoint: &str) -> anyhow::Result<EndpointHealth> {
+    let client = reqwest::Client::new();
+    let url = format!("{hypersync_endpoint}/height");
+    let response = client.get(&url).send().await?;
+    let is_success = response.status().is_success();
+
+    if is_success {
+        Ok(EndpointHealth::Healthy)
+    } else {
+        Ok(EndpointHealth::Unhealthy(format!(
+            "bad response from {url}"
+        )))
     }
 }

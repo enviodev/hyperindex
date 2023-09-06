@@ -1,11 +1,11 @@
+use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
-use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
-use serde::{Deserialize, Serialize};
-
 use crate::project_paths::handler_paths::ContractUniqueId;
+use crate::service_health::EndpointHealth;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     project_paths::ParsedPaths,
@@ -19,7 +19,7 @@ pub mod hypersync_endpoints;
 pub mod validation;
 
 pub mod constants;
-use crate::links;
+use crate::{links, service_health};
 pub mod graph_migration;
 
 type NetworkId = i32;
@@ -352,7 +352,6 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Con
         format!(
             "Failed to resolve config path {0}. Make sure you're in the correct directory and that a config file with the name {0} exists",
             &config_path.to_str().unwrap_or("unknown config file name path"),
-            
         )
     )?;
 
@@ -369,7 +368,7 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Con
     Ok(deserialized_yaml)
 }
 
-pub fn convert_config_to_chain_configs(
+pub async fn convert_config_to_chain_configs(
     parsed_paths: &ParsedPaths,
 ) -> anyhow::Result<Vec<ChainConfigTemplate>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
@@ -444,11 +443,40 @@ pub fn convert_config_to_chain_configs(
                 let supported_network = hypersync_endpoints::chain_id_to_network(network.id)
                     .context("Undefined network config, please provide rpc_config")?;
 
-                let skar_url = hypersync_endpoints::network_to_skar_url(&supported_network);
-                
+                let supported_skar_url =
+                    hypersync_endpoints::network_to_skar_url(&supported_network);
+
+                let skar_url = match supported_skar_url {
+                    None => None,
+                    Some(url) => {
+                        let health = service_health::fetch_hypersync_health(&url).await;
+
+                        match health {
+                            Ok(EndpointHealth::Healthy) => Some(url),
+                            _ => None,
+                        }
+                    }
+                };
+
                 match skar_url {
                     Some(skar_url) => (None, Some(skar_url), None),
-                    None => (None, None, Some(hypersync_endpoints::network_to_eth_archive_url(&supported_network)))
+                    None => {
+                        let eth_archive_server_url =
+                            hypersync_endpoints::network_to_eth_archive_url(&supported_network);
+                        let health =
+                            service_health::fetch_hypersync_health(&eth_archive_server_url)
+                                .await
+                                .context(format!(
+                                    "Health check for hypersync endpoint failed  on network {}",
+                                    network.id
+                                ))?;
+
+                        if let EndpointHealth::Unhealthy(msg) = health {
+                            return Err(anyhow!("hypersync endpoint unhealthy at network {}, please provide rpc_config or hypersync_config. {}", network.id, msg));
+                        }
+
+                        (None, None, Some(eth_archive_server_url))
+                    }
                 }
             }
         };
@@ -494,7 +522,7 @@ mod tests {
     use ethers::abi::{Event, EventParam, ParamType};
 
     use crate::capitalization::Capitalize;
-    use crate::config_parsing::{EventNameOrSig, NormalizedList, SyncSourceConfig, RpcConfig, NetworkConfigTemplate};
+    use crate::config_parsing::{EventNameOrSig, NetworkConfigTemplate, NormalizedList};
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::ChainConfigTemplate;
@@ -520,8 +548,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn convert_to_chain_configs_case_1() {
+    #[tokio::test]
+    async fn convert_to_chain_configs_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let abi_file_path = PathBuf::from("test/abis/Contract1.json");
 
@@ -578,7 +606,9 @@ mod tests {
             generated,
         })
         .unwrap();
-        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
+        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths)
+            .await
+            .unwrap();
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
@@ -607,8 +637,8 @@ mod tests {
         assert_eq!(expected_chain_configs, chain_configs,);
     }
 
-    #[test]
-    fn convert_to_chain_configs_case_2() {
+    #[tokio::test]
+    async fn convert_to_chain_configs_case_2() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
@@ -700,7 +730,9 @@ mod tests {
         })
         .unwrap();
 
-        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
+        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths)
+            .await
+            .unwrap();
 
         let events = vec![
             event1.event.get_name().to_capitalized_options(),
@@ -738,8 +770,8 @@ mod tests {
         assert_eq!(chain_configs, expected_chain_configs);
     }
 
-    #[test]
-    fn convert_to_chain_configs_case_3() {
+    #[tokio::test]
+    async fn convert_to_chain_configs_case_3() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
@@ -784,7 +816,9 @@ mod tests {
         })
         .unwrap();
 
-        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
+        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths)
+            .await
+            .unwrap();
 
         let events = vec![
             event1.event.get_name().to_capitalized_options(),
@@ -812,8 +846,8 @@ mod tests {
         assert_eq!(chain_configs, expected_chain_configs);
     }
 
-    #[test]
-    fn convert_to_chain_configs_case_4() {
+    #[tokio::test]
+    async fn convert_to_chain_configs_case_4() {
         let network1 = NetworkConfigTemplate {
             id: 1,
             rpc_config: None,
@@ -842,27 +876,27 @@ mod tests {
             generated,
         })
         .unwrap();
-        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths).unwrap();
+        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths)
+            .await
+            .unwrap();
 
         let chain_config_1 = ChainConfigTemplate {
             network_config: network1,
-            contracts: vec![
-            ],
+            contracts: vec![],
         };
 
         let chain_config_2 = ChainConfigTemplate {
             network_config: network2,
-            contracts: vec![
-            ],
+            contracts: vec![],
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
         assert_eq!(expected_chain_configs, chain_configs);
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn convert_to_chain_configs_case_5() {
+    async fn convert_to_chain_configs_case_5() {
         //Bad chain ID without sync config should panic
         let project_root = String::from("test");
         let config = String::from("configs/config5.yaml");
@@ -874,8 +908,11 @@ mod tests {
         })
         .unwrap();
 
-         super::convert_config_to_chain_configs(&parsed_paths).unwrap();
+        super::convert_config_to_chain_configs(&parsed_paths)
+            .await
+            .unwrap();
     }
+
     #[test]
     fn deserializes_event_name() {
         let event_string = serde_json::to_string("MyEvent").unwrap();
