@@ -17,5 +17,5 @@ let workerTypeSelected = switch EnvUtils.getStringEnvVar(
   RpcSelected
 }
 
-let maxEventFetchedQueueSize = EnvUtils.getIntEnvVar(~envSafe, ~fallback=500_000, "MAX_QUEUE_SIZE")
-let maxProcessBatchSize = EnvUtils.getIntEnvVar(~envSafe, ~fallback=50_000, "MAX_BATCH_SIZE")
+let maxEventFetchedQueueSize = EnvUtils.getIntEnvVar(~envSafe, ~fallback=100_000, "MAX_QUEUE_SIZE")
+let maxProcessBatchSize = EnvUtils.getIntEnvVar(~envSafe, ~fallback=10_000, "MAX_BATCH_SIZE")

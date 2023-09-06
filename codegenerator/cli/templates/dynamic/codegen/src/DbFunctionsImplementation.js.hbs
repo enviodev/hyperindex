@@ -82,7 +82,7 @@ const chunkBatchQuery = (
 
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   // TODO: make this max batch size optimal
-  const MAX_ITEMS_PER_QUERY_RawEvents = 50;
+  const MAX_ITEMS_PER_QUERY_RawEvents = 1000;
 
   return chunkBatchQuery(
     sql,
@@ -138,7 +138,7 @@ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
 
 module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   // TODO: make this max batch size optimal
-  const MAX_ITEMS_PER_QUERY_DynamicContractRegistry = 50;
+  const MAX_ITEMS_PER_QUERY_DynamicContractRegistry = 1000;
 
   return chunkBatchQuery(
     sql,
@@ -204,7 +204,7 @@ ${sql(combinedEntityAndEventData,
 module.exports.batchSet{{entity.name.capitalized
 }} = (sql, entityDataArray) => {
   // TODO: make this max batch size optimal. Do calculations to achieve this.
-  const MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}} = 50;
+  const MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}} = 1000;
 
   return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}}, batchSet{{entity.name.capitalized}}Core);
 }
