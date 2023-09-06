@@ -86,8 +86,6 @@ ERC20Contract_Transfer_handler(({ event, context: { account, log } }) => {
         receiverAccount.balance + event.params.value
       ,
     };
-    log.error("There's an error")
-
 
     // setting the accountEntity with the new transfer field value
     account.set(accountObject);
