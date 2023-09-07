@@ -858,11 +858,11 @@ mod tests {
         };
 
         let network2 = NetworkConfigTemplate {
-            id: 1564830818,
+            id: 137,
             rpc_config: None,
             skar_server_url: None,
             //Should default to eth archive since there is no skar endpoint at this id
-            eth_archive_server_url: Some("https://skale-calypso.archive.subsquid.io".to_string()),
+            eth_archive_server_url: Some("https://polygon.archive.subsquid.io".to_string()),
             start_block: 0,
             contracts: vec![],
         };
