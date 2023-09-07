@@ -15,23 +15,21 @@
       "codegen": "envio codegen",
       "start": "{{#if is_rescript}}pnpm build &&{{/if}}{{#if is_typescript}}ts-{{/if}}node generated/src/Index.bs.js"
   },
-  {{#if is_rescript}}
   "devDependencies": {
+    {{#if is_rescript}}
     "@glennsl/rescript-fetch": "^0.2.0",
     "@greenlabs/ppx-spice": "0.1.14",
     "@ryyppy/rescript-promise": "^2.1.0",
-    "rescript": "^10.1.2",
     "rescript-envsafe": "^1.3.0",
     "rescript-express": "^0.4.1",
-    "rescript-struct": "^4.1.1"
-  },
-  {{/if}}
-  {{#if is_typescript}}
-  "devDependencies": {
+    "rescript-struct": "^4.1.1",
+    {{/if}}
+    {{#if is_typescript}}
     "@types/node": "^18.16.1",
-    "typescript": "^5.0.4"
+    "typescript": "^5.0.4",
+    {{/if}}
+    "rescript": "^10.1.2"
   },
-  {{/if}}
   "dependencies": {
     {{#if is_typescript}}
     "ts-node": "^10.9.1",
