@@ -2,8 +2,7 @@ import {
   ERC20Contract_Approval_loader,
   ERC20Contract_Approval_handler,
   ERC20Contract_Transfer_loader,
-  ERC20Contract_Transfer_handler
-
+  ERC20Contract_Transfer_handler,
 } from "../generated/src/Handlers.gen";
 
 import { accountEntity } from "../generated/src/Types.gen";
@@ -47,7 +46,7 @@ ERC20Contract_Transfer_loader(({ event, context }) => {
   context.account.receiverAccountChangesLoad(event.params.to.toString());
 });
 
-ERC20Contract_Transfer_handler(({ event, context: { account, log } }) => {
+ERC20Contract_Transfer_handler(({ event, context: { account } }) => {
   // getting the sender accountEntity
   let senderAccount = account.senderAccountChanges;
 
@@ -57,8 +56,7 @@ ERC20Contract_Transfer_handler(({ event, context: { account, log } }) => {
     let accountObject: accountEntity = {
       id: senderAccount.id,
       approval: senderAccount.approval,
-      balance:
-        senderAccount.balance - event.params.value
+      balance: senderAccount.balance - event.params.value,
     };
     // setting the accountEntity with the new transfer field value
     account.set(accountObject);
@@ -82,9 +80,7 @@ ERC20Contract_Transfer_handler(({ event, context: { account, log } }) => {
     let accountObject: accountEntity = {
       id: receiverAccount.id,
       approval: receiverAccount.approval,
-      balance:
-        receiverAccount.balance + event.params.value
-      ,
+      balance: receiverAccount.balance + event.params.value,
     };
 
     // setting the accountEntity with the new transfer field value
