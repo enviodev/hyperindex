@@ -456,33 +456,23 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
         //event loop and each parse happens as a macro task. Meaning
         //promise resolves will take priority
         ->Deferred.mapArrayDeferred((item, resolve, reject) => {
-          //Logs in the same block as the log that called for dynamic contract registration
-          //should not be included if they occurred before the contract registering log
-          let logIsNotBeforeContractRegisteringLog = !(
-            item.log.blockNumber == fromBlock && item.log.logIndex <= fromLogIndex
-          )
-
-          if logIsNotBeforeContractRegisteringLog {
-            switch Converters.parseEvent(
-              ~log=item.log,
-              ~blockTimestamp=item.blockTimestamp,
-              ~contractInterfaceManager,
-            ) {
-            | Ok(parsed) =>
-              let queueItem: Types.eventBatchQueueItem = {
-                timestamp: item.blockTimestamp,
-                chainId: self.chainConfig.chainId,
-                blockNumber: item.log.blockNumber,
-                logIndex: item.log.logIndex,
-                event: parsed,
-              }
-
-              resolve(Some(queueItem))
-
-            | Error(e) => reject(Converters.ParseEventErrorExn(e))
+          switch Converters.parseEvent(
+            ~log=item.log,
+            ~blockTimestamp=item.blockTimestamp,
+            ~contractInterfaceManager,
+          ) {
+          | Ok(parsed) =>
+            let queueItem: Types.eventBatchQueueItem = {
+              timestamp: item.blockTimestamp,
+              chainId: self.chainConfig.chainId,
+              blockNumber: item.log.blockNumber,
+              logIndex: item.log.logIndex,
+              event: parsed,
             }
-          } else {
-            resolve(None)
+
+            resolve(Some(queueItem))
+
+          | Error(e) => reject(Converters.ParseEventErrorExn(e))
           }
         })
         ->Deferred.asPromise
