@@ -141,7 +141,7 @@ pub fn network_to_eth_archive_url(network: &SupportedNetwork) -> String {
 pub fn network_to_skar_url(network: &SupportedNetwork) -> Option<String> {
     match network {
         SupportedNetwork::EthereumMainnet => Some("http://91.216.245.118:1151".to_string()),
-        SupportedNetwork::Polygon => Some("http://91.216.245.118:2151".to_string()),
+        // SupportedNetwork::Polygon => Some("http://91.216.245.118:2151".to_string()),
         _network => None
 
         // SupportedNetwork::EthereumGoerliTestnet => "https://goerli.archive.subsquid.io",
