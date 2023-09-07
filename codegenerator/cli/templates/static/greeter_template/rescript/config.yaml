@@ -2,8 +2,6 @@ name: Greeter
 description: Greeter indexer
 networks:
   - id: 137 # Polygon
-    rpc_config:
-      url: https://polygon.llamarpc.com # We recommend you change this to a dedicated RPC provider
     start_block: 45336336
     contracts:
       - name: Greeter
