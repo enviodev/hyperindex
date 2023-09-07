@@ -70,6 +70,8 @@ module {{contract.name.capitalized}} = {
 type parseEventError =
   ParseError(Ethers.Interface.parseLogError) | UnregisteredContract(Ethers.ethAddress)
 
+exception ParseEventErrorExn(parseEventError)
+
 let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result.t<
   Types.event,
   _,

@@ -212,23 +212,31 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
 
         let parsingTimeRef = Hrtime.makeTimer()
         //Parse page items into queue items
-        let parsedQueueItems = pageUnsafe.items->Belt.Array.map(item => {
-          let parsedUnsafe =
-            Converters.parseEvent(
+        let parsedQueueItems =
+          await pageUnsafe.items
+          //Defer all this parsing into separate deferred callbacks
+          //on the macro task queue so that parsing doesn't block the
+          //event loop and each parse happens as a macro task. Meaning
+          //promise resolves will take priority
+          ->Deferred.mapArrayDeferred((item, resolve, reject) => {
+            switch Converters.parseEvent(
               ~log=item.log,
               ~blockTimestamp=item.blockTimestamp,
               ~contractInterfaceManager,
-            )->Belt.Result.getExn
-
-          let queueItem: Types.eventBatchQueueItem = {
-            timestamp: item.blockTimestamp,
-            chainId: chainConfig.chainId,
-            blockNumber: item.log.blockNumber,
-            logIndex: item.log.logIndex,
-            event: parsedUnsafe,
-          }
-          queueItem
-        })
+            ) {
+            | Ok(parsed) =>
+              let queueItem: Types.eventBatchQueueItem = {
+                timestamp: item.blockTimestamp,
+                chainId: chainConfig.chainId,
+                blockNumber: item.log.blockNumber,
+                logIndex: item.log.logIndex,
+                event: parsed,
+              }
+              resolve(queueItem)
+            | Error(e) => reject(Converters.ParseEventErrorExn(e))
+            }
+          })
+          ->Deferred.asPromise
 
         let parsingTimeElapsed =
           parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -405,31 +413,46 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
       | Ok(v) => v
       }
 
-      pageUnsafe.items->Belt.Array.forEach(item => {
-        //Logs in the same block as the log that called for dynamic contract registration
-        //should not be included if they occurred before the contract registering log
-        let logIsNotBeforeContractRegisteringLog = !(
-          item.log.blockNumber == fromBlock && item.log.logIndex <= fromLogIndex
-        )
+      let parsedItems =
+        await pageUnsafe.items
+        //Defer all this parsing into separate deferred callbacks
+        //on the macro task queue so that parsing doesn't block the
+        //event loop and each parse happens as a macro task. Meaning
+        //promise resolves will take priority
+        ->Deferred.mapArrayDeferred((item, resolve, reject) => {
+          //Logs in the same block as the log that called for dynamic contract registration
+          //should not be included if they occurred before the contract registering log
+          let logIsNotBeforeContractRegisteringLog = !(
+            item.log.blockNumber == fromBlock && item.log.logIndex <= fromLogIndex
+          )
 
-        if logIsNotBeforeContractRegisteringLog {
-          let parsedUnsafe =
-            Converters.parseEvent(
+          if logIsNotBeforeContractRegisteringLog {
+            switch Converters.parseEvent(
               ~log=item.log,
               ~blockTimestamp=item.blockTimestamp,
               ~contractInterfaceManager,
-            )->Belt.Result.getExn
+            ) {
+            | Ok(parsed) =>
+              let queueItem: Types.eventBatchQueueItem = {
+                timestamp: item.blockTimestamp,
+                chainId: self.chainConfig.chainId,
+                blockNumber: item.log.blockNumber,
+                logIndex: item.log.logIndex,
+                event: parsed,
+              }
 
-          let queueItem: Types.eventBatchQueueItem = {
-            timestamp: item.blockTimestamp,
-            chainId: self.chainConfig.chainId,
-            blockNumber: item.log.blockNumber,
-            logIndex: item.log.logIndex,
-            event: parsedUnsafe,
+              resolve(Some(queueItem))
+
+            | Error(e) => reject(Converters.ParseEventErrorExn(e))
+            }
+          } else {
+            resolve(None)
           }
+        })
+        ->Deferred.asPromise
 
-          queueItems->Js.Array2.push(queueItem)->ignore
-        }
+      parsedItems->Belt.Array.forEach(itemOpt => {
+        itemOpt->Belt.Option.map(item => queueItems->Js.Array2.push(item))->ignore
       })
 
       fromBlockRef := pageUnsafe.nextBlock
