@@ -780,6 +780,11 @@ module RpcWorker: ChainWorker = {
       //Set the latest fetched blocktimestamp in state
       self.latestFetchedBlockTimestamp = await toBlockTimestampPromise
 
+      //Loop through any callbacks on the queue waiting for confirmation of a new
+      //range queried and run callbacks. Even if no events we now have a new latest
+      //timestamp
+      self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
+
       // Only fetch the current block if it could affect the length of our next batch
       let nextIntervalEnd = fromBlockRef.contents + self.currentBlockInterval - 1
       if currentBlock.contents <= nextIntervalEnd {
