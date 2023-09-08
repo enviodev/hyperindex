@@ -17,8 +17,6 @@ ERC20Contract_Approval_handler(({ event, context: { account } }) => {
 
   let ownerAccount = account.ownerAccountChanges;
 
-  console.log("ownerAccount", ownerAccount);
-
   if (ownerAccount != undefined) {
     // setting accountEntity object
     let accountObject: accountEntity = {
