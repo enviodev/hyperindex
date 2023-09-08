@@ -441,7 +441,7 @@ pub async fn convert_config_to_chain_configs(
             },
             None => {
                 let supported_network = hypersync_endpoints::chain_id_to_network(network.id)
-                    .context("Undefined network config, please provide rpc_config")?;
+                    .context("Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
 
                 let supported_skar_url =
                     hypersync_endpoints::network_to_skar_url(&supported_network);
