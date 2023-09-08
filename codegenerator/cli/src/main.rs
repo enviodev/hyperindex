@@ -45,9 +45,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let hasura_health_check_is_error =
                 service_health::fetch_hasura_healthz().await.is_err();
 
+            let mut docker_started_on_run = false;
+
             if hasura_health_check_is_error {
                 //Run docker commands to spin up container
                 commands::docker::docker_compose_up_d(project_paths).await?;
+                docker_started_on_run = true;
             }
 
             let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
@@ -82,6 +85,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 )
                                 .await?;
                                 commands::db_migrate::run_db_setup(project_paths, true).await?;
+                                if docker_started_on_run {
+                                    open::that("http://localhost:8080")?;
+                                }
                                 commands::start::start_indexer(project_paths).await?;
                             }
                             RerunOptions::CodegenAndResyncFromStoredEvents => {
@@ -93,12 +99,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 )
                                 .await?;
                                 commands::db_migrate::run_db_setup(project_paths, false).await?;
+                                if docker_started_on_run {
+                                    open::that("http://localhost:8080")?;
+                                }
                                 commands::start::start_indexer(project_paths).await?;
                             }
                             RerunOptions::ResyncFromStoredEvents => {
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
                                 commands::db_migrate::run_db_setup(project_paths, false).await?; // does this need to be run?
+                                if docker_started_on_run {
+                                    open::that("http://localhost:8080")?;
+                                }
                                 commands::start::start_indexer(project_paths).await?;
                             }
                             RerunOptions::ContinueSync => {
@@ -109,13 +121,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     }
                                 };
 
-                                if !has_run_db_migrations {
+                                if !has_run_db_migrations || docker_started_on_run {
                                     commands::db_migrate::run_db_setup(project_paths, true).await?;
                                 }
-                                open::that("http://localhost:8080")?;
+                                if docker_started_on_run {
+                                    open::that("http://localhost:8080")?;
+                                }
                                 commands::start::start_indexer(project_paths).await?;
                             }
                         }
+                        
+                       
                     }
                 }
             }
