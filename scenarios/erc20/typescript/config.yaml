@@ -2,8 +2,8 @@ name: ERC20
 description: ERC-20 indexer
 networks:
   - id: 5 # Goerli Testnet
-    rpc_config:
-      url: https://rpc.ankr.com/eth_goerli # We recommend you change this to a dedicated RPC provider
+    # rpc_config:
+    #   url: https://rpc.ankr.com/eth_goerli # We recommend you change this to a dedicated RPC provider
     start_block: 9493714
     contracts:
       - name: ERC20
