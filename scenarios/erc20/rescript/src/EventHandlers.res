@@ -7,7 +7,7 @@ Handlers.ERC20Contract.Approval.loader((~event, ~context) => {
 
 Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
   //  getting the owner accountEntity
-  let ownerAccount = context.account.ownerAccountChanges()
+  let ownerAccount = context.account.ownerAccountChanges
 
   switch ownerAccount {
   | Some(existingAccount) => {
@@ -44,7 +44,7 @@ Handlers.ERC20Contract.Transfer.loader((~event, ~context) => {
 
 Handlers.ERC20Contract.Transfer.handler((~event, ~context) => {
   // getting the sender accountEntity
-  let senderAccount = context.account.senderAccountChanges()
+  let senderAccount = context.account.senderAccountChanges
 
   switch senderAccount {
   | Some(existingSenderAccount) => {
@@ -73,7 +73,7 @@ Handlers.ERC20Contract.Transfer.handler((~event, ~context) => {
   }
 
   // getting the sender accountEntity
-  let receiverAccount = context.account.receiverAccountChanges()
+  let receiverAccount = context.account.receiverAccountChanges
 
   switch receiverAccount {
   | Some(existingReceiverAccount) => {

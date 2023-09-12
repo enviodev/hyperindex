@@ -5,7 +5,7 @@ Handlers.GreeterContract.NewGreeting.loader((~event, ~context) => {
 })
 
 Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges()
+  let currentGreeterOpt = context.greeting.greetingWithChanges
 
   switch currentGreeterOpt {
   | Some(existingGreeter) => {
@@ -13,6 +13,7 @@ Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
         id: event.params.user->Ethers.ethAddressToString,
         latestGreeting: event.params.greeting,
         numberOfGreetings: existingGreeter.numberOfGreetings + 1,
+        greetings: existingGreeter.greetings->Belt.Array.concat([event.params.greeting]),
       }
 
       context.greeting.set(greetingObject)
@@ -23,6 +24,7 @@ Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
       id: event.params.user->Ethers.ethAddressToString,
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
+      greetings: [event.params.greeting],
     }
 
     context.greeting.set(greetingObject)
@@ -35,7 +37,7 @@ Handlers.GreeterContract.ClearGreeting.loader((~event, ~context) => {
 })
 
 Handlers.GreeterContract.ClearGreeting.handler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges()
+  let currentGreeterOpt = context.greeting.greetingWithChanges
 
   switch currentGreeterOpt {
   | Some(existingGreeter) => {
@@ -43,10 +45,12 @@ Handlers.GreeterContract.ClearGreeting.handler((~event, ~context) => {
         id: event.params.user->Ethers.ethAddressToString,
         latestGreeting: "",
         numberOfGreetings: existingGreeter.numberOfGreetings,
+        greetings: existingGreeter.greetings,
       }
 
       context.greeting.set(greetingObject)
     }
+
   | None => ()
   }
 })

@@ -7,7 +7,7 @@ ERC20Contract.Approval.loader((event, context) => {
 
 ERC20Contract.Approval.handler((event, context) => {
   //  getting the owner accountEntity
-  let ownerAccount = context.account.ownerAccountChanges();
+  let ownerAccount = context.account.ownerAccountChanges;
 
   if (ownerAccount != undefined) {
     // setting accountEntity object
@@ -40,7 +40,7 @@ ERC20Contract.Transfer.loader((event, context) => {
 
 ERC20Contract.Transfer.handler((event, context) => {
   // getting the sender accountEntity
-  let senderAccount = context.account.senderAccountChanges();
+  let senderAccount = context.account.senderAccountChanges;
 
   if (senderAccount != undefined) {
     // setting the totals field value
@@ -68,7 +68,7 @@ ERC20Contract.Transfer.handler((event, context) => {
   }
 
   // getting the sender accountEntity
-  let receiverAccount = context.account.receiverAccountChanges();
+  let receiverAccount = context.account.receiverAccountChanges;
 
   if (receiverAccount != undefined) {
     // setting accountEntity object
