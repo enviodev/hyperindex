@@ -772,7 +772,7 @@ mod tests {
         let network1 = NetworkConfigTemplate {
             id: 1,
             rpc_config: None,
-            skar_server_url: Some("http://46.4.5.110:78".to_string()),
+            skar_server_url: Some("http://46.4.5.110:79".to_string()),
             eth_archive_server_url: None,
             start_block: 0,
             contracts: contracts1,
