@@ -5,7 +5,6 @@ use std::error::Error;
 use std::path::PathBuf;
 
 use crate::project_paths::handler_paths::ContractUniqueId;
-use crate::service_health::EndpointHealth;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     project_paths::ParsedPaths,
@@ -19,7 +18,9 @@ pub mod hypersync_endpoints;
 pub mod validation;
 
 pub mod constants;
-use crate::{links, service_health};
+use crate::links;
+
+use self::hypersync_endpoints::HypersyncEndpoint;
 pub mod graph_migration;
 
 type NetworkId = i32;
@@ -440,42 +441,14 @@ pub async fn convert_config_to_chain_configs(
                 }
             },
             None => {
-                let supported_network = hypersync_endpoints::chain_id_to_network(network.id)
+                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(&network.id)
                     .context("Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
 
-                let supported_skar_url =
-                    hypersync_endpoints::network_to_skar_url(&supported_network);
-
-                let skar_url = match supported_skar_url {
-                    None => None,
-                    Some(url) => {
-                        let health = service_health::fetch_hypersync_health(&url).await;
-
-                        match health {
-                            Ok(EndpointHealth::Healthy) => Some(url),
-                            _ => None,
-                        }
-                    }
-                };
-
-                match skar_url {
-                    Some(skar_url) => (None, Some(skar_url), None),
-                    None => {
-                        let eth_archive_server_url =
-                            hypersync_endpoints::network_to_eth_archive_url(&supported_network);
-                        let health =
-                            service_health::fetch_hypersync_health(&eth_archive_server_url)
-                                .await
-                                .context(format!(
-                                    "Health check for hypersync endpoint failed  on network {}",
-                                    network.id
-                                ))?;
-
-                        if let EndpointHealth::Unhealthy(msg) = health {
-                            return Err(anyhow!("hypersync endpoint unhealthy at network {}, please provide rpc_config or hypersync_config. {}", network.id, msg));
-                        }
-
-                        (None, None, Some(eth_archive_server_url))
+                defualt_hypersync_endpoint.check_endpoint_health().await.context(format!("hypersync endpoint unhealthy at network {}, please provide rpc_config or hypersync_config. Read more in our docs https://docs.envio.dev/docs/configuration-file", network.id ))?;
+                match defualt_hypersync_endpoint {
+                    HypersyncEndpoint::Skar(skar_url) => (None, Some(skar_url), None),
+                    HypersyncEndpoint::EthArchive(eth_archive_url) => {
+                        (None, None, Some(eth_archive_url))
                     }
                 }
             }
@@ -773,7 +746,6 @@ mod tests {
     #[tokio::test]
     async fn convert_to_chain_configs_case_3() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-        let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
         let abi_file_path = PathBuf::from("test/abis/Contract1.json");
 
@@ -800,7 +772,7 @@ mod tests {
         let network1 = NetworkConfigTemplate {
             id: 1,
             rpc_config: None,
-            skar_server_url: Some("http://91.216.245.118:1151".to_string()),
+            skar_server_url: Some("http://46.4.5.110:79".to_string()),
             eth_archive_server_url: None,
             start_block: 0,
             contracts: contracts1,
@@ -862,7 +834,7 @@ mod tests {
             rpc_config: None,
             skar_server_url: None,
             //Should default to eth archive since there is no skar endpoint at this id
-            eth_archive_server_url: Some("https://polygon.archive.subsquid.io".to_string()),
+            eth_archive_server_url: Some("http://46.4.5.110:77".to_string()),
             start_block: 0,
             contracts: vec![],
         };

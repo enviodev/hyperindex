@@ -1,12 +1,12 @@
 name: erc20indexer
 description: ERC-20 indexer
 networks:
-  - id: 5 # Goerli Testnet
-    start_block: 9493714
+  - id: 1 # Goerli Testnet
+    start_block: 0
     contracts:
       - name: ERC20
         abi_file_path: abis/ERC20.json
-        address: ["0x61cce07e4cad3bf797667f8fd14d2a7d1582038e"]
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" #UNI
         handler: ./src/EventHandlers.bs.js
         events:
           - event: "Approval"
