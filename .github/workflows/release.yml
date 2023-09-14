@@ -365,12 +365,17 @@ jobs:
 
   update-npm-tag:
     if: ${{ needs.prepare.outputs.is_tagged }}
-    needs: template-integration-test
-    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - template-integration-test
+    runs-on: ubuntu-22.04
     steps:
       - name: update npm tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.tag_name }}
         run: |
-          npm dist-tag add envio@${{ needs.prepare.outputs.tag_name }} next
+          npm dist-tag add envio@${VERSION} next
 
   build-and-push:
     name: "build, publish and add docker container for deployment"
