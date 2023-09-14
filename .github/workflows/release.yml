@@ -9,6 +9,7 @@ on:
       # The following two branch names can be used to force build a version for development and sharing a patch.
       - "*force-npm-publish*"
       - "v*.*.*-branch*"
+      - "integration-testing-*"
       - "release-*"
 
 env:
@@ -48,7 +49,8 @@ jobs:
             echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
             echo "::set-output name=release_name::${GITHUB_REF_NAME}"
             echo "::set-output name=is_tagged::true"
-            echo "::set-output name=release_type::next" # NOTE: we currently go directly into prod when a tag is released - using 'next' would give us time to review before upgrading the tag.
+            echo "::set-output name=release_type::next-candidate" # NOTE: we currently go directly into prod when a tag is released - using 'next' would give us time to review before upgrading the tag.
+            
            # echo "::set-output name=release_type::latest"
           elif [[ "${GITHUB_REF_NAME}" =~ ^release-([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             version=v${BASH_REMATCH[1]}
@@ -179,7 +181,7 @@ jobs:
             7z a -tzip "envio_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" envio.exe
             mv "envio_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             echo "::set-output name=file_name::envio_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
-          fi
+          fihttps://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
         shell: bash
 
       - name: Build man page
@@ -203,7 +205,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           name: ${{ needs.prepare.outputs.release_name }}
-          tag_name: ${{ needs.prepare.outputs.tag_name }}
+          tag_name: ${{ needs.prepare.outputs.tag_name }}https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
           prerelease: true #always true for now
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
@@ -230,7 +232,7 @@ jobs:
           node_os=$(echo "${NAME}" | cut -d '-' -f1)
           export node_os
           node_arch=$(echo "${NAME}" | cut -d '-' -f2)
-          export node_arch
+          export node_archhttps://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
           if [ "${OS}" = "windows-2022" ]; then
             export node_pkg="${bin}-windows-${node_arch}"
           else
@@ -281,6 +283,96 @@ jobs:
           cp ../../README.md .
           echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}
+
+  template-integration-test:
+    name: integration-test ${{ matrix.template }} (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    needs:
+      - "publish-npm"
+    strategy:
+      matrix:
+        template: [erc20, greeter]
+        language: [javascript, rescript, typescript]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Install node
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18.16.0"
+          registry-url: "https://registry.npmjs.org"
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Set ENV for launcher
+        run: export LAUNCHER="curl"
+      - name: Install envio
+        run: |
+          npm i -g envio@${{ needs.prepare.outputs.tag_name }} --loglevel verbose
+      - name: Generate template
+        run: |
+          cd codegenerator/integration_tests
+          envio init --template ${{ matrix.template }} --language ${{ matrix.language }} --name "test" --directory "./integration_test_output/${{ matrix.template }}/${{ matrix.language }}"
+      - name: Run the integration test
+        env:
+          LANGUAGE: ${{ matrix.language }}
+        run: |
+          # Create the mock xdg-open and gio
+          echo 'echo "Mocked open. This would open the link in the browser usually:"' > ./xdg-open
+          chmod +x ./xdg-open
+          echo 'echo "Mocked open. This would open the link in the browser usually:"' > ./gio
+          chmod +x ./gio
+
+          # Update PATH
+          export PATH=$(pwd):$PATH
+
+          # TODO: this part of the script should be put into a separate script.
+          # This file will test a single scenario (language agnostic)
+          root_dir=$(pwd)
+
+          # change to the directory of the template
+          cd codegenerator/integration_tests/integration_test_output/${{ matrix.template }}/${{ matrix.language }}/
+
+          # install packages
+          pnpm install
+
+          # generate codegen as it is in gitignore
+          pnpm envio codegen
+
+          # clear everything before we start
+          pnpm envio stop || true
+
+          # start the indexer running manual steps
+          # NOTE: if dev fails or has issues you can debug with these separate steps.
+          # pnpm envio local docker up
+          # pnpm envio local db-migrate setup
+          # pnpm envio start & PID=$!
+          pnpm envio dev & PID=$!
+
+          # save this process so we can kill it later in the script
+          echo "process id is $PID"
+
+          # make requests to hasura and get indexed entity data
+          cd $root_dir
+
+          # NOTE: the error should propagate to this bash process, since the 'set -e' setting is used.
+          node ./codegenerator/integration_tests/tests/${{ matrix.template }}.js
+
+          if [ $? -ne 0 ]; then
+            echo "Test failed!"
+            exit 1
+          fi
+
+          echo "the process finished without error"
+
+  update-npm-tag:
+    if: ${{ needs.prepare.outputs.is_tagged }}
+    needs: template-integration-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: update npm tag
+        run: |
+          npm dist-tag add envio@${{ needs.prepare.outputs.tag_name }} next
 
   build-and-push:
     name: "build, publish and add docker container for deployment"

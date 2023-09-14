@@ -130,8 +130,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 commands::start::start_indexer(project_paths).await?;
                             }
                         }
-                        
-                       
                     }
                 }
             }
