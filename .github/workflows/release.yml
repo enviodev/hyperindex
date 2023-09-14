@@ -181,7 +181,7 @@ jobs:
             7z a -tzip "envio_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" envio.exe
             mv "envio_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip" ../../../
             echo "::set-output name=file_name::envio_${VERSION_NAME}_${PLATFORM_NAME}_${ARCH}.zip"
-          fihttps://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
+          fi
         shell: bash
 
       - name: Build man page
@@ -205,7 +205,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           name: ${{ needs.prepare.outputs.release_name }}
-          tag_name: ${{ needs.prepare.outputs.tag_name }}https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
+          tag_name: ${{ needs.prepare.outputs.tag_name }}
           prerelease: true #always true for now
           body: ${{ needs.prepare.outputs.changelog }}
           files: |
@@ -232,7 +232,7 @@ jobs:
           node_os=$(echo "${NAME}" | cut -d '-' -f1)
           export node_os
           node_arch=$(echo "${NAME}" | cut -d '-' -f2)
-          export node_archhttps://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
+          export node_arch
           if [ "${OS}" = "windows-2022" ]; then
             export node_pkg="${bin}-windows-${node_arch}"
           else
@@ -362,8 +362,6 @@ jobs:
             echo "Test failed!"
             exit 1
           fi
-
-          echo "the process finished without error"
 
   update-npm-tag:
     if: ${{ needs.prepare.outputs.is_tagged }}
