@@ -114,7 +114,7 @@ pub fn network_to_eth_archive_url(network: &SupportedNetwork) -> Option<String> 
 
 pub fn network_to_skar_url(network: &SupportedNetwork) -> Option<String> {
     match network {
-        SupportedNetwork::EthereumMainnet => Some("http://46.4.5.110:79".to_string()),
+        SupportedNetwork::EthereumMainnet => Some("http://91.216.245.118:1151".to_string()),
         _ => None
 
         // SupportedNetwork::Polygon => Some("http://91.216.245.118:2151".to_string()),
