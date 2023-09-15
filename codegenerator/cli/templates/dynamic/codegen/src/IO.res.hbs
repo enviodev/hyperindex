@@ -110,7 +110,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   let unique{{entity.name.capitalized}}AsEntityFieldArray: ref<array<string>> = ref([])
   {{/each}}
 
-  let rec{{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
+  let {{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
     entityId: string,
     {{#if entity.relational_params.filtered_not_derived_from.[0]}}{{entity.name.uncapitalized}}Load: Types.{{entity.name.uncapitalized}}LoaderConfig,{{/if}}
   ) => {
