@@ -1,15 +1,43 @@
 {
   "name": "erc20",
   "version": "0.1.0",
-  "sources": {
-    "dir": "src",
-    "subdirs": true
+  "gentypeconfig": {
+    "language": "typescript",
+    "shims": {},
+    "generatedFileExtension": ".gen.ts",
+    "module": "commonjs",
+    "debug": {
+      "all": false,
+      "basic": false
+    }
   },
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
+    },
+    {
+      "dir": "generated/src",
+      "subdirs": true
+    }
+  ],
   "suffix": ".bs.js",
   "package-specs": {
     "module": "commonjs",
     "in-source": true
   },
-  "bs-dependencies": ["generated","@ryyppy/rescript-promise"],
-  "pinned-dependencies": ["generated"]
+  "bs-dependencies": [
+    "@ryyppy/rescript-promise",
+    "rescript-envsafe",
+    "rescript-struct",
+    "@greenlabs/ppx-spice",
+    "rescript-express",
+    "@glennsl/rescript-fetch"
+  ],
+  "ppx-flags": [
+    "@greenlabs/ppx-spice/ppx"
+  ],
+  "bsc-flags": [
+    "-open RescriptStruct"
+  ]
 }
