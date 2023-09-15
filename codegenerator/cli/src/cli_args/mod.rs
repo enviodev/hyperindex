@@ -29,7 +29,7 @@ pub enum CommandType {
     Codegen(CodegenArgs),
 
     ///Prepare local environment for envio testing
-    #[clap(hide = true)]
+    // #[clap(hide = true)]
     #[command(subcommand)]
     Local(LocalCommandTypes),
 
