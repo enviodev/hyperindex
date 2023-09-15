@@ -23,6 +23,32 @@ let headers = {
   "X-Hasura-Admin-Secret": hasuraSecret,
 }
 
+@spice
+type hasuraErrorResponse = {code: string, error: string, path: string}
+type validHasuraResponse = QuerySucceeded | AlreadyDone
+
+let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.Result.t<
+  validHasuraResponse,
+  unit,
+> =>
+  if statusCode == 200 {
+    Ok(QuerySucceeded)
+  } else {
+    switch responseJson->hasuraErrorResponse_decode {
+    | Ok(decoded) =>
+      switch decoded.code {
+      | "already-exists"
+      | "already-tracked" =>
+        Ok(AlreadyDone)
+      | _ =>
+        //If the code is not known return it as an error
+        Error()
+      }
+    //If we couldn't decode just return it as an error
+    | Error(e) => Error()
+    }
+  }
+
 let trackTable = async (~tableName: string) => {
   let body = {
     "type": "pg_track_table",
@@ -44,10 +70,26 @@ let trackTable = async (~tableName: string) => {
 
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
-  if statusCode != 200 {
-    Logging.error({"msg": `There was an issue tracking the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`, "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
-  } else {
-    Logging.trace({"msg": "Table Tracked", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+
+  switch validateHasuraResponse(~statusCode, ~responseJson) {
+  | Error(_) =>
+    Logging.error({
+      "msg": `There was an issue tracking the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "tableName": tableName,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  | Ok(case) =>
+    let msg = switch case {
+    | QuerySucceeded => "Table Tracked"
+    | AlreadyDone => "Table Already Tracked"
+    }
+    Logging.trace({
+      "msg": msg,
+      "tableName": tableName,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
   }
 }
 
@@ -76,10 +118,26 @@ let createSelectPermissions = async (~tableName: string) => {
 
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
-  if statusCode != 200 {
-    Logging.error({"msg": `There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`, "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
-  } else {
-    Logging.trace({"msg": "Hasura select permissions created", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+
+  switch validateHasuraResponse(~statusCode, ~responseJson) {
+  | Error(_) =>
+    Logging.error({
+      "msg": `There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "tableName": tableName,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  | Ok(case) =>
+    let msg = switch case {
+    | QuerySucceeded => "Hasura select permissions created"
+    | AlreadyDone => "Hasura select permissions already created"
+    }
+    Logging.trace({
+      "msg": msg,
+      "tableName": tableName,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
   }
 }
 
@@ -91,9 +149,7 @@ let createEntityRelationship = async (
   ~derivedFromFieldKey: string,
 ) => {
   let derivedFromTo =
-    derivedFromFieldKey != ""
-      ? `"id": "${derivedFromFieldKey}"`
-      : `"${relationalKey}" : "id"`
+    derivedFromFieldKey != "" ? `"id": "${derivedFromFieldKey}"` : `"${relationalKey}" : "id"`
 
   let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": "${tableName}","name": "${relationalKey}Map","source": "default","using": {"manual_configuration": {"remote_table": "${mappedEntity}","column_mapping": {${derivedFromTo}}}}}}`
 
@@ -108,10 +164,26 @@ let createEntityRelationship = async (
 
   let responseJson = await response->Response.json
   let statusCode = response->Response.status
-  if statusCode != 200 {
-    Logging.error({"msg": `There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`, "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
-  } else {
-    Logging.trace({"msg": "Hasura derived field permissions created", "tableName": tableName, "requestStatusCode": statusCode, "requestResponseJson": responseJson})
+
+  switch validateHasuraResponse(~statusCode, ~responseJson) {
+  | Error(_) =>
+    Logging.error({
+      "msg": `There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "tableName": tableName,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  | Ok(case) =>
+    let msg = switch case {
+    | QuerySucceeded => "Hasura derived field permissions created"
+    | AlreadyDone => "Hasura derived field permissions already created"
+    }
+    Logging.trace({
+      "msg": msg,
+      "tableName": tableName,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
   }
 }
 
