@@ -189,7 +189,7 @@ let createEntityRelationship = async (
   let derivedFromTo =
     derivedFromFieldKey != "" ? `"id": "${derivedFromFieldKey}"` : `"${relationalKey}" : "id"`
 
-  let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": "${tableName}","name": "${relationalKey}Map","source": "default","using": {"manual_configuration": {"remote_table": "${mappedEntity}","column_mapping": {${derivedFromTo}}}}}}`
+  let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": "${tableName}","name": "${relationalKey}","source": "default","using": {"manual_configuration": {"remote_table": "${mappedEntity}","column_mapping": {${derivedFromTo}}}}}}`
 
   let response = await fetch(
     hasuraGraphqlEndpoint,
@@ -243,7 +243,7 @@ let trackAllTables = async () => {
         ~relationshipType="{{relational_param.relationship_type}}",
         ~relationalKey="{{relational_param.relational_key.uncapitalized}}",
         ~mappedEntity="{{relational_param.mapped_entity.uncapitalized}}",
-        ~derivedFromFieldKey="{{#if relational_param.derived_from_field_key}}{{relational_param.derived_from_field_key.uncapitalized}}{{/if}}", 
+        ~derivedFromFieldKey="{{relational_param.derived_from_field_key}}", 
       )
     {{/each}}
 {{/each}}

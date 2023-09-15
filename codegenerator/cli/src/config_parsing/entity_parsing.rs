@@ -83,9 +83,8 @@ pub fn get_entity_record_types_from_schema(
                             )
                         })?;
                     match &field_arg.1 {
-                        Value::String(val) => Some(val.to_capitalized_options()),
+                        Value::String(val) => Some(val.clone()),
                         _ => Err(format!("EE204: 'field' argument in @derivedFrom directive on field {}, entity {} needs to contain a string", field.name, object.name))?
-
                     }
                 }
             };
@@ -121,14 +120,11 @@ pub fn get_entity_record_types_from_schema(
                     entity
                         .fields
                         .iter()
-                        .find(|field| {
-                            field.name.to_capitalized_options().uncapitalized
-                                == field_key.uncapitalized
-                        })
+                        .find(|field| &field.name == field_key)
                         .ok_or_else(|| {
                             format!(
                                 "EE206: Derived field {} does not exist on entity {}",
-                                field_key.uncapitalized, entity.name
+                                field_key, entity.name
                             )
                         })?;
                 }
@@ -277,7 +273,7 @@ fn gql_type_to_postgres_relational_type(
     field_name: &String,
     gql_type: &Type<String>,
     entities_set: &HashSet<String>,
-    derived_from_field_key: Option<CapitalizedOptions>,
+    derived_from_field_key: Option<String>,
 ) -> Option<EntityRelationalTypesTemplate> {
     match gql_type {
         Type::NamedType(named) if entities_set.contains(named) => {

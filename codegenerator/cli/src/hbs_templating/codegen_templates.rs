@@ -44,7 +44,7 @@ pub struct EntityRelationalTypesTemplate {
     pub relationship_type: RelationshipTypeTemplate,
     pub is_array: bool,
     pub is_optional: bool,
-    pub derived_from_field_key: Option<CapitalizedOptions>,
+    pub derived_from_field_key: Option<String>,
 }
 
 pub trait HasIsDerivedFrom {
