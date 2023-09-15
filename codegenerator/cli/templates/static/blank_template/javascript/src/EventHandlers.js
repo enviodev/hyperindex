@@ -8,10 +8,10 @@
 // let { MyAwesomeContractContract } = require("../generated/src/Handlers.bs.js");
 
 // MyAwesomeContractContract.AwesomeEvent.loader(({ event, context }) => {
-//   let _ = context.awesomeEvent.load(event.params.identifier);
+//   let _ = context.AwesomeEntity.load(event.params.identifier);
 // });
 
 // MyAwesomeContractContract.AwesomeEvent.handler(({ event, context }) => {
-//   let awesomeEventObject = context.awesomeEvent.get(event.params.identifier);
-//   context.awesomeEvent.set(awesomeEventObject);
+//   let awesomeEventObject = context.AwesomeEntity.get(event.params.identifier);
+//   context.AwesomeEntity.set(awesomeEventObject);
 // });

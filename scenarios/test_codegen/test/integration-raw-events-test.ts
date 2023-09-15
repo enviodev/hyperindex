@@ -67,7 +67,7 @@ describe("Raw Events Integration", () => {
     };
   };
 
-  before(async function () {
+  before(async function() {
     this.timeout(30 * 1000);
     // setLogLevel("trace");
 
@@ -138,12 +138,12 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async function () {
+  it("RawEvents table contains rows after indexer runs", async function() {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
-  it("Entities have metrics and relate to their raw events", async function () {
+  it("Entities have metrics and relate to their raw events", async function() {
     let joinedMetricsRows = await sql`
     SELECT t.db_write_timestamp AS t_write, t.event_chain_id, t.event_id, r.block_timestamp, r.db_write_timestamp AS r_write
     FROM public."Token" AS t
@@ -153,7 +153,7 @@ describe("Raw Events Integration", () => {
     expect(joinedMetricsRows.count).to.be.gt(0);
   });
 
-  it("should ensure Entites are created correctly", async function () {
+  it("should ensure Entites are created correctly", async function() {
     let rowsNftCollection = await sql`SELECT * FROM public."NftCollection"`;
     expect(rowsNftCollection.count).to.be.gt(0);
     let rowsUsers = await sql`SELECT * FROM public."User"`;
