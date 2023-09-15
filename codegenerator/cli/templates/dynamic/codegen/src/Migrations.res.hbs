@@ -185,6 +185,7 @@ let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
 }
 
 let setupDb = async (~shouldDropRawEvents) => {
+  Logging.info("Provisioning Database")
   // TODO: we should make a hash of the schema file (that gets stored in the DB) and either drop the tables and create new ones or keep this migration.
   //       for now we always run the down migration.
   // if (process.env.MIGRATE === "force" || hash_of_schema_file !== hash_of_current_schema)

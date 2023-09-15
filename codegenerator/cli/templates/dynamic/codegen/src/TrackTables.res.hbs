@@ -49,6 +49,44 @@ let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.
     }
   }
 
+let clearHasuraMetadata = async () => {
+  let body = {
+    "type": "clear_metadata",
+    "args": Js.Obj.empty(),
+  }
+
+  let response = await fetch(
+    hasuraGraphqlEndpoint,
+    {
+      method: #POST,
+      body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
+      headers: Headers.fromObject(headers),
+    },
+  )
+
+  let responseJson = await response->Response.json
+  let statusCode = response->Response.status
+
+  switch validateHasuraResponse(~statusCode, ~responseJson) {
+  | Error(_) =>
+    Logging.error({
+      "msg": `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  | Ok(case) =>
+    let msg = switch case {
+    | QuerySucceeded => "Metadata Cleared"
+    | AlreadyDone => "Metadata Already Cleared"
+    }
+    Logging.trace({
+      "msg": msg,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  }
+}
+
 let trackTable = async (~tableName: string) => {
   let body = {
     "type": "pg_track_table",
@@ -188,6 +226,8 @@ let createEntityRelationship = async (
 }
 
 let trackAllTables = async () => {
+  Logging.info("Tracking tables in Hasura")
+  let _ = await clearHasuraMetadata()
   let _ = await trackTable(~tableName="raw_events")
   let _ = await createSelectPermissions(~tableName="raw_events")
   let _ = await trackTable(~tableName="dynamic_contract_registry")
