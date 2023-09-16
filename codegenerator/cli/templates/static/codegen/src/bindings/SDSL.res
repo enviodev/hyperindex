@@ -12,6 +12,7 @@ module PriorityQueue = {
   @get external length: t<'a> => int = "length"
   //Returns the top item without popping it
   @send external top: t<'a> => option<'a> = "top"
+  @send external toArray: t<'a> => array<'a> = "toArray"
 }
 
 module Queue = {

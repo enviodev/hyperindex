@@ -20,6 +20,19 @@ let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
   map.addressesByName->Js.Dict.set(name, newAddresses)
 }
 
+let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Ethers.ethAddress): bool => {
+  let addressAlreadyExists =
+    map.nameByAddress
+    ->Js.Dict.get(address->Ethers.ethAddressToString)
+    ->Belt.Option.mapWithDefault(false, expectedName => expectedName == name)
+
+  if !addressAlreadyExists {
+    addAddress(map, ~name, ~address)
+  }
+
+  addressAlreadyExists
+}
+
 let getAddresses = (map: mapping, name: string) => {
   map.addressesByName->Js.Dict.get(name)
 }
