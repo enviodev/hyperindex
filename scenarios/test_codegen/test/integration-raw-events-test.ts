@@ -16,7 +16,7 @@ import {
 import { deployContracts } from "./helpers/setupNodeAndContracts.js";
 
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
-import { make, startFetchers } from "generated/src/ChainManager.bs";
+import { make, startFetchers } from "generated/src/eventFetching/ChainManager.bs";
 import { startProcessingEventsOnQueue } from "generated/src/EventProcessing.bs";
 import { createChild } from "generated/src/Logging.bs";
 
