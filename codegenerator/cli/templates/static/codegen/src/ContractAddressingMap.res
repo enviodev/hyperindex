@@ -22,16 +22,16 @@ let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
 
 /// This adds the address if it doesn't exist and returns a boolean to say if it already existed.
 let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Ethers.ethAddress): bool => {
-  let addressAlreadyExists =
+  let addressIsNew =
     map.nameByAddress
     ->Js.Dict.get(address->Ethers.ethAddressToString)
-    ->Belt.Option.mapWithDefault(false, expectedName => expectedName == name)
+    ->Belt.Option.mapWithDefault(true, expectedName => expectedName != name /* check the name, since differently named contracts can have the same address */)
 
-  if !addressAlreadyExists {
+  if addressIsNew {
     addAddress(map, ~name, ~address)
   }
 
-  addressAlreadyExists
+  addressIsNew
 }
 
 let getAddresses = (map: mapping, name: string) => {
