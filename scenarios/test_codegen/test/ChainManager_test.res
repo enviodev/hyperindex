@@ -128,14 +128,6 @@ describe("ChainManager", () => {
         let allEventsRead = []
         let rec testThatCreatedEventsAreOrderedCorrectly = lastEvent => {
           let eventsInBlock = ChainManager.popBlockBatchItems(mockChainManager)
-          Js.log3(
-            "[BEG]recurse",
-            eventsInBlock->Belt.Option.mapWithDefault(
-              "EMPTY"->Obj.magic,
-              e => e->Belt.Array.map(i => i.event),
-            ),
-            "[END]recurse",
-          )
 
           // ensure that the events are ordered correctly
           switch eventsInBlock {

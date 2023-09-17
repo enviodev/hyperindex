@@ -20,6 +20,7 @@ let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
   map.addressesByName->Js.Dict.set(name, newAddresses)
 }
 
+/// This adds the address if it doesn't exist and returns a boolean to say if it already existed.
 let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Ethers.ethAddress): bool => {
   let addressAlreadyExists =
     map.nameByAddress

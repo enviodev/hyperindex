@@ -21,8 +21,6 @@ let priorityQueueComparitor = (a: Types.eventBatchQueueItem, b: Types.eventBatch
   }
 }
 
-// type blockGroupedBatchItems = array<Types.eventBatchQueueItem>
-
 let chainFetcherPeekComparitorEarliestEvent = (
   a: ChainFetcher.eventQueuePeek,
   b: ChainFetcher.eventQueuePeek,
