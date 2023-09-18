@@ -1,5 +1,4 @@
-%%raw("require('isomorphic-fetch')")
-open Fetch
+open Polyfill.NodeFetch
 
 %%private(let envSafe = EnvSafe.make())
 
@@ -45,7 +44,7 @@ let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.
         Error()
       }
     //If we couldn't decode just return it as an error
-    | Error(e) => Error()
+    | Error(_e) => Error()
     }
   }
 

@@ -1,4 +1,4 @@
-%raw("require('isomorphic-fetch')")
+open Polyfill.NodeFetch
 
 type t
 @module external process: t = "process"
@@ -12,7 +12,7 @@ let commitHash = envSafe->EnvSafe.get(~name="COMMIT_HASH", ~struct=S.string(), ~
 let organisationId = envSafe->EnvSafe.get(~name="ORGANISATION_ID", ~struct=S.string(), ~devFallback="", ())
 let indexerId = envSafe->EnvSafe.get(~name="INDEXER_ID", ~struct=S.string(), ~devFallback="", ())
 let createDatabase = async () => {
-open Fetch
+
 // TODO: add the orginisation/user ID to this to allow multiple people to have the same project name and avoid confusion! 
 let response = await fetch(
     `${operatorUrl}:${operatorPort->Belt.Int.toString}/databases`,
