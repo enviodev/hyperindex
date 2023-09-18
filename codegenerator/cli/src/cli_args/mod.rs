@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter};
 
-use self::interactive_init::InitInteractive;
+use self::interactive_init::{InitInteractive, InitNextInteractive};
 pub mod constants;
 pub mod interactive_init;
 pub mod validation;
@@ -18,6 +18,9 @@ pub struct CommandLineArgs {
 pub enum CommandType {
     ///Initialize a project with a template
     Init(InitArgs),
+    
+    ///Initialize a project with a contract address
+    InitNext(InitNextArgs),
 
     /// Development commands for starting, stopping, and restarting the local environment        
     Dev,
@@ -95,6 +98,7 @@ pub struct CodegenArgs {
 }
 
 type SubgraphMigrationID = String;
+type ContractAddress = String;
 #[derive(Args, Debug)]
 pub struct InitArgs {
     ///The directory of the project
@@ -113,6 +117,24 @@ pub struct InitArgs {
     ///Subgraph ID to start a migration from
     #[arg(short, long)]
     pub subgraph_migration: Option<SubgraphMigrationID>,
+
+    #[arg(short = 'l', long = "language")]
+    #[clap(value_enum)]
+    pub language: Option<Language>,
+}
+#[derive(Args, Debug)]
+pub struct InitNextArgs {
+    ///The directory of the project
+    // #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
+    #[arg(short, long)]
+    pub directory: Option<String>,
+
+    #[arg(short, long)]
+    pub name: Option<String>,
+
+    ///Subgraph ID to start a migration from
+    #[arg(short, long)]
+    pub contract_address: Option<ContractAddress>,
 
     #[arg(short = 'l', long = "language")]
     #[clap(value_enum)]
@@ -166,6 +188,16 @@ impl ToProjectPathsArgs for CodegenArgs {
 }
 
 impl ToProjectPathsArgs for InitInteractive {
+    fn to_project_paths_args(&self) -> ProjectPathsArgs {
+        ProjectPathsArgs {
+            project_root: self.directory.clone(),
+            generated: constants::DEFAULT_GENERATED_PATH.to_string(),
+            config: constants::DEFAULT_CONFIG_PATH.to_string(),
+        }
+    }
+}
+
+impl ToProjectPathsArgs for InitNextInteractive {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
             project_root: self.directory.clone(),

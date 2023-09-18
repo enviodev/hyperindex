@@ -1,4 +1,4 @@
-use super::{InitArgs, Language, Template as InitTemplate};
+use super::{InitArgs, InitNextArgs, Language, Template as InitTemplate};
 
 use inquire::{Select, Text};
 
@@ -21,6 +21,13 @@ pub struct InitInteractive {
     pub name: String,
     pub directory: String,
     pub template: TemplateOrSubgraphID,
+    pub language: Language,
+}
+
+pub struct InitNextInteractive {
+    pub name: String,
+    pub directory: String,
+    pub contract_address: String,
     pub language: Language,
 }
 
@@ -130,6 +137,77 @@ impl InitArgs {
             name,
             directory,
             template,
+            language,
+        })
+    }
+}
+impl InitNextArgs {
+    pub fn get_directory(&self) -> String {
+        if let Some(directory_str) = &self.directory {
+            directory_str.to_string()
+        } else {
+            DEFAULT_PROJECT_ROOT_PATH.to_string()
+        }
+    }
+
+    pub fn get_init_args_interactive(&self) -> anyhow::Result<InitNextInteractive> {
+        let name: String = match &self.name {
+            Some(args_name) => args_name.clone(),
+            None => {
+                // todo input validation for name
+
+                Text::new("Name your indexer: ").prompt()?
+            }
+        };
+
+        let directory: String = match &self.directory {
+            Some(args_directory) => args_directory.clone(),
+            None => {
+                Text::new("Set the directory: ")
+                    .with_default(DEFAULT_PROJECT_ROOT_PATH)
+                    .with_placeholder(DEFAULT_PROJECT_ROOT_PATH)
+                    // validate string is valid directory name
+                    .with_validator(is_valid_foldername_inquire_validation_result)
+                    // validate the directory doesn't already exist
+                    .with_validator(is_directory_new)
+                    .prompt()?
+            }
+        };
+
+        let contract_address = match &self.contract_address {
+            None => {
+                let input_contract_address =
+                    Text::new("[BETA VERSION] What is the address of the contract on Ethereum?")
+                        .prompt()?;
+
+                input_contract_address
+            }
+            Some(args_contract_address) => args_contract_address.to_string(),
+        };
+
+        let language = match &self.language {
+            Some(args_language) => args_language.clone(),
+            None => {
+                use Language::{Javascript, Rescript, Typescript};
+
+                let options = vec![Javascript, Typescript, Rescript]
+                    .iter()
+                    .map(|language| {
+                        serde_json::to_string(language).expect("Enum should be serializable")
+                    })
+                    .collect::<Vec<String>>();
+
+                let input_language =
+                    Select::new("Which language would you like to use?", options).prompt()?;
+
+                serde_json::from_str(&input_language)?
+            }
+        };
+
+        Ok(InitNextInteractive {
+            name,
+            directory,
+            contract_address,
             language,
         })
     }
