@@ -82,7 +82,7 @@ jobs:
         # {"os":"ubuntu-22.04", "platform":"linux", "target":"aarch64-unknown-linux-gnu", "arch":"arm64", "svm_target_platform":"linux-aarch64", "name":"linux-arm64-glibc"},
         run: |
           matrix='[
-            {"os":"ubuntu-22.04", "platform":"linux", "target":"x86_64-unknown-linux-gnu", "arch":"amd64", "svm_target_platform":"linux-amd64", "name":"linux-x64-glibc"},
+            {"os":"ubuntu-22.04", "platform":"linux", "target":"x86_64-unknown-linux-musl", "arch":"amd64", "svm_target_platform":"linux-amd64", "name":"linux-x64-musl"},
             {"os":"macos-latest", "platform":"darwin", "target":"x86_64-apple-darwin", "arch":"amd64", "svm_target_platform":"macosx-amd64", "name":"darwin-x64"},
             {"os":"macos-latest", "platform":"darwin", "target":"aarch64-apple-darwin", "arch":"arm64", "svm_target_platform":"macosx-aarch64", "name":"darwin-arm64"}
           ]'
@@ -151,6 +151,15 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+                                                          
+      - if: ${{ runner.os == 'Linux' }}
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: musl-tools # provides musl-gcc
+          # version: 1.0
+
+      - if: ${{ runner.os == 'Linux' }}
+        run: rustup target add x86_64-unknown-linux-musl
 
       - name: Build binaries
         uses: actions-rs/cargo@v1
