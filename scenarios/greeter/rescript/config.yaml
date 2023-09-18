@@ -1,14 +1,32 @@
-name: greeterrescript
+name: Greeter
 description: Greeter indexer
 networks:
-  - id: 1337
-    rpc_config:
-      url: http://localhost:8545
-    start_block: 0
+  - id: 137 # Polygon
+    start_block: 45336336
     contracts:
-      - name: Greeter
+      - name: PolygonGreeter
         abi_file_path: abis/greeter-abi.json
-        address: "0x2B502ab6F783c2Ae96A75dc68cf82a77ce2637c2"
+        address: "0x9D02A17dE4E68545d3a58D3a20BbBE0399E05c9c"
+        handler: ./src/EventHandlers.bs.js
+        events:
+          - event: "NewGreeting"
+            requiredEntities:
+              - name: "Greeting"
+                labels:
+                  - "greetingWithChanges"
+          - event: "ClearGreeting"
+            requiredEntities:
+              - name: "Greeting"
+                labels:
+                  - "greetingWithChanges"
+  - id: 59144 # Linea
+    rpc_config:
+      url: https://rpc.linea.build # We recommend you change this to a dedicated RPC provider
+    start_block: 367801
+    contracts:
+      - name: LineaGreeter
+        abi_file_path: abis/greeter-abi.json
+        address: "0xdEe21B97AB77a16B4b236F952e586cf8408CF32A"
         handler: ./src/EventHandlers.bs.js
         events:
           - event: "NewGreeting"

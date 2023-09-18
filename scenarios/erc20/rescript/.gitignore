@@ -18,7 +18,6 @@
 *.annot
 *.cmj
 *.bak
-*.bs.js
 lib/*
 *.mlast
 *.mliast
@@ -30,5 +29,5 @@ build/
 benchmarks/
 artifacts
 cache
-
+*.bs.js
 generated
