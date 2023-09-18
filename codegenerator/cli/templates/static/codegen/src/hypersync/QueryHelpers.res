@@ -4,7 +4,6 @@ exception FailedToParseJson(exn)
 type queryError =
   Deserialize(Spice.decodeError) | FailedToFetch(exn) | FailedToParseJson(exn) | Other(exn)
 
-open Polyfill.NodeFetch
 
 let executeFetchRequest = async (
   ~endpoint,
@@ -14,6 +13,7 @@ let executeFetchRequest = async (
   (),
 ): result<'b, queryError> => {
   try {
+    open Fetch
 
     let body = bodyAndEncoder->Belt.Option.map(((body, encoder)) => {
       body->encoder->Js.Json.stringify->Body.string

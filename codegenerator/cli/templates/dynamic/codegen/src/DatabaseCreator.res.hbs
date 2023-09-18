@@ -1,4 +1,5 @@
-open Polyfill.NodeFetch
+%%raw(`globalThis.fetch = require('node-fetch')`)
+open Fetch
 
 type t
 @module external process: t = "process"

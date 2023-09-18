@@ -1,4 +1,5 @@
-open Polyfill.NodeFetch
+%%raw(`globalThis.fetch = require('node-fetch')`)
+open Fetch
 
 %%private(let envSafe = EnvSafe.make())
 

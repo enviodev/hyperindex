@@ -1,6 +1,9 @@
+%%raw(`globalThis.fetch = require('node-fetch')`)
+
 RegisterHandlers.registerAllHandlers()
 
 open Express
+
 
 let app = expressCjs()
 
