@@ -146,7 +146,7 @@ describe("Raw Events Integration", () => {
   it("Entities have metrics and relate to their raw events", async function () {
     let joinedMetricsRows = await sql`
     SELECT t.db_write_timestamp AS t_write, t.event_chain_id, t.event_id, r.block_timestamp, r.db_write_timestamp AS r_write
-    FROM public.token AS t
+    FROM public."Token" AS t
     JOIN public.raw_events AS r
     ON t.event_chain_id = r.chain_id AND t.event_id = r.event_id;
     `;
@@ -154,11 +154,11 @@ describe("Raw Events Integration", () => {
   });
 
   it("should ensure Entites are created correctly", async function () {
-    let rowsNftcollection = await sql`SELECT * FROM public.nftcollection`;
+    let rowsNftcollection = await sql`SELECT * FROM public."Nftcollection"`;
     expect(rowsNftcollection.count).to.be.gt(0);
-    let rowsUsers = await sql`SELECT * FROM public.user`;
+    let rowsUsers = await sql`SELECT * FROM public."User"`;
     expect(rowsUsers.count).to.be.gt(0);
-    let rowsToken = await sql`SELECT * FROM public.token`;
+    let rowsToken = await sql`SELECT * FROM public."Token"`;
     expect(rowsToken.count).to.be.gt(0);
   });
 

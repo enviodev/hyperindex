@@ -3,7 +3,8 @@ open Types.GravatarContract
 let setMock = Sinon.stub()
 
 let mockNewGravatarContext: NewGravatarEvent.context = {
-  "gravatar": {
+  //note the js use uppercased even though the rescript context is lower case gravatar due to @as
+  "Gravatar": {
     NewGravatarEvent.set: gravatarSet => {
       setMock->Sinon.callStub1(gravatarSet.id)
     },
@@ -19,7 +20,7 @@ let mockUpdateGravatarContext: UpdatedGravatarEvent.context = {
     "error": Js.log,
     "errorWithExn": Js.log2,
   },
-  "gravatar": {
+  "Gravatar": {
     UpdatedGravatarEvent.gravatarWithChanges: Some(MockEntities.gravatarEntity1),
     set: gravatarSet => {
       setMock->Sinon.callStub1(gravatarSet.id)
