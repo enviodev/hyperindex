@@ -5,9 +5,11 @@ try {
   let _ = %raw(`require("{{contract.handler.relative_to_generated_src
   }}")`)
   } catch {
-  | _ => Logging.error("Unable to import the handler file for {{contract.name.capitalized
-  }}. Expected a file at {{contract.handler.relative_to_generated_src
-  }}, make sure this file is parsing as well")
+  | err => { Logging.error("There was an issue importing the handler file for {{contract.name.capitalized
+  }}. Expected file at {{contract.handler.relative_to_generated_src
+  }}")
+  Logging.error(err)
+  }
   }
 }
 {{/each}}
