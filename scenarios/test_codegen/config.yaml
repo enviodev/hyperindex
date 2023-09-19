@@ -45,5 +45,5 @@ networks:
           - event: "Transfer"
             requiredEntities:
               - name: "User"
-              - name: Nftcollection
+              - name: NftCollection
               - name: Token

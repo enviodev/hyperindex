@@ -154,8 +154,8 @@ describe("Raw Events Integration", () => {
   });
 
   it("should ensure Entites are created correctly", async function () {
-    let rowsNftcollection = await sql`SELECT * FROM public."Nftcollection"`;
-    expect(rowsNftcollection.count).to.be.gt(0);
+    let rowsNftCollection = await sql`SELECT * FROM public."NftCollection"`;
+    expect(rowsNftCollection.count).to.be.gt(0);
     let rowsUsers = await sql`SELECT * FROM public."User"`;
     expect(rowsUsers.count).to.be.gt(0);
     let rowsToken = await sql`SELECT * FROM public."Token"`;
