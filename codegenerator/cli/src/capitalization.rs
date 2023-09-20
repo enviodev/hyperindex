@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 pub struct CapitalizedOptions {
     pub capitalized: String,
     pub uncapitalized: String,
+    pub original: String,
 }
 
 pub trait Capitalize {
@@ -37,12 +38,14 @@ impl Capitalize for String {
         CapitalizedOptions {
             capitalized,
             uncapitalized,
+            original: self.clone(),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::Capitalize;
     #[test]
     fn string_capitalize() {
@@ -64,5 +67,15 @@ mod tests {
         let capitalization_options = string.to_capitalized_options();
         assert_eq!(capitalization_options.uncapitalized, "hello");
         assert_eq!(capitalization_options.capitalized, "Hello");
+        assert_eq!(capitalization_options.original, "Hello");
+    }
+
+    #[test]
+    fn string_camel_to_capitalization_options() {
+        let string = String::from("camelCase");
+        let capitalization_options = string.to_capitalized_options();
+        assert_eq!(capitalization_options.uncapitalized, "camelCase");
+        assert_eq!(capitalization_options.capitalized, "CamelCase");
+        assert_eq!(capitalization_options.original, "camelCase");
     }
 }
