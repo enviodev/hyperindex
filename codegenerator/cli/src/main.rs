@@ -154,7 +154,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if start_args.restart {
                 commands::db_migrate::run_db_setup(project_paths, true).await?;
             }
-            commands::start::start_indexer(project_paths, true).await?;
+            commands::start::start_indexer(project_paths, false).await?;
             Ok(())
         }
 
