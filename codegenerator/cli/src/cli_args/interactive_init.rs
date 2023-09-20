@@ -46,7 +46,7 @@ impl InitArgs {
         let directory: String = match &self.directory {
             Some(args_directory) => args_directory.clone(),
             None => {
-                Text::new("Set the folder name: ")
+                Text::new("Set the directory: ")
                     .with_default(DEFAULT_PROJECT_ROOT_PATH)
                     .with_placeholder(DEFAULT_PROJECT_ROOT_PATH)
                     // validate string is valid directory name
