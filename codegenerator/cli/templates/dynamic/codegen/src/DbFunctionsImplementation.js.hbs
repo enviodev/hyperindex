@@ -6,14 +6,14 @@ module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
   chainId
 ) => sql`
   SELECT block_number
-  FROM public.raw_events
+  FROM "public"."raw_events"
   WHERE chain_id = ${chainId}
   ORDER BY event_id DESC
   LIMIT 1;`;
 
 module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
   SELECT *
-  FROM public.raw_events
+  FROM "public"."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
 
 module.exports.getRawEventsPageGtOrEqEventId = (
@@ -24,7 +24,7 @@ module.exports.getRawEventsPageGtOrEqEventId = (
   contractAddresses
 ) => sql`
   SELECT *
-  FROM public.raw_events
+  FROM "public"."raw_events"
   WHERE "chain_id" = ${chainId}
   AND "event_id" >= ${eventId}
   AND "src_address" IN ${sql(contractAddresses)}
@@ -52,7 +52,7 @@ module.exports.getRawEventsPageWithinEventIdRangeInclusive = (
 
 const batchSetRawEventsCore = (sql, entityDataArray) => {
   return sql`
-    INSERT INTO public.raw_events
+    INSERT INTO "public"."raw_events"
   ${sql(
     entityDataArray,
     "chain_id",
@@ -97,7 +97,10 @@ const chunkBatchQuery = (
   }
 
   // Execute all promises
-  return Promise.all(promises);
+  return Promise.all(promises).catch(e => {
+    console.error("Sql query failed", e);
+    throw e;
+    });
 };
 
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
@@ -110,7 +113,7 @@ module.exports.batchSetRawEvents = (sql, entityDataArray) => {
 
 module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
-  FROM public.raw_events
+  FROM "public"."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
 
@@ -120,7 +123,7 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (
   block_number
 ) => sql`
   SELECT c.contract_address, c.contract_type, c.event_id
-  FROM public.dynamic_contract_registry as c
+  FROM "public"."dynamic_contract_registry" as c
   JOIN raw_events e ON c.chain_id = e.chain_id
   AND c.event_id = e.event_id
   WHERE e.block_number <= ${block_number} AND e.chain_id = ${chainId};`;
@@ -131,12 +134,12 @@ module.exports.readDynamicContractRegistryEntities = (
   entityIdArray
 ) => sql`
   SELECT *
-  FROM public.dynamic_contract_registry
+  FROM "public"."dynamic_contract_registry"
   WHERE (chain_id, contract_address) IN ${sql(entityIdArray)}`;
 
 const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
   return sql`
-    INSERT INTO public.dynamic_contract_registry
+    INSERT INTO "public"."dynamic_contract_registry"
   ${sql(
     entityDataArray,
     "chain_id",
@@ -162,7 +165,7 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
 
 module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
   DELETE
-  FROM public.dynamic_contract_registry
+  FROM "public"."dynamic_contract_registry"
   WHERE (chain_id, contract_address) IN ${sql(entityIdArray)};`;
 // end db operations for dynamic_contract_registry
 
@@ -179,7 +182,7 @@ SELECT
 {{/each}}
 event_chain_id, 
 event_id
-FROM public.{{entity.name.uncapitalized}}
+FROM "public"."{{entity.name.capitalized}}"
 WHERE id IN ${sql(entityIdArray)};`;
 
 const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
@@ -195,8 +198,7 @@ const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
     {{/each}} 
   }));
   return sql`
-    INSERT INTO public.{{entity.name.uncapitalized
-  }}
+    INSERT INTO "public"."{{entity.name.capitalized}}"
 ${sql(combinedEntityAndEventData,
   {{#each entity.params as |param|}}
     {{#unless param.is_derived_from}}"{{param.key}}",{{/unless}}
@@ -226,8 +228,7 @@ module.exports.batchSet{{entity.name.capitalized
 module.exports.batchDelete{{entity.name.capitalized
 }} = (sql, entityIdArray) => sql`
 DELETE
-FROM public.{{entity.name.uncapitalized
-}}
+FROM "public"."{{entity.name.capitalized}}"
 WHERE id IN ${sql(entityIdArray)};`
 // end db operations for {{entity.name.capitalized
 }}
