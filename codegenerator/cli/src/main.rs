@@ -85,10 +85,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 )
                                 .await?;
                                 commands::db_migrate::run_db_setup(project_paths, true).await?;
-                                if docker_started_on_run {
-                                    open::that("http://localhost:8080")?;
-                                }
-                                commands::start::start_indexer(project_paths).await?;
+                                commands::start::start_indexer(
+                                    project_paths,
+                                    docker_started_on_run,
+                                )
+                                .await?;
                             }
                             RerunOptions::CodegenAndResyncFromStoredEvents => {
                                 //TODO: Implement command for rerunning from stored events
@@ -99,19 +100,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 )
                                 .await?;
                                 commands::db_migrate::run_db_setup(project_paths, false).await?;
-                                if docker_started_on_run {
-                                    open::that("http://localhost:8080")?;
-                                }
-                                commands::start::start_indexer(project_paths).await?;
+                                commands::start::start_indexer(
+                                    project_paths,
+                                    docker_started_on_run,
+                                )
+                                .await?;
                             }
                             RerunOptions::ResyncFromStoredEvents => {
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
                                 commands::db_migrate::run_db_setup(project_paths, false).await?; // does this need to be run?
-                                if docker_started_on_run {
-                                    open::that("http://localhost:8080")?;
-                                }
-                                commands::start::start_indexer(project_paths).await?;
+                                commands::start::start_indexer(
+                                    project_paths,
+                                    docker_started_on_run,
+                                )
+                                .await?;
                             }
                             RerunOptions::ContinueSync => {
                                 let has_run_db_migrations = match existing_persisted_state {
@@ -124,10 +127,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 if !has_run_db_migrations || docker_started_on_run {
                                     commands::db_migrate::run_db_setup(project_paths, true).await?;
                                 }
-                                if docker_started_on_run {
-                                    open::that("http://localhost:8080")?;
-                                }
-                                commands::start::start_indexer(project_paths).await?;
+                                commands::start::start_indexer(
+                                    project_paths,
+                                    docker_started_on_run,
+                                )
+                                .await?;
                             }
                         }
                     }
@@ -150,7 +154,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             if start_args.restart {
                 commands::db_migrate::run_db_setup(project_paths, true).await?;
             }
-            commands::start::start_indexer(project_paths).await?;
+            commands::start::start_indexer(project_paths, false).await?;
             Ok(())
         }
 

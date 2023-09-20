@@ -192,7 +192,11 @@ pub mod start {
 
     pub async fn start_indexer(
         project_paths: &ProjectPaths,
+        should_open_hasura: bool,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        if should_open_hasura {
+            open::that("http://localhost:8080")?;
+        }
         //TODO: put the start script in the generated package.json
         //and run from there.
         Ok(Command::new("npm")
