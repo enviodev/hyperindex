@@ -1,23 +1,26 @@
 let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have the correct type */)
 
 module RawEventsTable = {
-  let createRawEventsTable: unit => promise<unit> = async () => {
+  let createEventTypeEnum: unit => promise<unit> = async () => {
     @warning("-21")
     let _ = await (
       %raw("sql`
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'event_type') THEN
-          CREATE TYPE EVENT_TYPE AS ENUM (
-          {{#each contracts as | contract |}}
-          {{#each contract.events as | event |}}
-          '{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'{{#unless @last}},{{/unless}}
-          {{/each}}{{#unless @last}},{{/unless}}
-         {{/each}}
+          CREATE TYPE EVENT_TYPE AS ENUM(
+          {{#each contracts as | contract |}}{{#each contract.events as | event |}}'{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event'{{#unless @last}},
+          {{/unless}}{{/each}}{{#unless @last}},
+          {{/unless}}{{/each}}
           );
         END IF;
       END $$;
       `")
     )
+    }
+
+  let createRawEventsTable: unit => promise<unit> = async () => {
+    let _ = await createEventTypeEnum()
+
     @warning("-21")
     let _ = await (
       %raw("sql`
@@ -110,16 +113,33 @@ module {{entity.name.capitalized}} = {
 {{/each}}
 
 let deleteAllTables:unit => promise<unit> = async () => {
+  Logging.trace("Dropping all tables")
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
   @warning("-21")
   await %raw("sql.unsafe`DROP SCHEMA public CASCADE;CREATE SCHEMA public;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;`")
 }
 
-let deleteAllTablesExceptRawEvents: unit => promise<unit> = async () => {
+let deleteAllTablesExceptRawEventsAndDynamicContractRegistry: unit => promise<unit> = async () => {
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
 
   @warning("-21")
-  await (%raw("sql.unsafe`CREATE SCHEMA temp;CREATE TABLE temp.raw_events AS SELECT * FROM public.raw_events WITH DATA;DROP SCHEMA public CASCADE;CREATE SCHEMA public;CREATE TABLE public.raw_events AS SELECT * FROM temp.raw_events WITH DATA;GRANT ALL ON SCHEMA public TO postgres;GRANT ALL ON SCHEMA public TO public;DROP SCHEMA temp CASCADE;`"))
+  await (
+    %raw("sql.unsafe`
+    DO $$ 
+    DECLARE
+        table_name_var text;
+    BEGIN
+        FOR table_name_var IN (SELECT table_name
+                           FROM information_schema.tables
+                           WHERE table_schema = 'public'
+                           AND table_name != 'raw_events'
+                           AND table_name != 'dynamic_contract_registry') 
+        LOOP
+            EXECUTE 'DROP TABLE IF EXISTS ' || table_name_var || ' CASCADE';
+        END LOOP;
+    END $$;
+  `")
+  )
 }
 
 type t
@@ -161,10 +181,6 @@ let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
   // await {{entity.name.capitalized}}.delete{{entity.name.capitalized}}Table()
   // {{/each}}
 
-  await DynamicContractRegistryTable.dropDynamicContractRegistryTable()->Promise.catch(err => {
-    exitCode := Failure
-    Logging.errorWithExn(err,"Error dropping dynamic contracts table")->Promise.resolve
-  })
 
   // NOTE: For now delete any remaining tables.
   if shouldDropRawEvents {
@@ -173,7 +189,7 @@ let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
       Logging.errorWithExn(err, "Error dropping entity tables")->Promise.resolve
     })
   } else {
-    await deleteAllTablesExceptRawEvents()->Promise.catch(err => {
+    await deleteAllTablesExceptRawEventsAndDynamicContractRegistry()->Promise.catch(err => {
       exitCode := Failure
       Logging.errorWithExn(err, "Error dropping entity tables except for raw events")->Promise.resolve
     })
