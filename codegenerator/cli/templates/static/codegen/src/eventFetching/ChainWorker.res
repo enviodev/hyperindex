@@ -521,11 +521,12 @@ module SkarWorker = MakeHyperSyncWorker(HyperSync.SkarHyperSync)
 module EthArchiveWorker = MakeHyperSyncWorker(HyperSync.EthArchiveHyperSync)
 
 module RawEventsWorker: S = {
-  type t = {
+  type rec t = {
     mutable latestFetchedBlockTimestamp: int,
     chainId: int,
     newRangeQueriedCallBacks: SDSL.Queue.t<unit => unit>,
     contractAddressMapping: ContractAddressingMap.mapping,
+    caughtUpToHeadHook: option<t => promise<unit>>,
   }
 
   let stopFetchingEvents = (self: t) => {
@@ -549,6 +550,7 @@ module RawEventsWorker: S = {
       chainId: chainConfig.chainId,
       newRangeQueriedCallBacks: SDSL.Queue.make(),
       contractAddressMapping,
+      caughtUpToHeadHook,
     }
   }
 
@@ -610,6 +612,8 @@ module RawEventsWorker: S = {
     //Loop through any callbacks on the queue waiting for confirmation of a new
     //range queried and run callbacks
     self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
+
+    await self.caughtUpToHeadHook->Belt.Option.mapWithDefault(Promise.resolve(), hook => hook(self))
   }
 
   let addNewRangeQueriedCallback = (self: t): promise<unit> => {
