@@ -24,6 +24,7 @@ let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawE
   let chainWorkerWithCallback = if shouldSyncFromRawEvents {
     let finishedSyncCallback = async (worker: ChainWorker.RawEventsWorker.t) => {
       await worker->ChainWorker.RawEventsWorker.stopFetchingEvents
+      logger->Logging.childInfo("Finished reprocessed cached events, starting fetcher")
       chainWorkerRef := chainConfigWorkerNoCallback->ChainWorker.make(~chainConfig)
     }
     ChainWorker.RawEventsSelectedWithCallback(Some(finishedSyncCallback))
