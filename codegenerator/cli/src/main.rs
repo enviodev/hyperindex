@@ -84,7 +84,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     &parsed_paths.project_paths,
                                 )
                                 .await?;
-                                commands::db_migrate::run_db_setup(project_paths, true).await?;
+                                const SHOULD_DROP_RAW_EVENTS: bool = true;
+                                commands::db_migrate::run_db_setup(
+                                    project_paths,
+                                    SHOULD_DROP_RAW_EVENTS,
+                                )
+                                .await?;
 
                                 const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
                                 commands::start::start_indexer(
@@ -102,7 +107,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     &parsed_paths.project_paths,
                                 )
                                 .await?;
-                                commands::db_migrate::run_db_setup(project_paths, false).await?;
+                                const SHOULD_DROP_RAW_EVENTS: bool = false;
+                                commands::db_migrate::run_db_setup(
+                                    project_paths,
+                                    SHOULD_DROP_RAW_EVENTS,
+                                )
+                                .await?;
 
                                 const SHOULD_SYNC_FROM_RAW_EVENTS: bool = true;
                                 commands::start::start_indexer(
@@ -115,7 +125,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                             RerunOptions::ResyncFromStoredEvents => {
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
-                                commands::db_migrate::run_db_setup(project_paths, false).await?; // does this need to be run?
+                                const SHOULD_DROP_RAW_EVENTS: bool = false;
+                                commands::db_migrate::run_db_setup(
+                                    project_paths,
+                                    SHOULD_DROP_RAW_EVENTS,
+                                )
+                                .await?; // does this need to be run?
                                 const SHOULD_SYNC_FROM_RAW_EVENTS: bool = true;
                                 commands::start::start_indexer(
                                     project_paths,
@@ -133,7 +148,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 };
 
                                 if !has_run_db_migrations || docker_started_on_run {
-                                    commands::db_migrate::run_db_setup(project_paths, true).await?;
+                                    const SHOULD_DROP_RAW_EVENTS: bool = true;
+                                    commands::db_migrate::run_db_setup(
+                                        project_paths,
+                                        SHOULD_DROP_RAW_EVENTS,
+                                    )
+                                    .await?;
 
                                     const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
                                     commands::start::start_indexer(
@@ -151,6 +171,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             Ok(())
         }
+
         CommandType::Stop => {
             let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
@@ -163,7 +184,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             if start_args.restart {
-                commands::db_migrate::run_db_setup(project_paths, true).await?;
+                const SHOULD_DROP_RAW_EVENTS: bool = true;
+                commands::db_migrate::run_db_setup(project_paths, SHOULD_DROP_RAW_EVENTS).await?;
             }
             const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
             const SHOULD_OPEN_HASURA: bool = false;
@@ -198,7 +220,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
 
                     DbMigrateSubcommands::Setup => {
-                        commands::db_migrate::run_db_setup(project_paths, true).await?;
+                        const SHOULD_DROP_RAW_EVENTS: bool = true;
+                        commands::db_migrate::run_db_setup(project_paths, SHOULD_DROP_RAW_EVENTS)
+                            .await?;
                     }
                 },
             }
