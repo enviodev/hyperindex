@@ -106,7 +106,7 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): S => {
     let logger = Logging.createChild(
       ~params={
         "chainId": chainConfig.chainId,
-        "workerType": "skar",
+        "workerType": "Hypersync",
         "loggerFor": "Used only in logging regestration of static contract addresses",
       },
     )
@@ -537,7 +537,7 @@ module RawEventsWorker: S = {
     let logger = Logging.createChild(
       ~params={
         "chainId": chainConfig.chainId,
-        "workerType": "rpc",
+        "workerType": "Raw Events",
         "loggerFor": "Used only in logging regestration of static contract addresses",
       },
     )

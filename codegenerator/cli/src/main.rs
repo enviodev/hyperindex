@@ -79,6 +79,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         match check_user_file_diff_match(&existing_persisted_state, &parsed_paths)?
                         {
                             RerunOptions::CodegenAndSyncFromRpc => {
+                                println!("Running codegen and resyncing from source");
                                 commands::codegen::run_codegen(&parsed_paths).await?;
                                 commands::codegen::run_post_codegen_command_sequence(
                                     &parsed_paths.project_paths,
@@ -100,6 +101,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 .await?;
                             }
                             RerunOptions::CodegenAndResyncFromStoredEvents => {
+                                println!("Running codegen and resyncing from cached events");
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
                                 commands::codegen::run_codegen(&parsed_paths).await?;
@@ -123,6 +125,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 .await?;
                             }
                             RerunOptions::ResyncFromStoredEvents => {
+                                println!("Resyncing from cached events");
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
                                 const SHOULD_DROP_RAW_EVENTS: bool = false;
@@ -140,6 +143,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 .await?;
                             }
                             RerunOptions::ContinueSync => {
+                                println!("Continuing sync");
                                 let has_run_db_migrations = match existing_persisted_state {
                                     ExistingPersistedState::NoFile => false,
                                     ExistingPersistedState::ExistingFile(ps) => {
@@ -154,15 +158,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                         SHOULD_DROP_RAW_EVENTS,
                                     )
                                     .await?;
-
-                                    const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
-                                    commands::start::start_indexer(
-                                        project_paths,
-                                        SHOULD_SYNC_FROM_RAW_EVENTS,
-                                        docker_started_on_run,
-                                    )
-                                    .await?;
                                 }
+                                const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
+                                commands::start::start_indexer(
+                                    project_paths,
+                                    SHOULD_SYNC_FROM_RAW_EVENTS,
+                                    docker_started_on_run,
+                                )
+                                .await?;
                             }
                         }
                     }
