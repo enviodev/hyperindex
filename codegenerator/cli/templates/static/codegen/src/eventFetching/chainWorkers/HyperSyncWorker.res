@@ -309,7 +309,7 @@ module Make = (HyperSync: HyperSync.S) => {
         }
 
         switch heighestBlockQueriedPage {
-        | Ok(page) =>
+        | Ok(_page) =>
           //Expected only 1 item but just taking last in case things change and we return
           //a range
           let lastBlockInRangeQueried =
@@ -322,7 +322,7 @@ module Make = (HyperSync: HyperSync.S) => {
             self.latestFetchedBlockNumber = latestBlockNumbersResolve(item.log.blockNumber)
           | None => fallbackUpdateLatestFetchedValuesToLastInBatch()
           }
-        | Error(err) => fallbackUpdateLatestFetchedValuesToLastInBatch()
+        | Error(_err) => fallbackUpdateLatestFetchedValuesToLastInBatch()
         }
         //Loop through any callbacks on the queue waiting for confirmation of a new
         //range queried and run callbacks since there will be an updated timestamp even
@@ -380,7 +380,6 @@ module Make = (HyperSync: HyperSync.S) => {
     let unaddedDynamicContracts = dynamicContracts->Belt.Array.keep(({
       contractAddress,
       contractType,
-      chainId,
     }) => {
       self.contractAddressMapping->ContractAddressingMap.addAddressIfNotExists(
         ~address=contractAddress,

@@ -1,8 +1,3 @@
-// TODO: add back warnings when ready!
-type chainId = int
-exception UndefinedChainConfig(chainId)
-exception IncorrectSyncSource(Config.syncSource)
-
 @@warning("-27")
 module type S = {
   type t

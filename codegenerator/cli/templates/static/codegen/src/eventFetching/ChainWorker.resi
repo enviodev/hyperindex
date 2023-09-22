@@ -1,6 +1,3 @@
-type chainId = int
-type exn += UndefinedChainConfig(chainId)
-
 module type S = {
   type t
   let make: (~caughtUpToHeadHook: t => promise<unit>=?, Config.chainConfig) => t

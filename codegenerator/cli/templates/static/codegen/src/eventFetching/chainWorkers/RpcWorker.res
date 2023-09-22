@@ -334,3 +334,68 @@
 
   let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
 
+  let unaddedDynamicContracts = dynamicContracts->Belt.Array.keep(({
+    contractAddress,
+    contractType,
+  }) => {
+    contractAddressMapping->ContractAddressingMap.addAddressIfNotExists(
+      ~address=contractAddress,
+      ~name=contractType,
+    )
+  })
+
+  let contractInterfaceManager =
+    unaddedDynamicContracts
+    ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
+      let chainConfig = switch Config.config->Js.Dict.get(chainId->Belt.Int.toString) {
+      | None =>
+        let exn = UndefinedChainConfig(chainId)
+        logger->Logging.childErrorWithExn(exn, "Could not find chain config for given ChainId")
+        exn->raise
+      | Some(c) => c
+      }
+
+      let singleContractInterfaceManager = ContractInterfaceManager.makeFromSingleContract(
+        ~contractAddress,
+        ~contractName=contractType,
+        ~chainConfig,
+      )
+
+      singleContractInterfaceManager
+    })
+    ->ContractInterfaceManager.combineInterfaceManagers
+
+  let {eventBatchPromises} = await EventFetching.getContractEventsOnFilters(
+    ~contractInterfaceManager,
+    ~fromBlock,
+    ~toBlock=currentlyFetchingToBlock, //Fetch up till the block that the worker has not included this address
+    ~initialBlockInterval=currentBlockInterval,
+    ~minFromBlockLogIndex=fromLogIndex,
+    ~rpcConfig,
+    ~chainId=chainConfig.chainId,
+    ~blockLoader,
+    ~logger,
+    (),
+  )
+  await eventBatchPromises
+  ->Belt.Array.map(async ({
+    timestampPromise,
+    chainId,
+    blockNumber,
+    logIndex,
+    eventPromise,
+  }): Types.eventBatchQueueItem => {
+    timestamp: await timestampPromise,
+    chainId,
+    blockNumber,
+    logIndex,
+    event: await eventPromise,
+  })
+  ->Promise.all
+}
+
+let addNewRangeQueriedCallback = (self: t): promise<unit> => {
+  self.newRangeQueriedCallBacks->ChainEventQueue.insertCallbackAwaitPromise
+}
+
+let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
