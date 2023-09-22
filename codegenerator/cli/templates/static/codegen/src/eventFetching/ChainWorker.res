@@ -28,6 +28,7 @@ module type ChainWorker = {
     ~logger: Pino.t,
   ) => promise<array<Types.eventBatchQueueItem>>
 }
+@@warnings("+27")
 
 module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
   type t = {
@@ -346,8 +347,12 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
     //be discarded
     self.hasNewDynamicContractRegistrations = pendingPromise
 
-    dynamicContracts->Belt.Array.forEach(({contractAddress, contractType, chainId}) => {
-      self.contractAddressMapping->ContractAddressingMap.addAddress(
+    let unaddedDynamicContracts = dynamicContracts->Belt.Array.keep(({
+      contractAddress,
+      contractType,
+      chainId,
+    }) => {
+      self.contractAddressMapping->ContractAddressingMap.addAddressIfNotExists(
         ~address=contractAddress,
         ~name=contractType,
       )
@@ -356,7 +361,7 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
     self.hasNewDynamicContractRegistrations = resolve(true)
 
     let contractInterfaceManager =
-      dynamicContracts
+      unaddedDynamicContracts
       ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
         let chainConfig = switch Config.config->Js.Dict.get(chainId->Belt.Int.toString) {
         | None =>
@@ -566,12 +571,13 @@ module RawEventsWorker: ChainWorker = {
     ~fromLogIndex,
     ~logger,
   ): array<Types.eventBatchQueueItem> => {
-    dynamicContracts->Belt.Array.forEach(({contractAddress, contractType}) => {
-      self.contractAddressMapping->ContractAddressingMap.addAddress(
-        ~address=contractAddress,
-        ~name=contractType,
+    let _unaddedDynamicContracts =
+      dynamicContracts->Belt.Array.keep(({contractType, contractAddress}) =>
+        self.contractAddressMapping->ContractAddressingMap.addAddressIfNotExists(
+          ~name=contractType,
+          ~address=contractAddress,
+        )
       )
-    })
 
     //Return empty array since raw events worker has already retrieved
     //dynamically registered contracts
@@ -818,8 +824,19 @@ module RpcWorker: ChainWorker = {
       currentlyFetchingToBlock,
     } = self
 
+    let unaddedDynamicContracts = dynamicContracts->Belt.Array.keep(({
+      contractAddress,
+      contractType,
+      chainId,
+    }) => {
+      self.contractAddressMapping->ContractAddressingMap.addAddressIfNotExists(
+        ~address=contractAddress,
+        ~name=contractType,
+      )
+    })
+
     let contractInterfaceManager =
-      dynamicContracts
+      unaddedDynamicContracts
       ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
         let chainConfig = switch Config.config->Js.Dict.get(chainId->Belt.Int.toString) {
         | None =>
