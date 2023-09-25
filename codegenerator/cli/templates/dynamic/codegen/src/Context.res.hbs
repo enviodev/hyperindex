@@ -114,7 +114,7 @@ module {{contract.name.capitalized}}Contract = {
                   {{#each required_entity.array_labels as |array_label| }}
                   let {{array_label}}_{{required_entity.name.capitalized}} = switch optIdArrayOf_{{array_label}}.contents {
                     | Some(ids) =>
-                      ids->Belt.Array.map(id => IO.InMemoryStore.A.getA(~id))
+                      ids->Belt.Array.map(id => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id))
                     | None =>
                       Logging.warn(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
                       []
