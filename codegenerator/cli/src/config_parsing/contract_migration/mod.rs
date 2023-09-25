@@ -1,13 +1,12 @@
-// TODO deserialization test for ABI string
-// TODO implement for multiple chains -> have two enums that link chain number to chain name and chain number to
-
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use tokio::time::{timeout, Duration};
 
 use crate::{
     cli_args::Language,
+    config_parsing::chain_helpers::NetworkName,
     config_parsing::{
         Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
     },
@@ -44,6 +43,7 @@ pub struct GetSourceCodeResult {
 }
 
 #[allow(non_snake_case)]
+#[allow(unused_variables)]
 #[derive(Debug, Deserialize)]
 struct Input {
     internalType: String,
@@ -64,11 +64,12 @@ struct Item {
 pub async fn generate_config_from_contract_address(
     name: &str,
     project_root_path: &PathBuf,
+    network: &NetworkName,
     contract_address: &str,
     language: &Language,
 ) -> anyhow::Result<()> {
     let (contract_name, abi_string) =
-        fetch_contract_name_and_abi_from_block_explorer(contract_address).await?;
+        fetch_contract_name_and_abi_from_block_explorer(network, contract_address).await?;
 
     // Create config object to be populated
     let mut config = Config {
@@ -80,7 +81,7 @@ pub async fn generate_config_from_contract_address(
 
     let mut network = Network {
         // TODO make this dependent on the network chosen
-        id: 1,
+        id: super::chain_helpers::get_network_id_given_network_name(Some(network.clone())),
         sync_source: None,
         start_block: 0,
         contracts: vec![],
@@ -102,10 +103,13 @@ pub async fn generate_config_from_contract_address(
                 let mut event_signature = format!("{}(", name);
 
                 for input in item.inputs.iter() {
-                    event_signature.push_str(&format!("{} {}, ", input.internalType, input.name));
+                    event_signature.push_str(&format!("{} {}, ", input.input_type, input.name));
                 }
-                // remove the last comma in event_signature string and close the bracket
-                event_signature.truncate(event_signature.len() - 2);
+                // Remove the last comma only if there were any inputs
+                if !item.inputs.is_empty() {
+                    event_signature.truncate(event_signature.len() - 2);
+                }
+                // Close the bracket
                 event_signature.push_str(")");
 
                 let event = ConfigEvent {
@@ -149,14 +153,47 @@ async fn write_file_to_system(
     }
     fs::write(&fs_file_path, file_string)
         .with_context(|| format!("Failed to write {} file", context_name))?;
-    // Write abi file to directory
-    println!(
-        "{} written to file: {}",
-        context_name,
-        fs_file_path.display()
-    );
 
     Ok(())
+}
+
+async fn fetch_from_block_explorer_with_retry(url: &str) -> anyhow::Result<String> {
+    let mut refetch_delay = Duration::from_secs(2);
+
+    let fail_if_maximum_is_exceeded = |current_refetch_delay, err: &str| -> anyhow::Result<()> {
+        if current_refetch_delay >= super::constants::MAXIMUM_BACKOFF {
+            eprintln!(
+                "Failed to fetch a response for the following API request {}",
+                url
+            );
+            return Err(anyhow!("Maximum backoff timeout exceeded"));
+        }
+        Ok(())
+    };
+    loop {
+        match timeout(refetch_delay, fetch_from_block_explorer(url)).await {
+            Ok(Ok(response)) => break Ok(response),
+            Ok(Err(err)) => {
+                fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
+                eprintln!(
+                    "Failed to fetch a response for the following API request {}: {}. Retrying in {} seconds...",
+                    url,
+                    &err,
+                    refetch_delay.as_secs()
+                );
+            }
+            Err(err) => {
+                fail_if_maximum_is_exceeded(refetch_delay, &err.to_string())?;
+                eprintln!(
+                    "Fetching a response for the following API request {} timed out. Retrying in {} seconds...",
+                    url,
+                    refetch_delay.as_secs()
+                );
+            }
+        }
+        tokio::time::sleep(refetch_delay).await;
+        refetch_delay *= 2;
+    }
 }
 
 async fn fetch_from_block_explorer(url: &str) -> anyhow::Result<String> {
@@ -179,15 +216,18 @@ async fn fetch_from_block_explorer(url: &str) -> anyhow::Result<String> {
 }
 
 async fn fetch_contract_name_and_abi_from_block_explorer(
+    network: &NetworkName,
     address: &str,
 ) -> anyhow::Result<(String, String)> {
     // TODO base URL should change according to the chain
     let url = format!(
-        "https://api.etherscan.io/api?module=contract&action=getsourcecode&address={}&apikey={}",
-        address, ETHERSCAN_API_KEY
+        "https://{}/api?module=contract&action=getsourcecode&address={}&apikey={}",
+        super::chain_helpers::get_base_url_for_explorer(Some(network.clone())),
+        address,
+        ETHERSCAN_API_KEY
     );
 
-    let content_raw = fetch_from_block_explorer(&url).await?;
+    let content_raw = fetch_from_block_explorer_with_retry(&url).await?;
     // Deserializing the JSON response into the correct response type
     let get_source_code_response: GetSourceCodeResponseType = serde_json::from_str(&content_raw)?;
 
@@ -210,6 +250,8 @@ mod test {
 
     use super::GetSourceCodeResponseType;
     use super::GetSourceCodeResult;
+
+    use super::Item;
 
     #[test]
     fn deserialize_get_source_code_response_type() {
@@ -259,5 +301,12 @@ mod test {
             ],
         };
         assert_eq!(response_type, expected_type);
+    }
+
+    // Unit test to see that a json string for ABI can be deserialized
+    #[test]
+    fn test_abi_string_deserializes() {
+        let abi_string = "[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_aggregator\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"_accessController\",\"type\":\"address\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"int256\",\"name\":\"current\",\"type\":\"int256\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"roundId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"}],\"name\":\"AnswerUpdated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"roundId\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"startedBy\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"}],\"name\":\"NewRound\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"OwnershipTransferRequested\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"OwnershipTransferred\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"acceptOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"accessController\",\"outputs\":[{\"internalType\":\"contract AccessControllerInterface\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"aggregator\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_aggregator\",\"type\":\"address\"}],\"name\":\"confirmAggregator\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"decimals\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"description\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_roundId\",\"type\":\"uint256\"}],\"name\":\"getAnswer\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint80\",\"name\":\"_roundId\",\"type\":\"uint80\"}],\"name\":\"getRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_roundId\",\"type\":\"uint256\"}],\"name\":\"getTimestamp\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestAnswer\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestRound\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestTimestamp\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint16\",\"name\":\"\",\"type\":\"uint16\"}],\"name\":\"phaseAggregators\",\"outputs\":[{\"internalType\":\"contract AggregatorV2V3Interface\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"phaseId\",\"outputs\":[{\"internalType\":\"uint16\",\"name\":\"\",\"type\":\"uint16\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_aggregator\",\"type\":\"address\"}],\"name\":\"proposeAggregator\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"proposedAggregator\",\"outputs\":[{\"internalType\":\"contract AggregatorV2V3Interface\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint80\",\"name\":\"_roundId\",\"type\":\"uint80\"}],\"name\":\"proposedGetRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"proposedLatestRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_accessController\",\"type\":\"address\"}],\"name\":\"setController\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_to\",\"type\":\"address\"}],\"name\":\"transferOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"version\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"}]".to_string();
+        let _abi_json: Vec<Item> = serde_json::from_str(&abi_string).unwrap();
     }
 }

@@ -12,6 +12,7 @@ use crate::{
 
 use anyhow::{anyhow, Context};
 
+pub mod chain_helpers;
 pub mod entity_parsing;
 pub mod event_parsing;
 pub mod hypersync_endpoints;

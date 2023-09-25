@@ -16,8 +16,6 @@ use crate::{
     },
 };
 
-mod chain_helpers;
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphManifest {
@@ -290,8 +288,8 @@ pub async fn generate_config_from_subgraph_id(
     for (network_name, contracts) in &network_hashmap {
         // Create network object to be populated
         let mut network = Network {
-            id: chain_helpers::get_graph_protocol_chain_id(
-                chain_helpers::deserialize_network_name(network_name),
+            id: super::chain_helpers::get_network_id_given_network_name(
+                super::chain_helpers::deserialize_network_name(network_name),
             ),
             // TODO: update to the final rpc url
             sync_source: None,
@@ -414,13 +412,13 @@ async fn fetch_ipfs_file_and_write_to_system(
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
 mod test {
     use crate::cli_args::Language;
+    use crate::config_parsing::chain_helpers::{
+        deserialize_network_name, get_network_id_given_network_name,
+    };
     use crate::config_parsing::graph_migration::get_ipfs_id_from_file_path;
     use std::collections::HashMap;
 
     use super::GraphManifest;
-
-    use super::chain_helpers;
-    // mod chain_helpers;
 
     // Integration test to see that a config file can be generated from a subgraph ID
     #[tokio::test]
@@ -491,9 +489,8 @@ mod test {
         let manifest: GraphManifest =
             serde_yaml::from_str::<GraphManifest>(&manifest_file).unwrap();
         for data_source in manifest.data_sources {
-            let chain_id = chain_helpers::get_graph_protocol_chain_id(
-                chain_helpers::deserialize_network_name(&data_source.network),
-            );
+            let chain_id =
+                get_network_id_given_network_name(deserialize_network_name(&data_source.network));
             println!("chainID: {}", chain_id);
         }
     }

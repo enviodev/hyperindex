@@ -7,6 +7,8 @@ pub mod constants;
 pub mod interactive_init;
 pub mod validation;
 
+use crate::config_parsing::chain_helpers::NetworkName;
+
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
 pub struct CommandLineArgs {
@@ -18,7 +20,7 @@ pub struct CommandLineArgs {
 pub enum CommandType {
     ///Initialize a project with a template
     Init(InitArgs),
-    
+
     ///Initialize a project with a contract address
     InitNext(InitNextArgs),
 
@@ -132,7 +134,11 @@ pub struct InitNextArgs {
     #[arg(short, long)]
     pub name: Option<String>,
 
-    ///Subgraph ID to start a migration from
+    ///Contract address to generate the config from
+    pub network: Option<NetworkName>,
+
+    // TODO should ask the user to specify another contract address if it is not found
+    ///Contract address to generate the config from
     #[arg(short, long)]
     pub contract_address: Option<ContractAddress>,
 

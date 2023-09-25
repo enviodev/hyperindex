@@ -1,5 +1,7 @@
 use super::{InitArgs, InitNextArgs, Language, Template as InitTemplate};
 
+use crate::config_parsing::chain_helpers::NetworkName;
+
 use inquire::{Select, Text};
 
 use serde::{Deserialize, Serialize};
@@ -27,6 +29,7 @@ pub struct InitInteractive {
 pub struct InitNextInteractive {
     pub name: String,
     pub directory: String,
+    pub network: NetworkName,
     pub contract_address: String,
     pub language: Language,
 }
@@ -174,11 +177,43 @@ impl InitNextArgs {
             }
         };
 
+        let network = match &self.network {
+            Some(args_network) => args_network.clone(),
+            None => {
+                use NetworkName::{
+                    ArbitrumGoerli, ArbitrumOne, Avalanche, Bsc, Goerli, Mainnet, Matic, Optimism,
+                    OptimismGoerli,
+                };
+
+                let options = vec![
+                    Mainnet,
+                    Goerli,
+                    Optimism,
+                    Bsc,
+                    Matic,
+                    OptimismGoerli,
+                    ArbitrumOne,
+                    ArbitrumGoerli,
+                    Avalanche,
+                ]
+                .iter()
+                .map(|network| serde_json::to_string(network).expect("Enum should be serializable"))
+                .collect::<Vec<String>>();
+
+                let input_network = Select::new(
+                    "Which network would you like to migrate a contract from?",
+                    options,
+                )
+                .prompt()?;
+
+                serde_json::from_str(&input_network)?
+            }
+        };
+
         let contract_address = match &self.contract_address {
             None => {
                 let input_contract_address =
-                    Text::new("[BETA VERSION] What is the address of the contract on Ethereum?")
-                        .prompt()?;
+                    Text::new("[BETA VERSION] What is the address of the contract?").prompt()?;
 
                 input_contract_address
             }
@@ -207,6 +242,7 @@ impl InitNextArgs {
         Ok(InitNextInteractive {
             name,
             directory,
+            network,
             contract_address,
             language,
         })

@@ -213,6 +213,7 @@ pub async fn run_init_next_args(init_next_args: &InitNextArgs) -> Result<(), Box
     generate_config_from_contract_address(
         &parsed_init_next_args.name,
         &project_root_path,
+        &parsed_init_next_args.network,
         &parsed_init_next_args.contract_address,
         &parsed_init_next_args.language,
     )
