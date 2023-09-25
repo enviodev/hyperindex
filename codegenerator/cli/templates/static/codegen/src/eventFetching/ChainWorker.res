@@ -40,6 +40,42 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
     serverUrl: string,
   }
 
+  module Helpers = {
+    let rec queryLogsPageWithBackoff = async (
+      ~backoffMsOnFailure=200,
+      ~callDepth=0,
+      ~maxCallDepth=15,
+      query: unit => promise<HyperSyncTypes.queryResponse<HyperSyncTypes.logsQueryPage>>,
+      logger: Pino.t,
+    ) =>
+      switch await query() {
+      | Error(e) =>
+        let msg = e->HyperSyncTypes.queryErrorToMsq
+        if callDepth < maxCallDepth {
+          logger->Logging.childWarn({
+            "err": msg,
+            "msg": `Issue while running fetching of events from Hypersync endpoint. Will wait ${backoffMsOnFailure->Belt.Int.toString}ms and try again.`,
+            "type": "EXPONENTIAL_BACKOFF",
+          })
+          await Time.resolvePromiseAfterDelay(~delayMilliseconds=backoffMsOnFailure)
+          await queryLogsPageWithBackoff(
+            ~callDepth=callDepth + 1,
+            ~backoffMsOnFailure=2 * backoffMsOnFailure,
+            query,
+            logger,
+          )
+        } else {
+          logger->Logging.childError({
+            "err": msg,
+            "msg": `Issue while running fetching batch of events from the RPC. Attempted query a maximum of ${maxCallDepth->string_of_int} times. Will NOT retry.`,
+            "type": "EXPONENTIAL_BACKOFF_MAX_DEPTH",
+          })
+          Js.Exn.raiseError(msg)
+        }
+      | Ok(v) => v
+      }
+  }
+
   let make = (chainConfig: Config.chainConfig): t => {
     let contractAddressMapping = ContractAddressingMap.make()
     let logger = Logging.createChild(
@@ -159,19 +195,17 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
       //fetch batch
-      let pageUnsafe = switch await HyperSync.queryLogsPage(
-        ~serverUrl,
-        ~fromBlock=fromBlock.contents,
-        ~toBlock=currentHeight.contents,
-        ~addresses,
-        ~topics=topLevelTopics,
-      ) {
-      | Error(e) =>
-        let msg = e->HyperSyncTypes.queryErrorToMsq
-        logger->Logging.childError(msg)
-        Js.Exn.raiseError(msg)
-      | Ok(v) => v
-      }
+      let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
+        () =>
+          HyperSync.queryLogsPage(
+            ~serverUrl,
+            ~fromBlock=fromBlock.contents,
+            ~toBlock=currentHeight.contents,
+            ~addresses,
+            ~topics=topLevelTopics,
+          ),
+        logger,
+      )
 
       let elapsedTimeFetchingPage =
         startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -403,19 +437,17 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
       let topLevelTopics = [topics]
 
       //fetch batch
-      let pageUnsafe = switch await HyperSync.queryLogsPage(
-        ~serverUrl,
-        ~fromBlock=fromBlockRef.contents,
-        ~toBlock,
-        ~addresses,
-        ~topics=topLevelTopics,
-      ) {
-      | Error(e) =>
-        let msg = e->HyperSyncTypes.queryErrorToMsq
-        logger->Logging.childError(msg)
-        Js.Exn.raiseError(msg)
-      | Ok(v) => v
-      }
+      let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
+        () =>
+          HyperSync.queryLogsPage(
+            ~serverUrl,
+            ~fromBlock=fromBlockRef.contents,
+            ~toBlock,
+            ~addresses,
+            ~topics=topLevelTopics,
+          ),
+        logger,
+      )
 
       let parsedItems =
         await pageUnsafe.items
