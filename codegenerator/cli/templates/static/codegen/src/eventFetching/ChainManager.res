@@ -1,5 +1,3 @@
-// TODO: move to `eventFetching`
-
 type t = {
   chainFetchers: Js.Dict.t<ChainFetcher.t>,
   //The priority queue should only house the latest event from each chain

@@ -1,5 +1,3 @@
-// TODO: move to `eventFetching`
-
 type t = {
   chainFetchers: Js.Dict.t<ChainFetcher.t>,
   arbitraryEventPriorityQueue: SDSL.PriorityQueue.t<Types.eventBatchQueueItem>,

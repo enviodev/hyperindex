@@ -1,4 +1,3 @@
-// TODO: move to `eventFetching` folder
 type chainId = int
 type exn += UndefinedChainConfig(chainId)
 
@@ -47,3 +46,4 @@ let addDynamicContractAndFetchMissingEvents: (
   ~logger: Pino.t,
 ) => promise<array<Types.eventBatchQueueItem>>
 let make: (Env.workerTypeSelected, ~chainConfig: Config.chainConfig) => chainWorker
+

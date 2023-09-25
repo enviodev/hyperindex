@@ -1,4 +1,3 @@
-// TODO: move to `eventFetching`
 // TODO: add back warnings when ready!
 type chainId = int
 exception UndefinedChainConfig(chainId)

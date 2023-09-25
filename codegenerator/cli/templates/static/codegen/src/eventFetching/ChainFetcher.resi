@@ -1,5 +1,3 @@
-// TODO: move to `eventFetching` folder
-
 type t = {
   logger: Pino.t,
   fetchedEventQueue: ChainEventQueue.t,

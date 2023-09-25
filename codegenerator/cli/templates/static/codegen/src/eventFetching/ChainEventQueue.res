@@ -1,5 +1,3 @@
-// TODO: move to `eventFetching` folder
-
 type t = {
   pushBacklogCallbacks: SDSL.Queue.t<unit => unit>,
   popBacklogCallbacks: SDSL.Queue.t<unit => unit>,
