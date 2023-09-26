@@ -48,7 +48,7 @@ let makeFromSingleContract = (
   ) {
   | None =>
     let exn = UndefinedContract(contractName)
-    Logging.errorWithExn(exn, "Unexpected undefined contract")
+    Logging.errorWithExn(exn, "EE900: Unexpected undefined contract. Please verify the contract name defined in the config.yaml file.")
     exn->raise
   | Some(c) => c
   }
@@ -118,7 +118,7 @@ let getAllTopicsAndAddresses = (self: t) => {
       let exn = UndefinedInterface(contractName)
       Logging.errorWithExn(
         exn,
-        "Unexpected case. Contract name does not exist in interface mapping.",
+        "EE901: Unexpected case. Contract name does not exist in interface mapping.",
       )
       exn->raise
     | Some(interface) => {

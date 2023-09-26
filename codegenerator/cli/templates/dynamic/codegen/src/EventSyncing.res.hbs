@@ -13,7 +13,7 @@ let startSyncingAllEvents = () => {
   ->Js.Promise2.catch(err => {
     Logging.error({
       "err": err,
-      "msg": `We have hit a top level while error catcher processing events on the queue. Please notify the team on discord.`,
+      "msg": `EE600: We have hit a top level while error catcher processing events on the queue. Please notify the team on discord.`,
     })->Js.Promise.resolve
   })
   ->ignore

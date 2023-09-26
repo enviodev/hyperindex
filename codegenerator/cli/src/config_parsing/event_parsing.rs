@@ -165,7 +165,7 @@ fn get_contract_type_from_config_contract(
                 .as_ref()
                 .ok_or_else(|| {
                     format!(
-                        "Please provide a valid abi_file_path for your named event {} or \
+                        "EE302: Please provide a valid abi_file_path for your named event {} or \
                          alternatively provide a event signature",
                         config_event_name
                     )
@@ -173,7 +173,7 @@ fn get_contract_type_from_config_contract(
                 .and_then(|abi| {
                     abi.event(config_event_name).map_err(|_| {
                         format!(
-                            "Unable to find an event named {} in your ABI",
+                            "EE303: Unable to find an event named {} in your ABI",
                             config_event_name
                         )
                     })
@@ -183,7 +183,7 @@ fn get_contract_type_from_config_contract(
                     match contract_abi.event(&config_defined_event.name) {
                         Err(_) => {
                             eprintln!(
-                                "WARNING: The event signature for {} defined in your config \
+                                "EE304: The event signature for {} defined in your config \
                                  does not exist in the provided ABI file",
                                 config_defined_event.name
                             );
@@ -191,7 +191,7 @@ fn get_contract_type_from_config_contract(
                         Ok(abi_file_event) => {
                             if abi_file_event != config_defined_event {
                                 eprintln!(
-                                    "WARNING: The event signature for {} in your ABI file \
+                                    "EE305: The event signature for {} in your ABI file \
                                      does not match the signature defined in the config",
                                     config_defined_event.name
                                 );

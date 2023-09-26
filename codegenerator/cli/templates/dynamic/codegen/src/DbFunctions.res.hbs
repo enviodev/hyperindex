@@ -104,7 +104,7 @@ module {{entity.name.capitalized}} = {
     let readRow = switch readRowJson->{{entity.name.uncapitalized}}ReadRow_decode {
         | Ok(v) => Ok(v)
         | Error(e) =>
-          Logging.error({"err":e, "msg": "Unable to parse row from database of entity {{entity.name.uncapitalized}} using spice", "raw_unparsed_object": readRowJson })
+          Logging.error({"err":e, "msg": "EE700: Unable to parse row from database of entity {{entity.name.uncapitalized}} using spice", "raw_unparsed_object": readRowJson })
           Error(e)
       }->Belt.Result.getExn
 

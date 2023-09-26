@@ -25,7 +25,7 @@ pub fn is_valid_foldername_inquire_validation_result(
     if !is_valid_folder_name(name) {
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            "Invalid folder name",
+            "EE400: Invalid folder name. The folder name cannot contain any of the following special characters: / \\ : * ? \" < > |",
         )));
     }
     Ok(Validation::Valid)
@@ -38,7 +38,7 @@ pub fn is_directory_new(
         return Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
-                "Directory '{}' already exists. Please use a new directory.",
+                "EE401: Directory '{}' already exists. Please use a new directory.",
                 directory
             ),
         )));

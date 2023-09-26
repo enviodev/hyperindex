@@ -190,7 +190,7 @@ impl TryFrom<String> for EventNameOrSig {
             match HumanReadableParser::parse_event(sig) {
                 Ok(event) => Ok(event),
                 Err(err) => Err(format!(
-                    "Unable to parse event signature {} due to the following error: {}",
+                    "EE103: Unable to parse event signature {} due to the following error: {}. Please refer to our docs on how to correctly define a human readable ABI.",
                     sig, err
                 )),
             }
@@ -351,13 +351,13 @@ fn strip_to_letters(string: &str) -> String {
 pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Config> {
     let config = std::fs::read_to_string(config_path).context(
         format!(
-            "Failed to resolve config path {0}. Make sure you're in the correct directory and that a config file with the name {0} exists",
+            "EE104: Failed to resolve config path {0}. Make sure you're in the correct directory and that a config file with the name {0} exists",
             &config_path.to_str().unwrap_or("unknown config file name path"),
         )
     )?;
 
     let mut deserialized_yaml: Config = serde_yaml::from_str(&config).context(format!(
-        "Failed to deserialize config. Visit the docs for more information {}",
+        "EE105: Failed to deserialize config. Visit the docs for more information {}",
         links::DOC_CONFIGURATION_FILE
     ))?;
 
@@ -393,12 +393,12 @@ pub async fn convert_config_to_chain_configs(
                     EventNameOrSig::Name(config_event_name) => match &parsed_abi_from_file {
                         Some(contract_abi) => {
                             contract_abi.event(config_event_name).context(format!(
-                                "event \"{}\" cannot be parsed the provided abi for contract {}",
-                                config_event_name, contract.name
-                            ))?
+                            "EE300: event \"{}\" cannot be parsed the provided abi for contract {}",
+                            config_event_name, contract.name
+                        ))?
                         }
                         None => {
-                            let message = anyhow!("Please add abi_file_path for contract {} to your config to parse event {} or define the signature in the config", contract.name, config_event_name);
+                            let message = anyhow!("EE301: Please add abi_file_path for contract {} to your config to parse event {} or define the signature in the config", contract.name, config_event_name);
                             Err(message)?
                         }
                     },
@@ -442,9 +442,9 @@ pub async fn convert_config_to_chain_configs(
             },
             None => {
                 let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(&network.id)
-                    .context("Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
+                    .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
 
-                defualt_hypersync_endpoint.check_endpoint_health().await.context(format!("hypersync endpoint unhealthy at network {}, please provide rpc_config or hypersync_config. Read more in our docs https://docs.envio.dev/docs/configuration-file", network.id ))?;
+                defualt_hypersync_endpoint.check_endpoint_health().await.context(format!("EE107: hypersync endpoint unhealthy at network {}, please provide rpc_config or hypersync_config. Read more in our docs https://docs.envio.dev/docs/configuration-file", network.id ))?;
                 match defualt_hypersync_endpoint {
                     HypersyncEndpoint::Skar(skar_url) => (None, Some(skar_url), None),
                     HypersyncEndpoint::EthArchive(eth_archive_url) => {

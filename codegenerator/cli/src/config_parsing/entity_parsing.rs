@@ -15,14 +15,14 @@ pub fn get_entity_record_types_from_schema(
 ) -> Result<Vec<EntityRecordTypeTemplate>, String> {
     let schema_string = std::fs::read_to_string(&parsed_paths.schema_path).map_err(|err| {
         format!(
-            "Failed to read schema file at {} with Error: {}",
+            "EE200: Failed to read schema file at {} with Error: {}. Please ensure that the schema file is placed correctly in the directory.",
             &parsed_paths.schema_path.to_str().unwrap_or("unknown file"),
             err
         )
     })?;
 
     let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
-        .map_err(|err| format!("Failed to parse schema with Error: {}", err))?;
+        .map_err(|err| format!("EE201: Failed to parse schema with Error: {}", err))?;
     let mut schema_object_types = Vec::new();
     let mut entities_set: HashSet<String> = HashSet::new();
 
@@ -61,7 +61,7 @@ pub fn get_entity_record_types_from_schema(
             //in the case of multiple we can just use a find rather than a filter method above
             if derived_from_directives.len() > 1 {
                 let msg = format!(
-                    "Cannot use more than one @derivedFrom directive, please update your entity {} at field {}",
+                    "EE202: Cannot use more than one @derivedFrom directive, please update your entity {} at field {}",
                     object.name, field.name
                 );
                 return Err(msg);
@@ -74,13 +74,13 @@ pub fn get_entity_record_types_from_schema(
                     let field_arg =
                         d.arguments.iter().find(|a| a.0 == "field").ok_or_else(|| {
                             format!(
-                                "No 'field' argument supplied to @derivedFrom directive on field {}, entity {}",
+                                "EE203: No 'field' argument supplied to @derivedFrom directive on field {}, entity {}",
                                 field.name, object.name
                             )
                         })?;
                     match &field_arg.1 {
                         Value::String(val) => Some(val.to_capitalized_options()),
-                        _ => Err(format!("'field' argument in @derivedFrom directive on field {}, entity {} needs to contain a string", field.name, object.name))?
+                        _ => Err(format!("EE204: 'field' argument in @derivedFrom directive on field {}, entity {} needs to contain a string", field.name, object.name))?
 
                     }
                 }
@@ -109,7 +109,7 @@ pub fn get_entity_record_types_from_schema(
                         })
                         .ok_or_else(|| {
                             format!(
-                                "Derived entity {} does not exist in schema",
+                                "EE205: Derived entity {} does not exist in schema",
                                 relational_type.mapped_entity.capitalized
                             )
                         })?;
@@ -123,7 +123,7 @@ pub fn get_entity_record_types_from_schema(
                         })
                         .ok_or_else(|| {
                             format!(
-                                "Derived field {} does not exist on entity {}",
+                                "EE206: Derived field {} does not exist on entity {}",
                                 field_key.uncapitalized, entity.name
                             )
                         })?;
@@ -218,7 +218,8 @@ fn gql_named_types_to_postgres_types(
             if entities_set.contains(named_type) {
                 "text".to_owned() //This would be the ID of another defined entity
             } else {
-                let error_message = format!("Failed to parse undefined type: {}", named_type);
+                let error_message =
+                    format!("EE207: Failed to parse undefined type: {}", named_type);
                 Err(error_message.to_owned())?
             }
         }
@@ -239,9 +240,9 @@ fn gql_type_to_postgres_type(
             //Postgres doesn't support nullable types inside of arrays
             Type::NonNullType(gql_type) =>format!("{}[]", gql_type_to_postgres_type(&gql_type, entities_set)?),
             Type::NamedType(named)   => Err(format!(
-                "Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", named
+                "EE208: Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", named
             ))?,
-            Type::ListType(_) => Err("Nullable multidemensional lists types are unsupported, please include a '!' for your inner list type eg. [[Int!]!]")?,
+            Type::ListType(_) => Err("EE209: Nullable multidimensional lists types are unsupported, please include a '!' for your inner list type eg. [[Int!]!]")?,
         },
         Type::NonNullType(gql_type) => format!(
             "{} NOT NULL",
