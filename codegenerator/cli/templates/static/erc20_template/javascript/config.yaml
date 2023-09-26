@@ -2,7 +2,7 @@ name: erc20indexer
 description: ERC-20 indexer
 networks:
   - id: 1 # Ethereum Mainnet
-    start_block: 0
+    start_block: 10861674
     contracts:
       - name: ERC20
         abi_file_path: abis/ERC20.json
