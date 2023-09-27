@@ -174,6 +174,12 @@ async fn generate_network_contract_hashmap(manifest_raw: &str) -> HashMap<String
         }
     }
 
+    // remove any duplicate contracts per network before returning the network_contracts hashmap
+    for (_, contracts) in &mut network_contracts {
+        contracts.sort();
+        contracts.dedup();
+    }
+
     network_contracts
 }
 
