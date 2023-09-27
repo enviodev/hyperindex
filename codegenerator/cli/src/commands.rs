@@ -99,7 +99,6 @@ pub mod codegen {
                 Command::new("npm")
                     .arg("install")
                     .arg("--global")
-                    .arg("--force")
                     .arg("pnpm")
                     .status()
                     .await?;
@@ -111,6 +110,9 @@ pub mod codegen {
     pub async fn pnpm_install(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        println!("Checking for pnpm package...");
+        check_and_install_pnpm().await?;
+
         Ok(Command::new("pnpm")
             .arg("install")
             .arg("--no-frozen-lockfile")
@@ -141,9 +143,6 @@ pub mod codegen {
     pub async fn run_post_codegen_command_sequence(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        println!("Checking for pnpm package...");
-        check_and_install_pnpm().await?;
-
         println!("installing packages... ");
         let exit1 = pnpm_install(project_paths).await?;
         if !exit1.success() {
