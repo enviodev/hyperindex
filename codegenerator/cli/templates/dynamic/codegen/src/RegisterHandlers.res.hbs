@@ -8,7 +8,7 @@ try {
   | err => { Logging.error("EE500: There was an issue importing the handler file for {{contract.name.capitalized
   }}. Expected file at {{contract.handler.relative_to_generated_src
   }}")
-  Logging.error(err)
+  Js.log(err)
   }
   }
 }
