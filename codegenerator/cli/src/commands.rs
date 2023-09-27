@@ -81,6 +81,33 @@ pub mod codegen {
     static CODEGEN_STATIC_DIR: Dir<'_> =
         include_dir!("$CARGO_MANIFEST_DIR/templates/static/codegen");
 
+    pub async fn check_and_install_pnpm() -> std::io::Result<()> {
+        // Check if pnpm is already installed
+        let check_pnpm = Command::new("pnpm")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        // If pnpm is not installed, run the installation command
+        match check_pnpm.await {
+            Ok(status) if status.success() => {
+                println!("Package pnpm is already installed. Continuing...");
+            }
+            _ => {
+                println!("Package pnpm is not installed. Installing now...");
+                Command::new("npm")
+                    .arg("install")
+                    .arg("--global")
+                    .arg("--force")
+                    .arg("pnpm")
+                    .status()
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub async fn pnpm_install(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
@@ -114,6 +141,9 @@ pub mod codegen {
     pub async fn run_post_codegen_command_sequence(
         project_paths: &ProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+        println!("Checking for pnpm package...");
+        check_and_install_pnpm().await?;
+
         println!("installing packages... ");
         let exit1 = pnpm_install(project_paths).await?;
         if !exit1.success() {
