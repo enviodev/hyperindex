@@ -117,7 +117,7 @@ pub fn validate_deserialized_config_yaml(
         if let Some(sync_source) = &network.sync_source {
             match sync_source.clone() {
                 SyncSourceConfig::RpcConfig(rpc_config) => rpc_urls.push(rpc_config.url.clone()),
-                SyncSourceConfig::HypersyncConfig(hypersync_config) => (), //TODO: add validation
+                SyncSourceConfig::HypersyncConfig(_hypersync_config) => (), //TODO: add validation
             }
         }
         for contract in &network.contracts {
