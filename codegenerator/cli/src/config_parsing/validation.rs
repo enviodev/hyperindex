@@ -184,13 +184,15 @@ pub fn validate_deserialized_config_yaml(
     Ok(())
 }
 
-// Function to validate the schema string
+// Checking that schema does not include any reserved words
 pub fn check_names_from_schema_for_reserved_words(schema_str: &str) -> Vec<String> {
     // Checking that schema does not include any reserved words
     let mut detected_reserved_words_in_schema = Vec::new();
-
-    // Creating a deduplicated set of reserved words from rescript
-    let words_set: HashSet<&str> = RESCRIPT_RESERVED_WORDS.iter().cloned().collect();
+    // Creating a deduplicated set of reserved words from javascript or rescript
+    let mut set = HashSet::new();
+    set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
+    set.extend(RESCRIPT_RESERVED_WORDS.iter());
+    let words_set: Vec<&str> = set.into_iter().cloned().collect();
 
     let re = Regex::new(r"\b\w+\b").unwrap();
 
@@ -327,8 +329,8 @@ mod tests {
 
     #[test]
     fn test_names_from_schema_for_reserved_words() {
-        let names_from_schema = "Greeting id greetings lastGreeting lazy open";
+        let names_from_schema = "Greeting id greetings lastGreeting lazy open catch";
         let flagged_words = super::check_names_from_schema_for_reserved_words(names_from_schema);
-        assert_eq!(flagged_words, vec!["lazy", "open"]);
+        assert_eq!(flagged_words, vec!["lazy", "open", "catch"]);
     }
 }

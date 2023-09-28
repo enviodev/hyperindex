@@ -169,7 +169,7 @@ pub fn get_entity_record_types_from_schema(
 
     if !detected_reserved_words.is_empty() {
         return Err(format!(
-            "EE210: The schema file cannot contain any reserved words from ReScript. Reserved word(s) are: {}. Please rename them in the schema file.",
+            "EE210: The schema file cannot contain any reserved words from JavaScript or ReScript. Reserved word(s) are: {}. Please rename them in the schema file.",
             detected_reserved_words.join(" "),
         ));
     }
