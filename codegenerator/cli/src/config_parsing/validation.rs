@@ -5,7 +5,9 @@ use std::path::Path;
 
 use crate::config_parsing::Config;
 
-use super::constants::RESERVED_WORDS;
+use super::constants::JAVASCRIPT_RESERVED_WORDS;
+use super::constants::RESCRIPT_RESERVED_WORDS;
+use super::constants::TYPESCRIPT_RESERVED_WORDS;
 use super::SyncSourceConfig;
 
 // It must start with a letter or underscore.
@@ -49,13 +51,20 @@ fn are_contract_names_unique(contract_names: &[String]) -> bool {
 // Words from config and schema are used in the codegen and eventually in eventHandlers for the user, thus cannot contain any reserved words.
 fn check_reserved_words(input_string: &str) -> Vec<String> {
     let mut flagged_words = Vec::new();
-    let words_set: HashSet<&str> = RESERVED_WORDS.iter().cloned().collect();
+    // Creating a deduplicated set of reserved words from javascript, typescript and rescript
+    let mut set = HashSet::new();
+    set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
+    set.extend(TYPESCRIPT_RESERVED_WORDS.iter());
+    set.extend(RESCRIPT_RESERVED_WORDS.iter());
+
+    let words_set: Vec<&str> = set.into_iter().cloned().collect();
+
     let re = Regex::new(r"\b\w+\b").unwrap();
 
     // Find all alphanumeric words in the YAML string
     for word in re.find_iter(input_string) {
         let word = word.as_str();
-        if words_set.contains(word) {
+        if words_set.contains(&word) {
             flagged_words.push(word.to_string());
         }
     }
@@ -254,11 +263,11 @@ mod tests {
     #[test]
     fn test_check_reserved_words() {
         let yaml_string =
-            "This is a YAML string with reserved words like break, import, match and symbol.";
+            "This is a YAML string with reserved words like break, import and symbol plus unreserved word like match.";
         let flagged_words = super::check_reserved_words(yaml_string);
         assert_eq!(
             flagged_words,
-            vec!["string", "with", "break", "import", "match", "and", "symbol"]
+            vec!["string", "with", "break", "import", "and", "symbol"]
         );
     }
 
