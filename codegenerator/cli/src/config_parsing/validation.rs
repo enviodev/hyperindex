@@ -184,6 +184,27 @@ pub fn validate_deserialized_config_yaml(
     Ok(())
 }
 
+// Function to validate the schema string
+pub fn check_names_from_schema_for_reserved_words(schema_str: &str) -> Vec<String> {
+    // Checking that schema does not include any reserved words
+    let mut detected_reserved_words_in_schema = Vec::new();
+
+    // Creating a deduplicated set of reserved words from rescript
+    let words_set: HashSet<&str> = RESCRIPT_RESERVED_WORDS.iter().cloned().collect();
+
+    let re = Regex::new(r"\b\w+\b").unwrap();
+
+    // Find all alphanumeric words in the YAML string
+    for word in re.find_iter(schema_str) {
+        let word = word.as_str();
+        if words_set.contains(&word) {
+            detected_reserved_words_in_schema.push(word.to_string());
+        }
+    }
+
+    detected_reserved_words_in_schema
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -302,5 +323,12 @@ mod tests {
         let is_invalid_other_protocol = super::validate_rpc_url(invalid_rpc_url_other_protocol);
         assert!(!is_invalid_missing_slash);
         assert!(!is_invalid_other_protocol);
+    }
+
+    #[test]
+    fn test_names_from_schema_for_reserved_words() {
+        let names_from_schema = "Greeting id greetings lastGreeting lazy open";
+        let flagged_words = super::check_names_from_schema_for_reserved_words(names_from_schema);
+        assert_eq!(flagged_words, vec!["lazy", "open"]);
     }
 }
