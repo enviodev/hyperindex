@@ -101,7 +101,7 @@ exception UndefinedChain(Types.chainId)
 let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
   switch self.chainFetchers->Js.Dict.get(chainId->Belt.Int.toString) {
   | None =>
-    Logging.error(`Undefined chain ${chainId->Belt.Int.toString} in chain manager`)
+    Logging.error(`EE1000: Undefined chain ${chainId->Belt.Int.toString} in chain manager. Please verify that the chain ID defined in the config.yaml file is valid.`)
     UndefinedChain(chainId)->raise
   | Some(fetcher) => fetcher
   }

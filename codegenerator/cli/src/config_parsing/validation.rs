@@ -90,7 +90,7 @@ fn validate_names_not_reserved(
     let detected_reserved_words = check_reserved_words(&names_from_config.join(" "));
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",
+            "EE102: The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",
             detected_reserved_words.join(" "),
             part_of_config
         ));
@@ -103,7 +103,7 @@ pub fn validate_deserialized_config_yaml(
     deserialized_yaml: &Config,
 ) -> anyhow::Result<()> {
     if !is_valid_postgres_db_name(&deserialized_yaml.name) {
-        return Err(anyhow!("The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+        return Err(anyhow!("EE108: The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 
     // Retrieving details from config file as a vectors of String
@@ -148,7 +148,7 @@ pub fn validate_deserialized_config_yaml(
 
         // Checking that contract names are non-unique
         if !are_contract_names_unique(&contract_names) {
-            return Err(anyhow!("The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")));
+            return Err(anyhow!("EE101: The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")));
         }
 
         // Checking that contract names do not include any reserved words
@@ -159,7 +159,7 @@ pub fn validate_deserialized_config_yaml(
     for a_contract_addressess in &contract_addresses {
         if !are_valid_ethereum_addresses(&a_contract_addressess.inner) {
             return Err(anyhow!(
-                "One of the contract addresses in the config file ({}) isn't valid",
+                "EE100: One of the contract addresses in the config file ({}) isn't valid",
                 &config_path
                     .to_str()
                     .unwrap_or("unknown config file name path")
@@ -169,7 +169,7 @@ pub fn validate_deserialized_config_yaml(
 
     // Checking if RPC URLs are valid
     if !validate_rpc_urls_from_config(&rpc_urls) {
-        return Err(anyhow!("The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")));
+        return Err(anyhow!("EE109: The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")));
     }
 
     Ok(())

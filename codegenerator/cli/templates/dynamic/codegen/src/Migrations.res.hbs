@@ -158,21 +158,21 @@ let runUpMigrations = async (~shouldExit) => {
   let exitCode = ref(Success)
       await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
         exitCode := Failure
-        Logging.errorWithExn(err, `Error creating raw events table`)->Promise.resolve
+        Logging.errorWithExn(err, `EE800: Error creating raw events table`)->Promise.resolve
       })
   await DynamicContractRegistryTable.createDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.errorWithExn(err,`Error creating dynamic contracts table`)->Promise.resolve
+    Logging.errorWithExn(err,`EE801: Error creating dynamic contracts table`)->Promise.resolve
   })
 // TODO: catch and handle query errors
 {{#each entities as |entity|}}
   await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()->Promise.catch(err => {
     exitCode := Failure
-    Logging.errorWithExn(err,`Error creating {{entity.name.capitalized}} table`)->Promise.resolve
+    Logging.errorWithExn(err,`EE802: Error creating {{entity.name.capitalized}} table`)->Promise.resolve
   })
 {{/each}}
   await TrackTables.trackAllTables()->Promise.catch(err => {
-    Logging.errorWithExn(err,`Error tracking tables`)->Promise.resolve
+    Logging.errorWithExn(err,`EE803: Error tracking tables`)->Promise.resolve
   })
   if shouldExit {
     process->exit(exitCode.contents)
@@ -191,12 +191,12 @@ let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
   if shouldDropRawEvents {
     await deleteAllTables()->Promise.catch(err => {
       exitCode := Failure
-      Logging.errorWithExn(err, "Error dropping entity tables")->Promise.resolve
+      Logging.errorWithExn(err, "EE804: Error dropping entity tables")->Promise.resolve
     })
   } else {
     await deleteAllTablesExceptRawEventsAndDynamicContractRegistry()->Promise.catch(err => {
       exitCode := Failure
-      Logging.errorWithExn(err, "Error dropping entity tables except for raw events")->Promise.resolve
+      Logging.errorWithExn(err, "EE805: Error dropping entity tables except for raw events")->Promise.resolve
     })
   }
    if shouldExit {

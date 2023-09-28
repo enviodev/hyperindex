@@ -69,7 +69,7 @@ let rec loadNext = async (am: asyncMap<'a>, k: int) => {
   // Track that we are loading it now
   am.inProgress->Belt.MutableSet.Int.add(k)
 
-  let awaitTaskPrommiseAndLoadNextWithTimeout = async () => {
+  let awaitTaskPromiseAndLoadNextWithTimeout = async () => {
     let val = await Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
     // Resolve the external promise
     am.resolvers->Js.Dict.get(key)->Belt.Option.map(r => r(. val))->ignore
@@ -96,17 +96,17 @@ let rec loadNext = async (am: asyncMap<'a>, k: int) => {
   }
 
   await (
-    switch await awaitTaskPrommiseAndLoadNextWithTimeout() {
+    switch await awaitTaskPromiseAndLoadNextWithTimeout() {
     | _ => Promise.resolve()
     | exception err =>
       Logging.error({
         "err": err,
-        "msg": `Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
+        "msg": `EE1100: Top level promise timeout reached. Please review other errors or warnings in the code. This function will retry in ${(am._retryDelayMillis / 1000)
             ->Belt.Int.toString} seconds. It is highly likely that your indexer isn't syncing on one or more chains currently. Also take a look at the "suggestedFix" in the metadata of this command`,
         "metadata": am.metadata,
       })
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=am._retryDelayMillis)
-      awaitTaskPrommiseAndLoadNextWithTimeout()
+      awaitTaskPromiseAndLoadNextWithTimeout()
     }
   )
 }

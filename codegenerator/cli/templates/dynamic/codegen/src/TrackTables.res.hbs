@@ -70,7 +70,7 @@ let clearHasuraMetadata = async () => {
   switch validateHasuraResponse(~statusCode, ~responseJson) {
   | Error(_) =>
     Logging.error({
-      "msg": `There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "msg": `EE806: There was an issue clearing metadata in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
     })
@@ -112,7 +112,7 @@ let trackTable = async (~tableName: string) => {
   switch validateHasuraResponse(~statusCode, ~responseJson) {
   | Error(_) =>
     Logging.error({
-      "msg": `There was an issue tracking the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "msg": `EE807: There was an issue tracking the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableName": tableName,
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
@@ -160,7 +160,7 @@ let createSelectPermissions = async (~tableName: string) => {
   switch validateHasuraResponse(~statusCode, ~responseJson) {
   | Error(_) =>
     Logging.error({
-      "msg": `There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "msg": `EE808: There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableName": tableName,
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
@@ -206,7 +206,7 @@ let createEntityRelationship = async (
   switch validateHasuraResponse(~statusCode, ~responseJson) {
   | Error(_) =>
     Logging.error({
-      "msg": `There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "msg": `EE808: There was an issue setting up view permissions for the ${tableName} table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
       "tableName": tableName,
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
