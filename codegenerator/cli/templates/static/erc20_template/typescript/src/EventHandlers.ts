@@ -5,95 +5,106 @@ import {
   ERC20Contract_Transfer_handler,
 } from "../generated/src/Handlers.gen";
 
-import { accountEntity } from "../generated/src/Types.gen";
+import { accountEntity, approvalEntity } from "../generated/src/Types.gen";
 
 ERC20Contract_Approval_loader(({ event, context }) => {
-  // loading the required accountEntity
-  context.account.ownerAccountChangesLoad(event.params.owner.toString());
+  context.account.load(event.params.owner.toString());
+  context.approval.load(
+    event.params.owner.toString() + "-" + event.params.spender.toString(),
+    {}
+  );
 });
 
-ERC20Contract_Approval_handler(({ event, context: { account } }) => {
+ERC20Contract_Approval_handler(({ event, context }) => {
   //  getting the owner accountEntity
+  let ownerAccount = context.account.get(event.params.owner.toString());
 
-  let ownerAccount = account.ownerAccountChanges;
-
-  if (ownerAccount != undefined) {
-    // setting accountEntity object
-    let accountObject: accountEntity = {
-      id: ownerAccount.id,
-      approval: event.params.value,
-      balance: ownerAccount.balance,
-    };
-
-    // setting the accountEntity with the new transfer field value
-    account.set(accountObject);
-  } else {
-    // setting accountEntity object
+  if (ownerAccount == undefined) {
+    // create the account
+    // This is an unlikely scenario, but it is possible
     let accountObject: accountEntity = {
       id: event.params.owner.toString(),
-      approval: event.params.value,
       balance: 0n,
     };
-
-    // setting the accountEntity with the new transfer field value
-    account.set(accountObject);
+    context.account.set(accountObject);
   }
+
+  let approvalId =
+    event.params.owner.toString() + "-" + event.params.spender.toString();
+
+  let approval = context.approval.get(approvalId);
+
+  let approvalObject: approvalEntity = {
+    id: approvalId,
+    amount: event.params.value,
+    owner: event.params.owner.toString(),
+    spender: event.params.spender.toString(),
+  };
+
+  // this is the same for create or update as the amount is overwritten
+  context.approval.set(approvalObject);
 });
 
 ERC20Contract_Transfer_loader(({ event, context }) => {
-  // loading the required accountEntity
-  context.account.senderAccountChangesLoad(event.params.from.toString());
-  context.account.receiverAccountChangesLoad(event.params.to.toString());
+  context.account.load(event.params.from.toString());
+  context.account.load(event.params.to.toString());
+  context.approval.load(
+    event.params.from.toString() + "-" + event.params.to.toString(),
+    {}
+  );
 });
 
-ERC20Contract_Transfer_handler(({ event, context: { account } }) => {
-  // getting the sender accountEntity
-  let senderAccount = account.senderAccountChanges;
+ERC20Contract_Transfer_handler(({ event, context }) => {
+  let senderAccount = context.account.get(event.params.from.toString());
 
-  if (senderAccount != undefined) {
-    // setting the totals field value
-    // setting accountEntity object
-    let accountObject: accountEntity = {
-      id: senderAccount.id,
-      approval: senderAccount.approval,
-      balance: senderAccount.balance - event.params.value,
-    };
-    // setting the accountEntity with the new transfer field value
-    account.set(accountObject);
-  } else {
-    // setting accountEntity object
+  if (senderAccount == undefined) {
+    // create the account
+    // This is likely only ever going to be the zero address in the case of the first mint
     let accountObject: accountEntity = {
       id: event.params.from.toString(),
-      approval: 0n,
       balance: 0n - event.params.value,
     };
 
-    // setting the accountEntity with the new transfer field value
-    account.set(accountObject);
+    context.account.set(accountObject);
+  } else {
+    // subtract the balance from the existing users balance
+    let accountObject: accountEntity = {
+      id: senderAccount.id,
+      balance: senderAccount.balance - event.params.value,
+    };
+    context.account.set(accountObject);
   }
 
-  // getting the sender accountEntity
-  let receiverAccount = account.receiverAccountChanges;
+  let receiverAccount = context.account.get(event.params.to.toString());
 
-  if (receiverAccount != undefined) {
-    // setting accountEntity object
+  if (receiverAccount == undefined) {
+    // create new account
+    let accountObject: accountEntity = {
+      id: event.params.to.toString(),
+      balance: event.params.value,
+    };
+    context.account.set(accountObject);
+  } else {
+    // update existing account
     let accountObject: accountEntity = {
       id: receiverAccount.id,
-      approval: receiverAccount.approval,
       balance: receiverAccount.balance + event.params.value,
     };
 
-    // setting the accountEntity with the new transfer field value
-    account.set(accountObject);
-  } else {
-    // setting accountEntity object
-    let accountObject: accountEntity = {
-      id: event.params.to.toString(),
-      approval: 0n,
-      balance: event.params.value,
-    };
+    context.account.set(accountObject);
+  }
 
-    // setting the accountEntity with the new transfer field value
-    account.set(accountObject);
+  let approvalId =
+    event.params.from.toString() + "-" + event.params.to.toString();
+
+  let approval = context.approval.get(approvalId);
+
+  if (approval != undefined) {
+    // if this is a spender from the approvals, subtract the amount from the approval on transfer
+    let approvalObject: approvalEntity = {
+      ...approval,
+      amount: approval.amount - event.params.value,
+    };
+    context.approval.set(approvalObject);
   }
 });

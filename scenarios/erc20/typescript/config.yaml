@@ -1,24 +1,18 @@
-name: ERC20
+name: erc20indexer
 description: ERC-20 indexer
 networks:
-  - id: 5 # Goerli Testnet
-    # rpc_config:
-    #   url: https://rpc.ankr.com/eth_goerli # If you prefer using RPC to sync rather than hypersync, we recommend you change this to a dedicated RPC provider
-    start_block: 9493714
+  - id: 1 # Ethereum Mainnet
+    start_block: 10861674
     contracts:
       - name: ERC20
-        abi_file_path: abis/erc20.json
-        address: ["0x61cce07e4cad3bf797667f8fd14d2a7d1582038e"]
-        handler: src/EventHandlers.js
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" #UNI
+        handler: src/EventHandlers.ts
         events:
-          - event: "Approval"
+          - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
             requiredEntities:
               - name: "Account"
-                labels:
-                  - "ownerAccountChanges"
-          - event: "Transfer"
+              - name: "Approval"
+          - event: "Transfer(address indexed from, address indexed to, uint256 value)"
             requiredEntities:
               - name: "Account"
-                labels:
-                  - "senderAccountChanges"
-                  - "receiverAccountChanges"
+              - name: "Approval"
