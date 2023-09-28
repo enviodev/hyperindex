@@ -6,7 +6,7 @@
       "build": "rescript build -with-deps",
       "watch": "rescript build -w -with-deps",
       "codegen": "envio codegen",
-      "start": "pnpm build &&node generated/src/Index.bs.js"
+      "start": "pnpm build && node generated/src/Index.bs.js"
   },
   "devDependencies": {
     "@glennsl/rescript-fetch": "^0.2.0",
