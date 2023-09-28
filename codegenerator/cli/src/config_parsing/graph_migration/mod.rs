@@ -118,6 +118,11 @@ fn get_event_handler_directory(language: &Language) -> String {
     }
 }
 
+// Function to replace unsupported field types from schema
+fn update_schema_with_supported_field_types(schema_str: String) -> String {
+    return schema_str.replace("BigDecimal", "Float");
+}
+
 // Function to fetch a file from IPFS
 // TODO: use a pinning service of hitting the IPFS gateway which can be slow sometimes
 async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
@@ -369,9 +374,13 @@ async fn fetch_ipfs_file_and_write_to_system(
 ) -> anyhow::Result<()> {
     let ipfs_id: &str = get_ipfs_id_from_file_path(&ipfs_file_path);
 
-    let file_string = fetch_ipfs_file_with_retry(ipfs_id, context_name)
+    let mut file_string = fetch_ipfs_file_with_retry(ipfs_id, context_name)
         .await
         .with_context(|| format!("Failed to fetch {} IPFS file", context_name))?;
+
+    if context_name == "schema" {
+        file_string = update_schema_with_supported_field_types(file_string);
+    }
 
     fs::write(&fs_file_path, file_string)
         .with_context(|| format!("Failed to write {} IPFS file", context_name))?;
@@ -414,6 +423,48 @@ mod test {
     fn test_manifest_deserializes() {
         let manifest_file = std::fs::read_to_string("test/configs/graph-manifest.yaml").unwrap();
         serde_yaml::from_str::<GraphManifest>(&manifest_file).unwrap();
+    }
+
+    // Unit test to see unsupported types in schema are replaced correctly
+    #[test]
+    fn test_update_schema_with_supported_field_types() {
+        let schema_str = "type Factory @entity {
+                id: ID!
+                poolCount: BigInt!
+                txCount: BigInt!
+                totalVolumeUSD: BigDecimal!
+                totalVolumeETH: BigDecimal!
+                totalFeesUSD: BigDecimal!
+                totalFeesETH: BigDecimal!
+                untrackedVolumeUSD: BigDecimal!
+                totalValueLockedUSD: BigDecimal!
+                totalValueLockedETH: BigDecimal!
+                totalValueLockedUSDUntracked: BigDecimal!
+                totalValueLockedETHUntracked: BigDecimal!
+                owner: ID!
+            }"
+        .to_string();
+        let expected_schema_str = "type Factory @entity {
+                id: ID!
+                poolCount: BigInt!
+                txCount: BigInt!
+                totalVolumeUSD: Float!
+                totalVolumeETH: Float!
+                totalFeesUSD: Float!
+                totalFeesETH: Float!
+                untrackedVolumeUSD: Float!
+                totalValueLockedUSD: Float!
+                totalValueLockedETH: Float!
+                totalValueLockedUSDUntracked: Float!
+                totalValueLockedETHUntracked: Float!
+                owner: ID!
+            }"
+        .to_string();
+
+        assert_eq!(
+            super::update_schema_with_supported_field_types(schema_str),
+            expected_schema_str
+        );
     }
 
     // Unit test to see if the network name is deserialized correctly
