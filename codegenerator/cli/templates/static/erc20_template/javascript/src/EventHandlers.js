@@ -1,23 +1,32 @@
 let { ERC20Contract } = require("../generated/src/Handlers.bs.js");
 
 ERC20Contract.Approval.loader((event, context) => {
-  // loading the required accountEntity
-  context.Account.load(event.params.owner);
+  // loading the required Account entity
+  context.Account.ownerAccountChangesLoad(event.params.owner);
 });
 
 ERC20Contract.Approval.handler((event, context) => {
-  //  getting the owner accountEntity
-  let ownerAccount = context.Account.get(event.params.owner);
+  //  getting the owner Account entity
+  let ownerAccount = context.Account.ownerAccountChanges;
 
-  if (ownerAccount === undefined) {
-    // create the account
-    // This is an unlikely scenario, but it is possible
+  if (ownerAccount !== undefined) {
+    // setting Account entity object
+    let accountObject = {
+      id: ownerAccount.id,
+      approval: event.params.value,
+      balance: ownerAccount.balance,
+    };
+
+    // setting the Account entity with the new transfer field value
+    context.Account.set(accountObject);
+  } else {
+    // setting Account entity object
     let accountObject = {
       id: event.params.owner,
       balance: BigInt(0),
     };
 
-    // setting the AccountEntity with the new transfer field value
+    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   }
   let approvalId = event.params.owner + "-" + event.params.spender;
@@ -34,41 +43,41 @@ ERC20Contract.Approval.handler((event, context) => {
 });
 
 ERC20Contract.Transfer.loader((event, context) => {
-  // loading the required AccountEntity
-  context.Account.load(event.params.from.toString());
-  context.Account.load(event.params.to.toString());
+  // loading the required Account entity
+  context.Account.senderAccountChangesLoad(event.params.from.toString());
+  context.Account.receiverAccountChangesLoad(event.params.to.toString());
 });
 
 ERC20Contract.Transfer.handler((event, context) => {
-  // getting the sender AccountEntity
+  // getting the sender Account entity
   let senderAccount = context.Account.senderAccountChanges;
 
   if (senderAccount !== undefined) {
     // setting the totals field value
-    // setting AccountEntity object
+    // setting Account entity object
     let accountObject = {
       id: event.params.from,
       balance: BigInt(0) - event.params.value,
     };
 
-    // setting the AccountEntity with the new transfer field value
+    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   } else {
-    // subtract the balance from the existing users balance
+    // setting Account entity object
     let accountObject = {
       id: senderAccount.id,
       balance: senderAccount.balance - event.params.value,
     };
 
-    // setting the AccountEntity with the new transfer field value
+    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   }
 
-  // getting the sender AccountEntity
+  // getting the sender Account entity
   let receiverAccount = context.Account.receiverAccountChanges;
 
   if (receiverAccount !== undefined) {
-    // setting AccountEntity object
+    // setting Account entity object
     let accountObject = {
       id: receiverAccount.id,
       approval: receiverAccount.approval,
@@ -77,10 +86,10 @@ ERC20Contract.Transfer.handler((event, context) => {
       ),
     };
 
-    // setting the AccountEntity with the new transfer field value
+    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   } else {
-    // setting AccountEntity object
+    // setting Account entity object
     let accountObject = {
       id: event.params.to.toString(),
       approval: BigInt(0),
@@ -94,7 +103,7 @@ ERC20Contract.Transfer.handler((event, context) => {
       balance: receiverAccount.balance + event.params.value,
     };
 
-    // setting the AccountEntity with the new transfer field value
+    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   }
 });
