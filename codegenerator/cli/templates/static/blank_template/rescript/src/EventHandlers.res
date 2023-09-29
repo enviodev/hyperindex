@@ -2,28 +2,31 @@
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
 
-Handlers.MyAwesomeContractContract.AwesomeEvent.loader((~event, ~context) => {
-  let _ = context.awesomeEntity.load(event.params.identifier)
-})
+// code below is purely for demonstration purposes
+// please use it for reference only and delete it when you start working on your indexer
 
-Handlers.MyAwesomeContractContract.AwesomeEvent.handler((~event, ~context) => {
-  switch context.awesomeEntity.get(event.params.identifier) {
-  | Some({id, awesomeTotal}) =>
-    let updatedObject: Types.awesomeEntityEntity = {
-      id,
-      awesomeTotal: awesomeTotal->Ethers.BigInt.add(event.params.awesomeValue),
-      awesomeAddress: event.params.awesomeAddress->Ethers.ethAddressToString,
-    }
+// Handlers.MyAwesomeContractContract.AwesomeEvent.loader((~event, ~context) => {
+//   let _ = context.awesomeEntity.load(event.params.identifier)
+// })
 
-    context.awesomeEntity.set(updatedObject)
+// Handlers.MyAwesomeContractContract.AwesomeEvent.handler((~event, ~context) => {
+//   switch context.awesomeEntity.get(event.params.identifier) {
+//   | Some({id, awesomeTotal}) =>
+//     let updatedObject: Types.awesomeEntityEntity = {
+//       id,
+//       awesomeTotal: awesomeTotal->Ethers.BigInt.add(event.params.awesomeValue),
+//       awesomeAddress: event.params.awesomeAddress->Ethers.ethAddressToString,
+//     }
 
-  | None =>
-    let awesomeEntityObject: Types.awesomeEntityEntity = {
-      id: event.params.identifier,
-      awesomeTotal: event.params.awesomeValue,
-      awesomeAddress: event.params.awesomeAddress->Ethers.ethAddressToString,
-    }
+//     context.awesomeEntity.set(updatedObject)
 
-    context.awesomeEntity.set(awesomeEntityObject)
-  }
-})
+//   | None =>
+//     let awesomeEntityObject: Types.awesomeEntityEntity = {
+//       id: event.params.identifier,
+//       awesomeTotal: event.params.awesomeValue,
+//       awesomeAddress: event.params.awesomeAddress->Ethers.ethAddressToString,
+//     }
+
+//     context.awesomeEntity.set(awesomeEntityObject)
+//   }
+// })
