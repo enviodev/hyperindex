@@ -1,4 +1,5 @@
 // db operations for raw_events:
+const MAX_ITEMS_PER_QUERY = 500;
 
 module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
   sql,
@@ -64,14 +65,13 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
 const chunkBatchQuery = (
   sql,
   entityDataArray,
-  maxItemsPerQuery,
   queryToExecute
 ) => {
   const promises = [];
 
-  // Split entityDataArray into chunks of maxItemsPerQuery
-  for (let i = 0; i < entityDataArray.length; i += maxItemsPerQuery) {
-    const chunk = entityDataArray.slice(i, i + maxItemsPerQuery);
+  // Split entityDataArray into chunks of MAX_ITEMS_PER_QUERY
+  for (let i = 0; i < entityDataArray.length; i += MAX_ITEMS_PER_QUERY) {
+    const chunk = entityDataArray.slice(i, i + MAX_ITEMS_PER_QUERY);
 
     promises.push(queryToExecute(sql, chunk));
   }
@@ -81,13 +81,9 @@ const chunkBatchQuery = (
 };
 
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
-  // TODO: make this max batch size optimal
-  const MAX_ITEMS_PER_QUERY_RawEvents = 1000;
-
   return chunkBatchQuery(
     sql,
     entityDataArray,
-    MAX_ITEMS_PER_QUERY_RawEvents,
     batchSetRawEventsCore
   );
 };
@@ -137,13 +133,9 @@ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
 };
 
 module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
-  // TODO: make this max batch size optimal
-  const MAX_ITEMS_PER_QUERY_DynamicContractRegistry = 1000;
-
   return chunkBatchQuery(
     sql,
     entityDataArray,
-    MAX_ITEMS_PER_QUERY_DynamicContractRegistry,
     batchSetDynamicContractRegistryCore
   );
 };
@@ -203,10 +195,12 @@ ${sql(combinedEntityAndEventData,
 
 module.exports.batchSet{{entity.name.capitalized
 }} = (sql, entityDataArray) => {
-  // TODO: make this max batch size optimal. Do calculations to achieve this.
-  const MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}} = 1000;
 
-  return chunkBatchQuery(sql, entityDataArray, MAX_ITEMS_PER_QUERY_{{entity.name.capitalized}}, batchSet{{entity.name.capitalized}}Core);
+  return chunkBatchQuery(
+    sql, 
+    entityDataArray, 
+    batchSet{{entity.name.capitalized}}Core
+  );
 }
 
 module.exports.batchDelete{{entity.name.capitalized

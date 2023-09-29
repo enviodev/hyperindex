@@ -1,7 +1,7 @@
 let startSyncingAllEvents = () => {
   let chainManager: ChainManager.t = ChainManager.make(
     ~configs=Config.config,
-    ~maxQueueSize=Env.maxEventFetchedQueueSize,
+    ~maxQueueSize=Env.maxPerChainQueueSize,
   )
 
   Logging.info("Starting chain fetchers.")
