@@ -10,6 +10,8 @@ use crate::{
 use graphql_parser::schema::{Definition, Directive, Type, TypeDefinition, Value};
 use std::collections::HashSet;
 
+use super::validation::check_names_from_schema_for_reserved_words;
+
 pub fn get_entity_record_types_from_schema(
     parsed_paths: &ParsedPaths,
 ) -> Result<Vec<EntityRecordTypeTemplate>, String> {
@@ -25,6 +27,7 @@ pub fn get_entity_record_types_from_schema(
         .map_err(|err| format!("EE201: Failed to parse schema with Error: {}", err))?;
     let mut schema_object_types = Vec::new();
     let mut entities_set: HashSet<String> = HashSet::new();
+    let mut names_from_schema: Vec<&str> = Vec::new();
 
     for definition in schema_doc.definitions.iter() {
         match definition {
@@ -34,6 +37,7 @@ pub fn get_entity_record_types_from_schema(
                 TypeDefinition::Object(object) => {
                     entities_set.insert(object.name.clone());
                     schema_object_types.push(object);
+                    names_from_schema.push(object.name.as_str());
                 }
                 TypeDefinition::Interface(_) => (),
                 TypeDefinition::Union(_) => (),
@@ -146,6 +150,7 @@ pub fn get_entity_record_types_from_schema(
             });
 
             relational_params_all.extend(maybe_relationship_type);
+            names_from_schema.push(field.name.as_str());
         }
 
         //Template needs access to both the full list and filtered for
@@ -157,6 +162,18 @@ pub fn get_entity_record_types_from_schema(
             relational_params,
         })
     }
+
+    // validate that no user defined names in the schema are reserved words
+    let detected_reserved_words =
+        check_names_from_schema_for_reserved_words(&names_from_schema.join(" "));
+
+    if !detected_reserved_words.is_empty() {
+        return Err(format!(
+            "EE210: The schema file cannot contain any reserved words from JavaScript or ReScript. Reserved word(s) are: {}. Please rename them in the schema file.",
+            detected_reserved_words.join(" "),
+        ));
+    }
+
     Ok(entity_records)
 }
 
