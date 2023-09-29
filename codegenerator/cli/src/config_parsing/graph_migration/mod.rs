@@ -234,6 +234,13 @@ pub async fn generate_config_from_subgraph_id(
     subgraph_id: &str,
     language: &Language,
 ) -> anyhow::Result<()> {
+    //Error out if the subgraph_id does not start with "Qm"
+    if !subgraph_id.starts_with("Qm") {
+        return Err(anyhow!(
+            "EE402: Invalid subgraph ID. Subgraph ID must start with \"Qm\""
+        ));
+    }
+
     const MANIFEST_FILE_NAME: &str = "manifest.yaml";
     let manifest_file_string = fetch_ipfs_file_with_retry(subgraph_id, MANIFEST_FILE_NAME)
         .await
