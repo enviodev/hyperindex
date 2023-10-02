@@ -44,10 +44,6 @@ ERC20Contract_Approval_handler(({ event, context }) => {
 ERC20Contract_Transfer_loader(({ event, context }) => {
   context.account.load(event.params.from.toString());
   context.account.load(event.params.to.toString());
-  context.approval.load(
-    event.params.from.toString() + "-" + event.params.to.toString(),
-    {}
-  );
 });
 
 ERC20Contract_Transfer_handler(({ event, context }) => {
@@ -88,19 +84,5 @@ ERC20Contract_Transfer_handler(({ event, context }) => {
     };
 
     context.account.set(accountObject);
-  }
-
-  let approvalId =
-    event.params.from.toString() + "-" + event.params.to.toString();
-
-  let approval = context.approval.get(approvalId);
-
-  if (approval != undefined) {
-    // if this is a spender from the approvals, subtract the amount from the approval on transfer
-    let approvalObject: approvalEntity = {
-      ...approval,
-      amount: approval.amount - event.params.value,
-    };
-    context.approval.set(approvalObject);
   }
 });
