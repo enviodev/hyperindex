@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_yaml;
 use std::collections::HashMap;
@@ -228,16 +229,20 @@ fn get_ipfs_id_from_file_path(file_path: &str) -> &str {
     &file_path[6..]
 }
 
+fn valid_ipfs_cid(cid: &str) -> bool {
+    let ipfs_cid_regex = Regex::new(r"Qm[1-9A-HJ-NP-Za-km-z]{44,}").unwrap();
+    ipfs_cid_regex.is_match(cid)
+}
+
 // Function to generate config, schema and abis from subgraph ID
 pub async fn generate_config_from_subgraph_id(
     project_root_path: &PathBuf,
     subgraph_id: &str,
     language: &Language,
 ) -> anyhow::Result<()> {
-    //Error out if the subgraph_id does not start with "Qm"
-    if !subgraph_id.starts_with("Qm") {
+    if !valid_ipfs_cid(subgraph_id) {
         return Err(anyhow!(
-            "EE402: Invalid subgraph ID. Subgraph ID must start with \"Qm\""
+            "EE402: Invalid subgraph ID. Subgraph ID must match the IPFS CID format convention. More information can be found here: https://github.com/multiformats/cid#cidv0"
         ));
     }
 
@@ -531,5 +536,20 @@ mod test {
         let mut network_contracts_expected = HashMap::new();
         network_contracts_expected.insert("mainnet".to_string(), vec!["FiatTokenV1".to_string()]);
         assert_eq!(network_contracts, network_contracts_expected);
+    }
+
+    #[test]
+    fn test_valid_ipfs_cid() {
+        let subgraph_id_1 = "QmdAmQxQCuGoeqNLuE8m6zH366pY2LkustTRYDhSt85X7w";
+        let subgraph_id_2 = "QmZ81YMckH8LxaLd9MnaGugvbvC9Mto3Ye3Vz4ydWE7npt";
+        let subgraph_id_3 = "QmZ81YMckH8LxaLd9MnaGugvbvC9Mto3Ye3Vz4ydWE7nt";
+
+        let valid_1 = super::valid_ipfs_cid(subgraph_id_1);
+        let valid_2 = super::valid_ipfs_cid(subgraph_id_2);
+        let valid_3 = super::valid_ipfs_cid(subgraph_id_3);
+
+        assert_eq!(valid_1, true);
+        assert_eq!(valid_2, true);
+        assert_eq!(valid_3, false);
     }
 }
