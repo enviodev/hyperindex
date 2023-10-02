@@ -22,94 +22,88 @@ module ResponseTypes = {
   //Note all fields marked as "nullable" are not explicitly null since
   //the are option fields and nulls will be deserialized to option when
   //in an optional field with spice
-  @spice
   type blockData = {
     number?: int,
     hash?: string,
-    @spice.key("parent_hash") parentHash?: string,
+    parentHash?: string,
     nonce?: int, //nullable
-    @spice.key("sha3_uncles") sha3Uncles?: string,
-    @spice.key("logs_bloom") logsBloom?: string,
-    @spice.key("transactions_root") transactionsRoot?: string,
-    @spice.key("state_root") stateRoot?: string,
-    @spice.key("receipts_root") receiptsRoot?: string,
+    sha3Uncles?: string,
+    logsBloom?: string,
+    transactionsRoot?: string,
+    stateRoot?: string,
+    receiptsRoot?: string,
     miner?: unchecksummedEthAddress,
     difficulty?: Ethers.BigInt.t, //nullable
-    @spice.key("total_difficulty") totalDifficulty?: Ethers.BigInt.t, //nullable
-    @spice.key("extra_data") extraData?: string,
+    totalDifficulty?: Ethers.BigInt.t, //nullable
+    extraData?: string,
     size?: Ethers.BigInt.t,
-    @spice.key("gas_limit") gasLimit?: Ethers.BigInt.t,
-    @spice.key("gas_used") gasUsed?: Ethers.BigInt.t,
+    gasLimit?: Ethers.BigInt.t,
+    gasUsed?: Ethers.BigInt.t,
     timestamp?: int,
-    @spice.key("unclus") uncles?: string, //nullable
-    @spice.key("base_fee_per_gas") baseFeePerGas?: Ethers.BigInt.t, //nullable
+    uncles?: string, //nullable
+    baseFeePerGas?: Ethers.BigInt.t, //nullable
   }
 
   //Note all fields marked as "nullable" are not explicitly null since
   //the are option fields and nulls will be deserialized to option when
   //in an optional field with spice
-  @spice
   type transactionData = {
-    @spice.key("block_hash") blockHash?: string,
-    @spice.key("block_number") blockNumber?: int,
+    blockHash?: string,
+    blockNumber?: int,
     from?: unchecksummedEthAddress, //nullable
     gas?: Ethers.BigInt.t,
-    @spice.key("gas_price") gasPrice?: Ethers.BigInt.t, //nullable
+    gasPrice?: Ethers.BigInt.t, //nullable
     hash?: string,
     input?: string,
     nonce?: int,
     to?: unchecksummedEthAddress, //nullable
-    @spice.key("transaction_index") transactionIndex?: int,
+    @as("transactionIndex") transactionIndex?: int,
     value?: Ethers.BigInt.t,
     v?: string, //nullable
     r?: string, //nullable
     s?: string, //nullable
-    @spice.key("max_priority_fee_per_gas") maxPriorityFeePerGas?: Ethers.BigInt.t, //nullable
-    @spice.key("max_fee_per_gas") maxFeePerGas?: Ethers.BigInt.t, //nullable
-    @spice.key("chain_id") chainId?: int, //nullable
-    @spice.key("cumulative_gas_used") cumulativeGasUsed?: Ethers.BigInt.t,
-    @spice.key("effective_gas_price") effectiveGasPrice?: Ethers.BigInt.t,
-    @spice.key("gas_used") gasUsed?: Ethers.BigInt.t,
-    @spice.key("contract_address") contractAddress?: unchecksummedEthAddress, //nullable
-    @spice.key("logs_bloom") logsBoom?: string,
-    @spice.key("type") type_?: int, //nullable
-    @spice.key("root") root?: string, //nullable
-    @spice.key("status") status?: int, //nullable
-    @spice.key("sighash") sighash?: string, //nullable
+    maxPriorityFeePerGas?: Ethers.BigInt.t, //nullable
+    maxFeePerGas?: Ethers.BigInt.t, //nullable
+    chainId?: int, //nullable
+    cumulativeGasUsed?: Ethers.BigInt.t,
+    effectiveGasPrice?: Ethers.BigInt.t,
+    gasUsed?: Ethers.BigInt.t,
+    contractAddress?: unchecksummedEthAddress, //nullable
+    logsBoom?: string,
+    type_?: int, //nullable
+    root?: string, //nullable
+    status?: int, //nullable
+    sighash?: string, //nullable
   }
 
   //Note all fields marked as "nullable" are not explicitly null since
   //the are option fields and nulls will be deserialized to option when
   //in an optional field with spice
-  @spice
   type logData = {
     removed?: bool, //nullable
-    @spice.key("log_index") index?: int,
-    @spice.key("transaction_index") transactionIndex?: int,
-    @spice.key("transaction_hash") transactionHash?: string,
-    @spice.key("block_hash") blockHash?: string,
-    @spice.key("block_number") blockNumber?: int,
+    @as("logIndex") index?: int,
+    transactionIndex?: int,
+    transactionHash?: string,
+    blockHash?: string,
+    blockNumber?: int,
     address?: unchecksummedEthAddress,
     data?: string,
-    topics?: array<Ethers.EventFilter.topic>, //nullable
+    topics?: array<Js.Nullable.t<Ethers.EventFilter.topic>>, //nullable
   }
 
-  @spice
   type data = {
     blocks?: array<blockData>,
     transactions?: array<transactionData>,
     logs?: array<logData>,
   }
 
-  @spice
   type queryResponse = {
     data: array<data>,
-    @spice.key("archive_height") archiveHeight: int,
-    @spice.key("next_block") nextBlock: int,
-    @spice.key("total_execution_time") totalTime: int,
+    archiveHeight: int,
+    nextBlock: int,
+    totalTime: int,
   }
 
-  @spice
   type heightResponse = {height: int}
 }
 

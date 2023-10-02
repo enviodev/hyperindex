@@ -141,6 +141,9 @@ importers:
       rescript-struct:
         specifier: ^4.1.1
         version: 4.1.1(rescript@10.1.2)
+      skar-client-node:
+        specifier: ^0.0.4
+        version: 0.0.4
     devDependencies:
       '@greenlabs/ppx-spice':
         specifier: 0.1.14
@@ -5326,6 +5329,72 @@ packages:
   /sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
     dev: true
+
+  /skar-client-node-darwin-arm64@0.0.4:
+    resolution: {integrity: sha512-dE34sCApsuyCSYTSkBMe7UUHNTm6aje4EGMYqsOECeIh2O+/r7qinbVTvzf3msy8OQLtc7mMOe4Zw8yhgTQPaA==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /skar-client-node-darwin-x64@0.0.4:
+    resolution: {integrity: sha512-X+BDSiKgh71WCM2kn5WmfYUAiOkm3Uune/TYcYPqI49GWf4oANsWiRKF5WdamHIg5n0TkejooikPLiU9Y/QmnQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /skar-client-node-linux-arm64-gnu@0.0.4:
+    resolution: {integrity: sha512-jp2hfQ1nCSS+/sT1X/V2yQjxvKqRvsEq4ejds4vFc9vaQZlrniUgdpCSnL0gqJJMgvP/lPzDsyLEx6loj4lxuA==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /skar-client-node-linux-x64-gnu@0.0.4:
+    resolution: {integrity: sha512-V3YkOfRffujdpCvWb+DVvCg6whASOT/g3ZXlyKkmMcJ8dp/3lHr2LABxQm68s+dFllL5x0QpBVDG1TVK8/vvUA==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /skar-client-node-linux-x64-musl@0.0.4:
+    resolution: {integrity: sha512-QQ5/ECkefvwzES6iqH1J7ozibspqTFIovq08z43LHHGbGBWXkHkbIOLMnhkEXNM9jZ7Y29qrsaCnhDcNvQabMg==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /skar-client-node-win32-x64-msvc@0.0.4:
+    resolution: {integrity: sha512-rc/tB4WMh/7GOkfLLvKrefhNYxigITljCnG1UfUQmEcivlVr6maVcYCn2MxV451/vNNWJPvgK9jjmGHTbAz7WQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+    requiresBuild: true
+    dev: false
+    optional: true
+
+  /skar-client-node@0.0.4:
+    resolution: {integrity: sha512-pg4qJIGcuAypxYcfOijeUrZytXOY5l7qwIskJjQuCuDmHMVgsyPGhcTmGjom8xIJ8T5U6GGRf5uK3BkitxEylg==}
+    engines: {node: '>= 10'}
+    optionalDependencies:
+      skar-client-node-darwin-arm64: 0.0.4
+      skar-client-node-darwin-x64: 0.0.4
+      skar-client-node-linux-arm64-gnu: 0.0.4
+      skar-client-node-linux-x64-gnu: 0.0.4
+      skar-client-node-linux-x64-musl: 0.0.4
+      skar-client-node-win32-x64-msvc: 0.0.4
+    dev: false
 
   /slash@3.0.0:
     resolution: {integrity: sha512-g9Q1haeby36OSStwb4ntCGGGaKsaVSjQ68fBxoQcutl5fS1vuY18H3wSt3jFyFtrkx+Kz0V1G85A4MyAdDMi2Q==}

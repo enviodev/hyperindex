@@ -66,6 +66,8 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
         Some(removed),
         Some(topics),
       ) =>
+      let topics = topics->Belt.Array.keepMap(Js.Nullable.toOption)
+
       let log: Ethers.log = {
         data,
         blockNumber,
@@ -119,115 +121,6 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
       Error(HyperSyncTypes.UnexpectedMissingParams(err))
     }
   }
-
-  //   events
-  //   ->Belt.Array.flatMap(item => {
-  //     switch (item.blocks, item.logs) {
-  //     | (Some(blocks), Some(logs)) =>
-  //       let blockTimestampsMap =
-  //         blocks
-  //         ->Belt.Array.keepMap(block => {
-  //           switch (block.number, block.timestamp) {
-  //           | (Some(number), Some(timestamp)) => Some((number->Belt.Int.toString, timestamp))
-  //           | _ => None
-  //           }
-  //         })
-  //         ->Js.Dict.fromArray
-
-  //       logs->Belt.Array.map((log: Skar.ResponseTypes.logData) => {
-  //         let blockTimestampOpt =
-  //           log.blockNumber->Belt.Option.flatMap(
-  //             number => blockTimestampsMap->Js.Dict.get(number->Belt.Int.toString),
-  //           )
-
-  //         switch (
-  //           blockTimestampOpt,
-  //           log.address,
-  //           log.blockHash,
-  //           log.blockNumber,
-  //           log.data,
-  //           log.index,
-  //           log.transactionHash,
-  //           log.transactionIndex,
-  //           log.removed,
-  //         ) {
-  //         | (
-  //             Some(timestamp),
-  //             Some(address),
-  //             Some(blockHash),
-  //             Some(blockNumber),
-  //             Some(data),
-  //             Some(index),
-  //             Some(transactionHash),
-  //             Some(transactionIndex),
-  //             Some(removed),
-  //           ) =>
-  //           let topics =
-  //             [log.topic0, log.topic1, log.topic2, log.topic3]->Belt.Array.keepMap(item => item)
-
-  //           let log: Ethers.log = {
-  //             data,
-  //             blockNumber,
-  //             blockHash,
-  //             address: Ethers.getAddressFromStringUnsafe(address),
-  //             transactionHash,
-  //             transactionIndex,
-  //             logIndex: index,
-  //             topics,
-  //             removed,
-  //           }
-
-  //           let blockTimestamp =
-  //             timestamp->Ethers.BigInt.toString->Belt.Int.fromString->Belt.Option.getExn
-
-  //           let pageItem: HyperSyncTypes.logsQueryPageItem = {log, blockTimestamp}
-  //           Ok(pageItem)
-
-  //         | _ =>
-  //           let missingParams =
-  //             [
-  //               blockTimestampOpt->Utils.optionMapNone("log.timestamp"),
-  //               log.address->Utils.optionMapNone("log.address"),
-  //               log.blockHash->Utils.optionMapNone("log.blockHash-"),
-  //               log.blockNumber->Utils.optionMapNone("log.blockNumber"),
-  //               log.data->Utils.optionMapNone("log.data"),
-  //               log.index->Utils.optionMapNone("log.index"),
-  //               log.transactionHash->Utils.optionMapNone("log.transactionHash"),
-  //               log.transactionIndex->Utils.optionMapNone("log.transactionIndex"),
-  //               log.removed->Utils.optionMapNone("log.removed"),
-  //             ]->Belt.Array.keepMap(v => v)
-  //           Error(
-  //             HyperSyncTypes.UnexpectedMissingParams({
-  //               queryName: "queryLogsPage Skar",
-  //               missingParams,
-  //             }),
-  //           )
-  //         }
-  //       })
-  //     | _ =>
-  //       let missingParams =
-  //         [
-  //           item.blocks->Utils.optionMapNone("blocks"),
-  //           item.logs->Utils.optionMapNone("logs"),
-  //         ]->Belt.Array.keepMap(v => v)
-
-  //       [
-  //         Error(
-  //           HyperSyncTypes.UnexpectedMissingParams({
-  //             queryName: "queryLogsPage Skar",
-  //             missingParams,
-  //           }),
-  //         ),
-  //       ]
-  //     }
-  //   })
-  //   ->Utils.mapArrayOfResults
-  //   ->Belt.Result.map((items): HyperSyncTypes.logsQueryPage => {
-  //     items,
-  //     nextBlock,
-  //     archiveHeight,
-  //   })
-  // }
 
   let queryLogsPage = async (
     ~serverUrl,
