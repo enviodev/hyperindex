@@ -7,6 +7,7 @@ type Account @entity {
   balance: BigInt!
 }
 
+# DEV NOTE: openzepplin's erc20 contract does not emit an approval event on a transfer and needs to implement [this](https://github.com/OpenZeppelin/openzeppelin-contracts/blob/5ed5a86d1d22f387ce69ab4e0ace405de8bc888d/contracts/token/ERC20/ERC20.sol#L277) function override in order to index the approval amount for an account
 type Approval @entity {
   # id is the owner address and spender address [owner-spender]
   id: ID!
