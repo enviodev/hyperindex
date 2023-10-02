@@ -5,18 +5,14 @@ networks:
     start_block: 10861674
     contracts:
       - name: ERC20
-        abi_file_path: abis/ERC20.json
         address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" #UNI
-        handler: ./src/EventHandlers.js
+        handler: src/EventHandlers.js
         events:
-          - event: "Approval"
+          - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
             requiredEntities:
               - name: "Account"
-                labels:
-                  - "ownerAccountChanges"
-          - event: "Transfer"
+              - name: "Approval"
+          - event: "Transfer(address indexed from, address indexed to, uint256 value)"
             requiredEntities:
               - name: "Account"
-                labels:
-                  - "senderAccountChanges"
-                  - "receiverAccountChanges"
+              - name: "Approval"

@@ -1,103 +1,91 @@
 open Types
 
 Handlers.ERC20Contract.Approval.loader((~event, ~context) => {
-  // loading the required accountEntity
-  context.account.ownerAccountChangesLoad(event.params.owner->Ethers.ethAddressToString)
+  context.account.load(event.params.owner->Ethers.ethAddressToString)
 })
 
 Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
-  //  getting the owner accountEntity
-  let ownerAccount = context.account.ownerAccountChanges
+  let ownerAccount = context.account.get(event.params.owner->Ethers.ethAddressToString)
 
-  switch ownerAccount {
-  | Some(existingAccount) => {
-      // setting accountEntity object
-      let accountObject: accountEntity = {
-        id: existingAccount.id,
-        approval: event.params.value,
-        balance: existingAccount.balance,
-      }
-
-      // setting the accountEntity with the new transfer field value
-      context.account.set(accountObject)
+  if(ownerAccount->Option.isNone())
+  {
+    // setting accountEntity object
+    let accountObject: accountEntity = {
+      id: event.params.owner->Ethers.ethAddressToString,
+      balance: Ethers.BigInt.fromInt(0),
     }
 
-  | None => {
-      // setting accountEntity object
-      let accountObject: accountEntity = {
-        id: event.params.owner->Ethers.ethAddressToString,
-        approval: event.params.value,
-        balance: Ethers.BigInt.fromInt(0),
-      }
-
-      // setting the accountEntity with the new transfer field value
-      context.account.set(accountObject)
-    }
+    // setting the accountEntity with the new transfer field value
+    context.account.set(accountObject)
   }
+
+  let approvalId =
+    event.params.owner->Ethers.ethAddressToString + "-" + event.params.spender->Ethers.ethAddressToString;
+
+  let approvalObject: approvalEntity = {
+    id: approvalId,
+    amount: event.params.value,
+    owner: event.params.owner->Ethers.ethAddressToString,
+    spender: event.params.spender->Ethers.ethAddressToString,
+  };
+
+  // this is the same for create or update as the amount is overwritten
+  context.approval.set(approvalObject);
+  
 })
 
 Handlers.ERC20Contract.Transfer.loader((~event, ~context) => {
-  // loading the required accountEntity
-  context.account.senderAccountChangesLoad(event.params.from->Ethers.ethAddressToString)
-  context.account.receiverAccountChangesLoad(event.params.to->Ethers.ethAddressToString)
+  context.account.load(event.params.from->Ethers.ethAddressToString)
+  context.account.load(event.params.to->Ethers.ethAddressToString)
 })
 
 Handlers.ERC20Contract.Transfer.handler((~event, ~context) => {
-  // getting the sender accountEntity
-  let senderAccount = context.account.senderAccountChanges
+  let senderAccount = context.account.get(event.params.from->Ethers.ethAddressToString)
 
   switch senderAccount {
   | Some(existingSenderAccount) => {
-      // setting accountEntity object
+      // subtract the balance from the existing users balance
       let accountObject: accountEntity = {
-        id: existingSenderAccount.id,
-        approval: existingSenderAccount.approval,
+        id: existingSenderAccount.id,        
         balance: existingSenderAccount.balance->Ethers.BigInt.sub(event.params.value),
       }
-
-      // setting the accountEntity with the new transfer field value
       context.account.set(accountObject)
     }
 
   | None => {
-      // setting accountEntity object
-        let accountObject: accountEntity = {
-          id: event.params.from->Ethers.ethAddressToString,
-          approval: Ethers.BigInt.fromInt(0),
-          balance: Ethers.BigInt.fromInt(0) ->Ethers.BigInt.sub(event.params.value),
-        }
+      // create the account
+      // This is likely only ever going to be the zero address in the case of the first mint
+      let accountObject: accountEntity = {
+        id: event.params.from->Ethers.ethAddressToString,
+        balance: Ethers.BigInt.fromInt(0) ->Ethers.BigInt.sub(event.params.value),
+      }
 
-        // setting the accountEntity with the new transfer field value
-        context.account.set(accountObject)
+      // setting the accountEntity with the new transfer field value
+      context.account.set(accountObject)
     }
   }
 
-  // getting the sender accountEntity
-  let receiverAccount = context.account.receiverAccountChanges
+  let receiverAccount = context.account.get(event.params.to->Ethers.ethAddressToString)
 
   switch receiverAccount {
   | Some(existingReceiverAccount) => {
-      // setting accountEntity object
+      // update existing account's added balance
       let accountObject: accountEntity = {
-        id: existingReceiverAccount.id,
-        approval: existingReceiverAccount.approval,
+        id: existingReceiverAccount.id,        
         balance: existingReceiverAccount.balance->Ethers.BigInt.add(event.params.value),
       }
 
-      // setting the accountEntity with the new transfer field value
       context.account.set(accountObject)
     }
 
   | None => {
-      // setting accountEntity object
-          let accountObject: accountEntity = {
-            id: event.params.to->Ethers.ethAddressToString,
-            approval: Ethers.BigInt.fromInt(0),
-            balance: event.params.value,
-          }
+      // create new account
+      let accountObject: accountEntity = {
+        id: event.params.to->Ethers.ethAddressToString,            
+        balance: event.params.value,
+      }
 
-          // setting the accountEntity with the new transfer field value
-          context.account.set(accountObject)
+      context.account.set(accountObject)
     }
   }
 })
