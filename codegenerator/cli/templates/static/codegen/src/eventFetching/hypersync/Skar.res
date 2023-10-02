@@ -92,7 +92,9 @@ module QueryTypes = {
 
   @spice
   type transactionParams = {
-    address?: array<Ethers.ethAddress>,
+    from?: array<Ethers.ethAddress>,
+    @spice.key("to")
+    to_?: array<Ethers.ethAddress>,
     sighash?: array<string>,
   }
 

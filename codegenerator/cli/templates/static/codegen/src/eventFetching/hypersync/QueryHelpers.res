@@ -4,7 +4,6 @@ exception FailedToParseJson(exn)
 type queryError =
   Deserialize(Spice.decodeError) | FailedToFetch(exn) | FailedToParseJson(exn) | Other(exn)
 
-
 let executeFetchRequest = async (
   ~endpoint,
   ~method: Fetch.method,
