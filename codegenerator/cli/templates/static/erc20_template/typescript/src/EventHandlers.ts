@@ -15,7 +15,7 @@ ERC20Contract_Approval_handler(({ event, context }) => {
   //  getting the owner accountEntity
   let ownerAccount = context.account.get(event.params.owner.toString());
 
-  if (ownerAccount == undefined) {
+  if (ownerAccount === undefined) {
     // create the account
     // This is an unlikely scenario, but it is possible
     let accountObject: accountEntity = {
@@ -47,7 +47,7 @@ ERC20Contract_Transfer_loader(({ event, context }) => {
 ERC20Contract_Transfer_handler(({ event, context }) => {
   let senderAccount = context.account.get(event.params.from.toString());
 
-  if (senderAccount == undefined) {
+  if (senderAccount === undefined) {
     // create the account
     // This is likely only ever going to be the zero address in the case of the first mint
     let accountObject: accountEntity = {
@@ -67,7 +67,7 @@ ERC20Contract_Transfer_handler(({ event, context }) => {
 
   let receiverAccount = context.account.get(event.params.to.toString());
 
-  if (receiverAccount == undefined) {
+  if (receiverAccount === undefined) {
     // create new account
     let accountObject: accountEntity = {
       id: event.params.to.toString(),
