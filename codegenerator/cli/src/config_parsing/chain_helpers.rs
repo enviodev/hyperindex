@@ -115,7 +115,7 @@ pub fn get_base_url_for_explorer(network_name: Option<NetworkName>) -> String {
         Some(NetworkName::Fuji) => "".to_string(),
         Some(NetworkName::Avalanche) => "api.snowtrace.io".to_string(),
         Some(NetworkName::CeloAlfajores) => "".to_string(),
-        Some(NetworkName::Mumbai) => "".to_string(),
+        Some(NetworkName::Mumbai) => "api-testnet.polygonscan.com".to_string(),
         Some(NetworkName::Aurora) => "".to_string(),
         Some(NetworkName::AuroraTestnet) => "".to_string(),
         Some(NetworkName::Harmony) => "".to_string(),
@@ -123,6 +123,47 @@ pub fn get_base_url_for_explorer(network_name: Option<NetworkName>) -> String {
         Some(NetworkName::PolygonZkevm) => "".to_string(),
         Some(NetworkName::ZksyncEra) => "".to_string(),
         Some(NetworkName::Sepolia) => "api-sepolia.etherscan.io".to_string(),
+        // placeholder base url of "" for unknown networks for contract migration
+        None => "".to_string(),
+    }
+}
+
+// Function to return the API key for the explorer based on network name
+pub fn get_api_key_for_explorer(network_name: Option<NetworkName>) -> String {
+    match network_name {
+        Some(NetworkName::Mainnet) => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
+        Some(NetworkName::Goerli) => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
+        Some(NetworkName::Optimism) => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA".to_string(),
+        Some(NetworkName::Bsc) => "api.bscscan.com".to_string(),
+        Some(NetworkName::PoaSokol) => "".to_string(),
+        Some(NetworkName::Chapel) => "".to_string(),
+        Some(NetworkName::PoaCore) => "".to_string(),
+        Some(NetworkName::Gnosis) => "".to_string(),
+        Some(NetworkName::Fuse) => "".to_string(),
+        Some(NetworkName::Matic) => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP".to_string(),
+        Some(NetworkName::Fantom) => "".to_string(),
+        Some(NetworkName::Zksync2Testnet) => "".to_string(),
+        Some(NetworkName::Boba) => "".to_string(),
+        Some(NetworkName::OptimismGoerli) => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA".to_string(),
+        Some(NetworkName::Clover) => "".to_string(),
+        Some(NetworkName::Moonbeam) => "".to_string(),
+        Some(NetworkName::Moonriver) => "".to_string(),
+        Some(NetworkName::Mbase) => "".to_string(),
+        Some(NetworkName::FantomTestnet) => "".to_string(),
+        Some(NetworkName::ArbitrumOne) => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D".to_string(),
+        Some(NetworkName::ArbitrumGoerli) => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D".to_string(),
+        Some(NetworkName::Celo) => "".to_string(),
+        Some(NetworkName::Fuji) => "".to_string(),
+        Some(NetworkName::Avalanche) => "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK".to_string(),
+        Some(NetworkName::CeloAlfajores) => "".to_string(),
+        Some(NetworkName::Mumbai) => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP".to_string(),
+        Some(NetworkName::Aurora) => "".to_string(),
+        Some(NetworkName::AuroraTestnet) => "".to_string(),
+        Some(NetworkName::Harmony) => "".to_string(),
+        Some(NetworkName::BaseTestnet) => "".to_string(),
+        Some(NetworkName::PolygonZkevm) => "".to_string(),
+        Some(NetworkName::ZksyncEra) => "".to_string(),
+        Some(NetworkName::Sepolia) => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
         // placeholder base url of "" for unknown networks for contract migration
         None => "".to_string(),
     }

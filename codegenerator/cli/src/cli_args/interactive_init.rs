@@ -213,7 +213,7 @@ impl InitNextArgs {
         let contract_address = match &self.contract_address {
             None => {
                 let input_contract_address =
-                    Text::new("[BETA VERSION] What is the address of the contract?").prompt()?;
+                    Text::new("[BETA VERSION] What is the address of the contract? Please provide address of the implementation contract.").prompt()?;
 
                 input_contract_address
             }

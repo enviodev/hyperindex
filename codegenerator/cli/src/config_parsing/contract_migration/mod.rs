@@ -12,8 +12,6 @@ use crate::{
     },
 };
 
-const ETHERSCAN_API_KEY: &str = "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV";
-
 // generic API response structure - keeping for possible future use.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct ResponseTypeV1<T> {
@@ -80,7 +78,6 @@ pub async fn generate_config_from_contract_address(
     };
 
     let mut network = Network {
-        // TODO make this dependent on the network chosen
         id: super::chain_helpers::get_network_id_given_network_name(Some(network.clone())),
         sync_source: None,
         start_block: 0,
@@ -95,7 +92,12 @@ pub async fn generate_config_from_contract_address(
         events: vec![],
     };
 
-    let abi_item: Vec<Item> = serde_json::from_str(&abi_string).unwrap();
+    let abi_item: Vec<Item> = serde_json::from_str(&abi_string).with_context(|| {
+        format!(
+            "Failed to deserialize ABI string for contract {}",
+            contract_name
+        )
+    })?;
 
     for item in abi_item.iter() {
         if item.item_type == "event" {
@@ -219,12 +221,11 @@ async fn fetch_contract_name_and_abi_from_block_explorer(
     network: &NetworkName,
     address: &str,
 ) -> anyhow::Result<(String, String)> {
-    // TODO base URL should change according to the chain
     let url = format!(
         "https://{}/api?module=contract&action=getsourcecode&address={}&apikey={}",
         super::chain_helpers::get_base_url_for_explorer(Some(network.clone())),
         address,
-        ETHERSCAN_API_KEY
+        super::chain_helpers::get_api_key_for_explorer(Some(network.clone()))
     );
 
     let content_raw = fetch_from_block_explorer_with_retry(&url).await?;
