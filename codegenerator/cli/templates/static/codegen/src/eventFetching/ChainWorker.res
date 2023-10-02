@@ -67,7 +67,7 @@ module MakeHyperSyncWorker = (HyperSync: HyperSync.S): ChainWorker => {
         } else {
           logger->Logging.childError({
             "err": msg,
-            "msg": `Issue while running fetching batch of events from the RPC. Attempted query a maximum of ${maxCallDepth->string_of_int} times. Will NOT retry.`,
+            "msg": `Issue while running fetching batch of events from Hypersync endpoint. Attempted query a maximum of ${maxCallDepth->string_of_int} times. Will NOT retry.`,
             "type": "EXPONENTIAL_BACKOFF_MAX_DEPTH",
           })
           Js.Exn.raiseError(msg)
