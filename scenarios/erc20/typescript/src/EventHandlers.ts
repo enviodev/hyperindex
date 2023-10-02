@@ -9,10 +9,6 @@ import { accountEntity, approvalEntity } from "../generated/src/Types.gen";
 
 ERC20Contract_Approval_loader(({ event, context }) => {
   context.account.load(event.params.owner.toString());
-  context.approval.load(
-    event.params.owner.toString() + "-" + event.params.spender.toString(),
-    {}
-  );
 });
 
 ERC20Contract_Approval_handler(({ event, context }) => {
