@@ -351,7 +351,9 @@ pub async fn generate_config_from_subgraph_id(
                     for data_source_abi in &data_source.mapping.abis {
                         let abi_dir_path = abi_dir_path.clone();
                         let abi_ipfs_file_path = data_source_abi.file.value.clone();
-                        let abi_file_path = abi_dir_path.join(format!("{}.json", data_source.name));
+                        let abi_file_path =
+                            abi_dir_path.join(format!("{}.json", data_source_abi.name));
+                        println!("abi_ipfs_file_path: {}", abi_ipfs_file_path);
                         join_set.spawn(async move {
                             fetch_ipfs_file_and_write_to_system(
                                 abi_ipfs_file_path,
