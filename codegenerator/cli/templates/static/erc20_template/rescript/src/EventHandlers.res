@@ -7,7 +7,7 @@ Handlers.ERC20Contract.Approval.loader((~event, ~context) => {
 Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
   let ownerAccount = context.account.get(event.params.owner->Ethers.ethAddressToString)
 
-  if(ownerAccount->Option.isNone())
+  if(ownerAccount->Belt.Option.isNone)
   {
     // setting accountEntity object
     let accountObject: accountEntity = {
@@ -20,7 +20,7 @@ Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
   }
 
   let approvalId =
-    event.params.owner->Ethers.ethAddressToString + "-" + event.params.spender->Ethers.ethAddressToString;
+    event.params.owner->Ethers.ethAddressToString ++ "-" ++ event.params.spender->Ethers.ethAddressToString;
 
   let approvalObject: approvalEntity = {
     id: approvalId,
@@ -57,7 +57,7 @@ Handlers.ERC20Contract.Transfer.handler((~event, ~context) => {
       // This is likely only ever going to be the zero address in the case of the first mint
       let accountObject: accountEntity = {
         id: event.params.from->Ethers.ethAddressToString,
-        balance: Ethers.BigInt.fromInt(0) ->Ethers.BigInt.sub(event.params.value),
+        balance: Ethers.BigInt.fromInt(0)->Ethers.BigInt.sub(event.params.value),
       }
 
       // setting the accountEntity with the new transfer field value

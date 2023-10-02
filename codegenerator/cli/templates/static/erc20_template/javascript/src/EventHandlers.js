@@ -21,7 +21,7 @@ ERC20Contract.Approval.handler((event, context) => {
   }
   let approvalId = event.params.owner + "-" + event.params.spender;
 
-  let approvalObject: approvalEntity = {
+  let approvalObject = {
     id: approvalId,
     amount: event.params.value,
     owner: event.params.owner,
@@ -43,15 +43,15 @@ ERC20Contract.Transfer.handler((event, context) => {
   if (senderAccount == undefined) {
     // create the account
     // This is likely only ever going to be the zero address in the case of the first mint
-    let accountObject: accountEntity = {
-      id: event.params.from.toString(),
+    let accountObject = {
+      id: event.params.from,
       balance: BigInt(0 - Number(event.params.value)),
     };
 
     context.account.set(accountObject);
   } else {
     // subtract the balance from the existing users balance
-    let accountObject: accountEntity = {
+    let accountObject = {
       id: senderAccount.id,
       balance: BigInt(
         Number(senderAccount.balance) - Number(event.params.value)
@@ -65,14 +65,14 @@ ERC20Contract.Transfer.handler((event, context) => {
 
   if (receiverAccount == undefined) {
     // create new account
-    let accountObject: accountEntity = {
-      id: event.params.to.toString(),
+    let accountObject = {
+      id: event.params.to,
       balance: BigInt(event.params.value),
     };
     context.account.set(accountObject);
   } else {
     // update existing account
-    let accountObject: accountEntity = {
+    let accountObject = {
       id: receiverAccount.id,
       balance: BigInt(
         Number(receiverAccount.balance) + Number(event.params.value)
