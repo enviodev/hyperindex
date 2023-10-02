@@ -15,10 +15,9 @@ const pollGraphQL = async () => {
     }
   `;
 
-  // TODO: we should rather use the `greeting_by_pk` query here, but it isn't implemented currently: https://github.com/Float-Capital/indexer/issues/804
   const accountEntityQuery = `
     {
-      account(where: {id: {_eq: "0x0000000000000000000000000000000000000000"}}) {
+      account_by_pk(id: "0x0000000000000000000000000000000000000000") {
         approval
         balance
         id
@@ -76,9 +75,8 @@ const pollGraphQL = async () => {
     console.log("First test passed, running the second one.");
 
     // Run the second test
-    fetchQuery(accountEntityQuery, (data) => {
-      const account = data.account[0];
-
+    fetchQuery(accountEntityQuery, ({ account_by_pk: account }) => {
+      assert(!!account, "account should not be null or undefined");
       assert(account.balance <= -103, "balance should be <= -103");
       assert(account.approval == 0, "approval should be = 0");
       console.log("Second test passed.");

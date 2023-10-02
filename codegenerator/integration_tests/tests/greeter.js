@@ -15,10 +15,9 @@ const pollGraphQL = async () => {
     }
   `;
 
-  // TODO: we should rather use the `greeting_by_pk` query here, but it isn't implemented currently: https://github.com/Float-Capital/indexer/issues/804
   const greetingEntityQuery = `
     {
-      greeting(order_by: {event_id: asc}, where: {id: {_eq: "0xf28eA36e3E68Aff0e8c9bFF8037ba2150312ac48"}}) {
+      greeting_by_pk("0xf28eA36e3E68Aff0e8c9bFF8037ba2150312ac48") {
         id
         numberOfGreetings
         greetings
@@ -71,15 +70,14 @@ const pollGraphQL = async () => {
   fetchQuery(rawEventsQuery, (data) => {
     assert(
       data.raw_events_by_pk.event_type ===
-        "PolygonGreeterContract_NewGreetingEvent",
+      "PolygonGreeterContract_NewGreetingEvent",
       "event_type should be PolygonGreeterContract_NewGreetingEvent"
     );
     console.log("First test passed, running the second one.");
 
     // Run the second test
-    fetchQuery(greetingEntityQuery, (data) => {
-      const greeting = data.greeting[0];
-
+    fetchQuery(greetingEntityQuery, ({ greeting_by_pk: greeting }) => {
+      assert(!!greeting, "greeting should not be null or undefined")
       assert(
         greeting.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
         "First 3 greetings should be 'gm,gn,gm paris'"
