@@ -300,11 +300,7 @@ pub async fn generate_config_from_subgraph_id(
                 Some(data_source) => {
                     let mut contract = ConfigContract {
                         name: data_source.name.to_string(),
-                        abi_file_path: Some(format!(
-                            "{}/abis/{}.json",
-                            project_root_path.display(),
-                            data_source.name
-                        )),
+                        abi_file_path: Some(format!("abis/{}.json", data_source.name)),
                         address: NormalizedList::from_single(
                             data_source.source.address.to_string(),
                         ),
@@ -363,7 +359,8 @@ pub async fn generate_config_from_subgraph_id(
     let yaml_string = serde_yaml::to_string(&config).unwrap();
 
     // Write YAML string to a file
-    std::fs::write("config.yaml", yaml_string).context("Failed to write config.yaml")?;
+    std::fs::write(project_root_path.join("config.yaml"), yaml_string)
+        .context("Failed to write config.yaml")?;
 
     //Await all the fetch and write threads before finishing
     while let Some(join) = join_set.join_next().await {
