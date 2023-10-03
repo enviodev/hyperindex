@@ -12,13 +12,9 @@ networks:
           - event: "NewGreeting"
             requiredEntities:
               - name: "Greeting"
-                labels:
-                  - "greetingWithChanges"
           - event: "ClearGreeting"
             requiredEntities:
               - name: "Greeting"
-                labels:
-                  - "greetingWithChanges"
   - id: 59144 # Linea
     rpc_config:
       url: https://rpc.linea.build # We recommend you change this to a dedicated RPC provider
@@ -32,10 +28,6 @@ networks:
           - event: "NewGreeting"
             requiredEntities:
               - name: "Greeting"
-                labels:
-                  - "greetingWithChanges"
           - event: "ClearGreeting"
             requiredEntities:
               - name: "Greeting"
-                labels:
-                  - "greetingWithChanges"

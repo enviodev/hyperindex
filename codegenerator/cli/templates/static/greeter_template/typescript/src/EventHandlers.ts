@@ -12,11 +12,11 @@ import {
 import { greetingEntity } from "../generated/src/Types.gen";
 
 PolygonGreeterContract_NewGreeting_loader(({ event, context }) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.greeting.load(event.params.user.toString());
 });
 
 PolygonGreeterContract_NewGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.greeting.greetingWithChanges;
+  let currentGreeter = context.greeting.get(event.params.user);
 
   if (currentGreeter != null) {
     let greetingObject: greetingEntity = {
@@ -39,11 +39,11 @@ PolygonGreeterContract_NewGreeting_handler(({ event, context }) => {
 });
 
 PolygonGreeterContract_ClearGreeting_loader(({ event, context }) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.greeting.load(event.params.user.toString());
 });
 
 PolygonGreeterContract_ClearGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.greeting.greetingWithChanges;
+  let currentGreeter = context.greeting.get(event.params.user);
 
   if (currentGreeter != null) {
     let greetingObject: greetingEntity = {
@@ -58,11 +58,11 @@ PolygonGreeterContract_ClearGreeting_handler(({ event, context }) => {
 });
 
 LineaGreeterContract_NewGreeting_loader(({ event, context }) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.greeting.load(event.params.user.toString());
 });
 
 LineaGreeterContract_NewGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.greeting.greetingWithChanges;
+  let currentGreeter = context.greeting.get(event.params.user);
 
   if (currentGreeter != null) {
     let greetingObject: greetingEntity = {
@@ -85,11 +85,11 @@ LineaGreeterContract_NewGreeting_handler(({ event, context }) => {
 });
 
 LineaGreeterContract_ClearGreeting_loader(({ event, context }) => {
-  context.greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.greeting.load(event.params.user.toString());
 });
 
 LineaGreeterContract_ClearGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.greeting.greetingWithChanges;
+  let currentGreeter = context.greeting.get(event.params.user);
 
   if (currentGreeter != null) {
     let greetingObject: greetingEntity = {
