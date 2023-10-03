@@ -3,6 +3,7 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
     address: Ethers.ethAddress,
     topics: array<array<Ethers.EventFilter.topic>>,
   }
+
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
@@ -35,119 +36,89 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
     },
   }
 
-  let convertResponse = (
-    res: result<Skar.ResponseTypes.queryResponse, QueryHelpers.queryError>,
-  ): HyperSyncTypes.queryResponse<HyperSyncTypes.logsQueryPage> => {
-    switch res {
-    | Error(e) => Error(HyperSyncTypes.QueryError(e))
-    | Ok({nextBlock, archiveHeight, data}) =>
-      data
-      ->Belt.Array.flatMap(item => {
-        switch (item.blocks, item.logs) {
-        | (Some(blocks), Some(logs)) =>
-          let blockTimestampsMap =
-            blocks
-            ->Belt.Array.keepMap(block => {
-              switch (block.number, block.timestamp) {
-              | (Some(number), Some(timestamp)) => Some((number->Belt.Int.toString, timestamp))
-              | _ => None
-              }
-            })
-            ->Js.Dict.fromArray
+  //Note this function can throw an error
+  let checkFields = (event: SkarClient.ResponseTypes.event): HyperSyncTypes.logsQueryPageItem => {
+    let log = event.log
 
-          logs->Belt.Array.map((log: Skar.ResponseTypes.logData) => {
-            let blockTimestampOpt =
-              log.blockNumber->Belt.Option.flatMap(
-                number => blockTimestampsMap->Js.Dict.get(number->Belt.Int.toString),
-              )
+    let blockTimestamp = event.block->Belt.Option.flatMap(b => b.timestamp)
 
-            switch (
-              blockTimestampOpt,
-              log.address,
-              log.blockHash,
-              log.blockNumber,
-              log.data,
-              log.index,
-              log.transactionHash,
-              log.transactionIndex,
-              log.removed,
-            ) {
-            | (
-                Some(timestamp),
-                Some(address),
-                Some(blockHash),
-                Some(blockNumber),
-                Some(data),
-                Some(index),
-                Some(transactionHash),
-                Some(transactionIndex),
-                Some(removed),
-              ) =>
-              let topics =
-                [log.topic0, log.topic1, log.topic2, log.topic3]->Belt.Array.keepMap(item => item)
+    switch (
+      blockTimestamp,
+      log.address,
+      log.blockHash,
+      log.blockNumber,
+      log.data,
+      log.index,
+      log.transactionHash,
+      log.transactionIndex,
+      log.removed,
+      log.topics,
+    ) {
+    | (
+        Some(blockTimestamp),
+        Some(address),
+        Some(blockHash),
+        Some(blockNumber),
+        Some(data),
+        Some(index),
+        Some(transactionHash),
+        Some(transactionIndex),
+        Some(removed),
+        Some(topics),
+      ) =>
+      let topics = topics->Belt.Array.keepMap(Js.Nullable.toOption)
 
-              let log: Ethers.log = {
-                data,
-                blockNumber,
-                blockHash,
-                address: Ethers.getAddressFromStringUnsafe(address),
-                transactionHash,
-                transactionIndex,
-                logIndex: index,
-                topics,
-                removed,
-              }
+      let log: Ethers.log = {
+        data,
+        blockNumber,
+        blockHash,
+        address: Ethers.getAddressFromStringUnsafe(address),
+        transactionHash,
+        transactionIndex,
+        logIndex: index,
+        topics,
+        removed,
+      }
 
-              let blockTimestamp =
-                timestamp->Ethers.BigInt.toString->Belt.Int.fromString->Belt.Option.getExn
+      let pageItem: HyperSyncTypes.logsQueryPageItem = {log, blockTimestamp}
+      pageItem
+    | _ =>
+      let missingParams =
+        [
+          blockTimestamp->Utils.optionMapNone("log.timestamp"),
+          log.address->Utils.optionMapNone("log.address"),
+          log.blockHash->Utils.optionMapNone("log.blockHash-"),
+          log.blockNumber->Utils.optionMapNone("log.blockNumber"),
+          log.data->Utils.optionMapNone("log.data"),
+          log.index->Utils.optionMapNone("log.index"),
+          log.transactionHash->Utils.optionMapNone("log.transactionHash"),
+          log.transactionIndex->Utils.optionMapNone("log.transactionIndex"),
+          log.removed->Utils.optionMapNone("log.removed"),
+        ]->Belt.Array.keepMap(v => v)
 
-              let pageItem: HyperSyncTypes.logsQueryPageItem = {log, blockTimestamp}
-              Ok(pageItem)
+      HyperSyncTypes.UnexpectedMissingParamsExn({
+        queryName: "queryLogsPage Skar",
+        missingParams,
+      })->raise
+    }
+  }
 
-            | _ =>
-              let missingParams =
-                [
-                  blockTimestampOpt->Utils.optionMapNone("log.timestamp"),
-                  log.address->Utils.optionMapNone("log.address"),
-                  log.blockHash->Utils.optionMapNone("log.blockHash-"),
-                  log.blockNumber->Utils.optionMapNone("log.blockNumber"),
-                  log.data->Utils.optionMapNone("log.data"),
-                  log.index->Utils.optionMapNone("log.index"),
-                  log.transactionHash->Utils.optionMapNone("log.transactionHash"),
-                  log.transactionIndex->Utils.optionMapNone("log.transactionIndex"),
-                  log.removed->Utils.optionMapNone("log.removed"),
-                ]->Belt.Array.keepMap(v => v)
-              Error(
-                HyperSyncTypes.UnexpectedMissingParams({
-                  queryName: "queryLogsPage Skar",
-                  missingParams,
-                }),
-              )
-            }
-          })
-        | _ =>
-          let missingParams =
-            [
-              item.blocks->Utils.optionMapNone("blocks"),
-              item.logs->Utils.optionMapNone("logs"),
-            ]->Belt.Array.keepMap(v => v)
-
-          [
-            Error(
-              HyperSyncTypes.UnexpectedMissingParams({
-                queryName: "queryLogsPage Skar",
-                missingParams,
-              }),
-            ),
-          ]
-        }
-      })
-      ->Utils.mapArrayOfResults
-      ->Belt.Result.map((items): HyperSyncTypes.logsQueryPage => {
+  let convertResponse = (res: SkarClient.ResponseTypes.response): HyperSyncTypes.queryResponse<
+    HyperSyncTypes.logsQueryPage,
+  > => {
+    try {
+      let {nextBlock, archiveHeight} = res
+      let items = res.events->Belt.Array.map(event => event->checkFields)
+      let page: HyperSyncTypes.logsQueryPage = {
         items,
         nextBlock,
         archiveHeight,
-      })
+      }
+
+      Ok(page)
+    } catch {
+    | HyperSyncTypes.UnexpectedMissingParamsExn(err) =>
+      Error(HyperSyncTypes.UnexpectedMissingParams(err))
     }
   }
 
@@ -167,8 +138,9 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
       // )
     })
     let body = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock, ~addressesWithTopics)
+    let skarClient = SkarClient.make({url: serverUrl})
 
-    let res = await Skar.executeSkarQuery(~postQueryBody=body, ~serverUrl)
+    let res = await skarClient->SkarClient.sendReq(body)
 
     //Use ethArchive converter since the response is currently
     //Using the same layout

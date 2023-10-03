@@ -92,7 +92,9 @@ module QueryTypes = {
 
   @spice
   type transactionParams = {
-    address?: array<Ethers.ethAddress>,
+    from?: array<Ethers.ethAddress>,
+    @spice.key("to")
+    to_?: array<Ethers.ethAddress>,
     sighash?: array<string>,
   }
 
@@ -103,6 +105,7 @@ module QueryTypes = {
     logs?: array<logParams>,
     transactions?: array<transactionParams>,
     @spice.key("field_selection") fieldSelection: fieldSelection,
+    @spice.key("max_num_logs") maxNumLogs?: int,
   }
 }
 

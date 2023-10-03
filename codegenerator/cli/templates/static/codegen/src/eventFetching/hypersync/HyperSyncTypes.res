@@ -23,6 +23,8 @@ type missingParams = {
 }
 type queryError = UnexpectedMissingParams(missingParams) | QueryError(QueryHelpers.queryError)
 
+exception UnexpectedMissingParamsExn(missingParams)
+
 let queryErrorToMsq = (e: queryError): string => {
   let getMsgFromExn = (exn: exn) =>
     exn
