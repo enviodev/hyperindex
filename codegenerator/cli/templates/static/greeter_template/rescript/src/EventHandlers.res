@@ -1,11 +1,11 @@
 open Types
 
 Handlers.PolygonGreeterContract.NewGreeting.loader((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
+  context.greeting.load(event.params.user->Ethers.ethAddressToString)
 })
 
 Handlers.PolygonGreeterContract.NewGreeting.handler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges
+  let currentGreeterOpt = context.greeting.get(event.params.user->Ethers.ethAddressToString)
 
   switch currentGreeterOpt {
   | Some(existingGreeter) => {
@@ -32,12 +32,12 @@ Handlers.PolygonGreeterContract.NewGreeting.handler((~event, ~context) => {
 })
 
 Handlers.PolygonGreeterContract.ClearGreeting.loader((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
+  context.greeting.load(event.params.user->Ethers.ethAddressToString)
   ()
 })
 
 Handlers.PolygonGreeterContract.ClearGreeting.handler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges
+  let currentGreeterOpt = context.greeting.get(event.params.user->Ethers.ethAddressToString)
 
   switch currentGreeterOpt {
   | Some(existingGreeter) => {
@@ -55,11 +55,11 @@ Handlers.PolygonGreeterContract.ClearGreeting.handler((~event, ~context) => {
   }
 })
 Handlers.LineaGreeterContract.NewGreeting.loader((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
+  context.greeting.load(event.params.user->Ethers.ethAddressToString)
 })
 
 Handlers.LineaGreeterContract.NewGreeting.handler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges
+  let currentGreeterOpt = context.greeting.get(event.params.user->Ethers.ethAddressToString)
 
   switch currentGreeterOpt {
   | Some(existingGreeter) => {
@@ -86,12 +86,12 @@ Handlers.LineaGreeterContract.NewGreeting.handler((~event, ~context) => {
 })
 
 Handlers.LineaGreeterContract.ClearGreeting.loader((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
+  context.greeting.load(event.params.user->Ethers.ethAddressToString)
   ()
 })
 
 Handlers.LineaGreeterContract.ClearGreeting.handler((~event, ~context) => {
-  let currentGreeterOpt = context.greeting.greetingWithChanges
+  let currentGreeterOpt = context.greeting.get(event.params.user->Ethers.ethAddressToString)
 
   switch currentGreeterOpt {
   | Some(existingGreeter) => {
