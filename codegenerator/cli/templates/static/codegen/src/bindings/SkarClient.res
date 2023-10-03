@@ -1,8 +1,3 @@
-// export class SkarClient {
-//   static new(cfg: JsonValue): SkarClient
-//   sendReq(query: JsonValue): Promise<QueryResponse>
-// }
-
 @spice
 type unchecksummedEthAddress = string
 
@@ -14,9 +9,6 @@ type cfg = {
   bearer_token?: string,
   http_req_timeout_millis?: int,
 }
-
-type transaction
-type block
 
 module ResponseTypes = {
   //Note all fields marked as "nullable" are not explicitly null since
@@ -91,34 +83,20 @@ module ResponseTypes = {
     topics?: array<Js.Nullable.t<Ethers.EventFilter.topic>>, //nullable
   }
 
-  type data = {
-    blocks?: array<blockData>,
-    transactions?: array<transactionData>,
-    logs?: array<logData>,
+  type event = {
+    transaction?: transactionData,
+    block?: blockData,
+    log: logData,
   }
 
-  type queryResponse = {
-    data: array<data>,
+  type response = {
     archiveHeight: int,
     nextBlock: int,
-    totalTime: int,
+    totalExecutionTime: int,
+    events: array<event>,
   }
-
-  type heightResponse = {height: int}
 }
 
-type event = {
-  transaction?: ResponseTypes.transactionData,
-  block?: ResponseTypes.blockData,
-  log: ResponseTypes.logData,
-}
-
-type response = {
-  archiveHeight: int,
-  nextBlock: int,
-  totalExecutionTime: int,
-  events: array<event>,
-}
 
 module Internal = {
   type constructor
@@ -126,7 +104,7 @@ module Internal = {
 
   @send external make: (constructor, Js.Json.t) => t = "new"
 
-  @send external sendReq: (t, Js.Json.t) => promise<response> = "sendReq"
+  @send external sendReq: (t, Js.Json.t) => promise<ResponseTypes.response> = "sendReq"
 }
 
 let make = (cfg: cfg) => {

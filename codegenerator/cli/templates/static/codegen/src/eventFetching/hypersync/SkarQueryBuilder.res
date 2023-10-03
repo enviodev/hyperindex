@@ -37,7 +37,7 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
   }
 
   //Note this function can throw an error
-  let checkFields = (event: SkarClient.event): HyperSyncTypes.logsQueryPageItem => {
+  let checkFields = (event: SkarClient.ResponseTypes.event): HyperSyncTypes.logsQueryPageItem => {
     let log = event.log
 
     let blockTimestamp = event.block->Belt.Option.flatMap(b => b.timestamp)
@@ -103,7 +103,7 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
     }
   }
 
-  let convertResponse = (res: SkarClient.response): HyperSyncTypes.queryResponse<
+  let convertResponse = (res: SkarClient.ResponseTypes.response): HyperSyncTypes.queryResponse<
     HyperSyncTypes.logsQueryPage,
   > => {
     try {
