@@ -32,7 +32,18 @@ module RawEvents = {
     ~chainId: chainId,
     ~eventId: Ethers.BigInt.t,
     ~limit: int,
+    ~contractAddresses: array<Ethers.ethAddress>,
   ) => promise<array<Types.rawEventsEntity>> = "getRawEventsPageGtOrEqEventId"
+
+  @module("./DbFunctionsImplementation.js")
+  external getRawEventsPageGtOrEqEventIdToInclusiveEventId: (
+    Postgres.sql,
+    ~chainId: chainId,
+    ~fromEventIdInclusive: Ethers.BigInt.t,
+    ~toEventIdInclusive: Ethers.BigInt.t,
+    ~limit: int,
+    ~contractAddresses: array<Ethers.ethAddress>,
+  ) => promise<array<Types.rawEventsEntity>> = "getRawEventsPageGtOrEqEventIdToInclusiveEventId"
 
   ///Returns an array with 1 block number (the highest processed on the given chainId)
   @module("./DbFunctionsImplementation.js")
@@ -69,6 +80,7 @@ module DynamicContractRegistry = {
   type contractTypeAndAddress = {
     @as("contract_address") contractAddress: Ethers.ethAddress,
     @as("contract_type") contractType: string,
+    @as("event_id") eventId: Ethers.BigInt.t,
   }
   ///Returns an array with 1 block number (the highest processed on the given chainId)
   @module("./DbFunctionsImplementation.js")

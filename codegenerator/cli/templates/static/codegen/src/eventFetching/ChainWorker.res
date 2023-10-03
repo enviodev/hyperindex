@@ -2,9 +2,20 @@
 module type S = {
   type t
 
-  let make: (~caughtUpToHeadHook: t => promise<unit>=?, Config.chainConfig) => t
+  let make: (
+    ~caughtUpToHeadHook: t => promise<unit>=?,
+    ~contractAddressMapping: ContractAddressingMap.mapping=?,
+    Config.chainConfig,
+  ) => t
 
   let stopFetchingEvents: t => promise<unit>
+
+  let startWorker: (
+    t,
+    ~startBlock: int,
+    ~logger: Pino.t,
+    ~fetchedEventQueue: ChainEventQueue.t,
+  ) => promise<unit>
 
   let startFetchingEvents: (
     t,
@@ -25,10 +36,10 @@ module type S = {
   ) => promise<array<Types.eventBatchQueueItem>>
 }
 
+@@warnings("+27")
+
 module SkarWorker: S = HyperSyncWorker.Make(HyperSync.SkarHyperSync)
 module EthArchiveWorker: S = HyperSyncWorker.Make(HyperSync.EthArchiveHyperSync)
-module RawEventsWorker: S = RawEventsWorker
-module RpcWorker: S = RpcWorker
 
 type chainWorker =
   | Rpc(RpcWorker.t)
@@ -60,6 +71,18 @@ module PolyMorphicChainWorkerFunctions = {
  */
 
   type chainWorkerModTuple<'workerType> = ('workerType, module(S with type t = 'workerType))
+
+  let startWorker = (
+    type workerType,
+    chainWorkerModTuple: chainWorkerModTuple<workerType>,
+    ~startBlock,
+    ~logger: Pino.t,
+    ~fetchedEventQueue: ChainEventQueue.t,
+  ) => {
+    let (worker, workerMod) = chainWorkerModTuple
+    let module(ChainWorker) = workerMod
+    worker->ChainWorker.startWorker(~startBlock, ~logger, ~fetchedEventQueue)
+  }
 
   let startFetchingEvents = (
     type workerType,
@@ -121,6 +144,17 @@ module PolyMorphicChainWorkerFunctions = {
   }
 }
 
+let startWorker = (worker: chainWorker) => {
+  //See note in description of PolyMorphicChainWorkerFunctions
+  open PolyMorphicChainWorkerFunctions
+  switch worker->chainWorkerToChainMod {
+  | RpcWorkerMod(w) => w->startWorker
+  | SkarWorkerMod(w) => w->startWorker
+  | EthArchiveWorkerMod(w) => w->startWorker
+  | RawEventsWorkerMod(w) => w->startWorker
+  }
+}
+
 let startFetchingEvents = (worker: chainWorker) => {
   //See note in description of PolyMorphicChainWorkerFunctions
   open PolyMorphicChainWorkerFunctions
@@ -172,15 +206,19 @@ type workerSelectionWithCallback =
   | EthArchiveSelectedWithCallback(caughtUpToHeadCallback<EthArchiveWorker.t>)
   | RawEventsSelectedWithCallback(caughtUpToHeadCallback<RawEventsWorker.t>)
 
-let make = (selectedWorker: workerSelectionWithCallback, ~chainConfig) => {
+let make = (
+  ~chainConfig,
+  ~contractAddressMapping=?,
+  selectedWorker: workerSelectionWithCallback,
+) => {
   switch selectedWorker {
   | RpcSelectedWithCallback(caughtUpToHeadHook) =>
-    Rpc(RpcWorker.make(~caughtUpToHeadHook?, chainConfig))
+    Rpc(RpcWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   | SkarSelectedWithCallback(caughtUpToHeadHook) =>
-    Skar(SkarWorker.make(~caughtUpToHeadHook?, chainConfig))
+    Skar(SkarWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   | EthArchiveSelectedWithCallback(caughtUpToHeadHook) =>
-    EthArchive(EthArchiveWorker.make(~caughtUpToHeadHook?, chainConfig))
+    EthArchive(EthArchiveWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   | RawEventsSelectedWithCallback(caughtUpToHeadHook) =>
-    RawEvents(RawEventsWorker.make(~caughtUpToHeadHook?, chainConfig))
+    RawEvents(RawEventsWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   }
 }

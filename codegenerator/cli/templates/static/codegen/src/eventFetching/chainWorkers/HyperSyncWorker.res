@@ -64,13 +64,16 @@ module Make = (HyperSync: HyperSync.S) => {
     }
   }
 
-  let make = (~caughtUpToHeadHook=?, chainConfig: Config.chainConfig): t => {
+  let make = (
+    ~caughtUpToHeadHook=?,
+    ~contractAddressMapping=?,
+    chainConfig: Config.chainConfig,
+  ): t => {
     let caughtUpToHeadHook = switch caughtUpToHeadHook {
     | None => (_self: t) => Promise.resolve()
     | Some(hook) => hook
     }
 
-    let contractAddressMapping = ContractAddressingMap.make()
     let logger = Logging.createChild(
       ~params={
         "chainId": chainConfig.chainId,
@@ -78,9 +81,16 @@ module Make = (HyperSync: HyperSync.S) => {
         "loggerFor": "Used only in logging regestration of static contract addresses",
       },
     )
-    //Add all contracts and addresses from config
-    //Dynamic contracts are checked in DB on start
-    contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
+
+    let contractAddressMapping = switch contractAddressMapping {
+    | None =>
+      let m = ContractAddressingMap.make()
+      //Add all contracts and addresses from config
+      //Dynamic contracts are checked in DB on start
+      m->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
+      m
+    | Some(m) => m
+    }
 
     let serverUrl = switch chainConfig.syncSource {
     | EthArchive(serverUrl)
@@ -112,44 +122,9 @@ module Make = (HyperSync: HyperSync.S) => {
     }
   }
 
-  let startFetchingEvents = async (
-    self: t,
-    ~logger: Pino.t,
-    ~fetchedEventQueue: ChainEventQueue.t,
-  ) => {
-    logger->Logging.childTrace("Starting event fetching on Skar worker")
-
+  let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
+    logger->Logging.childInfo("Hypersync worker starting")
     let {chainConfig, contractAddressMapping, serverUrl} = self
-    let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
-      ~chainId=chainConfig.chainId,
-    )
-
-    let startBlock =
-      latestProcessedBlock->Belt.Option.mapWithDefault(
-        chainConfig.startBlock,
-        latestProcessedBlock => latestProcessedBlock + 1,
-      )
-
-    logger->Logging.childTrace({
-      "msg": "Starting fetching events for chain.",
-      "startBlock": startBlock,
-      "latestProcessedBlock": latestProcessedBlock,
-    })
-
-    //Add all dynamic contracts from DB
-    let dynamicContracts =
-      await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
-        ~chainId=chainConfig.chainId,
-        ~startBlock,
-      )
-
-    dynamicContracts->Belt.Array.forEach(({contractType, contractAddress}) =>
-      contractAddressMapping->ContractAddressingMap.addAddress(
-        ~name=contractType,
-        ~address=contractAddress,
-      )
-    )
-
     let initialHeight = await HyperSync.getHeightWithRetry(~serverUrl=self.serverUrl, ~logger)
 
     let currentHeight = ref(initialHeight)
@@ -193,7 +168,7 @@ module Make = (HyperSync: HyperSync.S) => {
       let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
         () =>
           HyperSync.queryLogsPage(
-            ~serverUrl,
+            ~serverUrl=self.serverUrl,
             ~fromBlock=fromBlock.contents,
             ~toBlock=currentHeight.contents,
             ~addresses,
@@ -305,7 +280,7 @@ module Make = (HyperSync: HyperSync.S) => {
           ->ignore
 
           //We know the latest fetched block number since it will be the one before nextBlock
-          self.latestFetchedBlockNumber = latestBlockNumbersResolve(pageUnsafe.nextBlock - 1)
+          latestBlockNumbersResolve(pageUnsafe.nextBlock - 1)
         }
 
         switch heighestBlockQueriedPage {
@@ -319,7 +294,7 @@ module Make = (HyperSync: HyperSync.S) => {
           | Some(item) =>
             //Set the latest fetched data to the queried block
             self.latestFetchedBlockTimestamp = item.blockTimestamp
-            self.latestFetchedBlockNumber = latestBlockNumbersResolve(item.log.blockNumber)
+            latestBlockNumbersResolve(item.log.blockNumber)
           | None => fallbackUpdateLatestFetchedValuesToLastInBatch()
           }
         | Error(_err) => fallbackUpdateLatestFetchedValuesToLastInBatch()
@@ -349,6 +324,47 @@ module Make = (HyperSync: HyperSync.S) => {
         fromBlock := pageUnsafe.nextBlock
       }
     }
+  }
+
+  let startFetchingEvents = async (
+    self: t,
+    ~logger: Pino.t,
+    ~fetchedEventQueue: ChainEventQueue.t,
+  ) => {
+    logger->Logging.childTrace("Starting event fetching on Skar worker")
+
+    let {chainConfig, contractAddressMapping} = self
+    let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
+      ~chainId=chainConfig.chainId,
+    )
+
+    let startBlock =
+      latestProcessedBlock->Belt.Option.mapWithDefault(
+        chainConfig.startBlock,
+        latestProcessedBlock => latestProcessedBlock + 1,
+      )
+
+    logger->Logging.childTrace({
+      "msg": "Starting fetching events for chain.",
+      "startBlock": startBlock,
+      "latestProcessedBlock": latestProcessedBlock,
+    })
+
+    //Add all dynamic contracts from DB
+    let dynamicContracts =
+      await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
+        ~chainId=chainConfig.chainId,
+        ~startBlock,
+      )
+
+    dynamicContracts->Belt.Array.forEach(({contractType, contractAddress}) =>
+      contractAddressMapping->ContractAddressingMap.addAddress(
+        ~name=contractType,
+        ~address=contractAddress,
+      )
+    )
+
+    await self->startWorker(~fetchedEventQueue, ~logger, ~startBlock)
 
     self.hasStoppedFetchingCallBack()
   }
@@ -359,38 +375,24 @@ module Make = (HyperSync: HyperSync.S) => {
 
   let getLatestFetchedBlockTimestamp = (self: t) => self.latestFetchedBlockTimestamp
 
-  let addDynamicContractAndFetchMissingEvents = async (
+  let fetchArbitraryEvents = async (
     self: t,
     ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
     ~fromBlock,
     ~fromLogIndex,
+    ~toBlock,
     ~logger,
-  ): array<Types.eventBatchQueueItem> => {
-    let {serverUrl} = self
-    let {pendingPromise, resolve} = Utils.createPromiseWithHandles()
-
-    //Perform registering and updatiing "hasNewDynamicContractRegistrations" inside a lock
-    //To avoid race condition where fetcher sees that there are new contracts to register but
-    //they are still busy being registered (this would cause an improper batch query with missing
-    //addresses from the fetcher) or that the "hasNewDynamicContractRegistrations" state has not been
-    //set to true yet but there are infact new registrations and a batch could be processed when it should
-    //be discarded
-    self.hasNewDynamicContractRegistrations = pendingPromise
-
-    let unaddedDynamicContracts = dynamicContracts->Belt.Array.keep(({
-      contractAddress,
-      contractType,
-    }) => {
-      self.contractAddressMapping->ContractAddressingMap.addAddressIfNotExists(
-        ~address=contractAddress,
-        ~name=contractType,
-      )
+  ) => {
+    logger->Logging.childTrace({
+      "message": "Fetching Arbitrary Events",
+      "contracts": dynamicContracts,
+      "fromBlock": fromBlock,
+      "fromLogIndex": fromLogIndex,
+      "toBlock": toBlock,
     })
 
-    self.hasNewDynamicContractRegistrations = resolve(true)
-
     let contractInterfaceManager =
-      unaddedDynamicContracts
+      dynamicContracts
       ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
         let chainConfig = switch Config.config->Js.Dict.get(chainId->Belt.Int.toString) {
         | None =>
@@ -414,15 +416,6 @@ module Make = (HyperSync: HyperSync.S) => {
     let queueItems: array<Types.eventBatchQueueItem> = []
 
     let fromBlockRef = ref(fromBlock)
-    let toBlock = await self.latestFetchedBlockNumber
-
-    logger->Logging.childTrace({
-      "message": "Registering dynamic contracts",
-      "contracts": dynamicContracts,
-      "fromBlock": fromBlock,
-      "fromLogIndex": fromLogIndex,
-      "toBlock": toBlock,
-    })
 
     while fromBlockRef.contents < toBlock {
       let {addresses, topics} =
@@ -436,7 +429,7 @@ module Make = (HyperSync: HyperSync.S) => {
       let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
         () =>
           HyperSync.queryLogsPage(
-            ~serverUrl,
+            ~serverUrl=self.serverUrl,
             ~fromBlock=fromBlockRef.contents,
             ~toBlock,
             ~addresses,
@@ -481,5 +474,58 @@ module Make = (HyperSync: HyperSync.S) => {
     }
 
     queueItems
+  }
+
+  let getContractAddressMapping = (self: t) => self.contractAddressMapping
+
+  let addDynamicContractAndFetchMissingEvents = async (
+    self: t,
+    ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
+    ~fromBlock,
+    ~fromLogIndex,
+    ~logger,
+  ): array<Types.eventBatchQueueItem> => {
+    let {
+      pendingPromise: hasNewDynamicContractRegistrationsPendingPromise,
+      resolve: hasNewDynamicContractRegistrationsResolve,
+    } = Utils.createPromiseWithHandles()
+
+    //Perform registering and updatiing "hasNewDynamicContractRegistrations" inside a lock
+    //To avoid race condition where fetcher sees that there are new contracts to register but
+    //they are still busy being registered (this would cause an improper batch query with missing
+    //addresses from the fetcher) or that the "hasNewDynamicContractRegistrations" state has not been
+    //set to true yet but there are infact new registrations and a batch could be processed when it should
+    //be discarded
+    self.hasNewDynamicContractRegistrations = hasNewDynamicContractRegistrationsPendingPromise
+
+    let unaddedDynamicContracts = dynamicContracts->Belt.Array.keep(({
+      contractAddress,
+      contractType,
+    }) => {
+      self.contractAddressMapping->ContractAddressingMap.addAddressIfNotExists(
+        ~address=contractAddress,
+        ~name=contractType,
+      )
+    })
+
+    hasNewDynamicContractRegistrationsResolve(true)
+
+    let toBlock = await self.latestFetchedBlockNumber
+
+    logger->Logging.childTrace({
+      "message": "Registering dynamic contracts",
+      "contracts": dynamicContracts,
+      "fromBlock": fromBlock,
+      "fromLogIndex": fromLogIndex,
+      "toBlock": toBlock,
+    })
+
+    await self->fetchArbitraryEvents(
+      ~dynamicContracts=unaddedDynamicContracts,
+      ~logger,
+      ~fromBlock,
+      ~fromLogIndex,
+      ~toBlock,
+    )
   }
 }

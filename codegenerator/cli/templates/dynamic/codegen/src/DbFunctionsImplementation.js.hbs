@@ -20,12 +20,32 @@ module.exports.getRawEventsPageGtOrEqEventId = (
   sql,
   chainId,
   eventId,
-  limit
+  limit,
+  contractAddresses
 ) => sql`
   SELECT *
   FROM public.raw_events
   WHERE "chain_id" = ${chainId}
   AND "event_id" >= ${eventId}
+  AND "src_address" IN ${sql(contractAddresses)}
+  ORDER BY "event_id" ASC
+  LIMIT ${limit}
+`;
+
+module.exports.getRawEventsPageGtOrEqEventIdToInclusiveEventId = (
+  sql,
+  chainId,
+  fromEventIdInclusive,
+  toEventIdInclusive,
+  limit,
+  contractAddresses
+) => sql`
+  SELECT *
+  FROM public.raw_events
+  WHERE "chain_id" = ${chainId}
+  AND "event_id" >= ${fromEventIdInclusive}
+  AND "event_id" <= ${toEventIdInclusive}
+  AND "src_address" IN ${sql(contractAddresses)}
   ORDER BY "event_id" ASC
   LIMIT ${limit}
 `;
@@ -99,7 +119,7 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (
   chainId,
   block_number
 ) => sql`
-  SELECT contract_address, contract_type
+  SELECT c.contract_address, c.contract_type, c.event_id
   FROM public.dynamic_contract_registry as c
   JOIN raw_events e ON c.chain_id = e.chain_id
   AND c.event_id = e.event_id
