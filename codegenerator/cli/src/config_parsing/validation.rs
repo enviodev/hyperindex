@@ -18,7 +18,7 @@ fn is_valid_postgres_db_name(name: &str) -> bool {
     re.is_match(name)
 }
 
-fn is_valid_ethereum_address(address: &str) -> bool {
+pub fn is_valid_ethereum_address(address: &str) -> bool {
     let re = Regex::new(r"^0x[0-9a-fA-F]{40}$").unwrap();
     re.is_match(address)
 }

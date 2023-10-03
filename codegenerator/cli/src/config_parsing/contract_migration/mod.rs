@@ -7,6 +7,7 @@ use tokio::time::{timeout, Duration};
 use crate::{
     cli_args::Language,
     config_parsing::chain_helpers::NetworkName,
+    config_parsing::validation::is_valid_ethereum_address,
     config_parsing::{
         Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
     },
@@ -23,7 +24,7 @@ pub struct ResponseTypeV1<T> {
 pub type GetSourceCodeResponseType = ResponseTypeV1<GetSourceCodeResult>;
 
 #[allow(non_snake_case)]
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct GetSourceCodeResult {
     SourceCode: String,
     ABI: String,
@@ -41,7 +42,7 @@ pub struct GetSourceCodeResult {
 }
 
 #[allow(non_snake_case)]
-#[allow(unused_variables)]
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Input {
     internalType: String,
@@ -66,17 +67,53 @@ pub async fn generate_config_from_contract_address(
     contract_address: &str,
     language: &Language,
 ) -> anyhow::Result<()> {
-    let (contract_name, abi_string) =
-        fetch_contract_name_and_abi_from_block_explorer(network, contract_address).await?;
+    // Validate that the contract address is in the correct format.
+    if !is_valid_ethereum_address(contract_address) {
+        return Err(anyhow!(
+            "The contract address {} is not a valid Ethereum address. Please provide a valid contract address for contract migration.",
+            contract_address
+        ));
+    }
+
+    // Initialize variables
+    #[allow(unused_assignments)]
+    let mut implementation_contract_name = String::from("UNASSIGNED");
+    #[allow(unused_assignments)]
+    let mut abi_string = String::from("UNASSIGNED");
+
+    // GetSourceCodeResult from API call
+    let get_source_code_result =
+        fetch_get_source_code_result_from_block_explorer(network, contract_address).await?;
+
+    if get_source_code_result.Proxy == "1" {
+        let implementation_contract_address = get_source_code_result.Implementation.clone();
+        // GetSourceCodeResult from API call for the implementation contract
+        let implementation_get_source_code_result =
+            fetch_get_source_code_result_from_block_explorer(
+                network,
+                &implementation_contract_address,
+            )
+            .await?;
+
+        implementation_contract_name = implementation_get_source_code_result.ContractName.clone();
+        abi_string = implementation_get_source_code_result.ABI.clone();
+    } else {
+        // Assumption here is that we don't currently support contracts that are not proxies for contract migration.
+        return Err(anyhow!(
+            "The contract address {} is an implementation address. Please provide a proxy contract address for contract migration.",
+            contract_address
+        ));
+    }
 
     // Create config object to be populated
     let mut config = Config {
-        name: contract_name.clone(),
+        name: implementation_contract_name.clone(),
         description: name.to_string(),
         schema: None,
         networks: vec![],
     };
 
+    // Create network object to be populated
     let mut network = Network {
         id: super::chain_helpers::get_network_id_given_network_name(Some(network.clone())),
         sync_source: None,
@@ -84,26 +121,29 @@ pub async fn generate_config_from_contract_address(
         contracts: vec![],
     };
 
+    // Create contract object to be populated
     let mut contract = ConfigContract {
-        name: contract_name.to_string(),
+        name: implementation_contract_name.to_string(),
         abi_file_path: None,
         address: NormalizedList::from_single(contract_address.to_string()),
         handler: get_event_handler_directory(language),
         events: vec![],
     };
 
+    // Deserialize the ABI string into a vector of Items
     let abi_item: Vec<Item> = serde_json::from_str(&abi_string).with_context(|| {
         format!(
             "Failed to deserialize ABI string for contract {}",
-            contract_name
+            implementation_contract_name
         )
     })?;
 
+    // Iterate through the ABI items to find events
     for item in abi_item.iter() {
         if item.item_type == "event" {
             if let Some(name) = &item.name {
                 let mut event_signature = format!("{}(", name);
-
+                // Generating human readable ABI
                 for input in item.inputs.iter() {
                     event_signature.push_str(&format!("{} {}, ", input.input_type, input.name));
                 }
@@ -125,12 +165,14 @@ pub async fn generate_config_from_contract_address(
         }
     }
 
+    // Pushing contract to network
     network.contracts.push(contract.clone());
 
+    // Pushing network to config
     config.networks.push(network);
 
     // Convert config to YAML file
-    let config_yaml_string = serde_yaml::to_string(&config).unwrap();
+    let config_yaml_string = serde_yaml::to_string(&config)?;
 
     // Write config YAML string to a file
     write_file_to_system(
@@ -162,7 +204,7 @@ async fn write_file_to_system(
 async fn fetch_from_block_explorer_with_retry(url: &str) -> anyhow::Result<String> {
     let mut refetch_delay = Duration::from_secs(2);
 
-    let fail_if_maximum_is_exceeded = |current_refetch_delay, err: &str| -> anyhow::Result<()> {
+    let fail_if_maximum_is_exceeded = |current_refetch_delay, _err: &str| -> anyhow::Result<()> {
         if current_refetch_delay >= super::constants::MAXIMUM_BACKOFF {
             eprintln!(
                 "Failed to fetch a response for the following API request {}",
@@ -217,10 +259,10 @@ async fn fetch_from_block_explorer(url: &str) -> anyhow::Result<String> {
     }
 }
 
-async fn fetch_contract_name_and_abi_from_block_explorer(
+async fn fetch_get_source_code_result_from_block_explorer(
     network: &NetworkName,
     address: &str,
-) -> anyhow::Result<(String, String)> {
+) -> anyhow::Result<GetSourceCodeResult> {
     let url = format!(
         "https://{}/api?module=contract&action=getsourcecode&address={}&apikey={}",
         super::chain_helpers::get_base_url_for_explorer(Some(network.clone())),
@@ -232,10 +274,9 @@ async fn fetch_contract_name_and_abi_from_block_explorer(
     // Deserializing the JSON response into the correct response type
     let get_source_code_response: GetSourceCodeResponseType = serde_json::from_str(&content_raw)?;
 
-    let contract_name = get_source_code_response.result[0].ContractName.clone();
-    let abi = get_source_code_response.result[0].ABI.clone();
+    let get_source_code_result = get_source_code_response.result[0].clone();
 
-    Ok((contract_name, abi))
+    Ok(get_source_code_result)
 }
 
 // Logic to get the event handler directory based on the language
@@ -278,7 +319,7 @@ mod test {
             ]
         }"#;
 
-        let response_type = serde_json::from_str::<GetSourceCodeResponseType>(json).unwrap();
+        let response_type = serde_json::from_str::<GetSourceCodeResponseType>(json)?;
 
         let expected_type = GetSourceCodeResponseType {
             status: "1".to_string(),
@@ -308,6 +349,6 @@ mod test {
     #[test]
     fn test_abi_string_deserializes() {
         let abi_string = "[{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_aggregator\",\"type\":\"address\"},{\"internalType\":\"address\",\"name\":\"_accessController\",\"type\":\"address\"}],\"stateMutability\":\"nonpayable\",\"type\":\"constructor\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"int256\",\"name\":\"current\",\"type\":\"int256\"},{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"roundId\",\"type\":\"uint256\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"}],\"name\":\"AnswerUpdated\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"uint256\",\"name\":\"roundId\",\"type\":\"uint256\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"startedBy\",\"type\":\"address\"},{\"indexed\":false,\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"}],\"name\":\"NewRound\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"OwnershipTransferRequested\",\"type\":\"event\"},{\"anonymous\":false,\"inputs\":[{\"indexed\":true,\"internalType\":\"address\",\"name\":\"from\",\"type\":\"address\"},{\"indexed\":true,\"internalType\":\"address\",\"name\":\"to\",\"type\":\"address\"}],\"name\":\"OwnershipTransferred\",\"type\":\"event\"},{\"inputs\":[],\"name\":\"acceptOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"accessController\",\"outputs\":[{\"internalType\":\"contract AccessControllerInterface\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"aggregator\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_aggregator\",\"type\":\"address\"}],\"name\":\"confirmAggregator\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"decimals\",\"outputs\":[{\"internalType\":\"uint8\",\"name\":\"\",\"type\":\"uint8\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"description\",\"outputs\":[{\"internalType\":\"string\",\"name\":\"\",\"type\":\"string\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_roundId\",\"type\":\"uint256\"}],\"name\":\"getAnswer\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint80\",\"name\":\"_roundId\",\"type\":\"uint80\"}],\"name\":\"getRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint256\",\"name\":\"_roundId\",\"type\":\"uint256\"}],\"name\":\"getTimestamp\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestAnswer\",\"outputs\":[{\"internalType\":\"int256\",\"name\":\"\",\"type\":\"int256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestRound\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"latestTimestamp\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"owner\",\"outputs\":[{\"internalType\":\"address\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint16\",\"name\":\"\",\"type\":\"uint16\"}],\"name\":\"phaseAggregators\",\"outputs\":[{\"internalType\":\"contract AggregatorV2V3Interface\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"phaseId\",\"outputs\":[{\"internalType\":\"uint16\",\"name\":\"\",\"type\":\"uint16\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_aggregator\",\"type\":\"address\"}],\"name\":\"proposeAggregator\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"proposedAggregator\",\"outputs\":[{\"internalType\":\"contract AggregatorV2V3Interface\",\"name\":\"\",\"type\":\"address\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"uint80\",\"name\":\"_roundId\",\"type\":\"uint80\"}],\"name\":\"proposedGetRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"proposedLatestRoundData\",\"outputs\":[{\"internalType\":\"uint80\",\"name\":\"roundId\",\"type\":\"uint80\"},{\"internalType\":\"int256\",\"name\":\"answer\",\"type\":\"int256\"},{\"internalType\":\"uint256\",\"name\":\"startedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint256\",\"name\":\"updatedAt\",\"type\":\"uint256\"},{\"internalType\":\"uint80\",\"name\":\"answeredInRound\",\"type\":\"uint80\"}],\"stateMutability\":\"view\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_accessController\",\"type\":\"address\"}],\"name\":\"setController\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[{\"internalType\":\"address\",\"name\":\"_to\",\"type\":\"address\"}],\"name\":\"transferOwnership\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"version\",\"outputs\":[{\"internalType\":\"uint256\",\"name\":\"\",\"type\":\"uint256\"}],\"stateMutability\":\"view\",\"type\":\"function\"}]".to_string();
-        let _abi_json: Vec<Item> = serde_json::from_str(&abi_string).unwrap();
+        let _abi_json: Vec<Item> = serde_json::from_str(&abi_string)?;
     }
 }
