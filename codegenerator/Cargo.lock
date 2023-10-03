@@ -875,7 +875,6 @@ dependencies = [
  "clap-markdown",
  "dialoguer",
  "ethers",
- "ethers-etherscan",
  "graphql-parser",
  "handlebars",
  "include_dir",

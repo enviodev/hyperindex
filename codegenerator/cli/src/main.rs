@@ -16,7 +16,7 @@ use envio::{
     },
     project_paths::ParsedPaths,
     service_health::{self, EndpointHealth},
-    utils::{run_init_args, run_init_next_args}
+    utils::run_init_args,
 };
 
 #[tokio::main]
@@ -26,11 +26,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match command_line_args.command {
         CommandType::Init(init_args) => {
             run_init_args(&init_args).await?;
-            Ok(())
-        }
-
-        CommandType::InitNext(init_next_args) => {
-            run_init_next_args(&init_next_args).await?;
             Ok(())
         }
 

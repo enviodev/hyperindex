@@ -21,9 +21,6 @@ pub enum CommandType {
     ///Initialize a project with a template
     Init(InitArgs),
 
-    ///Initialize a project with a contract address
-    InitNext(InitNextArgs),
-
     /// Development commands for starting, stopping, and restarting the local environment        
     Dev,
 
@@ -120,24 +117,10 @@ pub struct InitArgs {
     #[arg(short, long)]
     pub subgraph_migration: Option<SubgraphMigrationID>,
 
-    #[arg(short = 'l', long = "language")]
-    #[clap(value_enum)]
-    pub language: Option<Language>,
-}
-#[derive(Args, Debug)]
-pub struct InitNextArgs {
-    ///The directory of the project
-    // #[arg(short, long, default_value_t=String::from(DEFAULT_PROJECT_ROOT_PATH))]
+    ///Network from which contract address should be fetched for migration
     #[arg(short, long)]
-    pub directory: Option<String>,
+    pub blockchain: Option<NetworkName>,
 
-    #[arg(short, long)]
-    pub name: Option<String>,
-
-    ///Contract address to generate the config from
-    pub network: Option<NetworkName>,
-
-    // TODO should ask the user to specify another contract address if it is not found
     ///Contract address to generate the config from
     #[arg(short, long)]
     pub contract_address: Option<ContractAddress>,
