@@ -142,8 +142,11 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1(rescript@10.1.2)
       skar-client-node:
-        specifier: ^0.0.4
-        version: 0.0.4
+        specifier: ^0.0.5
+        version: 0.0.5
+      yargs:
+        specifier: ^17.7.2
+        version: 17.7.2
     devDependencies:
       '@greenlabs/ppx-spice':
         specifier: 0.1.14
@@ -2245,6 +2248,15 @@ packages:
       string-width: 4.2.3
       strip-ansi: 6.0.1
       wrap-ansi: 7.0.0
+
+  /cliui@8.0.1:
+    resolution: {integrity: sha512-BSeNnyus75C4//NQ9gQt1/csTXyo/8Sb+afLAkzAptFuMsod9HFokGNudZpi/oQV73hnVK+sR+5PVRMd+Dr7YQ==}
+    engines: {node: '>=12'}
+    dependencies:
+      string-width: 4.2.3
+      strip-ansi: 6.0.1
+      wrap-ansi: 7.0.0
+    dev: false
 
   /co@4.6.0:
     resolution: {integrity: sha512-QVb0dM5HvG+uaxitm8wONl7jltx8dqhfU33DcqtOZcLSVIKSDDLDi7+0LbAKiyI8hD9u42m2YxXSkMGWThaecQ==}
@@ -5330,8 +5342,8 @@ packages:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
     dev: true
 
-  /skar-client-node-darwin-arm64@0.0.4:
-    resolution: {integrity: sha512-dE34sCApsuyCSYTSkBMe7UUHNTm6aje4EGMYqsOECeIh2O+/r7qinbVTvzf3msy8OQLtc7mMOe4Zw8yhgTQPaA==}
+  /skar-client-node-darwin-arm64@0.0.5:
+    resolution: {integrity: sha512-U61kvXBEIlV0AKxUk1QVYzkjs/afyeXwJCNnzLayzlV8k4t2+/eLh14OR/KeOUnb0l7PDqQZAsPiUvAcUMcQwQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
@@ -5339,8 +5351,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-darwin-x64@0.0.4:
-    resolution: {integrity: sha512-X+BDSiKgh71WCM2kn5WmfYUAiOkm3Uune/TYcYPqI49GWf4oANsWiRKF5WdamHIg5n0TkejooikPLiU9Y/QmnQ==}
+  /skar-client-node-darwin-x64@0.0.5:
+    resolution: {integrity: sha512-dEW6m6ePCwW1AqPbw+uxt6bKLTFhJI/P2U7wt6QxjWo3KEzfVN3sDC4hyKWWEezGLWs1mQUkz1bi8ndU5Q72IQ==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
@@ -5348,8 +5360,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-arm64-gnu@0.0.4:
-    resolution: {integrity: sha512-jp2hfQ1nCSS+/sT1X/V2yQjxvKqRvsEq4ejds4vFc9vaQZlrniUgdpCSnL0gqJJMgvP/lPzDsyLEx6loj4lxuA==}
+  /skar-client-node-linux-arm64-gnu@0.0.5:
+    resolution: {integrity: sha512-GFq2Yeis39gmdsVw282PnHujBam3h4+y7xPHvFrabtV2MIrBmSdU4FbKMaIVEUFQU/kIPD9VMNefwNo457NA5Q==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
@@ -5357,8 +5369,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-x64-gnu@0.0.4:
-    resolution: {integrity: sha512-V3YkOfRffujdpCvWb+DVvCg6whASOT/g3ZXlyKkmMcJ8dp/3lHr2LABxQm68s+dFllL5x0QpBVDG1TVK8/vvUA==}
+  /skar-client-node-linux-x64-gnu@0.0.5:
+    resolution: {integrity: sha512-nnC77J2reZewUvv7psGoGdsu6TvCn7sw1VzQZeRbB2RKNGyetJI6jVY8VTiidXIWtkXGfEBN45Z6yw8OQtPN4w==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -5366,8 +5378,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-x64-musl@0.0.4:
-    resolution: {integrity: sha512-QQ5/ECkefvwzES6iqH1J7ozibspqTFIovq08z43LHHGbGBWXkHkbIOLMnhkEXNM9jZ7Y29qrsaCnhDcNvQabMg==}
+  /skar-client-node-linux-x64-musl@0.0.5:
+    resolution: {integrity: sha512-YWXiy+t03kub+U9nr08YSHWFKbqkdI3LeNji6fU1bkijAjrpe4cr6hQTfKwkGI6u0dYX09eQe052SvNfzC/t0A==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -5375,8 +5387,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-win32-x64-msvc@0.0.4:
-    resolution: {integrity: sha512-rc/tB4WMh/7GOkfLLvKrefhNYxigITljCnG1UfUQmEcivlVr6maVcYCn2MxV451/vNNWJPvgK9jjmGHTbAz7WQ==}
+  /skar-client-node-win32-x64-msvc@0.0.5:
+    resolution: {integrity: sha512-PrYQ+gMn3hfTR3AeiKoysTSc9nhPdBminBuIctapJT/MGv82067QUMlfISB6MGsor+ySX56LT9ZM4Yqj4tQ/lA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
@@ -5384,16 +5396,16 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node@0.0.4:
-    resolution: {integrity: sha512-pg4qJIGcuAypxYcfOijeUrZytXOY5l7qwIskJjQuCuDmHMVgsyPGhcTmGjom8xIJ8T5U6GGRf5uK3BkitxEylg==}
+  /skar-client-node@0.0.5:
+    resolution: {integrity: sha512-oIiDJjk6gE5DMU/BFOEsYfz644yE51OSeGsryoRWzDQa7sCM2oJ53JToa4selVk3S8XjXaSaVQr7/5rxHn13lA==}
     engines: {node: '>= 10'}
     optionalDependencies:
-      skar-client-node-darwin-arm64: 0.0.4
-      skar-client-node-darwin-x64: 0.0.4
-      skar-client-node-linux-arm64-gnu: 0.0.4
-      skar-client-node-linux-x64-gnu: 0.0.4
-      skar-client-node-linux-x64-musl: 0.0.4
-      skar-client-node-win32-x64-msvc: 0.0.4
+      skar-client-node-darwin-arm64: 0.0.5
+      skar-client-node-darwin-x64: 0.0.5
+      skar-client-node-linux-arm64-gnu: 0.0.5
+      skar-client-node-linux-x64-gnu: 0.0.5
+      skar-client-node-linux-x64-musl: 0.0.5
+      skar-client-node-win32-x64-msvc: 0.0.5
     dev: false
 
   /slash@3.0.0:
@@ -6065,6 +6077,11 @@ packages:
     resolution: {integrity: sha512-WOkpgNhPTlE73h4VFAFsOnomJVaovO8VqLDzy5saChRBFQFBoMYirowyW+Q9HB4HFF4Z7VZTiG3iSzJJA29yRA==}
     engines: {node: '>=10'}
 
+  /yargs-parser@21.1.1:
+    resolution: {integrity: sha512-tVpsJW7DdjecAiFpbIB1e3qxIQsE6NoPc5/eTdrbbIC4h0LVsWhnoa3g+m2HclBIujHzsxZ4VJVA+GUuc2/LBw==}
+    engines: {node: '>=12'}
+    dev: false
+
   /yargs-unparser@2.0.0:
     resolution: {integrity: sha512-7pRTIA9Qc1caZ0bZ6RYRGbHJthJWuakf+WmHK0rVeLkNrrGhfoabBNdue6kdINI6r4if7ocq9aD/n7xwKOdzOA==}
     engines: {node: '>=10'}
@@ -6102,6 +6119,19 @@ packages:
       string-width: 4.2.3
       y18n: 5.0.8
       yargs-parser: 20.2.4
+
+  /yargs@17.7.2:
+    resolution: {integrity: sha512-7dSzzRQ++CKnNI/krKnYRV7JKKPUXMEh61soaHKg9mrWEhzFWhFnxPxGl+69cD1Ou63C13NUPCnmIcrvqCuM6w==}
+    engines: {node: '>=12'}
+    dependencies:
+      cliui: 8.0.1
+      escalade: 3.1.1
+      get-caller-file: 2.0.5
+      require-directory: 2.1.1
+      string-width: 4.2.3
+      y18n: 5.0.8
+      yargs-parser: 21.1.1
+    dev: false
 
   /yn@3.1.1:
     resolution: {integrity: sha512-Ux4ygGWsu2c7isFWe8Yu1YluJmqVhxqK2cLXNQA5AcC3QfbGNpM7fu0Y8b/z16pXLnFxZYvWhd3fhBY9DLmC6Q==}

@@ -1,11 +1,20 @@
-type chainId = int
-type exn += UndefinedChainConfig(chainId)
-
 module type S = {
   type t
-  let make: (~caughtUpToHeadHook: t => promise<unit>=?, Config.chainConfig) => t
+  let make: (
+    ~caughtUpToHeadHook: t => promise<unit>=?,
+    ~contractAddressMapping: ContractAddressingMap.mapping=?,
+    Config.chainConfig,
+  ) => t
 
   let stopFetchingEvents: t => promise<unit>
+
+  let startWorker: (
+    t,
+    ~startBlock: int,
+    ~logger: Pino.t,
+    ~fetchedEventQueue: ChainEventQueue.t,
+  ) => promise<unit>
+
   let startFetchingEvents: (
     t,
     ~logger: Pino.t,
@@ -22,16 +31,21 @@ module type S = {
   ) => promise<array<Types.eventBatchQueueItem>>
 }
 
-module RpcWorker: S
 module SkarWorker: S
 module EthArchiveWorker: S
-module RawEventsWorker: S
 
 type chainWorker =
   | Rpc(RpcWorker.t)
   | Skar(SkarWorker.t)
   | EthArchive(EthArchiveWorker.t)
   | RawEvents(RawEventsWorker.t)
+
+let startWorker: (
+  chainWorker,
+  ~startBlock: int,
+  ~logger: Pino.t,
+  ~fetchedEventQueue: ChainEventQueue.t,
+) => promise<unit>
 
 let startFetchingEvents: (
   chainWorker,
@@ -54,4 +68,8 @@ type workerSelectionWithCallback =
   | EthArchiveSelectedWithCallback(option<EthArchiveWorker.t => promise<unit>>)
   | RawEventsSelectedWithCallback(option<RawEventsWorker.t => promise<unit>>)
 
-let make: (workerSelectionWithCallback, ~chainConfig: Config.chainConfig) => chainWorker
+let make: (
+  ~chainConfig: Config.chainConfig,
+  ~contractAddressMapping: ContractAddressingMap.mapping=?,
+  workerSelectionWithCallback,
+) => chainWorker

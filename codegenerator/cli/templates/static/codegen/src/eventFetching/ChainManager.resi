@@ -4,11 +4,7 @@ type t = {
 }
 type nextEventErr = NoItemsInArray
 
-let make: (
-  ~configs: Config.chainConfigs,
-  ~maxQueueSize: int,
-  ~shouldSyncFromRawEvents: bool,
-) => t
+let make: (~configs: Config.chainConfigs, ~maxQueueSize: int, ~shouldSyncFromRawEvents: bool) => t
 let startFetchers: t => unit
 let getChainFetcher: (t, ~chainId: int) => ChainFetcher.t
 let createBatch: (
@@ -17,7 +13,7 @@ let createBatch: (
   ~maxBatchSize: int,
 ) => promise<array<Types.eventBatchQueueItem>>
 let addItemToArbitraryEvents: (t, Types.eventBatchQueueItem) => unit
- 
+
 type blockGroupedBatchItems = array<Types.eventBatchQueueItem>
 let popBlockBatchItems: t => option<blockGroupedBatchItems>
 let popBlockBatchAndAwaitItems: t => promise<option<blockGroupedBatchItems>>
