@@ -32,7 +32,7 @@ module.exports.getRawEventsPageGtOrEqEventId = (
   LIMIT ${limit}
 `;
 
-module.exports.getRawEventsPageGtOrEqEventIdToInclusiveEventId = (
+module.exports.getRawEventsPageWithinEventIdRangeInclusive = (
   sql,
   chainId,
   fromEventIdInclusive,

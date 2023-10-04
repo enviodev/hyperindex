@@ -36,14 +36,14 @@ module RawEvents = {
   ) => promise<array<Types.rawEventsEntity>> = "getRawEventsPageGtOrEqEventId"
 
   @module("./DbFunctionsImplementation.js")
-  external getRawEventsPageGtOrEqEventIdToInclusiveEventId: (
+  external getRawEventsPageWithinEventIdRangeInclusive: (
     Postgres.sql,
     ~chainId: chainId,
     ~fromEventIdInclusive: Ethers.BigInt.t,
     ~toEventIdInclusive: Ethers.BigInt.t,
     ~limit: int,
     ~contractAddresses: array<Ethers.ethAddress>,
-  ) => promise<array<Types.rawEventsEntity>> = "getRawEventsPageGtOrEqEventIdToInclusiveEventId"
+  ) => promise<array<Types.rawEventsEntity>> = "getRawEventsPageWithinEventIdRangeInclusive"
 
   ///Returns an array with 1 block number (the highest processed on the given chainId)
   @module("./DbFunctionsImplementation.js")

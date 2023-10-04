@@ -324,7 +324,7 @@ let addDynamicContractAndFetchMissingEvents = async (
   //since the worker will handle fetching the rest of the dynamic contract events
   //In the next iteration
   let getPageFromRawEvents = (~fromEventId) =>
-    DbFunctions.sql->DbFunctions.RawEvents.getRawEventsPageGtOrEqEventIdToInclusiveEventId(
+    DbFunctions.sql->DbFunctions.RawEvents.getRawEventsPageWithinEventIdRangeInclusive(
       ~limit=pageLimitSize,
       ~contractAddresses=existingDynamicContracts,
       ~chainId=self.chainId,
