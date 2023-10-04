@@ -29,9 +29,16 @@ app->get("/metrics", (_req, res) => {
     ->Promise.thenResolve(metrics => res->endWithData(metrics))
 })
 
+type args = {@as("sync-from-raw-events") syncFromRawEvents?: bool}
+
+type mainArgs = Yargs.parsedArgs<args>
+
 let main = () => {
-  EventSyncing.startSyncingAllEvents()
+  let mainArgs: mainArgs = Node.Process.argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
+
+  let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
+
+  EventSyncing.startSyncingAllEvents(~shouldSyncFromRawEvents)
 }
 
 main()
-

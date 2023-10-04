@@ -53,6 +53,7 @@ describe("E2E Db check", () => {
     let mockChainManager = ChainManager.make(
       ~configs=Config.config,
       ~maxQueueSize=arbitraryMaxQueueSize,
+      ~shouldSyncFromRawEvents=false,
     )
 
     await EventProcessing.processEventBatch(

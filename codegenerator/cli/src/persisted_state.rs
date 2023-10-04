@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::{
     error::Error,
     fmt::{self, Display},
@@ -15,22 +16,22 @@ use crate::project_paths::{ParsedPaths, ProjectPaths};
 pub struct HashString(String);
 
 impl HashString {
-    fn from_file_paths(
-        file_paths: Vec<&PathBuf>,
-        file_must_exist: bool,
-    ) -> Result<Self, Box<dyn Error>> {
+    fn from_file_paths(file_paths: Vec<&PathBuf>, file_must_exist: bool) -> anyhow::Result<Self> {
         // Read file contents into a buffer
         let mut buffer = Vec::new();
 
         for file_path in file_paths {
             // Open the file if we expect the file to exist at the stage of codegen
             if file_must_exist {
-                let mut file = File::open(file_path)?;
-                file.read_to_end(&mut buffer)?;
+                let mut file =
+                    File::open(file_path).context("Opening file in HashString::from_file_paths")?;
+                file.read_to_end(&mut buffer)
+                    .context("Reading file in HashString::from_file_paths where file must exist")?;
             }
             // Exception made specifically for event handlers which may not exist at codegen yet
             else if let Ok(mut file) = File::open(file_path) {
-                file.read_to_end(&mut buffer)?;
+                file.read_to_end(&mut buffer)
+                    .context("Reading file in HashString::from_file_paths where file")?;
             }
         }
 
@@ -43,7 +44,7 @@ impl HashString {
         Ok(HashString(hash_string))
     }
 
-    fn from_file_path(file_path: &PathBuf) -> Result<Self, Box<dyn Error>> {
+    fn from_file_path(file_path: &PathBuf) -> anyhow::Result<Self> {
         Self::from_file_paths(vec![file_path], true)
     }
 
@@ -70,16 +71,31 @@ pub struct PersistedState {
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 
 impl PersistedState {
-    pub fn try_default(parsed_paths: &ParsedPaths) -> Result<Self, Box<dyn Error>> {
+    pub fn try_default(parsed_paths: &ParsedPaths) -> anyhow::Result<Self> {
+        const HANDLER_FILES_MUST_EXIST: bool = false;
+        const ABI_FILES_MUST_EXIST: bool = true;
         Ok(PersistedState {
             has_run_db_migrations: false,
             config_hash: HashString::from_file_path(&parsed_paths.project_paths.config)?,
             schema_hash: HashString::from_file_path(&parsed_paths.schema_path)?,
             handler_files_hash: HashString::from_file_paths(
                 parsed_paths.get_all_handler_paths(),
-                false,
+                HANDLER_FILES_MUST_EXIST,
             )?,
-            abi_files_hash: HashString::from_file_paths(parsed_paths.get_all_abi_paths(), true)?,
+            abi_files_hash: HashString::from_file_paths(
+                parsed_paths.get_all_abi_paths(),
+                ABI_FILES_MUST_EXIST,
+            )?,
+        })
+    }
+
+    pub fn try_get_updated(&self, parsed_paths: &ParsedPaths) -> anyhow::Result<Self> {
+        let default =
+            Self::try_default(parsed_paths).context("Failed getting default in try get update")?;
+
+        Ok(PersistedState {
+            has_run_db_migrations: self.has_run_db_migrations,
+            ..default
         })
     }
 
@@ -91,38 +107,26 @@ impl PersistedState {
         project_paths.generated.join(PERSISTED_STATE_FILE_NAME)
     }
 
-    pub fn get_from_generated_file(project_paths: &ProjectPaths) -> Result<Self, String> {
+    pub fn get_from_generated_file(project_paths: &ProjectPaths) -> anyhow::Result<Self> {
         let file_path = Self::get_generated_file_path(project_paths);
-        let file_str = std::fs::read_to_string(file_path).map_err(|e| {
-            format!(
-                "Unable to find {} due to error: {}",
-                PERSISTED_STATE_FILE_NAME, e
-            )
-        })?;
+        let file_str = std::fs::read_to_string(file_path)
+            .context(format!("Unable to find {}", PERSISTED_STATE_FILE_NAME,))?;
 
-        serde_json::from_str(&file_str).map_err(|e| {
-            format!(
-                "Unable to parse {} due to error: {}",
-                PERSISTED_STATE_FILE_NAME, e
-            )
-        })
+        serde_json::from_str(&file_str)
+            .context(format!("Unable to parse {}", PERSISTED_STATE_FILE_NAME,))
     }
 
-    fn write_to_generated_file(&self, project_paths: &ProjectPaths) -> Result<(), String> {
+    fn write_to_generated_file(&self, project_paths: &ProjectPaths) -> anyhow::Result<()> {
         let file_path = Self::get_generated_file_path(project_paths);
         let contents = self.to_json_string();
-        std::fs::write(file_path, contents).map_err(|e| {
-            format!(
-                "Unable to write {} due to error: {}",
-                PERSISTED_STATE_FILE_NAME, e
-            )
-        })
+        std::fs::write(file_path, contents)
+            .context(format!("Unable to write {}", PERSISTED_STATE_FILE_NAME))
     }
 
     pub fn set_has_run_db_migrations(
         project_paths: &ProjectPaths,
         has_run_db_migrations: bool,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         let mut persisted_state = Self::get_from_generated_file(project_paths)?;
         if persisted_state.has_run_db_migrations != has_run_db_migrations {
             persisted_state.has_run_db_migrations = has_run_db_migrations;
@@ -183,7 +187,7 @@ pub enum ExistingPersistedState {
 pub fn check_user_file_diff_match(
     existing_persisted_state: &ExistingPersistedState,
     parsed_paths: &ParsedPaths,
-) -> Result<RerunOptions, Box<dyn Error>> {
+) -> anyhow::Result<RerunOptions> {
     //If there is no existing file, the whole process needs to
     //be run so we can skip diff checking
     let persisted_state = match existing_persisted_state {
@@ -192,28 +196,35 @@ pub fn check_user_file_diff_match(
         }
         ExistingPersistedState::ExistingFile(f) => f,
     };
+
     let mut diff = PersistedStateDiff::new();
-    let current_config_hash = HashString::from_file_path(&parsed_paths.project_paths.config)?;
-    if persisted_state.config_hash != current_config_hash {
+
+    let new_state = persisted_state
+        .try_get_updated(parsed_paths)
+        .context("Getting updated persisted state")?;
+
+    if persisted_state.config_hash != new_state.config_hash {
         println!("Change in config detected");
         diff.config_change = true;
     }
-    let current_schema_hash = HashString::from_file_path(&parsed_paths.schema_path)?;
-    if persisted_state.schema_hash != current_schema_hash {
+    if persisted_state.schema_hash != new_state.schema_hash {
         println!("Change in schema detected");
         diff.schema_change = true;
     }
-    let current_handlers_hash =
-        HashString::from_file_paths(parsed_paths.get_all_handler_paths(), false)?;
-    if persisted_state.handler_files_hash != current_handlers_hash {
+
+    if persisted_state.handler_files_hash != new_state.handler_files_hash {
         println!("Change in handlers detected");
         diff.handler_change = true;
     }
-    let current_abi_hash = HashString::from_file_paths(parsed_paths.get_all_abi_paths(), true)?;
-    if persisted_state.abi_files_hash != current_abi_hash {
+
+    if persisted_state.abi_files_hash != new_state.abi_files_hash {
         println!("Change in abis detected");
         diff.abi_change = true;
     }
+
+    new_state
+        .write_to_generated_file(&parsed_paths.project_paths)
+        .context("Writing new persisted state")?;
     Ok(diff.get_rerun_option())
 }
 

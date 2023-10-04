@@ -79,19 +79,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         match check_user_file_diff_match(&existing_persisted_state, &parsed_paths)?
                         {
                             RerunOptions::CodegenAndSyncFromRpc => {
+                                println!("Running codegen and resyncing from source");
                                 commands::codegen::run_codegen(&parsed_paths).await?;
                                 commands::codegen::run_post_codegen_command_sequence(
                                     &parsed_paths.project_paths,
                                 )
                                 .await?;
-                                commands::db_migrate::run_db_setup(project_paths, true).await?;
+                                const SHOULD_DROP_RAW_EVENTS: bool = true;
+                                commands::db_migrate::run_db_setup(
+                                    project_paths,
+                                    SHOULD_DROP_RAW_EVENTS,
+                                )
+                                .await?;
+
+                                const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
                                 commands::start::start_indexer(
                                     project_paths,
+                                    SHOULD_SYNC_FROM_RAW_EVENTS,
                                     docker_started_on_run,
                                 )
                                 .await?;
                             }
                             RerunOptions::CodegenAndResyncFromStoredEvents => {
+                                println!("Running codegen and resyncing from cached events");
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
                                 commands::codegen::run_codegen(&parsed_paths).await?;
@@ -99,24 +109,41 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                     &parsed_paths.project_paths,
                                 )
                                 .await?;
-                                commands::db_migrate::run_db_setup(project_paths, false).await?;
+                                const SHOULD_DROP_RAW_EVENTS: bool = false;
+                                commands::db_migrate::run_db_setup(
+                                    project_paths,
+                                    SHOULD_DROP_RAW_EVENTS,
+                                )
+                                .await?;
+
+                                const SHOULD_SYNC_FROM_RAW_EVENTS: bool = true;
                                 commands::start::start_indexer(
                                     project_paths,
+                                    SHOULD_SYNC_FROM_RAW_EVENTS,
                                     docker_started_on_run,
                                 )
                                 .await?;
                             }
                             RerunOptions::ResyncFromStoredEvents => {
+                                println!("Resyncing from cached events");
                                 //TODO: Implement command for rerunning from stored events
                                 //and action from this match arm
-                                commands::db_migrate::run_db_setup(project_paths, false).await?; // does this need to be run?
+                                const SHOULD_DROP_RAW_EVENTS: bool = false;
+                                commands::db_migrate::run_db_setup(
+                                    project_paths,
+                                    SHOULD_DROP_RAW_EVENTS,
+                                )
+                                .await?; // does this need to be run?
+                                const SHOULD_SYNC_FROM_RAW_EVENTS: bool = true;
                                 commands::start::start_indexer(
                                     project_paths,
+                                    SHOULD_SYNC_FROM_RAW_EVENTS,
                                     docker_started_on_run,
                                 )
                                 .await?;
                             }
                             RerunOptions::ContinueSync => {
+                                println!("Continuing sync");
                                 let has_run_db_migrations = match existing_persisted_state {
                                     ExistingPersistedState::NoFile => false,
                                     ExistingPersistedState::ExistingFile(ps) => {
@@ -125,10 +152,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 };
 
                                 if !has_run_db_migrations || docker_started_on_run {
-                                    commands::db_migrate::run_db_setup(project_paths, true).await?;
+                                    const SHOULD_DROP_RAW_EVENTS: bool = true;
+                                    commands::db_migrate::run_db_setup(
+                                        project_paths,
+                                        SHOULD_DROP_RAW_EVENTS,
+                                    )
+                                    .await?;
                                 }
+                                const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
                                 commands::start::start_indexer(
                                     project_paths,
+                                    SHOULD_SYNC_FROM_RAW_EVENTS,
                                     docker_started_on_run,
                                 )
                                 .await?;
@@ -140,6 +174,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             Ok(())
         }
+
         CommandType::Stop => {
             let parsed_paths = ParsedPaths::new(ProjectPathsArgs::default())?;
             let project_paths = &parsed_paths.project_paths;
@@ -152,9 +187,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
             let parsed_paths = ParsedPaths::new(start_args.to_project_paths_args())?;
             let project_paths = &parsed_paths.project_paths;
             if start_args.restart {
-                commands::db_migrate::run_db_setup(project_paths, true).await?;
+                const SHOULD_DROP_RAW_EVENTS: bool = true;
+                commands::db_migrate::run_db_setup(project_paths, SHOULD_DROP_RAW_EVENTS).await?;
             }
-            commands::start::start_indexer(project_paths, false).await?;
+            const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
+            const SHOULD_OPEN_HASURA: bool = false;
+            commands::start::start_indexer(
+                project_paths,
+                SHOULD_SYNC_FROM_RAW_EVENTS,
+                SHOULD_OPEN_HASURA,
+            )
+            .await?;
             Ok(())
         }
 
@@ -180,7 +223,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
 
                     DbMigrateSubcommands::Setup => {
-                        commands::db_migrate::run_db_setup(project_paths, true).await?;
+                        const SHOULD_DROP_RAW_EVENTS: bool = true;
+                        commands::db_migrate::run_db_setup(project_paths, SHOULD_DROP_RAW_EVENTS)
+                            .await?;
                     }
                 },
             }

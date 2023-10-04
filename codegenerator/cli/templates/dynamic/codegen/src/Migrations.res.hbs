@@ -74,7 +74,7 @@ module DynamicContractRegistryTable = {
     @warning("-21")
     let _ = await (
       %raw("sql`
-      CREATE TABLE public.dynamic_contract_registry (
+      CREATE TABLE IF NOT EXISTS public.dynamic_contract_registry (
         chain_id INTEGER NOT NULL,
         event_id NUMERIC NOT NULL,
         contract_address TEXT NOT NULL,

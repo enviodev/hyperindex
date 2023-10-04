@@ -1,3 +1,6 @@
+use anyhow::Context;
+use std::path::Path;
+
 pub mod rescript {
     use std::{error::Error, path::PathBuf};
     use tokio::process::Command;
@@ -212,90 +215,103 @@ pub mod codegen {
     }
 }
 
-pub mod start {
+async fn execute_command(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+) -> anyhow::Result<std::process::ExitStatus> {
+    Ok(tokio::process::Command::new(cmd)
+        .args(&args)
+        .current_dir(current_dir)
+        .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
+        .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+        //the child process
+        .spawn()
+        .context(format!(
+            "Failed to spawn command {} {} at {} as child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?
+        .wait()
+        .await
+        .context(format!(
+            "Failed to exit command {} {} at {} from child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?)
+}
 
-    use std::error::Error;
-    use tokio::process::Command;
+pub mod start {
 
     use crate::project_paths::ProjectPaths;
 
+    use super::execute_command;
+
     pub async fn start_indexer(
         project_paths: &ProjectPaths,
+        should_use_raw_events_worker: bool,
         should_open_hasura: bool,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    ) -> anyhow::Result<std::process::ExitStatus> {
         if should_open_hasura {
             open::that("http://localhost:8080")?;
         }
+        let cmd = "npm";
+        let mut args = vec!["run", "start"];
+        let current_dir = &project_paths.project_root;
+
         //TODO: put the start script in the generated package.json
         //and run from there.
-        Ok(Command::new("npm")
-            .arg("run")
-            .arg("start")
-            .current_dir(&project_paths.project_root)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?)
+        if should_use_raw_events_worker {
+            args.push("--");
+            args.push("--sync-from-raw-events");
+        }
+
+        execute_command(cmd, args, current_dir).await
     }
 }
 pub mod docker {
 
-    use std::error::Error;
-    use tokio::process::Command;
-
     use crate::project_paths::ProjectPaths;
+
+    use super::execute_command;
 
     pub async fn docker_compose_up_d(
         project_paths: &ProjectPaths,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        Ok(Command::new("docker")
-            .arg("compose")
-            .arg("up")
-            .arg("-d")
-            .current_dir(&project_paths.generated)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?)
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        let cmd = "docker";
+        let args = vec!["compose", "up", "-d"];
+        let current_dir = &project_paths.generated;
+
+        execute_command(cmd, args, current_dir).await
     }
     pub async fn docker_compose_down_v(
         project_paths: &ProjectPaths,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        Ok(Command::new("docker")
-            .arg("compose")
-            .arg("down")
-            .arg("-v")
-            .current_dir(&project_paths.generated)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?)
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        let cmd = "docker";
+        let args = vec!["compose", "down", "-v"];
+        let current_dir = &project_paths.generated;
+
+        execute_command(cmd, args, current_dir).await
     }
 }
 
 pub mod db_migrate {
 
-    use std::error::Error;
-    use tokio::process::Command;
+    use super::execute_command;
 
     use crate::{persisted_state::PersistedState, project_paths::ProjectPaths};
-    pub async fn run_up_migrations(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
-        let exit = Command::new("node")
-            .arg("-e")
-            .arg("require(`./src/Migrations.bs.js`).runUpMigrations(true)")
-            .current_dir(&project_paths.generated)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?;
+    pub async fn run_up_migrations(project_paths: &ProjectPaths) -> anyhow::Result<()> {
+        let cmd = "node";
+        let args = vec![
+            "-e",
+            "require(`./src/Migrations.bs.js`).runUpMigrations(true)",
+        ];
+
+        let current_dir = &project_paths.generated;
+
+        let exit = execute_command(cmd, args, current_dir).await?;
 
         if exit.success() {
             let has_run_db_migrations = true;
@@ -304,17 +320,16 @@ pub mod db_migrate {
         Ok(())
     }
 
-    pub async fn run_drop_schema(project_paths: &ProjectPaths) -> Result<(), Box<dyn Error>> {
-        let exit = Command::new("node")
-            .arg("-e")
-            .arg("require(`./src/Migrations.bs.js`).runDownMigrations(true)")
-            .current_dir(&project_paths.generated)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?;
+    pub async fn run_drop_schema(project_paths: &ProjectPaths) -> anyhow::Result<()> {
+        let cmd = "node";
+        let args = vec![
+            "-e",
+            "require(`./src/Migrations.bs.js`).runDownMigrations(true)",
+        ];
+
+        let current_dir = &project_paths.generated;
+
+        let exit = execute_command(cmd, args, current_dir).await?;
         if exit.success() {
             let has_run_db_migrations = false;
             PersistedState::set_has_run_db_migrations(project_paths, has_run_db_migrations)?;
@@ -325,20 +340,20 @@ pub mod db_migrate {
     pub async fn run_db_setup(
         project_paths: &ProjectPaths,
         should_drop_raw_events: bool,
-    ) -> Result<(), Box<dyn Error>> {
-        let exit = Command::new("node")
-            .arg("-e")
-            .arg(format!(
-                "require(`./src/Migrations.bs.js`).setupDb({})",
-                should_drop_raw_events
-            ))
-            .current_dir(&project_paths.generated)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?;
+    ) -> anyhow::Result<()> {
+        let cmd = "node";
+
+        let last_arg = format!(
+            "require(`./src/Migrations.bs.js`).setupDb({})",
+            should_drop_raw_events
+        );
+
+        let args = vec!["-e", last_arg.as_str()];
+
+        let current_dir = &project_paths.generated;
+
+        let exit = execute_command(cmd, args, current_dir).await?;
+
         if exit.success() {
             let has_run_db_migrations = true;
             PersistedState::set_has_run_db_migrations(project_paths, has_run_db_migrations)?;
