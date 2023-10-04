@@ -20,12 +20,24 @@ let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawE
     | EthArchive(_) => ChainWorker.EthArchiveSelectedWithCallback(noneCallback)
     }
   }
-
+  let fetchedEventQueue = ChainEventQueue.make(~maxQueueSize)
   let chainWorkerWithCallback = if shouldSyncFromRawEvents {
-    let finishedSyncCallback = async (worker: ChainWorker.RawEventsWorker.t) => {
-      await worker->ChainWorker.RawEventsWorker.stopFetchingEvents
-      chainWorkerRef := chainConfigWorkerNoCallback->ChainWorker.make(~chainConfig)
+    let finishedSyncCallback = async (worker: RawEventsWorker.t) => {
+      await worker->RawEventsWorker.stopFetchingEvents
+      logger->Logging.childInfo("Finished reprocessed cached events, starting fetcher")
+      let contractAddressMapping = worker.contractAddressMapping
+
+      let latestFetchedEventId = await worker.latestFetchedEventId
+      let {blockNumber} = latestFetchedEventId->EventUtils.unpackEventIndex
+      let startBlock = blockNumber + 1
+      chainWorkerRef :=
+        chainConfigWorkerNoCallback->ChainWorker.make(~chainConfig, ~contractAddressMapping)
+
+      chainWorkerRef.contents
+      ->ChainWorker.startWorker(~startBlock, ~fetchedEventQueue, ~logger)
+      ->ignore
     }
+
     ChainWorker.RawEventsSelectedWithCallback(Some(finishedSyncCallback))
   } else {
     chainConfigWorkerNoCallback
@@ -34,7 +46,7 @@ let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawE
   chainWorkerRef := chainWorkerWithCallback->ChainWorker.make(~chainConfig)
 
   {
-    fetchedEventQueue: ChainEventQueue.make(~maxQueueSize),
+    fetchedEventQueue,
     logger,
     chainConfig,
     chainWorker: chainWorkerRef,

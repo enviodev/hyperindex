@@ -25,7 +25,9 @@ let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Ethers.ethAd
   let addressIsNew =
     map.nameByAddress
     ->Js.Dict.get(address->Ethers.ethAddressToString)
-    ->Belt.Option.mapWithDefault(true, expectedName => expectedName != name /* check the name, since differently named contracts can have the same address */)
+    ->Belt.Option.mapWithDefault(true, expectedName => expectedName != name)
+
+  /* check the name, since differently named contracts can have the same address */
 
   if addressIsNew {
     addAddress(map, ~name, ~address)
@@ -98,4 +100,8 @@ let getAddressesFromContractName = (mapping, ~contractName) => {
   }
   ->Belt.Set.String.toArray
   ->stringsToAddresses
+}
+
+let getAllAddresses = (mapping: mapping) => {
+  mapping.nameByAddress->Js.Dict.keys->stringsToAddresses
 }
