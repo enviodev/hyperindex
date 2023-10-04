@@ -772,7 +772,7 @@ mod tests {
         let network1 = NetworkConfigTemplate {
             id: 1,
             rpc_config: None,
-            skar_server_url: Some("http://91.216.245.118:1151".to_string()),
+            skar_server_url: Some("http://91.216.245.175:1100".to_string()),
             eth_archive_server_url: None,
             start_block: 0,
             contracts: contracts1,
@@ -830,11 +830,11 @@ mod tests {
         };
 
         let network2 = NetworkConfigTemplate {
-            id: 137,
+            id: 59144,
             rpc_config: None,
             skar_server_url: None,
             //Should default to eth archive since there is no skar endpoint at this id
-            eth_archive_server_url: Some("http://46.4.5.110:77".to_string()),
+            eth_archive_server_url: Some("http://46.4.5.110:76".to_string()),
             start_block: 0,
             contracts: vec![],
         };
