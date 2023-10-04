@@ -35,8 +35,8 @@ let mergeSorted = (f: 'a => 'b, xs: array<'a>, ys: array<'a>) => {
 
 type promiseWithHandles<'a> = {
   pendingPromise: promise<'a>,
-  resolve: 'a => promise<'a>,
-  reject: exn => promise<'a>,
+  resolve: 'a => unit,
+  reject: exn => unit,
 }
 
 let createPromiseWithHandles = () => {
@@ -50,23 +50,13 @@ let createPromiseWithHandles = () => {
   })
 
   let resolve = (val: 'a) => {
-    switch resolveRef.contents {
-    | None => Promise.resolve(val)
-    | Some(res) => {
-        res(. val)
-        pendingPromise
-      }
-    }
+    let res = resolveRef.contents->Belt.Option.getUnsafe
+    res(. val)
   }
 
   let reject = (exn: exn) => {
-    switch rejectRef.contents {
-    | None => Promise.reject(exn)
-    | Some(rej) => {
-        rej(. exn)
-        pendingPromise
-      }
-    }
+    let rej = rejectRef.contents->Belt.Option.getUnsafe
+    rej(. exn)
   }
 
   {

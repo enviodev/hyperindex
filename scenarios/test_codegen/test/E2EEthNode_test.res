@@ -58,11 +58,12 @@ describe("E2E Integration Test", () => {
     let chainManager = ChainManager.make(
       ~configs=[(localChainConfig.chainId->Belt.Int.toString, localChainConfig)]->Js.Dict.fromArray,
       ~maxQueueSize=100,
+      ~shouldSyncFromRawEvents=false,
     )
 
     chainManager->ChainManager.startFetchers
 
-    EventSyncing.startSyncingAllEvents()
+    EventSyncing.startSyncingAllEvents(~shouldSyncFromRawEvents=false)
 
     //Note this isn't working. Something to do with the polling on hardhat eth node
     //Would be better to spin up a local node with ganache

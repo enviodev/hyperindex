@@ -2,12 +2,12 @@ type t = {
   logger: Pino.t,
   fetchedEventQueue: ChainEventQueue.t,
   chainConfig: Config.chainConfig,
-  chainWorker: ChainWorker.chainWorker,
+  chainWorker: ref<ChainWorker.chainWorker>,
 }
 let make: (
   ~chainConfig: Config.chainConfig,
   ~maxQueueSize: int,
-  ~chainWorkerTypeSelected: Env.workerTypeSelected,
+  ~shouldSyncFromRawEvents: bool,
 ) => t
 let startFetchingEvents: t => promise<result<unit, exn>>
 /**

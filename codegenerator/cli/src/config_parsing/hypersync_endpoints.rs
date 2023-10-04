@@ -115,6 +115,7 @@ pub fn network_to_eth_archive_url(network: &SupportedNetwork) -> Option<String> 
 pub fn network_to_skar_url(network: &SupportedNetwork) -> Option<String> {
     match network {
         SupportedNetwork::EthereumMainnet => Some("http://eth.hypersync.bigdevenergy.link:1100".to_string()),
+        SupportedNetwork::Polygon => Some("http://91.216.245.175:1101".to_string()),
         _ => None
 
         // SupportedNetwork::Polygon => Some("http://91.216.245.118:2151".to_string()),

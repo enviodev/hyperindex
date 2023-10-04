@@ -91,7 +91,9 @@ let populateChainQueuesWithRandomEvents = (
       logger: Logging.logger,
       chainConfig: "TODO"->Obj.magic,
       // This is quite a hack - but it works!
-      chainWorker: Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->Obj.magic),
+      chainWorker: ref(
+        ChainWorker.Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->Obj.magic),
+      ),
     }
     chainFetchers->Js.Dict.set(chainId->Belt.Int.toString, mockChainFetcher)
   }

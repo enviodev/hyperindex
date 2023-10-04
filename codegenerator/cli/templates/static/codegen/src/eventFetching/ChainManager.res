@@ -61,24 +61,12 @@ let determineNextEvent = (chainFetchersPeeks: array<ChainFetcher.eventQueuePeek>
   }
 }
 
-let make = (~configs: Config.chainConfigs, ~maxQueueSize): t => {
+let make = (~configs: Config.chainConfigs, ~maxQueueSize, ~shouldSyncFromRawEvents: bool): t => {
   let chainFetchers =
     configs
     ->Js.Dict.entries
     ->Belt.Array.map(((key, chainConfig)) => {
-      (
-        key,
-        ChainFetcher.make(
-          ~chainConfig,
-          ~maxQueueSize,
-          ~chainWorkerTypeSelected=switch (Env.workerTypeSelected, chainConfig.syncSource) {
-          | (RawEventsSelected, _) => RawEventsSelected
-          | (_, Rpc(_)) => RpcSelected
-          | (_, Skar(_)) => SkarSelected
-          | (_, EthArchive(_)) => EthArchiveSelected
-          },
-        ),
-      )
+      (key, ChainFetcher.make(~chainConfig, ~maxQueueSize, ~shouldSyncFromRawEvents))
     })
     ->Js.Dict.fromArray
   {

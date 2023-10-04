@@ -1,5 +1,3 @@
-// TODO: move to `eventFetching`
-
 type multiChainEventIndex = {
   timestamp: int,
   chainId: int,
