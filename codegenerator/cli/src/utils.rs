@@ -189,5 +189,14 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
             return Err("Failed to build rescript")?;
         }
     }
+
+    // If the project directory is not the current directory, print a message for user to cd into it
+    if project_paths.project_root != PathBuf::from(".") {
+        println!(
+            "Please run `cd {}` to run the rest of the envio commands",
+            project_paths.project_root.to_str().unwrap_or("")
+        );
+    }
+
     Ok(())
 }

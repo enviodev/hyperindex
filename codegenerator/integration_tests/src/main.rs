@@ -47,6 +47,8 @@ fn create_and_push_init_args(
         )),
         name: Some("test".to_string()),
         subgraph_migration: None, // ...
+        blockchain: None,
+        contract_address: None,
     };
     combinations.push(init_args);
 }

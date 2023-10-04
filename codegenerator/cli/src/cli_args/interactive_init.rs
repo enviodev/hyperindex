@@ -28,14 +28,6 @@ pub struct InitInteractive {
     pub language: Language,
 }
 
-pub struct InitNextInteractive {
-    pub name: String,
-    pub directory: String,
-    pub network: NetworkName,
-    pub contract_address: String,
-    pub language: Language,
-}
-
 impl InitArgs {
     pub fn get_directory(&self) -> String {
         if let Some(directory_str) = &self.directory {

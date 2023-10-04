@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter};
 
-use self::interactive_init::{InitInteractive, InitNextInteractive};
+use self::interactive_init::InitInteractive;
 pub mod constants;
 pub mod interactive_init;
 pub mod validation;
@@ -177,16 +177,6 @@ impl ToProjectPathsArgs for CodegenArgs {
 }
 
 impl ToProjectPathsArgs for InitInteractive {
-    fn to_project_paths_args(&self) -> ProjectPathsArgs {
-        ProjectPathsArgs {
-            project_root: self.directory.clone(),
-            generated: constants::DEFAULT_GENERATED_PATH.to_string(),
-            config: constants::DEFAULT_CONFIG_PATH.to_string(),
-        }
-    }
-}
-
-impl ToProjectPathsArgs for InitNextInteractive {
     fn to_project_paths_args(&self) -> ProjectPathsArgs {
         ProjectPathsArgs {
             project_root: self.directory.clone(),
