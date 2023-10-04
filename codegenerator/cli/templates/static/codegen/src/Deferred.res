@@ -48,7 +48,7 @@ let makeEmpty = () => {
   let thenCallbacks = ref([])
   let catchCallbacks = ref([])
   {
-    value: ref(Pending),
+    value: val,
     thenCallbacks,
     catchCallbacks,
     resolve: res => {

@@ -142,8 +142,8 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1(rescript@10.1.2)
       skar-client-node:
-        specifier: ^0.0.5
-        version: 0.0.5
+        specifier: ^0.0.7
+        version: 0.0.7
       yargs:
         specifier: ^17.7.2
         version: 17.7.2
@@ -5342,8 +5342,8 @@ packages:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
     dev: true
 
-  /skar-client-node-darwin-arm64@0.0.5:
-    resolution: {integrity: sha512-U61kvXBEIlV0AKxUk1QVYzkjs/afyeXwJCNnzLayzlV8k4t2+/eLh14OR/KeOUnb0l7PDqQZAsPiUvAcUMcQwQ==}
+  /skar-client-node-darwin-arm64@0.0.7:
+    resolution: {integrity: sha512-rCYoXGm60zywLoB3cXSvksx1Au/gLeevceSPSn6rMVgEhjq01jZ3cog/2wTZWXCtX40zZDaASogPenp2VbiWYw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
@@ -5351,8 +5351,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-darwin-x64@0.0.5:
-    resolution: {integrity: sha512-dEW6m6ePCwW1AqPbw+uxt6bKLTFhJI/P2U7wt6QxjWo3KEzfVN3sDC4hyKWWEezGLWs1mQUkz1bi8ndU5Q72IQ==}
+  /skar-client-node-darwin-x64@0.0.7:
+    resolution: {integrity: sha512-XIJWHJmmzK4XrPPi0uwnLi3hRe3IDmdIqL0nnGs99H2+muPrp+XgeebcglNJEQBEtrD1qqEqOUn03PJhzqR+1w==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
@@ -5360,8 +5360,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-arm64-gnu@0.0.5:
-    resolution: {integrity: sha512-GFq2Yeis39gmdsVw282PnHujBam3h4+y7xPHvFrabtV2MIrBmSdU4FbKMaIVEUFQU/kIPD9VMNefwNo457NA5Q==}
+  /skar-client-node-linux-arm64-gnu@0.0.7:
+    resolution: {integrity: sha512-XFZljCermoc6iAXZHbEJunIPGIH+heIQYgUHur2Salf9ta2nGm/4Uz0c8IxoOmkv8bcwX85MSnta0G5IAKpfLQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
@@ -5369,8 +5369,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-x64-gnu@0.0.5:
-    resolution: {integrity: sha512-nnC77J2reZewUvv7psGoGdsu6TvCn7sw1VzQZeRbB2RKNGyetJI6jVY8VTiidXIWtkXGfEBN45Z6yw8OQtPN4w==}
+  /skar-client-node-linux-x64-gnu@0.0.7:
+    resolution: {integrity: sha512-EzEq5OersTNXeU7Rhdf/adhZq3CSR+SYVPBUVYTnver9npxE07X+f2CJGTBYHY2H4tTfgZgmwWKxKZkAVO4b3g==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -5378,8 +5378,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-x64-musl@0.0.5:
-    resolution: {integrity: sha512-YWXiy+t03kub+U9nr08YSHWFKbqkdI3LeNji6fU1bkijAjrpe4cr6hQTfKwkGI6u0dYX09eQe052SvNfzC/t0A==}
+  /skar-client-node-linux-x64-musl@0.0.7:
+    resolution: {integrity: sha512-0TNglyDQLtKVEju+Z8axuL/BsWHzLtbPF/G1MgxdvhE9T0vqvoY2VtS/yilpItJux7rBNn7QtOhbssuxpO6Y1Q==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -5387,8 +5387,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-win32-x64-msvc@0.0.5:
-    resolution: {integrity: sha512-PrYQ+gMn3hfTR3AeiKoysTSc9nhPdBminBuIctapJT/MGv82067QUMlfISB6MGsor+ySX56LT9ZM4Yqj4tQ/lA==}
+  /skar-client-node-win32-x64-msvc@0.0.7:
+    resolution: {integrity: sha512-UXT/mBvLXTywDv5fuxPWfeiaVVsmYe0sVkI/96SO9hAPHDFzmkP/jDcLBwzLXhtcXQaQWbQ+gT0Tm8AQR0aS5Q==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
@@ -5396,16 +5396,16 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node@0.0.5:
-    resolution: {integrity: sha512-oIiDJjk6gE5DMU/BFOEsYfz644yE51OSeGsryoRWzDQa7sCM2oJ53JToa4selVk3S8XjXaSaVQr7/5rxHn13lA==}
+  /skar-client-node@0.0.7:
+    resolution: {integrity: sha512-7mE9qoCoomnV9+ohXTClLwR5ZK198u4JQa6t++rYw5o970LAVPOfJWN2UX5Rpc8VgzodHd+YGQydh5FwrJMpHg==}
     engines: {node: '>= 10'}
     optionalDependencies:
-      skar-client-node-darwin-arm64: 0.0.5
-      skar-client-node-darwin-x64: 0.0.5
-      skar-client-node-linux-arm64-gnu: 0.0.5
-      skar-client-node-linux-x64-gnu: 0.0.5
-      skar-client-node-linux-x64-musl: 0.0.5
-      skar-client-node-win32-x64-msvc: 0.0.5
+      skar-client-node-darwin-arm64: 0.0.7
+      skar-client-node-darwin-x64: 0.0.7
+      skar-client-node-linux-arm64-gnu: 0.0.7
+      skar-client-node-linux-x64-gnu: 0.0.7
+      skar-client-node-linux-x64-musl: 0.0.7
+      skar-client-node-win32-x64-msvc: 0.0.7
     dev: false
 
   /slash@3.0.0:
