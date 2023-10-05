@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use super::{InitArgs, InitFlow, Language, Template as InitTemplate};
 
-use crate::config_parsing::chain_helpers::NetworkName;
+use crate::config_parsing::chain_helpers::NetworkWithExplorer;
 use anyhow::Context;
 use strum::IntoEnumIterator;
 
@@ -14,7 +14,7 @@ use super::validation::{is_directory_new, is_valid_foldername_inquire_validation
 pub enum InitilizationTypeWithArgs {
     Template(InitTemplate),
     SubgraphID(String),
-    ContractMigration(NetworkName, String),
+    ContractMigration(NetworkWithExplorer, String),
 }
 
 pub struct InitInteractive {
@@ -121,7 +121,7 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
                     let chosen_network = match &args.blockchain {
                         Some(chain) => chain.clone(),
                         None => {
-                            let options = NetworkName::iter()
+                            let options = NetworkWithExplorer::iter()
                                 .map(|network| network.to_string())
                                 .collect::<Vec<String>>();
 
@@ -131,7 +131,7 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
                             )
                             .prompt()?;
 
-                            NetworkName::from_str(&input_network)
+                            NetworkWithExplorer::from_str(&input_network)
                                 .context("Parsing network from user selected network name")?
                         }
                     };

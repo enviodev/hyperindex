@@ -7,7 +7,7 @@ pub mod constants;
 pub mod interactive_init;
 pub mod validation;
 
-use crate::config_parsing::chain_helpers::NetworkName;
+use crate::config_parsing::chain_helpers::NetworkWithExplorer;
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
@@ -149,7 +149,7 @@ pub struct SubgraphMigrationArgs {
 pub struct ContractMigrationArgs {
     ///Network from which contract address should be fetched for migration
     #[arg(short, long)]
-    pub blockchain: Option<NetworkName>,
+    pub blockchain: Option<NetworkWithExplorer>,
 
     ///Contract address to generate the config from
     #[arg(short, long)]

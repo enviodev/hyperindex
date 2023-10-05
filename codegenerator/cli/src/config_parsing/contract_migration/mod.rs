@@ -6,8 +6,11 @@ use tokio::time::{timeout, Duration};
 
 use crate::{
     cli_args::Language,
-    config_parsing::chain_helpers::NetworkName,
     config_parsing::validation::is_valid_ethereum_address,
+    config_parsing::{
+        chain_helpers::{self, NetworkName, NetworkWithExplorer},
+        constants,
+    },
     config_parsing::{
         Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
     },
@@ -63,7 +66,7 @@ struct Item {
 pub async fn generate_config_from_contract_address(
     name: &str,
     project_root_path: &PathBuf,
-    network: &NetworkName,
+    network: &NetworkWithExplorer,
     contract_address: &str,
     language: &Language,
 ) -> anyhow::Result<()> {
@@ -115,7 +118,7 @@ pub async fn generate_config_from_contract_address(
 
     // Create network object to be populated
     let mut network = Network {
-        id: super::chain_helpers::get_network_id_given_network_name(Some(network.clone())),
+        id: chain_helpers::get_network_id_given_network_name(NetworkName::from(network.clone())),
         sync_source: None,
         start_block: 0,
         contracts: vec![],
@@ -205,7 +208,7 @@ async fn fetch_from_block_explorer_with_retry(url: &str) -> anyhow::Result<Strin
     let mut refetch_delay = Duration::from_secs(2);
 
     let fail_if_maximum_is_exceeded = |current_refetch_delay, _err: &str| -> anyhow::Result<()> {
-        if current_refetch_delay >= super::constants::MAXIMUM_BACKOFF {
+        if current_refetch_delay >= constants::MAXIMUM_BACKOFF {
             eprintln!(
                 "Failed to fetch a response for the following API request {}",
                 url
@@ -260,14 +263,15 @@ async fn fetch_from_block_explorer(url: &str) -> anyhow::Result<String> {
 }
 
 async fn fetch_get_source_code_result_from_block_explorer(
-    network: &NetworkName,
+    network: &NetworkWithExplorer,
     address: &str,
 ) -> anyhow::Result<GetSourceCodeResult> {
+    let base_url = chain_helpers::get_base_url_for_explorer(network);
+    let api_key = chain_helpers::get_api_key_for_explorer(network);
+
     let url = format!(
         "https://{}/api?module=contract&action=getsourcecode&address={}&apikey={}",
-        super::chain_helpers::get_base_url_for_explorer(Some(network.clone())),
-        address,
-        super::chain_helpers::get_api_key_for_explorer(Some(network.clone()))
+        base_url, address, api_key
     );
 
     let content_raw = fetch_from_block_explorer_with_retry(&url).await?;

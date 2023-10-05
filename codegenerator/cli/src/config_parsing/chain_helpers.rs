@@ -1,172 +1,218 @@
+use anyhow::anyhow;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
+use subenum::subenum;
 
+#[subenum(NetworkWithExplorer, SupportedNetwork, SkarNetwork, EthArchiveNetwork)]
 #[derive(
-    Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, PartialEq, Eq, Display,
+    Clone,
+    Debug,
+    ValueEnum,
+    Serialize,
+    Deserialize,
+    EnumIter,
+    EnumString,
+    PartialEq,
+    Eq,
+    Display,
+    Hash,
 )]
 #[serde(rename_all = "kebab-case")]
+//Please note! The current list is an exhaustive list of the graphs
+//chains and what the deserialize to
+//If we want to expand this list to incorporate other networks that we use,
+//pleaes add a subenum for the graph and add the attribute to each value here
+//If we want to change the names of any of these for our own use then we need
+//custom deserializers for the graph
 pub enum NetworkName {
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork)]
     Mainnet,
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork)]
     Goerli,
+    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork)]
     Optimism,
+    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, SkarNetwork)]
     Bsc,
     PoaSokol,
     Chapel,
     PoaCore,
+    #[subenum(SupportedNetwork, SkarNetwork)]
     Gnosis,
     Fuse,
     Fantom,
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, EthArchiveNetwork)]
     Matic,
     Zksync2Testnet,
     Boba,
+    #[subenum(NetworkWithExplorer)]
     OptimismGoerli,
     Clover,
     Moonbeam,
     Moonriver,
     Mbase,
     FantomTestnet,
+    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork)]
     ArbitrumOne,
+    #[subenum(NetworkWithExplorer)]
     ArbitrumGoerli,
     Celo,
     Fuji,
+    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork)]
     Avalanche,
     CeloAlfajores,
+    #[subenum(NetworkWithExplorer)]
     Mumbai,
     Aurora,
     AuroraTestnet,
     Harmony,
+    #[subenum(SupportedNetwork, EthArchiveNetwork)]
     BaseTestnet,
-    PolygonZkevm,
+    MaticZkevm,
     ZksyncEra,
+    #[subenum(NetworkWithExplorer, SkarNetwork)]
     Sepolia,
-}
-
-pub fn deserialize_network_name(network_name: &str) -> Option<NetworkName> {
-    serde_json::to_value(network_name)
-        .ok()
-        .and_then(|value| serde_json::from_value(value).ok())
+    #[subenum(SupportedNetwork, EthArchiveNetwork, SkarNetwork)]
+    Linea,
 }
 
 // Function to return the chain ID of the network based on the network name
-pub fn get_network_id_given_network_name(network_name: Option<NetworkName>) -> i32 {
+pub fn get_network_id_given_network_name(network_name: NetworkName) -> i32 {
     match network_name {
-        Some(NetworkName::Mainnet) => 1,
-        Some(NetworkName::Goerli) => 5,
-        Some(NetworkName::Optimism) => 10,
-        Some(NetworkName::Bsc) => 56,
-        Some(NetworkName::PoaSokol) => 77,
-        Some(NetworkName::Chapel) => 97,
-        Some(NetworkName::PoaCore) => 99,
-        Some(NetworkName::Gnosis) => 100,
-        Some(NetworkName::Fuse) => 122,
-        Some(NetworkName::Matic) => 137,
-        Some(NetworkName::Fantom) => 250,
-        Some(NetworkName::Zksync2Testnet) => 280,
-        Some(NetworkName::Boba) => 288,
-        Some(NetworkName::OptimismGoerli) => 420,
-        Some(NetworkName::Clover) => 1023,
-        Some(NetworkName::Moonbeam) => 1284,
-        Some(NetworkName::Moonriver) => 1285,
-        Some(NetworkName::Mbase) => 1287,
-        Some(NetworkName::FantomTestnet) => 4002,
-        Some(NetworkName::ArbitrumOne) => 42161,
-        Some(NetworkName::ArbitrumGoerli) => 421613,
-        Some(NetworkName::Celo) => 42220,
-        Some(NetworkName::Fuji) => 43113,
-        Some(NetworkName::Avalanche) => 43114,
-        Some(NetworkName::CeloAlfajores) => 44787,
-        Some(NetworkName::Mumbai) => 80001,
-        Some(NetworkName::Aurora) => 1313161554,
-        Some(NetworkName::AuroraTestnet) => 1313161555,
-        Some(NetworkName::Harmony) => 1666600000,
-        Some(NetworkName::BaseTestnet) => 84531,
-        Some(NetworkName::PolygonZkevm) => 1101,
-        Some(NetworkName::ZksyncEra) => 324,
-        Some(NetworkName::Sepolia) => 11155111,
-        // placeholder network ID of 0 for unknown networks for subgraph migration
-        None => 0,
+        NetworkName::Mainnet => 1,
+        NetworkName::Goerli => 5,
+        NetworkName::Optimism => 10,
+        NetworkName::Bsc => 56,
+        NetworkName::PoaSokol => 77,
+        NetworkName::Chapel => 97,
+        NetworkName::PoaCore => 99,
+        NetworkName::Gnosis => 100,
+        NetworkName::Fuse => 122,
+        NetworkName::Matic => 137,
+        NetworkName::Fantom => 250,
+        NetworkName::Zksync2Testnet => 280,
+        NetworkName::Boba => 288,
+        NetworkName::OptimismGoerli => 420,
+        NetworkName::Clover => 1023,
+        NetworkName::Moonbeam => 1284,
+        NetworkName::Moonriver => 1285,
+        NetworkName::Mbase => 1287,
+        NetworkName::FantomTestnet => 4002,
+        NetworkName::ArbitrumOne => 42161,
+        NetworkName::ArbitrumGoerli => 421613,
+        NetworkName::Celo => 42220,
+        NetworkName::Fuji => 43113,
+        NetworkName::Avalanche => 43114,
+        NetworkName::CeloAlfajores => 44787,
+        NetworkName::Mumbai => 80001,
+        NetworkName::Aurora => 1313161554,
+        NetworkName::AuroraTestnet => 1313161555,
+        NetworkName::Harmony => 1666600000,
+        NetworkName::BaseTestnet => 84531,
+        NetworkName::MaticZkevm => 1101,
+        NetworkName::ZksyncEra => 324,
+        NetworkName::Sepolia => 11155111,
+        NetworkName::Linea => 59144,
     }
 }
 
 // Function to return the chain ID of the network based on the network name
-pub fn get_base_url_for_explorer(network_name: Option<NetworkName>) -> String {
+pub fn get_network_name_from_id(network_id: i32) -> anyhow::Result<NetworkName> {
+    let network_name = match network_id {
+        1 => NetworkName::Mainnet,
+        5 => NetworkName::Goerli,
+        10 => NetworkName::Optimism,
+        56 => NetworkName::Bsc,
+        77 => NetworkName::PoaSokol,
+        97 => NetworkName::Chapel,
+        99 => NetworkName::PoaCore,
+        100 => NetworkName::Gnosis,
+        122 => NetworkName::Fuse,
+        137 => NetworkName::Matic,
+        250 => NetworkName::Fantom,
+        280 => NetworkName::Zksync2Testnet,
+        288 => NetworkName::Boba,
+        420 => NetworkName::OptimismGoerli,
+        1023 => NetworkName::Clover,
+        1284 => NetworkName::Moonbeam,
+        1285 => NetworkName::Moonriver,
+        1287 => NetworkName::Mbase,
+        4002 => NetworkName::FantomTestnet,
+        42161 => NetworkName::ArbitrumOne,
+        421613 => NetworkName::ArbitrumGoerli,
+        42220 => NetworkName::Celo,
+        43113 => NetworkName::Fuji,
+        43114 => NetworkName::Avalanche,
+        44787 => NetworkName::CeloAlfajores,
+        80001 => NetworkName::Mumbai,
+        1313161554 => NetworkName::Aurora,
+        1313161555 => NetworkName::AuroraTestnet,
+        1666600000 => NetworkName::Harmony,
+        84531 => NetworkName::BaseTestnet,
+        1101 => NetworkName::MaticZkevm,
+        324 => NetworkName::ZksyncEra,
+        11155111 => NetworkName::Sepolia,
+        59144 => NetworkName::Linea,
+        _ => Err(anyhow!(format!(
+            "Failed converting network_id {} to network name",
+            network_id
+        )))?,
+    };
+    Ok(network_name)
+}
+
+// Function to return the chain ID of the network based on the network name
+pub fn get_base_url_for_explorer(network_name: &NetworkWithExplorer) -> String {
     match network_name {
-        Some(NetworkName::Mainnet) => "api.etherscan.io".to_string(),
-        Some(NetworkName::Goerli) => "api-goerli.etherscan.io".to_string(),
-        Some(NetworkName::Optimism) => "api-optimistic.etherscan.io".to_string(),
-        Some(NetworkName::Bsc) => "api.bscscan.com".to_string(),
-        Some(NetworkName::PoaSokol) => "".to_string(),
-        Some(NetworkName::Chapel) => "".to_string(),
-        Some(NetworkName::PoaCore) => "".to_string(),
-        Some(NetworkName::Gnosis) => "".to_string(),
-        Some(NetworkName::Fuse) => "".to_string(),
-        Some(NetworkName::Matic) => "api.polygonscan.com".to_string(),
-        Some(NetworkName::Fantom) => "".to_string(),
-        Some(NetworkName::Zksync2Testnet) => "".to_string(),
-        Some(NetworkName::Boba) => "".to_string(),
-        Some(NetworkName::OptimismGoerli) => "api-goerli-optimistic.etherscan.io".to_string(),
-        Some(NetworkName::Clover) => "".to_string(),
-        Some(NetworkName::Moonbeam) => "".to_string(),
-        Some(NetworkName::Moonriver) => "".to_string(),
-        Some(NetworkName::Mbase) => "".to_string(),
-        Some(NetworkName::FantomTestnet) => "".to_string(),
-        Some(NetworkName::ArbitrumOne) => "api.arbiscan.io".to_string(),
-        Some(NetworkName::ArbitrumGoerli) => "api-goerli.arbiscan.io".to_string(),
-        Some(NetworkName::Celo) => "".to_string(),
-        Some(NetworkName::Fuji) => "".to_string(),
-        Some(NetworkName::Avalanche) => "api.snowtrace.io".to_string(),
-        Some(NetworkName::CeloAlfajores) => "".to_string(),
-        Some(NetworkName::Mumbai) => "api-testnet.polygonscan.com".to_string(),
-        Some(NetworkName::Aurora) => "".to_string(),
-        Some(NetworkName::AuroraTestnet) => "".to_string(),
-        Some(NetworkName::Harmony) => "".to_string(),
-        Some(NetworkName::BaseTestnet) => "".to_string(),
-        Some(NetworkName::PolygonZkevm) => "".to_string(),
-        Some(NetworkName::ZksyncEra) => "".to_string(),
-        Some(NetworkName::Sepolia) => "api-sepolia.etherscan.io".to_string(),
-        // placeholder base url of "" for unknown networks for contract migration
-        None => "".to_string(),
+        NetworkWithExplorer::Mainnet => "api.etherscan.io".to_string(),
+        NetworkWithExplorer::Goerli => "api-goerli.etherscan.io".to_string(),
+        NetworkWithExplorer::Optimism => "api-optimistic.etherscan.io".to_string(),
+        NetworkWithExplorer::Bsc => "api.bscscan.com".to_string(),
+        NetworkWithExplorer::Matic => "api.polygonscan.com".to_string(),
+        NetworkWithExplorer::OptimismGoerli => "api-goerli-optimistic.etherscan.io".to_string(),
+        NetworkWithExplorer::ArbitrumOne => "api.arbiscan.io".to_string(),
+        NetworkWithExplorer::ArbitrumGoerli => "api-goerli.arbiscan.io".to_string(),
+        NetworkWithExplorer::Avalanche => "api.snowtrace.io".to_string(),
+        NetworkWithExplorer::Mumbai => "api-testnet.polygonscan.com".to_string(),
+        NetworkWithExplorer::Sepolia => "api-sepolia.etherscan.io".to_string(),
     }
 }
 
 // Function to return the API key for the explorer based on network name
-pub fn get_api_key_for_explorer(network_name: Option<NetworkName>) -> String {
+pub fn get_api_key_for_explorer(network_name: &NetworkWithExplorer) -> String {
     match network_name {
-        Some(NetworkName::Mainnet) => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
-        Some(NetworkName::Goerli) => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
-        Some(NetworkName::Optimism) => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA".to_string(),
-        Some(NetworkName::Bsc) => "api.bscscan.com".to_string(),
-        Some(NetworkName::PoaSokol) => "".to_string(),
-        Some(NetworkName::Chapel) => "".to_string(),
-        Some(NetworkName::PoaCore) => "".to_string(),
-        Some(NetworkName::Gnosis) => "".to_string(),
-        Some(NetworkName::Fuse) => "".to_string(),
-        Some(NetworkName::Matic) => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP".to_string(),
-        Some(NetworkName::Fantom) => "".to_string(),
-        Some(NetworkName::Zksync2Testnet) => "".to_string(),
-        Some(NetworkName::Boba) => "".to_string(),
-        Some(NetworkName::OptimismGoerli) => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA".to_string(),
-        Some(NetworkName::Clover) => "".to_string(),
-        Some(NetworkName::Moonbeam) => "".to_string(),
-        Some(NetworkName::Moonriver) => "".to_string(),
-        Some(NetworkName::Mbase) => "".to_string(),
-        Some(NetworkName::FantomTestnet) => "".to_string(),
-        Some(NetworkName::ArbitrumOne) => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D".to_string(),
-        Some(NetworkName::ArbitrumGoerli) => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D".to_string(),
-        Some(NetworkName::Celo) => "".to_string(),
-        Some(NetworkName::Fuji) => "".to_string(),
-        Some(NetworkName::Avalanche) => "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK".to_string(),
-        Some(NetworkName::CeloAlfajores) => "".to_string(),
-        Some(NetworkName::Mumbai) => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP".to_string(),
-        Some(NetworkName::Aurora) => "".to_string(),
-        Some(NetworkName::AuroraTestnet) => "".to_string(),
-        Some(NetworkName::Harmony) => "".to_string(),
-        Some(NetworkName::BaseTestnet) => "".to_string(),
-        Some(NetworkName::PolygonZkevm) => "".to_string(),
-        Some(NetworkName::ZksyncEra) => "".to_string(),
-        Some(NetworkName::Sepolia) => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
-        // placeholder base url of "" for unknown networks for contract migration
-        None => "".to_string(),
+        NetworkWithExplorer::Mainnet => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
+        NetworkWithExplorer::Goerli => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
+        NetworkWithExplorer::Optimism => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA".to_string(),
+        NetworkWithExplorer::Bsc => "api.bscscan.com".to_string(),
+        NetworkWithExplorer::Matic => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP".to_string(),
+        NetworkWithExplorer::OptimismGoerli => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA".to_string(),
+        NetworkWithExplorer::ArbitrumOne => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D".to_string(),
+        NetworkWithExplorer::ArbitrumGoerli => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D".to_string(),
+        NetworkWithExplorer::Avalanche => "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK".to_string(),
+        NetworkWithExplorer::Mumbai => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP".to_string(),
+        NetworkWithExplorer::Sepolia => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod test {
+
+    use super::{get_network_id_given_network_name, get_network_name_from_id, NetworkName};
+
+    use anyhow::Context;
+    use strum::IntoEnumIterator;
+
+    #[test]
+    fn all_network_names_have_a_chain_id_mapping() {
+        for network in NetworkName::iter() {
+            let chain_id = get_network_id_given_network_name(network.clone().into());
+
+            let converted_network = get_network_name_from_id(chain_id)
+                .context("Testing all networks have a chain id converter")
+                .unwrap();
+
+            assert_eq!(&converted_network, &network);
+        }
     }
 }
