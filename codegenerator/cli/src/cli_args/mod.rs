@@ -112,7 +112,7 @@ pub struct InitArgs {
 
     ///The options for how to initialize
     #[command(subcommand)]
-    init_commands: Option<InitFlow>,
+    pub init_commands: Option<InitFlow>,
 
     ///The language used to write handlers
     #[arg(short = 'l', long = "language")]
@@ -121,7 +121,7 @@ pub struct InitArgs {
 }
 
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString)]
-enum InitFlow {
+pub enum InitFlow {
     ///Start from an example template
     Template(TemplateArgs),
     ///Start by migrating config from an existing subgraph

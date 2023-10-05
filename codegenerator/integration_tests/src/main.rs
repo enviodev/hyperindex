@@ -1,4 +1,4 @@
-use envio::cli_args::{InitArgs, Language, Template};
+use envio::cli_args::{InitArgs, InitFlow, Language, Template, TemplateArgs};
 use envio::utils::run_init_args;
 use std::time::Duration;
 use strum::IntoEnumIterator;
@@ -40,15 +40,14 @@ fn create_and_push_init_args(
 ) {
     let init_args = InitArgs {
         language: Some(language.clone()),
-        template: Some(template.clone()),
+        init_commands: Some(InitFlow::Template(TemplateArgs {
+            name: Some(template.clone()),
+        })),
         directory: Some(format!(
             "./integration_test_output/{}/{}",
             template, language
         )),
         name: Some("test".to_string()),
-        subgraph_migration: None, // ...
-        blockchain: None,
-        contract_address: None,
     };
     combinations.push(init_args);
 }
