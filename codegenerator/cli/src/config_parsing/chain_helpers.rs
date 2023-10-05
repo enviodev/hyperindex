@@ -1,8 +1,10 @@
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
-use strum_macros::{Display, EnumIter};
+use strum_macros::{Display, EnumIter, EnumString};
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, PartialEq, Eq, Display)]
+#[derive(
+    Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, PartialEq, Eq, Display,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum NetworkName {
     Mainnet,

@@ -1,6 +1,6 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
-use strum_macros::{Display, EnumIter};
+use strum_macros::{Display, EnumIter, EnumString};
 
 use self::interactive_init::InitInteractive;
 pub mod constants;
@@ -98,6 +98,7 @@ pub struct CodegenArgs {
 
 type SubgraphMigrationID = String;
 type ContractAddress = String;
+
 #[derive(Args, Debug)]
 pub struct InitArgs {
     ///The directory of the project
@@ -105,18 +106,47 @@ pub struct InitArgs {
     #[arg(short, long)]
     pub directory: Option<String>,
 
+    ///The name of your project
     #[arg(short, long)]
     pub name: Option<String>,
 
+    ///The options for how to initialize
+    #[command(subcommand)]
+    init_commands: Option<InitFlow>,
+
+    ///The language used to write handlers
+    #[arg(short = 'l', long = "language")]
+    #[clap(value_enum)]
+    pub language: Option<Language>,
+}
+
+#[derive(Subcommand, Debug, EnumIter, Display, EnumString)]
+enum InitFlow {
+    ///Start from an example template
+    Template(TemplateArgs),
+    ///Start by migrating config from an existing subgraph
+    SubgraphMigration(SubgraphMigrationArgs),
+    ///Import config for a contract address for a given chain
+    Import(ContractMigrationArgs),
+}
+
+#[derive(Args, Debug, Default)]
+pub struct TemplateArgs {
     ///The file in the project containing config.
     #[arg(short, long)]
     #[clap(value_enum)]
-    pub template: Option<Template>,
+    pub name: Option<Template>,
+}
 
+#[derive(Args, Debug, Default)]
+pub struct SubgraphMigrationArgs {
     ///Subgraph ID to start a migration from
     #[arg(short, long)]
-    pub subgraph_migration: Option<SubgraphMigrationID>,
+    pub subgraph_id: Option<SubgraphMigrationID>,
+}
 
+#[derive(Args, Debug, Default)]
+pub struct ContractMigrationArgs {
     ///Network from which contract address should be fetched for migration
     #[arg(short, long)]
     pub blockchain: Option<NetworkName>,
@@ -124,13 +154,9 @@ pub struct InitArgs {
     ///Contract address to generate the config from
     #[arg(short, long)]
     pub contract_address: Option<ContractAddress>,
-
-    #[arg(short = 'l', long = "language")]
-    #[clap(value_enum)]
-    pub language: Option<Language>,
 }
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, Display)]
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
 ///Template to work off
 pub enum Template {
     Blank,
@@ -138,7 +164,9 @@ pub enum Template {
     Erc20,
 }
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, PartialEq, Eq, Display)]
+#[derive(
+    Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, PartialEq, Eq, Display,
+)]
 ///Which language do you want to write in?
 pub enum Language {
     Javascript,
