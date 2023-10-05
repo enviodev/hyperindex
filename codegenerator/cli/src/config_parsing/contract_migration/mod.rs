@@ -16,6 +16,8 @@ use crate::{
     },
 };
 
+use super::chain_helpers::BlockExplorerApi;
+
 // generic API response structure - keeping for possible future use.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct ResponseTypeV1<T> {
@@ -266,8 +268,7 @@ async fn fetch_get_source_code_result_from_block_explorer(
     network: &NetworkWithExplorer,
     address: &str,
 ) -> anyhow::Result<GetSourceCodeResult> {
-    let base_url = chain_helpers::get_base_url_for_explorer(network);
-    let api_key = chain_helpers::get_api_key_for_explorer(network);
+    let BlockExplorerApi { base_url, api_key } = chain_helpers::get_block_explorer_api(network);
 
     let url = format!(
         "https://{}/api?module=contract&action=getsourcecode&address={}&apikey={}",

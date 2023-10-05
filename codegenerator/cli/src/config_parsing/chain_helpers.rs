@@ -161,37 +161,55 @@ pub fn get_network_name_from_id(network_id: i32) -> anyhow::Result<NetworkName> 
     Ok(network_name)
 }
 
-// Function to return the chain ID of the network based on the network name
-pub fn get_base_url_for_explorer(network_name: &NetworkWithExplorer) -> String {
-    match network_name {
-        NetworkWithExplorer::Mainnet => "api.etherscan.io".to_string(),
-        NetworkWithExplorer::Goerli => "api-goerli.etherscan.io".to_string(),
-        NetworkWithExplorer::Optimism => "api-optimistic.etherscan.io".to_string(),
-        NetworkWithExplorer::Bsc => "api.bscscan.com".to_string(),
-        NetworkWithExplorer::Matic => "api.polygonscan.com".to_string(),
-        NetworkWithExplorer::OptimismGoerli => "api-goerli-optimistic.etherscan.io".to_string(),
-        NetworkWithExplorer::ArbitrumOne => "api.arbiscan.io".to_string(),
-        NetworkWithExplorer::ArbitrumGoerli => "api-goerli.arbiscan.io".to_string(),
-        NetworkWithExplorer::Avalanche => "api.snowtrace.io".to_string(),
-        NetworkWithExplorer::Mumbai => "api-testnet.polygonscan.com".to_string(),
-        NetworkWithExplorer::Sepolia => "api-sepolia.etherscan.io".to_string(),
-    }
+pub struct BlockExplorerApi {
+    pub base_url: String,
+    pub api_key: String,
 }
 
-// Function to return the API key for the explorer based on network name
-pub fn get_api_key_for_explorer(network_name: &NetworkWithExplorer) -> String {
-    match network_name {
-        NetworkWithExplorer::Mainnet => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
-        NetworkWithExplorer::Goerli => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
-        NetworkWithExplorer::Optimism => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA".to_string(),
-        NetworkWithExplorer::Bsc => "api.bscscan.com".to_string(),
-        NetworkWithExplorer::Matic => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP".to_string(),
-        NetworkWithExplorer::OptimismGoerli => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA".to_string(),
-        NetworkWithExplorer::ArbitrumOne => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D".to_string(),
-        NetworkWithExplorer::ArbitrumGoerli => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D".to_string(),
-        NetworkWithExplorer::Avalanche => "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK".to_string(),
-        NetworkWithExplorer::Mumbai => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP".to_string(),
-        NetworkWithExplorer::Sepolia => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV".to_string(),
+// Function to return the chain ID of the network based on the network name
+pub fn get_block_explorer_api(network_name: &NetworkWithExplorer) -> BlockExplorerApi {
+    let (base_url_str, api_key_str) = match network_name {
+        NetworkWithExplorer::Mainnet => ("api.etherscan.io", "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV"),
+        NetworkWithExplorer::Goerli => (
+            "api-goerli.etherscan.io",
+            "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
+        ),
+        NetworkWithExplorer::Optimism => (
+            "api-optimistic.etherscan.io",
+            "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
+        ),
+        //TODO: GET BSC API KEY
+        NetworkWithExplorer::Bsc => ("api.bscscan.com", "BSC_API_KEY_PLACE_HOLDER"),
+        NetworkWithExplorer::Matic => ("api.polygonscan.com", "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP"),
+
+        NetworkWithExplorer::OptimismGoerli => (
+            "api-goerli-optimistic.etherscan.io",
+            "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
+        ),
+        NetworkWithExplorer::ArbitrumOne => {
+            ("api.arbiscan.io", "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D")
+        }
+
+        NetworkWithExplorer::ArbitrumGoerli => (
+            "api-goerli.arbiscan.io",
+            "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
+        ),
+        NetworkWithExplorer::Avalanche => {
+            ("api.snowtrace.io", "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK")
+        }
+        NetworkWithExplorer::Mumbai => (
+            "api-testnet.polygonscan.com",
+            "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP",
+        ),
+        NetworkWithExplorer::Sepolia => (
+            "api-sepolia.etherscan.io",
+            "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
+        ),
+    };
+
+    BlockExplorerApi {
+        base_url: base_url_str.to_string(),
+        api_key: api_key_str.to_string(),
     }
 }
 
