@@ -17,12 +17,12 @@ let resetPostgresClient: unit => unit = () => {
 describe("Linked Entity Loader Integration Test", () => {
   MochaPromise.before(async () => {
     resetPostgresClient()
-    (await Migrations.runDownMigrations(~shouldExit=false,~shouldDropRawEvents=true))->ignore
+    (await Migrations.runDownMigrations(~shouldExit=false, ~shouldDropRawEvents=true))->ignore
     (await Migrations.runUpMigrations(~shouldExit=false))->ignore
   })
 
   MochaPromise.after(async () => {
-    (await Migrations.runDownMigrations(~shouldExit=false,~shouldDropRawEvents=true))->ignore
+    (await Migrations.runDownMigrations(~shouldExit=false, ~shouldDropRawEvents=true))->ignore
     (await Migrations.runUpMigrations(~shouldExit=false))->ignore
   })
 
@@ -84,7 +84,10 @@ describe("Linked Entity Loader Integration Test", () => {
     await DbFunctions.B.batchSetB(sql, bEntities->Belt.Array.map(createEventB))
     await DbFunctions.C.batchSetC(sql, cEntities->Belt.Array.map(createEventC))
 
+    let inMemoryStore = IO.InMemoryStore.make()
+
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
+      ~inMemoryStore,
       ~chainId=123,
       ~event=Obj.magic(),
       ~logger=Logging.logger,
@@ -99,7 +102,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let entitiesToLoad = context.getEntitiesToLoad()
 
-    await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
+    await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
     let handlerContext = context.getContext(~eventData=testEventData, ())
     let testingA = handlerContext.a.all
@@ -191,7 +194,9 @@ describe("Linked Entity Loader Integration Test", () => {
     await DbFunctions.B.batchSetB(sql, bEntities->Belt.Array.map(createEventB))
     await DbFunctions.C.batchSetC(sql, cEntities->Belt.Array.map(createEventC))
 
+    let inMemoryStore = IO.InMemoryStore.make()
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
+      ~inMemoryStore,
       ~chainId=123,
       ~event=Obj.magic(),
       ~logger=Logging.logger,
@@ -206,7 +211,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let entitiesToLoad = context.getEntitiesToLoad()
 
-    await DbFunctions.sql->IO.loadEntities(entitiesToLoad)
+    await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
     let handlerContext = context.getContext(~eventData=testEventData, ())
     let testingA = handlerContext.a.all
@@ -243,10 +248,10 @@ describe("Linked Entity Loader Integration Test", () => {
       },
     )
 
-    let resultAWontLoad = IO.InMemoryStore.A.getA(~id="aWontLoad")
+    let resultAWontLoad = inMemoryStore.a->IO.InMemoryStore.A.get("aWontLoad")
     Assert.equal(resultAWontLoad, None, ~message="aWontLoad should not be in the store")
 
-    let resultBWontLoad = IO.InMemoryStore.B.getB(~id="bWontLoad")
+    let resultBWontLoad = inMemoryStore.b->IO.InMemoryStore.B.get("bWontLoad")
     Assert.equal(resultBWontLoad, None, ~message="bWontLoad should not be in the store")
   })
 })

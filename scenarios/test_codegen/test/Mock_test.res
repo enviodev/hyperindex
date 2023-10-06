@@ -5,13 +5,16 @@ let {it: it_promise, it_skip: it_skip_promise, before: before_promise} = module(
   RescriptMocha.Promise
 )
 
+let inMemoryStore = IO.InMemoryStore.make()
 describe("E2E Mock Event Batch", () => {
   before(() => {
     RegisterHandlers.registerAllHandlers()
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
-    MockEvents.eventRouterBatch->Belt.Array.forEach(event => event->EventProcessing.eventRouter)
+    MockEvents.eventRouterBatch->Belt.Array.forEach(
+      event => event->EventProcessing.eventRouter(~inMemoryStore),
+    )
   })
 
   after(() => {
@@ -57,6 +60,7 @@ describe("E2E Db check", () => {
     )
 
     await EventProcessing.processEventBatch(
+      ~inMemoryStore,
       ~eventBatch=MockEvents.eventBatchItems,
       ~chainManager=mockChainManager,
     )
@@ -67,7 +71,7 @@ describe("E2E Db check", () => {
   })
 
   it("Validate inmemory store state", () => {
-    let inMemoryStoreRows = IO.InMemoryStore.Gravatar.values()
+    let inMemoryStoreRows = inMemoryStore.gravatar->IO.InMemoryStore.Gravatar.values
 
     Assert.deep_equal(
       inMemoryStoreRows,
