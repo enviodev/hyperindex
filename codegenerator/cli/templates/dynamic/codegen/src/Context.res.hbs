@@ -12,10 +12,11 @@ module {{contract.name.capitalized}}Contract = {
       getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
     let contextCreator: (
+      ~inMemoryStore: IO.InMemoryStore.t,
       ~chainId: int,
       ~event: Types.eventLog<'a>,
       ~logger: Pino.t,
-    ) => contextCreatorFunctions = (~chainId, ~event, ~logger) => {
+    ) => contextCreatorFunctions = (~inMemoryStore, ~chainId, ~event, ~logger) => {
       let logger =
         logger->Logging.createChildFrom(
           ~logger=_,
@@ -59,7 +60,12 @@ module {{contract.name.capitalized}}Contract = {
 
             addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
 
-            IO.InMemoryStore.DynamicContractRegistry.setDynamicContractRegistry(~entity=dynamicContractRegistration)
+            inMemoryStore.dynamicContractRegistry->IO.InMemoryStore.DynamicContractRegistry.set(
+              ~key={chainId, contractAddress},
+              ~entity=dynamicContractRegistration,
+              ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
+              ~dbOp=Set,
+            )
           },
         {{/each}}
         },
@@ -103,7 +109,7 @@ module {{contract.name.capitalized}}Contract = {
                 {{#if required_entity.labels}}
                   {{#each required_entity.labels as |label| }}
                   let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
-                    | Some(id) => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+                    | Some(id) => inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
                     | None =>
                       Logging.warn(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
                       None
@@ -114,7 +120,7 @@ module {{contract.name.capitalized}}Contract = {
                   {{#each required_entity.array_labels as |array_label| }}
                   let {{array_label}}_{{required_entity.name.capitalized}} = switch optIdArrayOf_{{array_label}}.contents {
                     | Some(ids) =>
-                      ids->Belt.Array.map(id => IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id))
+                      ids->Belt.Array.map(id => inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id))
                     | None =>
                       Logging.warn(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
                       []
@@ -134,7 +140,7 @@ module {{contract.name.capitalized}}Contract = {
           },
           {{#each ../../entities as | entity |}}
             {{entity.name.uncapitalized}}: {
-              set: entity => {IO.InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity = entity, ~dbOp = Types.Set, ~eventData)},
+              set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(~key=entity.id, ~entity, ~dbOp = Types.Set, ~eventData)},
               delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
                 {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
@@ -150,14 +156,14 @@ module {{contract.name.capitalized}}Contract = {
                   {{/if}}
                   get: (id: Types.id) => {
                     if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
-                      IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+                      inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
                     } else {
                       Logging.warn(
                         `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
                       )
 
                       // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
-                      IO.InMemoryStore.{{required_entity.name.capitalized}}.get{{required_entity.name.capitalized}}(~id)
+                      inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
 
                       // TODO: add a further step to syncronously try fetch this from the DB if it isn't in the in-memory store - similar to this PR: https://github.com/Float-Capital/indexer/pull/759
                     }
@@ -168,7 +174,7 @@ module {{contract.name.capitalized}}Contract = {
               get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}} => {
                 {{#if entity_field.is_array}}
                   let {{entity_field.relational_key.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Array.map(entityId => {
-                    let optEntity = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id=entityId)
+                    let optEntity = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get(entityId)
 
                     switch optEntity {
                   | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
@@ -185,11 +191,11 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
                  switch {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}} {
                   | Some({{entity_field.relational_key.uncapitalized}}_field) =>
                     // TODO: we aren't handling the case where the code is an optional array. Maybe we should enforce that at the compile step, and force users to use an empty array instead.
-                    let opt{{entity_field.relational_key.capitalized}} = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id={{entity_field.relational_key.uncapitalized}}_field)
+                    let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity_field.relational_key.uncapitalized}}_field)
 
                     (
                 {{else}}
-                  let opt{{entity_field.relational_key.capitalized}} = IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get{{entity_field.mapped_entity.capitalized}}(~id={{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}})
+                  let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}})
                 {{/if}}
                   switch opt{{entity_field.relational_key.capitalized}} {
                   | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}

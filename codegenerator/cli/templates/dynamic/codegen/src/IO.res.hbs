@@ -12,84 +12,81 @@ module InMemoryStore = {
     }
   }
 
-  module RawEvents = {
-    %%private(let rawEventsDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.rawEventsEntity>>> = ref(
-      Js.Dict.empty(),
-    ))
-
-    let setRawEvents = (~entity: Types.rawEventsEntity) => {
-      let key = EventUtils.getEventIdKeyString(~chainId=entity.chainId, ~eventId=entity.eventId)
-
-      rawEventsDict.contents->Js.Dict.set(
-        key,
-        {eventData: {chainId: entity.chainId, eventId: entity.eventId}, entity, dbOp: Set},
-      )
-    }
-
-    let values = () => {
-      rawEventsDict.contents->Js.Dict.values
-    }
+  module type StoreItem = {
+    type t
+    type key
+    let hasher: key => string
   }
 
-  module DynamicContractRegistry = {
-      %%private(let dynamicContractRegistryDict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.dynamicContractRegistryEntity>>> = ref(
-        Js.Dict.empty(),
-      ))
-
-    let setDynamicContractRegistry = (~entity: Types.dynamicContractRegistryEntity) => {
-      let key = EventUtils.getContractAddressKeyString(
-        ~chainId=entity.chainId,
-        ~contractAddress=entity.contractAddress,
-      )
-
-      dynamicContractRegistryDict.contents->Js.Dict.set(
-        key,
-        {
-          eventData: {chainId: entity.chainId, eventId: entity.eventId->Ethers.BigInt.toString},
-          entity,
-          dbOp: Types.Set,
-        },
-      )
-
+  module MakeStore = (StoreItem: StoreItem) => {
+    type value = StoreItem.t
+    type key = StoreItem.key
+    type hasher = StoreItem.key => string
+    type t = {
+      dict: Js.Dict.t<Types.inMemoryStoreRow<StoreItem.t>>,
+      hasher: hasher,
     }
-    let values = () => {
-      dynamicContractRegistryDict.contents->Js.Dict.values
-    }
+
+    let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
+
+    let set = (self: t, ~key: StoreItem.key, ~eventData, ~dbOp, ~entity: StoreItem.t) =>
+      self.dict->Js.Dict.set(key->self.hasher, {eventData, entity, dbOp})
+
+    let get = (self: t, key: StoreItem.key) =>
+      self.dict->Js.Dict.get(key->self.hasher)->Belt.Option.map(row => row.entity)
+
+    let values = (self: t) => self.dict->Js.Dict.values
   }
+
+
+  type rawEventsKey = {
+    chainId: int,
+    eventId: string,
+  }
+
+  module RawEvents = MakeStore({
+    type t = Types.rawEventsEntity
+    type key = rawEventsKey
+    let hasher = (key: key) =>
+      EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
+  })
+
+  type dynamicContractRegistryKey = {
+    chainId: int,
+    contractAddress: Ethers.ethAddress,
+  }
+
+  module DynamicContractRegistry = MakeStore({
+    type t = Types.dynamicContractRegistryEntity
+    type key = dynamicContractRegistryKey
+    let hasher = ({chainId, contractAddress}) =>
+      EventUtils.getContractAddressKeyString(~chainId, ~contractAddress)
+  })
 
 {{#each entities as | entity |}}
 
-  module {{entity.name.capitalized}} = {
-    %%private(let {{entity.name.uncapitalized}}Dict: ref<Js.Dict.t<Types.inMemoryStoreRow<Types.{{entity.name.uncapitalized}}Entity>>> = ref(
-      Js.Dict.empty(),
-    ))
+  module {{entity.name.capitalized}} = MakeStore({
+    type t = Types.{{entity.name.uncapitalized}}Entity
+    type key = string
+    let hasher = Obj.magic
+  })
 
-    let get{{entity.name.capitalized}} = (~id: string) => {
-      let row = Js.Dict.get({{entity.name.uncapitalized}}Dict.contents, id)
-      row->Belt.Option.map(row => row.entity)
-    }
+{{/each}}
 
-    let set{{entity.name.capitalized}} = (~entity: Types.{{entity.name.uncapitalized}}Entity, ~dbOp: Types.dbOp, ~eventData: Types.eventData) => {
-      let {{entity.name.uncapitalized}}CurrentCrud = Js.Dict.get(
-        {{entity.name.uncapitalized}}Dict.contents,
-        entity.id,
-      )->Belt.Option.map(row => {
-        row.dbOp
-      })
 
-      {{entity.name.uncapitalized}}Dict.contents->Js.Dict.set(entity.id, {eventData, entity, dbOp: entityCurrentCrud({{entity.name.uncapitalized}}CurrentCrud, dbOp)})
-    }
-    let values = () => {
-      {{entity.name.uncapitalized}}Dict.contents->Js.Dict.values
-    }
-    let resetStore = () => {
-      {{entity.name.uncapitalized}}Dict := Js.Dict.empty()
-    }
-  }
-  {{/each}}
-  let resetStore = () => {
+  type t = {
+    rawEvents: RawEvents.t,
+    dynamicContractRegistry: DynamicContractRegistry.t,
   {{#each entities as | entity |}}
-    {{entity.name.capitalized}}.resetStore()
+    {{entity.name.uncapitalized}}: {{entity.name.capitalized}}.t,
+  {{/each}}
+  }
+
+  let make = (): t => {
+    rawEvents: RawEvents.make(),
+    dynamicContractRegistry: DynamicContractRegistry.make(),
+  {{#each entities as | entity |}}
+    {{entity.name.uncapitalized}}: {{entity.name.capitalized}}.make(),
   {{/each}}
   }
 }
@@ -97,7 +94,11 @@ module InMemoryStore = {
 type uniqueEntityReadIds = Js.Dict.t<Types.id>
 type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
-let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
+let loadEntities = async (
+  sql,
+  ~inMemoryStore: InMemoryStore.t,
+  ~entityBatch: array<Types.entityRead>,
+) => {
   let loadLayer = ref(false)
 
   {{#each entities as | entity |}}
@@ -132,7 +133,7 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
     switch {{entity.name.uncapitalized}}Load.load{{relational_param.relational_key.capitalized}} {
     | Some(load{{relational_param.mapped_entity.capitalized}}) =>
       let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
-        let _ = InMemoryStore.{{entity.name.capitalized}}.get{{entity.name.capitalized}}(~id=entityId)->Belt.Option.map(
+        let _ = inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.get(entityId)->Belt.Option.map(
           {{entity.name.uncapitalized}}Entity => {
             {{#if (eq relational_param.relationship_type "array")}}
               let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Array.map(
@@ -178,7 +179,13 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
 
       {{entity.name.uncapitalized}}FieldEntitiesArray->Belt.Array.forEach(readRow => {
         let {entity, eventData} = DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData(readRow)
-        InMemoryStore.{{entity.name.capitalized}}.set{{entity.name.capitalized}}(~entity, ~eventData, ~dbOp=Types.Read)
+
+        inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(
+          ~key=entity.id,
+          ~entity,
+          ~eventData,
+          ~dbOp=Types.Read,
+        )
       })
 
       unique{{entity.name.capitalized}}AsEntityFieldArray := []
@@ -193,8 +200,8 @@ let loadEntities = async (sql, entityBatch: array<Types.entityRead>) => {
   }
 }
 
-let executeBatch = async sql => {
-  let rawEventsRows = InMemoryStore.RawEvents.values()
+let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
+  let rawEventsRows = inMemoryStore.rawEvents->InMemoryStore.RawEvents.values
 
   let setRawEventsPromise = sql => {
     // NOTE: This is commented out because raw events are always 'Set' operations. Likely that will stay the case even with reorgs protections in place since it'll just re-run the batch rather than edit a partially run batch.
@@ -215,7 +222,7 @@ let executeBatch = async sql => {
   }
 
   let dynamicContractRegistryRows =
-    InMemoryStore.DynamicContractRegistry.values()
+    inMemoryStore.dynamicContractRegistry->InMemoryStore.DynamicContractRegistry.values
 
   // // NOTE: currently deleting dynamic contracts in unimplemented
   // let deleteDynamicContractRegistryIdsPromise = sql => {
@@ -259,7 +266,7 @@ let executeBatch = async sql => {
   }
 
   {{#each entities as | entity |}}
-  let {{entity.name.uncapitalized}}Rows = InMemoryStore.{{entity.name.capitalized}}.values()
+  let {{entity.name.uncapitalized}}Rows = inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values
 
   let delete{{entity.name.capitalized}}IdsPromise = (sql) => {
     let delete{{entity.name.capitalized}}Ids =
