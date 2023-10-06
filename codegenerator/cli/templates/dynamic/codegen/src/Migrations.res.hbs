@@ -1,5 +1,26 @@
 let sql = Postgres.makeSql(~config=Config.db->Obj.magic /* TODO: make this have the correct type */)
 
+module EventSyncState = {
+  let createEventSyncStateTable: unit => promise<unit> = async () => {
+    let _ = await %raw("sql`
+      CREATE TABLE IF NOT EXISTS public.event_sync_state (
+        chain_id INTEGER NOT NULL,
+        block_number INTEGER NOT NULL,
+        log_index INTEGER NOT NULL,
+        transaction_index INTEGER NOT NULL,
+        block_timestamp INTEGER NOT NULL,
+        PRIMARY KEY (chain_id)
+      );
+      `")
+  }
+
+  let dropEventSyncStateTable = async () => {
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.event_sync_state;
+    `")
+  }
+}
+
 module RawEventsTable = {
   let createEventTypeEnum: unit => promise<unit> = async () => {
     @warning("-21")
@@ -154,11 +175,16 @@ type exitCode = Success | Failure
 
 // TODO: all the migration steps should run as a single transaction
 let runUpMigrations = async (~shouldExit) => {
+
   let exitCode = ref(Success)
-      await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
-        exitCode := Failure
-        Logging.errorWithExn(err, `EE800: Error creating raw events table`)->Promise.resolve
-      })
+  await EventSyncState.createEventSyncStateTable()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err, `EE800: Error creating event_sync_state_table`)->Promise.resolve
+  })
+  await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err, `EE800: Error creating raw events table`)->Promise.resolve
+  })
   await DynamicContractRegistryTable.createDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err,`EE801: Error creating dynamic contracts table`)->Promise.resolve
