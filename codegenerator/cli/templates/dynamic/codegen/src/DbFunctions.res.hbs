@@ -10,6 +10,30 @@ type blockNumberRow = {
   @as("block_number") blockNumber: int
 }
 
+module EventSyncState = {
+  type eventSyncState = {
+    @as("chain_id") chainId: int,
+    @as("block_number") blockNumber: int,
+    @as("log_index") logIndex: int,
+    @as("transaction_index") transactionIndex: int,
+    @as("block_timestamp") blockTimestamp: int,
+  }
+  @module("./DbFunctionsImplementation.js")
+  external readLatestSyncedEventOnChainIdArr: (
+    Postgres.sql,
+    ~chainId: int,
+  ) => promise<array<eventSyncState>> = "readLatestSyncedEventOnChainId"
+
+  let readLatestSyncedEventOnChainId = async (sql, ~chainId) => {
+    let arr = await sql->readLatestSyncedEventOnChainIdArr(~chainId)
+    arr->Belt.Array.get(0)
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external batchSetEventSyncState: (Postgres.sql, array<eventSyncState>) => promise<unit> =
+    "batchSetEventSyncState"
+}
+
 module RawEvents = {
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")

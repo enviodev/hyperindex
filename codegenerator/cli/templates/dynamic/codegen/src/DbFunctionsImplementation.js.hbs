@@ -1,6 +1,32 @@
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
 
+module.exports.readLatestSyncedEventOnChainId = (sql, chainId) => sql`
+  SELECT *
+  FROM public.event_sync_state
+  WHERE chain_id = ${chainId}`;
+
+module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
+  return sql`
+    INSERT INTO public.event_sync_state
+  ${sql(
+    entityDataArray,
+    "chain_id",
+    "block_number",
+    "log_index",
+    "transaction_index",
+    "block_timestamp"
+  )}
+    ON CONFLICT(chain_id) DO UPDATE
+    SET
+    "chain_id" = EXCLUDED."chain_id",
+    "block_number" = EXCLUDED."block_number",
+    "log_index" = EXCLUDED."log_index",
+    "transaction_index" = EXCLUDED."transaction_index",
+    "block_timestamp" = EXCLUDED."block_timestamp";
+    `;
+};
+
 module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
   sql,
   chainId
