@@ -38,6 +38,11 @@ module InMemoryStore = {
     let values = (self: t) => self.dict->Js.Dict.values
   }
 
+  module EventSyncState = MakeStore({
+    type t = DbFunctions.EventSyncState.eventSyncState
+    type key = int
+    let hasher = Belt.Int.toString
+  })
 
   type rawEventsKey = {
     chainId: int,
@@ -75,6 +80,7 @@ module InMemoryStore = {
 
 
   type t = {
+    eventSyncState: EventSyncState.t,
     rawEvents: RawEvents.t,
     dynamicContractRegistry: DynamicContractRegistry.t,
   {{#each entities as | entity |}}
@@ -83,6 +89,7 @@ module InMemoryStore = {
   }
 
   let make = (): t => {
+    eventSyncState: EventSyncState.make(),
     rawEvents: RawEvents.make(),
     dynamicContractRegistry: DynamicContractRegistry.make(),
   {{#each entities as | entity |}}
