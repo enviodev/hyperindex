@@ -1,4 +1,10 @@
-let addEventToRawEvents = (event: Types.eventLog<'a>, ~chainId, ~jsonSerializedParams: Js.Json.t, ~eventName: Types.eventName) => {
+let addEventToRawEvents = (
+  event: Types.eventLog<'a>,
+  ~inMemoryStore: IO.InMemoryStore.t,
+  ~chainId,
+  ~jsonSerializedParams: Js.Json.t,
+  ~eventName: Types.eventName,
+) => {
   let {
     blockNumber,
     logIndex,
@@ -24,16 +30,24 @@ let addEventToRawEvents = (event: Types.eventLog<'a>, ~chainId, ~jsonSerializedP
     params: jsonSerializedParams->Js.Json.stringify,
   }
 
-  IO.InMemoryStore.RawEvents.setRawEvents(~entity=rawEvent)
+  let eventIdStr = eventId->Ethers.BigInt.toString
+
+  inMemoryStore.rawEvents->IO.InMemoryStore.RawEvents.set(
+    ~key={chainId, eventId: eventIdStr},
+    ~eventData={chainId, eventId: eventIdStr},
+    ~entity=rawEvent,
+    ~dbOp=Set,
+  )
 }
-let eventRouter = (item: Types.eventRouterEventAndContext) => {
+
+let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
   let {event, chainId} = item
   switch event {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, getContext) => {
   let jsonSerializedParams = event.params->Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode
-  event->addEventToRawEvents(~chainId, ~jsonSerializedParams, ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+  event->addEventToRawEvents(~inMemoryStore, ~chainId, ~jsonSerializedParams, ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
 )
 
   let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
@@ -98,6 +112,7 @@ type rec readEntitiesResultPromise = {
 }
 
 let rec loadReadEntitiesInner = async (
+  ~inMemoryStore,
   ~eventBatch: array<Types.eventBatchQueueItem>,
   ~logger,
   ~chainManager: ChainManager.t,
@@ -141,7 +156,12 @@ let rec loadReadEntitiesInner = async (
 
     //Only load inner batch if there are any events for the current batch
     if eventsForCurrentBatch->Belt.Array.length > 0 {
-      await loadReadEntitiesInner(~eventBatch=eventsForCurrentBatch, ~logger, ~chainManager)
+      await loadReadEntitiesInner(
+        ~inMemoryStore,
+        ~eventBatch=eventsForCurrentBatch,
+        ~logger,
+        ~chainManager,
+      )
     } else {
       //Else return an empty array since nothing will load
       []
@@ -175,7 +195,7 @@ let rec loadReadEntitiesInner = async (
         {{#each contracts as | contract |}}
         {{#each contract.events as | event |}}
           | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
-            let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~chainId, ~event, ~logger)
+            let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~inMemoryStore, ~chainId, ~event, ~logger)
 
             let context = contextHelper.getLoaderContext()
 
@@ -301,11 +321,17 @@ let rec flattenNested = (xs: array<nestedResult>): array<readEntitiesResult> => 
 }
 
 let loadReadEntities = async (
+  ~inMemoryStore,
   ~eventBatch: array<Types.eventBatchQueueItem>,
   ~chainManager: ChainManager.t,
   ~logger: Pino.t,
 ): array<Types.eventRouterEventAndContext> => {
-  let batch = await loadReadEntitiesInner(~eventBatch, ~logger, ~chainManager: ChainManager.t)
+  let batch = await loadReadEntitiesInner(
+    ~inMemoryStore,
+    ~eventBatch,
+    ~logger,
+    ~chainManager: ChainManager.t,
+  )
 
   let nestedResults = await batch->Belt.Array.map(recurseEntityPromises)->Promise.all
   let mergedResults = flattenNested(nestedResults)
@@ -324,7 +350,7 @@ let loadReadEntities = async (
 
   let readEntities = readEntitiesGrouped->Belt.Array.concatMany
 
-  await DbFunctions.sql->IO.loadEntities(readEntities)
+  await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=readEntities)
 
   contexts
 }
@@ -356,6 +382,7 @@ let registerProcessEventBatchMetrics = (
 let processEventBatch = async (
   ~eventBatch: array<Types.eventBatchQueueItem>,
   ~chainManager: ChainManager.t,
+  ~inMemoryStore: IO.InMemoryStore.t,
 ) => {
   let logger = Logging.createChild(
     ~params={
@@ -370,16 +397,20 @@ let processEventBatch = async (
   )
 
   let timeRef = Hrtime.makeTimer()
-  IO.InMemoryStore.resetStore()
 
-  let eventBatchAndContext = await loadReadEntities(~eventBatch, ~chainManager, ~logger)
+  let eventBatchAndContext = await loadReadEntities(
+    ~inMemoryStore,
+    ~eventBatch,
+    ~chainManager,
+    ~logger,
+  )
 
   let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter)
+  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter(~inMemoryStore))
 
   let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-  await DbFunctions.sql->IO.executeBatch
+  await DbFunctions.sql->IO.executeBatch(~inMemoryStore)
 
   let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
@@ -400,6 +431,7 @@ let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t): unit =
         ~maxBatchSize=Env.maxProcessBatchSize,
       )
 
-    await processEventBatch(~eventBatch=nextBatch, ~chainManager)
+    let inMemoryStore = IO.InMemoryStore.make()
+    await processEventBatch(~eventBatch=nextBatch, ~inMemoryStore, ~chainManager)
   }
 }
