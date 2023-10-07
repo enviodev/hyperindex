@@ -13,7 +13,7 @@ pub enum SupportedNetwork {
     AvalancheCChain,
     Optimism,
     Linea,
-    // EthereumGoerliTestnet,
+    EthereumGoerliTestnet,
     // EthereumSepoliaTestnet,
     // PolygonMumbaiTestnet,
     // ArbitrumNova,
@@ -48,7 +48,7 @@ pub fn chain_id_to_network(chain_id: &i32) -> anyhow::Result<SupportedNetwork> {
         43114 => Ok(SupportedNetwork::AvalancheCChain),
         10 => Ok(SupportedNetwork::Optimism),
         59144 => Ok(SupportedNetwork::Linea),
-        // 5 => Ok(SupportedNetwork::EthereumGoerliTestnet),
+        5 => Ok(SupportedNetwork::EthereumGoerliTestnet),
         // 11155111 => Ok(SupportedNetwork::EthereumSepoliaTestnet),
         // 80001 => Ok(SupportedNetwork::PolygonMumbaiTestnet),
         // 42170 => Ok(SupportedNetwork::ArbitrumNova),
@@ -116,10 +116,10 @@ pub fn network_to_skar_url(network: &SupportedNetwork) -> Option<String> {
     match network {
         SupportedNetwork::EthereumMainnet => Some("http://eth.hypersync.bigdevenergy.link:1100".to_string()),
         SupportedNetwork::Polygon => Some("http://91.216.245.175:1101".to_string()),
+        SupportedNetwork::EthereumGoerliTestnet => Some("https://goerli.hypersync.bigdevenergy.link:1104".to_string()),
         _ => None
 
         // SupportedNetwork::Polygon => Some("http://91.216.245.118:2151".to_string()),
-        // SupportedNetwork::EthereumGoerliTestnet => "https://goerli.archive.subsquid.io",
         // SupportedNetwork::EthereumSepoliaTestnet => "https://sepolia.archive.subsquid.io",
         // SupportedNetwork::PolygonMumbaiTestnet => "https://polygon-mumbai.archive.subsquid.io",
         // SupportedNetwork::ArbitrumOne => "https://arbitrum.archive.subsquid.io",
@@ -200,7 +200,7 @@ mod test {
     use strum::IntoEnumIterator;
 
     ///Currently only used for exhaustive testing. Can move this into the main module if needed
-    ///elsewher
+    ///elsewhere
     fn network_to_chain_id(network: SupportedNetwork) -> i32 {
         match network {
             SupportedNetwork::EthereumMainnet => 1,
@@ -211,7 +211,7 @@ mod test {
             SupportedNetwork::Optimism => 10,
             SupportedNetwork::Base => 84531,
             SupportedNetwork::Linea => 59144,
-            // SupportedNetwork::EthereumGoerliTestnet => 5,
+            SupportedNetwork::EthereumGoerliTestnet => 5,
             // SupportedNetwork::EthereumSepoliaTestnet => 11155111,
             // SupportedNetwork::PolygonMumbaiTestnet => 80001,
             // SupportedNetwork::ArbitrumNova => 42170,
