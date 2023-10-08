@@ -4,7 +4,7 @@ let maxRetries = 120;
 const pollGraphQL = async () => {
   const rawEventsQuery = `
     query {
-      raw_events_by_pk(event_id: "3071145413242", chain_id: 137) {
+      raw_events_by_pk(chain_id: 5, event_id: "622184760610") {
         event_type
         log_index
         src_address
@@ -15,12 +15,12 @@ const pollGraphQL = async () => {
     }
   `;
 
-  const greetingEntityQuery = `
+  const accountEntityQuery = `
     {
-      greeting_by_pk("0xf28eA36e3E68Aff0e8c9bFF8037ba2150312ac48") {
+      Account_by_pk(id: "0x0000000000000000000000000000000000000000") {
+        approval
+        balance
         id
-        numberOfGreetings
-        greetings
       }
     }
   `;
@@ -60,7 +60,7 @@ const pollGraphQL = async () => {
         console.error(errors);
       }
     } catch (err) {
-      console.log("Could not request data from Hasura due to error: ", err);
+      console.log("[will retry] Could not request data from Hasura due to error: ", err);
       console.log("Hasura not yet started, retrying in 1s");
     }
     setTimeout(() => fetchQuery(query, callback), 1000);
@@ -69,23 +69,16 @@ const pollGraphQL = async () => {
   // TODO: make this use promises rather than callbacks.
   fetchQuery(rawEventsQuery, (data) => {
     assert(
-      data.raw_events_by_pk.event_type ===
-      "PolygonGreeterContract_NewGreetingEvent",
-      "event_type should be PolygonGreeterContract_NewGreetingEvent"
+      data.raw_events_by_pk.event_type === "ERC20Contract_TransferEvent",
+      "event_type should be TransferEvent"
     );
     console.log("First test passed, running the second one.");
 
     // Run the second test
-    fetchQuery(greetingEntityQuery, ({ greeting_by_pk: greeting }) => {
-      assert(!!greeting, "greeting should not be null or undefined")
-      assert(
-        greeting.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
-        "First 3 greetings should be 'gm,gn,gm paris'"
-      );
-      assert(
-        greeting.numberOfGreetings >= 3,
-        "numberOfGreetings should be >= 3"
-      );
+    fetchQuery(accountEntityQuery, ({ account_by_pk: account }) => {
+      assert(!!account, "account should not be null or undefined");
+      assert(account.balance <= -103, "balance should be <= -103");
+      assert(account.approval == 0, "approval should be = 0");
       console.log("Second test passed.");
     });
   });
@@ -93,5 +86,5 @@ const pollGraphQL = async () => {
 
 pollGraphQL();
 
-// After all async tasks are done
-process.exit(0);
+// // After all async tasks are done
+// process.exit(0);
