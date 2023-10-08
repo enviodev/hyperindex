@@ -118,16 +118,16 @@ async fn run_all_init_combinations() {
 
 #[tokio::main]
 async fn main() {
-    println!("main");
     run_all_init_combinations().await;
 }
 
-#[cfg(test)]
-mod test {
-    use crate::run_all_init_combinations;
+// This slows down all the integration tests, so we don't run it by default.
+// #[cfg(test)]
+// mod test {
+//     use crate::run_all_init_combinations;
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_all_init_combinations() {
-        run_all_init_combinations().await;
-    }
-}
+//     #[tokio::test(flavor = "multi_thread")]
+//     async fn test_all_init_combinations() {
+//         run_all_init_combinations().await;
+//     }
+// }

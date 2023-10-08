@@ -1,10 +1,9 @@
 #!/bin/bash
 
 # This file will test a single scenario (language agnostic)
-echo -e "\n============================\nTsting TEMPLATE: $TEMPLATE, LANGUAGE: $LANGUAGE\n============================\n"
+echo -e "\n============================\nTesting TEMPLATE: $TEMPLATE, LANGUAGE: $LANGUAGE\n============================\n"
 
 set -e  # Exit on error
-trap 'kill -- -$(ps -o pgid= $PID | grep -o [0-9]*)' EXIT  # Cleanup on exit (success) OR error.
 
 root_dir=$(pwd)
 
@@ -26,24 +25,28 @@ $envio_cmd stop || true
 
 # start the indexer running manual steps
 # NOTE: if dev fails or has issues you can debug with these separate steps.
-# pnpm envio local docker up
-# pnpm envio local db-migrate setup
-# pnpm envio start & PID=$!
-$envio_cmd dev & PID=$!
+# $envio_cmd local docker up
+# $envio_cmd local db-migrate setup
+# npm run start & PID=$!
+# $envio_cmd start & PID=$!
 
-# save this process so we can kill it later in the script
-echo "process id is $PID"
+$envio_cmd dev &
+
+function cleanup_indexer_process()
+{
+  if [[ -n $(lsof -t -i :9898) ]]; then
+    echo "Killing the indexer process if it is still running"
+    kill $(lsof -t -i :9898)
+  fi
+}
+trap cleanup_indexer_process EXIT ERR # Cleanup on exit (success) or ERR (failure)
 
 # make requests to hasura and get indexed entity data
 cd $root_dir
-echo -e "\n\n here $(pwd) \n\n"
+
+sleep 2 # Weird things happen if the indexer process hasn't started yet.
 
 # NOTE: the error should propagate to this bash process, since the 'set -e' setting is used.
 node ./tests/${TEMPLATE}.js
-cat ./tests/${TEMPLATE}.js
-echo -e "\n\n starting test \n\n"
 
-# if [ $? -ne 0 ]; then
-#   echo "Test failed!"
-#   exit 1
-# fi
+echo "finished workflow test"

@@ -1,6 +1,8 @@
 const assert = require("assert");
 let maxRetries = 120;
 
+let shouldExitOnFailure = false; // This flag is set to true once all setup has completed and test is being performed.
+
 const pollGraphQL = async () => {
   const rawEventsQuery = `
     query {
@@ -17,10 +19,10 @@ const pollGraphQL = async () => {
 
   const greetingEntityQuery = `
     {
-      greeting_by_pk("0xf28eA36e3E68Aff0e8c9bFF8037ba2150312ac48") {
+      Greeting_by_pk(id: "0xf28eA36e3E68Aff0e8c9bFF8037ba2150312ac48") {
         id
-        numberOfGreetings
         greetings
+        numberOfGreetings
       }
     }
   `;
@@ -60,10 +62,15 @@ const pollGraphQL = async () => {
         console.error(errors);
       }
     } catch (err) {
-      console.log("Could not request data from Hasura due to error: ", err);
-      console.log("Hasura not yet started, retrying in 1s");
+      if (!shouldExitOnFailure) {
+        console.log("[will retry] Could not request data from Hasura due to error: ", err);
+        console.log("Hasura not yet started, retrying in 1s");
+      } else {
+        console.error(err);
+        exit(1);
+      }
     }
-    setTimeout(() => fetchQuery(query, callback), 1000);
+    setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 1000);
   };
 
   // TODO: make this use promises rather than callbacks.
@@ -76,7 +83,7 @@ const pollGraphQL = async () => {
     console.log("First test passed, running the second one.");
 
     // Run the second test
-    fetchQuery(greetingEntityQuery, ({ greeting_by_pk: greeting }) => {
+    fetchQuery(greetingEntityQuery, ({ Greeting_by_pk: greeting }) => {
       assert(!!greeting, "greeting should not be null or undefined")
       assert(
         greeting.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
@@ -86,7 +93,6 @@ const pollGraphQL = async () => {
         greeting.numberOfGreetings >= 3,
         "numberOfGreetings should be >= 3"
       );
-      assert(false, "force a fail")
       console.log("Second test passed.");
     });
   });

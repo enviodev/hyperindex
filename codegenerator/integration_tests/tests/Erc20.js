@@ -1,5 +1,8 @@
 const assert = require("assert");
+const { exit } = require("process");
 let maxRetries = 120;
+
+let shouldExitOnFailure = false; // This flag is set to true once all setup has completed and test is being performed.
 
 const pollGraphQL = async () => {
   const rawEventsQuery = `
@@ -17,8 +20,12 @@ const pollGraphQL = async () => {
 
   const accountEntityQuery = `
     {
-      Account_by_pk(id: "0x0000000000000000000000000000000000000000") {
-        approval
+      Account_by_pk(id: "0x894C63809B72207da77e4fa89E2d5cC003171B6a") {
+        approvals(order_by: {event_id: asc}) {
+          amount
+          owner
+          spender
+        }
         balance
         id
       }
@@ -60,10 +67,15 @@ const pollGraphQL = async () => {
         console.error(errors);
       }
     } catch (err) {
-      console.log("[will retry] Could not request data from Hasura due to error: ", err);
-      console.log("Hasura not yet started, retrying in 1s");
+      if (!shouldExitOnFailure) {
+        console.log("[will retry] Could not request data from Hasura due to error: ", err);
+        console.log("Hasura not yet started, retrying in 1s");
+      } else {
+        console.error(err);
+        exit(1);
+      }
     }
-    setTimeout(() => fetchQuery(query, callback), 1000);
+    setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 1000);
   };
 
   // TODO: make this use promises rather than callbacks.
@@ -75,10 +87,14 @@ const pollGraphQL = async () => {
     console.log("First test passed, running the second one.");
 
     // Run the second test
-    fetchQuery(accountEntityQuery, ({ account_by_pk: account }) => {
+    fetchQuery(accountEntityQuery, ({ Account_by_pk: account }) => {
       assert(!!account, "account should not be null or undefined");
-      assert(account.balance <= -103, "balance should be <= -103");
-      assert(account.approval == 0, "approval should be = 0");
+      shouldExitOnFailure = true;
+      assert(account.balance == 70, "balance should be == 70"); // NOTE the balance shouldn't change since we own this erc20 token.
+      assert(account.approvals.length > 0, "There should be at least one approval");
+      assert(account.approvals[0].amount == 50, "The first approval amount should be 50");
+      assert(account.approvals[0].owner == account.id, "The first approval owner should be the account id");
+      assert(account.approvals[0].spender == "0x894C63809B72207da77e4fa89E2d5cC003171B6a" /* The spender is himself, bad script... */, "The first approval spender should be the account id");
       console.log("Second test passed.");
     });
   });
@@ -86,5 +102,3 @@ const pollGraphQL = async () => {
 
 pollGraphQL();
 
-// // After all async tasks are done
-// process.exit(0);

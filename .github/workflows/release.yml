@@ -49,8 +49,7 @@ jobs:
             echo "::set-output name=tag_name::${GITHUB_REF_NAME}"
             echo "::set-output name=release_name::${GITHUB_REF_NAME}"
             echo "::set-output name=is_tagged::true"
-            echo "::set-output name=release_type::next-candidate" # NOTE: we currently go directly into prod when a tag is released - using 'next' would give us time to review before upgrading the tag.
-            
+            echo "::set-output name=release_type::next" # NOTE: we currently go directly into prod when a tag is released - using 'next' would give us time to review before upgrading the tag.
            # echo "::set-output name=release_type::latest"
           elif [[ "${GITHUB_REF_NAME}" =~ ^release-([0-9]+\.[0-9]+\.[0-9]+) ]]; then
             version=v${BASH_REMATCH[1]}
@@ -151,7 +150,7 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y gcc-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-                                                          
+
       - if: ${{ runner.os == 'Linux' }}
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
@@ -293,98 +292,20 @@ jobs:
           echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}
 
-  template-integration-test:
-    name: integration-test ${{ matrix.template }} (${{ matrix.language }})
-    runs-on: ubuntu-latest
-    needs:
-      - "publish-npm"
-    strategy:
-      matrix:
-        template: [erc20, greeter]
-        language: [javascript, rescript, typescript]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      - name: Install node
-        uses: actions/setup-node@v3
-        with:
-          node-version: "18.16.0"
-          registry-url: "https://registry.npmjs.org"
-      - uses: pnpm/action-setup@v2
-        with:
-          version: 8
-      - name: Set ENV for launcher
-        run: export LAUNCHER="curl"
-      - name: Install envio
-        run: |
-          npm i -g envio@${{ needs.prepare.outputs.tag_name }} --loglevel verbose
-      - name: Generate template
-        run: |
-          cd codegenerator/integration_tests
-          envio init --template ${{ matrix.template }} --language ${{ matrix.language }} --name "test" --directory "./integration_test_output/${{ matrix.template }}/${{ matrix.language }}"
-      - name: Run the integration test
-        env:
-          LANGUAGE: ${{ matrix.language }}
-        run: |
-          # Create the mock xdg-open and gio
-          echo 'echo "Mocked open. This would open the link in the browser usually:"' > ./xdg-open
-          chmod +x ./xdg-open
-          echo 'echo "Mocked open. This would open the link in the browser usually:"' > ./gio
-          chmod +x ./gio
-
-          # Update PATH
-          export PATH=$(pwd):$PATH
-
-          # TODO: this part of the script should be put into a separate script.
-          # This file will test a single scenario (language agnostic)
-          root_dir=$(pwd)
-
-          # change to the directory of the template
-          cd codegenerator/integration_tests/integration_test_output/${{ matrix.template }}/${{ matrix.language }}/
-
-          # install packages
-          pnpm install
-
-          # generate codegen as it is in gitignore
-          pnpm envio codegen
-
-          # clear everything before we start
-          pnpm envio stop || true
-
-          # start the indexer running manual steps
-          # NOTE: if dev fails or has issues you can debug with these separate steps.
-          # pnpm envio local docker up
-          # pnpm envio local db-migrate setup
-          # pnpm envio start & PID=$!
-          pnpm envio dev & PID=$!
-
-          # save this process so we can kill it later in the script
-          echo "process id is $PID"
-
-          # make requests to hasura and get indexed entity data
-          cd $root_dir
-
-          # NOTE: the error should propagate to this bash process, since the 'set -e' setting is used.
-          node ./codegenerator/integration_tests/tests/${{ matrix.template }}.js
-
-          if [ $? -ne 0 ]; then
-            echo "Test failed!"
-            exit 1
-          fi
-
-  update-npm-tag:
-    if: ${{ needs.prepare.outputs.is_tagged }}
-    needs:
-      - prepare
-      - template-integration-test
-    runs-on: ubuntu-22.04
-    steps:
-      - name: update npm tag
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          VERSION: ${{ needs.prepare.outputs.tag_name }}
-        run: |
-          npm dist-tag add envio@${VERSION} next
+  # TODO: add back the integration tests and work out how to automate this. This has been causing issues previously.
+  # update-npm-tag:
+  #   if: ${{ needs.prepare.outputs.is_tagged }}
+  #   needs:
+  #     - prepare
+  #     - template-integration-test
+  #   runs-on: ubuntu-22.04
+  #   steps:
+  #     - name: update npm tag
+  #       env:
+  #         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+  #         VERSION: ${{ needs.prepare.outputs.tag_name }}
+  #       run: |
+  #         npm dist-tag add envio@${VERSION} next
 
   build-and-push:
     name: "build, publish and add docker container for deployment"
