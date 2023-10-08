@@ -9,17 +9,17 @@ import {
   LineaGreeterContract_ClearGreeting_handler,
 } from "../generated/src/Handlers.gen";
 
-import { greetingEntity } from "../generated/src/Types.gen";
+import { GreetingEntity } from "../generated/src/Types.gen";
 
 PolygonGreeterContract_NewGreeting_loader(({ event, context }) => {
-  context.Greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.Greeting.load(event.params.user.toString());
 });
 
 PolygonGreeterContract_NewGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.Greeting.greetingWithChanges;
+  let currentGreeter = context.Greeting.get(event.params.user);
 
-  if (currentGreeter !== undefined) {
-    let greetingObject: greetingEntity = {
+  if (currentGreeter != null) {
+    let greetingObject: GreetingEntity = {
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: currentGreeter.numberOfGreetings + 1,
@@ -28,7 +28,7 @@ PolygonGreeterContract_NewGreeting_handler(({ event, context }) => {
 
     context.Greeting.set(greetingObject);
   } else {
-    let greetingObject: greetingEntity = {
+    let greetingObject: GreetingEntity = {
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
@@ -39,14 +39,14 @@ PolygonGreeterContract_NewGreeting_handler(({ event, context }) => {
 });
 
 PolygonGreeterContract_ClearGreeting_loader(({ event, context }) => {
-  context.Greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.Greeting.load(event.params.user.toString());
 });
 
 PolygonGreeterContract_ClearGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.Greeting.greetingWithChanges;
+  let currentGreeter = context.Greeting.get(event.params.user);
 
-  if (currentGreeter !== undefined) {
-    let greetingObject: greetingEntity = {
+  if (currentGreeter != null) {
+    let greetingObject: GreetingEntity = {
       id: event.params.user.toString(),
       latestGreeting: "",
       numberOfGreetings: currentGreeter.numberOfGreetings,
@@ -58,14 +58,14 @@ PolygonGreeterContract_ClearGreeting_handler(({ event, context }) => {
 });
 
 LineaGreeterContract_NewGreeting_loader(({ event, context }) => {
-  context.Greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.Greeting.load(event.params.user.toString());
 });
 
 LineaGreeterContract_NewGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.Greeting.greetingWithChanges;
+  let currentGreeter = context.Greeting.get(event.params.user);
 
-  if (currentGreeter !== undefined) {
-    let greetingObject: greetingEntity = {
+  if (currentGreeter != null) {
+    let greetingObject: GreetingEntity = {
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: currentGreeter.numberOfGreetings + 1,
@@ -74,7 +74,7 @@ LineaGreeterContract_NewGreeting_handler(({ event, context }) => {
 
     context.Greeting.set(greetingObject);
   } else {
-    let greetingObject: greetingEntity = {
+    let greetingObject: GreetingEntity = {
       id: event.params.user.toString(),
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
@@ -85,14 +85,14 @@ LineaGreeterContract_NewGreeting_handler(({ event, context }) => {
 });
 
 LineaGreeterContract_ClearGreeting_loader(({ event, context }) => {
-  context.Greeting.greetingWithChangesLoad(event.params.user.toString());
+  context.Greeting.load(event.params.user.toString());
 });
 
 LineaGreeterContract_ClearGreeting_handler(({ event, context }) => {
-  let currentGreeter = context.Greeting.greetingWithChanges;
+  let currentGreeter = context.Greeting.get(event.params.user);
 
-  if (currentGreeter !== undefined) {
-    let greetingObject: greetingEntity = {
+  if (currentGreeter != null) {
+    let greetingObject: GreetingEntity = {
       id: event.params.user.toString(),
       latestGreeting: "",
       numberOfGreetings: currentGreeter.numberOfGreetings,

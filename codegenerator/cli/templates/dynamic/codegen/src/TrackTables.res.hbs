@@ -241,9 +241,9 @@ let trackAllTables = async () => {
       let _ = await createEntityRelationship(
         ~tableName="{{entity.name.capitalized}}",
         ~relationshipType="{{relational_param.relationship_type}}",
+        ~derivedFromFieldKey="{{relational_param.derived_from_field_key}}", 
         ~relationalKey="{{relational_param.relational_key.original}}",
         ~mappedEntity="{{relational_param.mapped_entity.original}}",
-        ~derivedFromFieldKey="{{relational_param.derived_from_field_key}}", 
       )
     {{/each}}
 {{/each}}

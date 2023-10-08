@@ -2,31 +2,22 @@ let { ERC20Contract } = require("../generated/src/Handlers.bs.js");
 
 ERC20Contract.Approval.loader((event, context) => {
   // loading the required Account entity
-  context.Account.ownerAccountChangesLoad(event.params.owner);
+  context.Account.load(event.params.owner);
 });
 
 ERC20Contract.Approval.handler((event, context) => {
   //  getting the owner Account entity
-  let ownerAccount = context.Account.ownerAccountChanges;
+  let ownerAccount = context.Account.get(event.params.owner);
 
-  if (ownerAccount !== undefined) {
-    // setting Account entity object
-    let accountObject = {
-      id: ownerAccount.id,
-      approval: event.params.value,
-      balance: ownerAccount.balance,
-    };
+  if (ownerAccount === undefined) {
+    // Usually an accoun that is being approved alreay has/has had a balance, but it is possible they havent.
 
-    // setting the Account entity with the new transfer field value
-    context.Account.set(accountObject);
-  } else {
-    // setting Account entity object
+    // create the account
     let accountObject = {
       id: event.params.owner,
       balance: BigInt(0),
     };
 
-    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   }
   let approvalId = event.params.owner + "-" + event.params.spender;
@@ -39,63 +30,45 @@ ERC20Contract.Approval.handler((event, context) => {
   };
 
   // this is the same for create or update as the amount is overwritten
-  context.approval.set(approvalObject);
+  context.Approval.set(approvalObject);
 });
 
 ERC20Contract.Transfer.loader((event, context) => {
-  // loading the required Account entity
-  context.Account.senderAccountChangesLoad(event.params.from.toString());
-  context.Account.receiverAccountChangesLoad(event.params.to.toString());
+  context.Account.load(event.params.from);
+  context.Account.load(event.params.to);
 });
 
 ERC20Contract.Transfer.handler((event, context) => {
-  // getting the sender Account entity
-  let senderAccount = context.Account.senderAccountChanges;
+  let senderAccount = context.Account.get(event.params.from);
 
-  if (senderAccount !== undefined) {
-    // setting the totals field value
-    // setting Account entity object
+  if (senderAccount === undefined) {
+    // create the account
+    // This is likely only ever going to be the zero address in the case of the first mint
     let accountObject = {
       id: event.params.from,
       balance: BigInt(0) - event.params.value,
     };
 
-    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   } else {
-    // setting Account entity object
+    // subtract the balance from the existing users balance
     let accountObject = {
       id: senderAccount.id,
       balance: senderAccount.balance - event.params.value,
     };
-
-    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   }
 
   // getting the sender Account entity
-  let receiverAccount = context.Account.receiverAccountChanges;
+  let receiverAccount = context.Account.get(event.params.to);
 
-  if (receiverAccount !== undefined) {
-    // setting Account entity object
+  if (receiverAccount === undefined) {
+    // create new account
     let accountObject = {
-      id: receiverAccount.id,
-      approval: receiverAccount.approval,
-      balance: BigInt(
-        Number(receiverAccount.balance) + Number(event.params.value)
-      ),
-    };
-
-    // setting the Account entity with the new transfer field value
-    context.Account.set(accountObject);
-  } else {
-    // setting Account entity object
-    let accountObject = {
-      id: event.params.to.toString(),
-      approval: BigInt(0),
+      id: event.params.to,
       balance: event.params.value,
     };
-    context.account.set(accountObject);
+    context.Account.set(accountObject);
   } else {
     // update existing account
     let accountObject = {
@@ -103,7 +76,6 @@ ERC20Contract.Transfer.handler((event, context) => {
       balance: receiverAccount.balance + event.params.value,
     };
 
-    // setting the Account entity with the new transfer field value
     context.Account.set(accountObject);
   }
 });
