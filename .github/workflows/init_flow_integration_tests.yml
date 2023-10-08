@@ -24,11 +24,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+
       - name: Install node
         uses: actions/setup-node@v3
         with:
           node-version: "18.16.0"
           registry-url: "https://registry.npmjs.org"
+
       - uses: pnpm/action-setup@v2
         with:
           version: 8
@@ -66,18 +68,22 @@ jobs:
             ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
             ${{ runner.os }}-pnpm-store-
 
-      - name: Run the integration tests
+      # TODO see if there is a way to speed this up via caching etc
+      - name: Pre-pull docker-compose images
         run: |
-          # Create the mock xdg-open and gio
-          echo 'echo "Mocked open. This would open the link in the browser usually:"' > ./xdg-open
-          chmod +x ./xdg-open
-          echo 'echo "Mocked open. This would open the link in the browser usually:"' > ./gio
-          chmod +x ./gio
+          cd ../cli/templates/static/codegen # we use the docker-compose.yml in the static folder
+          docker-compose pull
 
-          # Update PATH
-          export PATH=$(pwd):$PATH
+      - name: Mock gio
+        run: |
+          mkdir -p /home/runner/.local/bin # This is on the path by default
+          echo 'echo "running mock gio"' > /home/runner/.local/bin/gio && chmod +x /home/runner/.local/bin/gio
+          echo 'echo "running mock xdg-open"' > /home/runner/.local/bin/xdg-open && chmod +x /home/runner/.local/bin/xdg-open
 
-          ./tests/runAll.sh
+      - name: Run the integration tests
+        env:
+          LOG_LEVEL: trace
+        run: ./tests/runAll.sh
 
       # - name: Test Failure
       #   uses: rjstone/discord-webhook-notify@v1

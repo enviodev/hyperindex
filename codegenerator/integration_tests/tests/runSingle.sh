@@ -15,12 +15,15 @@ envio_cmd=${ENVIO_CMD:-"cargo run --manifest-path $(dirname $(pwd))/cli/Cargo.to
 cd ./integration_test_output/${TEMPLATE}/${LANGUAGE}/
 
 # install packages
+echo "Installing packages"
 pnpm install
 
 # generate codegen as it is in gitignore
+echo "Generating codegen"
 $envio_cmd codegen
 
 # clear everything before we start
+echo "Clearing old docker state"
 $envio_cmd stop || true
 
 # start the indexer running manual steps
@@ -30,6 +33,7 @@ $envio_cmd stop || true
 # npm run start & PID=$!
 # $envio_cmd start & PID=$!
 
+echo "Starting indexer"
 $envio_cmd dev &
 
 function cleanup_indexer_process()
@@ -47,6 +51,7 @@ cd $root_dir
 sleep 2 # Weird things happen if the indexer process hasn't started yet.
 
 # NOTE: the error should propagate to this bash process, since the 'set -e' setting is used.
+echo "Running tests"
 node ./tests/${TEMPLATE}.js
 
 echo "finished workflow test"

@@ -255,7 +255,11 @@ pub mod start {
         should_open_hasura: bool,
     ) -> anyhow::Result<std::process::ExitStatus> {
         if should_open_hasura {
-            open::that("http://localhost:8080")?;
+            println!("Opening Hasura console at http://localhost:8080 ...");
+            if let Err(_) = open::that_detached("http://localhost:8080") {
+                println!("Unable to open http://localhost:8080 in your browser automatically for you. You can open that link yourself to view hasura");
+            }
+            println!("after open");
         }
         let cmd = "npm";
         let mut args = vec!["run", "start"];

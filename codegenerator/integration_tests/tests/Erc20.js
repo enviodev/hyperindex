@@ -1,6 +1,6 @@
 const assert = require("assert");
 const { exit } = require("process");
-let maxRetries = 120;
+let maxRetries = 200;
 
 let shouldExitOnFailure = false; // This flag is set to true once all setup has completed and test is being performed.
 
