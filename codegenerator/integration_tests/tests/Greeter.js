@@ -67,7 +67,7 @@ const pollGraphQL = async () => {
         console.log("Hasura not yet started, retrying in 1s");
       } else {
         console.error(err);
-        exit(1);
+        process.exit(1);
       }
     }
     setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 1000);

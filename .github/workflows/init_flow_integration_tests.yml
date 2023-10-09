@@ -6,7 +6,7 @@ on:
       - "v*.*.*"
     branches:
       - main
-      - js/template-integration-tests
+      - test-init-flow-integration-tests*
 
 env:
   CARGO_TERM_COLOR: always
@@ -85,17 +85,17 @@ jobs:
           LOG_LEVEL: trace
         run: ./tests/runAll.sh
 
-      # - name: Test Failure
-      #   uses: rjstone/discord-webhook-notify@v1
-      #   if: failure()
-      #   with:
-      #     severity: error
-      #     details: Integration test Failed - in main (make sure to fix before releasing a new version)!
-      #     webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
-      # - name: Test Cancelled
-      #   uses: rjstone/discord-webhook-notify@v1
-      #   if: cancelled()
-      #   with:
-      #     severity: warn
-      #     details: Integration Test Cancelled - make sure the cancelation was intentional
-      #     webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+      - name: Test Failure
+        uses: rjstone/discord-webhook-notify@v1
+        if: failure()
+        with:
+          severity: error
+          details: "Integration test Failed - in main (make sure to fix before releasing a new version)! (CC: <@&Devs> )"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+      - name: Test Cancelled
+        uses: rjstone/discord-webhook-notify@v1
+        if: cancelled()
+        with:
+          severity: warn
+          details: Integration Test Cancelled - make sure the cancelation was intentional
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}

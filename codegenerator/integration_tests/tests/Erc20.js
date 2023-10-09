@@ -7,7 +7,7 @@ let shouldExitOnFailure = false; // This flag is set to true once all setup has 
 const pollGraphQL = async () => {
   const rawEventsQuery = `
     query {
-      raw_events_by_pk(chain_id: 5, event_id: "622184760610") {
+      raw_events_by_pk(chain_id: 1, event_id: "712791818308") {
         event_type
         log_index
         src_address
@@ -20,8 +20,8 @@ const pollGraphQL = async () => {
 
   const accountEntityQuery = `
     {
-      Account_by_pk(id: "0x894C63809B72207da77e4fa89E2d5cC003171B6a") {
-        approvals(order_by: {event_id: asc}) {
+      Account_by_pk(id: "0x26921A182Cf9D6F33730D7F37E1a86fd430863Af") {
+        approvals(order_by: {event_id: asc}, limit: 2) {
           amount
           owner
           spender
@@ -72,7 +72,7 @@ const pollGraphQL = async () => {
         console.log("Hasura not yet started, retrying in 1s");
       } else {
         console.error(err);
-        exit(1);
+        process.exit(1);
       }
     }
     setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 1000);
@@ -81,20 +81,21 @@ const pollGraphQL = async () => {
   // TODO: make this use promises rather than callbacks.
   fetchQuery(rawEventsQuery, (data) => {
     assert(
-      data.raw_events_by_pk.event_type === "ERC20Contract_TransferEvent",
-      "event_type should be TransferEvent"
+      data.raw_events_by_pk.event_type === "ERC20Contract_ApprovalEvent",
+      "event_type should be an ApprovalEvent"
     );
     console.log("First test passed, running the second one.");
+
 
     // Run the second test
     fetchQuery(accountEntityQuery, ({ Account_by_pk: account }) => {
       assert(!!account, "account should not be null or undefined");
       shouldExitOnFailure = true;
-      assert(account.balance == 70, "balance should be == 70"); // NOTE the balance shouldn't change since we own this erc20 token.
+      assert(account.balance > 311465476000000000000, "balance should be == 70"); // NOTE the balance shouldn't change since we own this erc20 token.
       assert(account.approvals.length > 0, "There should be at least one approval");
-      assert(account.approvals[0].amount == 50, "The first approval amount should be 50");
+      assert(account.approvals[0].amount == 79228162514264337593543950335n, "The first approval amount should be 50");
       assert(account.approvals[0].owner == account.id, "The first approval owner should be the account id");
-      assert(account.approvals[0].spender == "0x894C63809B72207da77e4fa89E2d5cC003171B6a" /* The spender is himself, bad script... */, "The first approval spender should be the account id");
+      assert(account.approvals[0].spender == "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D", "The first approval spender should be correct (from uniswap)");
       console.log("Second test passed.");
     });
   });
