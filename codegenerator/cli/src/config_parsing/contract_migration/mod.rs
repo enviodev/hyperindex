@@ -294,11 +294,34 @@ fn get_event_handler_directory(language: &Language) -> String {
 }
 #[cfg(test)]
 mod test {
+    use crate::cli_args::Language;
+    use crate::config_parsing::chain_helpers::NetworkWithExplorer;
 
     use super::GetSourceCodeResponseType;
     use super::GetSourceCodeResult;
 
     use super::Item;
+
+    // Integration test to see that a config file can be generated from a contract address
+    #[tokio::test]
+    #[ignore = "Integration test that interacts with block explorer API"]
+    async fn generate_config_from_contract_address() {
+        // contract address of deprecated LongShort contract on Polygon
+        let name = "LongShort";
+        let contract_address: &str = "0x168a5d1217AEcd258b03018d5bF1A1677A07b733";
+        let network: NetworkWithExplorer = NetworkWithExplorer::Matic;
+        let language: Language = Language::Typescript;
+        let project_root_path: std::path::PathBuf = std::path::PathBuf::from("./");
+        super::generate_config_from_contract_address(
+            name,
+            &project_root_path,
+            &network,
+            contract_address,
+            &language,
+        )
+        .await
+        .unwrap();
+    }
 
     #[test]
     fn test_deserialize_get_source_code_response_type() {
