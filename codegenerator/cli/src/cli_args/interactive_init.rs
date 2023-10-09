@@ -14,7 +14,7 @@ use super::validation::{is_directory_new, is_valid_foldername_inquire_validation
 pub enum InitilizationTypeWithArgs {
     Template(InitTemplate),
     SubgraphID(String),
-    ContractMigration(NetworkWithExplorer, String),
+    ContractImportWithArgs(NetworkWithExplorer, String),
 }
 
 pub struct InitInteractive {
@@ -117,7 +117,7 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
                     InitilizationTypeWithArgs::SubgraphID(input_subgraph_id)
                 }
 
-                InitFlow::Import(args) => {
+                InitFlow::ContractImport(args) => {
                     let chosen_network = match &args.blockchain {
                         Some(chain) => chain.clone(),
                         None => {
@@ -126,7 +126,7 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
                                 .collect::<Vec<String>>();
 
                             let input_network = Select::new(
-                                "Which blockchain would you like to migrate a contract from?",
+                                "Which blockchain would you like to import a contract from?",
                                 options,
                             )
                             .prompt()?;
@@ -139,13 +139,13 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
                     let chosen_contract_address = match &args.contract_address {
                         Some(c) => c.clone(),
                         None => {
-                            Text::new("[BETA VERSION] What is the address of the contract? Please provide address of the proxy contract.")
+                            Text::new("[BETA VERSION] What is the address of proxy the contract?")
                                 .prompt()
                                 .context("Prompting user for contract address")?
                         }
                     };
 
-                    InitilizationTypeWithArgs::ContractMigration(
+                    InitilizationTypeWithArgs::ContractImportWithArgs(
                         chosen_network,
                         chosen_contract_address,
                     )
@@ -155,7 +155,7 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
             Ok(initialization)
         }
         None => {
-            //start prompt to determine whether user is migration from subgraph or starting from a template
+            //start prompt to ask the user which initialization option they want
             let user_response_options = InitFlow::iter()
                 .map(|init_cmd| init_cmd.to_string())
                 .collect::<Vec<String>>();
@@ -163,10 +163,10 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
             let user_response =
                 Select::new("Choose an initialization option", user_response_options).prompt()?;
 
-            let chosen_template_or_subgraph = InitFlow::from_str(&user_response)
+            let chosen_init_option = InitFlow::from_str(&user_response)
                 .context("Parsing InitFlow from user input string")?;
 
-            get_init_args(&Some(chosen_template_or_subgraph))
+            get_init_args(&Some(chosen_init_option))
         }
     }
 }

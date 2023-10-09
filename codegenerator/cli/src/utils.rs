@@ -140,7 +140,7 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
                 .await?;
         }
 
-        InitilizationTypeWithArgs::ContractMigration(network_name, contract_address) => {
+        InitilizationTypeWithArgs::ContractImportWithArgs(network_name, contract_address) => {
             //  Copy in the relevant js flavor specific subgraph migration files
             match &parsed_init_args.language {
                 Language::Rescript => {

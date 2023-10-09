@@ -127,7 +127,7 @@ pub enum InitFlow {
     ///Start by migrating config from an existing subgraph
     SubgraphMigration(SubgraphMigrationArgs),
     ///Import config for a contract address for a given chain
-    Import(ContractMigrationArgs),
+    ContractImport(ContractMigrationArgs),
 }
 
 #[derive(Args, Debug, Default)]

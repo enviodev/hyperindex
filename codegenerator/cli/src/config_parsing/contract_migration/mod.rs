@@ -75,7 +75,7 @@ pub async fn generate_config_from_contract_address(
     // Validate that the contract address is in the correct format.
     if !is_valid_ethereum_address(contract_address) {
         return Err(anyhow!(
-            "The contract address {} is not a valid Ethereum address. Please provide a valid contract address for contract migration.",
+            "Address {} is not a valid address. Please provide a valid address for contract import.",
             contract_address
         ));
     }
@@ -103,9 +103,9 @@ pub async fn generate_config_from_contract_address(
         implementation_contract_name = implementation_get_source_code_result.ContractName.clone();
         abi_string = implementation_get_source_code_result.ABI.clone();
     } else {
-        // Assumption here is that we don't currently support contracts that are not proxies for contract migration.
+        // Assumption here is that we don't currently support contracts that are not proxies for contract import.
         return Err(anyhow!(
-            "The contract address {} is an implementation address. Please provide a proxy contract address for contract migration.",
+            "Address {} is an implementation address. Please provide a proxy contract address for contract import.",
             contract_address
         ));
     }
