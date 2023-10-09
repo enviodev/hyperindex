@@ -122,6 +122,12 @@ module Make = (HyperSync: HyperSync.S) => {
     }
   }
 
+  type getNextPageRes = {
+    contractInterfaceManager: ContractInterfaceManager.t,
+    page: HyperSyncTypes.logsQueryPage,
+    pageFetchTime: int,
+  }
+
   let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
     logger->Logging.childInfo("Hypersync worker starting")
     let {chainConfig, contractAddressMapping, serverUrl} = self
@@ -148,7 +154,9 @@ module Make = (HyperSync: HyperSync.S) => {
       true
     }
 
-    while (await checkReadyToContinue()) && self.shouldContinueFetching {
+    let getNextPage = async () => {
+      //Wait for a valid range to query
+      let _ = await checkReadyToContinue()
       //Instantiate each time to add new registered contract addresses
       let contractInterfaceManager = ContractInterfaceManager.make(
         ~chainConfig,
@@ -172,12 +180,37 @@ module Make = (HyperSync: HyperSync.S) => {
         logger,
       )
 
-      let elapsedTimeFetchingPage =
+      let pageFetchTime =
         startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+      {page: pageUnsafe, contractInterfaceManager, pageFetchTime}
+    }
+
+    let initialPagePromise = getNextPage()
+
+    let nextPagePromise = ref(initialPagePromise)
+
+    while self.shouldContinueFetching {
+      let startFetchingBatchTimeRef = Hrtime.makeTimer()
+      //fetch batch
+      let {
+        page: pageUnsafe,
+        contractInterfaceManager,
+        pageFetchTime,
+      } = await nextPagePromise.contents
+
+      let currentBatchFromBlock = fromBlock.contents
+
+      //set height and next from block
+      currentHeight := pageUnsafe.archiveHeight
+      fromBlock := pageUnsafe.nextBlock
+
+      //Start fetching next page async before parsing current page
+      nextPagePromise := getNextPage()
 
       logger->Logging.childTrace({
         "message": "Retrieved event page from server",
-        "fromBlock": fromBlock.contents,
+        "fromBlock": currentBatchFromBlock,
         "toBlock": pageUnsafe.nextBlock - 1,
         "number of logs": pageUnsafe.items->Array.length,
       })
@@ -197,7 +230,7 @@ module Make = (HyperSync: HyperSync.S) => {
 
         logger->Logging.childTrace({
           "message": "Dropping invalid batch due to new dynamic contract registration",
-          "page fetch time elapsed (ms)": elapsedTimeFetchingPage,
+          "page fetch time elapsed (ms)": pageFetchTime,
         })
       } else {
         //Lock the latest fetched blockNumber until it gets
@@ -304,19 +337,15 @@ module Make = (HyperSync: HyperSync.S) => {
 
         logger->Logging.childTrace({
           "message": "Finished page range",
-          "fromBlock": fromBlock.contents,
+          "fromBlock": currentBatchFromBlock,
           "toBlock": await self.latestFetchedBlockNumber,
           "total time elapsed (ms)": totalTimeElapsed,
-          "page fetch time (ms)": elapsedTimeFetchingPage,
+          "page fetch time (ms)": pageFetchTime,
           "parsing time (ms)": parsingTimeElapsed,
           "average parse time per log (ms)": parsingTimeElapsed->Belt.Int.toFloat /.
             parsedQueueItems->Array.length->Belt.Int.toFloat,
           "push to queue time (ms)": queuePushingTimeElapsed,
         })
-
-        //set height and next from block
-        currentHeight := pageUnsafe.archiveHeight
-        fromBlock := pageUnsafe.nextBlock
       }
     }
   }
