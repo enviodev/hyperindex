@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use tokio::time::{timeout, Duration};
@@ -41,9 +41,20 @@ pub struct GetSourceCodeResult {
     EVMVersion: String,
     Library: String,
     LicenseType: String,
-    Proxy: String,
+    // boolean variable representing whether contract is a proxy or not
+    #[serde(deserialize_with = "deserialize_as_bool")]
+    Proxy: bool,
+    // address of the implementation contract if the current contract is a proxy
     Implementation: String,
     SwarmSource: String,
+}
+
+fn deserialize_as_bool<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: String = Deserialize::deserialize(deserializer)?;
+    Ok(value == "1")
 }
 
 #[allow(non_snake_case)]
@@ -90,7 +101,7 @@ pub async fn generate_config_from_contract_address(
     let get_source_code_result =
         fetch_get_source_code_result_from_block_explorer(network, contract_address).await?;
 
-    if get_source_code_result.Proxy == "1" {
+    if get_source_code_result.Proxy {
         let implementation_contract_address = get_source_code_result.Implementation.clone();
         // GetSourceCodeResult from API call for the implementation contract
         let implementation_get_source_code_result =
@@ -346,7 +357,7 @@ mod test {
                     EVMVersion: "Default".to_string(),
                     Library: "".to_string(),
                     LicenseType: "MIT".to_string(),
-                    Proxy: "0".to_string(),
+                    Proxy: false,
                     Implementation: "".to_string(),
                     SwarmSource: "".to_string()
                 }
