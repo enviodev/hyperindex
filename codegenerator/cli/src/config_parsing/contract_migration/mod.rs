@@ -274,7 +274,7 @@ async fn fetch_get_source_code_result_from_block_explorer(
     // Deserializing the JSON response into the correct response type
     let get_source_code_response: GetSourceCodeResponseType = serde_json::from_str(&content_raw)?;
 
-    let get_source_code_result = get_source_code_response.result[0].clone();
+    let get_source_code_result = get_source_code_response.result.get(0).ok_or_else(|| anyhow!("No first index of source code respones"))?.clone();
 
     Ok(get_source_code_result)
 }
