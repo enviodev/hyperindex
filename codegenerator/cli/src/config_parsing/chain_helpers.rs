@@ -1,5 +1,7 @@
 use anyhow::anyhow;
+use anyhow::Context;
 use clap::ValueEnum;
+use ethers::etherscan;
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
@@ -117,7 +119,7 @@ pub fn get_network_id_given_network_name(network_name: NetworkName) -> i32 {
 }
 
 // Function to return the chain ID of the network based on the network name
-pub fn get_network_name_from_id(network_id: i32) -> anyhow::Result<NetworkName> {
+pub fn get_network_name_from_id(network_id: u64) -> anyhow::Result<NetworkName> {
     let network_name = match network_id {
         1 => NetworkName::Mainnet,
         5 => NetworkName::Goerli,
@@ -213,10 +215,28 @@ pub fn get_block_explorer_api(network_name: &NetworkWithExplorer) -> BlockExplor
     }
 }
 
+pub async fn get_etherscan_client(
+    network: NetworkWithExplorer,
+) -> anyhow::Result<etherscan::Client> {
+    let BlockExplorerApi { api_key, .. } = get_block_explorer_api(&network);
+    let chain_id = get_network_id_given_network_name(network.into());
+
+    let ethers_chain = ethers::types::Chain::try_from(chain_id as u64)
+        .context("converting network id to ethers chain")?;
+
+    let client = etherscan::Client::new(ethers_chain, api_key)?;
+    let res = client.contract_source_code("address bla".parse()?).await?;
+
+    Ok(client)
+}
+
 #[cfg(test)]
 mod test {
 
-    use super::{get_network_id_given_network_name, get_network_name_from_id, NetworkName};
+    use super::{
+        get_network_id_given_network_name, get_network_name_from_id, NetworkName,
+        NetworkWithExplorer,
+    };
 
     use anyhow::Context;
     use strum::IntoEnumIterator;
@@ -231,6 +251,17 @@ mod test {
                 .unwrap();
 
             assert_eq!(&converted_network, &network);
+        }
+    }
+
+    #[test]
+    fn all_network_names_have_ethers_chain() {
+        for network in NetworkWithExplorer::iter() {
+            let chain_id = get_network_id_given_network_name(network.clone().into());
+
+            ethers::types::Chain::try_from(chain_id as u64).unwrap();
+
+            // assert_eq!(&converted_network, &network);
         }
     }
 }
