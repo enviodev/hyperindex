@@ -25,7 +25,7 @@ use self::hypersync_endpoints::HypersyncEndpoint;
 pub mod contract_import;
 pub mod graph_migration;
 
-type NetworkId = i32;
+type NetworkId = u64;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {

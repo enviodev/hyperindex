@@ -10,7 +10,7 @@ pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 use anyhow::Context;
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 pub struct ContractUniqueId {
-    pub network_id: i32,
+    pub network_id: u64,
     pub name: String,
 }
 

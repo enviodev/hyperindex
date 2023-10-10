@@ -69,7 +69,7 @@ impl HypersyncEndpoint {
     }
 }
 
-pub fn get_default_hypersync_endpoint(chain_id: &i32) -> anyhow::Result<HypersyncEndpoint> {
+pub fn get_default_hypersync_endpoint(chain_id: &u64) -> anyhow::Result<HypersyncEndpoint> {
     let network_name =
         get_network_name_from_id(*chain_id).context("getting network name from id")?;
 
