@@ -1,3 +1,4 @@
+use anyhow::Context;
 use std::error::Error;
 
 use std::path::PathBuf;
@@ -154,13 +155,15 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
                 }
             }
             //Copy in the rest of the shared subgraph migration files
-            BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
+            BLANK_TEMPLATE_STATIC_SHARED_DIR
+                .extract(&project_root_path)
+                .context("Parsing contract address")?;
 
             generate_config_from_contract_address(
                 &parsed_init_args.name,
                 &project_root_path,
                 network_name,
-                contract_address,
+                contract_address.clone(),
                 &parsed_init_args.language,
             )
             .await?;

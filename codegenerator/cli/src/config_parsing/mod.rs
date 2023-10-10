@@ -31,6 +31,7 @@ type NetworkId = u64;
 pub struct Config {
     name: String,
     description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub networks: Vec<Network>,
 }
@@ -58,7 +59,7 @@ enum SyncSourceConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Network {
     pub id: NetworkId,
-    #[serde(flatten)]
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
     sync_source: Option<SyncSourceConfig>,
     start_block: i32,
     pub contracts: Vec<ConfigContract>,
@@ -135,6 +136,7 @@ pub struct ConfigContract {
     pub name: String,
     // Eg for implementing a custom deserializer
     //  #[serde(deserialize_with = "abi_path_to_abi")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub abi_file_path: Option<String>,
     pub handler: String,
     address: NormalizedList<String>,
@@ -145,6 +147,7 @@ pub struct ConfigContract {
 #[serde(rename_all = "camelCase")]
 struct ConfigEvent {
     event: EventNameOrSig,
+    #[serde(skip_serializing_if = "Option::is_none")]
     required_entities: Option<Vec<RequiredEntity>>,
 }
 
@@ -159,7 +162,9 @@ enum EventNameOrSig {
 #[serde(rename_all = "camelCase")]
 struct RequiredEntity {
     name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     array_labels: Option<Vec<String>>,
 }
 

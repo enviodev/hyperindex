@@ -215,11 +215,9 @@ pub fn get_block_explorer_api(network_name: &NetworkWithExplorer) -> BlockExplor
     }
 }
 
-pub async fn get_etherscan_client(
-    network: NetworkWithExplorer,
-) -> anyhow::Result<etherscan::Client> {
-    let BlockExplorerApi { api_key, .. } = get_block_explorer_api(&network);
-    let chain_id = get_network_id_given_network_name(network.into());
+pub fn get_etherscan_client(network: &NetworkWithExplorer) -> anyhow::Result<etherscan::Client> {
+    let BlockExplorerApi { api_key, .. } = get_block_explorer_api(network);
+    let chain_id = get_network_id_given_network_name(network.clone().into());
 
     let ethers_chain = ethers::types::Chain::try_from(chain_id)
         .context("converting network id to ethers chain")?;

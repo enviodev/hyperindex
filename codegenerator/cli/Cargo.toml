@@ -33,6 +33,7 @@ anyhow = "1.0.72"
 sha2 = "0.10.7"
 open = "5.0.0"
 subenum = "1.1.1"
+async-recursion = "1.0.5"
 
 # NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
 #       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored
