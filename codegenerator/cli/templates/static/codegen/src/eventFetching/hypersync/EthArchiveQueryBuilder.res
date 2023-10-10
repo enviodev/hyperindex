@@ -140,10 +140,22 @@ module LogsQuery = {
     ~serverUrl,
     ~fromBlock,
     ~toBlock,
-    ~addresses: array<Ethers.ethAddress>,
-    ~topics,
+    ~contractAddressesAndtopics: ContractInterfaceManager.contractAdressesAndTopics,
   ): HyperSyncTypes.queryResponse<HyperSyncTypes.logsQueryPage> => {
-    let body = makeRequestBody(~fromBlock, ~toBlock, ~addresses, ~topics)
+    let (addresses, topics) = contractAddressesAndtopics->Belt.Array.reduce(([], []), (
+      accum,
+      item,
+    ) => {
+      let (addresses, topics) = accum
+
+      let newAddresses = addresses->Belt.Array.concat(item.address->Belt.Option.getWithDefault([]))
+
+      let newTopics = topics->Belt.Array.concat(item.topics->Belt.Array.concatMany)
+
+      (newAddresses, newTopics)
+    })
+
+    let body = makeRequestBody(~fromBlock, ~toBlock, ~addresses, ~topics=[topics])
 
     let res = await EthArchive.executeEthArchiveQuery(~postQueryBody=body, ~serverUrl)
 

@@ -4,8 +4,7 @@ module type S = {
     ~serverUrl: string,
     ~fromBlock: int,
     ~toBlock: int,
-    ~addresses: array<Ethers.ethAddress>,
-    ~topics: array<array<Ethers.EventFilter.topic>>,
+    ~contractAddressesAndtopics: ContractInterfaceManager.contractAdressesAndTopics,
   ) => promise<queryResponse<logsQueryPage>>
 
   let queryBlockTimestampsPage: (

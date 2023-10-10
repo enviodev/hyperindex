@@ -1,22 +1,12 @@
 module LogsQuery: HyperSyncTypes.LogsQuery = {
-  type addressWithTopics = {
-    address: Ethers.ethAddress,
-    topics: array<array<Ethers.EventFilter.topic>>,
-  }
-
   let makeRequestBody = (
     ~fromBlock,
     ~toBlockInclusive,
-    ~addressesWithTopics: array<addressWithTopics>,
+    ~addressesWithTopics: ContractInterfaceManager.contractAdressesAndTopics,
   ): Skar.QueryTypes.postQueryBody => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
-    logs: addressesWithTopics->Belt.Array.map(({address, topics}): Skar.QueryTypes.logParams => {
-      {
-        address: [address],
-        topics,
-      }
-    }),
+    logs: addressesWithTopics,
     fieldSelection: {
       log: [
         Address,
@@ -126,18 +116,14 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
     ~serverUrl,
     ~fromBlock,
     ~toBlock,
-    ~addresses: array<Ethers.ethAddress>,
-    ~topics,
+    ~contractAddressesAndtopics: ContractInterfaceManager.contractAdressesAndTopics,
   ): HyperSyncTypes.queryResponse<HyperSyncTypes.logsQueryPage> => {
     //TODO: This needs to be modified so that only related topics to addresses get passed in
-    let addressesWithTopics = addresses->Belt.Array.flatMap(address => {
-      [{address, topics}]
-      // let address = address->Ethers.ethAddressToStringLower->Obj.magic
-      // topics->Belt.Array.flatMap(topicsInner =>
-      //   topicsInner->Belt.Array.map(topic => {address, topics: []})
-      // )
-    })
-    let body = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock, ~addressesWithTopics)
+    let body = makeRequestBody(
+      ~fromBlock,
+      ~toBlockInclusive=toBlock,
+      ~addressesWithTopics=contractAddressesAndtopics,
+    )
     let skarClient = SkarClient.make({url: serverUrl})
 
     let res = await skarClient->SkarClient.sendReq(body)

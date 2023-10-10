@@ -155,12 +155,8 @@ module Make = (HyperSync: HyperSync.S) => {
         ~contractAddressMapping,
       )
 
-      let {addresses, topics} =
-        contractInterfaceManager->ContractInterfaceManager.getAllTopicsAndAddresses
-
-      //Just the topics of the event signature and no topics related
-      //to indexed parameters
-      let topLevelTopics = [topics]
+      let contractAddressesAndtopics =
+        contractInterfaceManager->ContractInterfaceManager.getAllContractTopicsAndAddresses
 
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
@@ -171,8 +167,7 @@ module Make = (HyperSync: HyperSync.S) => {
             ~serverUrl=self.serverUrl,
             ~fromBlock=fromBlock.contents,
             ~toBlock=currentHeight.contents,
-            ~addresses,
-            ~topics=topLevelTopics,
+            ~contractAddressesAndtopics,
           ),
         logger,
       )
@@ -418,12 +413,8 @@ module Make = (HyperSync: HyperSync.S) => {
     let fromBlockRef = ref(fromBlock)
 
     while fromBlockRef.contents < toBlock {
-      let {addresses, topics} =
-        contractInterfaceManager->ContractInterfaceManager.getAllTopicsAndAddresses
-
-      //Just the topics of the event signature and no topics related
-      //to indexed parameters
-      let topLevelTopics = [topics]
+      let contractAddressesAndtopics =
+        contractInterfaceManager->ContractInterfaceManager.getAllContractTopicsAndAddresses
 
       //fetch batch
       let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
@@ -432,8 +423,7 @@ module Make = (HyperSync: HyperSync.S) => {
             ~serverUrl=self.serverUrl,
             ~fromBlock=fromBlockRef.contents,
             ~toBlock,
-            ~addresses,
-            ~topics=topLevelTopics,
+            ~contractAddressesAndtopics,
           ),
         logger,
       )

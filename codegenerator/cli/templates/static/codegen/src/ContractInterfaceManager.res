@@ -48,7 +48,10 @@ let makeFromSingleContract = (
   ) {
   | None =>
     let exn = UndefinedContract(contractName)
-    Logging.errorWithExn(exn, "EE900: Unexpected undefined contract. Please verify the contract name defined in the config.yaml file.")
+    Logging.errorWithExn(
+      exn,
+      "EE900: Unexpected undefined contract. Please verify the contract name defined in the config.yaml file.",
+    )
     exn->raise
   | Some(c) => c
   }
@@ -106,7 +109,9 @@ type addressesAndTopics = {
   topics: array<Ethers.EventFilter.topic>,
 }
 
-let getAllTopicsAndAddresses = (self: t) => {
+//Returns a flattened unified mapping with all contract addresses
+//and topics (not subdivided by contract)
+let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
   let topics = []
   let addresses = []
   self.contractAddressMapping.addressesByName
@@ -136,6 +141,39 @@ let getAllTopicsAndAddresses = (self: t) => {
   })
 
   {addresses, topics}
+}
+
+type contractAdressesAndTopics = array<Skar.QueryTypes.logParams>
+let getAllContractTopicsAndAddresses = (self: t): contractAdressesAndTopics => {
+  self.contractAddressMapping.addressesByName
+  ->Js.Dict.keys
+  ->Belt.Array.map(contractName => {
+    let interfaceOpt = self->getInterfaceByName(~contractName)
+    switch interfaceOpt {
+    | None =>
+      let exn = UndefinedInterface(contractName)
+      Logging.errorWithExn(
+        exn,
+        "EE901: Unexpected case. Contract name does not exist in interface mapping.",
+      )
+      exn->raise
+    | Some(interface) => {
+        let topics = []
+        //Add the topic hash from each event on the interface
+        interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
+          topics->Js.Array2.push(eventFragment.topicHash)->ignore
+        })
+
+        let addresses = []
+        //Add the addresses for each contract
+        self.contractAddressMapping
+        ->ContractAddressingMap.getAddressesFromContractName(~contractName)
+        ->Belt.Array.forEach(address => addresses->Js.Array2.push(address)->ignore)
+
+        ({address: addresses, topics: [topics]}: Skar.QueryTypes.logParams)
+      }
+    }
+  })
 }
 
 let getContractNameFromAddress = (self: t, ~contractAddress) => {
