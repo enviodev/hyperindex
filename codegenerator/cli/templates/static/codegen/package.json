@@ -36,6 +36,7 @@
     "rescript-express": "^0.4.1",
     "rescript-struct": "^4.1.1",
     "skar-client-node": "^0.0.7",
+    "viem": "^1.16.0",
     "yargs": "^17.7.2"
   }
 }

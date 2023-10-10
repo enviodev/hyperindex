@@ -4,9 +4,13 @@ interfaces and their related contracts and addresses.
 
 Used to work with event topic hashes and in the parsing of events.
 */
+type interfaceAndAbi = {
+  interface: Ethers.Interface.t,
+  abi: Ethers.abi,
+}
 type t = {
   contractAddressMapping: ContractAddressingMap.mapping,
-  contractNameInterfaceMapping: Js.Dict.t<Ethers.Interface.t>,
+  contractNameInterfaceMapping: Js.Dict.t<interfaceAndAbi>,
 }
 
 let make = (
@@ -16,8 +20,9 @@ let make = (
   let contractNameInterfaceMapping = Js.Dict.empty()
 
   chainConfig.contracts->Belt.Array.forEach(contract => {
-    let interface = Ethers.Interface.make(~abi=contract.abi)
-    contractNameInterfaceMapping->Js.Dict.set(contract.name, interface)
+    let {name, abi} = contract
+    let interface = Ethers.Interface.make(~abi)
+    contractNameInterfaceMapping->Js.Dict.set(name, {interface, abi})
   })
 
   {contractAddressMapping, contractNameInterfaceMapping}
@@ -58,8 +63,9 @@ let makeFromSingleContract = (
 
   let contractNameInterfaceMapping = Js.Dict.empty()
   let contractAddressMapping = ContractAddressingMap.make()
-  let interface = Ethers.Interface.make(~abi=contract.abi)
-  contractNameInterfaceMapping->Js.Dict.set(contract.name, interface)
+  let {abi, name} = contract
+  let interface = Ethers.Interface.make(~abi)
+  contractNameInterfaceMapping->Js.Dict.set(name, {interface, abi})
   contractAddressMapping->ContractAddressingMap.addAddress(
     ~name=contract.name,
     ~address=contractAddress,
@@ -128,7 +134,7 @@ let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
       exn->raise
     | Some(interface) => {
         //Add the topic hash from each event on the interface
-        interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
+        interface.interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
           topics->Js.Array2.push(eventFragment.topicHash)->ignore
         })
 
@@ -157,7 +163,7 @@ let getAllContractTopicsAndAddresses = (self: t): contractAdressesAndTopics => {
         "EE901: Unexpected case. Contract name does not exist in interface mapping.",
       )
       exn->raise
-    | Some(interface) => {
+    | Some({ interface }) => {
         let topics = []
         //Add the topic hash from each event on the interface
         interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
@@ -199,16 +205,39 @@ let getCombinedEthersFilter = (
   }
 }
 
-type parseError =
-  EthersParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Ethers.ethAddress)
+type parseError = ParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Ethers.ethAddress)
 
-let parseLog = (self: t, ~log: Ethers.log) => {
-  let interfaceOpt = self->getInterfaceByAddress(~contractAddress=log.address)
+let parseLogEthers = (self: t, ~log: Ethers.log) => {
+  let interfaceOpt =
+    self
+    ->getInterfaceByAddress(~contractAddress=log.address)
+    ->Belt.Option.map(mapping => mapping.interface)
   switch interfaceOpt {
   | None => Error(UndefinedInterface(log.address))
   | Some(interface) =>
     switch interface->Ethers.Interface.parseLog(~log) {
-    | Error(e) => Error(EthersParseError(e))
+    | Error(e) => Error(ParseError(e))
+    | Ok(v) => Ok(v)
+    }
+  }
+}
+
+let parseLogViem = (self: t, ~log: Ethers.log) => {
+  let abiOpt =
+    self
+    ->getInterfaceByAddress(~contractAddress=log.address)
+    ->Belt.Option.map(mapping => mapping.abi)
+  switch abiOpt {
+  | None => Error(UndefinedInterface(log.address))
+  | Some(abi) =>
+    let viemLog: Viem.eventLog = {
+      abi,
+      data: log.data,
+      topics: log.topics,
+    }
+
+    switch viemLog->Viem.decodeEventLog {
+    | Error(e) => Error(ParseError(e))
     | Ok(v) => Ok(v)
     }
   }
