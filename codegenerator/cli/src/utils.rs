@@ -6,7 +6,7 @@ use crate::cli_args::{
     interactive_init::InitilizationTypeWithArgs, InitArgs, Language, Template, ToProjectPathsArgs,
 };
 use crate::commands;
-use crate::config_parsing::contract_migration::generate_config_from_contract_address;
+use crate::config_parsing::contract_import::generate_config_from_contract_address;
 use crate::config_parsing::graph_migration::generate_config_from_subgraph_id;
 use crate::hbs_templating::{
     hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates,

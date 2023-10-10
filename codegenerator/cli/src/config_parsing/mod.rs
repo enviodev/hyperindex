@@ -22,7 +22,7 @@ pub mod constants;
 use crate::links;
 
 use self::hypersync_endpoints::HypersyncEndpoint;
-pub mod contract_migration;
+pub mod contract_import;
 pub mod graph_migration;
 
 type NetworkId = i32;
