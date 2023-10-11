@@ -73,6 +73,8 @@ const pollGraphQL = async () => {
     setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 1000);
   };
 
+  console.log("[js context] Starting running test Greeter")
+
   // TODO: make this use promises rather than callbacks.
   fetchQuery(rawEventsQuery, (data) => {
     assert(

@@ -3,7 +3,23 @@
 # This file will test a single scenario (language agnostic)
 echo -e "\n============================\nTesting TEMPLATE: $TEMPLATE, LANGUAGE: $LANGUAGE\n============================\n"
 
-set -e  # Exit on error
+set -e # Exit on error
+
+# This shouldn't be needed - but the test will fail if port 9898 isn't available - so worth checking it first.
+while :; do
+	if lsof -i :9898 >/dev/null; then
+		if [ "$CI" == "true" ]; then
+			kill -9 $(lsof -t -i :9898)
+		else
+			echo "Waiting for the port 9898 to get freed - you can manually free it by running 'kill -9 $(lsof -t -i :9898)
+' if you are happy to kill the process."
+		fi
+		sleep 1
+	else
+		echo "Port 9898 is free!"
+		break
+	fi
+done
 
 root_dir=$(pwd)
 
@@ -36,19 +52,18 @@ $envio_cmd stop || true
 echo "Starting indexer"
 $envio_cmd dev &
 
-function cleanup_indexer_process()
-{
-  if [[ -n $(lsof -t -i :9898) ]]; then
-    echo "Killing the indexer process if it is still running"
-    kill $(lsof -t -i :9898)
-  fi
+function cleanup_indexer_process() {
+	if [[ -n $(lsof -t -i :9898) ]]; then
+		echo "Killing the indexer process if it is still running"
+		kill $(lsof -t -i :9898)
+	fi
 }
 trap cleanup_indexer_process EXIT ERR # Cleanup on exit (success) or ERR (failure)
 
 # make requests to hasura and get indexed entity data
 cd $root_dir
 
-sleep 2 # Weird things happen if the indexer process hasn't started yet.
+sleep 8 # Weird things happen if the indexer process hasn't started yet.
 
 # NOTE: the error should propagate to this bash process, since the 'set -e' setting is used.
 echo "Running tests"

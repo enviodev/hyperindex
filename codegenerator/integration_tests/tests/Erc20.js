@@ -69,14 +69,16 @@ const pollGraphQL = async () => {
     } catch (err) {
       if (!shouldExitOnFailure) {
         console.log("[will retry] Could not request data from Hasura due to error: ", err);
-        console.log("Hasura not yet started, retrying in 1s");
+        console.log("Hasura not yet started, retrying in 2s");
       } else {
         console.error(err);
         process.exit(1);
       }
     }
-    setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 1000);
+    setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 2000);
   };
+
+  console.log("Starting running test")
 
   // TODO: make this use promises rather than callbacks.
   fetchQuery(rawEventsQuery, (data) => {
