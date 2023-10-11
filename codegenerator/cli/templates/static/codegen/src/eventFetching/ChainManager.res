@@ -37,17 +37,41 @@ let chainFetcherPeekComparitorEarliestEvent = (
   }
 }
 
+// This is similar to `chainFetcherPeekComparitorEarliestEvent`, but it prioritizes events over `NoItem` no matter what the timestamp of `NoItem` is.
+let chainFetcherPeekComparitorEarliestEventPrioritizeEvents = (
+  a: ChainFetcher.eventQueuePeek,
+  b: ChainFetcher.eventQueuePeek,
+): bool => {
+  switch (a, b) {
+  | (Item(itemA), Item(itemB)) => itemA->getComparitorFromItem < itemB->getComparitorFromItem
+  | (Item(_), NoItem(_, _)) => false
+  | (NoItem(_, _), Item(_)) => true
+  | (
+      NoItem(latestFetchedBlockTimestampA, chainIdA),
+      NoItem(latestFetchedBlockTimestampB, chainIdB),
+    ) =>
+    // Makes no tangible difference if this is true or false - but keeping algorithm in tact.
+    (latestFetchedBlockTimestampA, chainIdA) < (latestFetchedBlockTimestampB, chainIdB)
+  }
+}
+
 type nextEventErr = NoItemsInArray
 
 let determineNextEvent = (chainFetchersPeeks: array<ChainFetcher.eventQueuePeek>): result<
   ChainFetcher.eventQueuePeek,
   nextEventErr,
 > => {
+  let comparitorFunction = if Config.isUnorderedHeadMode {
+    chainFetcherPeekComparitorEarliestEventPrioritizeEvents
+  } else {
+    chainFetcherPeekComparitorEarliestEvent
+  }
+
   let nextItem = chainFetchersPeeks->Belt.Array.reduce(None, (accum, valB) => {
     switch accum {
     | None => Some(valB)
     | Some(valA) =>
-      if chainFetcherPeekComparitorEarliestEvent(valA, valB) {
+      if comparitorFunction(valA, valB) {
         Some(valA)
       } else {
         Some(valB)
@@ -89,7 +113,9 @@ exception UndefinedChain(Types.chainId)
 let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
   switch self.chainFetchers->Js.Dict.get(chainId->Belt.Int.toString) {
   | None =>
-    Logging.error(`EE1000: Undefined chain ${chainId->Belt.Int.toString} in chain manager. Please verify that the chain ID defined in the config.yaml file is valid.`)
+    Logging.error(
+      `EE1000: Undefined chain ${chainId->Belt.Int.toString} in chain manager. Please verify that the chain ID defined in the config.yaml file is valid.`,
+    )
     UndefinedChain(chainId)->raise
   | Some(fetcher) => fetcher
   }

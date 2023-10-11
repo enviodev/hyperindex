@@ -55,6 +55,14 @@ S.literalVariant(EmptyOption, default),
 (),
 )
 
+let isUnorderedHeadMode =
+  envSafe->EnvSafe.get(
+    ~name="UNSTABLE__TEMP_UNORDERED_HEAD_MODE",
+    ~struct=S.bool(),
+    ~devFallback=false,
+    (),
+  )
+
 let logFilePath =
 envSafe->EnvSafe.get(~name="LOG_FILE", ~struct=S.string(), ~devFallback="logs/envio.log", ())
 let userLogLevel = getLogLevelConfig(~name="LOG_LEVEL", ~default=#info)
