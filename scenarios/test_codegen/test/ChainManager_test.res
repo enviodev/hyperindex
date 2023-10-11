@@ -213,3 +213,87 @@ describe("ChainManager", () => {
     )
   })
 })
+
+// NOTE: this is likely a temporary feature - can delete if feature no longer important.
+describe_only("determineNextEvent", () => {
+  describe("optimistic-unordered-mode", () => {
+    let determineNextEvent_unordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
+      ~isUnorderedHeadMode=true,
+    )
+    let determineNextEvent_ordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
+      ~isUnorderedHeadMode=false,
+    )
+
+    it(
+      "should always take an event if there is one, even if other chains haven't caught up",
+      () => {
+        let singleItem: ChainFetcher.eventQueuePeek = Item({
+          timestamp: 654,
+          chainId: 69,
+          blockNumber: 987654,
+          logIndex: 123456,
+          event: "SINGLE TEST EVENT"->Obj.magic,
+        })
+        let earliestItem = ChainFetcher.NoItem(5 /* earlier timestamp than the test event */, 10)
+        let example: array<ChainFetcher.eventQueuePeek> = [
+          earliestItem,
+          NoItem(653 /* earlier timestamp than the test event */, 10),
+          singleItem,
+          NoItem(655 /* later timestamp than the test event */, 10),
+        ]
+
+        let resultUnordered = determineNextEvent_unordered(example)
+
+        Assert.deep_equal(
+          resultUnordered,
+          Ok(singleItem),
+          ~message="Should have taken the single item",
+        )
+
+        let resultOrdered = determineNextEvent_ordered(example)
+
+        Assert.deep_equal(
+          resultOrdered,
+          Ok(earliestItem),
+          ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
+        )
+      },
+    )
+    it(
+      "should always take the lower of two events if there are any, even if other chains haven't caught up",
+      () => {
+        let singleItem: Types.eventBatchQueueItem = {
+          timestamp: 654,
+          chainId: 69,
+          blockNumber: 987654,
+          logIndex: 123456,
+          event: "SINGLE TEST EVENT"->Obj.magic,
+        }
+        let earliestItem = ChainFetcher.NoItem(5 /* earlier timestamp than the test event */, 10)
+        let example: array<ChainFetcher.eventQueuePeek> = [
+          earliestItem,
+          NoItem(653 /* earlier timestamp than the test event */, 10),
+          Item({...singleItem, timestamp: singleItem.timestamp + 1}),
+          Item(singleItem),
+          NoItem(655 /* later timestamp than the test event */, 10),
+        ]
+
+        let resultUnordered = determineNextEvent_unordered(example)
+
+        Assert.deep_equal(
+          resultUnordered,
+          Ok(Item(singleItem)),
+          ~message="Should have taken the single item",
+        )
+
+        let resultOrdered = determineNextEvent_ordered(example)
+
+        Assert.deep_equal(
+          resultOrdered,
+          Ok(earliestItem),
+          ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
+        )
+      },
+    )
+  })
+})

@@ -21,4 +21,8 @@ let popBlockBatchAndAwaitItems: t => promise<option<blockGroupedBatchItems>>
 module ExposedForTesting_Hidden: {
   let priorityQueueComparitor: (Types.eventBatchQueueItem, Types.eventBatchQueueItem) => int
   let getComparitorFromItem: Types.eventBatchQueueItem => (int, int, int, int)
+  let createDetermineNextEventFunction: (
+    ~isUnorderedHeadMode: bool,
+    array<ChainFetcher.eventQueuePeek>,
+  ) => result<ChainFetcher.eventQueuePeek, nextEventErr>
 }

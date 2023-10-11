@@ -44,46 +44,50 @@ let chainFetcherPeekComparitorEarliestEventPrioritizeEvents = (
 ): bool => {
   switch (a, b) {
   | (Item(itemA), Item(itemB)) => itemA->getComparitorFromItem < itemB->getComparitorFromItem
-  | (Item(_), NoItem(_, _)) => false
-  | (NoItem(_, _), Item(_)) => true
+  | (Item(_), NoItem(_, _)) => true
+  | (NoItem(_, _), Item(_)) => false
   | (
       NoItem(latestFetchedBlockTimestampA, chainIdA),
       NoItem(latestFetchedBlockTimestampB, chainIdB),
     ) =>
-    // Makes no tangible difference if this is true or false - but keeping algorithm in tact.
     (latestFetchedBlockTimestampA, chainIdA) < (latestFetchedBlockTimestampB, chainIdB)
   }
 }
 
 type nextEventErr = NoItemsInArray
 
-let determineNextEvent = (chainFetchersPeeks: array<ChainFetcher.eventQueuePeek>): result<
-  ChainFetcher.eventQueuePeek,
-  nextEventErr,
-> => {
-  let comparitorFunction = if Config.isUnorderedHeadMode {
+let createDetermineNextEventFunction = (~isUnorderedHeadMode: bool): (
+  array<ChainFetcher.eventQueuePeek> => result<ChainFetcher.eventQueuePeek, nextEventErr>
+) => {
+  let comparitorFunction = if isUnorderedHeadMode {
     chainFetcherPeekComparitorEarliestEventPrioritizeEvents
   } else {
     chainFetcherPeekComparitorEarliestEvent
   }
 
-  let nextItem = chainFetchersPeeks->Belt.Array.reduce(None, (accum, valB) => {
-    switch accum {
-    | None => Some(valB)
-    | Some(valA) =>
-      if comparitorFunction(valA, valB) {
-        Some(valA)
-      } else {
-        Some(valB)
+  (chainFetchersPeeks: array<ChainFetcher.eventQueuePeek>) => {
+    let nextItem = chainFetchersPeeks->Belt.Array.reduce(None, (accum, valB) => {
+      switch accum {
+      | None => Some(valB)
+      | Some(valA) =>
+        if comparitorFunction(valA, valB) {
+          Some(valA)
+        } else {
+          Some(valB)
+        }
       }
-    }
-  })
+    })
 
-  switch nextItem {
-  | None => Error(NoItemsInArray)
-  | Some(item) => Ok(item)
+    switch nextItem {
+    | None => Error(NoItemsInArray)
+    | Some(item) => Ok(item)
+    }
   }
 }
+
+let determineNextEvent = createDetermineNextEventFunction(
+  ~isUnorderedHeadMode=Config.isUnorderedHeadMode,
+)
 
 let make = (~configs: Config.chainConfigs, ~maxQueueSize, ~shouldSyncFromRawEvents: bool): t => {
   let chainFetchers =
@@ -490,4 +494,5 @@ let addItemToArbitraryEvents = (self: t, item: Types.eventBatchQueueItem) => {
 module ExposedForTesting_Hidden = {
   let priorityQueueComparitor = priorityQueueComparitor
   let getComparitorFromItem = getComparitorFromItem
+  let createDetermineNextEventFunction = createDetermineNextEventFunction
 }
