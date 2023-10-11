@@ -14,6 +14,7 @@ pub enum SupportedNetwork {
     Optimism,
     Linea,
     EthereumGoerliTestnet,
+    Gnosis,
     // EthereumSepoliaTestnet,
     // PolygonMumbaiTestnet,
     // ArbitrumNova,
@@ -49,6 +50,7 @@ pub fn chain_id_to_network(chain_id: &i32) -> anyhow::Result<SupportedNetwork> {
         10 => Ok(SupportedNetwork::Optimism),
         59144 => Ok(SupportedNetwork::Linea),
         5 => Ok(SupportedNetwork::EthereumGoerliTestnet),
+        100 => Ok(SupportedNetwork::Gnosis),
         // 11155111 => Ok(SupportedNetwork::EthereumSepoliaTestnet),
         // 80001 => Ok(SupportedNetwork::PolygonMumbaiTestnet),
         // 42170 => Ok(SupportedNetwork::ArbitrumNova),
@@ -116,6 +118,7 @@ pub fn network_to_skar_url(network: &SupportedNetwork) -> Option<String> {
     match network {
         SupportedNetwork::EthereumMainnet => Some("http://eth.hypersync.bigdevenergy.link:1100".to_string()),
         SupportedNetwork::Polygon => Some("http://polygon.hypersync.bigdevenergy.link:1101".to_string()),
+        SupportedNetwork::Gnosis => Some("http://gnosis.hypersync.bigdevenergy.link:1102".to_string()),
         SupportedNetwork::EthereumGoerliTestnet => Some("http://goerli.hypersync.bigdevenergy.link:1104".to_string()),
         _ => None
 
@@ -212,6 +215,7 @@ mod test {
             SupportedNetwork::Base => 84531,
             SupportedNetwork::Linea => 59144,
             SupportedNetwork::EthereumGoerliTestnet => 5,
+            SupportedNetwork::Gnosis => 100,
             // SupportedNetwork::EthereumSepoliaTestnet => 11155111,
             // SupportedNetwork::PolygonMumbaiTestnet => 80001,
             // SupportedNetwork::ArbitrumNova => 42170,
