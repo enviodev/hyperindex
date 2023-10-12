@@ -292,6 +292,72 @@ jobs:
           echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}
 
+  template-integration-test:
+    name: integration-test ${{ matrix.template }} (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    needs:
+      - "publish-npm"
+    strategy:
+      matrix:
+        template: [Erc20, Greeter]
+        language: [Javascript, Rescript, Typescript]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Install node
+        uses: actions/setup-node@v3
+        with:
+          node-version: "18.16.0"
+          registry-url: "https://registry.npmjs.org"
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Set ENV for launcher
+        run: export LAUNCHER="curl"
+      - name: Install envio
+        run: |
+          npm i -g envio@${{ needs.prepare.outputs.tag_name }} --loglevel verbose
+      - name: Generate template
+        run: |
+          cd codegenerator/integration_tests
+          envio init --template ${{ matrix.template }} --language ${{ matrix.language }} --name "test" --directory "./integration_test_output/${{ matrix.template }}/${{ matrix.language }}"
+
+      - name: Pre-pull docker-compose images
+        run: |
+          cd ../cli/templates/static/codegen # we use the docker-compose.yml in the static folder
+          docker-compose pull
+
+      - name: Mock gio
+        run: |
+          mkdir -p /home/runner/.local/bin # This is on the path by default
+          echo 'echo "running mock gio"' > /home/runner/.local/bin/gio && chmod +x /home/runner/.local/bin/gio
+          echo 'echo "running mock xdg-open"' > /home/runner/.local/bin/xdg-open && chmod +x /home/runner/.local/bin/xdg-open
+
+      - name: Run the integration test
+        working-directory: codegenerator/integration_tests
+        env:
+          LANGUAGE: ${{ matrix.language }}
+          TEMPLATE: ${{ matrix.template }}
+          LOG_LEVEL: trace
+          ENVIO_CMD: envio # This gives us flexibilty to use `pnpm envio` or the 'cargo run' version of envio.
+        run: |
+          ./tests/runSingle.sh
+
+      # - name: Test Failure
+      #   uses: rjstone/discord-webhook-notify@v1
+      #   if: failure()
+      #   with:
+      #     severity: error
+      #     details: "Integration test Failed - in main (make sure to fix before releasing a new version)! (CC: <@&Devs> )"
+      #     webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+      # - name: Test Cancelled
+      #   uses: rjstone/discord-webhook-notify@v1
+      #   if: cancelled()
+      #   with:
+      #     severity: warn
+      #     details: Integration Test Cancelled - make sure the cancelation was intentional
+      #     webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+
   # TODO: add back the integration tests and work out how to automate this. This has been causing issues previously.
   # update-npm-tag:
   #   if: ${{ needs.prepare.outputs.is_tagged }}
