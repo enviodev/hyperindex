@@ -141,7 +141,6 @@ fn get_event_template_from_ethereum_abi_event(
                             None => anyhow!("Required entity with name {} not found in Schema. Note, capitalization matters.", &required_entity.name)
                         }
                     }).context("Validating 'requiredEntity' fields in config.")?;
-                
 
                 let entity_fields_of_required_entity =
                     FilteredTemplateLists::new(entity_fields_of_required_entity_all);
@@ -324,7 +323,14 @@ mod tests {
             ],
             required_entities: vec![],
         };
-        assert_eq!(parsed_event_template, expected_event_template)
+
+        match parsed_event_template {
+            Ok(parsed) => assert_eq!(parsed, expected_event_template),
+            _ => panic!(
+                "Results do not match. Actual: {:?} Expected: {:?}",
+                parsed_event_template, expected_event_template
+            ),
+        }
     }
 
     #[test]
@@ -361,8 +367,14 @@ mod tests {
             }]),
         };
 
-        let parsed_event_template =
-            get_event_template_from_ethereum_abi_event(&config_event, &abi_event, &HashMap::new());
+        let mut required_entities_map = HashMap::new();
+        required_entities_map.insert("Gravatar".to_string(), Vec::new());
+
+        let parsed_event_template = get_event_template_from_ethereum_abi_event(
+            &config_event,
+            &abi_event,
+            &required_entities_map,
+        );
 
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
@@ -383,7 +395,14 @@ mod tests {
                 entity_fields_of_required_entity: FilteredTemplateLists::empty(),
             }],
         };
-        assert_eq!(parsed_event_template, expected_event_template)
+
+        match parsed_event_template {
+            Ok(parsed) => assert_eq!(parsed, expected_event_template),
+            _ => panic!(
+                "Results do not match.\nActual:\n{:?}\n\nExpected:\n{:?}",
+                parsed_event_template, expected_event_template
+            ),
+        }
     }
 
     #[test]
