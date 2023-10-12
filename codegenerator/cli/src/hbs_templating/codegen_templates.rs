@@ -167,7 +167,7 @@ pub fn entities_to_map(
     let mut map: HashMap<String, Vec<RequiredEntityEntityFieldTemplate>> = HashMap::new();
 
     for entity in entities {
-        let entity_name = entity.name.capitalized;
+        let entity_name = entity.name.original;
 
         let mut related_entities = vec![];
         for param in entity.params {
