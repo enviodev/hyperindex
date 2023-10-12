@@ -233,13 +233,13 @@ let trackAllTables = async () => {
   let _ = await trackTable(~tableName="dynamic_contract_registry")
   let _ = await createSelectPermissions(~tableName="dynamic_contract_registry")
   {{#each entities as |entity|}}
-  let _ = await trackTable(~tableName="{{entity.name.capitalized}}")
-  let _ = await createSelectPermissions(~tableName="{{entity.name.capitalized}}")
+  let _ = await trackTable(~tableName="{{entity.name.original}}")
+  let _ = await createSelectPermissions(~tableName="{{entity.name.original}}")
   {{/each}}
     {{#each entities as |entity|}}
     {{#each entity.relational_params.all as | relational_param | }}
       let _ = await createEntityRelationship(
-        ~tableName="{{entity.name.capitalized}}",
+        ~tableName="{{entity.name.original}}",
         ~relationshipType="{{relational_param.relationship_type}}",
         ~derivedFromFieldKey="{{relational_param.derived_from_field_key}}", 
         ~relationalKey="{{relational_param.relational_key.original}}",

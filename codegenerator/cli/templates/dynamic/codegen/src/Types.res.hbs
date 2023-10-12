@@ -58,7 +58,7 @@ type dynamicContractRegistryEntity = {
 
 
 {{#each entities as | entity |}}
-@spice @genType.as("{{entity.name.capitalized}}Entity")
+@spice @genType.as("{{entity.name.original}}Entity")
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
   {{#unless param.is_derived_from }}{{param.key}}: {{#if param.is_optional}}nullable<{{/if}}{{param.type_rescript_non_optional}}{{#if param.is_optional}}>{{/if}}, {{/unless}}
@@ -161,7 +161,7 @@ module {{event.name.capitalized}}Event = {
     type context = {
       log: Logs.userLogger,
       {{#each ../../entities as | entity |}}
-        @as("{{entity.name.capitalized}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
+        @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
       {{/each}}
     }
 
@@ -194,7 +194,7 @@ module {{event.name.capitalized}}Event = {
     type loaderContext = {
       contractRegistration: contractRegistrations,
     {{#each event.required_entities as | required_entity |}}
-      @as("{{required_entity.name.capitalized}}") {{required_entity.name.uncapitalized}} : {{required_entity.name.uncapitalized}}EntityLoaderContext,
+      @as("{{required_entity.name.original}}") {{required_entity.name.uncapitalized}} : {{required_entity.name.uncapitalized}}EntityLoaderContext,
     {{/each}}
     }
 }

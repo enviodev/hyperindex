@@ -171,7 +171,7 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
 
 {{#each entities as |entity|}}
 //////////////////////////////////////////////
-// DB operations for {{entity.name.capitalized}}:
+// DB operations for {{entity.name.original}}:
 //////////////////////////////////////////////
 
 module.exports.read{{entity.name.capitalized
@@ -182,7 +182,7 @@ SELECT
 {{/each}}
 event_chain_id, 
 event_id
-FROM "public"."{{entity.name.capitalized}}"
+FROM "public"."{{entity.name.original}}"
 WHERE id IN ${sql(entityIdArray)};`;
 
 const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
@@ -198,7 +198,7 @@ const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
     {{/each}} 
   }));
   return sql`
-    INSERT INTO "public"."{{entity.name.capitalized}}"
+    INSERT INTO "public"."{{entity.name.original}}"
 ${sql(combinedEntityAndEventData,
   {{#each entity.params as |param|}}
     {{#unless param.is_derived_from}}"{{param.key}}",{{/unless}}
@@ -228,9 +228,9 @@ module.exports.batchSet{{entity.name.capitalized
 module.exports.batchDelete{{entity.name.capitalized
 }} = (sql, entityIdArray) => sql`
 DELETE
-FROM "public"."{{entity.name.capitalized}}"
+FROM "public"."{{entity.name.original}}"
 WHERE id IN ${sql(entityIdArray)};`
-// end db operations for {{entity.name.capitalized
+// end db operations for {{entity.name.original
 }}
 
 {{/each}}
