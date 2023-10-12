@@ -8,6 +8,8 @@ use crate::{
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
 };
 
+use anyhow::{anyhow, Context};
+
 use std::{collections::HashMap, error::Error};
 
 use std::path::PathBuf;
@@ -94,7 +96,7 @@ fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthAbiEvent,
     entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityFieldTemplate>>,
-) -> Result<EventTemplate, String> {
+) -> anyhow::Result<EventTemplate> {
     let name = abi_event.name.to_owned().to_capitalized_options();
     let params = abi_event
         .inputs
@@ -115,14 +117,14 @@ fn get_event_template_from_ethereum_abi_event(
         })
         .collect();
 
-    let required_entities_result: Result<Vec<RequiredEntityTemplate>, String> = match &config_event.required_entities {
+    let required_entities_result: anyhow::Result<Vec<RequiredEntityTemplate>> = match &config_event.required_entities {
         Some(required_entities_config) => required_entities_config
             .iter()
             .map(|required_entity| {
                 let entity_fields_of_required_entity_all = entity_fields_of_required_entity_map
                     .get(&required_entity.name)
                     .cloned()
-                    .ok_or({
+                    .ok_or_else(|| {
                         // Look to see if there is a key that is similar in the keys of `entity_fields_of_required_entity_map`.
                         // It is similar if the lower case of the key is the same as the lowercase
                         // of the required_entity.name.
@@ -134,10 +136,11 @@ fn get_event_template_from_ethereum_abi_event(
                             .find(|&key| key.to_lowercase() == required_entity_name_lower);
 
                         match key_that_is_similar {
-                            Some(similar_key) => format!("Validation Error: Required entity with name {} not found in Schema - did you mean '{}'? Note, capitalization matters.", &required_entity.name, similar_key),
-                            None => format!("Validation Error: Required entity with name {} not found in Schema. Note, capitalization matters.", &required_entity.name)
+                            Some(similar_key) =>
+                                anyhow!("Required entity with name {} not found in Schema - did you mean '{}'? Note, capitalization matters.", &required_entity.name, similar_key),
+                            None => anyhow!("Required entity with name {} not found in Schema. Note, capitalization matters.", &required_entity.name)
                         }
-                    })?;
+                    }).context("Validating 'requiredEntity' fields in config.")?;
                 
 
                 let entity_fields_of_required_entity =
