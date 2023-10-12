@@ -125,8 +125,11 @@ impl ParsedPaths {
                     abi_path.to_str().unwrap_or("no_path"),
                 ))?;
 
-                let abi: ethers::abi::Contract = serde_json::from_str(&abi_file)?;
-                Some(abi)
+                let opt_abi: Option<ethers::abi::Contract> = serde_json::from_str(&abi_file)
+                    .map_err(|e| eprintln!("Failed to deserialize ABI - contiuing without the ABI - future errors may occur. Please ensure the ABI file is formatted correctly or contact the team."))
+                    .ok();
+
+                opt_abi
             }
         };
         Ok(abi_opt)
