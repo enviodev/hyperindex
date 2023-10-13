@@ -396,7 +396,7 @@ let addDynamicContractAndFetchMissingEvents = async (
 
   //Use the source worker to fetch all events up until the latest stored raw event
   //for new dynamic contract registrations
-  let newDynamicContractsQueueItems = DbFunctions.RawEvents.getLatestProcessedBlockNumber(
+  let newDynamicContractsQueueItems = DbFunctions.EventSyncState.getLatestProcessedBlockNumber(
     ~chainId=self.chainId,
   )->Promise.then(latestRawEventBlock =>
     switch latestRawEventBlock {

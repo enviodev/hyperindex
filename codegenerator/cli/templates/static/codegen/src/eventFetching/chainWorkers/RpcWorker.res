@@ -237,7 +237,7 @@ let startFetchingEvents = async (
 ) => {
   let {chainConfig, contractAddressMapping} = self
 
-  let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
+  let latestProcessedBlock = await DbFunctions.EventSyncState.getLatestProcessedBlockNumber(
     ~chainId=chainConfig.chainId,
   )
 

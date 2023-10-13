@@ -358,7 +358,7 @@ module Make = (HyperSync: HyperSync.S) => {
     logger->Logging.childTrace("Starting event fetching on Skar worker")
 
     let {chainConfig, contractAddressMapping} = self
-    let latestProcessedBlock = await DbFunctions.RawEvents.getLatestProcessedBlockNumber(
+    let latestProcessedBlock = await DbFunctions.EventSyncState.getLatestProcessedBlockNumber(
       ~chainId=chainConfig.chainId,
     )
 
