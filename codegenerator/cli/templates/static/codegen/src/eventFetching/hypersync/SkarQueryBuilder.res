@@ -133,7 +133,7 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
 
     let executeQuery = () => skarClient->SkarClient.sendReq(body)
 
-    let res = await executeQuery->Time.retryAsyncWithMultiplicativeBackOff(~logger=Some(logger))
+    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
     //Use ethArchive converter since the response is currently
     //Using the same layout

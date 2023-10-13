@@ -5,7 +5,7 @@ let resolvePromiseAfterDelay = (~delayMilliseconds) =>
     }, delayMilliseconds)
   })
 
-let rec retryAsyncWithMultiplicativeBackOff = async (
+let rec retryAsyncWithExponentialBackOff = async (
   ~backOffMillis=1000,
   ~multiplicative=2,
   ~retryCount=0,
@@ -29,7 +29,7 @@ let rec retryAsyncWithMultiplicativeBackOff = async (
       ->ignore
       await resolvePromiseAfterDelay(~delayMilliseconds=backOffMillis)
 
-      await f->retryAsyncWithMultiplicativeBackOff(
+      await f->retryAsyncWithExponentialBackOff(
         ~backOffMillis=backOffMillis * multiplicative,
         ~multiplicative,
         ~retryCount=nextRetryCount,
