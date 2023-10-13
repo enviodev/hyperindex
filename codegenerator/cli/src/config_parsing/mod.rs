@@ -520,6 +520,31 @@ mod tests {
             NormalizedList::from(vec!["0x123".to_string(), "0x456".to_string()])
         );
     }
+    #[tokio::test]
+    async fn check_config_with_multiple_sync_sources() {
+        let project_root = String::from("test");
+        let config = String::from("configs/invalid-multiple-sync-config6.yaml");
+        let generated = String::from("generated/");
+        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
+            project_root,
+            config,
+            generated,
+        })
+        .unwrap();
+        let parsed = super::convert_config_to_chain_configs(&parsed_paths)
+            .await
+            .unwrap();
+
+        assert!(
+            parsed[0].network_config.rpc_config.is_none(),
+            "rpc config should have been none since it was defined second"
+        );
+
+        assert!(
+            parsed[0].network_config.skar_server_url.is_some(),
+            "skar config should be some since it was defined first"
+        );
+    }
 
     #[tokio::test]
     async fn convert_to_chain_configs_case_1() {
