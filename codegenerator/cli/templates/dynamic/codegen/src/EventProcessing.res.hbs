@@ -40,6 +40,27 @@ let addEventToRawEvents = (
   )
 }
 
+let updateEventSyncState = (
+  event: Types.eventLog<'a>,
+  ~chainId,
+  ~inMemoryStore: IO.InMemoryStore.t,
+) => {
+  let {blockNumber, logIndex, transactionIndex, blockTimestamp} = event
+  let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)->Ethers.BigInt.toString
+  let _ = inMemoryStore.eventSyncState->IO.InMemoryStore.EventSyncState.set(
+    ~key=chainId,
+    ~entity={
+      chainId,
+      blockTimestamp,
+      blockNumber,
+      logIndex,
+      transactionIndex,
+    },
+    ~dbOp=Set,
+    ~eventData={chainId, eventId},
+  )
+}
+
 let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
   let {event, chainId} = item
   switch event {
@@ -49,6 +70,7 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
   let jsonSerializedParams = event.params->Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode
   event->addEventToRawEvents(~inMemoryStore, ~chainId, ~jsonSerializedParams, ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
 )
+      event->updateEventSyncState(~chainId, ~inMemoryStore)
 
   let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
   let context = getContext()
