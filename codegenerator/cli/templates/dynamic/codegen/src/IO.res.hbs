@@ -207,118 +207,71 @@ let loadEntities = async (
   }
 }
 
+let executeEntityFunction = (
+  sql: Postgres.sql,
+  ~rows: array<Types.inMemoryStoreRow<'a>>,
+  ~dbOp: Types.dbOp,
+  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
+  ~getInputValFromRow: Types.inMemoryStoreRow<'a> => 'b,
+) => {
+  let entityIds =
+    rows->Belt.Array.keepMap(row => row.dbOp == dbOp ? Some(row->getInputValFromRow) : None)
+
+  if entityIds->Array.length > 0 {
+    sql->dbFunction(entityIds)
+  } else {
+    Promise.resolve()
+  }
+}
+
+
+let executeSet = executeEntityFunction(~dbOp=Set)
+let executeDelete = executeEntityFunction(~dbOp=Delete)
+
+let executeSetSchemaEntity = (~entityEncoder) =>
+  executeSet(
+   ~getInputValFromRow=row => {
+    ...row,
+    entity: row.entity->entityEncoder,
+  })
+
 let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
-  let rawEventsRows = inMemoryStore.rawEvents->InMemoryStore.RawEvents.values
+  let setRawEvents = executeSet(
+    ~dbFunction=DbFunctions.RawEvents.batchSetRawEvents,
+    ~getInputValFromRow=row => row.entity,
+    ~rows=inMemoryStore.rawEvents->InMemoryStore.RawEvents.values,
+  )
 
-  let setRawEventsPromise = sql => {
-    // NOTE: This is commented out because raw events are always 'Set' operations. Likely that will stay the case even with reorgs protections in place since it'll just re-run the batch rather than edit a partially run batch.
-    // TODO: remove if not necessary
-    // let setRawEvents =
-    //   rawEventsRows->Belt.Array.keepMap(rawEventsRow =>
-    //     rawEventsRow.dbOp == Types.Set
-    //       ? Some(rawEventsRow.entity)
-    //       : None
-    //   )
-    let rawEventsToSet = rawEventsRows->Belt.Array.map(rawEventsRow => rawEventsRow.entity)
-
-    if rawEventsToSet->Belt.Array.length > 0 {
-      sql->DbFunctions.RawEvents.batchSetRawEvents(rawEventsToSet)
-    } else {
-      ()->Promise.resolve
-    }
-  }
-
-  let dynamicContractRegistryRows =
-    inMemoryStore.dynamicContractRegistry->InMemoryStore.DynamicContractRegistry.values
-
-  // // NOTE: currently deleting dynamic contracts in unimplemented
-  // let deleteDynamicContractRegistryIdsPromise = sql => {
-  //   let deleteDynamicContractRegistryIds =
-  //     dynamicContractRegistryRows
-  //     ->Belt.Array.keepMap(dynamicContractRegistryRow =>
-  //       dynamicContractRegistryRow.dbOp == Types.Delete
-  //         ? Some(dynamicContractRegistryRow.entity)
-  //         : None
-  //     )
-  //     ->Belt.Array.map(dynamicContractRegistry => (
-  //       dynamicContractRegistry.chainId,
-  //       dynamicContractRegistry.contractAddress,
-  //     ))
-
-  //   if deleteDynamicContractRegistryIds->Belt.Array.length > 0 {
-  //     sql->DbFunctions.DynamicContractRegistry.batchDeleteDynamicContractRegistry(
-  //       deleteDynamicContractRegistryIds,
-  //     )
-  //   } else {
-  //     ()->Promise.resolve
-  //   }
-  // }
-
-  let setDynamicContractRegistryPromise = sql => {
-    let setDynamicContractRegistry =
-      dynamicContractRegistryRows->Belt.Array.keepMap(dynamicContractRegistryRow =>
-        // NOTE: the currently they will all be of type 'Set', but in the future we may add functionality to also delete contracts from the registry.
-        dynamicContractRegistryRow.dbOp == Types.Set
-          ? Some(dynamicContractRegistryRow.entity)
-          : None
-      )
-
-    if setDynamicContractRegistry->Belt.Array.length > 0 {
-      sql->DbFunctions.DynamicContractRegistry.batchSetDynamicContractRegistry(
-        setDynamicContractRegistry,
-      )
-    } else {
-      ()->Promise.resolve
-    }
-  }
+  let setDynamicContracts = executeSet(
+    ~dbFunction=DbFunctions.DynamicContractRegistry.batchSetDynamicContractRegistry,
+    ~rows=inMemoryStore.dynamicContractRegistry->InMemoryStore.DynamicContractRegistry.values,
+    ~getInputValFromRow={row => row.entity},
+  )
 
   {{#each entities as | entity |}}
-  let {{entity.name.uncapitalized}}Rows = inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values
+  let delete{{entity.name.capitalized}}s = executeDelete(
+    ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}},
+    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
+    ~getInputValFromRow={row => row.entity.id},
+  )
 
-  let delete{{entity.name.capitalized}}IdsPromise = (sql) => {
-    let delete{{entity.name.capitalized}}Ids =
-      {{entity.name.uncapitalized}}Rows
-      ->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
-        {{entity.name.uncapitalized}}Row.dbOp == Types.Delete ? Some({{entity.name.uncapitalized}}Row.entity) : None
-      )
-      ->Belt.Array.map({{entity.name.uncapitalized}} => {{entity.name.uncapitalized}}.id)
-
-      if delete{{entity.name.capitalized}}Ids->Belt.Array.length > 0 {
-        sql->DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}}(delete{{entity.name.capitalized}}Ids)
-      } else {
-        ()->Promise.resolve
-      }
-  }
-  let set{{entity.name.capitalized}}Promise = (sql) => {
-    let set{{entity.name.capitalized}} =
-      {{entity.name.uncapitalized}}Rows->Belt.Array.keepMap({{entity.name.uncapitalized}}Row =>
-        {{entity.name.uncapitalized}}Row.dbOp == Types.Set
-          ? Some({
-            ...{{entity.name.uncapitalized}}Row,
-            entity: {{entity.name.uncapitalized}}Row.entity->Types.{{entity.name.uncapitalized}}Entity_encode,
-          }) 
-          : None
-      )
-
-      if set{{entity.name.capitalized}}->Belt.Array.length > 0 {
-         sql->DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}}(set{{entity.name.capitalized}})
-      } else {
-        ()->Promise.resolve
-      }
-  }
+  let set{{entity.name.capitalized}}s = executeSetSchemaEntity(
+    ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}},
+    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
+    ~entityEncoder=Types.{{entity.name.uncapitalized}}Entity_encode,
+  )
 
   {{/each}}
 
   let res = await sql->Postgres.beginSql((sql)=>{
-     [
-      sql->setRawEventsPromise,
-      // sql->deleteDynamicContractRegistryIdsPromise, // NOTE: currently deleting dynamic contracts in unimplemented
-      sql->setDynamicContractRegistryPromise,
+    [
+      setRawEvents,
+      setDynamicContracts,
       {{#each entities as | entity |}}
-      sql->delete{{entity.name.capitalized}}IdsPromise,
-      sql->set{{entity.name.capitalized}}Promise,
+      delete{{entity.name.capitalized}}s,
+      set{{entity.name.capitalized}}s,
       {{/each}}
-    ]
+    ]->Belt.Array.map(dbFunc => sql->dbFunc)
   })
 
   res
