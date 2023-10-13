@@ -61,55 +61,67 @@ let updateEventSyncState = (
   )
 }
 
+let getEventExnObj = (exn, ~event: Types.eventLog<'a>, ~chainId, ~eventName) => {
+  let eventInfoObj = {
+    "eventName": eventName,
+    "txHash": event.transactionHash,
+    "blockNumber": event.blockNumber->Belt.Int.toString,
+    "logIndex": event.logIndex->Belt.Int.toString,
+    "transactionIndex": event.transactionIndex->Belt.Int.toString,
+    "networkId": chainId,
+  }
+
+  switch exn {
+  | Js.Exn.Error(obj) =>
+    switch Js.Exn.message(obj) {
+    | Some(message) =>
+      Some({
+        "msg": "Caught a JS exception in your ${eventName}.handler, please fix the error to keep the indexer running smoothly",
+        "error": message,
+        "event-details": eventInfoObj,
+      })
+    | None => None
+    }
+  | _ => None
+  }->Belt.Option.getWithDefault({
+    "msg": `Unknown error in your ${eventName}.handler, please review your code carefully and use the stack trace to help you find the issue.`,
+    "error": "Unknown",
+    "event-details": eventInfoObj,
+  })
+}
+
 let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
   let {event, chainId} = item
   switch event {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, getContext) => {
-  let jsonSerializedParams = event.params->Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode
-  event->addEventToRawEvents(~inMemoryStore, ~chainId, ~jsonSerializedParams, ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
-)
       event->updateEventSyncState(~chainId, ~inMemoryStore)
 
-  let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
-  let context = getContext()
+      let jsonSerializedParams =
+        event.params->Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode
 
-            try {
-              handler(~event, ~context)
-            } catch {
-            // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
-            | userCodeException =>
-              // TODO: we must add the network details of this event too!
-              let eventInfoString = `The details of the event that caused this issue:
-              eventName: {{contract.name.capitalized}}.{{event.name.capitalized}}
-              txHash: ${event.transactionHash}
-blockNumber: ${event.blockNumber->Belt.Int.toString}
-logIndex: ${event.logIndex->Belt.Int.toString}
-transactionIndex: ${event.transactionIndex->Belt.Int.toString}`
-              let errorMessage = switch userCodeException {
-              | Js.Exn.Error(obj) =>
-                switch Js.Exn.message(obj) {
-                | Some(m) => Some(`Caught a JS exception in your {{contract.name.capitalized
-}}Contract.{{event.name.capitalized
-}}.handler with this message: ${m}.
+      event->addEventToRawEvents(
+        ~inMemoryStore, 
+        ~chainId, 
+        ~jsonSerializedParams, 
+        ~eventName={{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+      )
 
-Please fix this error to keep the indexer running smoothly.
+    let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
+    let context = getContext()
 
-${eventInfoString}
-`)
-                | None => None
-                }
-              | _ => None
-              }->Belt.Option.getWithDefault(
-                `Unknown error in your {{contract.name.capitalized
-}}Contract.{{event.name.capitalized
-}}.handler, please review your code carefully and use the stack trace to help you find the issue.
-
-${eventInfoString}`,
-              )
-              context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
-            }
+    try {
+      handler(~event, ~context)
+    } catch {
+    // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
+    | userCodeException =>
+        let errorObj =
+          userCodeException->getEventExnObj(~event, ~chainId, ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}")
+        //Logger takes any type just currently bound to string
+        let errorMessage = errorObj->Obj.magic
+        context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
+    }
   }
 {{/each}}
 {{/each}}
@@ -228,32 +240,10 @@ let rec loadReadEntitiesInner = async (
               } catch {
               // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
               | userCodeException =>
-                // TODO: we must add the network details of this event too!
-                let eventInfoString = `The details of the event that caused this issue:
-  eventName: {{contract.name.capitalized}}.{{event.name.capitalized}}
-  txHash: ${event.transactionHash}
-  blockNumber: ${event.blockNumber->Belt.Int.toString}
-  logIndex: ${event.logIndex->Belt.Int.toString}
-  transactionIndex: ${event.transactionIndex->Belt.Int.toString}`
-                let errorMessage = switch userCodeException {
-                | Js.Exn.Error(obj) =>
-                  switch Js.Exn.message(obj) {
-                  | Some(m) => Some(`Caught a JS exception in your {{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader with this message: ${m}.
-
-  Please fix this error to keep the indexer running smoothly.
-
-  ${eventInfoString}
-  `)
-                  | None => None
-                  }
-                | _ => None
-                }->Belt.Option.getWithDefault(
-                  `Unknown error in your {{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader, please review your code carefully and use the stack trace to help you find the issue.
-
-  ${eventInfoString}`,
-                )
+                let errorObj =
+                  userCodeException->getEventExnObj(~event, ~chainId, ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}")
                 // NOTE: we could use the user `uerror` function instead rather than using a system error. This is debatable.
-                logger->Logging.childErrorWithExn(userCodeException, errorMessage)
+                logger->Logging.childErrorWithExn(userCodeException, errorObj)
               }
 
             let {logIndex, blockNumber} = event
