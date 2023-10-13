@@ -4,3 +4,47 @@ let resolvePromiseAfterDelay = (~delayMilliseconds) =>
       resolve(. ())
     }, delayMilliseconds)
   })
+
+let rec retryAsyncWithMultiplicativeBackOff = async (
+  ~backOffMillis=1000,
+  ~multiplicative=2,
+  ~retryCount=0,
+  ~maxRetries=5,
+  ~logger: option<Pino.t>=None,
+  f: unit => promise<'a>,
+) => {
+  try {
+    await f()
+  } catch {
+  | exn =>
+    if retryCount < maxRetries {
+      let nextRetryCount = retryCount + 1
+      logger
+      ->Belt.Option.map(l =>
+        l->Logging.childErrorWithExn(
+          exn,
+          `Failure. Retrying ${nextRetryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} in ${backOffMillis->Belt.Int.toString}ms`,
+        )
+      )
+      ->ignore
+      await resolvePromiseAfterDelay(~delayMilliseconds=backOffMillis)
+
+      await f->retryAsyncWithMultiplicativeBackOff(
+        ~backOffMillis=backOffMillis * multiplicative,
+        ~multiplicative,
+        ~retryCount=nextRetryCount,
+        ~maxRetries,
+      )
+    } else {
+      logger
+      ->Belt.Option.map(l =>
+        l->Logging.childErrorWithExn(
+          exn,
+          `Failure. Max retries ${retryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} exceeded`,
+        )
+      )
+      ->ignore
+      await Promise.reject(exn)
+    }
+  }
+}

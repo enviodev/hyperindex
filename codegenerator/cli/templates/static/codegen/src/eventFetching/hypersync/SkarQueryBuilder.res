@@ -124,9 +124,16 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
       ~toBlockInclusive=toBlock,
       ~addressesWithTopics=contractAddressesAndtopics,
     )
+
     let skarClient = SkarClient.make({url: serverUrl})
 
-    let res = await skarClient->SkarClient.sendReq(body)
+    let logger = Logging.createChild(
+      ~params={"type": "hypersync query", "fromBlock": fromBlock, "serverUrl": serverUrl},
+    )
+
+    let executeQuery = () => skarClient->SkarClient.sendReq(body)
+
+    let res = await executeQuery->Time.retryAsyncWithMultiplicativeBackOff(~logger=Some(logger))
 
     //Use ethArchive converter since the response is currently
     //Using the same layout
