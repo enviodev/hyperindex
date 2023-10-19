@@ -215,13 +215,71 @@ module Make = (HyperSync: HyperSync.S) => {
         "number of logs": pageUnsafe.items->Array.length,
       })
 
-      //Start query for heighest block queried to get latest timestamp
-      let heighestBlockQueried = pageUnsafe.archiveHeight - 1
-      let heighestBlockQueriedPagePromise = HyperSync.queryBlockTimestampsPage(
-        ~serverUrl,
-        ~fromBlock=heighestBlockQueried,
-        ~toBlock=heighestBlockQueried,
-      )
+      //The heighest (biggest) blocknumber that was accounted for in
+      //Our query. Not necessarily the blocknumber of the last log returned
+      //In the query
+      let heighestBlockQueried = pageUnsafe.nextBlock - 1
+
+      //Helper function to fetch the timestamp of the heighest block queried
+      //In the case that it is unknown
+      let getHeighestBlockAndTimestampWithDefault = async (
+        ~defaultHeighestBlock: HyperSyncTypes.blockNumberAndTimestamp,
+      ) => {
+        let res = await HyperSync.queryBlockTimestampsPage(
+          ~serverUrl,
+          ~fromBlock=heighestBlockQueried,
+          ~toBlock=heighestBlockQueried,
+        )
+
+        res->Belt.Result.mapWithDefault(defaultHeighestBlock, page => {
+          //Expected only 1 item but just taking last in case things change and we return
+          //a range
+          let lastBlockInRangeQueried = page.items->Belt.Array.get(page.items->Array.length - 1)
+
+          lastBlockInRangeQueried->Belt.Option.getWithDefault(defaultHeighestBlock)
+        })
+      }
+
+      //The optional block and timestamp of the last item returned by the query
+      //(Optional in the case that there are no logs returned in the query)
+      let logItemsHeighestBlockOpt =
+        pageUnsafe.items
+        ->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1)
+        ->Belt.Option.map((item): HyperSyncTypes.blockNumberAndTimestamp => {
+          blockNumber: item.log.blockNumber,
+          timestamp: item.blockTimestamp,
+        })
+
+      let heighestBlockQueriedPromise: promise<
+        HyperSyncTypes.blockNumberAndTimestamp,
+      > = switch logItemsHeighestBlockOpt {
+      | Some(val) =>
+        let {blockNumber, timestamp} = val
+        if blockNumber == heighestBlockQueried {
+          //If the last log item in the current page is equal to the
+          //heighest block acounted for in the query. Simply return this
+          //value without making an extra query
+          Promise.resolve(val)
+        } else {
+          //If it does not match it means that there were no matching logs in the last
+          //block so we should fetch the block timestamp with a default of our heighest
+          //timestamp (the value in our heighest log)
+          getHeighestBlockAndTimestampWithDefault(
+            ~defaultHeighestBlock={timestamp, blockNumber: heighestBlockQueried},
+          )
+        }
+
+      | None =>
+        //If there were no logs at all in the current page query then fetch the
+        //timestamp of the heighest block accounted for,
+        //defaulting to our current latest blocktimestamp
+        getHeighestBlockAndTimestampWithDefault(
+          ~defaultHeighestBlock={
+            blockNumber: heighestBlockQueried,
+            timestamp: self.latestFetchedBlockTimestamp,
+          },
+        )
+      }
 
       if await self.hasNewDynamicContractRegistrations {
         //If there are new dynamic contract registrations
@@ -293,40 +351,14 @@ module Make = (HyperSync: HyperSync.S) => {
           queuePushingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
         //set latestFetchedBlockNumber and latestFetchedBlockTimestamp
-        let heighestBlockQueriedPage = await heighestBlockQueriedPagePromise
+        let {
+          blockNumber: heighestQueriedBlockNumber,
+          timestamp: heighestQueriedBlockTimestamp,
+        } = await heighestBlockQueriedPromise
 
-        //Used in failure case of query
-        let fallbackUpdateLatestFetchedValuesToLastInBatch = () => {
-          let lastItemInBatch = pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Array.length)
-          lastItemInBatch
-          ->Belt.Option.map(item => {
-            //Set the latest fetched timestamp to the last item in the batch timestamp
-            //Note this could be lower than the block we were querying until
-            //But its only used in query failure and it will still help unblock chain manager queues
-            self.latestFetchedBlockTimestamp = item.blockTimestamp
-          })
-          ->ignore
+        self.latestFetchedBlockTimestamp = heighestQueriedBlockTimestamp
+        latestBlockNumbersResolve(heighestQueriedBlockNumber)
 
-          //We know the latest fetched block number since it will be the one before nextBlock
-          latestBlockNumbersResolve(pageUnsafe.nextBlock - 1)
-        }
-
-        switch heighestBlockQueriedPage {
-        | Ok(_page) =>
-          //Expected only 1 item but just taking last in case things change and we return
-          //a range
-          let lastBlockInRangeQueried =
-            pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Array.length)
-
-          switch lastBlockInRangeQueried {
-          | Some(item) =>
-            //Set the latest fetched data to the queried block
-            self.latestFetchedBlockTimestamp = item.blockTimestamp
-            latestBlockNumbersResolve(item.log.blockNumber)
-          | None => fallbackUpdateLatestFetchedValuesToLastInBatch()
-          }
-        | Error(_err) => fallbackUpdateLatestFetchedValuesToLastInBatch()
-        }
         //Loop through any callbacks on the queue waiting for confirmation of a new
         //range queried and run callbacks since there will be an updated timestamp even
         //If there ar no items in the page
