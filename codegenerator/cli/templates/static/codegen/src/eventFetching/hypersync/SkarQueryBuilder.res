@@ -1,3 +1,22 @@
+//Manage clients in cache so we don't need to reinstantiate each time
+//Ideally client should be passed in as a param to the functions but
+//we are still sharing the same signature with eth archive query builder
+module CachedClients = {
+  let cache: Js.Dict.t<SkarClient.t> = Js.Dict.empty()
+
+  let getClient = url => {
+    switch cache->Js.Dict.get(url) {
+    | Some(client) => client
+    | None =>
+      let newClient = SkarClient.make({url: url})
+
+      cache->Js.Dict.set(url, newClient)
+
+      newClient
+    }
+  }
+}
+
 module LogsQuery: HyperSyncTypes.LogsQuery = {
   let makeRequestBody = (
     ~fromBlock,
@@ -125,7 +144,7 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
       ~addressesWithTopics=contractAddressesAndtopics,
     )
 
-    let skarClient = SkarClient.make({url: serverUrl})
+    let skarClient = CachedClients.getClient(serverUrl)
 
     let logger = Logging.createChild(
       ~params={"type": "hypersync query", "fromBlock": fromBlock, "serverUrl": serverUrl},
