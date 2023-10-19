@@ -222,22 +222,22 @@ module Make = (HyperSync: HyperSync.S) => {
 
       //Helper function to fetch the timestamp of the heighest block queried
       //In the case that it is unknown
-      let getHeighestBlockAndTimestampWithDefault = async (
-        ~defaultHeighestBlock: HyperSyncTypes.blockNumberAndTimestamp,
+      let getHeighestBlockAndTimestampWithDefault = (
+        ~default: HyperSyncTypes.blockNumberAndTimestamp,
       ) => {
-        let res = await HyperSync.queryBlockTimestampsPage(
+        HyperSync.queryBlockTimestampsPage(
           ~serverUrl,
           ~fromBlock=heighestBlockQueried,
           ~toBlock=heighestBlockQueried,
+        )->Promise.thenResolve(res =>
+          res->Belt.Result.mapWithDefault(default, page => {
+            //Expected only 1 item but just taking last in case things change and we return
+            //a range
+            let lastBlockInRangeQueried = page.items->Belt.Array.get(page.items->Array.length - 1)
+
+            lastBlockInRangeQueried->Belt.Option.getWithDefault(default)
+          })
         )
-
-        res->Belt.Result.mapWithDefault(defaultHeighestBlock, page => {
-          //Expected only 1 item but just taking last in case things change and we return
-          //a range
-          let lastBlockInRangeQueried = page.items->Belt.Array.get(page.items->Array.length - 1)
-
-          lastBlockInRangeQueried->Belt.Option.getWithDefault(defaultHeighestBlock)
-        })
       }
 
       //The optional block and timestamp of the last item returned by the query
@@ -265,7 +265,7 @@ module Make = (HyperSync: HyperSync.S) => {
           //block so we should fetch the block timestamp with a default of our heighest
           //timestamp (the value in our heighest log)
           getHeighestBlockAndTimestampWithDefault(
-            ~defaultHeighestBlock={timestamp, blockNumber: heighestBlockQueried},
+            ~default={timestamp, blockNumber: heighestBlockQueried},
           )
         }
 
@@ -274,7 +274,7 @@ module Make = (HyperSync: HyperSync.S) => {
         //timestamp of the heighest block accounted for,
         //defaulting to our current latest blocktimestamp
         getHeighestBlockAndTimestampWithDefault(
-          ~defaultHeighestBlock={
+          ~default={
             blockNumber: heighestBlockQueried,
             timestamp: self.latestFetchedBlockTimestamp,
           },
