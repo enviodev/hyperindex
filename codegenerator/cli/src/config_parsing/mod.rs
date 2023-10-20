@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use crate::hbs_templating::codegen_templates::EventType;
 use crate::project_paths::handler_paths::ContractUniqueId;
+use crate::utils::normalized_list::NormalizedList;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     project_paths::ParsedPaths,
@@ -43,7 +44,7 @@ pub struct Config {
     name: String,
     description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub contracts: Option<GlobalContractConfig>,
+    pub contracts: Option<Vec<GlobalContractConfig>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub networks: Vec<Network>,
@@ -75,7 +76,7 @@ pub struct Network {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     sync_source: Option<SyncSourceConfig>,
     start_block: i32,
-    pub contracts: Vec<ConfigContract>,
+    pub contracts: Vec<NetworkContractConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -167,8 +168,8 @@ pub struct NetworkContractConfig {
 }
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct LocalContractConfig {
-    abi_file_path: Option<String>,
-    handler: String,
+    pub abi_file_path: Option<String>,
+    pub handler: String,
     events: Vec<ConfigEvent>,
 }
 
@@ -285,94 +286,6 @@ impl EventNameOrSig {
     }
 }
 
-// We require this intermediate struct in order to allow the config to skip specifying "address".
-#[derive(Deserialize)]
-struct IntermediateConfigContract {
-    pub name: String,
-    pub abi_file_path: Option<String>,
-    pub handler: String,
-    // This is the difference - adding Option<> around it.
-    address: Option<NormalizedList<String>>,
-    events: Vec<ConfigEvent>,
-}
-
-impl From<IntermediateConfigContract> for ConfigContract {
-    fn from(icc: IntermediateConfigContract) -> Self {
-        ConfigContract {
-            name: icc.name,
-            abi_file_path: icc.abi_file_path,
-            handler: icc.handler,
-            address: icc.address.unwrap_or(NormalizedList { inner: vec![] }),
-            events: icc.events,
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ConfigContract {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        IntermediateConfigContract::deserialize(deserializer).map(ConfigContract::from)
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(untagged)]
-enum SingleOrList<T: Clone> {
-    Single(T),
-    List(Vec<T>),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct OptSingleOrList<T: Clone>(Option<SingleOrList<T>>);
-
-impl<T: Clone> OptSingleOrList<T> {
-    fn to_normalized_list(&self) -> NormalizedList<T> {
-        let list: Vec<T> = match &self.0 {
-            Some(single_or_list) => match single_or_list {
-                SingleOrList::Single(val) => vec![val.clone()],
-                SingleOrList::List(list) => list.to_vec(),
-            },
-            None => Vec::new(),
-        };
-
-        NormalizedList { inner: list }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, PartialEq)]
-#[serde(try_from = "OptSingleOrList<T>")]
-pub struct NormalizedList<T: Clone> {
-    inner: Vec<T>,
-}
-
-impl<T: Clone> NormalizedList<T> {
-    pub fn from(list: Vec<T>) -> Self {
-        NormalizedList { inner: list }
-    }
-
-    pub fn from_single(val: T) -> Self {
-        Self::from(vec![val])
-    }
-}
-
-impl<T: Clone> TryFrom<OptSingleOrList<T>> for NormalizedList<T> {
-    type Error = String;
-
-    fn try_from(single_or_list: OptSingleOrList<T>) -> Result<Self, Self::Error> {
-        Ok(single_or_list.to_normalized_list())
-    }
-}
-
-// fn abi_path_to_abi<'de, D>(deserializer: D) -> Result<u64, D::Error>
-// where
-//     D: Deserializer<'de>,
-// {
-//     let abi_file_path: &str = Deserialize::deserialize(deserializer)?;
-//     // ... convert to abi here
-// }
-
 type StringifiedAbi = String;
 type EthAddress = String;
 type ServerUrl = String;
@@ -384,7 +297,6 @@ struct NetworkConfigTemplate {
     skar_server_url: Option<ServerUrl>,
     eth_archive_server_url: Option<ServerUrl>,
     start_block: i32,
-    pub contracts: Vec<ConfigContract>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -447,6 +359,49 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Con
     Ok(deserialized_yaml)
 }
 
+pub fn get_global_contract(
+    config: &Config,
+    contract_name: String,
+) -> anyhow::Result<&GlobalContractConfig> {
+    //If local config doesn't exist try get from globally defined contract
+    let global_contracts = config
+        .contracts
+        .as_ref()
+        .ok_or_else(|| anyhow!("No top level 'contracts' defined"))?;
+    let contract = global_contracts
+        .iter()
+        .find(|g_contract| g_contract.name == contract_name)
+        .ok_or_else(|| {
+            anyhow!(
+                "No contract with name {} defined in top level 'contracts' config",
+                contract_name
+            )
+        })?;
+
+    Ok(contract)
+}
+
+fn get_top_level_contract_events(
+    config: &Config,
+    contract_name: String,
+) -> anyhow::Result<Vec<ConfigEvent>> {
+    let global_contract = get_global_contract(config, contract_name)?;
+
+    Ok(global_contract.events.clone())
+}
+
+fn get_events_from_network_contract(
+    contract: &NetworkContractConfig,
+    config: &Config,
+) -> anyhow::Result<Vec<ConfigEvent>> {
+    contract
+        .local_contract_config
+        .as_ref()
+        .map(|local_config| Ok(local_config.events.clone()))
+        .unwrap_or_else(|| get_top_level_contract_events(config, contract.name.clone()))
+        .context("Failed searching for contract events in globally defined 'contracts'")
+}
+
 pub async fn convert_config_to_chain_configs(
     parsed_paths: &ParsedPaths,
 ) -> anyhow::Result<Vec<ChainConfigTemplate>> {
@@ -462,11 +417,14 @@ pub async fn convert_config_to_chain_configs(
                 name: contract.name.clone(),
             };
 
+            let contract_events = get_events_from_network_contract(contract, &config)
+                .context(format!("Deserialising contract {} events", contract.name))?;
+
             let parsed_abi_from_file = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
             let mut reduced_abi = ethers::abi::Contract::default();
 
-            for config_event in contract.events.iter() {
+            for config_event in contract_events.iter() {
                 let abi_event = match &config_event.event {
                     EventNameOrSig::Name(config_event_name) => match &parsed_abi_from_file {
                         Some(contract_abi) => {
@@ -494,9 +452,8 @@ pub async fn convert_config_to_chain_configs(
             let contract_template = ContractTemplate {
                 name: contract.name.to_capitalized_options(),
                 abi: stringified_abi,
-                addresses: contract.address.inner.clone(),
-                events: contract
-                    .events
+                addresses: contract.address.clone().into(),
+                events: contract_events
                     .iter()
                     .map(|config_event| {
                         ChainConfigEvent::new(contract.name.clone(), config_event.event.get_name())
@@ -537,7 +494,6 @@ pub async fn convert_config_to_chain_configs(
         let network_config = NetworkConfigTemplate {
             id: network.id.clone(),
             start_block: network.start_block.clone(),
-            contracts: network.contracts.clone(),
             rpc_config,
             skar_server_url,
             eth_archive_server_url,
@@ -688,17 +644,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             required_entities: None,
         };
 
-        let contract1 = super::ConfigContract {
-            handler: "./src/EventHandler.js".to_string(),
-            address: NormalizedList::from_single(address1.clone()),
-            name: String::from("Contract1"),
-            //needed to have relative path in order to match config1.yaml
-            abi_file_path: Some(String::from("../abis/Contract1.json")),
-            events: vec![event1.clone(), event2.clone()],
-        };
-
-        let contracts = vec![contract1.clone()];
-
         let sync_config = super::SyncConfigUnstable {
             initial_block_interval: 10000,
             interval_ceiling: 10000,
@@ -719,7 +664,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             skar_server_url: None,
             eth_archive_server_url: None,
             start_block: 0,
-            contracts,
         };
 
         let project_root = String::from("test");
@@ -780,16 +724,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             required_entities: None,
         };
 
-        let contract1 = super::ConfigContract {
-            handler: "./src/EventHandler.js".to_string(),
-            address: NormalizedList::from_single(address1.clone()),
-            name: String::from("Contract1"),
-            abi_file_path: Some(String::from("../abis/Contract1.json")),
-            events: vec![event1.clone(), event2.clone()],
-        };
-
-        let contracts1 = vec![contract1.clone()];
-
         let sync_config = super::SyncConfigUnstable {
             initial_block_interval: 10000,
             interval_ceiling: 10000,
@@ -810,18 +744,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             skar_server_url: None,
             eth_archive_server_url: None,
             start_block: 0,
-            contracts: contracts1,
         };
-
-        let contract2 = super::ConfigContract {
-            handler: "./src/EventHandler.js".to_string(),
-            address: NormalizedList::from_single(address2.clone()),
-            name: String::from("Contract2"),
-            abi_file_path: Some(String::from("../abis/Contract2.json")),
-            events: vec![event1.clone(), event2.clone()],
-        };
-
-        let contracts2 = vec![contract2];
 
         let sync_config = super::SyncConfigUnstable {
             initial_block_interval: 10000,
@@ -843,7 +766,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             skar_server_url: None,
             eth_archive_server_url: None,
             start_block: 0,
-            contracts: contracts2,
         };
 
         let project_root = String::from("test");
@@ -915,23 +837,12 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             required_entities: None,
         };
 
-        let contract1 = super::ConfigContract {
-            handler: "./src/EventHandler.js".to_string(),
-            address: NormalizedList::from_single(address1.clone()),
-            name: String::from("Contract1"),
-            abi_file_path: Some(String::from("../abis/Contract1.json")),
-            events: vec![event1.clone(), event2.clone()],
-        };
-
-        let contracts1 = vec![contract1.clone()];
-
         let network1 = NetworkConfigTemplate {
             id: 1,
             rpc_config: None,
             skar_server_url: Some("http://eth.hypersync.bigdevenergy.link:1100".to_string()),
             eth_archive_server_url: None,
             start_block: 0,
-            contracts: contracts1,
         };
 
         let project_root = String::from("test");
@@ -982,7 +893,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             skar_server_url: Some("https://myskar.com".to_string()),
             eth_archive_server_url: None,
             start_block: 0,
-            contracts: vec![],
         };
 
         let network2 = NetworkConfigTemplate {
@@ -992,7 +902,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             //Should default to eth archive since there is no skar endpoint at this id
             eth_archive_server_url: Some("http://46.4.5.110:72".to_string()),
             start_block: 0,
-            contracts: vec![],
         };
 
         let project_root = String::from("test");

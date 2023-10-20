@@ -3,7 +3,10 @@ use pathdiff::diff_paths;
 use serde::Serialize;
 use std::{collections::HashMap, error::Error, path::PathBuf};
 
-use crate::{cli_args::ProjectPathsArgs, config_parsing::deserialize_config_from_yaml};
+use crate::{
+    cli_args::ProjectPathsArgs,
+    config_parsing::{deserialize_config_from_yaml, get_global_contract},
+};
 
 pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 
@@ -37,7 +40,7 @@ impl ParsedPaths {
             .parent()
             .ok_or("Unexpected config file should have a parent directory")?;
         let parsed_config = deserialize_config_from_yaml(&project_paths.config)?;
-        let schema_path_relative_opt = parsed_config.schema.map(PathBuf::from);
+        let schema_path_relative_opt = parsed_config.schema.clone().map(PathBuf::from);
 
         let schema_path_joined = match schema_path_relative_opt {
             Some(schema_path_relative) => config_directory.join(schema_path_relative),
@@ -56,15 +59,38 @@ impl ParsedPaths {
                     name: contract.name.clone(),
                 };
 
-                let handler_path_str = &contract.handler;
+                let handler_path_str = contract
+                    .local_contract_config
+                    .as_ref()
+                    .map(|l_contract| Ok::<String, anyhow::Error>(l_contract.handler.clone()))
+                    .unwrap_or_else(|| {
+                        Ok(get_global_contract(&parsed_config, contract.name.clone())
+                            .context("Failed getting global contract")?
+                            .handler
+                            .clone())
+                    })
+                    .context("Failed getting handler path")?;
+
+                let abi_path_str_opt = contract
+                    .local_contract_config
+                    .as_ref()
+                    .map(|l_contract| {
+                        Ok::<Option<String>, anyhow::Error>(l_contract.abi_file_path.clone())
+                    })
+                    .unwrap_or_else(|| {
+                        Ok(get_global_contract(&parsed_config, contract.name.clone())
+                            .context("Failed getting global contract")?
+                            .abi_file_path
+                            .clone())
+                    })
+                    .context("Failed getting abi path")?;
+
                 let handler_path_relative = PathBuf::from(handler_path_str);
                 let handler_path_joined = config_directory.join(handler_path_relative);
                 let handler_path = path_utils::normalize_path(&handler_path_joined);
                 handler_paths
                     .entry(contract_unique_id.clone())
                     .or_insert(handler_path);
-
-                let abi_path_str_opt = &contract.abi_file_path;
 
                 if let Some(abi_path_str) = abi_path_str_opt {
                     let abi_path_relative = PathBuf::from(abi_path_str);

@@ -1,6 +1,6 @@
 use crate::{
     capitalization::Capitalize,
-    config_parsing::{ConfigContract, ConfigEvent},
+    config_parsing::ConfigEvent,
     hbs_templating::codegen_templates::{
         ContractTemplate, EventParamTypeTemplate, EventTemplate, EventType, FilteredTemplateLists,
         RequiredEntityEntityFieldTemplate, RequiredEntityTemplate,
@@ -19,7 +19,7 @@ use ethers::abi::{
     ParamType as EthAbiParamType,
 };
 
-use super::{deserialize_config_from_yaml, EventNameOrSig};
+use super::{deserialize_config_from_yaml, get_events_from_network_contract, EventNameOrSig};
 
 pub fn parse_abi(abi: &str) -> Result<AbiContract, Box<dyn Error>> {
     let abi: AbiContract = serde_json::from_str(abi)?;
@@ -168,7 +168,8 @@ fn get_event_template_from_ethereum_abi_event(
 }
 
 fn get_contract_type_from_config_contract(
-    config_contract: &ConfigContract,
+    contract_name: String,
+    contract_events: Vec<ConfigEvent>,
     parsed_paths: &ParsedPaths,
     contract_unique_id: ContractUniqueId,
     entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityFieldTemplate>>,
@@ -177,7 +178,7 @@ fn get_contract_type_from_config_contract(
 
     let contract_abi_opt = parsed_paths.get_contract_abi(&contract_unique_id)?;
 
-    for config_event in config_contract.events.iter() {
+    for config_event in contract_events.iter() {
         let abi_event = match &config_event.event {
             EventNameOrSig::Name(config_event_name) => contract_abi_opt
                 .as_ref()
@@ -233,7 +234,7 @@ fn get_contract_type_from_config_contract(
     let handler_template = parsed_paths.get_contract_handler_paths_template(&contract_unique_id)?;
 
     let contract = ContractTemplate {
-        name: config_contract.name.to_capitalized_options(),
+        name: contract_name.to_capitalized_options(),
         events: event_types,
         handler: handler_template,
     };
@@ -254,12 +255,20 @@ pub fn get_contract_types_from_config(
                 name: config_contract.name.clone(),
             };
 
+            let contract_events = get_events_from_network_contract(config_contract, &config)
+                .context(format!(
+                    "Deserialising contract {} events",
+                    config_contract.name
+                ))?;
+
             let contract = get_contract_type_from_config_contract(
-                config_contract,
+                config_contract.name.clone(),
+                contract_events,
                 parsed_paths,
                 contract_unique_id,
                 entity_fields_of_required_entity_map,
             )?;
+
             contracts.push(contract);
         }
     }

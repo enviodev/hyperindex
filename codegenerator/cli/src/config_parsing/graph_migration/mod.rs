@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use tokio::task::JoinSet;
 use tokio::time::{timeout, Duration};
 
+use crate::config_parsing::{LocalContractConfig, NetworkContractConfig};
 use crate::project_paths::handler_paths::DEFAULT_SCHEMA_PATH;
 use crate::{
     cli_args::Language,
@@ -311,22 +312,18 @@ pub async fn generate_config_from_subgraph_id(
                     println!("Data source not found");
                 }
                 Some(data_source) => {
-                    let mut contract = ConfigContract {
-                        name: data_source.name.to_string(),
-                        abi_file_path: Some(format!("abis/{}.json", data_source.name)),
-                        address: NormalizedList::from_single(
-                            data_source.source.address.to_string(),
-                        ),
-                        handler: get_event_handler_directory(language),
-                        events: vec![],
-                    };
-
                     // Fetching event names from config
                     let event_handlers = &data_source.mapping.event_handlers;
-                    for event_handler in event_handlers {
-                        // Event signatures of the manifest file from theGraph can differ from smart contract event signature convention
-                        // therefore just extracting event name from event signature
-                        if let Some(start) = event_handler.event.as_str().find('(') {
+                    let events = event_handlers
+                        .iter()
+                        .map(|event_handler| {
+                            let start =
+                                event_handler.event.as_str().find('(').ok_or_else(|| {
+                                    anyhow!("Unexepected event definition without a '(' char")
+                                })?;
+
+                            // Event signatures of the manifest file from theGraph can differ from smart contract event signature convention
+                            // therefore just extracting event name from event signature
                             let event_name = &event_handler
                                 .event
                                 .as_str()
@@ -338,10 +335,20 @@ pub async fn generate_config_from_subgraph_id(
                                 required_entities: Some(vec![]),
                             };
 
-                            // Pushing event to contract
-                            contract.events.push(event);
-                        };
-                    }
+                            Ok(event)
+                        })
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+
+                    let contract = NetworkContractConfig {
+                        name: data_source.name.to_string(),
+                        address: vec![data_source.source.address.to_string()].into(),
+                        local_contract_config: Some(LocalContractConfig {
+                            abi_file_path: Some(format!("abis/{}.json", data_source.name)),
+                            handler: get_event_handler_directory(language),
+                            events,
+                        }),
+                    };
+
                     // Pushing contract to network
                     network.contracts.push(contract.clone());
 

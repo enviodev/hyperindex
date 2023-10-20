@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use regex::Regex;
 use std::collections::HashSet;
 use std::path::Path;
@@ -8,6 +8,7 @@ use crate::config_parsing::Config;
 use super::constants::JAVASCRIPT_RESERVED_WORDS;
 use super::constants::RESCRIPT_RESERVED_WORDS;
 use super::constants::TYPESCRIPT_RESERVED_WORDS;
+use super::ConfigEvent;
 use super::SyncSourceConfig;
 
 // It must start with a letter or underscore.
@@ -21,15 +22,6 @@ fn is_valid_postgres_db_name(name: &str) -> bool {
 pub fn is_valid_ethereum_address(address: &str) -> bool {
     let re = Regex::new(r"^0x[0-9a-fA-F]{40}$").unwrap();
     re.is_match(address)
-}
-
-fn are_valid_ethereum_addresses(addresses: &[String]) -> bool {
-    for address in addresses {
-        if !is_valid_ethereum_address(address) {
-            return false;
-        }
-    }
-    true
 }
 
 // Contracts must have unique names in the config file.
@@ -81,16 +73,6 @@ fn validate_rpc_url(url: &str) -> bool {
     true
 }
 
-// Check if all RPC URLs in the config file are valid.
-fn validate_rpc_urls_from_config(urls: &[String]) -> bool {
-    for url in urls {
-        if !validate_rpc_url(url) {
-            return false;
-        }
-    }
-    true
-}
-
 // Check if all names in the config file are valid.
 fn validate_names_not_reserved(
     names_from_config: &[String],
@@ -107,6 +89,30 @@ fn validate_names_not_reserved(
     Ok(())
 }
 
+fn validate_contract_events(events: Vec<ConfigEvent>) -> anyhow::Result<()> {
+    let mut event_names = Vec::new();
+    let mut entity_and_label_names = Vec::new();
+    for event in events {
+        event_names.push(event.event.get_name());
+        if let Some(required_entities) = &event.required_entities {
+            for entity in required_entities {
+                entity_and_label_names.push(entity.name.clone());
+                if let Some(labels) = &entity.labels {
+                    entity_and_label_names.extend(labels.clone());
+                }
+                if let Some(array_labels) = &entity.array_labels {
+                    entity_and_label_names.extend(array_labels.clone());
+                }
+            }
+            // Checking that entity names do not include any reserved words
+            validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
+        }
+    }
+    // Checking that event names do not include any reserved words
+    validate_names_not_reserved(&event_names, "Events".to_string())?;
+    Ok(())
+}
+
 pub fn validate_deserialized_config_yaml(
     config_path: &Path,
     deserialized_yaml: &Config,
@@ -115,71 +121,40 @@ pub fn validate_deserialized_config_yaml(
         return Err(anyhow!("EE108: The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
     }
 
-    // Retrieving details from config file as a vectors of String
     let mut contract_names = Vec::new();
-    let mut contract_addresses = Vec::new();
-    let mut event_names = Vec::new();
-    let mut entity_and_label_names = Vec::new();
-    let mut rpc_urls = Vec::new();
-
     for network in &deserialized_yaml.networks {
-        if let Some(sync_source) = &network.sync_source {
-            match sync_source.clone() {
-                SyncSourceConfig::RpcConfig(rpc_config) => rpc_urls.push(rpc_config.url.clone()),
-                SyncSourceConfig::HypersyncConfig(_hypersync_config) => (), //TODO: add validation
+        if let Some(SyncSourceConfig::RpcConfig(rpc_config)) = &network.sync_source {
+            if !validate_rpc_url(&rpc_config.url) {
+                return Err(anyhow!("EE109: The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")));
             }
         }
         for contract in &network.contracts {
             contract_names.push(contract.name.clone());
-            contract_addresses.push(contract.address.clone());
-            for event in &contract.events {
-                event_names.push(event.event.get_name());
-                if let Some(required_entities) = &event.required_entities {
-                    for entity in required_entities {
-                        entity_and_label_names.push(entity.name.clone());
-                        if let Some(labels) = &entity.labels {
-                            entity_and_label_names.extend(labels.clone());
-                        }
-                        if let Some(array_labels) = &entity.array_labels {
-                            entity_and_label_names.extend(array_labels.clone());
-                        }
-                    }
-                    // Checking that entity names do not include any reserved words
-                    validate_names_not_reserved(
-                        &entity_and_label_names,
-                        "Required Entities".to_string(),
-                    )?;
+            if let Some(local_contract) = contract.local_contract_config.as_ref() {
+                validate_contract_events(local_contract.events.clone())
+                    .context("Validating network contract config")?;
+            }
+
+            // Checking if contract addresses are valid addresses
+            for contract_address in contract.address.clone().into_iter() {
+                if !is_valid_ethereum_address(&contract_address) {
+                    return Err(anyhow!(
+                        "EE100: One of the contract addresses in the config file ({}) isn't valid",
+                        &config_path
+                            .to_str()
+                            .unwrap_or("unknown config file name path")
+                    ));
                 }
             }
-            // Checking that event names do not include any reserved words
-            validate_names_not_reserved(&event_names, "Events".to_string())?;
-        }
-
-        // Checking that contract names are non-unique
-        if !are_contract_names_unique(&contract_names) {
-            return Err(anyhow!("EE101: The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")));
-        }
-
-        // Checking that contract names do not include any reserved words
-        validate_names_not_reserved(&contract_names, "Contracts".to_string())?;
-    }
-
-    // Checking if contract addresses are valid addresses
-    for a_contract_addressess in &contract_addresses {
-        if !are_valid_ethereum_addresses(&a_contract_addressess.inner) {
-            return Err(anyhow!(
-                "EE100: One of the contract addresses in the config file ({}) isn't valid",
-                &config_path
-                    .to_str()
-                    .unwrap_or("unknown config file name path")
-            ));
         }
     }
-
-    // Checking if RPC URLs are valid
-    if !validate_rpc_urls_from_config(&rpc_urls) {
-        return Err(anyhow!("EE109: The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")));
+    // Checking that contract names are non-unique
+    if !are_contract_names_unique(&contract_names) {
+        return Err(anyhow!("EE101: The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")));
     }
+
+    // Checking that contract names do not include any reserved words
+    validate_names_not_reserved(&contract_names, "Contracts".to_string())?;
 
     Ok(())
 }
