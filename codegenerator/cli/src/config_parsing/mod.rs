@@ -28,10 +28,22 @@ pub mod graph_migration;
 
 type NetworkId = u64;
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct GlobalContractConfig {
+    pub name: String,
+    // Eg for implementing a custom deserializer
+    //  #[serde(deserialize_with = "abi_path_to_abi")]
+    pub abi_file_path: Option<String>,
+    pub handler: String,
+    events: Vec<ConfigEvent>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     name: String,
     description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contracts: Option<GlobalContractConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub networks: Vec<Network>,
