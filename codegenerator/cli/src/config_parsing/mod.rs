@@ -145,6 +145,22 @@ pub struct ConfigContract {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct NetworkContractConfig {
+    pub name: String,
+    address: NormalizedList<String>,
+    #[serde(flatten)]
+    //If this is "None" it should be expected that
+    //there is a global config for the contract
+    pub local_contract_config: Option<LocalContractConfig>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct LocalContractConfig {
+    abi_file_path: Option<String>,
+    handler: String,
+    events: Vec<ConfigEvent>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigEvent {
     pub event: EventNameOrSig,
@@ -315,7 +331,7 @@ impl<T: Clone> OptSingleOrList<T> {
 
 #[derive(Debug, Deserialize, Clone, PartialEq)]
 #[serde(try_from = "OptSingleOrList<T>")]
-struct NormalizedList<T: Clone> {
+pub struct NormalizedList<T: Clone> {
     inner: Vec<T>,
 }
 
@@ -547,10 +563,57 @@ mod tests {
     use ethers::abi::{Event, EventParam, ParamType};
 
     use crate::capitalization::Capitalize;
-    use crate::config_parsing::{EventNameOrSig, NetworkConfigTemplate, NormalizedList};
+    use crate::config_parsing::{
+        EventNameOrSig, LocalContractConfig, NetworkConfigTemplate, NetworkContractConfig,
+        NormalizedList,
+    };
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
     use super::{ChainConfigEvent, ChainConfigTemplate};
+
+    #[test]
+    fn test_flatten_deserialize_local_contract() {
+        let yaml = r#"
+name: Contract1
+handler: ./src/EventHandler.js
+address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+events: []
+    "#;
+
+        let deserialized: NetworkContractConfig = serde_yaml::from_str(yaml).unwrap();
+        let expected = NetworkContractConfig {
+            name: "Contract1".to_string(),
+            address: NormalizedList::from(vec![
+                "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
+            ]),
+            local_contract_config: Some(LocalContractConfig {
+                abi_file_path: None,
+                handler: "./src/EventHandler.js".to_string(),
+                events: vec![],
+            }),
+        };
+
+        assert_eq!(expected, deserialized);
+    }
+
+    #[test]
+    fn test_flatten_deserialize_global_contract() {
+        let yaml = r#"
+name: Contract1
+address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
+    "#;
+
+        let deserialized: NetworkContractConfig = serde_yaml::from_str(yaml).unwrap();
+        let expected = NetworkContractConfig {
+            name: "Contract1".to_string(),
+            address: NormalizedList::from(vec![
+                "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
+            ]),
+            local_contract_config: None,
+        };
+
+        assert_eq!(expected, deserialized);
+    }
 
     #[test]
     fn deserialize_address() {
