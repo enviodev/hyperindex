@@ -7,6 +7,6 @@ networks:
       endpoint_url: https://myskar.com # RPC URL that will be used to subscribe to blockchain data on this network
     start_block: 0
     contracts: []
-  - id: 59144 #Linea only on eth archive
+  - id: 43114 #Linea only on eth archive
     start_block: 0
     contracts: []
