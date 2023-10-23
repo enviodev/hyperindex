@@ -14,8 +14,7 @@ use crate::{
     cli_args::Language,
     config_parsing::{
         chain_helpers::{GraphNetwork, Network},
-        constants, Config, ConfigContract, ConfigEvent, EventNameOrSig, Network as ConfigNetwork,
-        NormalizedList,
+        constants, Config, ConfigEvent, EventNameOrSig, Network as ConfigNetwork,
     },
 };
 

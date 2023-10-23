@@ -6,17 +6,15 @@ use handlebars::Handlebars;
 use include_dir::{Dir, DirEntry};
 use serde::Serialize;
 
-pub mod config_parsing;
-pub mod linked_hashmap;
-pub mod project_paths;
-
 pub mod capitalization;
 pub mod cli_args;
-pub mod links;
-
 pub mod commands;
+pub mod config_parsing;
 pub mod hbs_templating;
+pub mod linked_hashmap;
+pub mod links;
 pub mod persisted_state;
+pub mod project_paths;
 pub mod service_health;
 
 use crate::project_paths::path_utils::normalize_path;

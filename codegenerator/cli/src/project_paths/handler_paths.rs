@@ -1,21 +1,18 @@
 use super::{path_utils, ProjectPaths};
 use pathdiff::diff_paths;
 use serde::Serialize;
-use std::{collections::HashMap, error::Error, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     cli_args::ProjectPathsArgs,
-    config_parsing::{deserialize_config_from_yaml, get_global_contract},
+    config_parsing::{config, deserialize_config_from_yaml},
+    utils::unique_hashmap,
 };
 
 pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 
-use anyhow::Context;
-#[derive(Eq, PartialEq, Hash, Debug, Clone)]
-pub struct ContractUniqueId {
-    pub network_id: u64,
-    pub name: String,
-}
+use anyhow::{anyhow, Context};
+type ContractNameKey = String;
 
 #[derive(Serialize, Debug, Eq, PartialEq, Clone)]
 pub struct HandlerPathsTemplate {
@@ -27,77 +24,46 @@ pub struct HandlerPathsTemplate {
 pub struct ParsedPaths {
     pub project_paths: ProjectPaths,
     pub schema_path: PathBuf,
-    pub handler_paths: HashMap<ContractUniqueId, PathBuf>,
-    abi_paths: HashMap<ContractUniqueId, PathBuf>,
+    pub handler_paths: HashMap<ContractNameKey, PathBuf>,
+    abi_paths: HashMap<ContractNameKey, PathBuf>,
 }
 
 impl ParsedPaths {
-    pub fn new(project_paths_args: ProjectPathsArgs) -> Result<ParsedPaths, Box<dyn Error>> {
-        let project_paths = ProjectPaths::new(project_paths_args)?;
+    pub fn new(project_paths_args: ProjectPathsArgs) -> anyhow::Result<ParsedPaths> {
+        let project_paths =
+            ProjectPaths::new(project_paths_args).context("Failed parsing project_paths")?;
 
         let config_directory = project_paths
             .config
             .parent()
-            .ok_or("Unexpected config file should have a parent directory")?;
-        let parsed_config = deserialize_config_from_yaml(&project_paths.config)?;
-        let schema_path_relative_opt = parsed_config.schema.clone().map(PathBuf::from);
+            .ok_or_else(|| anyhow!("Unexpected config file should have a parent directory"))?;
 
-        let schema_path_joined = match schema_path_relative_opt {
-            Some(schema_path_relative) => config_directory.join(schema_path_relative),
-            None => project_paths.project_root.join(DEFAULT_SCHEMA_PATH),
-        };
-
+        let deserialized_yaml = deserialize_config_from_yaml(&project_paths.config)
+            .context("Failed deserializing config file")?;
+        let parsed_config =
+            config::Config::parse_from_yaml_config(&deserialized_yaml, &project_paths)
+                .context("Failed parsing config from deserialized file")?;
+        let schema_path_relative = PathBuf::from(&parsed_config.schema_path);
+        let schema_path_joined = config_directory.join(schema_path_relative);
         let schema_path = path_utils::normalize_path(&schema_path_joined);
 
         let mut handler_paths = HashMap::new();
         let mut abi_paths = HashMap::new();
+        for contract in parsed_config.get_contracts() {
+            let handler_path_relative = PathBuf::from(&contract.handler_path);
+            let handler_path_joined = config_directory.join(handler_path_relative);
+            let handler_path = path_utils::normalize_path(&handler_path_joined);
 
-        for network in parsed_config.networks.iter() {
-            for contract in network.contracts.iter() {
-                let contract_unique_id = ContractUniqueId {
-                    network_id: network.id,
-                    name: contract.name.clone(),
-                };
+            unique_hashmap::try_insert(&mut handler_paths, contract.name.clone(), handler_path)
+                .context("Failed inserting contract handler into parsed paths")?;
 
-                let handler_path_str = contract
-                    .local_contract_config
-                    .as_ref()
-                    .map(|l_contract| Ok::<String, anyhow::Error>(l_contract.handler.clone()))
-                    .unwrap_or_else(|| {
-                        Ok(get_global_contract(&parsed_config, contract.name.clone())
-                            .context("Failed getting global contract")?
-                            .handler
-                            .clone())
-                    })
-                    .context("Failed getting handler path")?;
+            if let Some(abi_path_str) = &contract.abi_file_path {
+                let abi_path_relative = PathBuf::from(abi_path_str);
+                let abi_path_joined = config_directory.join(abi_path_relative);
+                let abi_path = path_utils::normalize_path(&abi_path_joined);
 
-                let abi_path_str_opt = contract
-                    .local_contract_config
-                    .as_ref()
-                    .map(|l_contract| {
-                        Ok::<Option<String>, anyhow::Error>(l_contract.abi_file_path.clone())
-                    })
-                    .unwrap_or_else(|| {
-                        Ok(get_global_contract(&parsed_config, contract.name.clone())
-                            .context("Failed getting global contract")?
-                            .abi_file_path
-                            .clone())
-                    })
-                    .context("Failed getting abi path")?;
-
-                let handler_path_relative = PathBuf::from(handler_path_str);
-                let handler_path_joined = config_directory.join(handler_path_relative);
-                let handler_path = path_utils::normalize_path(&handler_path_joined);
-                handler_paths
-                    .entry(contract_unique_id.clone())
-                    .or_insert(handler_path);
-
-                if let Some(abi_path_str) = abi_path_str_opt {
-                    let abi_path_relative = PathBuf::from(abi_path_str);
-                    let abi_path_joined = config_directory.join(abi_path_relative);
-                    let abi_path = path_utils::normalize_path(&abi_path_joined);
-                    abi_paths.entry(contract_unique_id).or_insert(abi_path);
-                }
+                unique_hashmap::try_insert(&mut abi_paths, contract.name.clone(), abi_path)
+                    .context("Failed inserting contract abi file path into parsed paths")?;
             }
         }
 
@@ -111,24 +77,24 @@ impl ParsedPaths {
 
     pub fn get_contract_handler_paths_template(
         &self,
-        contract_unique_id: &ContractUniqueId,
-    ) -> Result<HandlerPathsTemplate, Box<dyn Error>> {
+        contract_name: &ContractNameKey,
+    ) -> anyhow::Result<HandlerPathsTemplate> {
         let generated_src = self.project_paths.generated.join("src");
 
         let absolute_path = self
             .handler_paths
-            .get(contract_unique_id)
-            .ok_or_else(|| "invalid contract configuration".to_string())?;
+            .get(contract_name)
+            .ok_or_else(|| anyhow!("invalid contract configuration"))?;
 
         let relative_to_generated_src = diff_paths(absolute_path, generated_src)
-            .ok_or("could not find handler path relative to generated")?
+            .ok_or_else(|| anyhow!("could not find handler path relative to generated"))?
             .to_str()
-            .ok_or_else(|| "Handler path should be unicode".to_string())?
+            .ok_or_else(|| anyhow!("Handler path should be unicode"))?
             .to_string();
 
         let absolute = absolute_path
             .to_str()
-            .ok_or_else(|| "Handler path should be unicode".to_string())?
+            .ok_or_else(|| anyhow!("Handler path should be unicode"))?
             .to_string();
 
         Ok(HandlerPathsTemplate {
@@ -139,9 +105,9 @@ impl ParsedPaths {
 
     pub fn get_contract_abi(
         &self,
-        contract_unique_id: &ContractUniqueId,
+        contract_name: &ContractNameKey,
     ) -> anyhow::Result<Option<ethers::abi::Contract>> {
-        let abi_path_opt = self.abi_paths.get(contract_unique_id);
+        let abi_path_opt = self.abi_paths.get(contract_name);
 
         let abi_opt = match abi_path_opt {
             None => None,
@@ -182,11 +148,13 @@ mod tests {
     use std::path::PathBuf;
 
     use super::super::ProjectPathsArgs;
-    use super::{ContractUniqueId, HandlerPathsTemplate, ParsedPaths};
+    use super::{HandlerPathsTemplate, ParsedPaths};
 
     #[test]
     fn test_all_paths_construction_1() {
-        let project_root = String::from("test");
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let test_dir_path_buf = PathBuf::from(&test_dir);
+        let project_root = String::from(test_dir);
         let config = String::from("configs/config1.yaml");
         let generated = String::from("generated/");
         let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
@@ -194,24 +162,21 @@ mod tests {
             config,
             generated,
         })
-        .unwrap();
+        .expect("Failed creating parsed_paths");
 
-        let expected_schema_path = PathBuf::from("test/schemas/schema.graphql");
-        let contract_unique_id = ContractUniqueId {
-            network_id: 1,
-            name: "Contract1".to_string(),
-        };
+        let expected_schema_path = test_dir_path_buf.join(PathBuf::from("schemas/schema.graphql"));
+        let contract_name = "Contract1".to_string();
 
         let mut expected_handler_paths = HashMap::new();
         expected_handler_paths.insert(
-            contract_unique_id.clone(),
-            PathBuf::from("test/configs/src/EventHandler.js"),
+            contract_name.clone(),
+            test_dir_path_buf.join(PathBuf::from("configs/src/EventHandler.js")),
         );
 
         let mut expected_abi_paths = HashMap::new();
         expected_abi_paths.insert(
-            contract_unique_id,
-            PathBuf::from("test/abis/Contract1.json"),
+            contract_name,
+            test_dir_path_buf.join(PathBuf::from("abis/Contract1.json")),
         );
 
         assert_eq!(expected_schema_path, parsed_paths.schema_path);
@@ -229,16 +194,13 @@ mod tests {
             config,
             generated,
         })
-        .unwrap();
+        .expect("Failed creating parsed_paths");
 
-        let contract_unique_id = ContractUniqueId {
-            network_id: 1,
-            name: String::from("Contract1"),
-        };
+        let contract_name = "Contract1".to_string();
 
         let contract_handler_paths = parsed_paths
-            .get_contract_handler_paths_template(&contract_unique_id)
-            .unwrap();
+            .get_contract_handler_paths_template(&contract_name)
+            .expect("Failed getting contract handler_paths_template");
         let expected_handler_paths = HandlerPathsTemplate {
             absolute: "test/configs/src/EventHandler.js".to_string(),
 
@@ -258,15 +220,12 @@ mod tests {
             config,
             generated,
         })
-        .unwrap();
+        .expect("Failed creating parsed_paths");
 
-        let contract_unique_id = ContractUniqueId {
-            network_id: 1,
-            name: String::from("Contract1"),
-        };
+        let contract_name = "Contract1".to_string();
 
         let contract_abi = parsed_paths
-            .get_contract_abi(&contract_unique_id)
+            .get_contract_abi(&contract_name)
             .unwrap()
             .unwrap();
         let expected_abi_string = r#"

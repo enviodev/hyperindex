@@ -1,0 +1,6 @@
+#this is a default schema for configs in this folder that do
+#not have a defined schema path
+
+type EmptyEntity {
+  emptyField: ID!
+}

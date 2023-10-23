@@ -7,13 +7,15 @@ use crate::cli_args::{
     interactive_init::InitilizationTypeWithArgs, InitArgs, Language, Template, ToProjectPathsArgs,
 };
 use crate::commands;
+use crate::config_parsing::config;
 use crate::config_parsing::contract_import::{self, generate_config_from_contract_address};
+use crate::config_parsing::entity_parsing::Schema;
 use crate::config_parsing::graph_migration::generate_config_from_subgraph_id;
 use crate::hbs_templating::contract_import_templates;
 use crate::hbs_templating::{
     hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates,
 };
-use crate::project_paths::ParsedPaths;
+use crate::project_paths::{ParsedPaths, ProjectPaths};
 
 use include_dir::{include_dir, Dir};
 
@@ -117,7 +119,7 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
         }
 
         InitilizationTypeWithArgs::ContractImportWithArgs(network_name, contract_address) => {
-            let config = generate_config_from_contract_address(
+            let yaml_config = generate_config_from_contract_address(
                 &parsed_init_args.name,
                 network_name,
                 contract_address.clone(),
@@ -127,7 +129,7 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
             .context("Failed getting config")?;
 
             let serialized_config =
-                serde_yaml::to_string(&config).context("Failed serializing config")?;
+                serde_yaml::to_string(&yaml_config).context("Failed serializing config")?;
 
             //TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             contract_import::write_file_to_system(
@@ -137,9 +139,22 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
             .await
             .context("failed writing imported config.yaml")?;
 
+            let project_paths = ProjectPaths::new(parsed_init_args.to_project_paths_args())
+                .context("Failed getting project paths")?;
+
+            //Use an empty schema config to generate auto_schema_handler_template
+            //After it's been generated, the schema exists and codegen can parse it/use it
+            let parsed_config = config::Config::parse_from_yaml_with_schema(
+                &yaml_config,
+                Schema::empty(),
+                &project_paths,
+            )
+            .context("Failed parsing config")?;
+
             let auto_schema_handler_template =
-                contract_import_templates::AutoSchemaHandlerTemplate::try_from(config)
+                contract_import_templates::AutoSchemaHandlerTemplate::try_from(parsed_config)
                     .context("Failed converting config to auto auto_schema_handler_template")?;
+
             //  Copy in the relevant js flavor specific subgraph migration files
             match &parsed_init_args.language {
                 Language::Rescript => {
@@ -263,6 +278,26 @@ pub mod normalized_list {
 
         fn into_iter(self) -> Self::IntoIter {
             self.0.into_iter()
+        }
+    }
+}
+
+pub mod unique_hashmap {
+    use anyhow::anyhow;
+    use std::collections::HashMap;
+
+    pub fn try_insert<K, V>(map: &mut HashMap<K, V>, key: K, val: V) -> anyhow::Result<()>
+    where
+        K: std::cmp::Eq + std::hash::Hash + std::fmt::Display,
+    {
+        match map.get(&key) {
+            //If value exists, error without updating
+            Some(_) => Err(anyhow!("{} already exists, cannot have duplicates", key,)),
+            None => {
+                //If not insert it
+                map.insert(key, val);
+                Ok(())
+            }
         }
     }
 }

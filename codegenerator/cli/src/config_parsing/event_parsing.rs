@@ -5,7 +5,7 @@ use crate::{
         ContractTemplate, EventParamTypeTemplate, EventTemplate, EventType, FilteredTemplateLists,
         RequiredEntityEntityFieldTemplate, RequiredEntityTemplate,
     },
-    project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
+    project_paths::ParsedPaths,
 };
 
 use anyhow::{anyhow, Context};
@@ -19,7 +19,7 @@ use ethers::abi::{
     ParamType as EthAbiParamType,
 };
 
-use super::{deserialize_config_from_yaml, get_events_from_network_contract, EventNameOrSig};
+use super::{deserialize_config_from_yaml, EventNameOrSig};
 
 pub fn parse_abi(abi: &str) -> Result<AbiContract, Box<dyn Error>> {
     let abi: AbiContract = serde_json::from_str(abi)?;
@@ -31,13 +31,21 @@ pub fn get_abi_from_file_path(file_path: &PathBuf) -> Result<AbiContract, Box<dy
     parse_abi(&abi_file)
 }
 
-struct EthereumEventParam<'a> {
+pub struct EthereumEventParam<'a> {
     name: &'a str,
     abi_type: &'a EthAbiParamType,
 }
 
-impl<'a> EthereumEventParam<'a> {
-    fn from_ethereum_abi_param(abi_type: &'a EthAbiEventParam) -> EthereumEventParam<'a> {
+// impl<'a> From<EthAbiEventParam> for EthereumEventParam<'a> {
+//     fn from(abi_type: EthAbiEventParam) -> EthereumEventParam<'a> {
+//         EthereumEventParam {
+//             name: abi_type.name.as_str(),
+//             abi_type: &abi_type.kind,
+//         }
+//     }
+// }
+impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
+    fn from(abi_type: &'a EthAbiEventParam) -> EthereumEventParam<'a> {
         EthereumEventParam {
             name: &abi_type.name,
             abi_type: &abi_type.kind,
@@ -45,7 +53,16 @@ impl<'a> EthereumEventParam<'a> {
     }
 }
 
-fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
+impl<'a> EthereumEventParam<'a> {
+    pub fn from_ethereum_abi_param(abi_type: &'a EthAbiEventParam) -> EthereumEventParam<'a> {
+        EthereumEventParam {
+            name: &abi_type.name,
+            abi_type: &abi_type.kind,
+        }
+    }
+}
+
+pub fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
     match &param.abi_type {
         EthAbiParamType::Uint(_size) => String::from("Ethers.BigInt.t"),
         EthAbiParamType::Int(_size) => String::from("Ethers.BigInt.t"),
@@ -171,12 +188,11 @@ fn get_contract_type_from_config_contract(
     contract_name: String,
     contract_events: Vec<ConfigEvent>,
     parsed_paths: &ParsedPaths,
-    contract_unique_id: ContractUniqueId,
     entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityFieldTemplate>>,
 ) -> Result<ContractTemplate, Box<dyn Error>> {
     let mut event_types: Vec<EventTemplate> = Vec::new();
 
-    let contract_abi_opt = parsed_paths.get_contract_abi(&contract_unique_id)?;
+    let contract_abi_opt = parsed_paths.get_contract_abi(&contract_name)?;
 
     for config_event in contract_events.iter() {
         let abi_event = match &config_event.event {
@@ -225,13 +241,13 @@ fn get_contract_type_from_config_contract(
         let event_type = get_event_template_from_ethereum_abi_event(
             config_event,
             abi_event,
-            config_contract.name.clone(),
+            contract_name.clone(),
             entity_fields_of_required_entity_map,
         )?;
         event_types.push(event_type);
     }
 
-    let handler_template = parsed_paths.get_contract_handler_paths_template(&contract_unique_id)?;
+    let handler_template = parsed_paths.get_contract_handler_paths_template(&contract_name)?;
 
     let contract = ContractTemplate {
         name: contract_name.to_capitalized_options(),
@@ -250,12 +266,8 @@ pub fn get_contract_types_from_config(
     let mut contracts: Vec<ContractTemplate> = Vec::new();
     for network in config.networks.iter() {
         for config_contract in network.contracts.iter() {
-            let contract_unique_id = ContractUniqueId {
-                network_id: network.id,
-                name: config_contract.name.clone(),
-            };
-
-            let contract_events = get_events_from_network_contract(config_contract, &config)
+            let contract_events = config
+                .get_events_from_network_contract(config_contract)
                 .context(format!(
                     "Deserialising contract {} events",
                     config_contract.name
@@ -265,7 +277,6 @@ pub fn get_contract_types_from_config(
                 config_contract.name.clone(),
                 contract_events,
                 parsed_paths,
-                contract_unique_id,
                 entity_fields_of_required_entity_map,
             )?;
 

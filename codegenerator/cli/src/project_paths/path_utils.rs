@@ -3,6 +3,33 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+use anyhow::anyhow;
+
+use super::ProjectPaths;
+
+//Used for getting the path relative current dir for paths referenced in config.yaml
+//eg. current path is root_path/, config_path is root_path/config.yaml
+//handler in config.yaml is defined as ./EventHandler.js
+//return value should be root_path/EventHandler.js
+pub fn get_config_path_relative_to_root(
+    project_paths: &ProjectPaths,
+    relative_config_path: PathBuf,
+) -> anyhow::Result<PathBuf> {
+    let config_directory = project_paths.config.parent().ok_or_else(|| {
+        anyhow!(
+            "Unexpected config file should have a parent directory {}, {}",
+            project_paths.config.to_str().unwrap(),
+            relative_config_path.to_str().unwrap()
+        )
+    })?;
+
+    let path_relative = PathBuf::from(relative_config_path);
+    let path_joined = config_directory.join(path_relative);
+    let path = normalize_path(&path_joined);
+
+    Ok(path)
+}
+
 pub fn normalize_path(path: &Path) -> PathBuf {
     let mut components = path.components().peekable();
 
@@ -89,7 +116,6 @@ impl NewDir {
 }
 
 #[cfg(test)]
-
 mod tests {
     use super::normalize_path;
     use std::path::PathBuf;

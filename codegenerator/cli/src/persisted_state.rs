@@ -253,9 +253,11 @@ pub fn persisted_state_file_exists(project_paths: &ProjectPaths) -> bool {
 pub struct PersistedStateJsonString(String);
 
 impl PersistedStateJsonString {
-    pub fn try_default(parsed_paths: &ParsedPaths) -> Result<Self, Box<dyn Error>> {
+    pub fn try_default(parsed_paths: &ParsedPaths) -> anyhow::Result<Self> {
         Ok(PersistedStateJsonString(
-            PersistedState::try_default(parsed_paths)?.to_json_string(),
+            PersistedState::try_default(parsed_paths)
+                .context("Failed getting default persisted state")?
+                .to_json_string(),
         ))
     }
 }

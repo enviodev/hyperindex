@@ -1,479 +1,523 @@
-use crate::{
-    capitalization::Capitalize,
-    capitalization::CapitalizedOptions,
-    hbs_templating::codegen_templates::{
-        EntityParamTypeTemplate, EntityRecordTypeTemplate, EntityRelationalTypesTemplate,
-        FilteredTemplateLists, RelationshipTypeTemplate,
-    },
-    project_paths::ParsedPaths,
-};
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use ethers::abi::ethabi::ParamType as EthAbiParamType;
-use graphql_parser::schema::{Definition, Directive, Type, TypeDefinition, Value};
-use std::{collections::HashSet, fmt};
+use graphql_parser::schema::{
+    Definition, Directive, Document, Field as ObjField, ObjectType, Type as ObjType,
+    TypeDefinition, Value,
+};
+use serde::{Serialize, Serializer};
+use std::{collections::HashSet, fmt, path::PathBuf};
+use subenum::subenum;
 
-use super::validation::check_names_from_schema_for_reserved_words;
+use super::config::EntityMap;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Schema {
+    pub entities: Vec<Entity>,
+}
 
-pub fn get_entity_record_types_from_schema(
-    parsed_paths: &ParsedPaths,
-) -> Result<Vec<EntityRecordTypeTemplate>, String> {
-    let schema_string = std::fs::read_to_string(&parsed_paths.schema_path).map_err(|err| {
-        format!(
-            "EE200: Failed to read schema file at {} with Error: {}. Please ensure that the schema file is placed correctly in the directory.",
-            &parsed_paths.schema_path.to_str().unwrap_or("unknown file"),
-            err
-        )
-    })?;
-
-    let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
-        .map_err(|err| format!("EE201: Failed to parse schema with Error: {}", err))?;
-    let mut schema_object_types = Vec::new();
-    let mut entities_set: HashSet<String> = HashSet::new();
-    let mut names_from_schema: Vec<&str> = Vec::new();
-
-    for definition in schema_doc.definitions.iter() {
-        match definition {
-            Definition::SchemaDefinition(_) => (),
-            Definition::TypeDefinition(def) => match def {
-                TypeDefinition::Scalar(_) => (),
-                TypeDefinition::Object(object) => {
-                    entities_set.insert(object.name.clone());
-                    schema_object_types.push(object);
-                    names_from_schema.push(object.name.as_str());
-                }
-                TypeDefinition::Interface(_) => (),
-                TypeDefinition::Union(_) => (),
-                TypeDefinition::Enum(_) => (),
-                TypeDefinition::InputObject(_) => (),
-            },
-            Definition::DirectiveDefinition(_) => (),
-            Definition::TypeExtension(_) => (),
-        };
+impl Schema {
+    pub fn empty() -> Self {
+        Schema { entities: vec![] }
     }
-    let mut entity_records = Vec::new();
-    for object in schema_object_types.iter() {
-        let mut params = Vec::new();
-        let mut relational_params_all = Vec::new();
-        for field in object.fields.iter() {
-            //Get all gql derictives labeled @derivedFrom
-            let derived_from_directives = field
-                .directives
-                .iter()
-                .filter(|directive| directive.name == "derivedFrom")
-                .collect::<Vec<&Directive<'_, String>>>();
 
-            //Do not allow for multiple @derivedFrom directives
-            //If this step is not important and we are fine with just taking the first one
-            //in the case of multiple we can just use a find rather than a filter method above
-            if derived_from_directives.len() > 1 {
-                let msg = format!(
-                    "EE202: Cannot use more than one @derivedFrom directive, please update your entity {} at field {}",
-                    object.name, field.name
-                );
-                return Err(msg);
-            }
+    fn from_document(document: Document<String>) -> anyhow::Result<Self> {
+        let entities = document
+            .definitions
+            .iter()
+            .filter_map(|d| match d {
+                Definition::TypeDefinition(type_def) => Some(type_def),
+                _ => None,
+            })
+            .filter_map(|type_def| match type_def {
+                TypeDefinition::Object(obj) => Some(obj),
+                _ => None,
+            })
+            .map(|obj| Entity::from_object(obj))
+            .collect::<anyhow::Result<_>>()
+            .context("Failed contstructing schema from document")?;
 
-            let maybe_derived_from_directive = derived_from_directives.get(0);
-            let derived_from_field_key = match maybe_derived_from_directive {
-                None => None,
-                Some(d) => {
-                    let field_arg =
-                        d.arguments.iter().find(|a| a.0 == "field").ok_or_else(|| {
-                            format!(
-                                "EE203: No 'field' argument supplied to @derivedFrom directive on field {}, entity {}",
-                                field.name, object.name
-                            )
-                        })?;
-                    match &field_arg.1 {
-                        Value::String(val) => Some(val.clone()),
-                        _ => Err(format!("EE204: 'field' argument in @derivedFrom directive on field {}, entity {} needs to contain a string", field.name, object.name))?
-                    }
+        Ok(Schema { entities })
+    }
+
+    pub fn parse_from_file(path_to_schema: &PathBuf) -> anyhow::Result<Self> {
+        let schema_string = std::fs::read_to_string(&path_to_schema).context(
+            format!(
+                "EE200: Failed to read schema file at {}. Please ensure that the schema file is placed correctly in the directory.",
+                &path_to_schema.to_str().unwrap_or_else(||"bad file path"),
+            )
+        )?;
+
+        let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
+            .context("EE201: Failed to parse schema as document")?;
+
+        Self::from_document(schema_doc).context("Failed converting schema doc to schema struct")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Entity {
+    pub name: String,
+    pub fields: Vec<Field>,
+}
+
+impl Entity {
+    fn from_object(obj: &ObjectType<String>) -> anyhow::Result<Self> {
+        let name = obj.name.clone();
+
+        let fields = obj
+            .fields
+            .iter()
+            .map(|f| Field::from_obj_field(f))
+            .collect::<anyhow::Result<_>>()
+            .context("Failed contsructing fields")?;
+
+        Ok(Entity { name, fields })
+    }
+
+    pub fn get_related_entities<'a>(
+        &'a self,
+        other_entities: &'a EntityMap,
+    ) -> anyhow::Result<Vec<(&'a Field, &'a Self)>> {
+        let required_entities_with_field = self
+            .fields
+            .iter()
+            .filter_map(|field| {
+                let gql_scalar = field.field_type.get_underlying_scalar();
+                if let GqlScalar::Custom(entity_name) = gql_scalar {
+                    let field_and_entity = other_entities
+                        .get(entity_name)
+                        .map(|entity| (field, entity))
+                        .ok_or_else(|| anyhow!("Entity {} does not exist", entity_name));
+                    Some(field_and_entity)
+                } else {
+                    None
                 }
-            };
-            let is_derived_from = maybe_derived_from_directive.map_or(false, |_| true);
+            })
+            .collect::<anyhow::Result<_>>()?;
 
-            let param_type = gql_type_to_rescript_type(&field.field_type, &entities_set)?;
-            let param_pg_type = gql_type_to_postgres_type(&field.field_type, &entities_set)?;
-            let maybe_relationship_type = gql_type_to_postgres_relational_type(
-                &field.name,
-                &field.field_type,
-                &entities_set,
-                derived_from_field_key,
+        Ok(required_entities_with_field)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Field {
+    pub name: String,
+    pub field_type: FieldType,
+    pub derived_from_field: Option<String>,
+}
+
+impl Field {
+    fn from_obj_field(field: &ObjField<String>) -> anyhow::Result<Self> {
+        //Get all gql derictives labeled @derivedFrom
+        let derived_from_directives = field
+            .directives
+            .iter()
+            .filter(|directive| directive.name == "derivedFrom")
+            .collect::<Vec<&Directive<'_, String>>>();
+
+        //Do not allow for multiple @derivedFrom directives
+        //If this step is not important and we are fine with just taking the first one
+        //in the case of multiple we can just use a find rather than a filter method above
+        if derived_from_directives.len() > 1 {
+            let msg = anyhow!(
+                "EE202: Cannot use more than one @derivedFrom directive at field {}",
+                field.name
             );
-
-            //If the field has a relational type with a derived from field key
-            //Validate that the derived_from_field_key exists
-            //This simpler to do here once the relational_type has already been parsed
-            if let Some(relational_type) = &maybe_relationship_type {
-                if let Some(field_key) = &relational_type.derived_from_field_key {
-                    let entity = schema_object_types
-                        .iter()
-                        .find(|obj| {
-                            obj.name.to_capitalized_options().uncapitalized
-                                == relational_type.mapped_entity.uncapitalized
-                        })
-                        .ok_or_else(|| {
-                            format!(
-                                "EE205: Derived entity {} does not exist in schema",
-                                relational_type.mapped_entity.capitalized
-                            )
-                        })?;
-
-                    entity
-                        .fields
-                        .iter()
-                        .find(|field| &field.name == field_key)
-                        .ok_or_else(|| {
-                            format!(
-                                "EE206: Derived field {} does not exist on entity {}",
-                                field_key, entity.name
-                            )
-                        })?;
-                }
-            }
-
-            let param_maybe_entity_name =
-                gql_type_to_capitalized_entity_name(&field.field_type, &entities_set);
-
-            let is_optional = gql_type_is_optional(&field.field_type);
-
-            params.push(EntityParamTypeTemplate {
-                key: field.name.to_owned(),
-                is_optional,
-                type_rescript: param_type.to_owned(),
-                type_rescript_non_optional: strip_option_from_rescript_type_str(&param_type),
-                type_pg: param_pg_type,
-                maybe_entity_name: param_maybe_entity_name,
-                is_derived_from,
-            });
-
-            relational_params_all.extend(maybe_relationship_type);
-            names_from_schema.push(field.name.as_str());
+            return Err(msg);
         }
 
-        //Template needs access to both the full list and filtered for
-        //relational params that are not using a "@derivedFrom" directive
-        let relational_params = FilteredTemplateLists::new(relational_params_all);
-        entity_records.push(EntityRecordTypeTemplate {
-            name: object.name.to_owned().to_capitalized_options(),
-            params,
-            relational_params,
+        let maybe_derived_from_directive = derived_from_directives.get(0);
+        let derived_from_field = match maybe_derived_from_directive {
+            None => None,
+            Some(d) => {
+                let field_arg = d.arguments.iter().find(|a| a.0 == "field").ok_or_else(|| {
+                    anyhow!(
+                        "EE203: No 'field' argument supplied to @derivedFrom directive on field {}",
+                        field.name
+                    )
+                })?;
+                match &field_arg.1 {
+                        Value::String(val) => Some(val.clone()),
+                        _ => Err(anyhow!("EE204: 'field' argument in @derivedFrom directive on field {} needs to contain a string", field.name))?
+                    }
+            }
+        };
+
+        let field_type = FieldType::from_obj_field_type(&field.field_type);
+
+        Ok(Field {
+            name: field.name.clone(),
+            derived_from_field,
+            field_type,
         })
     }
-
-    // validate that no user defined names in the schema are reserved words
-    let detected_reserved_words =
-        check_names_from_schema_for_reserved_words(&names_from_schema.join(" "));
-
-    if !detected_reserved_words.is_empty() {
-        return Err(format!(
-            "EE210: The schema file cannot contain any reserved words from JavaScript or ReScript. Reserved word(s) are: {}. Please rename them in the schema file.",
-            detected_reserved_words.join(" "),
-        ));
-    }
-
-    Ok(entity_records)
 }
 
-#[derive(strum_macros::Display)]
-pub enum BuiltInGqlScalar {
-    ID,
-    String,
-    Int,
-    Float,
-    Boolean,
-}
-
-#[derive(strum_macros::Display)]
-pub enum AdditionalGqlScalar {
-    BigInt,
-    Bytes,
-}
-
-pub enum GqlScalar {
-    BuiltIn(BuiltInGqlScalar),
-    Additional(AdditionalGqlScalar),
-    Custom(String),
-}
-impl fmt::Display for GqlScalar {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            GqlScalar::BuiltIn(v) => write!(f, "{}", v),
-            GqlScalar::Additional(v) => write!(f, "{}", v),
-            GqlScalar::Custom(v) => write!(f, "{}", v),
-        }
-    }
-}
-pub enum Nullability {
-    NotNullable(ListOrSingle),
-    Nullable(ListOrSingle),
-}
-
-pub enum ListOrSingle {
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FieldType {
     Single(GqlScalar),
-    List(Box<Nullability>),
+    ListType(Box<FieldType>),
+    NonNullType(Box<FieldType>),
 }
 
-impl ListOrSingle {
-    pub fn to_string(&self) -> String {
-        match self {
-            ListOrSingle::Single(s) => s.to_string(),
-            ListOrSingle::List(inner) => format!("[{}]", Nullability::to_string(inner)),
+impl FieldType {
+    fn from_obj_field_type(field_type: &ObjType<'_, String>) -> Self {
+        match field_type {
+            ObjType::NamedType(name) => FieldType::Single(name.as_str().into()),
+            ObjType::NonNullType(inner) => {
+                FieldType::NonNullType(Box::new(Self::from_obj_field_type(inner.as_ref())))
+            }
+            ObjType::ListType(inner) => {
+                FieldType::ListType(Box::new(Self::from_obj_field_type(inner.as_ref())))
+            }
         }
     }
-}
 
-impl Nullability {
-    pub fn to_string(&self) -> String {
-        match self {
-            Nullability::Nullable(l) => l.to_string(),
-            Nullability::NotNullable(l) => {
-                format!("{}!", l.to_string())
+    pub fn to_postgres_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<String> {
+        let composed_type_name = match self {
+        Self::Single(gql_scalar) => {
+                gql_scalar.to_postgres_type(entities_set)?
+        }
+        Self::ListType(field_type) => match field_type.as_ref() {
+            //Postgres doesn't support nullable types inside of arrays
+            Self::NonNullType(field_type) =>format!("{}[]",field_type.to_postgres_type(entities_set)?),
+            Self::Single(gql_scalar)   => Err(anyhow!(
+                "EE208: Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", gql_scalar
+            ))?,
+            Self::ListType(_) => Err(anyhow!("EE209: Nullable multidimensional lists types are unsupported,\
+                please include a '!' for your inner list type eg. [[Int!]!]"))?,
+        },
+        Self::NonNullType(field_type) => format!(
+            "{} NOT NULL",
+            field_type.to_postgres_type(entities_set)?
+        ),
+    };
+        Ok(composed_type_name)
+    }
+
+    pub fn is_optional(&self) -> bool {
+        !matches!(self, Self::NonNullType(_))
+    }
+
+    pub fn is_array(&self) -> bool {
+        matches!(self, Self::ListType(_))
+            || matches!(
+                self,
+                Self::NonNullType(field_type) if field_type.is_array()
+            )
+    }
+
+    pub fn to_rescript_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<String> {
+        let composed_type_name = match self {
+            //Only types in here should be non optional
+            Self::NonNullType(field_type) => match field_type.as_ref() {
+                Self::Single(gql_scalar) => gql_scalar.to_rescript_type(entities_set)?,
+                Self::ListType(field_type) => {
+                    format!("array<{}>", field_type.to_rescript_type(entities_set)?)
+                }
+                //This case shouldn't happen, and should recurse without adding any types if so
+                //A double non null would be !! in gql
+                Self::NonNullType(field_type) => field_type.to_rescript_type(entities_set)?,
+            },
+            //If we match this case it missed the non null path entirely and should be optional
+            Self::Single(gql_scalar) => {
+                format!("option<{}>", gql_scalar.to_rescript_type(entities_set)?)
             }
+            //If we match this case it missed the non null path entirely and should be optional
+            Self::ListType(field_type) => {
+                format!(
+                    "option<array<{}>>",
+                    field_type.to_rescript_type(entities_set)?
+                )
+            }
+        };
+        Ok(composed_type_name)
+    }
+
+    fn get_underlying_scalar(&self) -> &GqlScalar {
+        match self {
+            Self::Single(gql_scalar) => gql_scalar,
+            Self::ListType(field_type) | Self::NonNullType(field_type) => {
+                field_type.get_underlying_scalar()
+            }
+        }
+    }
+
+    pub fn get_maybe_entity_name(&self) -> Option<String> {
+        if let GqlScalar::Custom(entity_name) = self.get_underlying_scalar() {
+            Some(entity_name.clone())
+        } else {
+            None
+        }
+    }
+
+    fn to_string(&self) -> String {
+        match &self {
+            Self::Single(gql_scalar) => gql_scalar.to_string(),
+            Self::ListType(field_type) => format!("[{}]", field_type.to_string()),
+            Self::NonNullType(field_type) => format!("{}!", field_type.to_string()),
         }
     }
 }
 
 // Implement the Display trait for the custom struct
-impl fmt::Display for Nullability {
+impl fmt::Display for FieldType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.to_string())
     }
 }
 
-pub fn ethabi_type_to_scalar(abi_type: &EthAbiParamType) -> anyhow::Result<Nullability> {
-    use GqlScalar::{Additional, BuiltIn};
-    use ListOrSingle::{List, Single};
-    use Nullability::NotNullable;
+impl Serialize for FieldType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
 
+#[subenum(BuiltInGqlScalar, AdditionalGqlScalar)]
+#[derive(Debug, Clone, PartialEq, strum_macros::Display, Eq, Hash)]
+pub enum GqlScalar {
+    #[subenum(BuiltInGqlScalar)]
+    ID,
+    #[subenum(BuiltInGqlScalar)]
+    String,
+    #[subenum(BuiltInGqlScalar)]
+    Int,
+    #[subenum(BuiltInGqlScalar)]
+    Float,
+    #[subenum(BuiltInGqlScalar)]
+    Boolean,
+    #[subenum(AdditionalGqlScalar)]
+    BigInt,
+    #[subenum(AdditionalGqlScalar)]
+    Bytes,
+    Custom(String),
+}
+
+pub fn ethabi_type_to_field_type(abi_type: &EthAbiParamType) -> anyhow::Result<FieldType> {
+    use FieldType::{ListType, NonNullType, Single};
     match abi_type {
         EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
-            Ok(NotNullable(Single(Additional(AdditionalGqlScalar::BigInt))))
+            Ok(NonNullType(Box::new(Single(GqlScalar::BigInt))))
         }
-        EthAbiParamType::Bool => Ok(NotNullable(Single(BuiltIn(BuiltInGqlScalar::Boolean)))),
+        EthAbiParamType::Bool => Ok(NonNullType(Box::new(Single(GqlScalar::Boolean)))),
         EthAbiParamType::Address
         | EthAbiParamType::Bytes
         | EthAbiParamType::String
-        | EthAbiParamType::FixedBytes(_) => {
-            Ok(NotNullable(Single(BuiltIn(BuiltInGqlScalar::String))))
-        }
+        | EthAbiParamType::FixedBytes(_) => Ok(NonNullType(Box::new(Single(GqlScalar::String)))),
         EthAbiParamType::Array(abi_type) | EthAbiParamType::FixedArray(abi_type, _) => {
-            let inner_type = ethabi_type_to_scalar(abi_type)?;
-            Ok(NotNullable(List(Box::new(inner_type))))
+            let inner_type = ethabi_type_to_field_type(abi_type)?;
+            Ok(NonNullType(Box::new(ListType(Box::new(inner_type)))))
         }
         EthAbiParamType::Tuple(_abi_types) => Err(anyhow!("Tuples not handled currently.")),
     }
 }
 
-fn gql_named_to_scalar(named_type: &str) -> GqlScalar {
-    match named_type {
-        "ID" => GqlScalar::BuiltIn(BuiltInGqlScalar::ID),
-        "String" => GqlScalar::BuiltIn(BuiltInGqlScalar::String),
-        "Int" => GqlScalar::BuiltIn(BuiltInGqlScalar::Int),
-        "Float" => GqlScalar::BuiltIn(BuiltInGqlScalar::Float), // Should we allow this type? Rounding issues will abound.
-        "Boolean" => GqlScalar::BuiltIn(BuiltInGqlScalar::Boolean),
-        "BigInt" => GqlScalar::Additional(AdditionalGqlScalar::BigInt), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
-        "Bytes" => GqlScalar::Additional(AdditionalGqlScalar::Bytes),
-        custom_type => GqlScalar::Custom(custom_type.to_string()),
+impl From<&str> for GqlScalar {
+    fn from(s: &str) -> Self {
+        match s {
+            "ID" => GqlScalar::ID,
+            "String" => GqlScalar::String,
+            "Int" => GqlScalar::Int,
+            "Float" => GqlScalar::Float, // Should we allow this type? Rounding issues will abound.
+            "Boolean" => GqlScalar::Boolean,
+            "BigInt" => GqlScalar::BigInt, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            "Bytes" => GqlScalar::Bytes,
+            custom_type => GqlScalar::Custom(custom_type.to_string()),
+        }
     }
 }
 
-fn gql_named_types_to_postgres_types(
-    scalar_type: &GqlScalar,
-    entities_set: &HashSet<String>,
-) -> Result<String, String> {
-    let converted = match scalar_type {
-        GqlScalar::BuiltIn(scalar) => {
-            use BuiltInGqlScalar::{Boolean, Float, Int, String, ID};
-            match scalar {
-                ID => "text".to_owned(),
-                String => "text".to_owned(),
-                Int => "integer".to_owned(),
-                Float => "numeric".to_owned(), // Should we allow this type? Rounding issues will abound.
-                Boolean => "boolean".to_owned(),
-            }
-        }
-        GqlScalar::Additional(scalar) => {
-            use AdditionalGqlScalar::{BigInt, Bytes};
-            match scalar {
-                Bytes => "text".to_owned(),
-                BigInt => "numeric".to_owned(), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
-            }
-        }
-        GqlScalar::Custom(named_type) => {
-            if entities_set.contains(named_type) {
-                "text".to_owned() //This would be the ID of another defined entity
-            } else {
-                let error_message =
-                    format!("EE207: Failed to parse undefined type: {}", named_type);
-                Err(error_message.to_owned())?
-            }
-        }
-    };
-    Ok(converted)
-}
-
-fn gql_type_to_postgres_type(
-    gql_type: &Type<String>,
-    entities_set: &HashSet<String>,
-) -> Result<String, String> {
-    let composed_type_name = match gql_type {
-        Type::NamedType(named) => {
-            let scalar = gql_named_to_scalar(named);
-            gql_named_types_to_postgres_types(&scalar, entities_set)?
-        }
-        Type::ListType(gql_type) => match *gql_type.clone() {
-            //Postgres doesn't support nullable types inside of arrays
-            Type::NonNullType(gql_type) =>format!("{}[]", gql_type_to_postgres_type(&gql_type, entities_set)?),
-            Type::NamedType(named)   => Err(format!(
-                "EE208: Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", named
-            ))?,
-            Type::ListType(_) => Err("EE209: Nullable multidimensional lists types are unsupported, please include a '!' for your inner list type eg. [[Int!]!]")?,
-        },
-        Type::NonNullType(gql_type) => format!(
-            "{} NOT NULL",
-            gql_type_to_postgres_type(gql_type, entities_set)?
-        ),
-    };
-    Ok(composed_type_name)
-}
-
-fn gql_type_is_optional(gql_type: &Type<String>) -> bool {
-    !matches!(gql_type, Type::NonNullType(_))
-}
-
-fn gql_type_to_postgres_relational_type(
-    field_name: &String,
-    gql_type: &Type<String>,
-    entities_set: &HashSet<String>,
-    derived_from_field_key: Option<String>,
-) -> Option<EntityRelationalTypesTemplate> {
-    match gql_type {
-        Type::NamedType(named) if entities_set.contains(named) => {
-            Some(EntityRelationalTypesTemplate {
-                relational_key: field_name.clone().to_capitalized_options(),
-                mapped_entity: named.to_capitalized_options(),
-                relationship_type: RelationshipTypeTemplate::Object,
-                is_optional: true,
-                is_array: false,
-                derived_from_field_key,
-            })
-        }
-        Type::NamedType(_) => None,
-        Type::ListType(gql_type) => {
-            match gql_type_to_postgres_relational_type(
-                field_name,
-                gql_type,
-                entities_set,
-                derived_from_field_key,
-            ) {
-                Some(mut relational_type) => {
-                    relational_type.relationship_type = RelationshipTypeTemplate::Array;
-                    relational_type.is_array = true;
-
-                    Some(relational_type)
+impl GqlScalar {
+    fn to_postgres_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<String> {
+        let converted = match self {
+            GqlScalar::ID => "text",
+            GqlScalar::String => "text",
+            GqlScalar::Int => "integer",
+            GqlScalar::Float => "numeric", // Should we allow this type? Rounding issues will abound.
+            GqlScalar::Boolean => "boolean",
+            GqlScalar::Bytes => "text",
+            GqlScalar::BigInt => "numeric", // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            GqlScalar::Custom(named_type) => {
+                if entities_set.contains(named_type) {
+                    "text" //This would be the ID of another defined entity
+                } else {
+                    Err(anyhow!(
+                        "EE207: Failed to parse undefined type: {}",
+                        named_type
+                    ))?
                 }
-                None => None,
             }
-        }
-        Type::NonNullType(gql_type) => {
-            match gql_type_to_postgres_relational_type(
-                field_name,
-                gql_type,
-                entities_set,
-                derived_from_field_key,
-            ) {
-                Some(mut relational_type) => {
-                    relational_type.is_optional = false;
-                    Some(relational_type)
+        };
+        Ok(converted.to_string())
+    }
+
+    fn to_rescript_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<String> {
+        let res_type = match self {
+            GqlScalar::ID => "string",
+            GqlScalar::String => "string",
+            GqlScalar::Int => "int",
+            GqlScalar::BigInt => "Ethers.BigInt.t",
+            GqlScalar::Float => "float",
+            GqlScalar::Bytes => "string",
+            GqlScalar::Boolean => "bool",
+            GqlScalar::Custom(entity_name) => {
+                if entities_set.contains(entity_name) {
+                    "id"
+                } else {
+                    Err(anyhow!(
+                        "EE207: Failed to parse undefined type: {}",
+                        entity_name
+                    ))?
                 }
-                None => None,
             }
-        }
+        };
+        Ok(res_type.to_string())
     }
 }
 
-fn gql_named_types_to_rescript_types(
-    named_type: &str,
-    entities_set: &HashSet<String>,
-) -> Result<String, String> {
-    match named_type {
-        "ID" => Ok("string".to_owned()),
-        "String" => Ok("string".to_owned()),
-        "Int" => Ok("int".to_owned()),
-        "BigInt" => Ok("Ethers.BigInt.t".to_owned()),
-        "Float" => Ok("float".to_owned()),
-        "Bytes" => Ok("string".to_owned()),
-        "Boolean" => Ok("bool".to_owned()),
-        custom_type => {
-            if entities_set.contains(custom_type) {
-                Ok("id".to_owned())
-            } else {
-                let error_message = format!("Failed to parse undefined type: {}", custom_type);
-                Err(error_message.to_owned())
-            }
-        }
-    }
-}
+// //impl
+// fn gql_type_is_optional(gql_type: &ObjType<String>) -> bool {
+//     !matches!(gql_type, ObjType::NonNullType(_))
+// }
+//
+// //impl
+// fn gql_type_to_postgres_relational_type(
+//     field_name: &String,
+//     gql_type: &ObjType<String>,
+//     entities_set: &HashSet<String>,
+//     derived_from_field_key: Option<String>,
+// ) -> Option<EntityRelationalTypesTemplate> {
+//     match gql_type {
+//         ObjType::NamedType(named) if entities_set.contains(named) => {
+//             Some(EntityRelationalTypesTemplate {
+//                 relational_key: field_name.clone().to_capitalized_options(),
+//                 mapped_entity: named.to_capitalized_options(),
+//                 relationship_type: RelationshipTypeTemplate::Object,
+//                 is_optional: true,
+//                 is_array: false,
+//                 derived_from_field_key,
+//             })
+//         }
+//         ObjType::NamedType(_) => None,
+//         ObjType::ListType(gql_type) => {
+//             match gql_type_to_postgres_relational_type(
+//                 field_name,
+//                 gql_type,
+//                 entities_set,
+//                 derived_from_field_key,
+//             ) {
+//                 Some(mut relational_type) => {
+//                     relational_type.relationship_type = RelationshipTypeTemplate::Array;
+//                     relational_type.is_array = true;
+//
+//                     Some(relational_type)
+//                 }
+//                 None => None,
+//             }
+//         }
+//         ObjType::NonNullType(gql_type) => {
+//             match gql_type_to_postgres_relational_type(
+//                 field_name,
+//                 gql_type,
+//                 entities_set,
+//                 derived_from_field_key,
+//             ) {
+//                 Some(mut relational_type) => {
+//                     relational_type.is_optional = false;
+//                     Some(relational_type)
+//                 }
+//                 None => None,
+//             }
+//         }
+//     }
+// }
+//
+// //impl
+// fn gql_named_types_to_rescript_types(
+//     named_type: &str,
+//     entities_set: &HashSet<String>,
+// ) -> Result<String, String> {
+//     match named_type {
+//         "ID" => Ok("string".to_owned()),
+//         "String" => Ok("string".to_owned()),
+//         "Int" => Ok("int".to_owned()),
+//         "BigInt" => Ok("Ethers.BigInt.t".to_owned()),
+//         "Float" => Ok("float".to_owned()),
+//         "Bytes" => Ok("string".to_owned()),
+//         "Boolean" => Ok("bool".to_owned()),
+//         custom_type => {
+//             if entities_set.contains(custom_type) {
+//                 Ok("id".to_owned())
+//             } else {
+//                 let error_message = format!("Failed to parse undefined type: {}", custom_type);
+//                 Err(error_message.to_owned())
+//             }
+//         }
+//     }
+// }
+//
+// //impl
+// enum NullableContainer {
+//     NotNullable,
+//     Nullable,
+// }
+//
+// //impl
+// fn gql_type_to_rescript_type_with_container_wrapper(
+//     gql_type: &ObjType<String>,
+//     container_type: NullableContainer,
+//     entities_set: &HashSet<String>,
+// ) -> Result<String, String> {
+//     let composed_type_name = match (gql_type, container_type) {
+//         (ObjType::NamedType(named), NullableContainer::NotNullable) => {
+//             gql_named_types_to_rescript_types(named, entities_set)?
+//         }
+//         (ObjType::NamedType(named), NullableContainer::Nullable) => {
+//             format!(
+//                 "option<{}>",
+//                 gql_named_types_to_rescript_types(named, entities_set)?
+//             )
+//         }
+//         (ObjType::ListType(gql_type), NullableContainer::NotNullable) => format!(
+//             "array<{}>",
+//             gql_type_to_rescript_type_with_container_wrapper(
+//                 gql_type,
+//                 NullableContainer::Nullable,
+//                 entities_set
+//             )?
+//         ),
+//         (ObjType::ListType(gql_type), NullableContainer::Nullable) => format!(
+//             "option<array<{}>>",
+//             gql_type_to_rescript_type_with_container_wrapper(
+//                 gql_type,
+//                 NullableContainer::Nullable,
+//                 entities_set
+//             )?
+//         ),
+//         (ObjType::NonNullType(gql_type), _) => (gql_type_to_rescript_type_with_container_wrapper(
+//             gql_type,
+//             NullableContainer::NotNullable,
+//             entities_set,
+//         )?)
+//         .to_string(),
+//     };
+//     Ok(composed_type_name)
+// }
+//
+// fn gql_type_to_rescript_type(
+//     gql_type: &ObjType<String>,
+//     entities_set: &HashSet<String>,
+// ) -> Result<String, String> {
+//     gql_type_to_rescript_type_with_container_wrapper(
+//         gql_type,
+//         NullableContainer::Nullable,
+//         entities_set,
+//     )
+// }
 
-enum NullableContainer {
-    NotNullable,
-    Nullable,
-}
-
-fn gql_type_to_rescript_type_with_container_wrapper(
-    gql_type: &Type<String>,
-    container_type: NullableContainer,
-    entities_set: &HashSet<String>,
-) -> Result<String, String> {
-    let composed_type_name = match (gql_type, container_type) {
-        (Type::NamedType(named), NullableContainer::NotNullable) => {
-            gql_named_types_to_rescript_types(named, entities_set)?
-        }
-        (Type::NamedType(named), NullableContainer::Nullable) => {
-            format!(
-                "option<{}>",
-                gql_named_types_to_rescript_types(named, entities_set)?
-            )
-        }
-        (Type::ListType(gql_type), NullableContainer::NotNullable) => format!(
-            "array<{}>",
-            gql_type_to_rescript_type_with_container_wrapper(
-                gql_type,
-                NullableContainer::Nullable,
-                entities_set
-            )?
-        ),
-        (Type::ListType(gql_type), NullableContainer::Nullable) => format!(
-            "option<array<{}>>",
-            gql_type_to_rescript_type_with_container_wrapper(
-                gql_type,
-                NullableContainer::Nullable,
-                entities_set
-            )?
-        ),
-        (Type::NonNullType(gql_type), _) => (gql_type_to_rescript_type_with_container_wrapper(
-            gql_type,
-            NullableContainer::NotNullable,
-            entities_set,
-        )?)
-        .to_string(),
-    };
-    Ok(composed_type_name)
-}
-
-fn gql_type_to_rescript_type(
-    gql_type: &Type<String>,
-    entities_set: &HashSet<String>,
-) -> Result<String, String> {
-    gql_type_to_rescript_type_with_container_wrapper(
-        gql_type,
-        NullableContainer::Nullable,
-        entities_set,
-    )
-}
-
-fn strip_option_from_rescript_type_str(s: &str) -> String {
+pub fn strip_option_from_rescript_type_str(s: &str) -> String {
     let prefix = "option<";
     let suffix = ">";
     if s.starts_with(prefix) && s.ends_with(suffix) {
@@ -484,79 +528,62 @@ fn strip_option_from_rescript_type_str(s: &str) -> String {
     s.to_string()
 }
 
-fn gql_type_to_capitalized_entity_name(
-    gql_type: &Type<String>,
-    entities_set: &HashSet<String>,
-) -> Option<CapitalizedOptions> {
-    match gql_type {
-        Type::NamedType(named_type) => entities_set
-            .contains(named_type)
-            .then(|| named_type.to_owned().to_capitalized_options()),
-        Type::ListType(gql_type) => gql_type_to_capitalized_entity_name(gql_type, entities_set),
-        Type::NonNullType(gql_type) => gql_type_to_capitalized_entity_name(gql_type, entities_set),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::{
-        capitalization::Capitalize,
-        config_parsing::entity_parsing::{
-            gql_type_is_optional, gql_type_to_postgres_relational_type, gql_type_to_rescript_type,
-            BuiltInGqlScalar, GqlScalar, ListOrSingle, Nullability,
-        },
-        hbs_templating::codegen_templates::{
-            EntityRelationalTypesTemplate, RelationshipTypeTemplate,
-        },
-    };
-    use graphql_parser::schema::{Definition, Type, TypeDefinition};
+    use super::{FieldType, GqlScalar, Schema};
     use std::collections::HashSet;
 
     #[test]
     fn gql_type_to_rescript_type_string() {
         let empty_set = HashSet::new();
-        let gql_string_type = Type::NamedType("String".to_owned());
-        let result = gql_type_to_rescript_type(&gql_string_type, &empty_set).unwrap();
+        let rescript_type = FieldType::Single(GqlScalar::String)
+            .to_rescript_type(&empty_set)
+            .expect("expected rescript option string");
 
-        assert_eq!(result, "option<string>".to_owned());
+        assert_eq!(rescript_type, "option<string>".to_owned());
     }
 
     #[test]
     fn gql_type_to_rescript_type_int() {
         let empty_set = HashSet::new();
-        let gql_int_type = Type::NamedType("Int".to_owned());
-        let result = gql_type_to_rescript_type(&gql_int_type, &empty_set).unwrap();
+        let rescript_type = FieldType::Single(GqlScalar::Int)
+            .to_rescript_type(&empty_set)
+            .expect("expected rescript option string");
 
-        assert_eq!(result, "option<int>".to_owned());
+        assert_eq!(rescript_type, "option<int>".to_owned());
     }
 
     #[test]
     fn gql_type_to_rescript_type_non_null_int() {
         let empty_set = HashSet::new();
-        let gql_int_type = Type::NonNullType(Box::new(Type::NamedType("Int".to_owned())));
-        let result = gql_type_to_rescript_type(&gql_int_type, &empty_set).unwrap();
+        let rescript_type = FieldType::NonNullType(Box::new(FieldType::Single(GqlScalar::Int)))
+            .to_rescript_type(&empty_set)
+            .expect("expected rescript type string");
 
-        assert_eq!(result, "int".to_owned());
+        assert_eq!(rescript_type, "int".to_owned());
     }
 
     #[test]
     fn gql_type_to_rescript_type_non_null_array() {
         let empty_set = HashSet::new();
-        let gql_int_type = Type::NonNullType(Box::new(Type::ListType(Box::new(
-            Type::NonNullType(Box::new(Type::NamedType("Int".to_owned()))),
-        ))));
-        let result = gql_type_to_rescript_type(&gql_int_type, &empty_set).unwrap();
+        let rescript_type = FieldType::NonNullType(Box::new(FieldType::ListType(Box::new(
+            FieldType::NonNullType(Box::new(FieldType::Single(GqlScalar::Int))),
+        ))))
+        .to_rescript_type(&empty_set)
+        .expect("expected rescript type string");
 
-        assert_eq!(result, "array<int>".to_owned());
+        assert_eq!(rescript_type, "array<int>".to_owned());
     }
 
     #[test]
     fn gql_type_to_rescript_type_null_array_int() {
         let empty_set = HashSet::new();
-        let gql_int_type = Type::ListType(Box::new(Type::NamedType("Int".to_owned())));
-        let result = gql_type_to_rescript_type(&gql_int_type, &empty_set).unwrap();
 
-        assert_eq!(result, "option<array<option<int>>>".to_owned());
+        let rescript_type = FieldType::ListType(Box::new(FieldType::Single(GqlScalar::Int)))
+            .to_rescript_type(&empty_set)
+            .expect("expected rescript type string");
+
+        assert_eq!(rescript_type, "option<array<option<int>>>".to_owned());
     }
 
     #[test]
@@ -564,151 +591,140 @@ mod tests {
         let mut entity_set = HashSet::new();
         let test_entity_string = String::from("TestEntity");
         entity_set.insert(test_entity_string.clone());
-        let gql_string_type = Type::NamedType(test_entity_string);
-        let result = gql_type_to_rescript_type(&gql_string_type, &entity_set).unwrap();
+        let rescript_type = FieldType::Single(GqlScalar::Custom(test_entity_string))
+            .to_rescript_type(&entity_set)
+            .expect("expected rescript type string");
 
-        assert_eq!(result, "option<id>".to_owned());
+        assert_eq!(rescript_type, "option<id>".to_owned());
     }
 
-    #[test]
-    fn gql_type_to_relational_type_scalar() {
-        let entity_set = HashSet::new();
+    // #[test]
+    // fn gql_type_to_relational_type_entity() {
+    //     let mut entity_set = HashSet::new();
+    //     let test_entity_string = String::from("TestEntity");
+    //     entity_set.insert(test_entity_string.clone());
+    //     let gql_object_type = Type::NamedType(test_entity_string.clone());
+    //     let field_name = String::from("testField1");
+    //     let derived_from_field_key = None;
+    //     let result = gql_type_to_postgres_relational_type(
+    //         &field_name,
+    //         &gql_object_type,
+    //         &entity_set,
+    //         derived_from_field_key.clone(),
+    //     );
+    //     let expect_output = Some(EntityRelationalTypesTemplate {
+    //         is_optional: true,
+    //         is_array: false,
+    //         relational_key: field_name.to_capitalized_options(),
+    //         mapped_entity: test_entity_string.to_capitalized_options(),
+    //         relationship_type: RelationshipTypeTemplate::Object,
+    //         derived_from_field_key,
+    //     });
+    //     assert_eq!(result, expect_output);
+    // }
+    //
+    // #[test]
+    // fn gql_type_to_non_null_relational_type_entity() {
+    //     let mut entity_set = HashSet::new();
+    //     let test_entity_string = String::from("TestEntity");
+    //     entity_set.insert(test_entity_string.clone());
+    //     let gql_object_type =
+    //         Type::NonNullType(Box::new(Type::NamedType(test_entity_string.clone())));
+    //     let field_name = String::from("testField1");
+    //     let derived_from_field_key = None;
+    //     let result = gql_type_to_postgres_relational_type(
+    //         &field_name,
+    //         &gql_object_type,
+    //         &entity_set,
+    //         derived_from_field_key.clone(),
+    //     );
+    //     let expect_output = Some(EntityRelationalTypesTemplate {
+    //         is_optional: false,
+    //         is_array: false,
+    //         relational_key: field_name.to_capitalized_options(),
+    //         mapped_entity: test_entity_string.to_capitalized_options(),
+    //         relationship_type: RelationshipTypeTemplate::Object,
+    //         derived_from_field_key,
+    //     });
+    //     assert_eq!(result, expect_output);
+    // }
+    //
+    // #[test]
+    // fn gql_type_to_relational_type_array_entity() {
+    //     let mut entity_set = HashSet::new();
+    //     let test_entity_string = String::from("TestEntity");
+    //     entity_set.insert(test_entity_string.clone());
+    //     let gql_array_object_type =
+    //         Type::ListType(Box::new(Type::NamedType(test_entity_string.clone())));
+    //
+    //     let field_name = String::from("testField1");
+    //     let derived_from_field_key = None;
+    //     let result = gql_type_to_postgres_relational_type(
+    //         &field_name,
+    //         &gql_array_object_type,
+    //         &entity_set,
+    //         derived_from_field_key.clone(),
+    //     );
+    //     let expect_output = Some(EntityRelationalTypesTemplate {
+    //         is_optional: true,
+    //         is_array: true,
+    //         relational_key: field_name.to_capitalized_options(),
+    //         mapped_entity: test_entity_string.to_capitalized_options(),
+    //         relationship_type: RelationshipTypeTemplate::Array,
+    //         derived_from_field_key,
+    //     });
+    //     assert_eq!(result, expect_output);
+    // }
+    // #[test]
+    // fn gql_type_to_non_null_relational_type_array_entity() {
+    //     let mut entity_set = HashSet::new();
+    //     let test_entity_string = String::from("TestEntity");
+    //     entity_set.insert(test_entity_string.clone());
+    //     let gql_array_object_type = Type::NonNullType(Box::new(Type::ListType(Box::new(
+    //         Type::NonNullType(Box::new(Type::NamedType(test_entity_string.clone()))),
+    //     ))));
+    //
+    //     let field_name = String::from("testField1");
+    //     let derived_from_field_key = None;
+    //     let result = gql_type_to_postgres_relational_type(
+    //         &field_name,
+    //         &gql_array_object_type,
+    //         &entity_set,
+    //         derived_from_field_key.clone(),
+    //     );
+    //     let expect_output = Some(EntityRelationalTypesTemplate {
+    //         is_optional: false,
+    //         is_array: true,
+    //         relational_key: field_name.to_capitalized_options(),
+    //         mapped_entity: test_entity_string.to_capitalized_options(),
+    //         relationship_type: RelationshipTypeTemplate::Array,
+    //         derived_from_field_key,
+    //     });
+    //     assert_eq!(result, expect_output);
+    // }
 
-        let gql_object_type = Type::NamedType("Int".to_owned());
-        let field_name = String::from("testField1");
-        let derived_from_field_key = None;
-        let result = gql_type_to_postgres_relational_type(
-            &field_name,
-            &gql_object_type,
-            &entity_set,
-            derived_from_field_key,
+    #[test]
+    fn field_type_is_optional_test() {
+        let test_scalar = GqlScalar::Custom(String::from("TestEntity"));
+        let test_field_type = FieldType::Single(test_scalar);
+        assert!(
+            test_field_type.is_optional(),
+            "single field should have been optional"
         );
-        let expect_output = None;
-        assert_eq!(result, expect_output);
-    }
-
-    #[test]
-    fn gql_type_to_relational_type_entity() {
-        let mut entity_set = HashSet::new();
-        let test_entity_string = String::from("TestEntity");
-        entity_set.insert(test_entity_string.clone());
-        let gql_object_type = Type::NamedType(test_entity_string.clone());
-        let field_name = String::from("testField1");
-        let derived_from_field_key = None;
-        let result = gql_type_to_postgres_relational_type(
-            &field_name,
-            &gql_object_type,
-            &entity_set,
-            derived_from_field_key.clone(),
-        );
-        let expect_output = Some(EntityRelationalTypesTemplate {
-            is_optional: true,
-            is_array: false,
-            relational_key: field_name.to_capitalized_options(),
-            mapped_entity: test_entity_string.to_capitalized_options(),
-            relationship_type: RelationshipTypeTemplate::Object,
-            derived_from_field_key,
-        });
-        assert_eq!(result, expect_output);
-    }
-
-    #[test]
-    fn gql_type_to_non_null_relational_type_entity() {
-        let mut entity_set = HashSet::new();
-        let test_entity_string = String::from("TestEntity");
-        entity_set.insert(test_entity_string.clone());
-        let gql_object_type =
-            Type::NonNullType(Box::new(Type::NamedType(test_entity_string.clone())));
-        let field_name = String::from("testField1");
-        let derived_from_field_key = None;
-        let result = gql_type_to_postgres_relational_type(
-            &field_name,
-            &gql_object_type,
-            &entity_set,
-            derived_from_field_key.clone(),
-        );
-        let expect_output = Some(EntityRelationalTypesTemplate {
-            is_optional: false,
-            is_array: false,
-            relational_key: field_name.to_capitalized_options(),
-            mapped_entity: test_entity_string.to_capitalized_options(),
-            relationship_type: RelationshipTypeTemplate::Object,
-            derived_from_field_key,
-        });
-        assert_eq!(result, expect_output);
-    }
-
-    #[test]
-    fn gql_type_to_relational_type_array_entity() {
-        let mut entity_set = HashSet::new();
-        let test_entity_string = String::from("TestEntity");
-        entity_set.insert(test_entity_string.clone());
-        let gql_array_object_type =
-            Type::ListType(Box::new(Type::NamedType(test_entity_string.clone())));
-
-        let field_name = String::from("testField1");
-        let derived_from_field_key = None;
-        let result = gql_type_to_postgres_relational_type(
-            &field_name,
-            &gql_array_object_type,
-            &entity_set,
-            derived_from_field_key.clone(),
-        );
-        let expect_output = Some(EntityRelationalTypesTemplate {
-            is_optional: true,
-            is_array: true,
-            relational_key: field_name.to_capitalized_options(),
-            mapped_entity: test_entity_string.to_capitalized_options(),
-            relationship_type: RelationshipTypeTemplate::Array,
-            derived_from_field_key,
-        });
-        assert_eq!(result, expect_output);
-    }
-    #[test]
-    fn gql_type_to_non_null_relational_type_array_entity() {
-        let mut entity_set = HashSet::new();
-        let test_entity_string = String::from("TestEntity");
-        entity_set.insert(test_entity_string.clone());
-        let gql_array_object_type = Type::NonNullType(Box::new(Type::ListType(Box::new(
-            Type::NonNullType(Box::new(Type::NamedType(test_entity_string.clone()))),
-        ))));
-
-        let field_name = String::from("testField1");
-        let derived_from_field_key = None;
-        let result = gql_type_to_postgres_relational_type(
-            &field_name,
-            &gql_array_object_type,
-            &entity_set,
-            derived_from_field_key.clone(),
-        );
-        let expect_output = Some(EntityRelationalTypesTemplate {
-            is_optional: false,
-            is_array: true,
-            relational_key: field_name.to_capitalized_options(),
-            mapped_entity: test_entity_string.to_capitalized_options(),
-            relationship_type: RelationshipTypeTemplate::Array,
-            derived_from_field_key,
-        });
-        assert_eq!(result, expect_output);
-    }
-
-    #[test]
-    fn gql_type_is_optional_test() {
-        let test_entity_string = String::from("TestEntity");
-        let test_named_entity = Type::NamedType(test_entity_string);
-        // NamedType:
-        let is_optional = gql_type_is_optional(&test_named_entity);
-        assert!(is_optional);
 
         // ListType:
-        let test_list_type = Type::ListType(Box::new(test_named_entity));
-        let is_optional = gql_type_is_optional(&test_list_type);
-        assert!(is_optional);
+        let test_list_type = FieldType::ListType(Box::new(test_field_type));
+        assert!(
+            test_list_type.is_optional(),
+            "list field should have been optional"
+        );
 
         // NonNullType
-        let gql_array_non_null_type = Type::NonNullType(Box::new(test_list_type));
-        let is_optional = gql_type_is_optional(&gql_array_non_null_type);
-        assert!(!is_optional);
+        let gql_array_non_null_type = FieldType::NonNullType(Box::new(test_list_type));
+        assert!(
+            !gql_array_non_null_type.is_optional(),
+            "non-null field should not be optioonal"
+        );
     }
 
     fn gql_type_to_postgres_type_test_helper(gql_field_str: &str) -> String {
@@ -720,18 +736,17 @@ mod tests {
         "#,
             gql_field_str
         );
-        let schema = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
-        let hash_set = HashSet::new();
-        let mut gql_type: Option<Type<String>> = None;
+        let schema_doc = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
+        let empty_entities_set = HashSet::new();
 
-        schema.definitions.iter().for_each(|def| {
-            if let Definition::TypeDefinition(TypeDefinition::Object(obj_def)) = def {
-                obj_def.fields.iter().for_each(|field| {
-                    gql_type = Some(field.field_type.clone());
-                })
-            }
-        });
-        super::gql_type_to_postgres_type(&gql_type.unwrap(), &hash_set).unwrap()
+        let schema = Schema::from_document(schema_doc).expect("bad schema");
+
+        let test_field = schema.entities[0].fields[0].clone();
+
+        test_field
+            .field_type
+            .to_postgres_type(&empty_entities_set)
+            .expect("unable to get postgres type")
     }
 
     #[test]
@@ -791,9 +806,8 @@ mod tests {
 
     #[test]
     fn test_nullability_to_string() {
-        let scalar = Nullability::NotNullable(ListOrSingle::List(Box::new(Nullability::Nullable(
-            ListOrSingle::Single(GqlScalar::BuiltIn(BuiltInGqlScalar::Int)),
-        ))));
+        use FieldType::{ListType, NonNullType, Single};
+        let scalar = NonNullType(Box::new(ListType(Box::new(Single(GqlScalar::Int)))));
 
         let expected_output = "[Int]!".to_string();
 

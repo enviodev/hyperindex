@@ -12,10 +12,10 @@ use crate::{
         chain_helpers::{self, NetworkWithExplorer},
         constants, RequiredEntity,
     },
-    config_parsing::{
-        Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
-    },
+    config_parsing::{Config, ConfigEvent, EventNameOrSig, Network},
 };
+
+use super::{LocalContractConfig, NetworkContractConfig};
 
 // Function to generate config, schema and abis from subgraph ID
 pub async fn generate_config_from_contract_address(
@@ -46,12 +46,14 @@ pub async fn generate_config_from_contract_address(
         .collect();
 
     // Create contract object to be populated
-    let contract = ConfigContract {
+    let contract = NetworkContractConfig {
         name: contract_data.name.to_string(),
-        abi_file_path: None,
-        address: NormalizedList::from_single(contract_address),
-        handler: get_event_handler_directory(language),
-        events,
+        local_contract_config: Some(LocalContractConfig {
+            handler: get_event_handler_directory(language),
+            events,
+            abi_file_path: None,
+        }),
+        address: vec![contract_address].into(),
     };
 
     // Create network object to be populated
@@ -65,6 +67,8 @@ pub async fn generate_config_from_contract_address(
     // Create config object to be populated
     let config = Config {
         name: contract_data.name.clone(),
+        //(Global contracts is none) contracts definined at the network level
+        contracts: None,
         description: name.to_string(),
         schema: None,
         networks: vec![network],

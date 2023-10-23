@@ -1,15 +1,19 @@
-use std::collections::HashMap;
-use std::error::Error;
-
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::capitalization::Capitalize;
-use crate::capitalization::CapitalizedOptions;
-use crate::config_parsing::ChainConfigTemplate;
+use crate::capitalization::{Capitalize, CapitalizedOptions};
+use crate::config_parsing::{
+    config,
+    entity_parsing::strip_option_from_rescript_type_str,
+    entity_parsing::{Entity, Field},
+    event_parsing::abi_type_to_rescript_string,
+    RpcConfig,
+};
 use crate::persisted_state::PersistedStateJsonString;
 use crate::project_paths::{handler_paths::HandlerPathsTemplate, ParsedPaths};
+use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use serde::Serialize;
+use std::collections::HashMap;
 
 pub trait HasName {
     fn set_name(&mut self, name: CapitalizedOptions);
@@ -20,6 +24,7 @@ pub struct EventParamTypeTemplate {
     pub key: String,
     pub type_rescript: String,
 }
+
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventRecordTypeTemplate {
     pub name: CapitalizedOptions,
@@ -46,6 +51,26 @@ pub struct EntityRelationalTypesTemplate {
     pub is_array: bool,
     pub is_optional: bool,
     pub derived_from_field_key: Option<String>,
+}
+
+impl EntityRelationalTypesTemplate {
+    fn from_config_entity(field: &Field, entity: &Entity) -> Self {
+        let is_array = field.field_type.is_array();
+        let relationship_type = if is_array {
+            RelationshipTypeTemplate::Array
+        } else {
+            RelationshipTypeTemplate::Object
+        };
+
+        EntityRelationalTypesTemplate {
+            relational_key: field.name.to_capitalized_options(),
+            mapped_entity: entity.name.to_capitalized_options(),
+            relationship_type,
+            is_optional: field.field_type.is_optional(),
+            is_array,
+            derived_from_field_key: field.derived_from_field.clone(),
+        }
+    }
 }
 
 pub trait HasIsDerivedFrom {
@@ -94,6 +119,38 @@ pub struct EntityParamTypeTemplate {
     pub is_derived_from: bool,
 }
 
+impl EntityParamTypeTemplate {
+    fn from_entity_field(field: &Field, config: &config::Config) -> Result<Self> {
+        let entity_names_set = config.get_entity_names_set();
+        let type_rescript = field
+            .field_type
+            .to_rescript_type(&entity_names_set)
+            .context("Failed getting rescript type")?;
+
+        let type_rescript_non_optional = strip_option_from_rescript_type_str(&type_rescript);
+
+        let type_pg = field
+            .field_type
+            .to_postgres_type(&entity_names_set)
+            .context("Failed getting postgres type")?;
+
+        let maybe_entity_name = field
+            .field_type
+            .get_maybe_entity_name()
+            .map(|s| s.to_capitalized_options());
+
+        Ok(EntityParamTypeTemplate {
+            key: field.name.clone(),
+            is_optional: field.field_type.is_optional(),
+            is_derived_from: field.derived_from_field.is_some(),
+            type_rescript,
+            type_rescript_non_optional,
+            type_pg,
+            maybe_entity_name,
+        })
+    }
+}
+
 impl HasIsDerivedFrom for EntityRelationalTypesTemplate {
     fn get_is_derived_from(&self) -> bool {
         self.derived_from_field_key.is_some()
@@ -105,6 +162,40 @@ pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EntityParamTypeTemplate>,
     pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
+}
+
+impl EntityRecordTypeTemplate {
+    fn from_config_entity(entity: &Entity, config: &config::Config) -> Result<Self> {
+        let params = entity
+            .fields
+            .iter()
+            .map(|field| EntityParamTypeTemplate::from_entity_field(field, config))
+            .collect::<Result<_>>()
+            .context(format!(
+                "Failed templating entity fields of entity: {}",
+                entity.name
+            ))?;
+
+        let entity_relational_types_templates = entity
+            .get_related_entities(config.get_entity_map())
+            .context(format!(
+                "Failed getting relational fields of entity: {}",
+                entity.name
+            ))?
+            .iter()
+            .map(|(field, related_entity)| {
+                EntityRelationalTypesTemplate::from_config_entity(field, related_entity)
+            })
+            .collect();
+
+        let relational_params = FilteredTemplateLists::new(entity_relational_types_templates);
+
+        Ok(EntityRecordTypeTemplate {
+            name: entity.name.to_capitalized_options(),
+            params,
+            relational_params,
+        })
+    }
 }
 
 impl HasName for EntityRecordTypeTemplate {
@@ -122,13 +213,25 @@ pub struct RequiredEntityEntityFieldTemplate {
     pub is_derived_from: bool,
 }
 
+impl RequiredEntityEntityFieldTemplate {
+    fn from_config_entity(field: &Field, entity: &Entity) -> Self {
+        RequiredEntityEntityFieldTemplate {
+            field_name: field.name.to_capitalized_options(),
+            type_name: entity.name.to_capitalized_options(),
+            is_optional: field.field_type.is_optional(),
+            is_array: field.field_type.is_array(),
+            is_derived_from: field.derived_from_field.is_some(),
+        }
+    }
+}
+
 impl HasIsDerivedFrom for RequiredEntityEntityFieldTemplate {
     fn get_is_derived_from(&self) -> bool {
         self.is_derived_from
     }
 }
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct RequiredEntityTemplate {
     pub name: CapitalizedOptions,
     pub labels: Option<Vec<String>>,
@@ -166,7 +269,7 @@ impl EventType {
     }
 }
 
-#[derive(Serialize, Debug, PartialEq)]
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventTemplate {
     pub name: CapitalizedOptions,
     //Used for the eventType variant in Types.res and the truncated version in postgres
@@ -175,22 +278,278 @@ pub struct EventTemplate {
     pub required_entities: Vec<RequiredEntityTemplate>,
 }
 
-#[derive(Serialize)]
+impl EventTemplate {
+    fn from_config_event(
+        config_event: &config::Event,
+        config: &config::Config,
+        contract_name: &String,
+    ) -> Result<Self> {
+        let name = config_event.event.name.to_owned().to_capitalized_options();
+        let params = config_event
+            .event
+            .inputs
+            .iter()
+            .enumerate()
+            .map(|(index, input)| {
+                let key = if input.name.is_empty() {
+                    format!("_{}", index)
+                } else {
+                    input.name.to_string()
+                };
+                EventParamTypeTemplate {
+                    key,
+                    type_rescript: abi_type_to_rescript_string(&input.into()),
+                }
+            })
+            .collect();
+
+        let all_entity_names = config.get_entity_names();
+
+        let required_entities = config_event
+            .required_entities
+            .iter()
+            .map(|required_entity| {
+                let entity = config.get_entity(&required_entity.name)
+                    .cloned()
+                    .ok_or_else(|| {
+                        // Look to see if there is a key that is similar in the keys of `entity_fields_of_required_entity_map`.
+                        // It is similar if the lower case of the key is the same as the lowercase
+                        // of the required_entity.name.
+                        let required_entity_name_lower = required_entity.name.to_lowercase();
+                        // NOTE: this is a very primative similarity metric. We could use something
+                        // like the Levenshtein distance or something more 'fuzzy'. The https://docs.rs/strsim/latest/strsim/
+                        // crate looks great for this!
+                        let key_that_is_similar = all_entity_names.iter()
+                            .find(|&key| key.to_lowercase() == required_entity_name_lower);
+
+                        match key_that_is_similar {
+                            Some(similar_key) =>
+                                anyhow!("Required entity with name {} not found in Schema - did you mean '{}'? Note, capitalization matters.", &required_entity.name, similar_key),
+                            None => anyhow!("Required entity with name {} not found in Schema. Note, capitalization matters.", &required_entity.name)
+                        }
+                    }).context("Validating 'requiredEntity' fields in config.")?;
+
+                let required_entity_entity_field_templates = entity.get_related_entities(config.get_entity_map()).context(format!("Failed retrieving related entities of required entity {}", entity.name))?
+                    .iter().map(|(field, related_entity)| RequiredEntityEntityFieldTemplate::from_config_entity(field, related_entity)).collect();
+
+                let entity_fields_of_required_entity =
+                    FilteredTemplateLists::new(required_entity_entity_field_templates);
+
+                Ok(RequiredEntityTemplate {
+                    name: required_entity.name.to_capitalized_options(),
+                    labels: required_entity.labels.clone(),
+                    array_labels: required_entity.array_labels.clone(),
+                    entity_fields_of_required_entity,
+                })
+            })
+            .collect::<Result<_>>()?;
+
+        Ok(EventTemplate {
+            name,
+            event_type: EventType::new(contract_name.clone(), config_event.event.name.clone()),
+            params,
+            required_entities,
+        })
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub events: Vec<EventTemplate>,
     pub handler: HandlerPathsTemplate,
 }
 
+impl ContractTemplate {
+    fn from_config_contract(
+        contract: &config::Contract,
+        parsed_paths: &ParsedPaths,
+        config: &config::Config,
+    ) -> Result<Self> {
+        let name = contract.name.to_capitalized_options();
+        let handler = parsed_paths.get_contract_handler_paths_template(&contract.name)?;
+        let events = contract
+            .events
+            .iter()
+            .map(|event| EventTemplate::from_config_event(event, config, &contract.name))
+            .collect::<Result<_>>()?;
+        Ok(ContractTemplate {
+            name,
+            handler,
+            events,
+        })
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct PerNetworkContractEventTemplate {
+    pub name: CapitalizedOptions,
+    //Used for the eventType variant in Types.res and the truncated version in postgres
+    pub event_type: EventType,
+}
+
+impl PerNetworkContractEventTemplate {
+    fn new(event_name: String, contract_name: String) -> Self {
+        PerNetworkContractEventTemplate {
+            name: event_name.to_capitalized_options(),
+            event_type: EventType::new(contract_name, event_name),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq, Clone)]
+pub struct PerNetworkContractTemplate {
+    name: CapitalizedOptions,
+    abi: StringifiedAbi,
+    addresses: Vec<EthAddress>,
+    events: Vec<PerNetworkContractEventTemplate>,
+}
+
+impl PerNetworkContractTemplate {
+    fn from_config_network_contract(
+        network_contract: &config::NetworkContract,
+        config: &config::Config,
+    ) -> anyhow::Result<Self> {
+        let contract = network_contract
+            .get_contract(config)
+            .context("Failed getting contract")?;
+
+        let abi = contract
+            .get_stringified_abi()
+            .context("Failed getting contract abi")?;
+
+        let events = contract
+            .get_event_names()
+            .into_iter()
+            .map(|n| PerNetworkContractEventTemplate::new(n, contract.name.clone()))
+            .collect();
+
+        Ok(PerNetworkContractTemplate {
+            name: network_contract.name.to_capitalized_options(),
+            abi,
+            addresses: network_contract.addresses.clone(),
+            events,
+        })
+    }
+}
+
+type EthAddress = String;
+type StringifiedAbi = String;
+type ServerUrl = String;
+
+#[derive(Debug, Serialize, PartialEq, Clone)]
+struct NetworkTemplate {
+    pub id: u64,
+    rpc_config: Option<RpcConfig>,
+    skar_server_url: Option<ServerUrl>,
+    eth_archive_server_url: Option<ServerUrl>,
+    start_block: i32,
+}
+
+impl NetworkTemplate {
+    fn from_config_network(network: &config::Network) -> Self {
+        NetworkTemplate {
+            id: network.id,
+            rpc_config: network.get_rpc_config(),
+            skar_server_url: network.get_skar_url(),
+            eth_archive_server_url: network.get_eth_archive_url(),
+            start_block: network.start_block,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq, Clone)]
+pub struct NetworkConfigTemplate {
+    network_config: NetworkTemplate,
+    contracts: Vec<PerNetworkContractTemplate>,
+}
+
+impl NetworkConfigTemplate {
+    fn from_config_network(network: &config::Network, config: &config::Config) -> Result<Self> {
+        let network_config = NetworkTemplate::from_config_network(network);
+        let contracts = network
+            .contracts
+            .iter()
+            .map(|network_contract| {
+                PerNetworkContractTemplate::from_config_network_contract(network_contract, config)
+            })
+            .collect::<Result<_>>()
+            .context("Failed mapping network contracts")?;
+
+        Ok(NetworkConfigTemplate {
+            network_config,
+            contracts,
+        })
+    }
+}
+
 #[derive(Serialize)]
-struct TypesTemplate {
+pub struct ProjectTemplate {
     project_name: String,
     sub_record_dependencies: Vec<EventRecordTypeTemplate>,
     contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
-    chain_configs: Vec<ChainConfigTemplate>,
+    chain_configs: Vec<NetworkConfigTemplate>,
     codegen_out_path: String,
     persisted_state: PersistedStateJsonString,
+}
+
+impl ProjectTemplate {
+    pub fn generate_templates(&self, parsed_paths: &ParsedPaths) -> Result<()> {
+        static CODEGEN_DYNAMIC_DIR: Dir<'_> =
+            include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/codegen");
+
+        let hbs = HandleBarsDirGenerator::new(
+            &CODEGEN_DYNAMIC_DIR,
+            &self,
+            &parsed_paths.project_paths.generated,
+        );
+        hbs.generate_hbs_templates()?;
+
+        Ok(())
+    }
+
+    pub fn from_config(cfg: config::Config, parsed_paths: &ParsedPaths) -> Result<Self> {
+        //TODO: make this a method in path handlers
+        let gitignore_generated_path = parsed_paths.project_paths.generated.join("*");
+        let gitignore_path_str = gitignore_generated_path
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid codegen path"))?
+            .to_string();
+
+        let contracts: Vec<ContractTemplate> = cfg
+            .get_contracts()
+            .iter()
+            .map(|cfg_contract| {
+                ContractTemplate::from_config_contract(cfg_contract, parsed_paths, &cfg)
+            })
+            .collect::<Result<_>>()
+            .context("Failed generating conract template types")?;
+
+        let entities: Vec<EntityRecordTypeTemplate> = cfg
+            .get_entities()
+            .iter()
+            .map(|entity| EntityRecordTypeTemplate::from_config_entity(entity, &cfg))
+            .collect::<Result<_>>()
+            .context("Failed generating entity template types")?;
+
+        let chain_configs: Vec<NetworkConfigTemplate> = cfg
+            .get_networks()
+            .iter()
+            .map(|network| NetworkConfigTemplate::from_config_network(network, &cfg))
+            .collect::<Result<_>>()
+            .context("Failed generating chain configs template")?;
+
+        Ok(ProjectTemplate {
+            project_name: cfg.name,
+            sub_record_dependencies: vec![], //unused atm, use empty vec to not break template
+            contracts,
+            entities,
+            chain_configs,
+            codegen_out_path: gitignore_path_str,
+            persisted_state: PersistedStateJsonString::try_default(parsed_paths)?,
+        })
+    }
 }
 
 /// transform entities into a map from entity name to a list of all linked entities (entity fields) on that entity.
@@ -222,43 +581,271 @@ pub fn entities_to_map(
     map
 }
 
-pub fn generate_templates(
-    sub_record_dependencies: Vec<EventRecordTypeTemplate>,
-    contracts: Vec<ContractTemplate>,
-    chain_configs: Vec<ChainConfigTemplate>,
-    entity_types: Vec<EntityRecordTypeTemplate>,
-    parsed_paths: &ParsedPaths,
-    project_name: String,
-) -> Result<(), Box<dyn Error>> {
-    static CODEGEN_DYNAMIC_DIR: Dir<'_> =
-        include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/codegen");
-    let mut handlebars = handlebars::Handlebars::new();
-    handlebars.set_strict_mode(true);
-    handlebars.register_escape_fn(handlebars::no_escape);
+#[cfg(test)]
+mod test {
+    use std::{fs, path::PathBuf};
 
-    //TODO: make this a method in path handlers
-    let gitignore_generated_path = parsed_paths.project_paths.generated.join("*");
-    let gitignore_path_str = gitignore_generated_path
-        .to_str()
-        .ok_or("invalid codegen path")?
-        .to_string();
-
-    let types_data = TypesTemplate {
-        sub_record_dependencies,
-        contracts,
-        entities: entity_types,
-        chain_configs,
-        codegen_out_path: gitignore_path_str,
-        project_name,
-        persisted_state: PersistedStateJsonString::try_default(parsed_paths)?,
+    use crate::{
+        capitalization::Capitalize,
+        cli_args::ProjectPathsArgs,
+        config_parsing::{self, chain_helpers::EthArchiveNetwork, RpcConfig},
+        project_paths::ParsedPaths,
     };
 
-    let hbs = HandleBarsDirGenerator::new(
-        &CODEGEN_DYNAMIC_DIR,
-        &types_data,
-        &parsed_paths.project_paths.generated,
-    );
-    hbs.generate_hbs_templates()?;
+    use super::PerNetworkContractEventTemplate;
 
-    Ok(())
+    fn get_per_contract_events_vec_helper(
+        event_names: Vec<&str>,
+        contract_name: &str,
+    ) -> Vec<PerNetworkContractEventTemplate> {
+        event_names
+            .into_iter()
+            .map(|n| PerNetworkContractEventTemplate::new(n.to_string(), contract_name.to_string()))
+            .collect()
+    }
+
+    fn get_test_path_string_helper() -> String {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        String::from(test_dir)
+    }
+
+    fn get_test_path_buf_helper() -> PathBuf {
+        PathBuf::from(&get_test_path_string_helper())
+    }
+
+    fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
+        let project_root = get_test_path_string_helper();
+        let config = String::from(format!("configs/{}", configs_file_name));
+        let generated = String::from("generated/");
+        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
+            project_root,
+            config,
+            generated,
+        })
+        .expect("Parsed paths");
+
+        let yaml_config =
+            config_parsing::deserialize_config_from_yaml(&parsed_paths.project_paths.config)
+                .expect("Config should be deserializeable");
+
+        let config = config_parsing::config::Config::parse_from_yaml_config(
+            &yaml_config,
+            &parsed_paths.project_paths,
+        )
+        .expect("Deserialized yml config should be parseable");
+
+        let project_template = super::ProjectTemplate::from_config(config, &parsed_paths)
+            .expect("should be able to get project template");
+        project_template
+    }
+
+    #[test]
+    fn check_config_with_multiple_sync_sources() {
+        let project_template = get_project_template_helper("invalid-multiple-sync-config6.yaml");
+
+        assert!(
+            project_template.chain_configs[0]
+                .network_config
+                .rpc_config
+                .is_none(),
+            "rpc config should have been none since it was defined second"
+        );
+
+        assert!(
+            project_template.chain_configs[0]
+                .network_config
+                .skar_server_url
+                .is_some(),
+            "skar config should be some since it was defined first"
+        );
+    }
+
+    #[test]
+    fn chain_configs_parsed_case_1() {
+        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
+        let abi_file_path = get_test_path_buf_helper().join(PathBuf::from("abis/Contract1.json"));
+
+        let rpc_config1 = RpcConfig::new("https://eth.com");
+
+        let network1 = super::NetworkTemplate {
+            id: 1,
+            rpc_config: Some(rpc_config1),
+            skar_server_url: None,
+            eth_archive_server_url: None,
+            start_block: 0,
+        };
+
+        let abi_unparsed_string =
+            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
+        let events =
+            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let contract1 = super::PerNetworkContractTemplate {
+            name: String::from("Contract1").to_capitalized_options(),
+            abi: abi_parsed_string,
+            addresses: vec![address1.clone()],
+            events,
+        };
+
+        let chain_config_1 = super::NetworkConfigTemplate {
+            network_config: network1,
+            contracts: vec![contract1],
+        };
+
+        let expected_chain_configs = vec![chain_config_1];
+
+        let project_template = get_project_template_helper("config1.yaml");
+
+        assert_eq!(
+            expected_chain_configs[0].network_config,
+            project_template.chain_configs[0].network_config
+        );
+        assert_eq!(expected_chain_configs, project_template.chain_configs,);
+    }
+
+    #[tokio::test]
+    async fn chain_configs_parsed_case_2() {
+        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
+        let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
+
+        let abi_file_path = get_test_path_buf_helper().join(PathBuf::from("abis/Contract1.json"));
+
+        let rpc_config1 = RpcConfig::new("https://eth.com");
+
+        let network1 = super::NetworkTemplate {
+            id: 1,
+            rpc_config: Some(rpc_config1.clone()),
+            skar_server_url: None,
+            eth_archive_server_url: None,
+            start_block: 0,
+        };
+
+        let network2 = super::NetworkTemplate {
+            id: 2,
+            rpc_config: Some(rpc_config1),
+            skar_server_url: None,
+            eth_archive_server_url: None,
+            start_block: 0,
+        };
+
+        let abi_unparsed_string =
+            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
+        let events =
+            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let contract1 = super::PerNetworkContractTemplate {
+            name: String::from("Contract1").to_capitalized_options(),
+            abi: abi_parsed_string.clone(),
+            addresses: vec![address1.clone()],
+            events,
+        };
+
+        let events =
+            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract2");
+        let contract2 = super::PerNetworkContractTemplate {
+            name: String::from("Contract2").to_capitalized_options(),
+            abi: abi_parsed_string.clone(),
+            addresses: vec![address2.clone()],
+            events,
+        };
+
+        let chain_config_1 = super::NetworkConfigTemplate {
+            network_config: network1,
+            contracts: vec![contract1],
+        };
+        let chain_config_2 = super::NetworkConfigTemplate {
+            network_config: network2,
+            contracts: vec![contract2],
+        };
+
+        let expected_chain_configs = vec![chain_config_1, chain_config_2];
+
+        let project_template = get_project_template_helper("config2.yaml");
+
+        assert_eq!(expected_chain_configs, project_template.chain_configs);
+    }
+
+    #[test]
+    fn convert_to_chain_configs_case_3() {
+        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
+
+        let abi_file_path = get_test_path_buf_helper().join(PathBuf::from("abis/Contract1.json"));
+
+        let network1 = super::NetworkTemplate {
+            id: 1,
+            rpc_config: None,
+            skar_server_url: Some("http://eth.hypersync.bigdevenergy.link:1100".to_string()),
+            eth_archive_server_url: None,
+            start_block: 0,
+        };
+
+        let events =
+            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+
+        let abi_unparsed_string =
+            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
+        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
+        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
+        let contract1 = super::PerNetworkContractTemplate {
+            name: String::from("Contract1").to_capitalized_options(),
+            abi: abi_parsed_string.clone(),
+            addresses: vec![address1.clone()],
+            events,
+        };
+
+        let chain_config_1 = super::NetworkConfigTemplate {
+            network_config: network1,
+            contracts: vec![contract1],
+        };
+
+        let expected_chain_configs = vec![chain_config_1];
+
+        let project_template = get_project_template_helper("config3.yaml");
+
+        assert_eq!(expected_chain_configs, project_template.chain_configs);
+    }
+
+    #[test]
+    fn convert_to_chain_configs_case_4() {
+        let network1 = super::NetworkTemplate {
+            id: 1,
+            rpc_config: None,
+            skar_server_url: Some("https://myskar.com".to_string()),
+            eth_archive_server_url: None,
+            start_block: 0,
+        };
+
+        let network2 = super::NetworkTemplate {
+            id: EthArchiveNetwork::Avalanche as u64,
+            rpc_config: None,
+            skar_server_url: None,
+            //Should default to eth archive since there is no skar endpoint at this id
+            eth_archive_server_url: Some("http://46.4.5.110:72".to_string()),
+            start_block: 0,
+        };
+
+        let chain_config_1 = super::NetworkConfigTemplate {
+            network_config: network1,
+            contracts: vec![],
+        };
+
+        let chain_config_2 = super::NetworkConfigTemplate {
+            network_config: network2,
+            contracts: vec![],
+        };
+
+        let expected_chain_configs = vec![chain_config_1, chain_config_2];
+        let project_template = get_project_template_helper("config4.yaml");
+
+        assert_eq!(expected_chain_configs, project_template.chain_configs);
+    }
+
+    #[test]
+    #[should_panic]
+    fn convert_to_chain_configs_case_5() {
+        //Bad chain ID without sync config should panic
+        get_project_template_helper("config5.yaml");
+    }
 }

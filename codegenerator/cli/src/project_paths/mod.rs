@@ -1,8 +1,5 @@
-use std::{
-    // collections:HashMap,
-    error::Error,
-    path::{Component, PathBuf},
-};
+use anyhow::anyhow;
+use std::path::{Component, PathBuf};
 
 use crate::cli_args::{ProjectPathsArgs, ToProjectPathsArgs};
 
@@ -18,18 +15,18 @@ pub struct ProjectPaths {
 }
 
 impl ProjectPaths {
-    pub fn new(project_paths_args: ProjectPathsArgs) -> Result<ProjectPaths, Box<dyn Error>> {
+    pub fn new(project_paths_args: ProjectPathsArgs) -> anyhow::Result<ProjectPaths> {
         let project_root = PathBuf::from(project_paths_args.project_root);
         let generated_relative_path = PathBuf::from(&project_paths_args.generated);
         if let Some(Component::ParentDir) = generated_relative_path.components().peekable().peek() {
-            return Err("Generated folder must be in project directory".into());
+            return Err(anyhow!("Generated folder must be in project directory"));
         }
         let generated_joined: PathBuf = project_root.join(generated_relative_path);
         let generated = path_utils::normalize_path(&generated_joined);
 
         let config_relative_path = PathBuf::from(&project_paths_args.config);
         if let Some(Component::ParentDir) = config_relative_path.components().peekable().peek() {
-            return Err("Config path must be in project directory".into());
+            return Err(anyhow!("Config path must be in project directory"));
         }
 
         let config_joined: PathBuf = project_root.join(config_relative_path);

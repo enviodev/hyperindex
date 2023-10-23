@@ -1,31 +1,24 @@
+use self::hypersync_endpoints::HypersyncEndpoint;
+use crate::links;
+use crate::project_paths::ParsedPaths;
+use crate::project_paths::{path_utils, ProjectPaths};
+use crate::utils::normalized_list::NormalizedList;
+use anyhow::{anyhow, Context};
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
-use crate::hbs_templating::codegen_templates::EventType;
-use crate::project_paths::handler_paths::ContractUniqueId;
-use crate::utils::normalized_list::NormalizedList;
-use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
-    project_paths::ParsedPaths,
-};
-
-use anyhow::{anyhow, Context};
-
 pub mod chain_helpers;
+pub mod config;
+pub mod constants;
+pub mod contract_import;
 pub mod entity_parsing;
 pub mod event_parsing;
+pub mod graph_migration;
 pub mod hypersync_endpoints;
 pub mod validation;
-
-pub mod constants;
-use crate::links;
-
-use self::hypersync_endpoints::HypersyncEndpoint;
-pub mod contract_import;
-pub mod graph_migration;
 
 type NetworkId = u64;
 
@@ -39,6 +32,28 @@ pub struct GlobalContractConfig {
     events: Vec<ConfigEvent>,
 }
 
+impl GlobalContractConfig {
+    pub fn parse_abi(
+        &self,
+        project_paths: &ProjectPaths,
+    ) -> anyhow::Result<Option<ethers::abi::Contract>> {
+        match &self.abi_file_path {
+            None => Ok(None),
+            Some(abi_path_relative_string) => {
+                let relative_path_buf = PathBuf::from(abi_path_relative_string);
+                let abi_path =
+                    path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)
+                        .context("Failed getting abi path")?;
+                let parsed = parse_contract_abi(abi_path).context(format!(
+                    "Failed parsing global contract {} abi {}",
+                    self.name, abi_path_relative_string
+                ))?;
+                Ok(Some(parsed))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
     name: String,
@@ -48,6 +63,52 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub networks: Vec<Network>,
+}
+
+impl Config {
+    pub fn get_global_contract(
+        &self,
+        contract_name: String,
+    ) -> anyhow::Result<&GlobalContractConfig> {
+        //If local config doesn't exist try get from globally defined contract
+        let global_contracts = self
+            .contracts
+            .as_ref()
+            .ok_or_else(|| anyhow!("No top level 'contracts' defined"))?;
+
+        let contract = global_contracts
+            .iter()
+            .find(|g_contract| g_contract.name == contract_name)
+            .ok_or_else(|| {
+                anyhow!(
+                    "No contract with name {} defined in top level 'contracts' config",
+                    contract_name
+                )
+            })?;
+
+        Ok(contract)
+    }
+
+    pub fn get_top_level_contract_events(
+        &self,
+        contract_name: String,
+    ) -> anyhow::Result<Vec<ConfigEvent>> {
+        let global_contract = self.get_global_contract(contract_name)?;
+
+        Ok(global_contract.events.clone())
+    }
+
+    pub fn get_events_from_network_contract(
+        &self,
+        contract: &NetworkContractConfig,
+    ) -> anyhow::Result<Vec<ConfigEvent>> {
+        contract
+            .local_contract_config
+            .as_ref()
+            .map(|local_config| Ok(local_config.events.clone()))
+            .unwrap_or_else(|| self.get_top_level_contract_events(contract.name.clone()))
+            .context("Failed searching for contract events in globally defined 'contracts'")
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -77,6 +138,31 @@ pub struct Network {
     sync_source: Option<SyncSourceConfig>,
     start_block: i32,
     pub contracts: Vec<NetworkContractConfig>,
+}
+
+impl Network {
+    fn get_sync_source_with_default(&self) -> anyhow::Result<SyncSourceConfig> {
+        match &self.sync_source {
+            Some(s) => Ok(s.clone()),
+            None => {
+                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(self.id.clone())
+                    .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
+
+                let hypersync_config = match defualt_hypersync_endpoint {
+                    HypersyncEndpoint::Skar(skar_url) => HypersyncConfig {
+                        worker_type: HypersyncWorkerType::Skar,
+                        endpoint_url: skar_url,
+                    },
+                    HypersyncEndpoint::EthArchive(eth_archive_url) => HypersyncConfig {
+                        worker_type: HypersyncWorkerType::EthArchive,
+                        endpoint_url: eth_archive_url,
+                    },
+                };
+
+                Ok(SyncSourceConfig::HypersyncConfig(hypersync_config))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -145,6 +231,17 @@ pub struct RpcConfig {
     unstable__sync_config: SyncConfigUnstable,
 }
 
+impl RpcConfig {
+    //used only in tests
+    #[cfg(test)]
+    pub fn new(url: &str) -> Self {
+        RpcConfig {
+            url: String::from(url),
+            unstable__sync_config: default_unstable__sync_config(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ConfigContract {
     pub name: String,
@@ -166,11 +263,33 @@ pub struct NetworkContractConfig {
     //there is a global config for the contract
     pub local_contract_config: Option<LocalContractConfig>,
 }
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct LocalContractConfig {
     pub abi_file_path: Option<String>,
     pub handler: String,
     events: Vec<ConfigEvent>,
+}
+
+impl LocalContractConfig {
+    pub fn parse_abi(
+        &self,
+        project_paths: &ProjectPaths,
+    ) -> anyhow::Result<Option<ethers::abi::Contract>> {
+        match &self.abi_file_path {
+            None => Ok(None),
+            Some(abi_path_relative_string) => {
+                let relative_path_buf = PathBuf::from(abi_path_relative_string);
+                let abi_path =
+                    path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)?;
+                let parsed = parse_contract_abi(abi_path).context(format!(
+                    "Failed parsing local network contract abi {}",
+                    abi_path_relative_string
+                ))?;
+                Ok(Some(parsed))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -181,6 +300,23 @@ pub struct ConfigEvent {
     required_entities: Option<Vec<RequiredEntity>>,
 }
 
+impl ConfigEvent {
+    //used only in tests
+    #[cfg(test)]
+    pub fn new_name(name: &str) -> Self {
+        ConfigEvent {
+            event: EventNameOrSig::Name(String::from(name)),
+            required_entities: None,
+        }
+    }
+
+    //used only in tests
+    #[cfg(test)]
+    pub fn get_name(&self) -> String {
+        self.event.get_name()
+    }
+}
+
 #[derive(Debug, PartialEq, Deserialize, Clone)]
 #[serde(try_from = "String")]
 pub enum EventNameOrSig {
@@ -188,14 +324,50 @@ pub enum EventNameOrSig {
     Event(EthAbiEvent),
 }
 
+impl EventNameOrSig {
+    pub fn get_abi_event(
+        &self,
+        opt_abi: &Option<ethers::abi::Contract>,
+    ) -> anyhow::Result<EthAbiEvent> {
+        match self {
+            EventNameOrSig::Event(e) => Ok(e.clone()),
+            EventNameOrSig::Name(config_event_name) => match opt_abi {
+                Some(contract_abi) => {
+                    let event = contract_abi.event(config_event_name).context(format!(
+                        "Failed retrieving event {} from abi",
+                        config_event_name
+                    ))?;
+                    Ok(event.clone())
+                }
+                None => Err(anyhow!(
+                    "No abi file provided for event {}",
+                    config_event_name
+                )),
+            },
+        }
+    }
+}
+
+fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
+    let abi_file = std::fs::read_to_string(&abi_path).context(format!("Failed to read abi"))?;
+
+    let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
+        "Failed to deserialize ABI at {} \
+            -  Please ensure the ABI file is formatted correctly or contact the team.",
+        abi_path.to_str().unwrap_or_else(|| "Bad abi_path name")
+    ))?;
+
+    Ok(abi)
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RequiredEntity {
-    name: String,
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    labels: Option<Vec<String>>,
+    pub labels: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    array_labels: Option<Vec<String>>,
+    pub array_labels: Option<Vec<String>>,
 }
 
 impl Serialize for EventNameOrSig {
@@ -234,15 +406,6 @@ impl ToHumanReadable for ethers::abi::Event {
                 .join(", "),
             if self.anonymous { " anonymous" } else { "" },
         )
-    }
-}
-
-impl<T: Serialize + Clone> Serialize for NormalizedList<T> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        self.inner.serialize(serializer)
     }
 }
 
@@ -286,48 +449,6 @@ impl EventNameOrSig {
     }
 }
 
-type StringifiedAbi = String;
-type EthAddress = String;
-type ServerUrl = String;
-
-#[derive(Debug, Serialize, PartialEq, Clone)]
-struct NetworkConfigTemplate {
-    pub id: NetworkId,
-    rpc_config: Option<RpcConfig>,
-    skar_server_url: Option<ServerUrl>,
-    eth_archive_server_url: Option<ServerUrl>,
-    start_block: i32,
-}
-
-#[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct ChainConfigTemplate {
-    network_config: NetworkConfigTemplate,
-    contracts: Vec<ContractTemplate>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct ChainConfigEvent {
-    name: CapitalizedOptions,
-    event_type: EventType,
-}
-
-impl ChainConfigEvent {
-    pub fn new(contract_name: String, event_name: String) -> Self {
-        let name = event_name.to_capitalized_options();
-        let event_type = EventType::new(contract_name, event_name);
-
-        ChainConfigEvent { name, event_type }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct ContractTemplate {
-    name: CapitalizedOptions,
-    abi: StringifiedAbi,
-    addresses: Vec<EthAddress>,
-    events: Vec<ChainConfigEvent>,
-}
-
 fn strip_to_letters(string: &str) -> String {
     let mut pg_friendly_name = String::new();
     for c in string.chars() {
@@ -359,161 +480,12 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Con
     Ok(deserialized_yaml)
 }
 
-pub fn get_global_contract(
-    config: &Config,
-    contract_name: String,
-) -> anyhow::Result<&GlobalContractConfig> {
-    //If local config doesn't exist try get from globally defined contract
-    let global_contracts = config
-        .contracts
-        .as_ref()
-        .ok_or_else(|| anyhow!("No top level 'contracts' defined"))?;
-    let contract = global_contracts
-        .iter()
-        .find(|g_contract| g_contract.name == contract_name)
-        .ok_or_else(|| {
-            anyhow!(
-                "No contract with name {} defined in top level 'contracts' config",
-                contract_name
-            )
-        })?;
-
-    Ok(contract)
-}
-
-fn get_top_level_contract_events(
-    config: &Config,
-    contract_name: String,
-) -> anyhow::Result<Vec<ConfigEvent>> {
-    let global_contract = get_global_contract(config, contract_name)?;
-
-    Ok(global_contract.events.clone())
-}
-
-fn get_events_from_network_contract(
-    contract: &NetworkContractConfig,
-    config: &Config,
-) -> anyhow::Result<Vec<ConfigEvent>> {
-    contract
-        .local_contract_config
-        .as_ref()
-        .map(|local_config| Ok(local_config.events.clone()))
-        .unwrap_or_else(|| get_top_level_contract_events(config, contract.name.clone()))
-        .context("Failed searching for contract events in globally defined 'contracts'")
-}
-
-pub async fn convert_config_to_chain_configs(
-    parsed_paths: &ParsedPaths,
-) -> anyhow::Result<Vec<ChainConfigTemplate>> {
-    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
-
-    let mut chain_configs = Vec::new();
-    for network in config.networks.iter() {
-        let mut contract_templates = Vec::new();
-
-        for contract in network.contracts.iter() {
-            let contract_unique_id = ContractUniqueId {
-                network_id: network.id,
-                name: contract.name.clone(),
-            };
-
-            let contract_events = get_events_from_network_contract(contract, &config)
-                .context(format!("Deserialising contract {} events", contract.name))?;
-
-            let parsed_abi_from_file = parsed_paths.get_contract_abi(&contract_unique_id)?;
-
-            let mut reduced_abi = ethers::abi::Contract::default();
-
-            for config_event in contract_events.iter() {
-                let abi_event = match &config_event.event {
-                    EventNameOrSig::Name(config_event_name) => match &parsed_abi_from_file {
-                        Some(contract_abi) => {
-                            contract_abi.event(config_event_name).context(format!(
-                            "EE300: event \"{}\" cannot be parsed the provided abi for contract {}",
-                            config_event_name, contract.name
-                        ))?
-                        }
-                        None => {
-                            let message = anyhow!("EE301: Please add abi_file_path for contract {} to your config to parse event {} or define the signature in the config", contract.name, config_event_name);
-                            Err(message)?
-                        }
-                    },
-                    EventNameOrSig::Event(abi_event) => abi_event,
-                };
-
-                reduced_abi
-                    .events
-                    .entry(abi_event.name.clone())
-                    .or_default()
-                    .push(abi_event.clone());
-            }
-
-            let stringified_abi = serde_json::to_string(&reduced_abi)?;
-            let contract_template = ContractTemplate {
-                name: contract.name.to_capitalized_options(),
-                abi: stringified_abi,
-                addresses: contract.address.clone().into(),
-                events: contract_events
-                    .iter()
-                    .map(|config_event| {
-                        ChainConfigEvent::new(contract.name.clone(), config_event.event.get_name())
-                    })
-                    .collect(),
-            };
-            contract_templates.push(contract_template);
-        }
-
-        let (rpc_config, skar_server_url, eth_archive_server_url) = match &network.sync_source {
-            Some(sync_source) => match sync_source {
-                SyncSourceConfig::RpcConfig(rpc_config) => (Some(rpc_config.clone()), None, None),
-                SyncSourceConfig::HypersyncConfig(hypersync_config) => {
-                    match hypersync_config.worker_type {
-                        HypersyncWorkerType::Skar => {
-                            (None, Some(hypersync_config.endpoint_url.clone()), None)
-                        }
-                        HypersyncWorkerType::EthArchive => {
-                            (None, None, Some(hypersync_config.endpoint_url.clone()))
-                        }
-                    }
-                }
-            },
-            None => {
-                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id)
-                    .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
-
-                defualt_hypersync_endpoint.check_endpoint_health().await.context(format!("EE107: hypersync endpoint unhealthy at network {}, please provide rpc_config or hypersync_config. Read more in our docs https://docs.envio.dev/docs/configuration-file", network.id ))?;
-                match defualt_hypersync_endpoint {
-                    HypersyncEndpoint::Skar(skar_url) => (None, Some(skar_url), None),
-                    HypersyncEndpoint::EthArchive(eth_archive_url) => {
-                        (None, None, Some(eth_archive_url))
-                    }
-                }
-            }
-        };
-
-        let network_config = NetworkConfigTemplate {
-            id: network.id.clone(),
-            start_block: network.start_block.clone(),
-            rpc_config,
-            skar_server_url,
-            eth_archive_server_url,
-        };
-
-        let chain_config = ChainConfigTemplate {
-            network_config,
-            contracts: contract_templates,
-        };
-        chain_configs.push(chain_config);
-    }
-    Ok(chain_configs)
-}
-
 pub fn get_project_name_from_config(parsed_paths: &ParsedPaths) -> Result<String, Box<dyn Error>> {
     let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
     Ok(config.name)
 }
 
-pub fn is_rescript(handler_path: &HashMap<ContractUniqueId, PathBuf>) -> bool {
+pub fn is_rescript(handler_path: &HashMap<String, PathBuf>) -> bool {
     for handler_path in handler_path.values() {
         if let Ok(path_str) = handler_path.clone().into_os_string().into_string() {
             if path_str.ends_with(".bs.js") {
@@ -525,19 +497,12 @@ pub fn is_rescript(handler_path: &HashMap<ContractUniqueId, PathBuf>) -> bool {
 }
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::PathBuf;
 
     use ethers::abi::{Event, EventParam, ParamType};
 
-    use crate::capitalization::Capitalize;
     use crate::config_parsing::{
-        EventNameOrSig, LocalContractConfig, NetworkConfigTemplate, NetworkContractConfig,
-        NormalizedList,
+        EventNameOrSig, LocalContractConfig, NetworkContractConfig, NormalizedList,
     };
-    use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
-
-    use super::{ChainConfigEvent, ChainConfigTemplate};
 
     #[test]
     fn test_flatten_deserialize_local_contract() {
@@ -602,352 +567,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             deserialized,
             NormalizedList::from(vec!["0x123".to_string(), "0x456".to_string()])
         );
-    }
-    #[tokio::test]
-    async fn check_config_with_multiple_sync_sources() {
-        let project_root = String::from("test");
-        let config = String::from("configs/invalid-multiple-sync-config6.yaml");
-        let generated = String::from("generated/");
-        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
-        let parsed = super::convert_config_to_chain_configs(&parsed_paths)
-            .await
-            .unwrap();
-
-        assert!(
-            parsed[0].network_config.rpc_config.is_none(),
-            "rpc config should have been none since it was defined second"
-        );
-
-        assert!(
-            parsed[0].network_config.skar_server_url.is_some(),
-            "skar config should be some since it was defined first"
-        );
-    }
-
-    #[tokio::test]
-    async fn convert_to_chain_configs_case_1() {
-        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-        let abi_file_path = PathBuf::from("test/abis/Contract1.json");
-
-        let event1 = super::ConfigEvent {
-            event: EventNameOrSig::Name(String::from("NewGravatar")),
-            required_entities: None,
-        };
-
-        let event2 = super::ConfigEvent {
-            event: EventNameOrSig::Name(String::from("UpdatedGravatar")),
-            required_entities: None,
-        };
-
-        let sync_config = super::SyncConfigUnstable {
-            initial_block_interval: 10000,
-            interval_ceiling: 10000,
-            backoff_multiplicative: 0.8,
-            acceleration_additive: 2000,
-            backoff_millis: 5000,
-            query_timeout_millis: 20000,
-        };
-
-        let rpc_config1 = super::RpcConfig {
-            url: String::from("https://eth.com"),
-            unstable__sync_config: sync_config,
-        };
-
-        let network1 = NetworkConfigTemplate {
-            id: 1,
-            rpc_config: Some(rpc_config1),
-            skar_server_url: None,
-            eth_archive_server_url: None,
-            start_block: 0,
-        };
-
-        let project_root = String::from("test");
-        let config = String::from("configs/config1.yaml");
-        let generated = String::from("generated/");
-        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
-        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths)
-            .await
-            .unwrap();
-        let abi_unparsed_string =
-            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
-        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
-        let contract1_name = String::from("Contract1");
-        let contract1 = super::ContractTemplate {
-            name: contract1_name.to_capitalized_options(),
-            abi: abi_parsed_string,
-            addresses: vec![address1.clone()],
-            events: vec![
-                ChainConfigEvent::new(contract1_name.clone(), event1.event.get_name()),
-                ChainConfigEvent::new(contract1_name.clone(), event2.event.get_name()),
-            ],
-        };
-
-        let chain_config_1 = ChainConfigTemplate {
-            network_config: network1,
-            contracts: vec![contract1],
-        };
-
-        let expected_chain_configs = vec![chain_config_1];
-
-        assert_eq!(
-            expected_chain_configs[0].network_config,
-            chain_configs[0].network_config
-        );
-        assert_eq!(expected_chain_configs, chain_configs,);
-    }
-
-    #[tokio::test]
-    async fn convert_to_chain_configs_case_2() {
-        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-        let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
-
-        let abi_file_path = PathBuf::from("test/abis/Contract1.json");
-
-        let event1 = super::ConfigEvent {
-            event: EventNameOrSig::Name(String::from("NewGravatar")),
-            required_entities: None,
-        };
-
-        let event2 = super::ConfigEvent {
-            event: EventNameOrSig::Name(String::from("UpdatedGravatar")),
-            required_entities: None,
-        };
-
-        let sync_config = super::SyncConfigUnstable {
-            initial_block_interval: 10000,
-            interval_ceiling: 10000,
-            backoff_multiplicative: 0.8,
-            acceleration_additive: 2000,
-            backoff_millis: 5000,
-            query_timeout_millis: 20000,
-        };
-
-        let rpc_config1 = super::RpcConfig {
-            url: String::from("https://eth.com"),
-            unstable__sync_config: sync_config,
-        };
-
-        let network1 = NetworkConfigTemplate {
-            id: 1,
-            rpc_config: Some(rpc_config1),
-            skar_server_url: None,
-            eth_archive_server_url: None,
-            start_block: 0,
-        };
-
-        let sync_config = super::SyncConfigUnstable {
-            initial_block_interval: 10000,
-            interval_ceiling: 10000,
-            backoff_multiplicative: 0.8,
-            acceleration_additive: 2000,
-            backoff_millis: 5000,
-            query_timeout_millis: 20000,
-        };
-
-        let rpc_config2 = super::RpcConfig {
-            url: String::from("https://eth.com"),
-            unstable__sync_config: sync_config,
-        };
-
-        let network2 = NetworkConfigTemplate {
-            id: 2,
-            rpc_config: Some(rpc_config2),
-            skar_server_url: None,
-            eth_archive_server_url: None,
-            start_block: 0,
-        };
-
-        let project_root = String::from("test");
-        let config = String::from("configs/config2.yaml");
-        let generated = String::from("generated/");
-        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
-
-        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths)
-            .await
-            .unwrap();
-
-        let abi_unparsed_string =
-            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
-        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
-        let contract1_name = String::from("Contract1");
-        let contract1 = super::ContractTemplate {
-            name: contract1_name.to_capitalized_options(),
-            abi: abi_parsed_string.clone(),
-            addresses: vec![address1.clone()],
-            events: vec![
-                ChainConfigEvent::new(contract1_name.clone(), event1.event.get_name()),
-                ChainConfigEvent::new(contract1_name.clone(), event2.event.get_name()),
-            ],
-        };
-        let contract2_name = String::from("Contract2");
-        let contract2 = super::ContractTemplate {
-            name: contract2_name.to_capitalized_options(),
-            abi: abi_parsed_string.clone(),
-            addresses: vec![address2.clone()],
-            events: vec![
-                ChainConfigEvent::new(contract2_name.clone(), event1.event.get_name()),
-                ChainConfigEvent::new(contract2_name.clone(), event2.event.get_name()),
-            ],
-        };
-
-        let chain_config_1 = ChainConfigTemplate {
-            network_config: network1,
-            contracts: vec![contract1],
-        };
-        let chain_config_2 = ChainConfigTemplate {
-            network_config: network2,
-            contracts: vec![contract2],
-        };
-
-        let expected_chain_configs = vec![chain_config_1, chain_config_2];
-
-        assert_eq!(chain_configs, expected_chain_configs);
-    }
-
-    #[tokio::test]
-    async fn convert_to_chain_configs_case_3() {
-        let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-
-        let abi_file_path = PathBuf::from("test/abis/Contract1.json");
-
-        let event1 = super::ConfigEvent {
-            event: EventNameOrSig::Name(String::from("NewGravatar")),
-            required_entities: None,
-        };
-
-        let event2 = super::ConfigEvent {
-            event: EventNameOrSig::Name(String::from("UpdatedGravatar")),
-            required_entities: None,
-        };
-
-        let network1 = NetworkConfigTemplate {
-            id: 1,
-            rpc_config: None,
-            skar_server_url: Some("http://eth.hypersync.bigdevenergy.link:1100".to_string()),
-            eth_archive_server_url: None,
-            start_block: 0,
-        };
-
-        let project_root = String::from("test");
-        let config = String::from("configs/config3.yaml");
-        let generated = String::from("generated/");
-        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
-
-        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths)
-            .await
-            .unwrap();
-
-        let abi_unparsed_string =
-            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
-        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
-
-        let contract1_name = String::from("Contract1");
-        let contract1 = super::ContractTemplate {
-            name: contract1_name.to_capitalized_options(),
-            abi: abi_parsed_string.clone(),
-            addresses: vec![address1.clone()],
-            events: vec![
-                ChainConfigEvent::new(contract1_name.clone(), event1.event.get_name()),
-                ChainConfigEvent::new(contract1_name.clone(), event2.event.get_name()),
-            ],
-        };
-
-        let chain_config_1 = ChainConfigTemplate {
-            network_config: network1,
-            contracts: vec![contract1],
-        };
-
-        let expected_chain_configs = vec![chain_config_1];
-
-        assert_eq!(chain_configs, expected_chain_configs);
-    }
-
-    #[tokio::test]
-    async fn convert_to_chain_configs_case_4() {
-        let network1 = NetworkConfigTemplate {
-            id: 1,
-            rpc_config: None,
-            skar_server_url: Some("https://myskar.com".to_string()),
-            eth_archive_server_url: None,
-            start_block: 0,
-        };
-
-        let network2 = NetworkConfigTemplate {
-            id: 43114,
-            rpc_config: None,
-            skar_server_url: None,
-            //Should default to eth archive since there is no skar endpoint at this id
-            eth_archive_server_url: Some("http://46.4.5.110:72".to_string()),
-            start_block: 0,
-        };
-
-        let project_root = String::from("test");
-        let config = String::from("configs/config4.yaml");
-        let generated = String::from("generated/");
-        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
-        let chain_configs = super::convert_config_to_chain_configs(&parsed_paths)
-            .await
-            .unwrap();
-
-        let chain_config_1 = ChainConfigTemplate {
-            network_config: network1,
-            contracts: vec![],
-        };
-
-        let chain_config_2 = ChainConfigTemplate {
-            network_config: network2,
-            contracts: vec![],
-        };
-
-        let expected_chain_configs = vec![chain_config_1, chain_config_2];
-        assert_eq!(expected_chain_configs, chain_configs);
-    }
-
-    #[tokio::test]
-    #[should_panic]
-    async fn convert_to_chain_configs_case_5() {
-        //Bad chain ID without sync config should panic
-        let project_root = String::from("test");
-        let config = String::from("configs/config5.yaml");
-        let generated = String::from("generated/");
-        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
-
-        super::convert_config_to_chain_configs(&parsed_paths)
-            .await
-            .unwrap();
     }
 
     #[test]
