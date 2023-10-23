@@ -230,6 +230,8 @@ let trackAllTables = async () => {
   let _ = await clearHasuraMetadata()
   let _ = await trackTable(~tableName="raw_events")
   let _ = await createSelectPermissions(~tableName="raw_events")
+  let _ = await trackTable(~tableName="chain_metadata")
+  let _ = await createSelectPermissions(~tableName="chain_metadata")
   let _ = await trackTable(~tableName="dynamic_contract_registry")
   let _ = await createSelectPermissions(~tableName="dynamic_contract_registry")
   let _ = await trackTable(~tableName="event_sync_state")

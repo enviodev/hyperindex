@@ -136,6 +136,12 @@ module Make = (HyperSync: HyperSync.S) => {
     let currentHeight = ref(initialHeight)
     let fromBlock = ref(startBlock)
 
+    DbFunctions.ChainMetadata.setChainMetadataRow(
+      ~chainId=chainConfig.chainId,
+      ~startBlock,
+      ~blockHeight=initialHeight,
+    )->ignore
+
     let checkReadyToContinue = async () => {
       if fromBlock.contents >= currentHeight.contents {
         logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
@@ -150,6 +156,12 @@ module Make = (HyperSync: HyperSync.S) => {
               ~logger,
             )
           )
+
+        DbFunctions.ChainMetadata.setChainMetadataRow(
+          ~chainId=chainConfig.chainId,
+          ~startBlock,
+          ~blockHeight=currentHeight.contents,
+        )->ignore
       }
       true
     }
@@ -202,7 +214,18 @@ module Make = (HyperSync: HyperSync.S) => {
       let currentBatchFromBlock = fromBlock.contents
 
       //set height and next from block
-      currentHeight := pageUnsafe.archiveHeight
+      //TODO save this to the db in the background
+
+      if pageUnsafe.archiveHeight > currentHeight.contents {
+        DbFunctions.ChainMetadata.setChainMetadataRow(
+          ~chainId=chainConfig.chainId,
+          ~startBlock,
+          ~blockHeight=pageUnsafe.archiveHeight,
+        )->ignore
+
+        currentHeight := pageUnsafe.archiveHeight
+      }
+
       fromBlock := pageUnsafe.nextBlock
 
       //Start fetching next page async before parsing current page

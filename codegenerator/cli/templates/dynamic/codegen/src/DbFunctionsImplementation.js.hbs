@@ -27,6 +27,25 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     `;
 };
 
+module.exports.setChainMetadata = (sql, entityDataArray) => {
+  return (sql`
+    INSERT INTO public.chain_metadata
+  ${sql(
+    entityDataArray,
+    "chain_id",
+    "start_block", // this is left out of the on conflict below as it only needs to be set once
+    "block_height"
+  )}
+  ON CONFLICT(chain_id) DO UPDATE
+  SET
+  "chain_id" = EXCLUDED."chain_id",
+  "block_height" = EXCLUDED."block_height";`).then(res => {
+    
+  }).catch(err => {
+    console.log("errored", err)
+  });
+};
+
 module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
   sql,
   chainId

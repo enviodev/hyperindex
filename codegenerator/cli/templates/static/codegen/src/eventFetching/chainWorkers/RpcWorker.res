@@ -125,6 +125,12 @@ let startWorker = async (
     })
   let currentBlock: ref<int> = ref(await getCurrentBlockFromRPC())
 
+  DbFunctions.ChainMetadata.setChainMetadataRow(
+    ~chainId=chainConfig.chainId,
+    ~startBlock,
+    ~blockHeight=currentBlock.contents,
+  )->ignore
+
   let isNewBlocksToFetch = () => fromBlockRef.contents <= currentBlock.contents
 
   let rec checkShouldContinue = async (): bool => {
@@ -222,6 +228,12 @@ let startWorker = async (
         `We will finish processing known blocks in the next block. Checking for a newer block than ${currentBlock.contents->Belt.Int.toString}`,
       )
       currentBlock := (await getCurrentBlockFromRPC())
+      DbFunctions.ChainMetadata.setChainMetadataRow(
+        ~chainId=chainConfig.chainId,
+        ~startBlock,
+        ~blockHeight=currentBlock.contents,
+      )->ignore
+
       logger->Logging.childInfo(
         `getCurrentBlockFromRPC() => ${currentBlock.contents->Belt.Int.toString}`,
       )

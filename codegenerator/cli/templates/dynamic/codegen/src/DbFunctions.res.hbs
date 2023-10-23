@@ -10,6 +10,21 @@ type blockNumberRow = {
   @as("block_number") blockNumber: int
 }
 
+module ChainMetadata = {
+  type chainMetadata = {
+    @as("chain_id") chainId: int,
+    @as("block_height") blockHeight: int,
+    @as("start_block") startBlock: int,
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external setChainMetadata: (Postgres.sql, chainMetadata) => promise<unit> = "setChainMetadata"
+
+  let setChainMetadataRow = (~chainId, ~startBlock, ~blockHeight) => {
+    sql->setChainMetadata({chainId, startBlock, blockHeight})
+  }
+}
+
 module EventSyncState = {
   type eventSyncState = {
     @as("chain_id") chainId: int,

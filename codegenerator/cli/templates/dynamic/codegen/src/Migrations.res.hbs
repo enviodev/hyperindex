@@ -21,6 +21,25 @@ module EventSyncState = {
   }
 }
 
+module ChainMetadata = {
+  let createChainMetadataTable: unit => promise<unit> = async () => {
+    let _ = await %raw("sql`
+      CREATE TABLE IF NOT EXISTS public.chain_metadata (
+        chain_id INTEGER NOT NULL,
+        start_block INTEGER NOT NULL,
+        block_height INTEGER NOT NULL,
+        PRIMARY KEY (chain_id)
+      );
+      `")
+  }
+
+  let dropChainMetadataTable = async () => {
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.chain_metadata;
+    `")
+  }
+}
+
 module RawEventsTable = {
   let createEventTypeEnum: unit => promise<unit> = async () => {
     @warning("-21")
@@ -179,15 +198,19 @@ let runUpMigrations = async (~shouldExit) => {
   let exitCode = ref(Success)
   await EventSyncState.createEventSyncStateTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.errorWithExn(err, `EE800: Error creating event_sync_state_table`)->Promise.resolve
+    Logging.errorWithExn(err, `EE800: Error creating event_sync_state table`)->Promise.resolve
+  })
+  await ChainMetadata.createChainMetadataTable()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err, `EE800: Error creating chain_metadata table`)->Promise.resolve
   })
   await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.errorWithExn(err, `EE800: Error creating raw events table`)->Promise.resolve
+    Logging.errorWithExn(err, `EE800: Error creating raw_events table`)->Promise.resolve
   })
   await DynamicContractRegistryTable.createDynamicContractRegistryTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.errorWithExn(err,`EE801: Error creating dynamic contracts table`)->Promise.resolve
+    Logging.errorWithExn(err,`EE801: Error creating dynamic_contracts table`)->Promise.resolve
   })
 // TODO: catch and handle query errors
 {{#each entities as |entity|}}
