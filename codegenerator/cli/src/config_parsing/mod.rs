@@ -140,20 +140,20 @@ pub struct ConfigContract {
     pub abi_file_path: Option<String>,
     pub handler: String,
     address: NormalizedList<String>,
-    events: Vec<ConfigEvent>,
+    pub events: Vec<ConfigEvent>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct ConfigEvent {
-    event: EventNameOrSig,
+pub struct ConfigEvent {
+    pub event: EventNameOrSig,
     #[serde(skip_serializing_if = "Option::is_none")]
     required_entities: Option<Vec<RequiredEntity>>,
 }
 
 #[derive(Debug, PartialEq, Deserialize, Clone)]
 #[serde(try_from = "String")]
-enum EventNameOrSig {
+pub enum EventNameOrSig {
     Name(String),
     Event(EthAbiEvent),
 }

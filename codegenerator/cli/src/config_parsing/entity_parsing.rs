@@ -7,8 +7,10 @@ use crate::{
     },
     project_paths::ParsedPaths,
 };
+use anyhow::anyhow;
+use ethers::abi::ethabi::ParamType as EthAbiParamType;
 use graphql_parser::schema::{Definition, Directive, Type, TypeDefinition, Value};
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt};
 
 use super::validation::check_names_from_schema_for_reserved_words;
 
@@ -173,7 +175,8 @@ pub fn get_entity_record_types_from_schema(
     Ok(entity_records)
 }
 
-enum BuiltInGqlScalar {
+#[derive(strum_macros::Display)]
+pub enum BuiltInGqlScalar {
     ID,
     String,
     Int,
@@ -181,15 +184,85 @@ enum BuiltInGqlScalar {
     Boolean,
 }
 
-enum AdditionalGqlScalar {
+#[derive(strum_macros::Display)]
+pub enum AdditionalGqlScalar {
     BigInt,
     Bytes,
 }
 
-enum GqlScalar {
+pub enum GqlScalar {
     BuiltIn(BuiltInGqlScalar),
     Additional(AdditionalGqlScalar),
     Custom(String),
+}
+impl fmt::Display for GqlScalar {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            GqlScalar::BuiltIn(v) => write!(f, "{}", v),
+            GqlScalar::Additional(v) => write!(f, "{}", v),
+            GqlScalar::Custom(v) => write!(f, "{}", v),
+        }
+    }
+}
+pub enum Nullability {
+    NotNullable(ListOrSingle),
+    Nullable(ListOrSingle),
+}
+
+pub enum ListOrSingle {
+    Single(GqlScalar),
+    List(Box<Nullability>),
+}
+
+impl ListOrSingle {
+    pub fn to_string(&self) -> String {
+        match self {
+            ListOrSingle::Single(s) => s.to_string(),
+            ListOrSingle::List(inner) => format!("[{}]", Nullability::to_string(inner)),
+        }
+    }
+}
+
+impl Nullability {
+    pub fn to_string(&self) -> String {
+        match self {
+            Nullability::Nullable(l) => l.to_string(),
+            Nullability::NotNullable(l) => {
+                format!("{}!", l.to_string())
+            }
+        }
+    }
+}
+
+// Implement the Display trait for the custom struct
+impl fmt::Display for Nullability {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
+
+pub fn ethabi_type_to_scalar(abi_type: &EthAbiParamType) -> anyhow::Result<Nullability> {
+    use GqlScalar::{Additional, BuiltIn};
+    use ListOrSingle::{List, Single};
+    use Nullability::NotNullable;
+
+    match abi_type {
+        EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
+            Ok(NotNullable(Single(Additional(AdditionalGqlScalar::BigInt))))
+        }
+        EthAbiParamType::Bool => Ok(NotNullable(Single(BuiltIn(BuiltInGqlScalar::Boolean)))),
+        EthAbiParamType::Address
+        | EthAbiParamType::Bytes
+        | EthAbiParamType::String
+        | EthAbiParamType::FixedBytes(_) => {
+            Ok(NotNullable(Single(BuiltIn(BuiltInGqlScalar::String))))
+        }
+        EthAbiParamType::Array(abi_type) | EthAbiParamType::FixedArray(abi_type, _) => {
+            let inner_type = ethabi_type_to_scalar(abi_type)?;
+            Ok(NotNullable(List(Box::new(inner_type))))
+        }
+        EthAbiParamType::Tuple(_abi_types) => Err(anyhow!("Tuples not handled currently.")),
+    }
 }
 
 fn gql_named_to_scalar(named_type: &str) -> GqlScalar {
@@ -319,6 +392,7 @@ fn gql_type_to_postgres_relational_type(
         }
     }
 }
+
 fn gql_named_types_to_rescript_types(
     named_type: &str,
     entities_set: &HashSet<String>,
@@ -429,6 +503,7 @@ mod tests {
         capitalization::Capitalize,
         config_parsing::entity_parsing::{
             gql_type_is_optional, gql_type_to_postgres_relational_type, gql_type_to_rescript_type,
+            BuiltInGqlScalar, GqlScalar, ListOrSingle, Nullability,
         },
         hbs_templating::codegen_templates::{
             EntityRelationalTypesTemplate, RelationshipTypeTemplate,
@@ -712,5 +787,16 @@ mod tests {
             super::strip_option_from_rescript_type_str("option<"),
             "option<"
         );
+    }
+
+    #[test]
+    fn test_nullability_to_string() {
+        let scalar = Nullability::NotNullable(ListOrSingle::List(Box::new(Nullability::Nullable(
+            ListOrSingle::Single(GqlScalar::BuiltIn(BuiltInGqlScalar::Int)),
+        ))));
+
+        let expected_output = "[Int]!".to_string();
+
+        assert_eq!(scalar.to_string(), expected_output);
     }
 }

@@ -1,7 +1,8 @@
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 
-use crate::capitalization::CapitalizedOptions;
-use crate::config_parsing::Config;
+use crate::capitalization::{Capitalize, CapitalizedOptions};
+use crate::config_parsing::entity_parsing::ethabi_type_to_scalar;
+use crate::config_parsing::{Config, EventNameOrSig};
 
 struct AutoSchemaHandlerTemplate {
     contracts: Vec<Contract>,
@@ -32,36 +33,41 @@ impl AutoSchemaHandlerTemplate {
                 let mut events = Vec::new();
 
                 for config_event in contract.events.iter() {
-                    let abi_event = match &config_event.event {
-                        EventNameOrSig::Name(name) => {
-                            
-                        }
+                    match &config_event.event {
+                        EventNameOrSig::Name(_) => Err(anyhow!(
+                            "Currently only handling config defined events (not external abi file)"
+                        ))?,
                         EventNameOrSig::Event(event) => {
                             let event_name = event.name.to_capitalized_options();
-                            let mut params = Vec::new();
-                            for param in event.inputs.iter() {
-                                let param_name = param.name.to_capitalized_options();
-                                let graphql_type = param.kind.to_string();
-                                params.push(Param{
-                                    key: param_name,
-                                    graphql_type
-                                });
-                            }
-                            events.push(Event{
+
+                            let params: Vec<_> = event
+                                .inputs
+                                .iter()
+                                .map(|param| {
+                                    let graphql_type = ethabi_type_to_scalar(&param.kind)
+                                        .context("converting eth event param to gql scalar")?
+                                        .to_string();
+                                    let param_name = param.name.to_capitalized_options();
+                                    Ok(Param {
+                                        key: param_name,
+                                        graphql_type,
+                                    })
+                                })
+                                .collect::<anyhow::Result<_>>()?;
+
+                            events.push(Event {
                                 name: event_name,
-                                params
+                                params,
                             });
                         }
                     };
                 }
-                contracts.push(Contract{
+                contracts.push(Contract {
                     name: contract_name,
-                    events
+                    events,
                 });
             }
         }
-        Ok(AutoSchemaHandlerTemplate{
-            contracts
-        })
+        Ok(AutoSchemaHandlerTemplate { contracts })
     }
 }
