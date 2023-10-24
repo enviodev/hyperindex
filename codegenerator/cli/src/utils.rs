@@ -7,8 +7,9 @@ use crate::cli_args::{
     interactive_init::InitilizationTypeWithArgs, InitArgs, Language, Template, ToProjectPathsArgs,
 };
 use crate::commands;
-use crate::config_parsing::contract_import::generate_config_from_contract_address;
+use crate::config_parsing::contract_import::{self, generate_config_from_contract_address};
 use crate::config_parsing::graph_migration::generate_config_from_subgraph_id;
+use crate::hbs_templating::contract_import_templates;
 use crate::hbs_templating::{
     hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates,
 };
@@ -18,14 +19,12 @@ use include_dir::{include_dir, Dir};
 
 static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/shared");
+static BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
+    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/javascript");
 static BLANK_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/rescript");
 static BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/typescript");
-static BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/javascript");
-static BLANK_TEMPLATE_DYNAMIC_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/blank_template");
 static GREETER_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/shared");
 static GREETER_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
@@ -64,30 +63,6 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
 
     match &parsed_init_args.template {
         InitilizationTypeWithArgs::Template(template) => match template {
-            Template::Blank => {
-                //Copy in the relevant language specific blank template files
-                match &parsed_init_args.language {
-                    Language::Rescript => {
-                        BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
-                    }
-                    Language::Typescript => {
-                        BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
-                    }
-                    Language::Javascript => {
-                        BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
-                    }
-                }
-                //Copy in the rest of the shared blank template files
-                BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&project_root_path)?;
-
-                let hbs_config_file = HandleBarsDirGenerator::new(
-                    &BLANK_TEMPLATE_DYNAMIC_DIR,
-                    &hbs_template,
-                    &project_root_path,
-                );
-
-                hbs_config_file.generate_hbs_templates()?;
-            }
             Template::Greeter => {
                 //Copy in the relevant language specific greeter files
                 match &parsed_init_args.language {
@@ -142,31 +117,60 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
         }
 
         InitilizationTypeWithArgs::ContractImportWithArgs(network_name, contract_address) => {
+            let config = generate_config_from_contract_address(
+                &parsed_init_args.name,
+                network_name,
+                contract_address.clone(),
+                &parsed_init_args.language,
+            )
+            .await
+            .context("Failed getting config")?;
+
+            let serialized_config =
+                serde_yaml::to_string(&config).context("Failed serializing config")?;
+
+            //TODO: Allow parsed paths to not depend on a written config.yaml file in file system
+            contract_import::write_file_to_system(
+                serialized_config,
+                project_root_path.join("config.yaml"),
+            )
+            .await
+            .context("failed writing imported config.yaml")?;
+
+            let auto_schema_handler_template =
+                contract_import_templates::AutoSchemaHandlerTemplate::try_from(config)
+                    .context("Failed converting config to auto auto_schema_handler_template")?;
             //  Copy in the relevant js flavor specific subgraph migration files
             match &parsed_init_args.language {
                 Language::Rescript => {
                     BLANK_TEMPLATE_STATIC_RESCRIPT_DIR.extract(&project_root_path)?;
+                    auto_schema_handler_template
+                        .generate_templates_rescript(&project_root_path)
+                        .context(
+                            "Failed generating rescript templates for schema and event handlers.",
+                        )?;
                 }
                 Language::Typescript => {
                     BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
+                    auto_schema_handler_template
+                    .generate_templates_typescript(&project_root_path)
+                    .context(
+                        "Failed generating typescript templates for schema and event handlers.",
+                    )?;
                 }
                 Language::Javascript => {
                     BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;
+                    auto_schema_handler_template
+                        .generate_templates_javascript(&project_root_path)
+                        .context(
+                            "Failed generating javascript templates for schema and event handlers.",
+                        )?;
                 }
             }
             //Copy in the rest of the shared subgraph migration files
             BLANK_TEMPLATE_STATIC_SHARED_DIR
                 .extract(&project_root_path)
                 .context("Parsing contract address")?;
-
-            generate_config_from_contract_address(
-                &parsed_init_args.name,
-                &project_root_path,
-                network_name,
-                contract_address.clone(),
-                &parsed_init_args.language,
-            )
-            .await?;
         }
     }
 

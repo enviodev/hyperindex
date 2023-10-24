@@ -1,27 +1,14 @@
 /*
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
-import {
-  {{#each contracts as | contract |}}
-  {{#each contract.events as |event|}}
-  {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_loader,
-  {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler,
-  {{/each}}
-  {{/each}}
-} from "../generated/src/Handlers.gen";
 
-import {
-  {{#each contracts as | contract |}}
-  {{#each contract.events as |event|}}
-  {{event.name.capitalized}}Entity,
-  {{/each}}
-  {{/each}}
-  EventsSummaryEntity
-} from "./src/Types.gen";
+{{#each contracts as | contract |}}
+let { {{contract.name.capitalized}}Contract } = require("../generated/src/Handlers.bs.js");
+{{/each}}
 
 const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 
-const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
+const INITIAL_EVENTS_SUMMARY = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
   {{#each contracts as | contract |}}
   {{#each contract.events as |event|}}
@@ -32,22 +19,21 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
 
 {{#each contracts as | contract |}}
 {{#each contract.events as |event|}}
-{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_loader(({ event, context }) => {
+{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader((event, context) => {
   context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
 });
 
-{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler(({ event, context }) => {
+{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler((event, context) => {
   let summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  let currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  let currentSummaryEntity = summary ?? INITIAL_EVENTS_SUMMARY;
 
   let nextSummaryEntity = {
     ...currentSummaryEntity,
     {{event.name.uncapitalized}}sCount: currentSummaryEntity.{{event.name.uncapitalized}}sCount + BigInt(1),
   };
 
-  let {{event.name.uncapitalized}}Entity: {{event.name.capitalized}}Entity = {
+  let {{event.name.uncapitalized}}Entity = {
     id: event.transactionHash + event.logIndex.toString(),
     {{#each event.params as |param|}}
     {{param.key.uncapitalized}}: event.params.{{param.key.uncapitalized}},

@@ -1,0 +1,21 @@
+type EventsSummary @entity {
+  id: ID!
+  {{#each contracts as | contract |}}
+  {{#each contract.events as |event|}}
+  {{event.name.uncapitalized}}: [{{event.name.capitalized}}!]! @derivedFrom(field: "eventsSummary")
+  {{event.name.uncapitalized}}sCount: BigInt!
+  {{/each}}
+  {{/each}}
+}
+
+{{#each contracts as | contract |}}
+{{#each contract.events as |event|}}
+type {{event.name.capitalized}} @entity {
+  id: ID!
+  {{#each event.params as |param|}}
+  {{param.key.uncapitalized}}: {{param.graphql_type}}
+  {{/each}}
+  eventsSummary: String!
+}
+{{/each}}
+{{/each}}

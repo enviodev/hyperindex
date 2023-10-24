@@ -160,7 +160,7 @@ pub enum EventNameOrSig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-struct RequiredEntity {
+pub struct RequiredEntity {
     name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     labels: Option<Vec<String>>,
@@ -175,8 +175,35 @@ impl Serialize for EventNameOrSig {
     {
         match self {
             EventNameOrSig::Name(event_name) => serializer.serialize_str(event_name),
-            EventNameOrSig::Event(eth_abi_event) => eth_abi_event.serialize(serializer),
+            EventNameOrSig::Event(eth_abi_event) => {
+                serializer.serialize_str(eth_abi_event.to_human_readable().as_str())
+            }
         }
+    }
+}
+
+trait ToHumanReadable {
+    fn to_human_readable(&self) -> String;
+}
+
+impl ToHumanReadable for ethers::abi::Event {
+    fn to_human_readable(&self) -> String {
+        format!(
+            "{}({}){}",
+            self.name,
+            self.inputs
+                .iter()
+                .map(|input| {
+                    let param_type = input.kind.to_string();
+                    let indexed_keyword = if input.indexed { " indexed " } else { " " };
+                    let param_name = input.name.clone();
+
+                    format!("{}{}{}", param_type, indexed_keyword, param_name)
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            if self.anonymous { " anonymous" } else { "" },
+        )
     }
 }
 

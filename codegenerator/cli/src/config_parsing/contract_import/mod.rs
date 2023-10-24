@@ -10,45 +10,20 @@ use crate::{
     cli_args::Language,
     config_parsing::{
         chain_helpers::{self, NetworkName, NetworkWithExplorer},
-        constants,
+        constants, RequiredEntity,
     },
     config_parsing::{
         Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
     },
 };
 
-trait ToHumanReadable {
-    fn to_human_readable(&self) -> String;
-}
-
-impl ToHumanReadable for ethers::abi::Event {
-    fn to_human_readable(&self) -> String {
-        format!(
-            "{}({}){}",
-            self.name,
-            self.inputs
-                .iter()
-                .map(|input| {
-                    let param_type = input.kind.to_string();
-                    let indexed_keyword = if input.indexed { " indexed " } else { " " };
-                    let param_name = input.name.clone();
-
-                    format!("{}{}{}", param_type, indexed_keyword, param_name)
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-            if self.anonymous { " anonymous" } else { "" },
-        )
-    }
-}
 // Function to generate config, schema and abis from subgraph ID
 pub async fn generate_config_from_contract_address(
     name: &str,
-    project_root_path: &PathBuf,
     network: &NetworkWithExplorer,
     contract_address: String,
     language: &Language,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Config> {
     let contract_address_h160 = contract_address
         .parse()
         .context("parsing address to h160")?;
@@ -60,8 +35,13 @@ pub async fn generate_config_from_contract_address(
         .abi
         .events()
         .map(|event| ConfigEvent {
-            event: EventNameOrSig::Name(event.to_human_readable()),
-            required_entities: None,
+            event: EventNameOrSig::Event(event.clone()),
+            required_entities: Some(vec![RequiredEntity {
+                //Required entity needed for autogen schema
+                name: "EventsSummary".to_string(),
+                labels: None,
+                array_labels: None,
+            }]),
         })
         .collect();
 
@@ -90,33 +70,21 @@ pub async fn generate_config_from_contract_address(
         networks: vec![network],
     };
 
-    // Convert config to YAML file
-    let config_yaml_string =
-        serde_yaml::to_string(&config).context("serializing constructed config")?;
-
-    // Write config YAML string to a file
-    write_file_to_system(
-        config_yaml_string,
-        project_root_path.join("config.yaml"),
-        "config.yaml",
-    )
-    .await?;
-
-    Ok(())
+    Ok(config)
 }
 
-async fn write_file_to_system(
+pub async fn write_file_to_system(
     file_string: String,
     fs_file_path: PathBuf,
-    context_name: &str,
 ) -> anyhow::Result<()> {
+    let file_path_str = fs_file_path.to_str().unwrap_or_else(|| "unknown file path");
     // Create the directory if it doesn't exist
     if let Some(parent_dir) = fs_file_path.parent() {
         fs::create_dir_all(parent_dir)
-            .with_context(|| format!("Failed to create directory for {} file", context_name))?;
+            .with_context(|| format!("Failed to create directory for {} file", file_path_str))?;
     }
     fs::write(&fs_file_path, file_string)
-        .with_context(|| format!("Failed to write {} file", context_name))?;
+        .with_context(|| format!("Failed to write {} file", file_path_str))?;
 
     Ok(())
 }

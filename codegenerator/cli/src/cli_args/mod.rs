@@ -159,7 +159,6 @@ pub struct ContractMigrationArgs {
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
 ///Template to work off
 pub enum Template {
-    Blank,
     Greeter,
     Erc20,
 }

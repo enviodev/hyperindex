@@ -1,0 +1,41 @@
+let globalEventsSummaryKey = "GlobalEventsSummary"
+
+module BigInt = Ethers.BigInt
+
+let initialEventsSummary: Types.eventsSummaryEntity = {
+  id: globalEventsSummaryKey,
+  {{#each contracts as | contract |}}
+  {{#each contract.events as |event|}}
+  {{event.name.uncapitalized}}sCount: BigInt.fromInt(0),
+  {{/each}}
+  {{/each}}
+}
+
+{{#each contracts as | contract |}}
+{{#each contract.events as |event|}}
+Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader((~event, ~context) => {
+  context.eventsSummary.load(globalEventsSummaryKey)
+})
+Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler((~event, ~context) => {
+  let summary = context.eventsSummary.get(globalEventsSummaryKey)
+
+  let currentSummaryEntity = summary->Belt.Option.getWithDefault(initialEventsSummary)
+
+  let nextSummaryEntity = {
+    ...currentSummaryEntity,
+    {{event.name.uncapitalized}}sCount: currentSummaryEntity.{{event.name.uncapitalized}}sCount->BigInt.add(BigInt.fromInt(1)),
+  }
+
+  let {{event.name.uncapitalized}}Entity: Types.{{event.name.uncapitalized}}Entity = {
+    id: event.transactionHash ++ event.logIndex->Belt.Int.toString,
+    {{#each event.params as |param|}}
+    {{param.key.uncapitalized}}: event.params.{{param.key.uncapitalized}}{{#if param.is_eth_address}}->Ethers.ethAddressToString{{/if}},
+    {{/each}}
+    eventsSummary: globalEventsSummaryKey,
+  }
+
+  context.eventsSummary.set(nextSummaryEntity)
+  context.{{event.name.uncapitalized}}.set({{event.name.uncapitalized}}Entity)
+})
+{{/each}}
+{{/each}}

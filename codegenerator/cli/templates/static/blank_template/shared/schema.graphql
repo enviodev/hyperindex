@@ -1,5 +1,0 @@
-type AwesomeEntity @entity {
-  id: ID!
-  awesomeAddress: String!
-  awesomeTotal: BigInt!
-}
