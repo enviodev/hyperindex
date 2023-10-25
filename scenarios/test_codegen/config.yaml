@@ -18,6 +18,7 @@ networks:
         address: "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3" # -> use this if you want to deploy to local ganache
         handler: ./src/EventHandlers.bs.js
         events:
+          - event: "TestEventWithLongNameBeyondThePostgresEnumCharacterLimit(address testField)"
           - event: "TestEvent"
             requiredEntities:
               - name: "A"

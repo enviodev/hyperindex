@@ -142,8 +142,11 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1(rescript@10.1.2)
       skar-client-node:
-        specifier: ^0.0.7
-        version: 0.0.7
+        specifier: ^0.0.8
+        version: 0.0.8
+      viem:
+        specifier: ^1.16.0
+        version: 1.16.6(typescript@5.0.4)
       yargs:
         specifier: ^17.7.2
         version: 17.7.2
@@ -159,6 +162,10 @@ importers:
         version: 10.1.2
 
 packages:
+
+  /@adraffy/ens-normalize@1.9.4:
+    resolution: {integrity: sha512-UK0bHA7hh9cR39V+4gl2/NnBBjoXIxkuWAPCaY4X7fbH4L/azIi7ilWOCjMUYfpJgraLUAqkRi2BqrjME8Rynw==}
+    dev: false
 
   /@ampproject/remapping@2.2.1:
     resolution: {integrity: sha512-lFMjJTrFL3j7L9yBxwYfCq2k6qqwHyzuUl/XBnif78PWTJYyL/dfowQHWE3sp6U6ZzqWiiIZnpTMO96zhkjwtg==}
@@ -1092,11 +1099,22 @@ packages:
       tweetnacl: 1.0.3
       tweetnacl-util: 0.15.1
 
+  /@noble/curves@1.2.0:
+    resolution: {integrity: sha512-oYclrNgRaM9SsBUBVbb8M6DTV7ZHRTKugureoYEncY5c65HOmRzvSiTE3y5CYaPYJA/GVkrhXEoF0M3Ya9PMnw==}
+    dependencies:
+      '@noble/hashes': 1.3.2
+    dev: false
+
   /@noble/hashes@1.1.2:
     resolution: {integrity: sha512-KYRCASVTv6aeUi1tsF8/vpyR7zpfs3FUzy2Jqm+MU+LmUKhQ0y2FpfwqkCcxSg2ua4GALJd8k2R76WxwZGbQpA==}
 
   /@noble/hashes@1.2.0:
     resolution: {integrity: sha512-FZfhjEDbT5GRswV3C6uvLPHMiVD6lQBmpoX5+eSiPaMTXte/IKqI5dykDxzZB/WBeK/CDuQRBWarPdi3FNY2zQ==}
+
+  /@noble/hashes@1.3.2:
+    resolution: {integrity: sha512-MVC8EAQp7MvEcm30KWENFjgR+Mkmf+D189XJTkFIlwohU5hcBbn1ZkKq7KVTi2Hme3PMGF390DaL52beVrIihQ==}
+    engines: {node: '>= 16'}
+    dev: false
 
   /@noble/secp256k1@1.7.1:
     resolution: {integrity: sha512-hOUk6AyBFmqVrv7k5WAw/LpszxVbj9gGN4JRkIX52fdFAj1UA61KXmZDvqVEm+pOyec3+fIeZB02LYa/pWOArw==}
@@ -1362,6 +1380,10 @@ packages:
   /@scure/base@1.1.1:
     resolution: {integrity: sha512-ZxOhsSyxYwLJj3pLZCefNitxsj093tb2vq90mp2txoYeBqbcjDjqFhyM8eUjq/uFm6zJ+mUuqxlS2FkuSY1MTA==}
 
+  /@scure/base@1.1.3:
+    resolution: {integrity: sha512-/+SgoRjLq7Xlf0CWuLHq2LUZeL/w65kfzAPG5NH9pcmBhs+nunQTn4gvdwgMTIXnt9b2C/1SeL2XiysZEyIC9Q==}
+    dev: false
+
   /@scure/bip32@1.1.5:
     resolution: {integrity: sha512-XyNh1rB0SkEqd3tXcXMi+Xe1fvg+kUIcoRIEujP1Jgv7DqW2r9lg3Ah0NkFaCs9sTkQAQA8kw7xiRXzENi9Rtw==}
     dependencies:
@@ -1369,11 +1391,26 @@ packages:
       '@noble/secp256k1': 1.7.1
       '@scure/base': 1.1.1
 
+  /@scure/bip32@1.3.2:
+    resolution: {integrity: sha512-N1ZhksgwD3OBlwTv3R6KFEcPojl/W4ElJOeCZdi+vuI5QmTFwLq3OFf2zd2ROpKvxFdgZ6hUpb0dx9bVNEwYCA==}
+    dependencies:
+      '@noble/curves': 1.2.0
+      '@noble/hashes': 1.3.2
+      '@scure/base': 1.1.3
+    dev: false
+
   /@scure/bip39@1.1.1:
     resolution: {integrity: sha512-t+wDck2rVkh65Hmv280fYdVdY25J9YeEUIgn2LG1WM6gxFkGzcksoDiUkWVpVp3Oex9xGC68JU2dSbUfwZ2jPg==}
     dependencies:
       '@noble/hashes': 1.2.0
       '@scure/base': 1.1.1
+
+  /@scure/bip39@1.2.1:
+    resolution: {integrity: sha512-Z3/Fsz1yr904dduJD0NpiyRHhRYHdcnyh73FZWiV+/qhWi83wNJ3NWolYqCEN+ZWsUz2TWwajJggcRE9r1zUYg==}
+    dependencies:
+      '@noble/hashes': 1.3.2
+      '@scure/base': 1.1.1
+    dev: false
 
   /@sentry/core@5.30.0:
     resolution: {integrity: sha512-TmfrII8w1PQZSZgPpUESqjB+jC6MvZJZdLtE/0hZ+SrnKhW3x5WlYLvTXZpcWePYBku7rl2wn1RZu6uT0qCTeg==}
@@ -1680,6 +1717,20 @@ packages:
   /abab@2.0.6:
     resolution: {integrity: sha512-j2afSsaIENvHZN2B8GOpF566vZ5WVk5opAiMTvWgaQT8DkbOqsTfvNAvHoRGU2zzP8cPoqys+xHTRDWW8L+/BA==}
     dev: true
+
+  /abitype@0.9.8(typescript@5.0.4):
+    resolution: {integrity: sha512-puLifILdm+8sjyss4S+fsUN09obiT1g2YW6CtcQF+QDzxR0euzgEB29MZujC6zMk2a6SVmtttq1fc6+YFA7WYQ==}
+    peerDependencies:
+      typescript: '>=5.0.4'
+      zod: ^3 >=3.19.1
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+      zod:
+        optional: true
+    dependencies:
+      typescript: 5.0.4
+    dev: false
 
   /abort-controller@3.0.0:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
@@ -3548,6 +3599,14 @@ packages:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
     dev: true
 
+  /isows@1.0.3(ws@8.13.0):
+    resolution: {integrity: sha512-2cKei4vlmg2cxEjm3wVSqn8pcoRF/LX/wpifuuNquFO4SQmPwarClT+SUCA2lt+l581tTeZIPIZuIDo2jWN1fg==}
+    peerDependencies:
+      ws: '*'
+    dependencies:
+      ws: 8.13.0
+    dev: false
+
   /istanbul-lib-coverage@3.2.0:
     resolution: {integrity: sha512-eOeJ5BHCmHYvQK7xt9GkdHuzuCGS1Y6g9Gvnx3Ym33fz/HpLRYxiS0wHNr+m/MBC8B647Xt608vCDEvhl9c6Mw==}
     engines: {node: '>=8'}
@@ -5342,8 +5401,8 @@ packages:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
     dev: true
 
-  /skar-client-node-darwin-arm64@0.0.7:
-    resolution: {integrity: sha512-rCYoXGm60zywLoB3cXSvksx1Au/gLeevceSPSn6rMVgEhjq01jZ3cog/2wTZWXCtX40zZDaASogPenp2VbiWYw==}
+  /skar-client-node-darwin-arm64@0.0.8:
+    resolution: {integrity: sha512-OSKIk6P6dzSplvdMFhqhrz4noFYSYin0Uu1H225P+ShHneYRST7f8NNaTpqX9fIXXKJMWvBfX/xlU0ZUECsXsw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
@@ -5351,8 +5410,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-darwin-x64@0.0.7:
-    resolution: {integrity: sha512-XIJWHJmmzK4XrPPi0uwnLi3hRe3IDmdIqL0nnGs99H2+muPrp+XgeebcglNJEQBEtrD1qqEqOUn03PJhzqR+1w==}
+  /skar-client-node-darwin-x64@0.0.8:
+    resolution: {integrity: sha512-0qBBSYRK7vPN2FPmJ/tSocv4W+NHhs7Bn2rdWNnHOM6Arr23G3NmbEQXM3eh09Xb7yV5ACZ/9PfZRf3rMIOc4Q==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
@@ -5360,8 +5419,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-arm64-gnu@0.0.7:
-    resolution: {integrity: sha512-XFZljCermoc6iAXZHbEJunIPGIH+heIQYgUHur2Salf9ta2nGm/4Uz0c8IxoOmkv8bcwX85MSnta0G5IAKpfLQ==}
+  /skar-client-node-linux-arm64-gnu@0.0.8:
+    resolution: {integrity: sha512-hWoLJTh+ihJptuzAs9gkCcsEmT4hlacdbra0BC1CtpJblf3QAoZdbL2yBOpJ2cBBYDXCtAsglWfFc73KtT0EMg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
@@ -5369,8 +5428,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-x64-gnu@0.0.7:
-    resolution: {integrity: sha512-EzEq5OersTNXeU7Rhdf/adhZq3CSR+SYVPBUVYTnver9npxE07X+f2CJGTBYHY2H4tTfgZgmwWKxKZkAVO4b3g==}
+  /skar-client-node-linux-x64-gnu@0.0.8:
+    resolution: {integrity: sha512-wp85ytcPAZtPv62E5kxbYjTyjjMDqIqhHRX1+QrzZJY8RfFymVPZiBVJm0UYcrSht19XeLLN08oQirG9aVL9EA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -5378,8 +5437,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-linux-x64-musl@0.0.7:
-    resolution: {integrity: sha512-0TNglyDQLtKVEju+Z8axuL/BsWHzLtbPF/G1MgxdvhE9T0vqvoY2VtS/yilpItJux7rBNn7QtOhbssuxpO6Y1Q==}
+  /skar-client-node-linux-x64-musl@0.0.8:
+    resolution: {integrity: sha512-2Le8M4xewUQD+p8rCY8xHZ3Ieij7HMf+iA8L1wFZlqoYryFN6uGMIdRkc3VF2sDjHxwueGuxvJMtl7+tNyIQAg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -5387,8 +5446,8 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node-win32-x64-msvc@0.0.7:
-    resolution: {integrity: sha512-UXT/mBvLXTywDv5fuxPWfeiaVVsmYe0sVkI/96SO9hAPHDFzmkP/jDcLBwzLXhtcXQaQWbQ+gT0Tm8AQR0aS5Q==}
+  /skar-client-node-win32-x64-msvc@0.0.8:
+    resolution: {integrity: sha512-3qnbzLU3vu8ZvDXaCVqDwy9+lVCglftGPIYdS9hkV4bHxgq3E14bMSjYJlqXjQjgIUfi59eLMYC+BJKuRjCQwg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
@@ -5396,16 +5455,16 @@ packages:
     dev: false
     optional: true
 
-  /skar-client-node@0.0.7:
-    resolution: {integrity: sha512-7mE9qoCoomnV9+ohXTClLwR5ZK198u4JQa6t++rYw5o970LAVPOfJWN2UX5Rpc8VgzodHd+YGQydh5FwrJMpHg==}
+  /skar-client-node@0.0.8:
+    resolution: {integrity: sha512-pEe51hhQuM0/L2fifFZG+xaw/MpwLz4VdP06iuj9y0OEagVfdZ1CsVOnKM7c5Pj6z22PJA/2TI1fh02ymQBe2Q==}
     engines: {node: '>= 10'}
     optionalDependencies:
-      skar-client-node-darwin-arm64: 0.0.7
-      skar-client-node-darwin-x64: 0.0.7
-      skar-client-node-linux-arm64-gnu: 0.0.7
-      skar-client-node-linux-x64-gnu: 0.0.7
-      skar-client-node-linux-x64-musl: 0.0.7
-      skar-client-node-win32-x64-msvc: 0.0.7
+      skar-client-node-darwin-arm64: 0.0.8
+      skar-client-node-darwin-x64: 0.0.8
+      skar-client-node-linux-arm64-gnu: 0.0.8
+      skar-client-node-linux-x64-gnu: 0.0.8
+      skar-client-node-linux-x64-musl: 0.0.8
+      skar-client-node-win32-x64-msvc: 0.0.8
     dev: false
 
   /slash@3.0.0:
@@ -5890,6 +5949,29 @@ packages:
     engines: {node: '>= 0.8'}
     dev: false
 
+  /viem@1.16.6(typescript@5.0.4):
+    resolution: {integrity: sha512-jcWcFQ+xzIfDwexwPJRvCuCRJKEkK9iHTStG7mpU5MmuSBpACs4nATBDyXNFtUiyYTFzLlVEwWkt68K0nCSImg==}
+    peerDependencies:
+      typescript: '>=5.0.4'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+    dependencies:
+      '@adraffy/ens-normalize': 1.9.4
+      '@noble/curves': 1.2.0
+      '@noble/hashes': 1.3.2
+      '@scure/bip32': 1.3.2
+      '@scure/bip39': 1.2.1
+      abitype: 0.9.8(typescript@5.0.4)
+      isows: 1.0.3(ws@8.13.0)
+      typescript: 5.0.4
+      ws: 8.13.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+      - zod
+    dev: false
+
   /w3c-hr-time@1.0.2:
     resolution: {integrity: sha512-z8P5DvDNjKDoFIHK7q8r8lackT6l+jo/Ye3HOle7l9nICP9lf1Ci25fy9vHd0JOWewkIFzXIEig3TdKT7JQ5fQ==}
     deprecated: Use your platform's native performance.now() and performance.timeOrigin.
@@ -6029,6 +6111,19 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
+
+  /ws@8.13.0:
+    resolution: {integrity: sha512-x9vcZYTrFPC7aSIbj7sRCYo7L/Xb8Iy+pW0ng0wt2vCJv7M9HOMy0UoN3rr+IFC7hb7vXoqS+P9ktyLLLhO+LA==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+    dev: false
 
   /ws@8.5.0:
     resolution: {integrity: sha512-BWX0SWVgLPzYwF8lTzEy1egjhS4S4OEAHfsO8o65WOVsrnSRGaSiUaa9e0ggGlkMTtBlmOpEXiie9RUcBO86qg==}

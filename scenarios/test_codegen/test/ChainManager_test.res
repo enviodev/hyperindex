@@ -116,7 +116,7 @@ describe("ChainManager", () => {
         let (
           mockChainManager,
           numberOfMockEventsCreated,
-          allEvents,
+          _allEvents,
         ) = populateChainQueuesWithRandomEvents()
         let defaultFirstEvent: Types.eventBatchQueueItem = {
           timestamp: 0,
@@ -215,7 +215,7 @@ describe("ChainManager", () => {
 })
 
 // NOTE: this is likely a temporary feature - can delete if feature no longer important.
-describe_only("determineNextEvent", () => {
+describe("determineNextEvent", () => {
   describe("optimistic-unordered-mode", () => {
     let determineNextEvent_unordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
       ~isUnorderedHeadMode=true,

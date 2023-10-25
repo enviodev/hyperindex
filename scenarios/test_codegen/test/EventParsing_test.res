@@ -31,7 +31,7 @@ describe("Parsing Raw Events", () => {
       logIndex,
       transactionHash,
       srcAddress,
-      eventType: Js.Json.string("GravatarContract_NewGravatarEvent"),
+      eventType: Js.Json.string("Gravatar_NewGravatar"),
       blockHash,
       params: paramsEncoded,
     }
