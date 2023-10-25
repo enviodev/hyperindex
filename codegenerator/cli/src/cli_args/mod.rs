@@ -18,24 +18,24 @@ pub struct CommandLineArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum CommandType {
-    ///Initialize a project with a template
+    ///Initialize an indexer with one of the initialization options
     Init(InitArgs),
 
-    /// Development commands for starting, stopping, and restarting the local environment        
+    /// Development commands for starting, stopping, and restarting the indexer with automatic codegen for any changed files
     Dev,
 
     /// Stop the local environment - delete the database and stop all processes (including Docker) for the current directory
     Stop,
 
-    ///Generate code from a config.yaml & schema.graphql file
+    ///Generate indexing code from user-defined configuration & schema files
     Codegen(CodegenArgs),
 
-    ///Prepare local environment for envio testing
+    ///Prepare local environment for envio testing 
     // #[clap(hide = true)]
     #[command(subcommand)]
     Local(LocalCommandTypes),
 
-    ///Start the indexer
+    ///Start the indexer without any automatic codegen
     Start(StartArgs),
 
     ///Print help into a markdown file
@@ -66,9 +66,9 @@ pub enum LocalCommandTypes {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum LocalDockerSubcommands {
-    ///Run docker compose up -d on generated/docker-compose.yaml
+    ///Create docker images required for local environment
     Up,
-    ///Run docker compose down -v on generated/docker-compose.yaml
+    ///Delete existing docker images on local environment
     Down,
 }
 
@@ -110,7 +110,7 @@ pub struct InitArgs {
     #[arg(short, long)]
     pub name: Option<String>,
 
-    ///The options for how to initialize
+    ///Initialization option for creating an indexer
     #[command(subcommand)]
     pub init_commands: Option<InitFlow>,
 
@@ -122,17 +122,17 @@ pub struct InitArgs {
 
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString)]
 pub enum InitFlow {
-    ///Start from an example template
+    ///Initialize from an example template
     Template(TemplateArgs),
-    ///Start by migrating config from an existing subgraph
+    ///Initialize by migrating config from an existing subgraph
     SubgraphMigration(SubgraphMigrationArgs),
-    ///Import config for a contract address for a given chain
+    ///Initialize by importing config from a contract for a given chain
     ContractImport(ContractMigrationArgs),
 }
 
 #[derive(Args, Debug, Default)]
 pub struct TemplateArgs {
-    ///The file in the project containing config.
+    ///Name of the template to be used in initialization
     #[arg(short, long)]
     #[clap(value_enum)]
     pub name: Option<Template>,
