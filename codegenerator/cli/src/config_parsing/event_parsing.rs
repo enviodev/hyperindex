@@ -2,7 +2,7 @@ use crate::{
     capitalization::Capitalize,
     config_parsing::{ConfigContract, ConfigEvent},
     hbs_templating::codegen_templates::{
-        ContractTemplate, EventParamTypeTemplate, EventTemplate, FilteredTemplateLists,
+        ContractTemplate, EventParamTypeTemplate, EventTemplate, EventType, FilteredTemplateLists,
         RequiredEntityEntityFieldTemplate, RequiredEntityTemplate,
     },
     project_paths::{handler_paths::ContractUniqueId, ParsedPaths},
@@ -95,6 +95,7 @@ fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
 fn get_event_template_from_ethereum_abi_event(
     config_event: &ConfigEvent,
     abi_event: &EthAbiEvent,
+    contract_name: String,
     entity_fields_of_required_entity_map: &HashMap<String, Vec<RequiredEntityEntityFieldTemplate>>,
 ) -> anyhow::Result<EventTemplate> {
     let name = abi_event.name.to_owned().to_capitalized_options();
@@ -156,11 +157,13 @@ fn get_event_template_from_ethereum_abi_event(
     };
 
     let required_entities = required_entities_result?;
+    let event_type = EventType::new(contract_name, name.capitalized.clone());
 
     Ok(EventTemplate {
         name,
         params,
         required_entities,
+        event_type,
     })
 }
 
@@ -221,6 +224,7 @@ fn get_contract_type_from_config_contract(
         let event_type = get_event_template_from_ethereum_abi_event(
             config_event,
             abi_event,
+            config_contract.name.clone(),
             entity_fields_of_required_entity_map,
         )?;
         event_types.push(event_type);
@@ -268,7 +272,8 @@ mod tests {
         capitalization::Capitalize,
         config_parsing::{self, EventNameOrSig, RequiredEntity},
         hbs_templating::codegen_templates::{
-            EventParamTypeTemplate, EventTemplate, FilteredTemplateLists, RequiredEntityTemplate,
+            EventParamTypeTemplate, EventTemplate, EventType, FilteredTemplateLists,
+            RequiredEntityTemplate,
         },
     };
     use ethers::abi::{Event as AbiEvent, EventParam, ParamType};
@@ -306,8 +311,14 @@ mod tests {
             required_entities: None,
         };
 
-        let parsed_event_template =
-            get_event_template_from_ethereum_abi_event(&config_event, &abi_event, &HashMap::new());
+        const CONTRACT_NAME: &str = "MyContract";
+
+        let parsed_event_template = get_event_template_from_ethereum_abi_event(
+            &config_event,
+            &abi_event,
+            CONTRACT_NAME.to_string(),
+            &HashMap::new(),
+        );
 
         let expected_event_template = EventTemplate {
             name: event_name.to_capitalized_options(),
@@ -321,6 +332,7 @@ mod tests {
                     type_rescript: String::from("Ethers.ethAddress"),
                 },
             ],
+            event_type: EventType::new(CONTRACT_NAME.to_string(), event_name.clone()),
             required_entities: vec![],
         };
 
@@ -352,6 +364,7 @@ mod tests {
 
         let inputs = vec![input1, input2];
         let event_name = String::from("NewGravatar");
+        let contract_name = String::from("Gravatar");
 
         let abi_event = AbiEvent {
             name: event_name.clone(),
@@ -373,6 +386,7 @@ mod tests {
         let parsed_event_template = get_event_template_from_ethereum_abi_event(
             &config_event,
             &abi_event,
+            contract_name.clone(),
             &required_entities_map,
         );
 
@@ -388,6 +402,7 @@ mod tests {
                     type_rescript: String::from("Ethers.ethAddress"),
                 },
             ],
+            event_type: EventType::new(contract_name.clone(), event_name.clone()),
             required_entities: vec![RequiredEntityTemplate {
                 name: String::from("Gravatar").to_capitalized_options(),
                 labels: Some(vec![String::from("gravatarWithChanges")]),

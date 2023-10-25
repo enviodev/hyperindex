@@ -8,6 +8,7 @@ use crate::config_parsing::ChainConfigTemplate;
 use crate::persisted_state::PersistedStateJsonString;
 use crate::project_paths::{handler_paths::HandlerPathsTemplate, ParsedPaths};
 use include_dir::{include_dir, Dir};
+use serde::Deserialize;
 use serde::Serialize;
 
 pub trait HasName {
@@ -135,9 +136,41 @@ pub struct RequiredEntityTemplate {
     pub entity_fields_of_required_entity: FilteredTemplateLists<RequiredEntityEntityFieldTemplate>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct EventType {
+    //Contract name and event name joined with a '_'
+    //Always capitalized
+    //Used as a unique per-contract event variant in rescript
+    full: String,
+    //Contract name and event name joined with a '_' truncated to  63 char max
+    //Always capitalized
+    //for char limit in postgres for enums
+    truncated_for_pg_enum_limit: String,
+}
+
+impl EventType {
+    pub fn new(contract_name: String, event_name: String) -> Self {
+        let full = contract_name.capitalize() + "_" + &event_name;
+        const MAX_CHAR_LIMIT_FOR_PG_ENUM: usize = 63;
+        let truncated_for_pg_enum_limit = full
+            .chars()
+            .enumerate()
+            .filter(|(i, _x)| i < &MAX_CHAR_LIMIT_FOR_PG_ENUM)
+            .map(|(_i, x)| x)
+            .collect();
+
+        EventType {
+            full,
+            truncated_for_pg_enum_limit,
+        }
+    }
+}
+
 #[derive(Serialize, Debug, PartialEq)]
 pub struct EventTemplate {
     pub name: CapitalizedOptions,
+    //Used for the eventType variant in Types.res and the truncated version in postgres
+    pub event_type: EventType,
     pub params: Vec<EventParamTypeTemplate>,
     pub required_entities: Vec<RequiredEntityTemplate>,
 }

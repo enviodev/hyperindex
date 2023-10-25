@@ -221,19 +221,18 @@ type eventRouterEventAndContext = {
   chainId: int,
   event: eventAndContext,
 }
-
 @spice
 type eventName =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
-  | @spice.as("{{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event") {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+  | @spice.as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
 {{/each}}
 {{/each}}
 
 let eventNameToString = (eventName: eventName) => switch eventName {
   {{#each contracts as | contract |}}
   {{#each contract.events as | event |}}
-    | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event => "{{event.name.capitalized}}"
+    | {{event.event_type.full}} => "{{event.name.capitalized}}"
   {{/each}}
   {{/each}}
 }

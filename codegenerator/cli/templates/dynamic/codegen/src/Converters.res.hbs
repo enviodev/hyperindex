@@ -4,7 +4,7 @@ let eventStringToEvent = (eventName: string, contractName: string): Types.eventN
   switch (eventName, contractName) {
     {{#each contracts as |contract|}}
     {{#each contract.events as |event|}}
-    | ("{{event.name.capitalized}}", "{{contract.name.capitalized}}") => {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event
+    | ("{{event.name.capitalized}}", "{{contract.name.capitalized}}") => {{event.event_type.full}}
     {{/each}}
     {{/each}}
     | _ => UndefinedEvent(eventName)->raise
@@ -122,7 +122,7 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.
       let event = switch eventStringToEvent(logDescription.name, contractName) {
       {{#each contracts as |contract|}}
       {{#each contract.events as |event|}}
-        | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
+        | {{event.event_type.full}} =>
             logDescription
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp)
@@ -156,7 +156,7 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result
       let event = switch eventStringToEvent(decodedEvent.eventName, contractName) {
       {{#each contracts as |contract|}}
       {{#each contract.events as |event|}}
-        | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
+        | {{event.event_type.full}} =>
             decodedEvent
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}ViemDecodedEvent
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogViem(~log, ~blockTimestamp)
@@ -219,7 +219,7 @@ let parseRawEvent = (rawEvent: Types.rawEventsEntity): Spice.result<Types.eventB
     switch eventName {
   {{#each contracts as |contract|}}
   {{#each contract.events as |event|}}
-      | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}Event =>
+      | {{event.event_type.full}} =>
       rawEvent->decodeRawEventWith(
         ~decoder=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_decode,
         ~variantAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}},

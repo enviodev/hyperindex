@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
+use crate::hbs_templating::codegen_templates::EventType;
 use crate::project_paths::handler_paths::ContractUniqueId;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
@@ -365,11 +366,26 @@ pub struct ChainConfigTemplate {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct ChainConfigEvent {
+    name: CapitalizedOptions,
+    event_type: EventType,
+}
+
+impl ChainConfigEvent {
+    pub fn new(contract_name: String, event_name: String) -> Self {
+        let name = event_name.to_capitalized_options();
+        let event_type = EventType::new(contract_name, event_name);
+
+        ChainConfigEvent { name, event_type }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 struct ContractTemplate {
     name: CapitalizedOptions,
     abi: StringifiedAbi,
     addresses: Vec<EthAddress>,
-    events: Vec<CapitalizedOptions>,
+    events: Vec<ChainConfigEvent>,
 }
 
 fn strip_to_letters(string: &str) -> String {
@@ -454,7 +470,9 @@ pub async fn convert_config_to_chain_configs(
                 events: contract
                     .events
                     .iter()
-                    .map(|config_event| config_event.event.get_name().to_capitalized_options())
+                    .map(|config_event| {
+                        ChainConfigEvent::new(contract.name.clone(), config_event.event.get_name())
+                    })
                     .collect(),
             };
             contract_templates.push(contract_template);
@@ -532,7 +550,7 @@ mod tests {
     use crate::config_parsing::{EventNameOrSig, NetworkConfigTemplate, NormalizedList};
     use crate::{cli_args::ProjectPathsArgs, project_paths::ParsedPaths};
 
-    use super::ChainConfigTemplate;
+    use super::{ChainConfigEvent, ChainConfigTemplate};
 
     #[test]
     fn deserialize_address() {
@@ -645,13 +663,14 @@ mod tests {
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
+        let contract1_name = String::from("Contract1");
         let contract1 = super::ContractTemplate {
-            name: String::from("Contract1").to_capitalized_options(),
+            name: contract1_name.to_capitalized_options(),
             abi: abi_parsed_string,
             addresses: vec![address1.clone()],
             events: vec![
-                event1.event.get_name().to_capitalized_options(),
-                event2.event.get_name().to_capitalized_options(),
+                ChainConfigEvent::new(contract1_name.clone(), event1.event.get_name()),
+                ChainConfigEvent::new(contract1_name.clone(), event2.event.get_name()),
             ],
         };
 
@@ -766,26 +785,29 @@ mod tests {
             .await
             .unwrap();
 
-        let events = vec![
-            event1.event.get_name().to_capitalized_options(),
-            event2.event.get_name().to_capitalized_options(),
-        ];
-
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
+        let contract1_name = String::from("Contract1");
         let contract1 = super::ContractTemplate {
-            name: String::from("Contract1").to_capitalized_options(),
+            name: contract1_name.to_capitalized_options(),
             abi: abi_parsed_string.clone(),
             addresses: vec![address1.clone()],
-            events: events.clone(),
+            events: vec![
+                ChainConfigEvent::new(contract1_name.clone(), event1.event.get_name()),
+                ChainConfigEvent::new(contract1_name.clone(), event2.event.get_name()),
+            ],
         };
+        let contract2_name = String::from("Contract2");
         let contract2 = super::ContractTemplate {
-            name: String::from("Contract2").to_capitalized_options(),
+            name: contract2_name.to_capitalized_options(),
             abi: abi_parsed_string.clone(),
             addresses: vec![address2.clone()],
-            events,
+            events: vec![
+                ChainConfigEvent::new(contract2_name.clone(), event1.event.get_name()),
+                ChainConfigEvent::new(contract2_name.clone(), event2.event.get_name()),
+            ],
         };
 
         let chain_config_1 = ChainConfigTemplate {
@@ -851,20 +873,20 @@ mod tests {
             .await
             .unwrap();
 
-        let events = vec![
-            event1.event.get_name().to_capitalized_options(),
-            event2.event.get_name().to_capitalized_options(),
-        ];
-
         let abi_unparsed_string =
             fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
         let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
         let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
+
+        let contract1_name = String::from("Contract1");
         let contract1 = super::ContractTemplate {
-            name: String::from("Contract1").to_capitalized_options(),
+            name: contract1_name.to_capitalized_options(),
             abi: abi_parsed_string.clone(),
             addresses: vec![address1.clone()],
-            events: events.clone(),
+            events: vec![
+                ChainConfigEvent::new(contract1_name.clone(), event1.event.get_name()),
+                ChainConfigEvent::new(contract1_name.clone(), event2.event.get_name()),
+            ],
         };
 
         let chain_config_1 = ChainConfigTemplate {
