@@ -186,15 +186,8 @@ mod test {
         let contract_address = "0x168a5d1217AEcd258b03018d5bF1A1677A07b733".to_string();
         let network: NetworkWithExplorer = NetworkWithExplorer::Matic;
         let language: Language = Language::Typescript;
-        let project_root_path: std::path::PathBuf = std::path::PathBuf::from("./");
-        super::generate_config_from_contract_address(
-            name,
-            &project_root_path,
-            &network,
-            contract_address,
-            &language,
-        )
-        .await
-        .unwrap();
+        super::generate_config_from_contract_address(name, &network, contract_address, &language)
+            .await
+            .unwrap();
     }
 }
