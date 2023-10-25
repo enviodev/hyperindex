@@ -214,8 +214,6 @@ module Make = (HyperSync: HyperSync.S) => {
       let currentBatchFromBlock = fromBlock.contents
 
       //set height and next from block
-      //TODO save this to the db in the background
-
       if pageUnsafe.archiveHeight > currentHeight.contents {
         DbFunctions.ChainMetadata.setChainMetadataRow(
           ~chainId=chainConfig.chainId,
