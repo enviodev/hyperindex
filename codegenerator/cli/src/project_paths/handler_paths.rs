@@ -126,7 +126,7 @@ impl ParsedPaths {
                 ))?;
 
                 let opt_abi: Option<ethers::abi::Contract> = serde_json::from_str(&abi_file)
-                    .map_err(|e| eprintln!("Failed to deserialize ABI - contiuing without the ABI - future errors may occur. Please ensure the ABI file is formatted correctly or contact the team."))
+                    .map_err(|_e| eprintln!("Failed to deserialize ABI - contiuing without the ABI - future errors may occur. Please ensure the ABI file is formatted correctly or contact the team."))
                     .ok();
 
                 opt_abi
