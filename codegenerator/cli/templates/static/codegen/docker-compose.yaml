@@ -3,7 +3,7 @@ services:
     image: postgres:13
     restart: always
     ports:
-      - "${PG_PORT:-5432}:5432"
+      - "${PG_PORT:-5433}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     environment:
