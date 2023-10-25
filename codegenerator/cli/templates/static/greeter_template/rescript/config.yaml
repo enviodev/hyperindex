@@ -16,8 +16,6 @@ networks:
             requiredEntities:
               - name: "Greeting"
   - id: 59144 # Linea
-    rpc_config:
-      url: https://rpc.linea.build # We recommend you change this to a dedicated RPC provider
     start_block: 367801
     contracts:
       - name: LineaGreeter
