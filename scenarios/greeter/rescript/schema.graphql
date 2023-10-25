@@ -1,6 +1,0 @@
-type Greeting @entity {
-  id: ID!
-  greetings: [String!]!
-  latestGreeting: String!
-  numberOfGreetings: Int!
-}
