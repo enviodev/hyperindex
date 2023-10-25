@@ -16,6 +16,7 @@ let initialEventsSummary: Types.eventsSummaryEntity = {
 Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader((~event, ~context) => {
   context.eventsSummary.load(globalEventsSummaryKey)
 })
+
 Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler((~event, ~context) => {
   let summary = context.eventsSummary.get(globalEventsSummaryKey)
 
@@ -37,5 +38,6 @@ Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handle
   context.eventsSummary.set(nextSummaryEntity)
   context.{{event.name.uncapitalized}}.set({{event.name.uncapitalized}}Entity)
 })
+
 {{/each}}
 {{/each}}
