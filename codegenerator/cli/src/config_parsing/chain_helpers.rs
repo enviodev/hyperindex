@@ -32,8 +32,10 @@ pub enum NetworkName {
     Mainnet,
     #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork)]
     Goerli,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, SkarNetwork)]
     Optimism,
+    #[subenum(SupportedNetwork, SkarNetwork)]
+    Base,
     #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, SkarNetwork)]
     Bsc,
     PoaSokol,
@@ -115,6 +117,7 @@ pub fn get_network_id_given_network_name(network_name: NetworkName) -> u64 {
         NetworkName::ZksyncEra => 324,
         NetworkName::Sepolia => 11155111,
         NetworkName::Linea => 59144,
+        NetworkName::Base => 8453,
     }
 }
 
@@ -150,6 +153,7 @@ pub fn get_network_name_from_id(network_id: u64) -> anyhow::Result<NetworkName> 
         1313161554 => NetworkName::Aurora,
         1313161555 => NetworkName::AuroraTestnet,
         1666600000 => NetworkName::Harmony,
+        8453 => NetworkName::Base,
         84531 => NetworkName::BaseTestnet,
         1101 => NetworkName::MaticZkevm,
         324 => NetworkName::ZksyncEra,

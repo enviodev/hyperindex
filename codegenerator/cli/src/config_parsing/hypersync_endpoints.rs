@@ -43,10 +43,12 @@ pub fn network_to_skar_url(network: &SkarNetwork) -> String {
         SkarNetwork::Mainnet => "http://eth.hypersync.bigdevenergy.link:1100".to_string(),
         SkarNetwork::Matic => "http://91.216.245.175:1101".to_string(),
         SkarNetwork::Gnosis => "http://gnosis.hypersync.bigdevenergy.link:1102".to_string(),
-        SkarNetwork::Goerli => "http://goerli.hypersync.bigdevenergy.link:1104".to_string(),
         SkarNetwork::Bsc => "http://bsc.hypersync.bigdevenergy.link:1103".to_string(),
-        SkarNetwork::Sepolia => "http://sepolia.hypersync.bigdevenergy.link:1108".to_string(),
+        SkarNetwork::Goerli => "http://goerli.hypersync.bigdevenergy.link:1104".to_string(),
+        SkarNetwork::Optimism => "http://optimism.hypersync.bigdevenergy.link:1105".to_string(),
         SkarNetwork::Linea => "http://linea.hypersync.bigdevenergy.link:1107".to_string(),
+        SkarNetwork::Sepolia => "http://sepolia.hypersync.bigdevenergy.link:1108".to_string(),
+        SkarNetwork::Base => "http://base.hypersync.bigdevenergy.link:1109".to_string(),
     }
 }
 

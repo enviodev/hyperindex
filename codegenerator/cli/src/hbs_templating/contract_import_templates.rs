@@ -82,7 +82,11 @@ impl AutoSchemaHandlerTemplate {
         Ok(AutoSchemaHandlerTemplate { contracts })
     }
 
-    fn generate_templates(&self, project_root: &PathBuf, template_dir:&Dir<'_>) -> anyhow::Result<()> {
+    fn generate_templates(
+        &self,
+        project_root: &PathBuf,
+        template_dir: &Dir<'_>,
+    ) -> anyhow::Result<()> {
         static SHARED_DIR: Dir<'_> =
             include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/contract_import_templates/shared");
 
@@ -99,24 +103,24 @@ impl AutoSchemaHandlerTemplate {
     pub fn generate_templates_typescript(&self, project_root: &PathBuf) -> anyhow::Result<()> {
         static DIR: Dir<'_> = include_dir!(
             "$CARGO_MANIFEST_DIR/templates/dynamic/contract_import_templates/typescript"
-        ); 
+        );
 
         self.generate_templates(project_root, &DIR)
-    }        
+    }
 
     pub fn generate_templates_javascript(&self, project_root: &PathBuf) -> anyhow::Result<()> {
         static DIR: Dir<'_> = include_dir!(
             "$CARGO_MANIFEST_DIR/templates/dynamic/contract_import_templates/javascript"
-        ); 
+        );
 
         self.generate_templates(project_root, &DIR)
-    }        
+    }
 
     pub fn generate_templates_rescript(&self, project_root: &PathBuf) -> anyhow::Result<()> {
         static DIR: Dir<'_> = include_dir!(
             "$CARGO_MANIFEST_DIR/templates/dynamic/contract_import_templates/rescript"
-        ); 
+        );
 
         self.generate_templates(project_root, &DIR)
-    }        
+    }
 }

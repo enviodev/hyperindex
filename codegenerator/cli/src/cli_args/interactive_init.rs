@@ -138,11 +138,9 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
 
                     let chosen_contract_address = match &args.contract_address {
                         Some(c) => c.clone(),
-                        None => {
-                            Text::new("[BETA VERSION] What is the address of the contract?")
-                                .prompt()
-                                .context("Prompting user for contract address")?
-                        }
+                        None => Text::new("[BETA VERSION] What is the address of the contract?")
+                            .prompt()
+                            .context("Prompting user for contract address")?,
                     };
 
                     InitilizationTypeWithArgs::ContractImportWithArgs(

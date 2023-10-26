@@ -153,10 +153,10 @@ pub async fn run_init_args(init_args: &InitArgs) -> Result<(), Box<dyn Error>> {
                 Language::Typescript => {
                     BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR.extract(&project_root_path)?;
                     auto_schema_handler_template
-                    .generate_templates_typescript(&project_root_path)
-                    .context(
-                        "Failed generating typescript templates for schema and event handlers.",
-                    )?;
+                        .generate_templates_typescript(&project_root_path)
+                        .context(
+                            "Failed generating typescript templates for schema and event handlers.",
+                        )?;
                 }
                 Language::Javascript => {
                     BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR.extract(&project_root_path)?;

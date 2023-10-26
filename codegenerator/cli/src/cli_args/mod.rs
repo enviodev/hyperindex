@@ -30,7 +30,7 @@ pub enum CommandType {
     ///Generate indexing code from user-defined configuration & schema files
     Codegen(CodegenArgs),
 
-    ///Prepare local environment for envio testing 
+    ///Prepare local environment for envio testing
     // #[clap(hide = true)]
     #[command(subcommand)]
     Local(LocalCommandTypes),
