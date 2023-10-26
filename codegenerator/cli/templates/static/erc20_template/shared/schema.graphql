@@ -1,4 +1,4 @@
-type Account @entity {
+type Account {
   # id is the address of the account
   id: ID!
   # approvals are a list of approvals that this account has given
@@ -7,7 +7,7 @@ type Account @entity {
   balance: BigInt!
 }
 
-type Approval @entity {
+type Approval {
   # id is the owner address and spender address [owner-spender]
   id: ID!
   # amount is the amount of tokens approved

@@ -1,4 +1,4 @@
-type User @entity {
+type User {
   id: ID!
   address: Bytes!
   gravatar: Gravatar
@@ -6,7 +6,7 @@ type User @entity {
   tokens: [Token!]!
 }
 
-type Gravatar @entity {
+type Gravatar {
   id: ID!
   owner: User!
   displayName: String!
@@ -14,7 +14,7 @@ type Gravatar @entity {
   updatesCount: BigInt!
 }
 
-type NftCollection @entity {
+type NftCollection {
   id: ID!
   contractAddress: Bytes!
   name: String!
@@ -24,24 +24,24 @@ type NftCollection @entity {
   tokens: [Token!]! @derivedFrom(field: "collection")
 }
 
-type Token @entity {
+type Token {
   id: ID!
   tokenId: BigInt!
   collection: NftCollection!
   owner: User!
 }
 
-type A @entity {
+type A {
   id: ID!
   b: B!
   optionalBigInt: BigInt
 }
-type B @entity {
+type B {
   id: ID!
   a: [A!]!
   c: C
 }
-type C @entity {
+type C {
   id: ID!
   a: A!
 }

@@ -1,11 +1,11 @@
-type User @entity {
+type User {
   id: ID!
   address: String!
   balance: BigInt!
   tokenBalances: [TokenBalance!]! @derivedFrom(field: "user")
 }
 
-type TokenBalance @entity {
+type TokenBalance {
   id: ID!
   name: String!
   symbol: String!

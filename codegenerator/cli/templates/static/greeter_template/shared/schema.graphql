@@ -1,4 +1,4 @@
-type Greeting @entity {
+type Greeting {
   id: ID!
   greetings: [String!]!
   latestGreeting: String!
