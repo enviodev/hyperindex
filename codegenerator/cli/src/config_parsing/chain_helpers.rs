@@ -35,6 +35,8 @@ pub enum NetworkName {
     #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, SkarNetwork)]
     Optimism,
     #[subenum(SupportedNetwork, SkarNetwork)]
+    //Note - Base was not originally in the graph's supported networks which is what the enum was made for
+    //If this causes issues we should rather create a subenum of this list just for the graph
     Base,
     #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, SkarNetwork)]
     Bsc,
