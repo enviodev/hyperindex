@@ -22,6 +22,15 @@ module {{contract.name.capitalized}}Contract = {
           ~logger=_,
           ~params={"userLog": "{{contract.name.capitalized}}.{{event.name.capitalized}}.context"},
         )
+      let contextLogger: Logs.userLogger = {
+        info: (message: string) => logger->Logging.uinfo(message),
+        debug: (message: string) => logger->Logging.udebug(message),
+        warn: (message: string) => logger->Logging.uwarn(message),
+        error: (message: string) => logger->Logging.uerror(message),
+        errorWithExn: (exn: option<Js.Exn.t>, message: string) =>
+          logger->Logging.uerrorWithExn(exn, message),
+      }
+
       {{#each event.required_entities as | required_entity |}}
       {{#if required_entity.labels}}
       {{#each required_entity.labels as |label| }}
@@ -42,6 +51,7 @@ module {{contract.name.capitalized}}Contract = {
 
       @warning("-16")
       let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext = {
+        log: contextLogger,
         contractRegistration: {
         {{#each ../../contracts as |contract_inner| }}
           //TODO only add contracts we've registered for the event in the config
@@ -131,13 +141,7 @@ module {{contract.name.capitalized}}Contract = {
             {{/each}}
           {{/each}}
         {
-          log: {
-            info: (message: string) => logger->Logging.uinfo(message),
-            debug: (message: string) => logger->Logging.udebug(message),
-            warn: (message: string) => logger->Logging.uwarn(message),
-            error: (message: string) => logger->Logging.uerror(message),
-            errorWithExn: (exn: option<Js.Exn.t>, message: string) => logger->Logging.uerrorWithExn(exn, message),
-          },
+          log: contextLogger,
           {{#each ../../entities as | entity |}}
             {{entity.name.uncapitalized}}: {
               set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(~key=entity.id, ~entity, ~dbOp = Types.Set, ~eventData)},
