@@ -22,6 +22,7 @@ impl InitTemplates {
             crate_version.to_string()
         } else {
             //Else install the latest version from npm so as not to break dev environments
+            // todo: this should be the latest version from npm, temp hard coding this for hosted service over ethlondon
             "0.0.22".to_string()
         };
 
