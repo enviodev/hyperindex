@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use super::{InitArgs, InitFlow, Language, Template as InitTemplate};
 
-use crate::config_parsing::chain_helpers::NetworkWithExplorer;
+use crate::config_parsing::chain_helpers::{NetworkWithExplorer, SupportedNetwork};
 use anyhow::Context;
 use strum::IntoEnumIterator;
 
@@ -122,6 +122,14 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
                         Some(chain) => chain.clone(),
                         None => {
                             let options = NetworkWithExplorer::iter()
+                                //Filter only our supported networks
+                                .filter(|&n| {
+                                    SupportedNetwork::iter()
+                                        //able to cast as u64 because networks enum
+                                        //uses repr(u64) attribute
+                                        .find(|&sn| n as u64 == sn as u64)
+                                        .is_some()
+                                })
                                 .map(|network| network.to_string())
                                 .collect::<Vec<String>>();
 

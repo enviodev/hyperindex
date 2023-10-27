@@ -12,8 +12,9 @@ use crate::project_paths::handler_paths::DEFAULT_SCHEMA_PATH;
 use crate::{
     cli_args::Language,
     config_parsing::{
-        chain_helpers::{self, NetworkName},
-        constants, Config, ConfigContract, ConfigEvent, EventNameOrSig, Network, NormalizedList,
+        chain_helpers::{GraphNetwork, Network},
+        constants, Config, ConfigContract, ConfigEvent, EventNameOrSig, Network as ConfigNetwork,
+        NormalizedList,
     },
 };
 
@@ -43,7 +44,7 @@ pub struct Schema {
 pub struct DataSource {
     pub kind: String,
     pub name: String,
-    pub network: NetworkName,
+    pub network: GraphNetwork,
     pub source: Source,
     pub mapping: Mapping,
 }
@@ -51,7 +52,7 @@ pub struct DataSource {
 pub struct Template {
     pub kind: String,
     pub name: String,
-    pub network: NetworkName,
+    pub network: GraphNetwork,
     pub source: TemplateSource,
     pub mapping: Mapping,
 }
@@ -138,11 +139,11 @@ async fn fetch_ipfs_file(cid: &str) -> Result<String, reqwest::Error> {
 // But will be useful multiple subgraph IDs for same subgraph across different chains
 async fn generate_network_contract_hashmap(
     manifest_raw: &str,
-) -> HashMap<NetworkName, Vec<String>> {
+) -> HashMap<GraphNetwork, Vec<String>> {
     // Deserialize manifest file
     let manifest: GraphManifest = serde_yaml::from_str::<GraphManifest>(manifest_raw).unwrap();
 
-    let mut network_contracts: HashMap<NetworkName, Vec<String>> = HashMap::new();
+    let mut network_contracts: HashMap<GraphNetwork, Vec<String>> = HashMap::new();
 
     // Iterate through data sources and templates to get network name and contracts
     for data_source in manifest.data_sources {
@@ -288,10 +289,10 @@ pub async fn generate_config_from_subgraph_id(
     // Generate network contract hashmap
     let network_hashmap = generate_network_contract_hashmap(&manifest_file_string).await;
 
-    for (network_name, contracts) in &network_hashmap {
+    for (graph_network, contracts) in &network_hashmap {
         // Create network object to be populated
-        let mut network = Network {
-            id: chain_helpers::get_network_id_given_network_name(network_name.clone()),
+        let mut network = ConfigNetwork {
+            id: Network::from(*graph_network).get_network_id(),
             // TODO: update to the final rpc url
             sync_source: None,
             start_block: 0,
@@ -413,7 +414,7 @@ async fn fetch_ipfs_file_and_write_to_system(
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
 mod test {
     use crate::cli_args::Language;
-    use crate::config_parsing::chain_helpers::{get_network_id_given_network_name, NetworkName};
+    use crate::config_parsing::chain_helpers::{GraphNetwork, Network};
     use crate::config_parsing::graph_migration::get_ipfs_id_from_file_path;
     use std::collections::HashMap;
 
@@ -488,7 +489,7 @@ mod test {
         let manifest: GraphManifest =
             serde_yaml::from_str::<GraphManifest>(&manifest_file).unwrap();
         for data_source in manifest.data_sources {
-            let chain_id = get_network_id_given_network_name(data_source.network);
+            let chain_id = Network::from(data_source.network).get_network_id();
             println!("chainID: {}", chain_id);
         }
     }
@@ -531,7 +532,10 @@ mod test {
         let manifest_file = std::fs::read_to_string("test/configs/graph-manifest.yaml").unwrap();
         let network_contracts = super::generate_network_contract_hashmap(&manifest_file).await;
         let mut network_contracts_expected = HashMap::new();
-        network_contracts_expected.insert(NetworkName::Mainnet, vec!["FiatTokenV1".to_string()]);
+        network_contracts_expected.insert(
+            GraphNetwork::EthereumMainnet,
+            vec!["FiatTokenV1".to_string()],
+        );
         assert_eq!(network_contracts, network_contracts_expected);
     }
 

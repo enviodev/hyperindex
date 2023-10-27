@@ -493,7 +493,7 @@ pub async fn convert_config_to_chain_configs(
                 }
             },
             None => {
-                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(&network.id)
+                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id)
                     .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
 
                 defualt_hypersync_endpoint.check_endpoint_health().await.context(format!("EE107: hypersync endpoint unhealthy at network {}, please provide rpc_config or hypersync_config. Read more in our docs https://docs.envio.dev/docs/configuration-file", network.id ))?;

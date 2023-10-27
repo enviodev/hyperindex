@@ -9,7 +9,7 @@ use tokio::time::Duration;
 use crate::{
     cli_args::Language,
     config_parsing::{
-        chain_helpers::{self, NetworkName, NetworkWithExplorer},
+        chain_helpers::{self, NetworkWithExplorer},
         constants, RequiredEntity,
     },
     config_parsing::{
@@ -56,7 +56,7 @@ pub async fn generate_config_from_contract_address(
 
     // Create network object to be populated
     let network = Network {
-        id: chain_helpers::get_network_id_given_network_name(NetworkName::from(network.clone())),
+        id: *network as u64,
         sync_source: None,
         start_block: 0,
         contracts: vec![contract],
@@ -184,7 +184,7 @@ mod test {
         // contract address of deprecated LongShort contract on Polygon
         let name = "LongShort";
         let contract_address = "0x168a5d1217AEcd258b03018d5bF1A1677A07b733".to_string();
-        let network: NetworkWithExplorer = NetworkWithExplorer::Matic;
+        let network: NetworkWithExplorer = NetworkWithExplorer::Polygon;
         let language: Language = Language::Typescript;
         super::generate_config_from_contract_address(name, &network, contract_address, &language)
             .await

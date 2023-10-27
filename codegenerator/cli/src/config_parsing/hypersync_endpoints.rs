@@ -2,9 +2,7 @@ use anyhow::{anyhow, Context};
 
 use crate::service_health::{self, EndpointHealth};
 
-use super::chain_helpers::{
-    get_network_name_from_id, EthArchiveNetwork, NetworkName, SkarNetwork, SupportedNetwork,
-};
+use super::chain_helpers::{EthArchiveNetwork, Network, SkarNetwork, SupportedNetwork};
 
 enum HyperSyncNetwork {
     Skar(SkarNetwork),
@@ -14,7 +12,7 @@ enum HyperSyncNetwork {
 fn get_hypersync_network_from_supported(
     network: &SupportedNetwork,
 ) -> anyhow::Result<HyperSyncNetwork> {
-    let network_name = NetworkName::from(network.clone());
+    let network_name = Network::from(network.clone());
     match SkarNetwork::try_from(network_name.clone()) {
         Ok(n) => Ok(HyperSyncNetwork::Skar(n)),
         Err(_) => match EthArchiveNetwork::try_from(network_name) {
@@ -28,7 +26,7 @@ fn get_hypersync_network_from_supported(
 
 pub fn network_to_eth_archive_url(network: &EthArchiveNetwork) -> String {
     match network {
-        EthArchiveNetwork::Matic => "http://46.4.5.110:77".to_string(),
+        EthArchiveNetwork::Polygon => "http://46.4.5.110:77".to_string(),
         EthArchiveNetwork::ArbitrumOne => "http://46.4.5.110:75".to_string(),
         EthArchiveNetwork::Bsc => "http://46.4.5.110:73".to_string(),
         EthArchiveNetwork::Avalanche => "http://46.4.5.110:72".to_string(),
@@ -40,8 +38,8 @@ pub fn network_to_eth_archive_url(network: &EthArchiveNetwork) -> String {
 
 pub fn network_to_skar_url(network: &SkarNetwork) -> String {
     match network {
-        SkarNetwork::Mainnet => "http://eth.hypersync.bigdevenergy.link:1100".to_string(),
-        SkarNetwork::Matic => "http://91.216.245.175:1101".to_string(),
+        SkarNetwork::EthereumMainnet => "http://eth.hypersync.bigdevenergy.link:1100".to_string(),
+        SkarNetwork::Polygon => "http://91.216.245.175:1101".to_string(),
         SkarNetwork::Gnosis => "http://gnosis.hypersync.bigdevenergy.link:1102".to_string(),
         SkarNetwork::Bsc => "http://bsc.hypersync.bigdevenergy.link:1103".to_string(),
         SkarNetwork::Goerli => "http://goerli.hypersync.bigdevenergy.link:1104".to_string(),
@@ -71,9 +69,9 @@ impl HypersyncEndpoint {
     }
 }
 
-pub fn get_default_hypersync_endpoint(chain_id: &u64) -> anyhow::Result<HypersyncEndpoint> {
+pub fn get_default_hypersync_endpoint(chain_id: u64) -> anyhow::Result<HypersyncEndpoint> {
     let network_name =
-        get_network_name_from_id(*chain_id).context("getting network name from id")?;
+        Network::from_network_id(chain_id).context("getting network name from id")?;
 
     let network = SupportedNetwork::try_from(network_name)
         .context("Unsupported network provided for hypersync")?;
@@ -95,8 +93,7 @@ pub fn get_default_hypersync_endpoint(chain_id: &u64) -> anyhow::Result<Hypersyn
 mod test {
 
     use crate::config_parsing::{
-        chain_helpers::{get_network_id_given_network_name, NetworkName},
-        hypersync_endpoints::get_default_hypersync_endpoint,
+        chain_helpers::Network, hypersync_endpoints::get_default_hypersync_endpoint,
     };
 
     use super::{EthArchiveNetwork, SkarNetwork, SupportedNetwork};
@@ -105,9 +102,9 @@ mod test {
     #[test]
     fn all_supported_chain_networks_have_a_skar_or_eth_archive_network() {
         for network in SupportedNetwork::iter() {
-            let skar_url = SkarNetwork::try_from(NetworkName::from(network.clone())).is_ok();
+            let skar_url = SkarNetwork::try_from(Network::from(network.clone())).is_ok();
             let eth_archive_url =
-                EthArchiveNetwork::try_from(NetworkName::from(network.clone())).is_ok();
+                EthArchiveNetwork::try_from(Network::from(network.clone())).is_ok();
 
             assert!(
                 skar_url || eth_archive_url,
@@ -120,9 +117,7 @@ mod test {
     #[test]
     fn all_supported_chain_ids_return_a_hypersync_endpoint() {
         for network in SupportedNetwork::iter() {
-            let chain_id = get_network_id_given_network_name(network.clone().into());
-
-            let _ = get_default_hypersync_endpoint(&chain_id).unwrap();
+            let _ = get_default_hypersync_endpoint(network as u64).unwrap();
         }
     }
 }
