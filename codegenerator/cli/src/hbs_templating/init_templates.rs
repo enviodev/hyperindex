@@ -22,7 +22,7 @@ impl InitTemplates {
             crate_version.to_string()
         } else {
             //Else install the latest version from npm so as not to break dev environments
-            "0.0.22".to_string()
+            "latest".to_string()
         };
 
         let template = InitTemplates {
