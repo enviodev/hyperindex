@@ -192,7 +192,6 @@ let createEntityRelationship = async (
 
   let objectName = isDerivedFrom ? relationalKey : `${relationalKey}Object`
   let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": "${tableName}","name": "${objectName}","source": "default","using": {"manual_configuration": {"remote_table": "${mappedEntity}","column_mapping": {${derivedFromTo}}}}}}`
-  Js.log(bodyString);
 
   let response = await fetch(
     hasuraGraphqlEndpoint,
