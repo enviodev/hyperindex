@@ -36,14 +36,6 @@ pub struct EthereumEventParam<'a> {
     abi_type: &'a EthAbiParamType,
 }
 
-// impl<'a> From<EthAbiEventParam> for EthereumEventParam<'a> {
-//     fn from(abi_type: EthAbiEventParam) -> EthereumEventParam<'a> {
-//         EthereumEventParam {
-//             name: abi_type.name.as_str(),
-//             abi_type: &abi_type.kind,
-//         }
-//     }
-// }
 impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
     fn from(abi_type: &'a EthAbiEventParam) -> EthereumEventParam<'a> {
         EthereumEventParam {
