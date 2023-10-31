@@ -1,13 +1,10 @@
 use self::hypersync_endpoints::HypersyncEndpoint;
 use crate::links;
-use crate::project_paths::ParsedPaths;
-use crate::project_paths::{path_utils, ProjectPaths};
+use crate::project_paths::{path_utils, ParsedProjectPaths};
 use crate::utils::normalized_list::NormalizedList;
 use anyhow::{anyhow, Context};
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::error::Error;
 use std::path::PathBuf;
 
 pub mod chain_helpers;
@@ -35,7 +32,7 @@ pub struct GlobalContractConfig {
 impl GlobalContractConfig {
     pub fn parse_abi(
         &self,
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<Option<ethers::abi::Contract>> {
         match &self.abi_file_path {
             None => Ok(None),
@@ -274,7 +271,7 @@ pub struct LocalContractConfig {
 impl LocalContractConfig {
     pub fn parse_abi(
         &self,
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<Option<ethers::abi::Contract>> {
         match &self.abi_file_path {
             None => Ok(None),
@@ -480,21 +477,25 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Con
     Ok(deserialized_yaml)
 }
 
-pub fn get_project_name_from_config(parsed_paths: &ParsedPaths) -> Result<String, Box<dyn Error>> {
-    let config = deserialize_config_from_yaml(&parsed_paths.project_paths.config)?;
-    Ok(config.name)
+pub fn is_rescript(
+    config: &config::Config,
+    project_paths: &ParsedProjectPaths,
+) -> anyhow::Result<bool> {
+    let is_rescript = config
+        .get_all_paths_to_handlers(project_paths)?
+        .iter()
+        .flat_map(|path| path.file_name())
+        .any(|file_name| {
+            if let Ok(path_str) = file_name.to_os_string().into_string() {
+                path_str.ends_with(".bs.js")
+            } else {
+                false
+            }
+        });
+
+    Ok(is_rescript)
 }
 
-pub fn is_rescript(handler_path: &HashMap<String, PathBuf>) -> bool {
-    for handler_path in handler_path.values() {
-        if let Ok(path_str) = handler_path.clone().into_os_string().into_string() {
-            if path_str.ends_with(".bs.js") {
-                return true;
-            }
-        }
-    }
-    false
-}
 #[cfg(test)]
 mod tests {
 

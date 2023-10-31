@@ -8,7 +8,8 @@ use crate::config_parsing::{
     RpcConfig,
 };
 use crate::persisted_state::PersistedStateJsonString;
-use crate::project_paths::{handler_paths::HandlerPathsTemplate, ParsedPaths};
+use crate::project_paths::handler_paths::HandlerPathsTemplate;
+use crate::project_paths::ParsedProjectPaths;
 use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
@@ -363,11 +364,12 @@ pub struct ContractTemplate {
 impl ContractTemplate {
     fn from_config_contract(
         contract: &config::Contract,
-        parsed_paths: &ParsedPaths,
+        project_paths: &ParsedProjectPaths,
         config: &config::Config,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
-        let handler = parsed_paths.get_contract_handler_paths_template(&contract.name)?;
+        let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
+            .context("Failed building handler paths template")?;
         let events = contract
             .events
             .iter()
@@ -495,23 +497,20 @@ pub struct ProjectTemplate {
 }
 
 impl ProjectTemplate {
-    pub fn generate_templates(&self, parsed_paths: &ParsedPaths) -> Result<()> {
+    pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         static CODEGEN_DYNAMIC_DIR: Dir<'_> =
             include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/codegen");
 
-        let hbs = HandleBarsDirGenerator::new(
-            &CODEGEN_DYNAMIC_DIR,
-            &self,
-            &parsed_paths.project_paths.generated,
-        );
+        let hbs =
+            HandleBarsDirGenerator::new(&CODEGEN_DYNAMIC_DIR, &self, &project_paths.generated);
         hbs.generate_hbs_templates()?;
 
         Ok(())
     }
 
-    pub fn from_config(cfg: config::Config, parsed_paths: &ParsedPaths) -> Result<Self> {
+    pub fn from_config(cfg: &config::Config, project_paths: &ParsedProjectPaths) -> Result<Self> {
         //TODO: make this a method in path handlers
-        let gitignore_generated_path = parsed_paths.project_paths.generated.join("*");
+        let gitignore_generated_path = project_paths.generated.join("*");
         let gitignore_path_str = gitignore_generated_path
             .to_str()
             .ok_or_else(|| anyhow!("invalid codegen path"))?
@@ -521,7 +520,7 @@ impl ProjectTemplate {
             .get_contracts()
             .iter()
             .map(|cfg_contract| {
-                ContractTemplate::from_config_contract(cfg_contract, parsed_paths, &cfg)
+                ContractTemplate::from_config_contract(cfg_contract, project_paths, cfg)
             })
             .collect::<Result<_>>()
             .context("Failed generating conract template types")?;
@@ -529,25 +528,28 @@ impl ProjectTemplate {
         let entities: Vec<EntityRecordTypeTemplate> = cfg
             .get_entities()
             .iter()
-            .map(|entity| EntityRecordTypeTemplate::from_config_entity(entity, &cfg))
+            .map(|entity| EntityRecordTypeTemplate::from_config_entity(entity, cfg))
             .collect::<Result<_>>()
             .context("Failed generating entity template types")?;
 
         let chain_configs: Vec<NetworkConfigTemplate> = cfg
             .get_networks()
             .iter()
-            .map(|network| NetworkConfigTemplate::from_config_network(network, &cfg))
+            .map(|network| NetworkConfigTemplate::from_config_network(network, cfg))
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
 
+        let persisted_state = PersistedStateJsonString::try_default(cfg, project_paths)
+            .context("Failed creating default persisted state")?;
+
         Ok(ProjectTemplate {
-            project_name: cfg.name,
+            project_name: cfg.name.clone(),
             sub_record_dependencies: vec![], //unused atm, use empty vec to not break template
             contracts,
             entities,
             chain_configs,
             codegen_out_path: gitignore_path_str,
-            persisted_state: PersistedStateJsonString::try_default(parsed_paths)?,
+            persisted_state,
         })
     }
 }
@@ -583,16 +585,16 @@ pub fn entities_to_map(
 
 #[cfg(test)]
 mod test {
-    use std::{fs, path::PathBuf};
-
+    use super::{
+        EventParamTypeTemplate, EventTemplate, EventType, FilteredTemplateLists,
+        PerNetworkContractEventTemplate, RequiredEntityTemplate,
+    };
     use crate::{
         capitalization::Capitalize,
-        cli_args::ProjectPathsArgs,
         config_parsing::{self, chain_helpers::EthArchiveNetwork, RpcConfig},
-        project_paths::ParsedPaths,
+        project_paths::ParsedProjectPaths,
     };
-
-    use super::PerNetworkContractEventTemplate;
+    use std::{fs, path::PathBuf};
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
@@ -617,24 +619,17 @@ mod test {
         let project_root = get_test_path_string_helper();
         let config = String::from(format!("configs/{}", configs_file_name));
         let generated = String::from("generated/");
-        let parsed_paths = ParsedPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .expect("Parsed paths");
+        let project_paths =
+            ParsedProjectPaths::new(project_root, generated, config).expect("Parsed paths");
 
-        let yaml_config =
-            config_parsing::deserialize_config_from_yaml(&parsed_paths.project_paths.config)
-                .expect("Config should be deserializeable");
+        let yaml_config = config_parsing::deserialize_config_from_yaml(&project_paths.config)
+            .expect("Config should be deserializeable");
 
-        let config = config_parsing::config::Config::parse_from_yaml_config(
-            &yaml_config,
-            &parsed_paths.project_paths,
-        )
-        .expect("Deserialized yml config should be parseable");
+        let config =
+            config_parsing::config::Config::parse_from_yaml_config(&yaml_config, &project_paths)
+                .expect("Deserialized yml config should be parseable");
 
-        let project_template = super::ProjectTemplate::from_config(config, &parsed_paths)
+        let project_template = super::ProjectTemplate::from_config(&config, &project_paths)
             .expect("should be able to get project template");
         project_template
     }
@@ -847,5 +842,82 @@ mod test {
     fn convert_to_chain_configs_case_5() {
         //Bad chain ID without sync config should panic
         get_project_template_helper("config5.yaml");
+    }
+
+    #[test]
+    fn abi_event_to_record_1() {
+        let project_template = get_project_template_helper("config1.yaml");
+
+        let new_gavatar_event_template = &project_template.contracts[0].events[0];
+
+        let expected_event_template = EventTemplate {
+            name: "NewGravatar".to_string().to_capitalized_options(),
+            event_type: EventType {
+                full: "Contract1_NewGravatar".to_string(),
+                truncated_for_pg_enum_limit: "Contract1_NewGravatar".to_string(),
+            },
+            params: vec![
+                EventParamTypeTemplate {
+                    key: "id".to_string(),
+                    type_rescript: String::from("Ethers.BigInt.t"),
+                },
+                EventParamTypeTemplate {
+                    key: "owner".to_string(),
+                    type_rescript: String::from("Ethers.ethAddress"),
+                },
+                EventParamTypeTemplate {
+                    key: "displayName".to_string(),
+                    type_rescript: String::from("string"),
+                },
+                EventParamTypeTemplate {
+                    key: "imageUrl".to_string(),
+                    type_rescript: String::from("string"),
+                },
+            ],
+            required_entities: vec![],
+        };
+
+        assert_eq!(&expected_event_template, new_gavatar_event_template);
+    }
+
+    #[test]
+    fn abi_event_to_record_2() {
+        let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
+
+        let new_gavatar_event_template = &project_template.contracts[0].events[0];
+
+        let expected_event_template = EventTemplate {
+            name: "NewGravatar".to_string().to_capitalized_options(),
+            event_type: EventType {
+                full: "Contract1_NewGravatar".to_string(),
+                truncated_for_pg_enum_limit: "Contract1_NewGravatar".to_string(),
+            },
+            params: vec![
+                EventParamTypeTemplate {
+                    key: "id".to_string(),
+                    type_rescript: String::from("Ethers.BigInt.t"),
+                },
+                EventParamTypeTemplate {
+                    key: "owner".to_string(),
+                    type_rescript: String::from("Ethers.ethAddress"),
+                },
+                EventParamTypeTemplate {
+                    key: "displayName".to_string(),
+                    type_rescript: String::from("string"),
+                },
+                EventParamTypeTemplate {
+                    key: "imageUrl".to_string(),
+                    type_rescript: String::from("string"),
+                },
+            ],
+            required_entities: vec![RequiredEntityTemplate {
+                name: String::from("Gravatar").to_capitalized_options(),
+                labels: Some(vec![String::from("gravatarWithChanges")]),
+                array_labels: None,
+                entity_fields_of_required_entity: FilteredTemplateLists::empty(),
+            }],
+        };
+
+        assert_eq!(&expected_event_template, new_gavatar_event_template);
     }
 }

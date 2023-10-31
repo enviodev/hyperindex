@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use super::{InitArgs, InitFlow, Language, Template as InitTemplate};
+use super::{InitArgs, InitFlow, Language, ProjectPaths, Template as InitTemplate};
 
 use crate::config_parsing::chain_helpers::{NetworkWithExplorer, SupportedNetwork};
 use anyhow::Context;
@@ -11,12 +11,14 @@ use inquire::{Select, Text};
 use super::constants::DEFAULT_PROJECT_ROOT_PATH;
 use super::validation::{is_directory_new, is_valid_foldername_inquire_validation_result};
 
+#[derive(Clone)]
 pub enum InitilizationTypeWithArgs {
     Template(InitTemplate),
     SubgraphID(String),
     ContractImportWithArgs(NetworkWithExplorer, String),
 }
 
+#[derive(Clone)]
 pub struct InitInteractive {
     pub name: String,
     pub directory: String,
@@ -25,15 +27,14 @@ pub struct InitInteractive {
 }
 
 impl InitArgs {
-    pub fn get_directory(&self) -> String {
-        if let Some(directory_str) = &self.directory {
-            directory_str.to_string()
-        } else {
-            DEFAULT_PROJECT_ROOT_PATH.to_string()
-        }
+    pub fn get_directory(&self, unparsed_project_paths: &ProjectPaths) -> String {
+        unparsed_project_paths.get_directory_with_default()
     }
 
-    pub fn get_init_args_interactive(&self) -> anyhow::Result<InitInteractive> {
+    pub fn get_init_args_interactive(
+        &self,
+        project_paths: &ProjectPaths,
+    ) -> anyhow::Result<InitInteractive> {
         let name: String = match &self.name {
             Some(args_name) => args_name.clone(),
             None => {
@@ -43,7 +44,7 @@ impl InitArgs {
             }
         };
 
-        let directory: String = match &self.directory {
+        let directory: String = match &project_paths.directory {
             Some(args_directory) => args_directory.clone(),
             None => {
                 Text::new("Specify a folder name (ENTER to skip): ")

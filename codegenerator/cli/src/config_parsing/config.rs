@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ProjectPaths},
+    project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
 
@@ -74,13 +74,57 @@ impl Config {
         networks.sort_by_key(|n| n.id);
         networks
     }
+
+    pub fn get_path_to_schema(&self, project_paths: &ParsedProjectPaths) -> Result<PathBuf> {
+        let schema_path = path_utils::get_config_path_relative_to_root(
+            project_paths,
+            PathBuf::from(&self.schema_path),
+        )
+        .context("Failed creating a relative path to schema")?;
+
+        Ok(schema_path)
+    }
+
+    pub fn get_all_paths_to_handlers(
+        &self,
+        project_paths: &ParsedProjectPaths,
+    ) -> Result<Vec<PathBuf>> {
+        let mut all_paths_to_handlers = self
+            .get_contracts()
+            .into_iter()
+            .map(|c| c.get_path_to_handler(project_paths))
+            .collect::<Result<HashSet<_>>>()?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        all_paths_to_handlers.sort();
+
+        Ok(all_paths_to_handlers)
+    }
+
+    pub fn get_all_paths_to_abi_files(
+        &self,
+        project_paths: &ParsedProjectPaths,
+    ) -> Result<Vec<PathBuf>> {
+        let mut filtered_unique_abi_files = self
+            .get_contracts()
+            .into_iter()
+            .filter_map(|c| c.get_path_to_abi_file(project_paths))
+            .collect::<Result<HashSet<_>>>()?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        filtered_unique_abi_files.sort();
+
+        Ok(filtered_unique_abi_files)
+    }
 }
 
 impl Config {
     pub fn parse_from_yaml_with_schema(
         yaml_cfg: &YamlConfig,
         schema: Schema,
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
         let mut networks: NetworkMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
@@ -201,7 +245,7 @@ impl Config {
 
     pub fn parse_from_yaml_config(
         yaml_cfg: &YamlConfig,
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
         let relative_schema_path_from_config = yaml_cfg
             .schema
@@ -286,7 +330,7 @@ pub struct Contract {
 }
 
 impl Contract {
-    pub fn get_stringified_abi(&self) -> Result<String> {
+    pub fn get_abi(&self) -> ethers::abi::Contract {
         let mut events_abi = ethers::abi::Contract::default();
 
         for event_container in &self.events {
@@ -297,6 +341,12 @@ impl Contract {
                 .push(event_container.event.clone());
         }
 
+        events_abi
+    }
+
+    pub fn get_stringified_abi(&self) -> Result<String> {
+        let events_abi = self.get_abi();
+
         let stringified_abi =
             serde_json::to_string(&events_abi).context("Failed serializing abi")?;
 
@@ -305,6 +355,37 @@ impl Contract {
 
     pub fn get_event_names(&self) -> Vec<String> {
         self.events.iter().map(|e| e.event.name.clone()).collect()
+    }
+
+    pub fn get_path_to_handler(&self, project_paths: &ParsedProjectPaths) -> Result<PathBuf> {
+        let handler_path = path_utils::get_config_path_relative_to_root(
+            project_paths,
+            PathBuf::from(&self.handler_path),
+        )
+        .context(format!(
+            "Failed creating a relative path to handler in contract {}",
+            self.name
+        ))?;
+
+        Ok(handler_path)
+    }
+
+    pub fn get_path_to_abi_file(
+        &self,
+        project_paths: &ParsedProjectPaths,
+    ) -> Option<Result<PathBuf>> {
+        self.abi_file_path.as_ref().map(|abi_path| {
+            let abi_rel_path = path_utils::get_config_path_relative_to_root(
+                project_paths,
+                PathBuf::from(abi_path),
+            )
+            .context(format!(
+                "Failed creating a relative path to abi in contract {}",
+                self.name
+            ))?;
+
+            Ok(abi_rel_path)
+        })
     }
 }
 
@@ -315,7 +396,7 @@ pub struct Event {
 }
 
 impl Event {
-    fn try_from_config_event(
+    pub fn try_from_config_event(
         yaml_cfg_event: super::ConfigEvent,
         opt_abi: &Option<ethers::abi::Contract>,
     ) -> Result<Self> {
@@ -342,5 +423,101 @@ impl From<super::RequiredEntity> for RequiredEntity {
             labels: r.labels.unwrap_or_else(|| vec![]),
             array_labels: r.array_labels.unwrap_or_else(|| vec![]),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::{
+        config_parsing::{self, entity_parsing::Schema},
+        project_paths::ParsedProjectPaths,
+    };
+
+    #[test]
+    fn test_get_contract_abi() {
+        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let project_root = String::from(test_dir);
+        let config_dir = String::from("configs/config1.yaml");
+        let generated = String::from("generated/");
+        let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
+            .expect("Failed creating parsed_paths");
+
+        let yaml_cfg = config_parsing::deserialize_config_from_yaml(&project_paths.config)
+            .expect("Failed deserializing config");
+
+        let config =
+            super::Config::parse_from_yaml_with_schema(&yaml_cfg, Schema::empty(), &project_paths)
+                .expect("Failed parsing config");
+
+        let contract_name = "Contract1".to_string();
+
+        let contract_abi = config
+            .get_contract(&contract_name)
+            .expect("Failed getting contract")
+            .get_abi();
+
+        let expected_abi_string = r#"
+                [
+                {
+                    "anonymous": false,
+                    "inputs": [
+                    {
+                        "indexed": false,
+                        "name": "id",
+                        "type": "uint256"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "owner",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "displayName",
+                        "type": "string"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "imageUrl",
+                        "type": "string"
+                    }
+                    ],
+                    "name": "NewGravatar",
+                    "type": "event"
+                },
+                {
+                    "anonymous": false,
+                    "inputs": [
+                    {
+                        "indexed": false,
+                        "name": "id",
+                        "type": "uint256"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "owner",
+                        "type": "address"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "displayName",
+                        "type": "string"
+                    },
+                    {
+                        "indexed": false,
+                        "name": "imageUrl",
+                        "type": "string"
+                    }
+                    ],
+                    "name": "UpdatedGravatar",
+                    "type": "event"
+                }
+                ]
+    "#;
+
+        let expected_abi: ethers::abi::Contract =
+            serde_json::from_str(expected_abi_string).unwrap();
+
+        assert_eq!(expected_abi, contract_abi);
     }
 }

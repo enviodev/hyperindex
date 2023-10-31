@@ -5,14 +5,14 @@ use std::{
 
 use anyhow::anyhow;
 
-use super::ProjectPaths;
+use super::ParsedProjectPaths;
 
 //Used for getting the path relative current dir for paths referenced in config.yaml
 //eg. current path is root_path/, config_path is root_path/config.yaml
 //handler in config.yaml is defined as ./EventHandler.js
 //return value should be root_path/EventHandler.js
 pub fn get_config_path_relative_to_root(
-    project_paths: &ProjectPaths,
+    project_paths: &ParsedProjectPaths,
     relative_config_path: PathBuf,
 ) -> anyhow::Result<PathBuf> {
     let config_directory = project_paths.config.parent().ok_or_else(|| {

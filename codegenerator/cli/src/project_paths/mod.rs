@@ -1,30 +1,37 @@
 use anyhow::anyhow;
 use std::path::{Component, PathBuf};
 
-use crate::cli_args::{ProjectPathsArgs, ToProjectPathsArgs};
+use crate::cli_args::{
+    constants::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH},
+    interactive_init::InitInteractive,
+    ProjectPaths,
+};
 
 pub mod handler_paths;
-pub use handler_paths::ParsedPaths;
 pub mod path_utils;
 
 #[derive(Debug, PartialEq)]
-pub struct ProjectPaths {
+pub struct ParsedProjectPaths {
     pub project_root: PathBuf,
     pub config: PathBuf,
     pub generated: PathBuf,
 }
 
-impl ProjectPaths {
-    pub fn new(project_paths_args: ProjectPathsArgs) -> anyhow::Result<ProjectPaths> {
-        let project_root = PathBuf::from(project_paths_args.project_root);
-        let generated_relative_path = PathBuf::from(&project_paths_args.generated);
+impl ParsedProjectPaths {
+    pub fn new(
+        project_root: String,
+        generated: String,
+        config: String,
+    ) -> anyhow::Result<ParsedProjectPaths> {
+        let project_root = PathBuf::from(project_root);
+        let generated_relative_path = PathBuf::from(generated);
         if let Some(Component::ParentDir) = generated_relative_path.components().peekable().peek() {
             return Err(anyhow!("Generated folder must be in project directory"));
         }
         let generated_joined: PathBuf = project_root.join(generated_relative_path);
         let generated = path_utils::normalize_path(&generated_joined);
 
-        let config_relative_path = PathBuf::from(&project_paths_args.config);
+        let config_relative_path = PathBuf::from(config);
         if let Some(Component::ParentDir) = config_relative_path.components().peekable().peek() {
             return Err(anyhow!("Config path must be in project directory"));
         }
@@ -32,48 +39,64 @@ impl ProjectPaths {
         let config_joined: PathBuf = project_root.join(config_relative_path);
         let config = path_utils::normalize_path(&config_joined);
 
-        Ok(ProjectPaths {
+        Ok(ParsedProjectPaths {
             project_root,
             generated,
             config,
         })
     }
+
+    pub fn default() -> anyhow::Result<ParsedProjectPaths> {
+        Self::new(
+            DEFAULT_PROJECT_ROOT_PATH.to_string(),
+            DEFAULT_GENERATED_PATH.to_string(),
+            DEFAULT_CONFIG_PATH.to_string(),
+        )
+    }
+
+    pub fn default_with_root(project_root: String) -> anyhow::Result<ParsedProjectPaths> {
+        Self::new(
+            project_root,
+            DEFAULT_GENERATED_PATH.to_string(),
+            DEFAULT_CONFIG_PATH.to_string(),
+        )
+    }
 }
 
-impl ToProjectPathsArgs for ProjectPaths {
-    fn to_project_paths_args(&self) -> ProjectPathsArgs {
-        let pathbuf_to_string = |path: &PathBuf| {
-            path.to_str()
-                .expect("project path should be convertable to a string")
-                .to_string()
-        };
+impl TryFrom<ProjectPaths> for ParsedProjectPaths {
+    type Error = anyhow::Error;
+    fn try_from(project_paths: ProjectPaths) -> Result<Self, Self::Error> {
+        let project_root = project_paths
+            .directory
+            .unwrap_or_else(|| DEFAULT_PROJECT_ROOT_PATH.to_string());
 
-        ProjectPathsArgs {
-            project_root: pathbuf_to_string(&self.project_root),
-            generated: pathbuf_to_string(&self.generated),
-            config: pathbuf_to_string(&self.config),
-        }
+        Self::new(
+            project_root,
+            project_paths.output_directory,
+            project_paths.config,
+        )
+    }
+}
+
+impl TryFrom<InitInteractive> for ParsedProjectPaths {
+    type Error = anyhow::Error;
+    fn try_from(init_interactive: InitInteractive) -> Result<Self, Self::Error> {
+        Self::default_with_root(init_interactive.directory)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ProjectPaths;
-    use crate::cli_args::ProjectPathsArgs;
+    use super::ParsedProjectPaths;
     use std::path::PathBuf;
     #[test]
     fn test_project_path_default_case() {
         let project_root = String::from("./");
         let config = String::from("config.yaml");
         let generated = String::from("generated/");
-        let project_paths = ProjectPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
+        let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
 
-        let expected_project_paths = ProjectPaths {
+        let expected_project_paths = ParsedProjectPaths {
             project_root: PathBuf::from("./"),
             config: PathBuf::from("config.yaml"),
             generated: PathBuf::from("generated"),
@@ -85,14 +108,9 @@ mod tests {
         let project_root = String::from("my_dir/my_project");
         let config = String::from("custom_config.yaml");
         let generated = String::from("custom_gen/my_project_generated");
-        let project_paths = ProjectPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
+        let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
 
-        let expected_project_paths = ProjectPaths {
+        let expected_project_paths = ParsedProjectPaths {
             project_root: PathBuf::from("my_dir/my_project/"),
             config: PathBuf::from("my_dir/my_project/custom_config.yaml"),
 
@@ -105,14 +123,9 @@ mod tests {
         let project_root = String::from("../my_dir/my_project");
         let config = String::from("custom_config.yaml");
         let generated = String::from("custom_gen/my_project_generated");
-        let project_paths = ProjectPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
+        let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
 
-        let expected_project_paths = ProjectPaths {
+        let expected_project_paths = ParsedProjectPaths {
             project_root: PathBuf::from("../my_dir/my_project/"),
             config: PathBuf::from("../my_dir/my_project/custom_config.yaml"),
             generated: PathBuf::from("../my_dir/my_project/custom_gen/my_project_generated"),
@@ -126,12 +139,7 @@ mod tests {
         let project_root = String::from("./");
         let config = String::from("config.yaml");
         let generated = String::from("../generated/");
-        ProjectPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
+        ParsedProjectPaths::new(project_root, config, generated).unwrap();
     }
 
     #[test]
@@ -140,11 +148,6 @@ mod tests {
         let project_root = String::from("./");
         let config = String::from("../config.yaml");
         let generated = String::from("generated/");
-        ProjectPaths::new(ProjectPathsArgs {
-            project_root,
-            config,
-            generated,
-        })
-        .unwrap();
+        ParsedProjectPaths::new(project_root, config, generated).unwrap();
     }
 }

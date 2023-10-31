@@ -66,12 +66,13 @@ pub mod rescript {
 
 pub mod codegen {
 
-    use crate::{commands::rescript, config_parsing, hbs_templating, project_paths::ParsedPaths};
+    use crate::{commands::rescript, config_parsing::config, hbs_templating};
+    use anyhow::{self, Context};
     use std::error::Error;
     use std::fs;
     use tokio::process::Command;
 
-    use crate::project_paths::ProjectPaths;
+    use crate::project_paths::ParsedProjectPaths;
     use include_dir::{include_dir, Dir};
     static CODEGEN_STATIC_DIR: Dir<'_> =
         include_dir!("$CARGO_MANIFEST_DIR/templates/static/codegen");
@@ -103,7 +104,7 @@ pub mod codegen {
     }
 
     pub async fn pnpm_install(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         println!("Checking for pnpm package...");
         check_and_install_pnpm().await?;
@@ -120,23 +121,23 @@ pub mod codegen {
             .await?)
     }
     pub async fn rescript_clean(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         rescript::clean(&project_paths.generated).await
     }
     pub async fn rescript_format(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         rescript::format(&project_paths.generated).await
     }
     pub async fn rescript_build(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         rescript::build(&project_paths.generated).await
     }
 
     pub async fn run_post_codegen_command_sequence(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
         println!("installing packages... ");
         let exit1 = pnpm_install(project_paths).await?;
@@ -162,20 +163,23 @@ pub mod codegen {
         Ok(last_exit)
     }
 
-    pub async fn run_codegen(parsed_paths: &ParsedPaths) -> Result<(), Box<dyn Error>> {
-        let project_paths = &parsed_paths.project_paths;
+    pub async fn run_codegen(
+        config: &config::Config,
+        project_paths: &ParsedProjectPaths,
+    ) -> anyhow::Result<()> {
         fs::create_dir_all(&project_paths.generated)?;
 
-        let yaml_config = config_parsing::deserialize_config_from_yaml(&project_paths.config)?;
-        let config =
-            config_parsing::config::Config::parse_from_yaml_config(&yaml_config, &project_paths)?;
-
         let template =
-            hbs_templating::codegen_templates::ProjectTemplate::from_config(config, parsed_paths)?;
+            hbs_templating::codegen_templates::ProjectTemplate::from_config(config, project_paths)
+                .context("Failed creating project template")?;
 
-        CODEGEN_STATIC_DIR.extract(&project_paths.generated)?;
+        CODEGEN_STATIC_DIR
+            .extract(&project_paths.generated)
+            .context("Failed extracting static codegen files")?;
 
-        template.generate_templates(parsed_paths)?;
+        template
+            .generate_templates(project_paths)
+            .context("Failed generating dynamic codegen files")?;
 
         Ok(())
     }
@@ -211,12 +215,12 @@ async fn execute_command(
 
 pub mod start {
 
-    use crate::project_paths::ProjectPaths;
+    use crate::project_paths::ParsedProjectPaths;
 
     use super::execute_command;
 
     pub async fn start_indexer(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
         should_use_raw_events_worker: bool,
         should_open_hasura: bool,
     ) -> anyhow::Result<std::process::ExitStatus> {
@@ -242,12 +246,12 @@ pub mod start {
 }
 pub mod docker {
 
-    use crate::project_paths::ProjectPaths;
+    use crate::project_paths::ParsedProjectPaths;
 
     use super::execute_command;
 
     pub async fn docker_compose_up_d(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<std::process::ExitStatus> {
         let cmd = "docker";
         let args = vec!["compose", "up", "-d"];
@@ -256,7 +260,7 @@ pub mod docker {
         execute_command(cmd, args, current_dir).await
     }
     pub async fn docker_compose_down_v(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<std::process::ExitStatus> {
         let cmd = "docker";
         let args = vec!["compose", "down", "-v"];
@@ -270,8 +274,8 @@ pub mod db_migrate {
 
     use super::execute_command;
 
-    use crate::{persisted_state::PersistedState, project_paths::ProjectPaths};
-    pub async fn run_up_migrations(project_paths: &ProjectPaths) -> anyhow::Result<()> {
+    use crate::{persisted_state::PersistedState, project_paths::ParsedProjectPaths};
+    pub async fn run_up_migrations(project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
         let cmd = "node";
         let args = vec![
             "-e",
@@ -289,7 +293,7 @@ pub mod db_migrate {
         Ok(())
     }
 
-    pub async fn run_drop_schema(project_paths: &ProjectPaths) -> anyhow::Result<()> {
+    pub async fn run_drop_schema(project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
         let cmd = "node";
         let args = vec![
             "-e",
@@ -307,7 +311,7 @@ pub mod db_migrate {
     }
 
     pub async fn run_db_setup(
-        project_paths: &ProjectPaths,
+        project_paths: &ParsedProjectPaths,
         should_drop_raw_events: bool,
     ) -> anyhow::Result<()> {
         let cmd = "node";
