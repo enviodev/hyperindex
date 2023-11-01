@@ -40,13 +40,3 @@ async-recursion = "1.0.5"
 #   It should be possible to use a linked version of openssl, but after hours of trying I (Jason) was unsuccessful.
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
 openssl = { version = "0.10.56", features = ["vendored"] }
-
-# Default profile
-[profile.dev]
-opt-level = 0
-debug = true
-
-# Release profile - must run with `cargo build --release` to use this profile
-[profile.release]
-opt-level = 3
-debug = false
