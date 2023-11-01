@@ -358,6 +358,7 @@ impl EventTemplate {
 pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub events: Vec<EventTemplate>,
+    pub abi: StringifiedAbi,
     pub handler: HandlerPathsTemplate,
 }
 
@@ -375,10 +376,15 @@ impl ContractTemplate {
             .iter()
             .map(|event| EventTemplate::from_config_event(event, config, &contract.name))
             .collect::<Result<_>>()?;
+        let abi = contract
+            .get_stringified_abi()
+            .context(format!("Failed getting abi of contract {}", contract.name))?;
+
         Ok(ContractTemplate {
             name,
             handler,
             events,
+            abi,
         })
     }
 }
@@ -402,7 +408,6 @@ impl PerNetworkContractEventTemplate {
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct PerNetworkContractTemplate {
     name: CapitalizedOptions,
-    abi: StringifiedAbi,
     addresses: Vec<EthAddress>,
     events: Vec<PerNetworkContractEventTemplate>,
 }
@@ -416,10 +421,6 @@ impl PerNetworkContractTemplate {
             .get_contract(config)
             .context("Failed getting contract")?;
 
-        let abi = contract
-            .get_stringified_abi()
-            .context("Failed getting contract abi")?;
-
         let events = contract
             .get_event_names()
             .into_iter()
@@ -428,7 +429,6 @@ impl PerNetworkContractTemplate {
 
         Ok(PerNetworkContractTemplate {
             name: network_contract.name.to_capitalized_options(),
-            abi,
             addresses: network_contract.addresses.clone(),
             events,
         })
@@ -594,7 +594,6 @@ mod test {
         config_parsing::{self, chain_helpers::EthArchiveNetwork, RpcConfig},
         project_paths::ParsedProjectPaths,
     };
-    use std::{fs, path::PathBuf};
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
@@ -609,10 +608,6 @@ mod test {
     fn get_test_path_string_helper() -> String {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         String::from(test_dir)
-    }
-
-    fn get_test_path_buf_helper() -> PathBuf {
-        PathBuf::from(&get_test_path_string_helper())
     }
 
     fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
@@ -658,7 +653,6 @@ mod test {
     #[test]
     fn chain_configs_parsed_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
-        let abi_file_path = get_test_path_buf_helper().join(PathBuf::from("abis/Contract1.json"));
 
         let rpc_config1 = RpcConfig::new("https://eth.com");
 
@@ -670,15 +664,10 @@ mod test {
             start_block: 0,
         };
 
-        let abi_unparsed_string =
-            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
-        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let events =
             get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
-            abi: abi_parsed_string,
             addresses: vec![address1.clone()],
             events,
         };
@@ -704,8 +693,6 @@ mod test {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let abi_file_path = get_test_path_buf_helper().join(PathBuf::from("abis/Contract1.json"));
-
         let rpc_config1 = RpcConfig::new("https://eth.com");
 
         let network1 = super::NetworkTemplate {
@@ -724,15 +711,10 @@ mod test {
             start_block: 0,
         };
 
-        let abi_unparsed_string =
-            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
-        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let events =
             get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
-            abi: abi_parsed_string.clone(),
             addresses: vec![address1.clone()],
             events,
         };
@@ -741,7 +723,6 @@ mod test {
             get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract2");
         let contract2 = super::PerNetworkContractTemplate {
             name: String::from("Contract2").to_capitalized_options(),
-            abi: abi_parsed_string.clone(),
             addresses: vec![address2.clone()],
             events,
         };
@@ -766,8 +747,6 @@ mod test {
     fn convert_to_chain_configs_case_3() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let abi_file_path = get_test_path_buf_helper().join(PathBuf::from("abis/Contract1.json"));
-
         let network1 = super::NetworkTemplate {
             id: 1,
             rpc_config: None,
@@ -779,13 +758,8 @@ mod test {
         let events =
             get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
 
-        let abi_unparsed_string =
-            fs::read_to_string(abi_file_path).expect("expected json file to be at this path");
-        let abi_parsed: ethers::abi::Contract = serde_json::from_str(&abi_unparsed_string).unwrap();
-        let abi_parsed_string = serde_json::to_string(&abi_parsed).unwrap();
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
-            abi: abi_parsed_string.clone(),
             addresses: vec![address1.clone()],
             events,
         };
