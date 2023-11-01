@@ -122,6 +122,13 @@ pub fn validate_deserialized_config_yaml(
     }
 
     let mut contract_names = Vec::new();
+
+    if let Some(global_contracts) = &deserialized_yaml.contracts {
+        for global_contract in global_contracts {
+            contract_names.push(global_contract.name.clone());
+        }
+    }
+
     for network in &deserialized_yaml.networks {
         if let Some(SyncSourceConfig::RpcConfig(rpc_config)) = &network.sync_source {
             if !validate_rpc_url(&rpc_config.url) {
@@ -129,8 +136,8 @@ pub fn validate_deserialized_config_yaml(
             }
         }
         for contract in &network.contracts {
-            contract_names.push(contract.name.clone());
             if let Some(local_contract) = contract.local_contract_config.as_ref() {
+                contract_names.push(contract.name.clone());
                 validate_contract_events(local_contract.events.clone())
                     .context("Validating network contract config")?;
             }
