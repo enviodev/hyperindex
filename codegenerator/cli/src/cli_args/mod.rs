@@ -20,15 +20,15 @@ pub struct CommandLineArgs {
 #[derive(Args, Debug)]
 pub struct ProjectPaths {
     ///The directory of the project. Defaults to current dir ("./")
-    #[arg(short, long)]
+    #[arg(global = true, short, long)]
     pub directory: Option<String>,
 
     ///The directory within the project that generated code should output to
-    #[arg(short, long, default_value_t=String::from(constants::DEFAULT_GENERATED_PATH))]
+    #[arg(global = true, short, long, default_value_t=String::from(constants::DEFAULT_GENERATED_PATH))]
     pub output_directory: String,
 
     ///The file in the project containing config.
-    #[arg(short, long, default_value_t=String::from(constants::DEFAULT_CONFIG_PATH))]
+    #[arg(global = true, long, default_value_t=String::from(constants::DEFAULT_CONFIG_PATH))]
     pub config: String,
 }
 
@@ -109,7 +109,7 @@ type ContractAddress = String;
 #[derive(Args, Debug)]
 pub struct InitArgs {
     ///The name of your project
-    #[arg(short, long)]
+    #[arg(global = true, short, long)]
     pub name: Option<String>,
 
     ///Initialization option for creating an indexer
@@ -117,7 +117,7 @@ pub struct InitArgs {
     pub init_commands: Option<InitFlow>,
 
     ///The language used to write handlers
-    #[arg(short = 'l', long = "language")]
+    #[arg(global = true, short = 'l', long = "language")]
     #[clap(value_enum)]
     pub language: Option<Language>,
 }
@@ -137,7 +137,7 @@ pub struct TemplateArgs {
     ///Name of the template to be used in initialization
     #[arg(short, long)]
     #[clap(value_enum)]
-    pub name: Option<Template>,
+    pub template: Option<Template>,
 }
 
 #[derive(Args, Debug, Default)]

@@ -45,7 +45,7 @@ impl TemplateLangCombo {
         let init_args = InitArgs {
             language: Some(l.clone()),
             init_commands: Some(InitFlow::Template(TemplateArgs {
-                name: Some(t.clone()),
+                template: Some(t.clone()),
             })),
             name: Some("test".to_string()),
         };

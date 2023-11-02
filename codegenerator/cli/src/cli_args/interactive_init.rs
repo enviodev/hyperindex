@@ -89,7 +89,7 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
         Some(init_flow) => {
             let initialization = match init_flow {
                 InitFlow::Template(args) => {
-                    let chosen_template = match &args.name {
+                    let chosen_template = match &args.template {
                         Some(template_name) => template_name.clone(),
                         None => {
                             let options = InitTemplate::iter()
