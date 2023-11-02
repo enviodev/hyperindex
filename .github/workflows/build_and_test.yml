@@ -75,7 +75,7 @@ jobs:
       - uses: pnpm/action-setup@v2
         if: steps.changes.outputs.testChanges == 'true'
         with:
-          version: 8
+          version: 8.9
 
       - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
         if: steps.changes.outputs.testChanges == 'true'

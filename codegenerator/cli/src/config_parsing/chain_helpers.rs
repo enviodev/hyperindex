@@ -93,7 +93,13 @@ pub enum Network {
     Mbase = 1287,
     #[subenum(GraphNetwork)]
     FantomTestnet = 4002,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, GraphNetwork)]
+    #[subenum(
+        SupportedNetwork,
+        NetworkWithExplorer,
+        EthArchiveNetwork,
+        GraphNetwork,
+        SkarNetwork
+    )]
     ArbitrumOne = 42161,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,

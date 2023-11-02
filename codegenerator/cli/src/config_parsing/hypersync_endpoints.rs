@@ -44,6 +44,7 @@ pub fn network_to_skar_url(network: &SkarNetwork) -> String {
         SkarNetwork::Bsc => "http://bsc.hypersync.bigdevenergy.link:1103".to_string(),
         SkarNetwork::Goerli => "http://goerli.hypersync.bigdevenergy.link:1104".to_string(),
         SkarNetwork::Optimism => "http://optimism.hypersync.bigdevenergy.link:1105".to_string(),
+        SkarNetwork::ArbitrumOne => "http://arbitrum.hypersync.bigdevenergy.link:1106".to_string(),
         SkarNetwork::Linea => "http://linea.hypersync.bigdevenergy.link:1107".to_string(),
         SkarNetwork::Sepolia => "http://sepolia.hypersync.bigdevenergy.link:1108".to_string(),
         SkarNetwork::Base => "http://base.hypersync.bigdevenergy.link:1109".to_string(),
