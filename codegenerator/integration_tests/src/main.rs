@@ -1,4 +1,5 @@
-use envio::cli_args::{InitArgs, InitFlow, Language, Template, TemplateArgs};
+use envio::cli_args::constants::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH};
+use envio::cli_args::{InitArgs, InitFlow, Language, ProjectPaths, Template, TemplateArgs};
 use envio::utils::run_init_args;
 use std::time::Duration;
 use strum::IntoEnumIterator;
@@ -33,39 +34,52 @@ fn clear_path_if_it_exists(path_str: &str) -> io::Result<()> {
     }
 }
 
-fn create_and_push_init_args(
-    combinations: &mut Vec<InitArgs>,
-    language: &Language,
-    template: &Template,
-) {
-    let init_args = InitArgs {
-        language: Some(language.clone()),
-        init_commands: Some(InitFlow::Template(TemplateArgs {
-            name: Some(template.clone()),
-        })),
-        directory: Some(format!(
-            "./integration_test_output/{}/{}",
-            template, language
-        )),
-        name: Some("test".to_string()),
-    };
-    combinations.push(init_args);
+struct TemplateLangCombo {
+    language: Language,
+    template: Template,
+    init_args: InitArgs,
 }
 
-fn generate_init_args_combinations() -> Vec<InitArgs> {
-    let mut combinations: Vec<InitArgs> = Vec::new();
-
-    // Use nested loops or iterators to generate all possible combinations of InitArgs.
-    for language in Language::iter() {
-        for template in Template::iter() {
-            create_and_push_init_args(&mut combinations, &language, &template);
+impl TemplateLangCombo {
+    fn new(l: Language, t: Template) -> Self {
+        let init_args = InitArgs {
+            language: Some(l.clone()),
+            init_commands: Some(InitFlow::Template(TemplateArgs {
+                name: Some(t.clone()),
+            })),
+            name: Some("test".to_string()),
+        };
+        TemplateLangCombo {
+            language: l,
+            template: t,
+            init_args,
         }
     }
 
-    // NOTE: you can use the below code to test a specific scenario in isolation.
-    // create_and_push_init_args(&mut combinations, &Language::Rescript, &Template::Blank);
+    fn get_dir(&self) -> String {
+        format!(
+            "./integration_test_output/{}/{}",
+            self.template, self.language
+        )
+    }
 
-    combinations
+    fn get_project_paths(&self) -> ProjectPaths {
+        ProjectPaths {
+            directory: Some(self.get_dir()),
+            output_directory: DEFAULT_GENERATED_PATH.to_string(),
+            config: DEFAULT_CONFIG_PATH.to_string(),
+        }
+    }
+}
+
+fn generate_init_args_combinations() -> Vec<TemplateLangCombo> {
+    Language::iter()
+        .flat_map(|l| {
+            Template::iter()
+                .map(|t| TemplateLangCombo::new(l.clone(), t.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 async fn run_all_init_combinations() {
@@ -73,21 +87,19 @@ async fn run_all_init_combinations() {
 
     let mut join_set = JoinSet::new();
 
-    for init_args in combinations {
+    for combo in combinations {
+        let dir = combo.get_dir();
+        let project_paths = combo.get_project_paths();
+        let init_args = combo.init_args;
         //spawn a thread for fetching schema
         join_set.spawn(async move {
-            let dir = init_args
-                .directory
-                .as_ref()
-                // Here we panic if it is None, because we need this for the tests.
-                .expect("Directory is None!");
             clear_path_if_it_exists(&dir).expect("unable to clear directories");
             println!("Running with init args: {:?}", init_args);
 
             //5 minute timeout
             let timeout_duration: Duration = Duration::from_secs(5 * 60);
 
-            match timeout(timeout_duration, run_init_args(&init_args)).await {
+            match timeout(timeout_duration, run_init_args(&init_args, &project_paths)).await {
                 Err(e) => panic!(
                     "Timed out after elapsed {} on running init args: {:?}",
                     e, init_args
