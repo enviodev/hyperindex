@@ -87,13 +87,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 ExistingPersistedState::NoFile
                             };
 
-                        if handler_file_has_changed(
-                            &existing_persisted_state,
-                            &config,
-                            &project_paths,
-                        )
-                        .context("Failed checking if handler file has changes")?
-                            && is_rescript(&config, &project_paths)
+                        if handler_file_has_changed(&existing_persisted_state, &config)
+                            .context("Failed checking if handler file has changes")?
+                            && is_rescript(&config)
                                 .context("Failed checking if handler file is rescript")?
                         {
                             commands::rescript::build(&project_paths.project_root).await?;

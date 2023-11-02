@@ -70,20 +70,17 @@ pub struct PersistedState {
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 
 impl PersistedState {
-    pub fn try_default(
-        config: &config::Config,
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<Self> {
+    pub fn try_default(config: &config::Config) -> anyhow::Result<Self> {
         let schema_path = config
-            .get_path_to_schema(project_paths)
+            .get_path_to_schema()
             .context("Failed getting path to schema")?;
 
         let all_handler_paths = config
-            .get_all_paths_to_handlers(project_paths)
+            .get_all_paths_to_handlers()
             .context("Failed getting handler paths")?;
 
         let all_abi_file_paths = config
-            .get_all_paths_to_abi_files(project_paths)
+            .get_all_paths_to_abi_files()
             .context("Failed getting abi file paths")?;
 
         const HANDLER_FILES_MUST_EXIST: bool = false;
@@ -91,7 +88,7 @@ impl PersistedState {
 
         Ok(PersistedState {
             has_run_db_migrations: false,
-            config_hash: HashString::from_file_path(project_paths.config.clone())
+            config_hash: HashString::from_file_path(config.parsed_project_paths.config.clone())
                 .context("Failed hashing config file")?,
             schema_hash: HashString::from_file_path(schema_path.clone())
                 .context("Failed hashing schema file")?,
@@ -105,13 +102,9 @@ impl PersistedState {
         })
     }
 
-    pub fn try_get_updated(
-        &self,
-        config: &config::Config,
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<Self> {
-        let default = Self::try_default(config, project_paths)
-            .context("Failed getting default in try get update")?;
+    pub fn try_get_updated(&self, config: &config::Config) -> anyhow::Result<Self> {
+        let default =
+            Self::try_default(config).context("Failed getting default in try get update")?;
 
         Ok(PersistedState {
             has_run_db_migrations: self.has_run_db_migrations,
@@ -221,7 +214,7 @@ pub fn check_user_file_diff_match(
     let mut diff = PersistedStateDiff::new();
 
     let new_state = persisted_state
-        .try_get_updated(config, project_paths)
+        .try_get_updated(config)
         .context("Getting updated persisted state")?;
 
     if persisted_state.config_hash != new_state.config_hash {
@@ -252,7 +245,6 @@ pub fn check_user_file_diff_match(
 pub fn handler_file_has_changed(
     existing_persisted_state: &ExistingPersistedState,
     config: &config::Config,
-    project_paths: &ParsedProjectPaths,
 ) -> anyhow::Result<bool> {
     let persisted_state = match existing_persisted_state {
         ExistingPersistedState::NoFile => {
@@ -262,7 +254,7 @@ pub fn handler_file_has_changed(
     };
 
     let all_handler_paths = config
-        .get_all_paths_to_handlers(project_paths)
+        .get_all_paths_to_handlers()
         .context("Failed getting all handler paths")?;
 
     let current_handlers_hash = HashString::from_file_paths(all_handler_paths, false)
@@ -281,12 +273,9 @@ pub fn persisted_state_file_exists(project_paths: &ParsedProjectPaths) -> bool {
 pub struct PersistedStateJsonString(String);
 
 impl PersistedStateJsonString {
-    pub fn try_default(
-        config: &config::Config,
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<Self> {
+    pub fn try_default(config: &config::Config) -> anyhow::Result<Self> {
         Ok(PersistedStateJsonString(
-            PersistedState::try_default(config, project_paths)
+            PersistedState::try_default(config)
                 .context("Failed getting default persisted state")?
                 .to_json_string(),
         ))

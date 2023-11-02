@@ -10,7 +10,7 @@ use crate::cli_args::{
 pub mod handler_paths;
 pub mod path_utils;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ParsedProjectPaths {
     pub project_root: PathBuf,
     pub config: PathBuf,

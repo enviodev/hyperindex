@@ -477,12 +477,9 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Con
     Ok(deserialized_yaml)
 }
 
-pub fn is_rescript(
-    config: &config::Config,
-    project_paths: &ParsedProjectPaths,
-) -> anyhow::Result<bool> {
+pub fn is_rescript(config: &config::Config) -> anyhow::Result<bool> {
     let is_rescript = config
-        .get_all_paths_to_handlers(project_paths)?
+        .get_all_paths_to_handlers()?
         .iter()
         .flat_map(|path| path.file_name())
         .any(|file_name| {

@@ -26,6 +26,7 @@ pub type EntityMap = HashMap<EntityKey, Entity>;
 pub struct Config {
     pub name: String,
     pub schema_path: String,
+    pub parsed_project_paths: ParsedProjectPaths,
     networks: NetworkMap,
     contracts: ContractMap,
     entities: EntityMap,
@@ -75,9 +76,9 @@ impl Config {
         networks
     }
 
-    pub fn get_path_to_schema(&self, project_paths: &ParsedProjectPaths) -> Result<PathBuf> {
+    pub fn get_path_to_schema(&self) -> Result<PathBuf> {
         let schema_path = path_utils::get_config_path_relative_to_root(
-            project_paths,
+            &self.parsed_project_paths,
             PathBuf::from(&self.schema_path),
         )
         .context("Failed creating a relative path to schema")?;
@@ -85,14 +86,11 @@ impl Config {
         Ok(schema_path)
     }
 
-    pub fn get_all_paths_to_handlers(
-        &self,
-        project_paths: &ParsedProjectPaths,
-    ) -> Result<Vec<PathBuf>> {
+    pub fn get_all_paths_to_handlers(&self) -> Result<Vec<PathBuf>> {
         let mut all_paths_to_handlers = self
             .get_contracts()
             .into_iter()
-            .map(|c| c.get_path_to_handler(project_paths))
+            .map(|c| c.get_path_to_handler(&self.parsed_project_paths))
             .collect::<Result<HashSet<_>>>()?
             .into_iter()
             .collect::<Vec<_>>();
@@ -102,14 +100,11 @@ impl Config {
         Ok(all_paths_to_handlers)
     }
 
-    pub fn get_all_paths_to_abi_files(
-        &self,
-        project_paths: &ParsedProjectPaths,
-    ) -> Result<Vec<PathBuf>> {
+    pub fn get_all_paths_to_abi_files(&self) -> Result<Vec<PathBuf>> {
         let mut filtered_unique_abi_files = self
             .get_contracts()
             .into_iter()
-            .filter_map(|c| c.get_path_to_abi_file(project_paths))
+            .filter_map(|c| c.get_path_to_abi_file(&self.parsed_project_paths))
             .collect::<Result<HashSet<_>>>()?
             .into_iter()
             .collect::<Vec<_>>();
@@ -233,6 +228,7 @@ impl Config {
 
         Ok(Config {
             name: yaml_cfg.name.clone(),
+            parsed_project_paths: project_paths.clone(),
             schema_path: yaml_cfg
                 .schema
                 .clone()

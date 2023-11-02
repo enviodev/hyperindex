@@ -539,7 +539,7 @@ impl ProjectTemplate {
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
 
-        let persisted_state = PersistedStateJsonString::try_default(cfg, project_paths)
+        let persisted_state = PersistedStateJsonString::try_default(cfg)
             .context("Failed creating default persisted state")?;
 
         Ok(ProjectTemplate {

@@ -82,19 +82,19 @@ mod tests {
         assert_eq!(
             expected_schema_path,
             config
-                .get_path_to_schema(&project_paths)
+                .get_path_to_schema()
                 .expect("failed to get schema path")
         );
         assert_eq!(
             expected_handler_paths,
             config
-                .get_all_paths_to_handlers(&project_paths)
+                .get_all_paths_to_handlers()
                 .expect("Failed to get hadnler paths")
         );
         assert_eq!(
             expected_abi_paths,
             config
-                .get_all_paths_to_abi_files(&project_paths)
+                .get_all_paths_to_abi_files()
                 .expect("failed to get abi paths")
         );
     }
