@@ -1,3 +1,4 @@
+use super::{system_config::EntityMap, validation::check_names_from_schema_for_reserved_words};
 use anyhow::{anyhow, Context};
 use ethers::abi::ethabi::ParamType as EthAbiParamType;
 use graphql_parser::schema::{
@@ -8,7 +9,6 @@ use serde::{Serialize, Serializer};
 use std::{collections::HashSet, fmt, path::PathBuf};
 use subenum::subenum;
 
-use super::{config::EntityMap, validation::check_names_from_schema_for_reserved_words};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Schema {
     pub entities: Vec<Entity>,

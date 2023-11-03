@@ -1,21 +1,24 @@
-use anyhow::{anyhow, Context, Result};
-
-use std::path::PathBuf;
-
-use crate::cli_args::ProjectPaths;
-use crate::cli_args::{interactive_init::InitilizationTypeWithArgs, InitArgs, Language, Template};
-use crate::config_parsing::config;
-use crate::config_parsing::contract_import::{self, generate_config_from_contract_address};
-use crate::config_parsing::entity_parsing::Schema;
-use crate::config_parsing::graph_migration::generate_config_from_subgraph_id;
-use crate::hbs_templating::contract_import_templates;
-use crate::hbs_templating::{
-    hbs_dir_generator::HandleBarsDirGenerator, init_templates::InitTemplates,
+use crate::{
+    cli_args::{
+        interactive_init::InitilizationTypeWithArgs, InitArgs, Language, ProjectPaths, Template,
+    },
+    commands,
+    config_parsing::{
+        contract_import::{self, generate_config_from_contract_address},
+        entity_parsing::Schema,
+        graph_migration::generate_config_from_subgraph_id,
+        human_config,
+        system_config::SystemConfig,
+    },
+    hbs_templating::{
+        contract_import_templates, hbs_dir_generator::HandleBarsDirGenerator,
+        init_templates::InitTemplates,
+    },
+    project_paths::ParsedProjectPaths,
 };
-use crate::project_paths::ParsedProjectPaths;
-use crate::{commands, config_parsing};
-
+use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir};
+use std::path::PathBuf;
 
 static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/shared");
@@ -156,7 +159,7 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
 
             //Use an empty schema config to generate auto_schema_handler_template
             //After it's been generated, the schema exists and codegen can parse it/use it
-            let parsed_config = config::Config::parse_from_yaml_with_schema(
+            let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
                 &yaml_config,
                 Schema::empty(),
                 &parsed_project_paths,
@@ -209,12 +212,11 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     println!("Project template ready");
     println!("Running codegen");
 
-    let yaml_config = config_parsing::deserialize_config_from_yaml(&parsed_project_paths.config)
+    let yaml_config = human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
         .context("Failed deserializing config")?;
 
-    let config =
-        config_parsing::config::Config::parse_from_yaml_config(&yaml_config, &parsed_project_paths)
-            .context("Failed parsing config")?;
+    let config = SystemConfig::parse_from_human_config(&yaml_config, &parsed_project_paths)
+        .context("Failed parsing config")?;
 
     commands::codegen::run_codegen(&config, &parsed_project_paths).await?;
 

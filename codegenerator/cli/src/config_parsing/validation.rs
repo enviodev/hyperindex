@@ -1,15 +1,10 @@
+use super::human_config::{ConfigEvent, HumanConfig, SyncSourceConfig};
+use crate::constants::reserved_keywords::{
+    JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS, TYPESCRIPT_RESERVED_WORDS,
+};
 use anyhow::{anyhow, Context};
 use regex::Regex;
-use std::collections::HashSet;
-use std::path::Path;
-
-use crate::config_parsing::Config;
-
-use super::constants::JAVASCRIPT_RESERVED_WORDS;
-use super::constants::RESCRIPT_RESERVED_WORDS;
-use super::constants::TYPESCRIPT_RESERVED_WORDS;
-use super::ConfigEvent;
-use super::SyncSourceConfig;
+use std::{collections::HashSet, path::Path};
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
@@ -115,7 +110,7 @@ fn validate_contract_events(events: Vec<ConfigEvent>) -> anyhow::Result<()> {
 
 pub fn validate_deserialized_config_yaml(
     config_path: &Path,
-    deserialized_yaml: &Config,
+    deserialized_yaml: &HumanConfig,
 ) -> anyhow::Result<()> {
     if !is_valid_postgres_db_name(&deserialized_yaml.name) {
         return Err(anyhow!("EE108: The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());

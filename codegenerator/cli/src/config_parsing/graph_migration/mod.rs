@@ -1,21 +1,22 @@
-use anyhow::{anyhow, Context};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
-use serde_yaml;
-use std::collections::HashMap;
-use std::fs;
-use std::path::PathBuf;
-use tokio::task::JoinSet;
-use tokio::time::{timeout, Duration};
-
-use crate::config_parsing::{LocalContractConfig, NetworkContractConfig};
-use crate::project_paths::handler_paths::DEFAULT_SCHEMA_PATH;
 use crate::{
     cli_args::Language,
     config_parsing::{
         chain_helpers::{GraphNetwork, Network},
-        constants, Config, ConfigEvent, EventNameOrSig, Network as ConfigNetwork,
+        human_config::{
+            ConfigEvent, EventNameOrSig, HumanConfig, LocalContractConfig,
+            Network as ConfigNetwork, NetworkContractConfig,
+        },
     },
+    project_paths::handler_paths::DEFAULT_SCHEMA_PATH,
+};
+use anyhow::{anyhow, Context};
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_yaml;
+use std::{collections::HashMap, fs, path::PathBuf};
+use tokio::{
+    task::JoinSet,
+    time::{timeout, Duration},
 };
 
 #[derive(Debug, Deserialize)]
@@ -186,11 +187,14 @@ async fn generate_network_contract_hashmap(
     network_contracts
 }
 
+// maximum backoff period for fetching files from IPFS
+const MAXIMUM_BACKOFF: Duration = Duration::from_secs(32);
+
 async fn fetch_ipfs_file_with_retry(file_id: &str, file_name: &str) -> anyhow::Result<String> {
     let mut refetch_delay = Duration::from_secs(2);
 
     let fail_if_maximum_is_exceeded = |current_refetch_delay, err: &str| -> anyhow::Result<()> {
-        if current_refetch_delay >= constants::MAXIMUM_BACKOFF {
+        if current_refetch_delay >= MAXIMUM_BACKOFF {
             eprintln!("Failed to fetch {}: {}", file_name, err);
             eprintln!("{} file needs to be imported manually.", file_name);
             return Err(anyhow!("Maximum backoff timeout exceeded"));
@@ -266,7 +270,7 @@ pub async fn generate_config_from_subgraph_id(
         .with_context(|| format!("Failed to deserialize {}.", MANIFEST_FILE_NAME))?;
 
     // Create config object to be populated
-    let mut config = Config {
+    let mut config = HumanConfig {
         name: manifest.data_sources[0].name.clone(),
         description: manifest.description.unwrap_or_default(),
         schema: None,

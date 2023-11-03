@@ -1,5 +1,5 @@
 use super::{path_utils, ParsedProjectPaths};
-use crate::config_parsing::config;
+use crate::config_parsing::system_config;
 use anyhow::anyhow;
 use pathdiff::diff_paths;
 use serde::Serialize;
@@ -15,7 +15,7 @@ pub struct HandlerPathsTemplate {
 
 impl HandlerPathsTemplate {
     pub fn from_contract(
-        contract: &config::Contract,
+        contract: &system_config::Contract,
         project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<Self> {
         let config_directory = project_paths
@@ -48,12 +48,11 @@ impl HandlerPathsTemplate {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use crate::{
-        config_parsing::{self, config, entity_parsing::Schema},
+        config_parsing::{entity_parsing::Schema, human_config, system_config::SystemConfig},
         project_paths::ParsedProjectPaths,
     };
+    use std::path::PathBuf;
 
     #[test]
     fn test_all_paths_construction_1() {
@@ -65,12 +64,15 @@ mod tests {
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
 
-        let yaml_cfg = config_parsing::deserialize_config_from_yaml(&project_paths.config)
+        let yaml_cfg = human_config::deserialize_config_from_yaml(&project_paths.config)
             .expect("Failed deserializing config");
 
-        let config =
-            config::Config::parse_from_yaml_with_schema(&yaml_cfg, Schema::empty(), &project_paths)
-                .expect("Failed parsing config");
+        let config = SystemConfig::parse_from_human_cfg_with_schema(
+            &yaml_cfg,
+            Schema::empty(),
+            &project_paths,
+        )
+        .expect("Failed parsing config");
 
         let expected_schema_path = test_dir_path_buf.join(PathBuf::from("schemas/schema.graphql"));
 
@@ -107,12 +109,15 @@ mod tests {
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
 
-        let yaml_cfg = config_parsing::deserialize_config_from_yaml(&project_paths.config)
+        let yaml_cfg = human_config::deserialize_config_from_yaml(&project_paths.config)
             .expect("Failed deserializing config");
 
-        let config =
-            config::Config::parse_from_yaml_with_schema(&yaml_cfg, Schema::empty(), &project_paths)
-                .expect("Failed parsing config");
+        let config = SystemConfig::parse_from_human_cfg_with_schema(
+            &yaml_cfg,
+            Schema::empty(),
+            &project_paths,
+        )
+        .expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
 

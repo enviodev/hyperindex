@@ -1,6 +1,9 @@
 use crate::{
     commands,
-    config_parsing::{self, is_rescript},
+    config_parsing::{
+        human_config::{self, is_rescript},
+        system_config::SystemConfig,
+    },
     persisted_state::{
         check_user_file_diff_match, handler_file_has_changed, persisted_state_file_exists,
         ExistingPersistedState, PersistedState, RerunOptions,
@@ -11,12 +14,11 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 
 pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
-    let yaml_config = config_parsing::deserialize_config_from_yaml(&project_paths.config)
+    let human_config = human_config::deserialize_config_from_yaml(&project_paths.config)
         .context("Failed deserializing config")?;
 
-    let config =
-        config_parsing::config::Config::parse_from_yaml_config(&yaml_config, &project_paths)
-            .context("Failed parsing config")?;
+    let config = SystemConfig::parse_from_human_config(&human_config, &project_paths)
+        .context("Failed parsing config")?;
     // if hasura healhz check returns not found assume docker isnt running and start it up {
     let hasura_health_check_is_error = service_health::fetch_hasura_healthz().await.is_err();
 

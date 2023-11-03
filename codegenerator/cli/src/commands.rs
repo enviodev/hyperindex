@@ -63,9 +63,8 @@ pub mod rescript {
 }
 
 pub mod codegen {
-    use super::execute_command;
-    use super::rescript;
-    use crate::{config_parsing::config, hbs_templating};
+    use super::{execute_command, rescript};
+    use crate::{config_parsing::system_config::SystemConfig, hbs_templating};
     use anyhow::{self, Context, Result};
     use std::fs;
     use std::path::PathBuf;
@@ -148,7 +147,7 @@ pub mod codegen {
     }
 
     pub async fn run_codegen(
-        config: &config::Config,
+        config: &SystemConfig,
         project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<()> {
         fs::create_dir_all(&project_paths.generated)?;

@@ -1,19 +1,19 @@
+use super::{
+    entity_parsing::{Entity, Schema},
+    human_config::{
+        self, HumanConfig, HypersyncConfig, HypersyncWorkerType, RpcConfig, SyncSourceConfig,
+    },
+};
+use crate::{
+    project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
+    utils::unique_hashmap,
+};
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::ethabi::Event as EthAbiEvent;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
-};
-
-use crate::{
-    project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
-    utils::unique_hashmap,
-};
-
-use super::{
-    entity_parsing::{Entity, Schema},
-    Config as YamlConfig, HypersyncConfig, HypersyncWorkerType, RpcConfig, SyncSourceConfig,
 };
 
 type ContractNameKey = String;
@@ -23,7 +23,7 @@ type NetworkMap = HashMap<NetworkIdKey, Network>;
 type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 
-pub struct Config {
+pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
@@ -32,7 +32,8 @@ pub struct Config {
     entities: EntityMap,
 }
 
-impl Config {
+//Getter methods for system config
+impl SystemConfig {
     pub fn get_contracts(&self) -> Vec<&Contract> {
         let mut contracts: Vec<&Contract> = self.contracts.values().collect();
         contracts.sort_by_key(|c| c.name.clone());
@@ -115,9 +116,10 @@ impl Config {
     }
 }
 
-impl Config {
-    pub fn parse_from_yaml_with_schema(
-        yaml_cfg: &YamlConfig,
+//Parse methods for system config
+impl SystemConfig {
+    pub fn parse_from_human_cfg_with_schema(
+        human_cfg: &HumanConfig,
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
@@ -125,7 +127,7 @@ impl Config {
         let mut contracts: ContractMap = HashMap::new();
 
         //Add all global contracts
-        if let Some(global_contracts) = &yaml_cfg.contracts {
+        if let Some(global_contracts) = &human_cfg.contracts {
             for g_contract in global_contracts {
                 let opt_abi = g_contract.parse_abi(project_paths)?;
                 let events = g_contract
@@ -152,7 +154,7 @@ impl Config {
             }
         }
 
-        for network in &yaml_cfg.networks {
+        for network in &human_cfg.networks {
             for contract in network.contracts.clone() {
                 //Add values for local contract
                 match contract.local_contract_config {
@@ -226,10 +228,10 @@ impl Config {
                 .context("Failed inserting entity at entities map")?;
         }
 
-        Ok(Config {
-            name: yaml_cfg.name.clone(),
+        Ok(SystemConfig {
+            name: human_cfg.name.clone(),
             parsed_project_paths: project_paths.clone(),
-            schema_path: yaml_cfg
+            schema_path: human_cfg
                 .schema
                 .clone()
                 .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
@@ -239,11 +241,11 @@ impl Config {
         })
     }
 
-    pub fn parse_from_yaml_config(
-        yaml_cfg: &YamlConfig,
+    pub fn parse_from_human_config(
+        human_cfg: &HumanConfig,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
-        let relative_schema_path_from_config = yaml_cfg
+        let relative_schema_path_from_config = human_cfg
             .schema
             .clone()
             .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string());
@@ -257,7 +259,7 @@ impl Config {
         let schema =
             Schema::parse_from_file(&schema_path).context("Parsing schema file for config")?;
 
-        Self::parse_from_yaml_with_schema(yaml_cfg, schema, project_paths)
+        Self::parse_from_human_cfg_with_schema(human_cfg, schema, project_paths)
     }
 }
 
@@ -307,7 +309,7 @@ pub struct NetworkContract {
 }
 
 impl NetworkContract {
-    pub fn get_contract<'a>(&self, config: &'a Config) -> Result<&'a Contract> {
+    pub fn get_contract<'a>(&self, config: &'a SystemConfig) -> Result<&'a Contract> {
         config.get_contract(&self.name).ok_or_else(|| {
             anyhow!(
                 "Unexpected, network contract {} should have a contract in mapping",
@@ -388,16 +390,16 @@ impl Contract {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Event {
     pub event: EthAbiEvent,
-    pub required_entities: Vec<super::RequiredEntity>,
+    pub required_entities: Vec<human_config::RequiredEntity>,
 }
 
 impl Event {
     pub fn try_from_config_event(
-        yaml_cfg_event: super::ConfigEvent,
+        human_cfg_event: human_config::ConfigEvent,
         opt_abi: &Option<ethers::abi::Contract>,
     ) -> Result<Self> {
-        let event = yaml_cfg_event.event.get_abi_event(opt_abi)?;
-        let required_entities = yaml_cfg_event.required_entities.unwrap_or_else(|| vec![]);
+        let event = human_cfg_event.event.get_abi_event(opt_abi)?;
+        let required_entities = human_cfg_event.required_entities.unwrap_or_else(|| vec![]);
 
         Ok(Event {
             event,
@@ -412,8 +414,8 @@ struct RequiredEntity {
     pub labels: Vec<String>,
     pub array_labels: Vec<String>,
 }
-impl From<super::RequiredEntity> for RequiredEntity {
-    fn from(r: super::RequiredEntity) -> Self {
+impl From<human_config::RequiredEntity> for RequiredEntity {
+    fn from(r: human_config::RequiredEntity) -> Self {
         RequiredEntity {
             name: r.name,
             labels: r.labels.unwrap_or_else(|| vec![]),
@@ -424,6 +426,7 @@ impl From<super::RequiredEntity> for RequiredEntity {
 
 #[cfg(test)]
 mod test {
+    use super::SystemConfig;
     use crate::{
         config_parsing::{self, entity_parsing::Schema},
         project_paths::ParsedProjectPaths,
@@ -438,12 +441,16 @@ mod test {
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
 
-        let yaml_cfg = config_parsing::deserialize_config_from_yaml(&project_paths.config)
-            .expect("Failed deserializing config");
+        let human_cfg =
+            config_parsing::human_config::deserialize_config_from_yaml(&project_paths.config)
+                .expect("Failed deserializing config");
 
-        let config =
-            super::Config::parse_from_yaml_with_schema(&yaml_cfg, Schema::empty(), &project_paths)
-                .expect("Failed parsing config");
+        let config = SystemConfig::parse_from_human_cfg_with_schema(
+            &human_cfg,
+            Schema::empty(),
+            &project_paths,
+        )
+        .expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
 

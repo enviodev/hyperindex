@@ -1,15 +1,13 @@
+use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths};
 use anyhow::Context;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fmt::{self, Display},
     fs::{self, File},
     io::Read,
     path::PathBuf,
 };
-
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-
-use crate::{config_parsing::config, project_paths::ParsedProjectPaths};
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct HashString(String);
@@ -70,7 +68,7 @@ pub struct PersistedState {
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 
 impl PersistedState {
-    pub fn try_default(config: &config::Config) -> anyhow::Result<Self> {
+    pub fn try_default(config: &SystemConfig) -> anyhow::Result<Self> {
         let schema_path = config
             .get_path_to_schema()
             .context("Failed getting path to schema")?;
@@ -102,7 +100,7 @@ impl PersistedState {
         })
     }
 
-    pub fn try_get_updated(&self, config: &config::Config) -> anyhow::Result<Self> {
+    pub fn try_get_updated(&self, config: &SystemConfig) -> anyhow::Result<Self> {
         let default =
             Self::try_default(config).context("Failed getting default in try get update")?;
 
@@ -199,7 +197,7 @@ pub enum ExistingPersistedState {
 
 pub fn check_user_file_diff_match(
     existing_persisted_state: &ExistingPersistedState,
-    config: &config::Config,
+    config: &SystemConfig,
     project_paths: &ParsedProjectPaths,
 ) -> anyhow::Result<RerunOptions> {
     //If there is no existing file, the whole process needs to
@@ -244,7 +242,7 @@ pub fn check_user_file_diff_match(
 
 pub fn handler_file_has_changed(
     existing_persisted_state: &ExistingPersistedState,
-    config: &config::Config,
+    config: &SystemConfig,
 ) -> anyhow::Result<bool> {
     let persisted_state = match existing_persisted_state {
         ExistingPersistedState::NoFile => {
@@ -273,7 +271,7 @@ pub fn persisted_state_file_exists(project_paths: &ParsedProjectPaths) -> bool {
 pub struct PersistedStateJsonString(String);
 
 impl PersistedStateJsonString {
-    pub fn try_default(config: &config::Config) -> anyhow::Result<Self> {
+    pub fn try_default(config: &SystemConfig) -> anyhow::Result<Self> {
         Ok(PersistedStateJsonString(
             PersistedState::try_default(config)
                 .context("Failed getting default persisted state")?

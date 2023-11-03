@@ -2,11 +2,11 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        config,
         entity_parsing::strip_option_from_rescript_type_str,
         entity_parsing::{Entity, Field},
         event_parsing::abi_type_to_rescript_string,
-        RpcConfig,
+        human_config::RpcConfig,
+        system_config::{self, SystemConfig},
     },
     persisted_state::PersistedStateJsonString,
     project_paths::{handler_paths::HandlerPathsTemplate, ParsedProjectPaths},
@@ -121,7 +121,7 @@ pub struct EntityParamTypeTemplate {
 }
 
 impl EntityParamTypeTemplate {
-    fn from_entity_field(field: &Field, config: &config::Config) -> Result<Self> {
+    fn from_entity_field(field: &Field, config: &SystemConfig) -> Result<Self> {
         let entity_names_set = config.get_entity_names_set();
         let type_rescript = field
             .field_type
@@ -166,7 +166,7 @@ pub struct EntityRecordTypeTemplate {
 }
 
 impl EntityRecordTypeTemplate {
-    fn from_config_entity(entity: &Entity, config: &config::Config) -> Result<Self> {
+    fn from_config_entity(entity: &Entity, config: &SystemConfig) -> Result<Self> {
         let params = entity
             .fields
             .iter()
@@ -281,8 +281,8 @@ pub struct EventTemplate {
 
 impl EventTemplate {
     fn from_config_event(
-        config_event: &config::Event,
-        config: &config::Config,
+        config_event: &system_config::Event,
+        config: &SystemConfig,
         contract_name: &String,
     ) -> Result<Self> {
         let name = config_event.event.name.to_owned().to_capitalized_options();
@@ -364,9 +364,9 @@ pub struct ContractTemplate {
 
 impl ContractTemplate {
     fn from_config_contract(
-        contract: &config::Contract,
+        contract: &system_config::Contract,
         project_paths: &ParsedProjectPaths,
-        config: &config::Config,
+        config: &SystemConfig,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
         let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
@@ -414,8 +414,8 @@ pub struct PerNetworkContractTemplate {
 
 impl PerNetworkContractTemplate {
     fn from_config_network_contract(
-        network_contract: &config::NetworkContract,
-        config: &config::Config,
+        network_contract: &system_config::NetworkContract,
+        config: &SystemConfig,
     ) -> anyhow::Result<Self> {
         let contract = network_contract
             .get_contract(config)
@@ -449,7 +449,7 @@ struct NetworkTemplate {
 }
 
 impl NetworkTemplate {
-    fn from_config_network(network: &config::Network) -> Self {
+    fn from_config_network(network: &system_config::Network) -> Self {
         NetworkTemplate {
             id: network.id,
             rpc_config: network.get_rpc_config(),
@@ -467,7 +467,10 @@ pub struct NetworkConfigTemplate {
 }
 
 impl NetworkConfigTemplate {
-    fn from_config_network(network: &config::Network, config: &config::Config) -> Result<Self> {
+    fn from_config_network(
+        network: &system_config::Network,
+        config: &SystemConfig,
+    ) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
         let contracts = network
             .contracts
@@ -508,7 +511,7 @@ impl ProjectTemplate {
         Ok(())
     }
 
-    pub fn from_config(cfg: &config::Config, project_paths: &ParsedProjectPaths) -> Result<Self> {
+    pub fn from_config(cfg: &SystemConfig, project_paths: &ParsedProjectPaths) -> Result<Self> {
         //TODO: make this a method in path handlers
         let gitignore_generated_path = project_paths.generated.join("*");
         let gitignore_path_str = gitignore_generated_path
@@ -562,7 +565,10 @@ mod test {
     };
     use crate::{
         capitalization::Capitalize,
-        config_parsing::{self, chain_helpers::EthArchiveNetwork, RpcConfig},
+        config_parsing::{
+            chain_helpers::EthArchiveNetwork, human_config, human_config::RpcConfig,
+            system_config::SystemConfig,
+        },
         project_paths::ParsedProjectPaths,
     };
 
@@ -588,12 +594,11 @@ mod test {
         let project_paths =
             ParsedProjectPaths::new(project_root, generated, config).expect("Parsed paths");
 
-        let yaml_config = config_parsing::deserialize_config_from_yaml(&project_paths.config)
+        let yaml_config = human_config::deserialize_config_from_yaml(&project_paths.config)
             .expect("Config should be deserializeable");
 
-        let config =
-            config_parsing::config::Config::parse_from_yaml_config(&yaml_config, &project_paths)
-                .expect("Deserialized yml config should be parseable");
+        let config = SystemConfig::parse_from_human_config(&yaml_config, &project_paths)
+            .expect("Deserialized yml config should be parseable");
 
         let project_template = super::ProjectTemplate::from_config(&config, &project_paths)
             .expect("should be able to get project template");

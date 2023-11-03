@@ -1,3 +1,11 @@
+use super::human_config::{
+    ConfigEvent, EventNameOrSig, HumanConfig, LocalContractConfig, Network, NetworkContractConfig,
+    RequiredEntity,
+};
+use crate::{
+    cli_args::Language,
+    config_parsing::chain_helpers::{self, NetworkWithExplorer},
+};
 use anyhow::{anyhow, Context};
 use async_recursion::async_recursion;
 use ethers::etherscan::contract::ContractMetadata;
@@ -6,24 +14,13 @@ use std::fs;
 use std::path::PathBuf;
 use tokio::time::Duration;
 
-use crate::{
-    cli_args::Language,
-    config_parsing::{
-        chain_helpers::{self, NetworkWithExplorer},
-        constants, RequiredEntity,
-    },
-    config_parsing::{Config, ConfigEvent, EventNameOrSig, Network},
-};
-
-use super::{LocalContractConfig, NetworkContractConfig};
-
 // Function to generate config, schema and abis from subgraph ID
 pub async fn generate_config_from_contract_address(
     name: &str,
     network: &NetworkWithExplorer,
     contract_address: String,
     language: &Language,
-) -> anyhow::Result<Config> {
+) -> anyhow::Result<HumanConfig> {
     let contract_address_h160 = contract_address
         .parse()
         .context("parsing address to h160")?;
@@ -65,7 +62,7 @@ pub async fn generate_config_from_contract_address(
     };
 
     // Create config object to be populated
-    let config = Config {
+    let config = HumanConfig {
         name: contract_data.name.clone(),
         //(Global contracts is none) contracts definined at the network level
         contracts: None,
@@ -128,6 +125,9 @@ async fn get_contract_data_from_contract(
     }
 }
 
+// maximum backoff period for fetching result from explorer
+const MAXIMUM_BACKOFF: Duration = Duration::from_secs(32);
+
 async fn fetch_get_source_code_result_from_block_explorer(
     client: &etherscan::Client,
     address: &H160,
@@ -136,7 +136,7 @@ async fn fetch_get_source_code_result_from_block_explorer(
     let mut refetch_delay = Duration::from_secs(2);
 
     let fail_if_maximum_is_exceeded = |current_refetch_delay| -> anyhow::Result<()> {
-        if current_refetch_delay >= constants::MAXIMUM_BACKOFF {
+        if current_refetch_delay >= MAXIMUM_BACKOFF {
             Err(anyhow!("Maximum backoff timeout exceeded"))
         } else {
             Ok(())

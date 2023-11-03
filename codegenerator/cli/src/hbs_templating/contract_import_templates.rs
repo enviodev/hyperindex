@@ -1,15 +1,16 @@
 use super::hbs_dir_generator::HandleBarsDirGenerator;
+use crate::{
+    capitalization::{Capitalize, CapitalizedOptions},
+    config_parsing::{
+        entity_parsing::{ethabi_type_to_field_type, Entity, Field, FieldType, Schema},
+        system_config::{self, SystemConfig},
+    },
+};
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{EventParam, ParamType};
 use include_dir::{include_dir, Dir};
 use serde::Serialize;
 use std::path::PathBuf;
-
-use crate::capitalization::{Capitalize, CapitalizedOptions};
-use crate::config_parsing::config::{self, Config, Contract as ConfigContract};
-use crate::config_parsing::entity_parsing::{
-    ethabi_type_to_field_type, Entity, Field, FieldType, Schema,
-};
 
 #[derive(Serialize)]
 pub struct AutoSchemaHandlerTemplate {
@@ -37,7 +38,7 @@ pub struct Contract {
 }
 
 impl Contract {
-    fn from_config_contract(contract: &ConfigContract) -> Result<Self> {
+    fn from_config_contract(contract: &system_config::Contract) -> Result<Self> {
         let events = contract
             .events
             .iter()
@@ -69,7 +70,7 @@ pub struct Event {
 }
 
 impl Event {
-    fn from_config_event(e: &config::Event) -> Result<Self> {
+    fn from_config_event(e: &system_config::Event) -> Result<Self> {
         let params = e
             .event
             .inputs
@@ -124,7 +125,7 @@ impl Into<Field> for Param {
 }
 
 impl AutoSchemaHandlerTemplate {
-    pub fn try_from(config: Config) -> Result<Self> {
+    pub fn try_from(config: SystemConfig) -> Result<Self> {
         let contracts = config
             .get_contracts()
             .iter()
