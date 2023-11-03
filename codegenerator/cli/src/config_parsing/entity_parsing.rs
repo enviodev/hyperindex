@@ -8,7 +8,7 @@ use serde::{Serialize, Serializer};
 use std::{collections::HashSet, fmt, path::PathBuf};
 use subenum::subenum;
 
-use super::config::EntityMap;
+use super::{config::EntityMap, validation::check_names_from_schema_for_reserved_words};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Schema {
     pub entities: Vec<Entity>,
@@ -49,7 +49,34 @@ impl Schema {
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
             .context("EE201: Failed to parse schema as document")?;
 
-        Self::from_document(schema_doc).context("Failed converting schema doc to schema struct")
+        let parsed = Self::from_document(schema_doc)
+            .context("Failed converting schema doc to schema struct")?;
+
+        parsed
+            .check_schema_for_reserved_words()
+            .context("Failed checking if schema contains reserved keywords")?;
+
+        Ok(parsed)
+    }
+
+    pub fn check_schema_for_reserved_words(&self) -> anyhow::Result<()> {
+        let mut all_names: Vec<String> = Vec::new();
+        for entity in &self.entities {
+            all_names.push(entity.name.clone());
+
+            for field in &entity.fields {
+                all_names.push(field.name.clone());
+            }
+        }
+        let reserved_keywords_used = check_names_from_schema_for_reserved_words(all_names);
+        if !reserved_keywords_used.is_empty() {
+            return Err(anyhow!(
+                "Schema contains the following reserved keywords: {}",
+                reserved_keywords_used.join(", ")
+            ));
+        }
+
+        Ok(())
     }
 }
 

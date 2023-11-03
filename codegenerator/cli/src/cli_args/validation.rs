@@ -1,4 +1,4 @@
-use super::constants::DEFAULT_PROJECT_ROOT_PATH;
+use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use inquire::validator::Validation;
 use serde::ser::StdError;
 use std::fs;

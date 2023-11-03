@@ -1,20 +1,20 @@
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::capitalization::{Capitalize, CapitalizedOptions};
-use crate::config_parsing::{
-    config,
-    entity_parsing::strip_option_from_rescript_type_str,
-    entity_parsing::{Entity, Field},
-    event_parsing::abi_type_to_rescript_string,
-    RpcConfig,
+use crate::{
+    capitalization::{Capitalize, CapitalizedOptions},
+    config_parsing::{
+        config,
+        entity_parsing::strip_option_from_rescript_type_str,
+        entity_parsing::{Entity, Field},
+        event_parsing::abi_type_to_rescript_string,
+        RpcConfig,
+    },
+    persisted_state::PersistedStateJsonString,
+    project_paths::{handler_paths::HandlerPathsTemplate, ParsedProjectPaths},
 };
-use crate::persisted_state::PersistedStateJsonString;
-use crate::project_paths::handler_paths::HandlerPathsTemplate;
-use crate::project_paths::ParsedProjectPaths;
 use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashMap;
 
 pub trait HasName {
     fn set_name(&mut self, name: CapitalizedOptions);
@@ -552,35 +552,6 @@ impl ProjectTemplate {
             persisted_state,
         })
     }
-}
-
-/// transform entities into a map from entity name to a list of all linked entities (entity fields) on that entity.
-pub fn entities_to_map(
-    entities: Vec<EntityRecordTypeTemplate>,
-) -> HashMap<String, Vec<RequiredEntityEntityFieldTemplate>> {
-    let mut map: HashMap<String, Vec<RequiredEntityEntityFieldTemplate>> = HashMap::new();
-
-    for entity in entities {
-        let entity_name = entity.name.original;
-
-        let mut related_entities = vec![];
-        for param in entity.params {
-            if let Some(entity_name) = param.maybe_entity_name {
-                let required_entity = RequiredEntityEntityFieldTemplate {
-                    is_array: param.type_rescript.starts_with("array"),
-                    field_name: param.key.to_owned().to_capitalized_options(),
-                    type_name: entity_name,
-                    is_optional: param.is_optional,
-                    is_derived_from: param.is_derived_from,
-                };
-                related_entities.push(required_entity);
-            }
-        }
-
-        map.insert(entity_name, related_entities);
-    }
-
-    map
 }
 
 #[cfg(test)]

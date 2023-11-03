@@ -1,5 +1,4 @@
-use anyhow::Context;
-use std::error::Error;
+use anyhow::{anyhow, Context, Result};
 
 use std::path::PathBuf;
 
@@ -45,10 +44,7 @@ static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
 static INIT_TEMPLATES_SHARED_DIR: Dir<'_> =
     include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/init_templates/shared");
 
-pub async fn run_init_args(
-    init_args: &InitArgs,
-    project_paths: &ProjectPaths,
-) -> Result<(), Box<dyn Error>> {
+pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -> Result<()> {
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
     let parsed_init_args = init_args
@@ -226,13 +222,13 @@ pub async fn run_init_args(
         commands::codegen::run_post_codegen_command_sequence(&parsed_project_paths).await?;
 
     if !post_codegen_exit.success() {
-        return Err("Failed to complete post codegen command sequence")?;
+        return Err(anyhow!("Failed to complete post codegen command sequence"))?;
     }
 
     if parsed_init_args.language == Language::Rescript {
         let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
         if !res_build_exit.success() {
-            return Err("Failed to build rescript")?;
+            return Err(anyhow!("Failed to build rescript"))?;
         }
     }
 
@@ -245,83 +241,4 @@ pub async fn run_init_args(
     }
 
     Ok(())
-}
-
-pub mod normalized_list {
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    #[serde(untagged)]
-    enum SingleOrList<T: Clone> {
-        Single(T),
-        List(Vec<T>),
-    }
-
-    impl<T: Clone> From<SingleOrList<T>> for Vec<T> {
-        fn from(single_or_list: SingleOrList<T>) -> Self {
-            match single_or_list {
-                SingleOrList::Single(v) => vec![v],
-                SingleOrList::List(l) => l,
-            }
-        }
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    struct OptSingleOrList<T: Clone>(Option<SingleOrList<T>>);
-
-    impl<T: Clone> From<OptSingleOrList<T>> for Vec<T> {
-        fn from(single_or_list: OptSingleOrList<T>) -> Self {
-            single_or_list.0.map_or_else(|| vec![], |v| v.into())
-        }
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    #[serde(from = "OptSingleOrList<T>")]
-    pub struct NormalizedList<T: Clone>(Vec<T>);
-
-    impl<T: Clone> From<OptSingleOrList<T>> for NormalizedList<T> {
-        fn from(single_or_list: OptSingleOrList<T>) -> Self {
-            NormalizedList(single_or_list.0.map_or_else(|| vec![], |v| v.into()))
-        }
-    }
-
-    impl<T: Clone> From<NormalizedList<T>> for Vec<T> {
-        fn from(normalized_list: NormalizedList<T>) -> Self {
-            normalized_list.0
-        }
-    }
-    impl<T: Clone> From<Vec<T>> for NormalizedList<T> {
-        fn from(v: Vec<T>) -> Self {
-            NormalizedList(v)
-        }
-    }
-
-    impl<T: Clone> IntoIterator for NormalizedList<T> {
-        type Item = T;
-        type IntoIter = std::vec::IntoIter<T>;
-
-        fn into_iter(self) -> Self::IntoIter {
-            self.0.into_iter()
-        }
-    }
-}
-
-pub mod unique_hashmap {
-    use anyhow::anyhow;
-    use std::collections::HashMap;
-
-    pub fn try_insert<K, V>(map: &mut HashMap<K, V>, key: K, val: V) -> anyhow::Result<()>
-    where
-        K: std::cmp::Eq + std::hash::Hash + std::fmt::Display,
-    {
-        match map.get(&key) {
-            //If value exists, error without updating
-            Some(_) => Err(anyhow!("{} already exists, cannot have duplicates", key,)),
-            None => {
-                //If not insert it
-                map.insert(key, val);
-                Ok(())
-            }
-        }
-    }
 }

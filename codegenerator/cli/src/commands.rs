@@ -1,103 +1,93 @@
 use anyhow::Context;
 use std::path::Path;
 
-pub mod rescript {
-    use std::{error::Error, path::PathBuf};
-    use tokio::process::Command;
+async fn execute_command(
+    cmd: &str,
+    args: Vec<&str>,
+    current_dir: &Path,
+) -> anyhow::Result<std::process::ExitStatus> {
+    Ok(tokio::process::Command::new(cmd)
+        .args(&args)
+        .current_dir(current_dir)
+        .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
+        .kill_on_drop(true) //needed so that dropped threads calling this will also drop
+        //the child process
+        .spawn()
+        .context(format!(
+            "Failed to spawn command {} {} at {} as child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?
+        .wait()
+        .await
+        .context(format!(
+            "Failed to exit command {} {} at {} from child process",
+            cmd,
+            args.join(" "),
+            current_dir.to_str().unwrap_or("bad_path")
+        ))?)
+}
 
-    pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        Ok(Command::new("npx")
-            .arg("rescript")
-            .arg("clean")
-            .arg("-with-deps")
-            .current_dir(path)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            .spawn()?
-            .wait()
-            .await?)
-    }
-    pub async fn format(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+pub mod rescript {
+    use super::execute_command;
+    use anyhow::{anyhow, Result};
+    use std::path::PathBuf;
+
+    pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus> {
+        let args = vec!["rescript", "clean", "-with-deps"];
         //npx should work with any node package manager
-        Ok(Command::new("npx")
-            .arg("rescript")
-            .arg("format")
-            .arg("-all")
-            .current_dir(path)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            .spawn()?
-            .wait()
-            .await?)
+        execute_command("npx", args, path).await
     }
-    pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus, Box<dyn Error>> {
-        // TODO: make a separate function for `pnpm install` and compose them rather
-        // Make suer that the top level repo is installed
-        let status = Command::new("pnpm")
-            .arg("install")
-            .current_dir(&path)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            .spawn()?
-            .wait()
-            .await?;
+
+    pub async fn format(path: &PathBuf) -> Result<std::process::ExitStatus> {
+        let args = vec!["rescript", "format", "-all"];
+        //npx should work with any node package manager
+        execute_command("npx", args, path).await
+    }
+    pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus> {
+        let args = vec!["install"];
+        //npx should work with any node package manager
+        // Make sure that the top level repo is installed
+        let status = execute_command("pnpm", args, path).await?;
 
         // TODO: re-evaluate the necessity for this check when better error-handling standards and guidelines have been created for this project.
         // Check if the first command was successful
         if !status.success() {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "pnpm install command failed",
-            )));
+            return Err(anyhow!("pnpm install command failed"));
         }
 
-        Ok(Command::new("npx")
-            .arg("rescript")
-            .arg("build")
-            .arg("-with-deps")
-            .current_dir(path)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            .spawn()?
-            .wait()
-            .await?)
+        let args = vec!["rescript", "build", "-with-deps"];
+        execute_command("npx", args, path).await
     }
 }
 
 pub mod codegen {
-
-    use crate::{commands::rescript, config_parsing::config, hbs_templating};
-    use anyhow::{self, Context};
-    use std::error::Error;
+    use super::execute_command;
+    use super::rescript;
+    use crate::{config_parsing::config, hbs_templating};
+    use anyhow::{self, Context, Result};
     use std::fs;
-    use tokio::process::Command;
+    use std::path::PathBuf;
 
     use crate::project_paths::ParsedProjectPaths;
     use include_dir::{include_dir, Dir};
     static CODEGEN_STATIC_DIR: Dir<'_> =
         include_dir!("$CARGO_MANIFEST_DIR/templates/static/codegen");
 
-    pub async fn check_and_install_pnpm() -> std::io::Result<()> {
+    pub async fn check_and_install_pnpm(current_dir: &PathBuf) -> Result<()> {
         // Check if pnpm is already installed
-        let check_pnpm = Command::new("pnpm")
-            .arg("--version")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
+        let check_pnpm = execute_command("pnpm", vec!["--version"], current_dir).await;
 
         // If pnpm is not installed, run the installation command
-        match check_pnpm.await {
+        match check_pnpm {
             Ok(status) if status.success() => {
                 println!("Package pnpm is already installed. Continuing...");
             }
             _ => {
                 println!("Package pnpm is not installed. Installing now...");
-                Command::new("npm")
-                    .arg("install")
-                    .arg("--global")
-                    .arg("pnpm")
-                    .status()
-                    .await?;
+                let args = vec!["install", "--global", "pnpm"];
+                execute_command("npm", args, current_dir).await?;
             }
         }
         Ok(())
@@ -105,40 +95,34 @@ pub mod codegen {
 
     pub async fn pnpm_install(
         project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    ) -> Result<std::process::ExitStatus> {
         println!("Checking for pnpm package...");
-        check_and_install_pnpm().await?;
+        let current_dir = &project_paths.generated;
+        check_and_install_pnpm(current_dir).await?;
 
-        Ok(Command::new("pnpm")
-            .arg("install")
-            .arg("--no-frozen-lockfile")
-            .current_dir(&project_paths.generated)
-            .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-            .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-            //the child process
-            .spawn()?
-            .wait()
-            .await?)
+        let args = vec!["install", "--no-frozen-lockfile"];
+        execute_command("pnpm", args, current_dir).await
     }
+
     pub async fn rescript_clean(
         project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    ) -> Result<std::process::ExitStatus> {
         rescript::clean(&project_paths.generated).await
     }
     pub async fn rescript_format(
         project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    ) -> Result<std::process::ExitStatus> {
         rescript::format(&project_paths.generated).await
     }
     pub async fn rescript_build(
         project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    ) -> Result<std::process::ExitStatus> {
         rescript::build(&project_paths.generated).await
     }
 
     pub async fn run_post_codegen_command_sequence(
         project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus, Box<dyn Error>> {
+    ) -> anyhow::Result<std::process::ExitStatus> {
         println!("installing packages... ");
         let exit1 = pnpm_install(project_paths).await?;
         if !exit1.success() {
@@ -185,39 +169,9 @@ pub mod codegen {
     }
 }
 
-async fn execute_command(
-    cmd: &str,
-    args: Vec<&str>,
-    current_dir: &Path,
-) -> anyhow::Result<std::process::ExitStatus> {
-    Ok(tokio::process::Command::new(cmd)
-        .args(&args)
-        .current_dir(current_dir)
-        .stdin(std::process::Stdio::null()) //passes null on any stdinprompt
-        .kill_on_drop(true) //needed so that dropped threads calling this will also drop
-        //the child process
-        .spawn()
-        .context(format!(
-            "Failed to spawn command {} {} at {} as child process",
-            cmd,
-            args.join(" "),
-            current_dir.to_str().unwrap_or("bad_path")
-        ))?
-        .wait()
-        .await
-        .context(format!(
-            "Failed to exit command {} {} at {} from child process",
-            cmd,
-            args.join(" "),
-            current_dir.to_str().unwrap_or("bad_path")
-        ))?)
-}
-
 pub mod start {
-
-    use crate::project_paths::ParsedProjectPaths;
-
     use super::execute_command;
+    use crate::project_paths::ParsedProjectPaths;
 
     pub async fn start_indexer(
         project_paths: &ParsedProjectPaths,
@@ -245,10 +199,8 @@ pub mod start {
     }
 }
 pub mod docker {
-
-    use crate::project_paths::ParsedProjectPaths;
-
     use super::execute_command;
+    use crate::project_paths::ParsedProjectPaths;
 
     pub async fn docker_compose_up_d(
         project_paths: &ParsedProjectPaths,
@@ -271,10 +223,9 @@ pub mod docker {
 }
 
 pub mod db_migrate {
-
     use super::execute_command;
-
     use crate::{persisted_state::PersistedState, project_paths::ParsedProjectPaths};
+
     pub async fn run_up_migrations(project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
         let cmd = "node";
         let args = vec![

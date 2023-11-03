@@ -1,10 +1,11 @@
 use anyhow::anyhow;
 use std::path::{Component, PathBuf};
 
-use crate::cli_args::{
-    constants::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH},
-    interactive_init::InitInteractive,
-    ProjectPaths,
+use crate::{
+    cli_args::{interactive_init::InitInteractive, ProjectPaths},
+    constants::project_paths::{
+        DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH,
+    },
 };
 
 pub mod handler_paths;
@@ -44,14 +45,6 @@ impl ParsedProjectPaths {
             generated,
             config,
         })
-    }
-
-    pub fn default() -> anyhow::Result<ParsedProjectPaths> {
-        Self::new(
-            DEFAULT_PROJECT_ROOT_PATH.to_string(),
-            DEFAULT_GENERATED_PATH.to_string(),
-            DEFAULT_CONFIG_PATH.to_string(),
-        )
     }
 
     pub fn default_with_root(project_root: String) -> anyhow::Result<ParsedProjectPaths> {

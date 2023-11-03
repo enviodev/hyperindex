@@ -1,19 +1,4 @@
-use anyhow::{Context, Result};
-
-use std::path::PathBuf;
-
-use ethers::abi::{
-    Contract as AbiContract, EventParam as EthAbiEventParam, ParamType as EthAbiParamType,
-};
-
-pub fn parse_abi(abi: &str) -> Result<AbiContract> {
-    Ok(serde_json::from_str(abi)?)
-}
-
-pub fn get_abi_from_file_path(file_path: &PathBuf) -> Result<AbiContract> {
-    let abi_file = std::fs::read_to_string(file_path).context("Failed reading abi file")?;
-    parse_abi(&abi_file)
-}
+use ethers::abi::{EventParam as EthAbiEventParam, ParamType as EthAbiParamType};
 
 pub struct EthereumEventParam<'a> {
     name: &'a str,
@@ -22,15 +7,6 @@ pub struct EthereumEventParam<'a> {
 
 impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
     fn from(abi_type: &'a EthAbiEventParam) -> EthereumEventParam<'a> {
-        EthereumEventParam {
-            name: &abi_type.name,
-            abi_type: &abi_type.kind,
-        }
-    }
-}
-
-impl<'a> EthereumEventParam<'a> {
-    pub fn from_ethereum_abi_param(abi_type: &'a EthAbiEventParam) -> EthereumEventParam<'a> {
         EthereumEventParam {
             name: &abi_type.name,
             abi_type: &abi_type.kind,

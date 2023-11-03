@@ -1,7 +1,4 @@
-use std::{
-    fs,
-    path::{Component, Path, PathBuf},
-};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::anyhow;
 
@@ -75,44 +72,6 @@ pub fn normalize_path(path: &Path) -> PathBuf {
         }
     }
     normalized_path_buf
-}
-
-pub struct NewDir {
-    pub path: PathBuf,
-    pub root_dir_name: String,
-}
-
-impl NewDir {
-    pub fn new(path: PathBuf) -> Result<Self, String> {
-        let path_str = path.to_str().unwrap_or("bad_path");
-        fs::create_dir_all(&path).map_err(|e| {
-            format!(
-                "Failed to create directory at {} due to error: {}",
-                &path_str, e
-            )
-        })?;
-
-        // ./my_dir -> /Users/MyName/folder/my_dir
-        let path_canonicalized = path
-            .canonicalize()
-            .map_err(|e| format!("Unable to canonicalize path {} error: {}", &path_str, e))?;
-
-        let err_message = "File name should exist due to canonicalization.".to_string();
-        let root_dir_name = path_canonicalized
-            .file_name()
-            .map(|dir_name| {
-                dir_name
-                    .to_str()
-                    .map(|str| str.to_string())
-                    .ok_or(&err_message)
-            })
-            .ok_or(&err_message)??;
-
-        Ok(NewDir {
-            path,
-            root_dir_name,
-        })
-    }
 }
 
 #[cfg(test)]

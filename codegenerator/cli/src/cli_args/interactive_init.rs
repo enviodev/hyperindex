@@ -1,15 +1,15 @@
-use std::str::FromStr;
-
-use super::{InitArgs, InitFlow, Language, ProjectPaths, Template as InitTemplate};
-
-use crate::config_parsing::chain_helpers::{NetworkWithExplorer, SupportedNetwork};
+use super::{
+    validation::{is_directory_new, is_valid_foldername_inquire_validation_result},
+    InitArgs, InitFlow, Language, ProjectPaths, Template as InitTemplate,
+};
+use crate::{
+    config_parsing::chain_helpers::{NetworkWithExplorer, SupportedNetwork},
+    constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
+};
 use anyhow::Context;
-use strum::IntoEnumIterator;
-
 use inquire::{Select, Text};
-
-use super::constants::DEFAULT_PROJECT_ROOT_PATH;
-use super::validation::{is_directory_new, is_valid_foldername_inquire_validation_result};
+use std::str::FromStr;
+use strum::IntoEnumIterator;
 
 #[derive(Clone)]
 pub enum InitilizationTypeWithArgs {
@@ -27,10 +27,6 @@ pub struct InitInteractive {
 }
 
 impl InitArgs {
-    pub fn get_directory(&self, unparsed_project_paths: &ProjectPaths) -> String {
-        unparsed_project_paths.get_directory_with_default()
-    }
-
     pub fn get_init_args_interactive(
         &self,
         project_paths: &ProjectPaths,

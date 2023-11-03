@@ -1,12 +1,3 @@
-use self::hypersync_endpoints::HypersyncEndpoint;
-use crate::links;
-use crate::project_paths::{path_utils, ParsedProjectPaths};
-use crate::utils::normalized_list::NormalizedList;
-use anyhow::{anyhow, Context};
-use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-
 pub mod chain_helpers;
 pub mod config;
 pub mod constants;
@@ -16,6 +7,17 @@ pub mod event_parsing;
 pub mod graph_migration;
 pub mod hypersync_endpoints;
 pub mod validation;
+
+use crate::{
+    constants::links,
+    project_paths::{path_utils, ParsedProjectPaths},
+    utils::normalized_list::NormalizedList,
+};
+use anyhow::{anyhow, Context};
+use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
+use hypersync_endpoints::HypersyncEndpoint;
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 type NetworkId = u64;
 
@@ -60,52 +62,6 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub networks: Vec<Network>,
-}
-
-impl Config {
-    pub fn get_global_contract(
-        &self,
-        contract_name: String,
-    ) -> anyhow::Result<&GlobalContractConfig> {
-        //If local config doesn't exist try get from globally defined contract
-        let global_contracts = self
-            .contracts
-            .as_ref()
-            .ok_or_else(|| anyhow!("No top level 'contracts' defined"))?;
-
-        let contract = global_contracts
-            .iter()
-            .find(|g_contract| g_contract.name == contract_name)
-            .ok_or_else(|| {
-                anyhow!(
-                    "No contract with name {} defined in top level 'contracts' config",
-                    contract_name
-                )
-            })?;
-
-        Ok(contract)
-    }
-
-    pub fn get_top_level_contract_events(
-        &self,
-        contract_name: String,
-    ) -> anyhow::Result<Vec<ConfigEvent>> {
-        let global_contract = self.get_global_contract(contract_name)?;
-
-        Ok(global_contract.events.clone())
-    }
-
-    pub fn get_events_from_network_contract(
-        &self,
-        contract: &NetworkContractConfig,
-    ) -> anyhow::Result<Vec<ConfigEvent>> {
-        contract
-            .local_contract_config
-            .as_ref()
-            .map(|local_config| Ok(local_config.events.clone()))
-            .unwrap_or_else(|| self.get_top_level_contract_events(contract.name.clone()))
-            .context("Failed searching for contract events in globally defined 'contracts'")
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -295,23 +251,6 @@ pub struct ConfigEvent {
     pub event: EventNameOrSig,
     #[serde(skip_serializing_if = "Option::is_none")]
     required_entities: Option<Vec<RequiredEntity>>,
-}
-
-impl ConfigEvent {
-    //used only in tests
-    #[cfg(test)]
-    pub fn new_name(name: &str) -> Self {
-        ConfigEvent {
-            event: EventNameOrSig::Name(String::from(name)),
-            required_entities: None,
-        }
-    }
-
-    //used only in tests
-    #[cfg(test)]
-    pub fn get_name(&self) -> String {
-        self.event.get_name()
-    }
 }
 
 #[derive(Debug, PartialEq, Deserialize, Clone)]

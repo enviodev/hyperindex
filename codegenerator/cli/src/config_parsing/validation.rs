@@ -167,22 +167,16 @@ pub fn validate_deserialized_config_yaml(
 }
 
 // Checking that schema does not include any reserved words
-pub fn check_names_from_schema_for_reserved_words(schema_str: &str) -> Vec<String> {
+pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
     // Checking that schema does not include any reserved words
     let mut detected_reserved_words_in_schema = Vec::new();
     // Creating a deduplicated set of reserved words from javascript or rescript
-    let mut set = HashSet::new();
-    set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
-    set.extend(RESCRIPT_RESERVED_WORDS.iter());
-    let words_set: Vec<&str> = set.into_iter().cloned().collect();
-
-    let re = Regex::new(r"\b\w+\b").unwrap();
-
-    // Find all alphanumeric words in the YAML string
-    for word in re.find_iter(schema_str) {
-        let word = word.as_str();
-        if words_set.contains(&word) {
-            detected_reserved_words_in_schema.push(word.to_string());
+    let mut word_set: HashSet<&str> = HashSet::new();
+    word_set.extend(JAVASCRIPT_RESERVED_WORDS.iter());
+    word_set.extend(RESCRIPT_RESERVED_WORDS.iter());
+    for word in schema_words {
+        if word_set.contains(word.as_str()) {
+            detected_reserved_words_in_schema.push(word);
         }
     }
 
@@ -311,7 +305,10 @@ mod tests {
 
     #[test]
     fn test_names_from_schema_for_reserved_words() {
-        let names_from_schema = "Greeting id greetings lastGreeting lazy open catch";
+        let names_from_schema = "Greeting id greetings lastGreeting lazy open catch"
+            .split(" ")
+            .map(|s| s.to_string())
+            .collect();
         let flagged_words = super::check_names_from_schema_for_reserved_words(names_from_schema);
         assert_eq!(flagged_words, vec!["lazy", "open", "catch"]);
     }

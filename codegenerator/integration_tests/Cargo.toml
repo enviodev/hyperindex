@@ -6,7 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.75"
 envio = { path = "../cli" }
+reqwest = "0.11.22"
 strum = "0.25"
 tempfile = "3.2.0"
 tokio = { version = "1.28.2", features = [

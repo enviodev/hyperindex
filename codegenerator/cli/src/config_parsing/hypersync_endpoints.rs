@@ -1,7 +1,5 @@
 use anyhow::{anyhow, Context};
 
-use crate::service_health::{self, EndpointHealth};
-
 use super::chain_helpers::{EthArchiveNetwork, Network, SkarNetwork, SupportedNetwork};
 
 enum HyperSyncNetwork {
@@ -55,19 +53,6 @@ pub type Url = String;
 pub enum HypersyncEndpoint {
     Skar(Url),
     EthArchive(Url),
-}
-
-impl HypersyncEndpoint {
-    pub async fn check_endpoint_health(&self) -> anyhow::Result<()> {
-        match self {
-            HypersyncEndpoint::Skar(url) | HypersyncEndpoint::EthArchive(url) => {
-                match service_health::fetch_hypersync_health(url).await? {
-                    EndpointHealth::Healthy => Ok(()),
-                    EndpointHealth::Unhealthy(e) => Err(anyhow!(e)),
-                }
-            }
-        }
-    }
 }
 
 pub fn get_default_hypersync_endpoint(chain_id: u64) -> anyhow::Result<HypersyncEndpoint> {

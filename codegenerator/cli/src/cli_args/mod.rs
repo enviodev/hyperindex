@@ -1,12 +1,13 @@
+pub mod interactive_init;
+mod validation;
+
+use crate::{
+    config_parsing::chain_helpers::NetworkWithExplorer,
+    constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
+};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter, EnumString};
-
-pub mod constants;
-pub mod interactive_init;
-pub mod validation;
-
-use crate::config_parsing::chain_helpers::NetworkWithExplorer;
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
@@ -17,27 +18,19 @@ pub struct CommandLineArgs {
     pub project_paths: ProjectPaths,
 }
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct ProjectPaths {
     ///The directory of the project. Defaults to current dir ("./")
     #[arg(global = true, short, long)]
     pub directory: Option<String>,
 
     ///The directory within the project that generated code should output to
-    #[arg(global = true, short, long, default_value_t=String::from(constants::DEFAULT_GENERATED_PATH))]
+    #[arg(global = true, short, long, default_value_t=String::from(DEFAULT_GENERATED_PATH))]
     pub output_directory: String,
 
     ///The file in the project containing config.
-    #[arg(global = true, long, default_value_t=String::from(constants::DEFAULT_CONFIG_PATH))]
+    #[arg(global = true, long, default_value_t=String::from(DEFAULT_CONFIG_PATH))]
     pub config: String,
-}
-
-impl ProjectPaths {
-    fn get_directory_with_default(&self) -> String {
-        self.directory
-            .clone()
-            .unwrap_or_else(|| constants::DEFAULT_PROJECT_ROOT_PATH.to_string())
-    }
 }
 
 #[derive(Debug, Subcommand)]
