@@ -1,23 +1,21 @@
+use crate::{project_paths::path_utils::normalize_path, template_dirs::RelativeDir};
+use anyhow::{anyhow, Context};
+use handlebars::Handlebars;
+use include_dir::DirEntry;
+use pathdiff::diff_paths;
+use serde::Serialize;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{anyhow, Context};
-use handlebars::Handlebars;
-
-use include_dir::{Dir, DirEntry};
-use serde::Serialize;
-
-use crate::project_paths::path_utils::normalize_path;
-
 pub struct HandleBarsDirGenerator<'a, T: Serialize> {
     handlebars: handlebars::Handlebars<'a>,
-    templates_dir: &'a Dir<'a>,
+    templates_dir: &'a RelativeDir<'a>,
     rs_template: &'a T,
     output_dir: &'a Path,
 }
 
 impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
-    pub fn new(templates_dir: &'a Dir, rs_template: &'a T, output_dir: &'a Path) -> Self {
+    pub fn new(templates_dir: &'a RelativeDir, rs_template: &'a T, output_dir: &'a Path) -> Self {
         let mut handlebars = Handlebars::new();
         handlebars.set_strict_mode(true);
         handlebars.register_escape_fn(handlebars::no_escape);
@@ -32,7 +30,7 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
 
     fn generate_hbs_templates_internal_recursive(
         &self,
-        hbs_templates_root_dir: &Dir,
+        hbs_templates_root_dir: &RelativeDir,
     ) -> anyhow::Result<()> {
         for entry in hbs_templates_root_dir.entries() {
             match entry {
@@ -45,9 +43,11 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                         let path_str = path.to_str().ok_or_else(|| {
                             anyhow!("Could not cast path to str in generate_hbs_templates")
                         })?;
+
                         //Get the parent of the file src/MyTemplate.res.hbs -> src/
                         let parent = path
                             .parent()
+                            .and_then(|p| diff_paths(p, hbs_templates_root_dir.parent_path))
                             .ok_or_else(|| anyhow!("Could not produce parent of {}", path_str))?;
 
                         //Get the file stem src/MyTemplate.res.hbs -> MyTemplate.res
@@ -87,7 +87,10 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                             .context(format!("file write failed at {}", &output_dir_path_str))?;
                     }
                 }
-                DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recursive(self, dir)?,
+                DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recursive(
+                    self,
+                    &RelativeDir::new_relative(dir, hbs_templates_root_dir.parent_path),
+                )?,
             }
         }
         Ok(())

@@ -1,7 +1,5 @@
 use crate::{
-    cli_args::{
-        interactive_init::InitilizationTypeWithArgs, InitArgs, Language, ProjectPaths, Template,
-    },
+    cli_args::{interactive_init::InitilizationTypeWithArgs, InitArgs, Language, ProjectPaths},
     commands,
     config_parsing::{
         contract_import::{self, generate_config_from_contract_address},
@@ -15,39 +13,13 @@ use crate::{
         init_templates::InitTemplates,
     },
     project_paths::ParsedProjectPaths,
+    template_dirs::TemplateDirs,
 };
 use anyhow::{anyhow, Context, Result};
-use include_dir::{include_dir, Dir};
 use std::path::PathBuf;
 
-static BLANK_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/shared");
-static BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/javascript");
-static BLANK_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/rescript");
-static BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/blank_template/typescript");
-static GREETER_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/shared");
-static GREETER_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/rescript");
-static GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/typescript");
-static GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/greeter_template/javascript");
-static ERC20_TEMPLATE_STATIC_SHARED_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/erc20_template/shared");
-static ERC20_TEMPLATE_STATIC_RESCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/erc20_template/rescript");
-static ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/erc20_template/typescript");
-static ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/static/erc20_template/javascript");
-static INIT_TEMPLATES_SHARED_DIR: Dir<'_> =
-    include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/init_templates/shared");
-
 pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -> Result<()> {
+    let template_dirs = TemplateDirs::new();
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
     let parsed_init_args = init_args
@@ -62,78 +34,45 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     let hbs_template =
         InitTemplates::new(parsed_init_args.name.clone(), &parsed_init_args.language);
 
+    let init_shared_template_dir = template_dirs.get_init_template_dynamic_shared()?;
+
     let hbs_generator = HandleBarsDirGenerator::new(
-        &INIT_TEMPLATES_SHARED_DIR,
+        &init_shared_template_dir,
         &hbs_template,
         &parsed_project_paths.project_root,
     );
 
     match &parsed_init_args.template {
-        InitilizationTypeWithArgs::Template(template) => match template {
-            Template::Greeter => {
-                //Copy in the relevant language specific greeter files
-                match &parsed_init_args.language {
-                    Language::Rescript => {
-                        GREETER_TEMPLATE_STATIC_RESCRIPT_DIR
-                            .extract(&parsed_project_paths.project_root)?;
-                    }
-                    Language::Typescript => {
-                        GREETER_TEMPLATE_STATIC_TYPESCRIPT_DIR
-                            .extract(&parsed_project_paths.project_root)?;
-                    }
-                    Language::Javascript => {
-                        GREETER_TEMPLATE_STATIC_JAVASCRIPT_DIR
-                            .extract(&parsed_project_paths.project_root)?;
-                    }
-                }
-                //Copy in the rest of the shared greeter files
-                GREETER_TEMPLATE_STATIC_SHARED_DIR.extract(&parsed_project_paths.project_root)?;
-            }
-            Template::Erc20 => {
-                //Copy in the relevant js flavor specific greeter files
-                match &parsed_init_args.language {
-                    Language::Rescript => {
-                        ERC20_TEMPLATE_STATIC_RESCRIPT_DIR
-                            .extract(&parsed_project_paths.project_root)?;
-                    }
-                    Language::Typescript => {
-                        ERC20_TEMPLATE_STATIC_TYPESCRIPT_DIR
-                            .extract(&parsed_project_paths.project_root)?;
-                    }
-                    Language::Javascript => {
-                        ERC20_TEMPLATE_STATIC_JAVASCRIPT_DIR
-                            .extract(&parsed_project_paths.project_root)?;
-                    }
-                }
-                //Copy in the rest of the shared greeter files
-                ERC20_TEMPLATE_STATIC_SHARED_DIR.extract(&parsed_project_paths.project_root)?;
-            }
-        },
+        InitilizationTypeWithArgs::Template(template) => {
+            template_dirs
+                .get_and_extract_template(
+                    &template,
+                    &parsed_init_args.language,
+                    &parsed_project_paths.project_root,
+                )
+                .context(format!(
+                    "Failed initializing with template {} with language {} at path {:?}",
+                    &template, &parsed_init_args.language, &parsed_project_paths.project_root,
+                ))?;
+        }
         InitilizationTypeWithArgs::SubgraphID(cid) => {
-            //  Copy in the relevant js flavor specific subgraph migration files
-            match &parsed_init_args.language {
-                Language::Rescript => {
-                    BLANK_TEMPLATE_STATIC_RESCRIPT_DIR
-                        .extract(&parsed_project_paths.project_root)?;
-                }
-                Language::Typescript => {
-                    BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR
-                        .extract(&parsed_project_paths.project_root)?;
-                }
-                Language::Javascript => {
-                    BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR
-                        .extract(&parsed_project_paths.project_root)?;
-                }
-            }
-            //Copy in the rest of the shared subgraph migration files
-            BLANK_TEMPLATE_STATIC_SHARED_DIR.extract(&parsed_project_paths.project_root)?;
+            template_dirs
+                .get_and_extract_blank_template(
+                    &parsed_init_args.language,
+                    &parsed_project_paths.project_root,
+                )
+                .context(format!(
+                    "Failed initializing blank template for Subgraph Migration with language {} at path {:?}",
+                    &parsed_init_args.language, &parsed_project_paths.project_root,
+                ))?;
 
             generate_config_from_subgraph_id(
                 &parsed_project_paths.project_root,
                 cid,
                 &parsed_init_args.language,
             )
-            .await?;
+            .await
+            .context("Failed generating config from subgraph")?;
         }
 
         InitilizationTypeWithArgs::ContractImportWithArgs(network_name, contract_address) => {
@@ -170,40 +109,24 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
                 contract_import_templates::AutoSchemaHandlerTemplate::try_from(parsed_config)
                     .context("Failed converting config to auto auto_schema_handler_template")?;
 
-            //  Copy in the relevant js flavor specific subgraph migration files
-            match &parsed_init_args.language {
-                Language::Rescript => {
-                    BLANK_TEMPLATE_STATIC_RESCRIPT_DIR
-                        .extract(&parsed_project_paths.project_root)?;
-                    auto_schema_handler_template
-                        .generate_templates_rescript(&parsed_project_paths.project_root)
-                        .context(
-                            "Failed generating rescript templates for schema and event handlers.",
-                        )?;
-                }
-                Language::Typescript => {
-                    BLANK_TEMPLATE_STATIC_TYPESCRIPT_DIR
-                        .extract(&parsed_project_paths.project_root)?;
-                    auto_schema_handler_template
-                        .generate_templates_typescript(&parsed_project_paths.project_root)
-                        .context(
-                            "Failed generating typescript templates for schema and event handlers.",
-                        )?;
-                }
-                Language::Javascript => {
-                    BLANK_TEMPLATE_STATIC_JAVASCRIPT_DIR
-                        .extract(&parsed_project_paths.project_root)?;
-                    auto_schema_handler_template
-                        .generate_templates_javascript(&parsed_project_paths.project_root)
-                        .context(
-                            "Failed generating javascript templates for schema and event handlers.",
-                        )?;
-                }
-            }
-            //Copy in the rest of the shared subgraph migration files
-            BLANK_TEMPLATE_STATIC_SHARED_DIR
-                .extract(&parsed_project_paths.project_root)
-                .context("Parsing contract address")?;
+            template_dirs
+                .get_and_extract_blank_template(
+                    &parsed_init_args.language,
+                    &parsed_project_paths.project_root,
+                )
+                .context(format!(
+                    "Failed initializing blank template for Contract Import with language {} at path {:?}",
+                    &parsed_init_args.language, &parsed_project_paths.project_root,
+                ))?;
+
+            auto_schema_handler_template
+                .generate_templates(
+                    &parsed_init_args.language,
+                    &parsed_project_paths.project_root,
+                )
+                .context(
+                    "Failed generating contract import templates for schema and event handlers.",
+                )?;
         }
     }
 

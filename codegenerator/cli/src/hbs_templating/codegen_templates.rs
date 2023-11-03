@@ -10,9 +10,9 @@ use crate::{
     },
     persisted_state::PersistedStateJsonString,
     project_paths::{handler_paths::HandlerPathsTemplate, ParsedProjectPaths},
+    template_dirs::TemplateDirs,
 };
 use anyhow::{anyhow, Context, Result};
-use include_dir::{include_dir, Dir};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -501,11 +501,13 @@ pub struct ProjectTemplate {
 
 impl ProjectTemplate {
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
-        static CODEGEN_DYNAMIC_DIR: Dir<'_> =
-            include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/codegen");
+        let template_dirs = TemplateDirs::new();
+        let dynamic_codegen_dir = template_dirs
+            .get_codegen_dynamic_dir()
+            .context("Failed getting dynamic codegen dir")?;
 
         let hbs =
-            HandleBarsDirGenerator::new(&CODEGEN_DYNAMIC_DIR, &self, &project_paths.generated);
+            HandleBarsDirGenerator::new(&dynamic_codegen_dir, &self, &project_paths.generated);
         hbs.generate_hbs_templates()?;
 
         Ok(())

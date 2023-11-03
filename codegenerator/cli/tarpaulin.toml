@@ -1,0 +1,10 @@
+[cli]
+"target-dir" = "tarpaulin_target"
+"skip-clean" = true
+ignored = true
+packages = ["envio"]
+lib = true
+
+[report]
+out = ["Html"]
+"output-dir" = "./"

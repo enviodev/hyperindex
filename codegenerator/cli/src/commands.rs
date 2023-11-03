@@ -31,7 +31,7 @@ async fn execute_command(
 
 pub mod rescript {
     use super::execute_command;
-    use anyhow::{anyhow, Result};
+    use anyhow::Result;
     use std::path::PathBuf;
 
     pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus> {
@@ -46,17 +46,6 @@ pub mod rescript {
         execute_command("npx", args, path).await
     }
     pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus> {
-        let args = vec!["install"];
-        //npx should work with any node package manager
-        // Make sure that the top level repo is installed
-        let status = execute_command("pnpm", args, path).await?;
-
-        // TODO: re-evaluate the necessity for this check when better error-handling standards and guidelines have been created for this project.
-        // Check if the first command was successful
-        if !status.success() {
-            return Err(anyhow!("pnpm install command failed"));
-        }
-
         let args = vec!["rescript", "build", "-with-deps"];
         execute_command("npx", args, path).await
     }
@@ -64,15 +53,14 @@ pub mod rescript {
 
 pub mod codegen {
     use super::{execute_command, rescript};
-    use crate::{config_parsing::system_config::SystemConfig, hbs_templating};
+    use crate::{
+        config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
+    };
     use anyhow::{self, Context, Result};
     use std::fs;
     use std::path::PathBuf;
 
     use crate::project_paths::ParsedProjectPaths;
-    use include_dir::{include_dir, Dir};
-    static CODEGEN_STATIC_DIR: Dir<'_> =
-        include_dir!("$CARGO_MANIFEST_DIR/templates/static/codegen");
 
     pub async fn check_and_install_pnpm(current_dir: &PathBuf) -> Result<()> {
         // Check if pnpm is already installed
@@ -103,22 +91,6 @@ pub mod codegen {
         execute_command("pnpm", args, current_dir).await
     }
 
-    pub async fn rescript_clean(
-        project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus> {
-        rescript::clean(&project_paths.generated).await
-    }
-    pub async fn rescript_format(
-        project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus> {
-        rescript::format(&project_paths.generated).await
-    }
-    pub async fn rescript_build(
-        project_paths: &ParsedProjectPaths,
-    ) -> Result<std::process::ExitStatus> {
-        rescript::build(&project_paths.generated).await
-    }
-
     pub async fn run_post_codegen_command_sequence(
         project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<std::process::ExitStatus> {
@@ -129,19 +101,25 @@ pub mod codegen {
         }
 
         println!("clean build directory");
-        let exit2 = rescript_clean(project_paths).await?;
+        let exit2 = rescript::clean(&project_paths.generated)
+            .await
+            .context("Failed running rescript clean")?;
         if !exit2.success() {
             return Ok(exit2);
         }
 
         println!("formatting code");
-        let exit3 = rescript_format(project_paths).await?;
+        let exit3 = rescript::format(&project_paths.generated)
+            .await
+            .context("Failed running rescript format")?;
         if !exit3.success() {
             return Ok(exit3);
         }
 
         println!("building code");
-        let last_exit = rescript_build(project_paths).await?;
+        let last_exit = rescript::build(&project_paths.generated)
+            .await
+            .context("Failed running rescript build")?;
 
         Ok(last_exit)
     }
@@ -150,13 +128,15 @@ pub mod codegen {
         config: &SystemConfig,
         project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<()> {
+        let template_dirs = TemplateDirs::new();
         fs::create_dir_all(&project_paths.generated)?;
 
         let template =
             hbs_templating::codegen_templates::ProjectTemplate::from_config(config, project_paths)
                 .context("Failed creating project template")?;
 
-        CODEGEN_STATIC_DIR
+        template_dirs
+            .get_codegen_static_dir()?
             .extract(&project_paths.generated)
             .context("Failed extracting static codegen files")?;
 

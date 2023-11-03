@@ -1,14 +1,15 @@
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
+    cli_args::Language,
     config_parsing::{
         entity_parsing::{ethabi_type_to_field_type, Entity, Field, FieldType, Schema},
         system_config::{self, SystemConfig},
     },
+    template_dirs::TemplateDirs,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use ethers::abi::{EventParam, ParamType};
-use include_dir::{include_dir, Dir};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -134,41 +135,27 @@ impl AutoSchemaHandlerTemplate {
         Ok(AutoSchemaHandlerTemplate { contracts })
     }
 
-    fn generate_templates(&self, project_root: &PathBuf, template_dir: &Dir<'_>) -> Result<()> {
-        static SHARED_DIR: Dir<'_> =
-            include_dir!("$CARGO_MANIFEST_DIR/templates/dynamic/contract_import_templates/shared");
+    pub fn generate_templates(&self, lang: &Language, project_root: &PathBuf) -> Result<()> {
+        let template_dirs = TemplateDirs::new();
 
-        let hbs = HandleBarsDirGenerator::new(&template_dir, &self, &project_root);
-        let hbs_shared = HandleBarsDirGenerator::new(&SHARED_DIR, &self, &project_root);
-        hbs.generate_hbs_templates().map_err(|e| anyhow!("{}", e))?;
+        let shared_dir = template_dirs
+            .get_contract_import_shared_dir()
+            .context("Failed getting shared contract import templates")?;
+
+        let lang_dir = template_dirs
+            .get_contract_import_lang_dir(lang)
+            .context(format!("Failed getting {} contract import templates", lang))?;
+
+        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, &project_root);
+        let hbs_shared = HandleBarsDirGenerator::new(&shared_dir, &self, &project_root);
+        hbs.generate_hbs_templates().context(format!(
+            "Failed generating {} contract import templates",
+            lang
+        ))?;
         hbs_shared
             .generate_hbs_templates()
-            .map_err(|e| anyhow!("{}", e))?;
+            .context("Failed generating shared contract import templates")?;
 
         Ok(())
-    }
-
-    pub fn generate_templates_typescript(&self, project_root: &PathBuf) -> Result<()> {
-        static DIR: Dir<'_> = include_dir!(
-            "$CARGO_MANIFEST_DIR/templates/dynamic/contract_import_templates/typescript"
-        );
-
-        self.generate_templates(project_root, &DIR)
-    }
-
-    pub fn generate_templates_javascript(&self, project_root: &PathBuf) -> Result<()> {
-        static DIR: Dir<'_> = include_dir!(
-            "$CARGO_MANIFEST_DIR/templates/dynamic/contract_import_templates/javascript"
-        );
-
-        self.generate_templates(project_root, &DIR)
-    }
-
-    pub fn generate_templates_rescript(&self, project_root: &PathBuf) -> Result<()> {
-        static DIR: Dir<'_> = include_dir!(
-            "$CARGO_MANIFEST_DIR/templates/dynamic/contract_import_templates/rescript"
-        );
-
-        self.generate_templates(project_root, &DIR)
     }
 }
