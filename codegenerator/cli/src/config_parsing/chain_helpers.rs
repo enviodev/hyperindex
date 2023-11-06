@@ -50,7 +50,7 @@ pub enum Network {
         GraphNetwork
     )]
     Optimism = 10,
-    #[subenum(SupportedNetwork, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Base = 8453,
     #[subenum(
         SupportedNetwork,
@@ -66,7 +66,7 @@ pub enum Network {
     Chapel = 97,
     #[subenum(GraphNetwork)]
     PoaCore = 99,
-    #[subenum(SupportedNetwork, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Gnosis = 100,
     #[subenum(GraphNetwork)]
     Fuse = 122,
@@ -200,6 +200,11 @@ impl NetworkWithExplorer {
                 "api-sepolia.etherscan.io",
                 "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
             ),
+            NetworkWithExplorer::Gnosis => (
+                "https://api.gnosisscan.io/api",
+                "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV",
+            ),
+            NetworkWithExplorer::Base => ("", ""),
         };
 
         BlockExplorerApi {
