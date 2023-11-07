@@ -124,7 +124,7 @@ pub enum Network {
     ZksyncEra = 324,
     #[subenum(NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Sepolia = 11155111,
-    #[subenum(SupportedNetwork, EthArchiveNetwork, SkarNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, SkarNetwork)]
     Linea = 59144,
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
@@ -171,8 +171,7 @@ impl NetworkWithExplorer {
                 "api-optimistic.etherscan.io",
                 "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
             ),
-            //TODO: GET BSC API KEY
-            NetworkWithExplorer::Bsc => ("api.bscscan.com", "BSC_API_KEY_PLACE_HOLDER"),
+            NetworkWithExplorer::Bsc => ("api.bscscan.com", "ZZMAWTWCP7T2MP855DA87A3ND6R13GT3K8"),
             NetworkWithExplorer::Polygon => {
                 ("api.polygonscan.com", "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP")
             }
@@ -201,10 +200,15 @@ impl NetworkWithExplorer {
                 "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
             ),
             NetworkWithExplorer::Gnosis => (
-                "https://api.gnosisscan.io/api",
+                "api.gnosisscan.io/api",
                 "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV",
             ),
-            NetworkWithExplorer::Base => ("", ""),
+            NetworkWithExplorer::Linea => {
+                ("api.lineascan.build", "TYCR43IQ5U85DKZXQG8MQIJI7922DVHZX5")
+            }
+            NetworkWithExplorer::Base => ("api.basescan.org", "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3"),
+            // TODO: uncomment this out when Celo is supported by Skar or ethArchive
+            // NetworkWithExplorer::Celo => ("api.celoscan.io", "D1S1S25RRC9J6ATMSCVYVXXAH2XXZV9ZJK"),
         };
 
         BlockExplorerApi {
