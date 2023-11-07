@@ -199,10 +199,9 @@ impl NetworkWithExplorer {
                 "api-sepolia.etherscan.io",
                 "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
             ),
-            NetworkWithExplorer::Gnosis => (
-                "api.gnosisscan.io",
-                "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV",
-            ),
+            NetworkWithExplorer::Gnosis => {
+                ("api.gnosisscan.io", "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV")
+            }
             NetworkWithExplorer::Linea => {
                 ("api.lineascan.build", "TYCR43IQ5U85DKZXQG8MQIJI7922DVHZX5")
             }
@@ -225,8 +224,19 @@ pub fn get_etherscan_client(network: &NetworkWithExplorer) -> anyhow::Result<eth
     let ethers_chain = ethers::types::Chain::try_from(chain_id)
         .context("converting network id to ethers chain")?;
 
-    let client =
-        etherscan::Client::new(ethers_chain, api_key).context("creating client for network")?;
+    let client = if let NetworkWithExplorer::Gnosis = network {
+        //Hack for now until
+        etherscan::Client::builder()
+            .with_api_url("https://api.gnosisscan.io/api/")
+            .context("api url")?
+            .with_url("https://gnosisscan.io/")
+            .context("url")?
+            .with_api_key(api_key)
+            .build()
+            .context("build")?
+    } else {
+        etherscan::Client::new(ethers_chain, api_key).context("creating client for network")?
+    };
 
     Ok(client)
 }
@@ -328,5 +338,24 @@ mod test {
                 n
             )
         }
+    }
+
+    use tracing_subscriber;
+
+    #[tokio::test]
+    #[ignore = "Integration test that interacts with block explorer API"]
+    async fn check_gnosis_get_contract_source_code() {
+        tracing_subscriber::fmt::init();
+        let network: NetworkWithExplorer = NetworkWithExplorer::Gnosis;
+        let client = get_etherscan_client(&network).unwrap();
+
+        client
+            .contract_source_code(
+                "0x4ECaBa5870353805a9F068101A40E0f32ed605C6"
+                    .parse()
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
     }
 }

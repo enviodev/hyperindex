@@ -40,3 +40,6 @@ async-recursion = "1.0.5"
 #   It should be possible to use a linked version of openssl, but after hours of trying I (Jason) was unsuccessful.
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
 openssl = { version = "0.10.56", features = ["vendored"] }
+
+[dev-dependencies]
+tracing-subscriber = "0.3.17"
