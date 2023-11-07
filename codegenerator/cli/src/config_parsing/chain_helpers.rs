@@ -236,7 +236,7 @@ mod test {
 
     use crate::config_parsing::chain_helpers::Network;
 
-    use super::{GraphNetwork, NetworkWithExplorer, SupportedNetwork};
+    use super::{get_etherscan_client, GraphNetwork, NetworkWithExplorer, SupportedNetwork};
 
     use strum::IntoEnumIterator;
 
@@ -244,6 +244,13 @@ mod test {
     fn all_network_names_have_ethers_chain() {
         for network in NetworkWithExplorer::iter() {
             ethers::types::Chain::try_from(network as u64).unwrap();
+        }
+    }
+
+    #[test]
+    fn all_networks_with_explorer_can_get_etherscan_client() {
+        for network in NetworkWithExplorer::iter() {
+            get_etherscan_client(&network).unwrap();
         }
     }
 
