@@ -39,7 +39,7 @@ pub fn network_to_eth_archive_url(network: &EthArchiveNetwork) -> String {
 pub fn network_to_skar_url(network: &SkarNetwork) -> String {
     match network {
         SkarNetwork::EthereumMainnet => "http://eth.hypersync.bigdevenergy.link:1100".to_string(),
-        SkarNetwork::Polygon => "http://91.216.245.175:1101".to_string(),
+        SkarNetwork::Polygon => "http://polygon.hypersync.bigdevenergy.link:1101".to_string(),
         SkarNetwork::Gnosis => "http://gnosis.hypersync.bigdevenergy.link:1102".to_string(),
         SkarNetwork::Bsc => "http://bsc.hypersync.bigdevenergy.link:1103".to_string(),
         SkarNetwork::Goerli => "http://goerli.hypersync.bigdevenergy.link:1104".to_string(),
