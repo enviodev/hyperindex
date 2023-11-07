@@ -2,7 +2,6 @@ use crate::{project_paths::path_utils::normalize_path, template_dirs::RelativeDi
 use anyhow::{anyhow, Context};
 use handlebars::Handlebars;
 use include_dir::DirEntry;
-use pathdiff::diff_paths;
 use serde::Serialize;
 use std::fs;
 use std::path::Path;
@@ -30,6 +29,7 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
 
     fn generate_hbs_templates_internal_recursive(
         &self,
+        //The relative dir in "TemplateDirs" that can be extracted
         hbs_templates_root_dir: &RelativeDir,
     ) -> anyhow::Result<()> {
         for entry in hbs_templates_root_dir.entries() {
@@ -47,8 +47,13 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                         //Get the parent of the file src/MyTemplate.res.hbs -> src/
                         let parent = path
                             .parent()
-                            .and_then(|p| diff_paths(p, hbs_templates_root_dir.parent_path))
-                            .ok_or_else(|| anyhow!("Could not produce parent of {}", path_str))?;
+                            .ok_or_else(|| anyhow!("Could not produce parent of {}", path_str))
+                            //Diff the relative path, parent could be
+                            //templates/dynamic/codegen/src/ where the relative dir is
+                            //templates/dynamic/codegen/ and so the diff is just the to the
+                            //relative dir ie. src/
+                            .and_then(|p| hbs_templates_root_dir.diff_path_from_parent(p))
+                            .context("Failed creating parent path")?;
 
                         //Get the file stem src/MyTemplate.res.hbs -> MyTemplate.res
                         let file_stem = path
@@ -89,7 +94,9 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                 }
                 DirEntry::Dir(dir) => Self::generate_hbs_templates_internal_recursive(
                     self,
-                    &RelativeDir::new_relative(dir, hbs_templates_root_dir.parent_path),
+                    //Create a child when recursing so that there is always a reference
+                    //to the relative path this template dir is at
+                    &hbs_templates_root_dir.new_child(dir),
                 )?,
             }
         }

@@ -12,12 +12,14 @@ static TEMPLATES_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
 type TemplateDir<'a> = &'a Dir<'a>;
 
-pub struct TemplateDirs<'a> {
-    dir: TemplateDir<'a>,
-}
-
+///Used to attach a reference to a parent path for "Dir" type from include_dir module
+///The dir.extract() method only works from the top level extracted dir as it always references
+///the full path from the top. Relative allows you to extract nested dir somewhere
 pub struct RelativeDir<'a> {
+    //Any "Dir" entry from TEMPLATES_DIR, for eg TEMPLATES_DIR.get_dir("static/codegen"), the
+    //.path() method on this obect would yield "static/codegen"
     dir: TemplateDir<'a>,
+    //The parent path of given dir to diff with
     pub parent_path: &'a Path,
 }
 
@@ -28,15 +30,42 @@ impl<'a> From<TemplateDir<'a>> for RelativeDir<'a> {
 }
 
 impl<'a> RelativeDir<'a> {
-    pub fn new_relative(dir: TemplateDir<'a>, parent_path: &'a Path) -> Self {
+    ///internal: Specify the base dir and the path of its
+    fn new_relative(dir: TemplateDir<'a>, parent_path: &'a Path) -> Self {
         Self { dir, parent_path }
     }
 
-    pub fn new(dir: TemplateDir<'a>) -> Self {
+    ///Instantiates a relative dir with the parent path as the current
+    ///dir path
+    fn new(dir: TemplateDir<'a>) -> Self {
         Self::new_relative(dir, dir.path())
     }
 
-    pub fn get_dir<S>(&self, path: S) -> Option<Self>
+    ///Creates a child of current relative dir where parent_path is preserved
+    ///in the child
+    pub fn new_child(&self, dir: TemplateDir<'a>) -> Self {
+        Self {
+            dir,
+            parent_path: self.parent_path,
+        }
+    }
+
+    ///Returns the diff between the given path and the current RelativeDir's
+    ///parent path. Ie RelativeDir with parent_path static/codegen diffed with
+    ///static/codegen/src/bindings yields src/bindings
+    pub fn diff_path_from_parent(&self, path: &Path) -> Result<PathBuf> {
+        diff_paths(path, self.parent_path).ok_or_else(|| {
+            anyhow!(
+                "Expeted a valid path diff between parent {:?} and child {:?}",
+                self.dir.path(),
+                self.parent_path
+            )
+        })
+    }
+
+    ///Get a sub dir at relative path and return it as new
+    ///RelativeDir where the sub dir is the parent.
+    fn get_dir<S>(&self, path: S) -> Option<Self>
     where
         S: AsRef<Path>,
     {
@@ -45,10 +74,9 @@ impl<'a> RelativeDir<'a> {
             .map(|dir| dir.into())
     }
 
-    pub fn path(&self) -> PathBuf {
-        diff_paths(self.dir.path(), self.parent_path).unwrap()
-    }
-
+    ///Iterate over the dir entries. DirEntry does not
+    ///have a RelativeDir equivalent yet so the entries don't have
+    ///special relative functions
     pub fn entries(&self) -> &'a [DirEntry<'a>] {
         self.dir.entries()
     }
@@ -57,20 +85,20 @@ impl<'a> RelativeDir<'a> {
     /// Creates parent directories of `path` if they do not already exist.
     /// Fails if some files already exist.
     /// In case of error, partially extracted directory may remain on the filesystem.
+    /// If RelativedDir is at path static/codegen/src with parsent static/codegen it will
+    /// extract to {base_path}/src not {base_path}/static/codegen/src like the regular
+    /// Dir.extract() method
     pub fn extract<S: AsRef<Path>>(&self, base_path: S) -> Result<()> {
         let base_path = base_path.as_ref();
 
         for entry in self.dir.entries() {
-            let rel_entry_path = diff_paths(entry.path(), self.parent_path).ok_or_else(|| {
-                anyhow!("Unexpected, child entry could not diff with parent path")
-            })?;
-
+            let rel_entry_path = self.diff_path_from_parent(entry.path())?;
             let path = base_path.join(rel_entry_path);
 
             match entry {
-                DirEntry::Dir(d) => {
+                DirEntry::Dir(dir) => {
                     fs::create_dir_all(&path)?;
-                    Self::new_relative(d, self.parent_path).extract(base_path)?;
+                    self.new_child(dir).extract(base_path)?;
                 }
                 DirEntry::File(f) => {
                     fs::write(path, f.contents())?;
@@ -82,6 +110,12 @@ impl<'a> RelativeDir<'a> {
     }
 }
 
+///A Client object for interfacing with the templates directory
+pub struct TemplateDirs<'a> {
+    dir: TemplateDir<'a>,
+}
+
+///Current Options for our template folders
 #[derive(strum_macros::Display)]
 #[strum(serialize_all = "lowercase")]
 enum TemplateType {
@@ -90,12 +124,14 @@ enum TemplateType {
 }
 
 impl<'a> TemplateDirs<'a> {
+    ///Instantiates the client that interacts with the templates dir
     pub fn new() -> Self {
         Self {
             dir: &TEMPLATES_DIR,
         }
     }
 
+    ///Gets either the static or dynamic dir
     fn get_template_dir(&self, template_type: TemplateType) -> Result<RelativeDir<'a>> {
         self.dir
             .get_dir(template_type.to_string())
@@ -103,6 +139,7 @@ impl<'a> TemplateDirs<'a> {
             .ok_or_else(|| anyhow!("Unexpected, {} templates dir does not exist", template_type))
     }
 
+    ///Gets the codegen template dir for either static or dynamic templates
     fn get_codegen_dir(&self, template_type: TemplateType) -> Result<RelativeDir<'a>> {
         let template_dir = self
             .get_template_dir(template_type)
@@ -113,14 +150,17 @@ impl<'a> TemplateDirs<'a> {
             .ok_or_else(|| anyhow!("Unexpected, codegen dir does not exist"))
     }
 
+    ///Gets the templates/static/codegen directory
     pub fn get_codegen_static_dir(&self) -> Result<RelativeDir<'a>> {
         self.get_codegen_dir(TemplateType::Static)
     }
 
+    ///Gets the templates/dynamic/codegen directory
     pub fn get_codegen_dynamic_dir(&self) -> Result<RelativeDir<'a>> {
         self.get_codegen_dir(TemplateType::Dynamic)
     }
 
+    ///Gets directories within dynamic
     fn get_dynamic_dir<T: Display>(&self, dirname: T) -> Result<RelativeDir<'a>> {
         let template_dir = self
             .get_template_dir(TemplateType::Dynamic)
@@ -130,11 +170,12 @@ impl<'a> TemplateDirs<'a> {
             anyhow!(
                 "Unexpected, dynamic {} dir does not exist at {:?}",
                 dirname,
-                template_dir.path()
+                template_dir.parent_path
             )
         })
     }
 
+    ///Gets template from templates/dynamic/contract_import_templates/{template}
     fn get_contract_import_dynamic_dir<T: Display>(&self, template: T) -> Result<RelativeDir<'a>> {
         let template_dir = self
             .get_dynamic_dir("contract_import_templates")
@@ -144,11 +185,23 @@ impl<'a> TemplateDirs<'a> {
             anyhow!(
                 "Unexpected, dynamic {} dir does not exist at {:?}",
                 template,
-                template_dir.path()
+                template_dir.parent_path
             )
         })
     }
 
+    ///Gets template from templates/dynamic/contract_import_templates/shared
+    pub fn get_contract_import_shared_dir(&self) -> Result<RelativeDir<'a>> {
+        self.get_contract_import_dynamic_dir("shared")
+    }
+
+    ///Gets template from templates/dynamic/contract_import_templates/{language} ie
+    ///(rescript, javascript or typescript)
+    pub fn get_contract_import_lang_dir(&self, lang: &Language) -> Result<RelativeDir<'a>> {
+        self.get_contract_import_dynamic_dir(lang.to_string().to_lowercase())
+    }
+
+    ///Gets dir at templates/dynamic/init_templates/shared
     pub fn get_init_template_dynamic_shared(&self) -> Result<RelativeDir<'a>> {
         let template_dir = self
             .get_dynamic_dir("init_templates")
@@ -157,19 +210,12 @@ impl<'a> TemplateDirs<'a> {
         template_dir.get_dir("shared").ok_or_else(|| {
             anyhow!(
                 "Unexpected, dynamic shared dir does not exist at {:?}",
-                template_dir.path()
+                template_dir.parent_path
             )
         })
     }
 
-    pub fn get_contract_import_shared_dir(&self) -> Result<RelativeDir<'a>> {
-        self.get_contract_import_dynamic_dir("shared")
-    }
-
-    pub fn get_contract_import_lang_dir(&self, lang: &Language) -> Result<RelativeDir<'a>> {
-        self.get_contract_import_dynamic_dir(lang.to_string().to_lowercase())
-    }
-
+    ///Gets template from templates/static/{init_template}
     fn get_init_template_static_dirs(&self, template: String) -> Result<RelativeDir<'a>> {
         let template_dir = self
             .get_template_dir(TemplateType::Static)
@@ -181,11 +227,12 @@ impl<'a> TemplateDirs<'a> {
             anyhow!(
                 "Unexpected, static {} dir does not exist at {:?}",
                 template_folder_name,
-                template_dir.path()
+                template_dir.parent_path
             )
         })
     }
 
+    ///Gets template from templates/static/{init_template}_template/{option}
     fn get_template_static_dir(
         &self,
         template: String,
@@ -198,11 +245,12 @@ impl<'a> TemplateDirs<'a> {
         template_dir.get_dir(&subdir_name).ok_or_else(|| {
             anyhow!(
                 "Unexpected, static dir {:?} does not exist for",
-                template_dir.path()
+                template_dir.parent_path
             )
         })
     }
 
+    ///Gets template from templates/static/{init_template}_template/{language}
     fn get_template_lang_dir(
         &self,
         template: &Template,
@@ -214,18 +262,23 @@ impl<'a> TemplateDirs<'a> {
         )
     }
 
+    ///Gets template from templates/static/{init_template}_template/shared
     fn get_template_shared_dir(&self, template: &Template) -> Result<RelativeDir<'a>> {
         self.get_template_static_dir(template.to_string().to_lowercase(), "shared".to_string())
     }
 
+    ///Gets template from templates/static/blank_template/{language}
     fn get_blank_lang_dir(&self, lang: &Language) -> Result<RelativeDir<'a>> {
         self.get_template_static_dir("blank".to_string(), lang.to_string().to_lowercase())
     }
 
+    ///Gets template from templates/static/blank_template/shared
     fn get_blank_shared_dir(&self) -> Result<RelativeDir<'a>> {
         self.get_template_static_dir("blank".to_string(), "shared".to_string())
     }
 
+    ///Extracts static template for language and shared folder for a given template and language
+    ///Extracts to the given project_root
     pub fn get_and_extract_template(
         &self,
         template: &Template,
@@ -255,6 +308,7 @@ impl<'a> TemplateDirs<'a> {
         Ok(())
     }
 
+    ///Extracts static blank_template for a language to the given project_root
     pub fn get_and_extract_blank_template(
         &self,
         lang: &Language,
@@ -383,18 +437,5 @@ mod test {
         template_dirs
             .get_contract_import_dynamic_dir("bad_dynamic_path")
             .unwrap();
-    }
-
-    #[test]
-    fn relative_dir() {
-        let rel_dir = RelativeDir::new(
-            super::TEMPLATES_DIR
-                .get_dir("static")
-                .expect("getting static"),
-        );
-
-        let child = rel_dir.get_dir("codegen").unwrap();
-
-        assert_eq!(child.path(), PathBuf::from(""));
     }
 }
