@@ -200,7 +200,7 @@ impl NetworkWithExplorer {
                 "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
             ),
             NetworkWithExplorer::Gnosis => (
-                "api.gnosisscan.io/api",
+                "api.gnosisscan.io",
                 "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV",
             ),
             NetworkWithExplorer::Linea => {
