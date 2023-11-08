@@ -70,11 +70,39 @@ pub struct Event {
     params: Vec<Param>,
 }
 
+///Take an event, and if any param is a tuple type,
+///it flattens it into an event with more params
+///MyEvent(address myAddress, (uint256, bool) myTupleParam) ->
+///MyEvent(address myAddress, uint256 myTupleParam_1, uint256 myTupleParam_2)
+///This representation makes it easy to have single field conversions
+fn flatten_event_inputs(
+    event_inputs: Vec<ethers::abi::EventParam>,
+) -> Vec<ethers::abi::EventParam> {
+    event_inputs
+        .into_iter()
+        .flat_map(|event_input| {
+            if let ParamType::Tuple(param_types) = event_input.kind {
+                let event_inputs = param_types
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, p)| ethers::abi::EventParam {
+                        /// Param name. becomes tupleParamame_1 for eg.
+                        name: format!("{}_{}", event_input.name, i + 1),
+                        kind: p,
+                        indexed: false,
+                    })
+                    .collect();
+                flatten_event_inputs(event_inputs)
+            } else {
+                vec![event_input]
+            }
+        })
+        .collect()
+}
+
 impl Event {
     fn from_config_event(e: &system_config::Event) -> Result<Self> {
-        let params = e
-            .event
-            .inputs
+        let params = flatten_event_inputs(e.event.inputs.clone())
             .iter()
             .map(|input| Param::from_event_param(input))
             .collect::<Result<_>>()
@@ -157,5 +185,90 @@ impl AutoSchemaHandlerTemplate {
             .context("Failed generating shared contract import templates")?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use ethers::abi::EventParam;
+    #[test]
+    fn flatten_event_with_tuple() {
+        let event_inputs = vec![
+            EventParam {
+                name: "user".to_string(),
+                kind: ParamType::Address,
+                indexed: false,
+            },
+            EventParam {
+                name: "myTupleParam".to_string(),
+                kind: ParamType::Tuple(vec![ParamType::Uint(256), ParamType::Bool]),
+                indexed: false,
+            },
+        ];
+
+        let expected_flat_inputs = vec![
+            EventParam {
+                name: "user".to_string(),
+                kind: ParamType::Address,
+                indexed: false,
+            },
+            EventParam {
+                name: "myTupleParam_1".to_string(),
+                kind: ParamType::Uint(256),
+                indexed: false,
+            },
+            EventParam {
+                name: "myTupleParam_2".to_string(),
+                kind: ParamType::Bool,
+                indexed: false,
+            },
+        ];
+
+        assert_eq!(expected_flat_inputs, flatten_event_inputs(event_inputs));
+    }
+
+    #[test]
+    fn flatten_event_with_nested_tuple() {
+        let event_inputs = vec![
+            EventParam {
+                name: "user".to_string(),
+                kind: ParamType::Address,
+                indexed: false,
+            },
+            EventParam {
+                name: "myTupleParam".to_string(),
+                kind: ParamType::Tuple(vec![
+                    ParamType::Tuple(vec![ParamType::Uint(8), ParamType::Uint(8)]),
+                    ParamType::Bool,
+                ]),
+                indexed: false,
+            },
+        ];
+
+        let expected_flat_inputs = vec![
+            EventParam {
+                name: "user".to_string(),
+                kind: ParamType::Address,
+                indexed: false,
+            },
+            EventParam {
+                name: "myTupleParam_1_1".to_string(),
+                kind: ParamType::Uint(8),
+                indexed: false,
+            },
+            EventParam {
+                name: "myTupleParam_1_2".to_string(),
+                kind: ParamType::Uint(8),
+                indexed: false,
+            },
+            EventParam {
+                name: "myTupleParam_2".to_string(),
+                kind: ParamType::Bool,
+                indexed: false,
+            },
+        ];
+
+        assert_eq!(expected_flat_inputs, flatten_event_inputs(event_inputs));
     }
 }
