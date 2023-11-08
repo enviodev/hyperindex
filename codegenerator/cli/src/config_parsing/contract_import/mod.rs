@@ -8,8 +8,8 @@ use crate::{
 };
 use anyhow::{anyhow, Context};
 use async_recursion::async_recursion;
-use ethers::etherscan::contract::ContractMetadata;
 use ethers::{etherscan, types::H160};
+use ethers::{etherscan::contract::ContractMetadata, prelude::errors::EtherscanError};
 use std::fs;
 use std::path::PathBuf;
 use tokio::time::Duration;
@@ -135,10 +135,18 @@ async fn fetch_get_source_code_result_from_block_explorer(
     //todo make retryable
     let mut refetch_delay = Duration::from_secs(2);
 
-    let fail_if_maximum_is_exceeded = |current_refetch_delay| -> anyhow::Result<()> {
+    let fail_if_maximum_is_exceeded = |current_refetch_delay: Duration, e| -> anyhow::Result<()> {
         if current_refetch_delay >= MAXIMUM_BACKOFF {
-            Err(anyhow!("Maximum backoff timeout exceeded"))
+            Err(e).context(format!(
+                "Maximum backoff timeout {}s exceeded",
+                MAXIMUM_BACKOFF.as_secs()
+            ))
         } else {
+            println!(
+                "Retrying in {}s due to failure: {}",
+                current_refetch_delay.as_secs(),
+                e
+            );
             Ok(())
         }
     };
@@ -148,14 +156,42 @@ async fn fetch_get_source_code_result_from_block_explorer(
             Ok(res) => {
                 break Ok::<_, anyhow::Error>(res);
             }
-            Err(_e) => {
-                fail_if_maximum_is_exceeded(refetch_delay)?;
+            Err(e) => {
+                let retry_err = match e {
+                    //In these cases, return ok(err) if it should be retried
+                    EtherscanError::Reqwest(_)
+                    | EtherscanError::BadStatusCode(_)
+                    | EtherscanError::RateLimitExceeded
+                    | EtherscanError::IO(_)
+                    | EtherscanError::ErrorResponse { .. } => Ok(e),
+
+                    //In these cases exit with error
+                    EtherscanError::ChainNotSupported(_)
+                    | EtherscanError::ExecutionFailed(_)
+                    | EtherscanError::BalanceFailed
+                    | EtherscanError::BlockNumberByTimestampFailed
+                    | EtherscanError::TransactionReceiptFailed
+                    | EtherscanError::GasEstimationFailed
+                    | EtherscanError::EnvVarNotFound(_)
+                    | EtherscanError::Serde(_)
+                    | EtherscanError::ContractCodeNotVerified(_)
+                    | EtherscanError::EmptyResult { .. }
+                    | EtherscanError::LocalNetworksNotSupported
+                    | EtherscanError::Unknown(_)
+                    | EtherscanError::Builder(_)
+                    | EtherscanError::MissingSolcVersion(_)
+                    | EtherscanError::InvalidApiKey
+                    | EtherscanError::BlockedByCloudflare
+                    | EtherscanError::CloudFlareSecurityChallenge
+                    | EtherscanError::PageNotFound => Err(e),
+                }?;
+                fail_if_maximum_is_exceeded(refetch_delay, retry_err)?;
                 tokio::time::sleep(refetch_delay).await;
                 refetch_delay *= 2;
             }
         }
     }
-    .context("fetching contract source code")?;
+    .context("Fetching contract source code")?;
 
     if contract_metadata.items.len() > 1 {
         return Err(anyhow!("Unexpected multiple metadata items in contract"));
@@ -176,6 +212,7 @@ fn get_event_handler_directory(language: &Language) -> String {
         Language::Javascript => "./src/EventHandlers.js".to_string(),
     }
 }
+
 #[cfg(test)]
 mod test {
     use crate::cli_args::Language;
