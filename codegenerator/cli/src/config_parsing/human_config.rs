@@ -1,8 +1,4 @@
-use super::{
-    hypersync_endpoints::{self, HypersyncEndpoint},
-    system_config::SystemConfig,
-    validation,
-};
+use super::{hypersync_endpoints, system_config::SystemConfig, validation};
 use crate::{
     constants::links,
     project_paths::{path_utils, ParsedProjectPaths},
@@ -18,7 +14,8 @@ type NetworkId = u64;
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HumanConfig {
     pub name: String,
-    pub description: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contracts: Option<Vec<GlobalContractConfig>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -95,18 +92,9 @@ impl Network {
                 let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(self.id.clone())
                     .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
 
-                let hypersync_config = match defualt_hypersync_endpoint {
-                    HypersyncEndpoint::Skar(skar_url) => HypersyncConfig {
-                        worker_type: HypersyncWorkerType::Skar,
-                        endpoint_url: skar_url,
-                    },
-                    HypersyncEndpoint::EthArchive(eth_archive_url) => HypersyncConfig {
-                        worker_type: HypersyncWorkerType::EthArchive,
-                        endpoint_url: eth_archive_url,
-                    },
-                };
-
-                Ok(SyncSourceConfig::HypersyncConfig(hypersync_config))
+                Ok(SyncSourceConfig::HypersyncConfig(
+                    defualt_hypersync_endpoint,
+                ))
             }
         }
     }
@@ -183,8 +171,8 @@ fn default_unstable__sync_config() -> SyncConfigUnstable {
 #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
 pub struct RpcConfig {
     pub url: String,
-    #[serde(default = "default_unstable__sync_config")]
-    unstable__sync_config: SyncConfigUnstable,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unstable__sync_config: Option<SyncConfigUnstable>,
 }
 
 impl RpcConfig {
@@ -193,7 +181,7 @@ impl RpcConfig {
     pub fn new(url: &str) -> Self {
         RpcConfig {
             url: String::from(url),
-            unstable__sync_config: default_unstable__sync_config(),
+            unstable__sync_config: Some(default_unstable__sync_config()),
         }
     }
 }

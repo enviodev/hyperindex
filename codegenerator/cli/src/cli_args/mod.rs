@@ -4,6 +4,7 @@ mod validation;
 use crate::{
     config_parsing::chain_helpers::NetworkWithExplorer,
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
+    utils::address_type::Address,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
@@ -97,7 +98,6 @@ pub enum DbMigrateSubcommands {
 }
 
 type SubgraphMigrationID = String;
-type ContractAddress = String;
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
@@ -148,7 +148,7 @@ pub struct ContractMigrationArgs {
 
     ///Contract address to generate the config from
     #[arg(short, long)]
-    pub contract_address: Option<ContractAddress>,
+    pub contract_address: Option<Address>,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]

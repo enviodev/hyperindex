@@ -595,16 +595,15 @@ mod test {
     }
 
     fn get_test_path_string_helper() -> String {
-        let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        String::from(test_dir)
+        format!("{}/test", env!("CARGO_MANIFEST_DIR"))
     }
 
     fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
         let project_root = get_test_path_string_helper();
-        let config = String::from(format!("configs/{}", configs_file_name));
-        let generated = String::from("generated/");
+        let config = format!("configs/{}", configs_file_name);
+        let generated = "generated/";
         let project_paths =
-            ParsedProjectPaths::new(project_root, generated, config).expect("Parsed paths");
+            ParsedProjectPaths::new(&project_root, generated, &config).expect("Parsed paths");
 
         let yaml_config = human_config::deserialize_config_from_yaml(&project_paths.config)
             .expect("Config should be deserializeable");

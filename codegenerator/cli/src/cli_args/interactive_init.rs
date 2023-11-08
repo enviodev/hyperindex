@@ -5,8 +5,9 @@ use super::{
 use crate::{
     config_parsing::chain_helpers::{NetworkWithExplorer, SupportedNetwork},
     constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
+    utils::address_type::Address,
 };
-use anyhow::Context;
+use anyhow::{Context, Result};
 use inquire::{Select, Text};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
@@ -15,7 +16,7 @@ use strum::IntoEnumIterator;
 pub enum InitilizationTypeWithArgs {
     Template(InitTemplate),
     SubgraphID(String),
-    ContractImportWithArgs(NetworkWithExplorer, String),
+    ContractImportWithArgs(NetworkWithExplorer, Address),
 }
 
 #[derive(Clone)]
@@ -143,9 +144,25 @@ fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<Initilizati
 
                     let chosen_contract_address = match &args.contract_address {
                         Some(c) => c.clone(),
-                        None => Text::new("[BETA VERSION] What is the address of the contract?")
-                            .prompt()
-                            .context("Prompting user for contract address")?,
+                        None => {
+                            let mut address_str =
+                                Text::new("[BETA VERSION] What is the address of the contract?")
+                                    .prompt()
+                                    .context("Prompting user for contract address")?;
+
+                            loop {
+                                match address_str.as_str().parse() {
+                                    Ok(parsed_val) => break parsed_val,
+                                    Err(_) => {
+                                        address_str = Text::new(
+                                            "Invalid contract address input, please try again",
+                                        )
+                                        .prompt()
+                                        .context("Re-prompting user for valid contract address")?;
+                                    }
+                                }
+                            }
+                        }
                     };
 
                     InitilizationTypeWithArgs::ContractImportWithArgs(

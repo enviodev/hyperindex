@@ -58,9 +58,9 @@ mod tests {
     fn test_all_paths_construction_1() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
         let test_dir_path_buf = PathBuf::from(&test_dir);
-        let project_root = String::from(test_dir);
-        let config_dir = String::from("configs/config1.yaml");
-        let generated = String::from("generated/");
+        let project_root = test_dir.as_str();
+        let config_dir = "configs/config1.yaml";
+        let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
 
@@ -103,9 +103,9 @@ mod tests {
 
     #[test]
     fn test_get_contract_handler_path_template() {
-        let project_root = String::from("test");
-        let config_dir = String::from("configs/config1.yaml");
-        let generated = String::from("generated/");
+        let project_root = "test";
+        let config_dir = "configs/config1.yaml";
+        let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
 

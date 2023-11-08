@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Context};
 
-use super::chain_helpers::{EthArchiveNetwork, Network, SkarNetwork, SupportedNetwork};
+use super::{
+    chain_helpers::{EthArchiveNetwork, Network, SkarNetwork, SupportedNetwork},
+    human_config,
+};
 
 enum HyperSyncNetwork {
     Skar(SkarNetwork),
@@ -49,13 +52,9 @@ pub fn network_to_skar_url(network: &SkarNetwork) -> String {
     }
 }
 
-pub type Url = String;
-pub enum HypersyncEndpoint {
-    Skar(Url),
-    EthArchive(Url),
-}
-
-pub fn get_default_hypersync_endpoint(chain_id: u64) -> anyhow::Result<HypersyncEndpoint> {
+pub fn get_default_hypersync_endpoint(
+    chain_id: u64,
+) -> anyhow::Result<human_config::HypersyncConfig> {
     let network_name =
         Network::from_network_id(chain_id).context("getting network name from id")?;
 
@@ -66,10 +65,14 @@ pub fn get_default_hypersync_endpoint(chain_id: u64) -> anyhow::Result<Hypersync
         .context("Converting supported network to hypersync network")?;
 
     let endpoint = match hypersync_network {
-        HyperSyncNetwork::Skar(n) => HypersyncEndpoint::Skar(network_to_skar_url(&n)),
-        HyperSyncNetwork::EthArchive(n) => {
-            HypersyncEndpoint::EthArchive(network_to_eth_archive_url(&n))
-        }
+        HyperSyncNetwork::Skar(n) => human_config::HypersyncConfig {
+            endpoint_url: network_to_skar_url(&n),
+            worker_type: human_config::HypersyncWorkerType::Skar,
+        },
+        HyperSyncNetwork::EthArchive(n) => human_config::HypersyncConfig {
+            endpoint_url: network_to_eth_archive_url(&n),
+            worker_type: human_config::HypersyncWorkerType::EthArchive,
+        },
     };
 
     Ok(endpoint)

@@ -27,9 +27,9 @@ pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
-    networks: NetworkMap,
-    contracts: ContractMap,
-    entities: EntityMap,
+    pub networks: NetworkMap,
+    pub contracts: ContractMap,
+    pub entities: EntityMap,
 }
 
 //Getter methods for system config
@@ -268,7 +268,7 @@ type ServerUrl = String;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Network {
     pub id: u64,
-    sync_source: SyncSourceConfig,
+    pub sync_source: SyncSourceConfig,
     pub start_block: i32,
     pub contracts: Vec<NetworkContract>,
 }
@@ -435,9 +435,9 @@ mod test {
     #[test]
     fn test_get_contract_abi() {
         let test_dir = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
-        let project_root = String::from(test_dir);
-        let config_dir = String::from("configs/config1.yaml");
-        let generated = String::from("generated/");
+        let project_root = test_dir.as_str();
+        let config_dir = "configs/config1.yaml";
+        let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
 

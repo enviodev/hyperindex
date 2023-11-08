@@ -20,9 +20,9 @@ pub struct ParsedProjectPaths {
 
 impl ParsedProjectPaths {
     pub fn new(
-        project_root: String,
-        generated: String,
-        config: String,
+        project_root: &str,
+        generated: &str,
+        config: &str,
     ) -> anyhow::Result<ParsedProjectPaths> {
         let project_root = PathBuf::from(project_root);
         let generated_relative_path = PathBuf::from(generated);
@@ -47,12 +47,19 @@ impl ParsedProjectPaths {
         })
     }
 
-    pub fn default_with_root(project_root: String) -> anyhow::Result<ParsedProjectPaths> {
+    pub fn default_with_root(project_root: &str) -> anyhow::Result<ParsedProjectPaths> {
+        Self::new(project_root, DEFAULT_GENERATED_PATH, DEFAULT_CONFIG_PATH)
+    }
+}
+
+impl Default for ParsedProjectPaths {
+    fn default() -> Self {
         Self::new(
-            project_root,
-            DEFAULT_GENERATED_PATH.to_string(),
-            DEFAULT_CONFIG_PATH.to_string(),
+            DEFAULT_PROJECT_ROOT_PATH,
+            DEFAULT_GENERATED_PATH,
+            DEFAULT_CONFIG_PATH,
         )
+        .expect("Unexpected failure initializing default parsed paths")
     }
 }
 
@@ -64,9 +71,9 @@ impl TryFrom<ProjectPaths> for ParsedProjectPaths {
             .unwrap_or_else(|| DEFAULT_PROJECT_ROOT_PATH.to_string());
 
         Self::new(
-            project_root,
-            project_paths.output_directory,
-            project_paths.config,
+            &project_root,
+            &project_paths.output_directory,
+            &project_paths.config,
         )
     }
 }
@@ -74,7 +81,7 @@ impl TryFrom<ProjectPaths> for ParsedProjectPaths {
 impl TryFrom<InitInteractive> for ParsedProjectPaths {
     type Error = anyhow::Error;
     fn try_from(init_interactive: InitInteractive) -> Result<Self, Self::Error> {
-        Self::default_with_root(init_interactive.directory)
+        Self::default_with_root(&init_interactive.directory)
     }
 }
 
@@ -84,9 +91,9 @@ mod tests {
     use std::path::PathBuf;
     #[test]
     fn test_project_path_default_case() {
-        let project_root = String::from("./");
-        let config = String::from("config.yaml");
-        let generated = String::from("generated/");
+        let project_root = "./";
+        let config = "config.yaml";
+        let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
 
         let expected_project_paths = ParsedProjectPaths {
@@ -98,9 +105,9 @@ mod tests {
     }
     #[test]
     fn test_project_path_alternative_case() {
-        let project_root = String::from("my_dir/my_project");
-        let config = String::from("custom_config.yaml");
-        let generated = String::from("custom_gen/my_project_generated");
+        let project_root = "my_dir/my_project";
+        let config = "custom_config.yaml";
+        let generated = "custom_gen/my_project_generated";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
 
         let expected_project_paths = ParsedProjectPaths {
@@ -113,9 +120,9 @@ mod tests {
     }
     #[test]
     fn test_project_path_relative_case() {
-        let project_root = String::from("../my_dir/my_project");
-        let config = String::from("custom_config.yaml");
-        let generated = String::from("custom_gen/my_project_generated");
+        let project_root = "../my_dir/my_project";
+        let config = "custom_config.yaml";
+        let generated = "custom_gen/my_project_generated";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
 
         let expected_project_paths = ParsedProjectPaths {
@@ -129,18 +136,23 @@ mod tests {
     #[test]
     #[should_panic]
     fn test_project_path_panics_when_generated_is_outside_of_root() {
-        let project_root = String::from("./");
-        let config = String::from("config.yaml");
-        let generated = String::from("../generated/");
+        let project_root = "./";
+        let config = "config.yaml";
+        let generated = "../generated/";
         ParsedProjectPaths::new(project_root, config, generated).unwrap();
     }
 
     #[test]
     #[should_panic]
     fn test_project_path_panics_when_config_is_outside_of_root() {
-        let project_root = String::from("./");
-        let config = String::from("../config.yaml");
-        let generated = String::from("generated/");
+        let project_root = "./";
+        let config = "../config.yaml";
+        let generated = "generated/";
         ParsedProjectPaths::new(project_root, config, generated).unwrap();
+    }
+
+    #[test]
+    fn check_default_does_not_panic() {
+        ParsedProjectPaths::default();
     }
 }

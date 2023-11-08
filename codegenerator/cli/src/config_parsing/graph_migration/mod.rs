@@ -272,7 +272,7 @@ pub async fn generate_config_from_subgraph_id(
     // Create config object to be populated
     let mut config = HumanConfig {
         name: manifest.data_sources[0].name.clone(),
-        description: manifest.description.unwrap_or_default(),
+        description: manifest.description,
         schema: None,
         contracts: None,
         networks: vec![],

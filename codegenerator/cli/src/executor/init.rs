@@ -31,17 +31,6 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     // The cli errors if the folder exists, the user must provide a new folder to proceed which we create below
     std::fs::create_dir_all(&parsed_project_paths.project_root)?;
 
-    let hbs_template =
-        InitTemplates::new(parsed_init_args.name.clone(), &parsed_init_args.language);
-
-    let init_shared_template_dir = template_dirs.get_init_template_dynamic_shared()?;
-
-    let hbs_generator = HandleBarsDirGenerator::new(
-        &init_shared_template_dir,
-        &hbs_template,
-        &parsed_project_paths.project_root,
-    );
-
     match &parsed_init_args.template {
         InitilizationTypeWithArgs::Template(template) => {
             template_dirs
@@ -77,10 +66,10 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
 
         InitilizationTypeWithArgs::ContractImportWithArgs(network_name, contract_address) => {
             let yaml_config = generate_config_from_contract_address(
-                &parsed_init_args.name,
-                network_name,
+                parsed_init_args.name.clone(),
+                &network_name,
                 contract_address.clone(),
-                &parsed_init_args.language,
+                parsed_init_args.language.clone(),
             )
             .await
             .context("Failed getting config")?;
@@ -129,6 +118,17 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
                 )?;
         }
     }
+
+    let hbs_template =
+        InitTemplates::new(parsed_init_args.name.clone(), &parsed_init_args.language);
+
+    let init_shared_template_dir = template_dirs.get_init_template_dynamic_shared()?;
+
+    let hbs_generator = HandleBarsDirGenerator::new(
+        &init_shared_template_dir,
+        &hbs_template,
+        &parsed_project_paths.project_root,
+    );
 
     hbs_generator.generate_hbs_templates()?;
 
