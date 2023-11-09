@@ -1,12 +1,6 @@
-use super::converters::{
-    AutoConfigSelection, ContractImportNetworkSelection, ContractImportSelection,
-};
+use super::converters::{ContractImportNetworkSelection, ContractImportSelection};
 use crate::{
-    cli_args::Language,
-    config_parsing::{
-        chain_helpers::{self, NetworkWithExplorer},
-        human_config::HumanConfig,
-    },
+    config_parsing::chain_helpers::{self, NetworkWithExplorer},
     utils::address_type::Address,
 };
 use anyhow::{anyhow, Context, Result};
@@ -16,7 +10,6 @@ use ethers::{
     prelude::errors::EtherscanError,
     types::H160,
 };
-use std::{fs, path::PathBuf};
 use tokio::time::Duration;
 
 pub async fn fetch_contract_auto_selection_from_etherscan(
@@ -39,42 +32,6 @@ pub async fn fetch_contract_auto_selection_from_etherscan(
         network_selection,
         events,
     ))
-}
-
-// Function to generate config, schema and abis from subgraph ID
-pub async fn generate_config_from_contract_address(
-    project_name: String,
-    network: &NetworkWithExplorer,
-    contract_address: Address,
-    language: Language,
-) -> anyhow::Result<HumanConfig> {
-    let selected_contract = fetch_contract_auto_selection_from_etherscan(contract_address, network)
-        .await
-        .context("Failed fetching contract data")?;
-
-    let auto_config_selection: AutoConfigSelection =
-        AutoConfigSelection::new(project_name, language, selected_contract);
-
-    let human_config = HumanConfig::try_from(auto_config_selection)
-        .context("Failed converting contract data to config.yaml")?;
-
-    Ok(human_config)
-}
-
-pub async fn write_file_to_system(
-    file_string: String,
-    fs_file_path: PathBuf,
-) -> anyhow::Result<()> {
-    let file_path_str = fs_file_path.to_str().unwrap_or_else(|| "unknown file path");
-    // Create the directory if it doesn't exist
-    if let Some(parent_dir) = fs_file_path.parent() {
-        fs::create_dir_all(parent_dir)
-            .with_context(|| format!("Failed to create directory for {} file", file_path_str))?;
-    }
-    fs::write(&fs_file_path, file_string)
-        .with_context(|| format!("Failed to write {} file", file_path_str))?;
-
-    Ok(())
 }
 
 struct ContractData {

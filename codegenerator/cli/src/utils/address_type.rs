@@ -60,9 +60,10 @@ impl Address {
 impl FromStr for Address {
     type Err = Error;
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let address = s
-            .parse()
-            .context("Failed parsing address string {} as H160")?;
+        let address = s.parse().context(format!(
+            "Failed parsing {} as hexidecimal address string. Please provide a valid address",
+            s
+        ))?;
         Ok(Self(address))
     }
 }

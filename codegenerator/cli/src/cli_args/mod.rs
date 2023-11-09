@@ -1,15 +1,16 @@
-pub mod interactive_init;
-mod validation;
-
 use crate::{
-    config_parsing::chain_helpers::NetworkWithExplorer,
+    config_parsing::chain_helpers::{Network, NetworkWithExplorer},
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
     utils::address_type::Address,
 };
+use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use strum_macros::{Display, EnumIter, EnumString};
 
+pub mod interactive_init;
+mod validation;
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
 pub struct CommandLineArgs {
@@ -122,7 +123,7 @@ pub enum InitFlow {
     ///Initialize by migrating config from an existing subgraph
     SubgraphMigration(SubgraphMigrationArgs),
     ///Initialize by importing config from a contract for a given chain
-    ContractImport(ContractMigrationArgs),
+    ContractImport(ContractImportArgs),
 }
 
 #[derive(Args, Debug, Default)]
@@ -141,14 +142,81 @@ pub struct SubgraphMigrationArgs {
 }
 
 #[derive(Args, Debug, Default)]
-pub struct ContractMigrationArgs {
+pub struct ContractImportArgs {
+    ///Choose to import a contract from a local abi or
+    ///using get values from an explorer using a contract address
+    #[command(subcommand)]
+    pub local_or_explorer: Option<LocalOrExplorerImport>,
+
+    ///Contract address to generate the config from
+    #[arg(global = true, short, long)]
+    pub contract_address: Option<Address>,
+
+    ///Specify whether or not it is a single contrac being imported
+    ///in thes case where this is true and all required flags are present
+    ///there will be no interactive prompt
+    #[arg(global = true, short, long, action)]
+    pub single_contract: bool,
+}
+
+#[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
+pub enum LocalOrExplorerImport {
+    ///Initialize by migrating config from an existing subgraph
+    Explorer(ExplorerImportArgs),
+    ///Initialize from an example template
+    Local(LocalImportArgs),
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct ExplorerImportArgs {
     ///Network from which contract address should be fetched for migration
     #[arg(short, long)]
     pub blockchain: Option<NetworkWithExplorer>,
+}
 
-    ///Contract address to generate the config from
+#[derive(Debug, Clone)]
+pub enum NetworkOrChainId {
+    NetworkName(Network),
+    ChainId(u64),
+}
+
+impl From<NetworkOrChainId> for u64 {
+    fn from(value: NetworkOrChainId) -> Self {
+        match value {
+            NetworkOrChainId::ChainId(val) => val,
+            NetworkOrChainId::NetworkName(name) => name as u64,
+        }
+    }
+}
+
+impl FromStr for NetworkOrChainId {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let res_network: Result<Network, _> = s.parse();
+
+        match res_network {
+            Ok(n) => Ok(NetworkOrChainId::NetworkName(n)),
+            Err(_) => {
+                let chain_id: u64 = s.parse().context("Invalid network name or id")?;
+                Ok(NetworkOrChainId::ChainId(chain_id))
+            }
+        }
+    }
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct LocalImportArgs {
+    ///The path to a json abi file
     #[arg(short, long)]
-    pub contract_address: Option<Address>,
+    pub abi_file: Option<String>,
+    ///The name of the contract
+    #[arg(long)]
+    pub contract_name: Option<String>,
+
+    ///Network from which contract address should be fetched for migration
+    #[arg(short, long)]
+    pub blockchain: Option<NetworkOrChainId>,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]

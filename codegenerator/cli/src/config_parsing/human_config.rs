@@ -155,18 +155,6 @@ fn default_query_timeout_millis() -> u32 {
     SYNC_CONFIG_DEFAULT.query_timeout_millis
 }
 
-#[allow(non_snake_case)]
-fn default_unstable__sync_config() -> SyncConfigUnstable {
-    SyncConfigUnstable {
-        initial_block_interval: default_initial_block_interval(),
-        backoff_multiplicative: default_backoff_multiplicative(),
-        acceleration_additive: default_acceleration_additive(),
-        interval_ceiling: default_interval_ceiling(),
-        backoff_millis: default_backoff_millis(),
-        query_timeout_millis: default_query_timeout_millis(),
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
 pub struct RpcConfig {
@@ -275,13 +263,13 @@ impl EventNameOrSig {
     }
 }
 
-fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
+pub fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
     let abi_file = std::fs::read_to_string(&abi_path).context(format!("Failed to read abi"))?;
 
     let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
-        "Failed to deserialize ABI at {} \
+        "Failed to deserialize ABI at {:?} \
             -  Please ensure the ABI file is formatted correctly or contact the team.",
-        abi_path.to_str().unwrap_or_else(|| "Bad abi_path name")
+        abi_path
     ))?;
 
     Ok(abi)

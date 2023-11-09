@@ -2,10 +2,7 @@ use crate::{
     cli_args::{interactive_init::InitilizationTypeWithArgs, InitArgs, Language, ProjectPaths},
     commands,
     config_parsing::{
-        contract_import::{self, generate_config_from_contract_address},
-        entity_parsing::Schema,
-        graph_migration::generate_config_from_subgraph_id,
-        human_config,
+        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id, human_config,
         system_config::SystemConfig,
     },
     hbs_templating::{
@@ -14,6 +11,7 @@ use crate::{
     },
     project_paths::ParsedProjectPaths,
     template_dirs::TemplateDirs,
+    utils::file_system,
 };
 use anyhow::{anyhow, Context, Result};
 use std::path::PathBuf;
@@ -24,6 +22,7 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     //if they haven't already been
     let parsed_init_args = init_args
         .get_init_args_interactive(project_paths)
+        .await
         .context("Failed during interactive input")?;
 
     let parsed_project_paths = ParsedProjectPaths::try_from(parsed_init_args.clone())
@@ -64,21 +63,17 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
             .context("Failed generating config from subgraph")?;
         }
 
-        InitilizationTypeWithArgs::ContractImportWithArgs(network_name, contract_address) => {
-            let yaml_config = generate_config_from_contract_address(
-                parsed_init_args.name.clone(),
-                &network_name,
-                contract_address.clone(),
-                parsed_init_args.language.clone(),
-            )
-            .await
-            .context("Failed getting config")?;
+        InitilizationTypeWithArgs::ContractImportWithArgs(auto_config_selection) => {
+            let yaml_config = auto_config_selection
+                .clone()
+                .try_into()
+                .context("Failed to converting auto config selection into config.yaml")?;
 
             let serialized_config =
                 serde_yaml::to_string(&yaml_config).context("Failed serializing config")?;
 
             //TODO: Allow parsed paths to not depend on a written config.yaml file in file system
-            contract_import::write_file_to_system(
+            file_system::write_file_string_to_system(
                 serialized_config,
                 parsed_project_paths.project_root.join("config.yaml"),
             )

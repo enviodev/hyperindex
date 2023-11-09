@@ -7,9 +7,9 @@ type EventsSummary {
   {{/each}}
   {{/each}}
 }
-
 {{#each contracts as | contract |}}
 {{#each contract.events as |event|}}
+
 type {{event.name.capitalized}} {
   id: ID!
   {{#each event.params as |param|}}

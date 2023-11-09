@@ -1,6 +1,7 @@
 use crate::{
     cli_args::Language,
     config_parsing::{
+        chain_helpers::NetworkWithExplorer,
         human_config::{
             self, ConfigEvent, EventNameOrSig, GlobalContractConfig, HumanConfig,
             LocalContractConfig, RequiredEntity, RpcConfig, SyncSourceConfig,
@@ -9,13 +10,16 @@ use crate::{
     },
     utils::{address_type::Address, unique_hashmap},
 };
-use anyhow::Context;
+use anyhow::{Context, Result};
 use itertools::{self, Itertools};
 use std::collections::HashMap;
+
+use super::etherscan_helpers::fetch_contract_auto_selection_from_etherscan;
 
 ///A an object that holds all the values a user can select during
 ///the auto config generation. Values can come from etherscan or
 ///abis etc.
+#[derive(Clone)]
 pub struct AutoConfigSelection {
     project_name: String,
     selected_contracts: Vec<ContractImportSelection>,
@@ -34,12 +38,40 @@ impl AutoConfigSelection {
             selected_contracts: vec![selected_contract],
         }
     }
+
+    pub async fn from_etherscan(
+        project_name: String,
+        language: Language,
+        network: &NetworkWithExplorer,
+        address: Address,
+    ) -> Result<Self> {
+        let selected_contract = fetch_contract_auto_selection_from_etherscan(address, network)
+            .await
+            .context("Failed fetching selected contract")?;
+
+        Ok(Self::new(project_name, language, selected_contract))
+    }
+
+    pub fn from_abi(
+        project_name: String,
+        language: Language,
+        network_id: u64,
+        address: Address,
+        contract_name: String,
+        abi: ethers::abi::Contract,
+    ) -> Self {
+        let selected_contract =
+            ContractImportSelection::from_abi(network_id, address, contract_name, abi);
+
+        Self::new(project_name, language, selected_contract)
+    }
 }
 
 ///The hierarchy is based on how you would add items to
 ///your selection as you go. Ie. Once you have constructed
 ///the selection of a contract you can add more addresses or
 ///networks
+#[derive(Clone)]
 pub struct ContractImportSelection {
     name: String,
     networks: Vec<ContractImportNetworkSelection>,
@@ -59,11 +91,27 @@ impl ContractImportSelection {
         }
     }
 
+    pub fn from_abi(
+        network_id: u64,
+        address: Address,
+        contract_name: String,
+        abi: ethers::abi::Contract,
+    ) -> Self {
+        let network_selection = ContractImportNetworkSelection::new(network_id, address);
+        let events = abi.events().cloned().collect();
+        Self::new(contract_name, network_selection, events)
+    }
+
     pub fn add_network(&mut self, network_selection: ContractImportNetworkSelection) {
         self.networks.push(network_selection)
     }
+
+    pub async fn from_etherscan(network: &NetworkWithExplorer, address: Address) -> Result<Self> {
+        fetch_contract_auto_selection_from_etherscan(address, network).await
+    }
 }
 
+#[derive(Clone)]
 pub struct ContractImportNetworkSelection {
     network_id: u64,
     addresses: Vec<Address>,
