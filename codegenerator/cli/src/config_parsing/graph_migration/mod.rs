@@ -424,22 +424,27 @@ async fn fetch_ipfs_file_and_write_to_system(
 
 #[cfg(test)] // ignore from the compiler when it builds, only checked when we run cargo test
 mod test {
-    use crate::cli_args::Language;
-    use crate::config_parsing::chain_helpers::{GraphNetwork, Network};
-    use crate::config_parsing::graph_migration::get_ipfs_id_from_file_path;
-    use std::collections::HashMap;
-
     use super::GraphManifest;
+    use crate::{
+        cli_args::Language,
+        config_parsing::{
+            chain_helpers::{GraphNetwork, Network},
+            graph_migration::get_ipfs_id_from_file_path,
+        },
+    };
+    use std::{collections::HashMap, path::PathBuf};
+    use tempdir::TempDir;
 
     // Integration test to see that a config file can be generated from a subgraph ID
     #[tokio::test]
     #[ignore = "Integration test that interacts with ipfs"]
     async fn test_generate_config_from_subgraph_id() {
+        let temp_dir = TempDir::new("temp_graph_migration_folder").unwrap();
         // subgraph ID of USDC on Ethereum mainnet
         let cid: &str = "QmU5V3jy56KnFbxX2uZagvMwocYZASzy1inX828W2XWtTd";
         let language: Language = Language::Rescript;
-        let project_root_path: std::path::PathBuf = std::path::PathBuf::from("./");
-        super::generate_config_from_subgraph_id(&project_root_path, cid, &language)
+        let project_root = PathBuf::from(temp_dir.path());
+        super::generate_config_from_subgraph_id(&project_root, cid, &language)
             .await
             .unwrap();
     }
