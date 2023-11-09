@@ -10,25 +10,36 @@ use crate::{
     utils::{address_type::Address, unique_hashmap},
 };
 use anyhow::Context;
+use itertools::{self, Itertools};
 use std::collections::HashMap;
-pub struct ContractImportNetworkSelection {
-    network_id: u64,
-    addresses: Vec<Address>,
+
+///A an object that holds all the values a user can select during
+///the auto config generation. Values can come from etherscan or
+///abis etc.
+pub struct AutoConfigSelection {
+    project_name: String,
+    selected_contracts: Vec<ContractImportSelection>,
+    language: Language,
 }
 
-impl ContractImportNetworkSelection {
-    pub fn new(network_id: u64, address: Address) -> Self {
+impl AutoConfigSelection {
+    pub fn new(
+        project_name: String,
+        language: Language,
+        selected_contract: ContractImportSelection,
+    ) -> Self {
         Self {
-            network_id,
-            addresses: vec![address],
+            project_name,
+            language,
+            selected_contracts: vec![selected_contract],
         }
     }
-
-    pub fn add_address(&mut self, address: Address) {
-        self.addresses.push(address)
-    }
 }
 
+///The hierarchy is based on how you would add items to
+///your selection as you go. Ie. Once you have constructed
+///the selection of a contract you can add more addresses or
+///networks
 pub struct ContractImportSelection {
     name: String,
     networks: Vec<ContractImportNetworkSelection>,
@@ -53,26 +64,25 @@ impl ContractImportSelection {
     }
 }
 
-pub struct AutoConfigSelection {
-    project_name: String,
-    selected_contracts: Vec<ContractImportSelection>,
-    language: Language,
+pub struct ContractImportNetworkSelection {
+    network_id: u64,
+    addresses: Vec<Address>,
 }
 
-impl AutoConfigSelection {
-    pub fn new(
-        project_name: String,
-        language: Language,
-        selected_contract: ContractImportSelection,
-    ) -> Self {
+impl ContractImportNetworkSelection {
+    pub fn new(network_id: u64, address: Address) -> Self {
         Self {
-            project_name,
-            language,
-            selected_contracts: vec![selected_contract],
+            network_id,
+            addresses: vec![address],
         }
+    }
+
+    pub fn add_address(&mut self, address: Address) {
+        self.addresses.push(address)
     }
 }
 
+///Converts the selection object into a human config
 type ContractName = String;
 impl TryFrom<AutoConfigSelection> for HumanConfig {
     type Error = anyhow::Error;
@@ -165,12 +175,16 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
             }
         }
 
-        let contracts = match global_contracts.into_values().collect::<Vec<_>>() {
+        let contracts = match global_contracts
+            .into_values()
+            .sorted_by_key(|v| v.name.clone())
+            .collect::<Vec<_>>()
+        {
             values if values.is_empty() => None,
             values => Some(values),
         };
 
-        let networks = networks_map.into_values().collect();
+        let networks = networks_map.into_values().sorted_by_key(|v| v.id).collect();
 
         Ok(HumanConfig {
             name: selection.project_name,

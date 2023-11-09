@@ -5,10 +5,7 @@ use crate::{
     cli_args::Language,
     config_parsing::{
         chain_helpers::{self, NetworkWithExplorer},
-        human_config::{
-            ConfigEvent, EventNameOrSig, HumanConfig, LocalContractConfig, Network,
-            NetworkContractConfig, RequiredEntity,
-        },
+        human_config::HumanConfig,
     },
     utils::address_type::Address,
 };
@@ -192,15 +189,6 @@ async fn fetch_get_source_code_result_from_block_explorer(
         .get(0)
         .cloned()
         .ok_or_else(|| anyhow!("No items returned with contract metadata"))
-}
-
-// Logic to get the event handler directory based on the language
-fn get_event_handler_directory(language: &Language) -> String {
-    match language {
-        Language::Rescript => "./src/EventHandlers.bs.js".to_string(),
-        Language::Typescript => "src/EventHandlers.ts".to_string(),
-        Language::Javascript => "./src/EventHandlers.js".to_string(),
-    }
 }
 
 #[cfg(test)]

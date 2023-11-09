@@ -888,6 +888,7 @@ dependencies = [
  "handlebars",
  "include_dir",
  "inquire",
+ "itertools",
  "open",
  "openssl",
  "paste",

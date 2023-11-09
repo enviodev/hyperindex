@@ -31,7 +31,7 @@ impl InitArgs {
     pub fn get_init_args_interactive(
         &self,
         project_paths: &ProjectPaths,
-    ) -> anyhow::Result<InitInteractive> {
+    ) -> Result<InitInteractive> {
         let name: String = match &self.name {
             Some(args_name) => args_name.clone(),
             None => {
@@ -81,7 +81,7 @@ impl InitArgs {
     }
 }
 
-fn get_init_args(opt_init_flow: &Option<InitFlow>) -> anyhow::Result<InitilizationTypeWithArgs> {
+fn get_init_args(opt_init_flow: &Option<InitFlow>) -> Result<InitilizationTypeWithArgs> {
     match opt_init_flow {
         Some(init_flow) => {
             let initialization = match init_flow {
