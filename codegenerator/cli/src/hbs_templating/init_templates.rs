@@ -1,7 +1,6 @@
+use crate::cli_args::clap_definitions::Language;
 use regex::Regex;
 use serde::Serialize;
-
-use crate::cli_args;
 
 #[derive(Serialize)]
 pub struct InitTemplates {
@@ -13,7 +12,7 @@ pub struct InitTemplates {
 }
 
 impl InitTemplates {
-    pub fn new(project_name: String, lang: &cli_args::Language) -> Self {
+    pub fn new(project_name: String, lang: &Language) -> Self {
         let crate_version = env!("CARGO_PKG_VERSION");
 
         let envio_version = if is_valid_release_version_number(crate_version) {
@@ -33,7 +32,6 @@ impl InitTemplates {
             envio_version,
         };
 
-        use cli_args::Language;
         match lang {
             Language::Rescript => InitTemplates {
                 is_rescript: true,

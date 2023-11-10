@@ -150,7 +150,6 @@ async fn fetch_get_source_code_result_from_block_explorer(
 
 #[cfg(test)]
 mod test {
-    use crate::cli_args::Language;
     use crate::config_parsing::chain_helpers::NetworkWithExplorer;
 
     // Integration test to see that a config file can be generated from a contract address
@@ -158,13 +157,13 @@ mod test {
     #[ignore = "Integration test that interacts with block explorer API"]
     async fn test_generate_config_from_contract_address() {
         // contract address of deprecated LongShort contract on Polygon
-        let name = "LongShort".to_string();
+        // let name = "LongShort".to_string();
         let contract_address = "0x168a5d1217AEcd258b03018d5bF1A1677A07b733"
             .parse()
             .unwrap();
         let network: NetworkWithExplorer = NetworkWithExplorer::Polygon;
-        let language: Language = Language::Typescript;
-        super::generate_config_from_contract_address(name, &network, contract_address, language)
+
+        super::fetch_contract_auto_selection_from_etherscan(contract_address, &network)
             .await
             .unwrap();
     }

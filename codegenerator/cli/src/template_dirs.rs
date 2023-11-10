@@ -1,4 +1,4 @@
-use crate::cli_args::{Language, Template};
+use crate::cli_args::clap_definitions::{Language, Template};
 use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir, DirEntry};
 use pathdiff::diff_paths;

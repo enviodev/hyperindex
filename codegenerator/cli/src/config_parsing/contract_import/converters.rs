@@ -1,5 +1,5 @@
 use crate::{
-    cli_args::Language,
+    cli_args::clap_definitions::Language,
     config_parsing::{
         chain_helpers::NetworkWithExplorer,
         human_config::{

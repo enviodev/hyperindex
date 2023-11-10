@@ -1,5 +1,5 @@
 use crate::{
-    cli_args::{DbMigrateSubcommands, LocalCommandTypes, LocalDockerSubcommands},
+    cli_args::clap_definitions::{DbMigrateSubcommands, LocalCommandTypes, LocalDockerSubcommands},
     commands,
     project_paths::ParsedProjectPaths,
 };

@@ -169,7 +169,7 @@ impl RpcConfig {
     pub fn new(url: &str) -> Self {
         RpcConfig {
             url: String::from(url),
-            unstable__sync_config: Some(default_unstable__sync_config()),
+            unstable__sync_config: Some(SYNC_CONFIG_DEFAULT),
         }
     }
 }

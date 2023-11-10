@@ -1,5 +1,8 @@
 use crate::{
-    cli_args::{interactive_init::InitilizationTypeWithArgs, InitArgs, Language, ProjectPaths},
+    cli_args::{
+        clap_definitions::{InitArgs, Language, ProjectPaths},
+        interactive_init::InitilizationTypeWithArgs,
+    },
     commands,
     config_parsing::{
         entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id, human_config,

@@ -1,5 +1,7 @@
-use super::{
-    validation::{is_directory_new, is_valid_foldername_inquire_validation_result},
+mod inquire_helpers;
+mod validation;
+
+use super::clap_definitions::{
     ContractImportArgs, ExplorerImportArgs, InitArgs, InitFlow, Language, LocalImportArgs,
     LocalOrExplorerImport, ProjectPaths, Template as InitTemplate,
 };
@@ -15,8 +17,10 @@ use crate::{
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
 use inquire::{Select, Text};
+use inquire_helpers::FilePathCompleter;
 use std::{path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
+use validation::{is_directory_new, is_valid_foldername_inquire_validation_result};
 
 #[derive(Clone)]
 pub enum InitilizationTypeWithArgs {
@@ -65,7 +69,6 @@ impl ContractImportArgs {
                     })),
                 contract_address: Some(contract_address),
                 single_contract: true,
-                //TODO: implement abi import
             } => {
                 let abi_file_path = PathBuf::from(abi_file_path);
 
@@ -195,6 +198,7 @@ impl ContractImportArgs {
                             Some(p) => p,
                             None => {
                                 let abi_path = Text::new("What is the path to your json abi file?")
+                                    .with_autocomplete(FilePathCompleter::default())
                                     .prompt()
                                     .context("Failed during prompt for abi file path")?;
 

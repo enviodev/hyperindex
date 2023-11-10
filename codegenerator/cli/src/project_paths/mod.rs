@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use std::path::{Component, PathBuf};
 
 use crate::{
-    cli_args::{interactive_init::InitInteractive, ProjectPaths},
+    cli_args::{clap_definitions::ProjectPaths, interactive_init::InitInteractive},
     constants::project_paths::{
         DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH,
     },

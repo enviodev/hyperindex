@@ -1,5 +1,5 @@
 use crate::{
-    cli_args::{CommandLineArgs, CommandType},
+    cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     project_paths::ParsedProjectPaths,
 };

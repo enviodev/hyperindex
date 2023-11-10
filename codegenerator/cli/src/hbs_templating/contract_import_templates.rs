@@ -1,7 +1,7 @@
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
-    cli_args::Language,
+    cli_args::clap_definitions::Language,
     config_parsing::{
         entity_parsing::{ethabi_type_to_field_type, Entity, Field, FieldType, Schema},
         system_config::{self, SystemConfig},
