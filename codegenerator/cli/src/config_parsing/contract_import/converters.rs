@@ -1,12 +1,11 @@
 use crate::{
     cli_args::clap_definitions::Language,
     config_parsing::{
-        chain_helpers::NetworkWithExplorer,
+        chain_helpers::{NetworkWithExplorer, SupportedNetwork},
         human_config::{
             self, ConfigEvent, EventNameOrSig, GlobalContractConfig, HumanConfig,
             LocalContractConfig, RequiredEntity, RpcConfig, SyncSourceConfig,
         },
-        hypersync_endpoints,
     },
     utils::{address_type::Address, unique_hashmap},
 };
@@ -55,13 +54,13 @@ impl AutoConfigSelection {
     pub fn from_abi(
         project_name: String,
         language: Language,
-        network_id: u64,
+        network: Network,
         address: Address,
         contract_name: String,
         abi: ethers::abi::Contract,
     ) -> Self {
         let selected_contract =
-            ContractImportSelection::from_abi(network_id, address, contract_name, abi);
+            ContractImportSelection::from_abi(network, address, contract_name, abi);
 
         Self::new(project_name, language, selected_contract)
     }
@@ -92,12 +91,12 @@ impl ContractImportSelection {
     }
 
     pub fn from_abi(
-        network_id: u64,
+        network: Network,
         address: Address,
         contract_name: String,
         abi: ethers::abi::Contract,
     ) -> Self {
-        let network_selection = ContractImportNetworkSelection::new(network_id, address);
+        let network_selection = ContractImportNetworkSelection::new(network, address);
         let events = abi.events().cloned().collect();
         Self::new(contract_name, network_selection, events)
     }
@@ -111,16 +110,34 @@ impl ContractImportSelection {
     }
 }
 
+type NetworkId = u64;
+type RpcUrl = String;
+
+#[derive(Clone)]
+pub enum Network {
+    Supported(SupportedNetwork),
+    Unsupported(NetworkId, RpcUrl),
+}
+
+impl Network {
+    fn get_network_id(&self) -> NetworkId {
+        match self {
+            Network::Supported(n) => n.clone() as u64,
+            Network::Unsupported(n, _) => *n,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ContractImportNetworkSelection {
-    network_id: u64,
+    network: Network,
     addresses: Vec<Address>,
 }
 
 impl ContractImportNetworkSelection {
-    pub fn new(network_id: u64, address: Address) -> Self {
+    pub fn new(network: Network, address: Address) -> Self {
         Self {
-            network_id,
+            network,
             addresses: vec![address],
         }
     }
@@ -194,24 +211,26 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                     .collect::<Vec<_>>()
                     .into();
 
-                let network = networks_map.entry(selected_network.network_id).or_insert({
-                    let sync_source = match hypersync_endpoints::get_default_hypersync_endpoint(
-                        selected_network.network_id,
-                    ) {
-                        Ok(_) => None, //No sync_source config needed since there is a default,
-                        Err(_) => Some(SyncSourceConfig::RpcConfig(RpcConfig {
-                            url: "<MY_RPC_URL>".to_string(),
-                            unstable__sync_config: None,
-                        })),
-                    };
+                let network = networks_map
+                    .entry(selected_network.network.get_network_id())
+                    .or_insert({
+                        let sync_source = match &selected_network.network {
+                            Network::Supported(_) => None,
+                            Network::Unsupported(_, url) => {
+                                Some(SyncSourceConfig::RpcConfig(RpcConfig {
+                                    url: url.clone(),
+                                    unstable__sync_config: None,
+                                }))
+                            }
+                        };
 
-                    human_config::Network {
-                        id: selected_network.network_id,
-                        sync_source,
-                        start_block: 0,
-                        contracts: Vec::new(),
-                    }
-                });
+                        human_config::Network {
+                            id: selected_network.network.get_network_id(),
+                            sync_source,
+                            start_block: 0,
+                            contracts: Vec::new(),
+                        }
+                    });
 
                 let contract = human_config::NetworkContractConfig {
                     name: selected_contract.name.clone(),

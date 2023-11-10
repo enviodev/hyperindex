@@ -26,8 +26,7 @@ pub struct HumanConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct GlobalContractConfig {
     pub name: String,
-    // Eg for implementing a custom deserializer
-    //  #[serde(deserialize_with = "abi_path_to_abi")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub abi_file_path: Option<String>,
     pub handler: String,
     pub events: Vec<ConfigEvent>,
@@ -174,18 +173,6 @@ impl RpcConfig {
     }
 }
 
-#[derive(Debug, Serialize, Clone, PartialEq)]
-pub struct ConfigContract {
-    pub name: String,
-    // Eg for implementing a custom deserializer
-    //  #[serde(deserialize_with = "abi_path_to_abi")]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub abi_file_path: Option<String>,
-    pub handler: String,
-    address: NormalizedList<String>,
-    pub events: Vec<ConfigEvent>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NetworkContractConfig {
     pub name: String,
@@ -198,6 +185,7 @@ pub struct NetworkContractConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct LocalContractConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub abi_file_path: Option<String>,
     pub handler: String,
     pub events: Vec<ConfigEvent>,

@@ -5,7 +5,7 @@ use crate::{
         entity_parsing::strip_option_from_rescript_type_str,
         entity_parsing::{Entity, Field},
         event_parsing::abi_type_to_rescript_string,
-        human_config::RpcConfig,
+        human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
     },
     persisted_state::PersistedStateJsonString,
@@ -449,6 +449,25 @@ type EthAddress = String;
 type StringifiedAbi = String;
 type ServerUrl = String;
 
+///Same as Rpc config defined in human config but no optional values
+#[derive(Debug, Serialize, PartialEq, Clone)]
+#[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
+struct RpcConfig {
+    pub url: String,
+    pub unstable__sync_config: SyncConfigUnstable,
+}
+
+impl From<human_config::RpcConfig> for RpcConfig {
+    fn from(value: human_config::RpcConfig) -> Self {
+        Self {
+            url: value.url,
+            unstable__sync_config: value
+                .unstable__sync_config
+                .unwrap_or_else(|| SYNC_CONFIG_DEFAULT),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, PartialEq, Clone)]
 struct NetworkTemplate {
     pub id: u64,
@@ -462,7 +481,7 @@ impl NetworkTemplate {
     fn from_config_network(network: &system_config::Network) -> Self {
         NetworkTemplate {
             id: network.id,
-            rpc_config: network.get_rpc_config(),
+            rpc_config: network.get_rpc_config().map(|c| c.into()),
             skar_server_url: network.get_skar_url(),
             eth_archive_server_url: network.get_eth_archive_url(),
             start_block: network.start_block,
@@ -641,7 +660,7 @@ mod test {
     fn chain_configs_parsed_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let rpc_config1 = RpcConfig::new("https://eth.com");
+        let rpc_config1 = RpcConfig::new("https://eth.com").into();
 
         let network1 = super::NetworkTemplate {
             id: 1,
@@ -680,7 +699,7 @@ mod test {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let rpc_config1 = RpcConfig::new("https://eth.com");
+        let rpc_config1: super::RpcConfig = RpcConfig::new("https://eth.com").into();
 
         let network1 = super::NetworkTemplate {
             id: 1,

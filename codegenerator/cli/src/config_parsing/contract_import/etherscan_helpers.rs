@@ -1,4 +1,4 @@
-use super::converters::{ContractImportNetworkSelection, ContractImportSelection};
+use super::converters::{self, ContractImportNetworkSelection, ContractImportSelection};
 use crate::{
     config_parsing::chain_helpers::{self, NetworkWithExplorer},
     utils::address_type::Address,
@@ -16,6 +16,11 @@ pub async fn fetch_contract_auto_selection_from_etherscan(
     contract_address: Address,
     network: &NetworkWithExplorer,
 ) -> Result<ContractImportSelection> {
+    let supported_network: chain_helpers::SupportedNetwork =
+        chain_helpers::Network::from(network.clone())
+            .try_into()
+            .context("Unexpected, network with explorer should be a supported network")?;
+
     let contract_data = get_contract_data_from_contract(network, contract_address.as_h160())
         .await
         .context(format!(
@@ -25,7 +30,10 @@ pub async fn fetch_contract_auto_selection_from_etherscan(
 
     let events = contract_data.abi.events().cloned().collect();
 
-    let network_selection = ContractImportNetworkSelection::new(*network as u64, contract_address);
+    let network_selection = ContractImportNetworkSelection::new(
+        converters::Network::Supported(supported_network),
+        contract_address,
+    );
 
     Ok(ContractImportSelection::new(
         contract_data.name,

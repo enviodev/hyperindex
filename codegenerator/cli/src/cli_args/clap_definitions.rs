@@ -149,12 +149,6 @@ pub struct ContractImportArgs {
     ///Contract address to generate the config from
     #[arg(global = true, short, long)]
     pub contract_address: Option<Address>,
-
-    ///Specify whether or not it is a single contrac being imported
-    ///in thes case where this is true and all required flags are present
-    ///there will be no interactive prompt
-    #[arg(global = true, short, long, action)]
-    pub single_contract: bool,
 }
 
 #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
@@ -215,6 +209,10 @@ pub struct LocalImportArgs {
     ///Network from which contract address should be fetched for migration
     #[arg(short, long)]
     pub blockchain: Option<NetworkOrChainId>,
+
+    ///The rpc url to use if the network id used is unsupported by our hypersync
+    #[arg(short, long)]
+    pub rpc_url: Option<String>,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
