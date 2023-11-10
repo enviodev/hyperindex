@@ -18,6 +18,9 @@ module {{contract.name.capitalized}} = {
     Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
   > = Obj.magic
 
+  {{#unless event.params}}
+  @warning("-27")
+  {{/unless}}
   let convert{{event.name.capitalized}}LogDescription = (log: Ethers.logDescription<'a>): Ethers.logDescription<
     Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
   > => {
@@ -33,24 +36,36 @@ module {{contract.name.capitalized}} = {
         name,
         signature,
         topic,
+        {{#if event.params}}
         args: {
         {{#each event.params as | param |}}
           {{param.key}}: args.{{param.key}},
         {{/each}}
         }
+        {{else}}
+        args: ()
+        {{/if}}
       }
   }
-
+  
+  {{#unless event.params}}
+  @warning("-27")
+  {{/unless}}
   let convert{{event.name.capitalized}}Log = (
     logDescription: Ethers.logDescription<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
     ~log: Ethers.log,
     ~blockTimestamp: int,
   ) => {
-    let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
+    let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
+    {{#if event.params}}
+    {
       {{#each event.params as | param |}}
         {{param.key}}: logDescription.args.{{param.key}},
       {{/each}}
     }
+    {{else}}
+    ()
+    {{/if}}
 
     let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
       params,
@@ -65,17 +80,24 @@ module {{contract.name.capitalized}} = {
 
     Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}({{event.name.uncapitalized}}Log)
   }
-
+  {{#unless event.params}}
+  @warning("-27")
+  {{/unless}}
   let convert{{event.name.capitalized}}LogViem = (
     decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
     ~log: Ethers.log,
     ~blockTimestamp: int,
   ) => {
-    let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
+    let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
+    {{#if event.params}}
+    {
       {{#each event.params as | param |}}
         {{param.key}}: decodedEvent.args.{{param.key}},
       {{/each}}
     }
+    {{else}}
+    ()
+    {{/if}}
 
     let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
       params,
