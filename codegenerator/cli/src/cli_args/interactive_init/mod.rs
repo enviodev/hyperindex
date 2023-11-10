@@ -63,6 +63,7 @@ impl ContractImportArgs {
 
         Ok(network)
     }
+
     pub async fn get_auto_config_selection(
         &self,
         project_name: String,
@@ -91,22 +92,15 @@ impl ContractImportArgs {
             match &self.contract_address {
                 Some(c) => Ok(c.clone()),
                 None => {
-                    let mut address_str =
-                        Text::new("[BETA VERSION] What is the address of the contract?")
-                            .prompt()
-                            .context("Prompting user for contract address")?;
+                    let address_str = Text::new("What is the address of the contract?")
+                        .prompt()
+                        .context("Prompting user for contract address")?;
 
-                    loop {
-                        match address_str.as_str().parse() {
-                            Ok(parsed_val) => break Ok(parsed_val),
-                            Err(_) => {
-                                address_str =
-                                    Text::new("Invalid contract address input, please try again")
-                                        .prompt()
-                                        .context("Re-prompting user for valid contract address")?;
-                            }
-                        }
-                    }
+                    parse_or_reprompt(
+                        address_str,
+                        |s| s.as_str().parse(),
+                        "Invalid contract address input, please try again",
+                    )
                 }
             }
         };
@@ -153,19 +147,11 @@ impl ContractImportArgs {
                 rpc_url,
             }) => {
                 let parse_and_reprompt_abi_path = |path: String| -> Result<_> {
-                    let mut abi_path = path;
-                    loop {
-                        match parse_contract_abi(PathBuf::from(abi_path)) {
-                            Ok(parsed) => break Ok(parsed),
-                            Err(e) => {
-                                let text =
-                                    format!("Invalid abi file path input {}, please try again", e);
-                                abi_path = Text::new(&text)
-                                    .prompt()
-                                    .context(format!("Re-prompting user for valid abi {}", e))?;
-                            }
-                        }
-                    }
+                    parse_or_reprompt(
+                        path,
+                        |s| parse_contract_abi(PathBuf::from(s)),
+                        "Invalid abi file path input, please try again",
+                    )
                 };
 
                 let abi_path_string = match abi_file {
@@ -201,23 +187,13 @@ impl ContractImportArgs {
 
                         match choose_from_networks.as_str() {
                             choice if choice == enter_id => {
-                                let mut id_string = Text::new("Enter the network id:").prompt()?;
-                                let network_id: u64 = loop {
-                                    match id_string.as_str().parse() {
-                                        Ok(parsed_val) => {
-                                            break parsed_val;
-                                        }
-                                        Err(_) => {
-                                            id_string = Text::new(
-                                                "Invalid network id input, please enter a number",
-                                            )
-                                            .prompt()
-                                            .context(
-                                                "Re-prompting user for valid contract address",
-                                            )?;
-                                        }
-                                    }
-                                };
+                                let id_string = Text::new("Enter the network id:").prompt()?;
+
+                                let network_id: u64 = parse_or_reprompt(
+                                    id_string,
+                                    |s| Ok(s.as_str().parse()?),
+                                    "Invalid network id input, please enter a number",
+                                )?;
 
                                 Self::get_converter_network_from_network_id_prompt(
                                     network_id, rpc_url,
@@ -262,7 +238,6 @@ impl InitArgs {
             Some(args_name) => args_name.clone(),
             None => {
                 // todo input validation for name
-
                 Text::new("Name your indexer: ").prompt()?
             }
         };
@@ -305,6 +280,25 @@ impl InitArgs {
             template,
             language,
         })
+    }
+}
+
+fn parse_or_reprompt<T>(
+    val: String,
+    parse_fn: fn(String) -> Result<T>,
+    reprompt_msg: &str,
+) -> Result<T> {
+    let mut string = val;
+
+    loop {
+        match parse_fn(string) {
+            Ok(parsed_val) => break Ok(parsed_val),
+            Err(_) => {
+                string = Text::new(reprompt_msg)
+                    .prompt()
+                    .context(format!("Failed during reprompt: {}", reprompt_msg))?;
+            }
+        }
     }
 }
 
