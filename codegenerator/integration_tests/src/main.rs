@@ -1,6 +1,8 @@
 mod hypersync_health;
 use envio::{
-    cli_args::{InitArgs, InitFlow, Language, ProjectPaths, Template, TemplateArgs},
+    cli_args::clap_definitions::{
+        InitArgs, InitFlow, Language, ProjectPaths, Template, TemplateArgs,
+    },
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
     executor::init::run_init_args,
 };
