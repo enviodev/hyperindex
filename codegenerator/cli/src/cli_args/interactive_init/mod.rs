@@ -2,9 +2,10 @@ mod inquire_helpers;
 mod validation;
 
 use self::validation::{
-    is_abi_file_validator, is_directory_new_validator, is_valid_foldername_inquire_validator,
+    contains_no_whitespace_validator, first_char_is_alphabet_validator, is_abi_file_validator,
+    is_directory_new_validator, is_not_empty_string_validator,
+    is_only_alpha_numeric_characters_validator, is_valid_foldername_inquire_validator,
 };
-
 use super::clap_definitions::{
     ContractImportArgs, ExplorerImportArgs, InitArgs, InitFlow, Language, LocalImportArgs,
     LocalOrExplorerImport, ProjectPaths, Template as InitTemplate,
@@ -75,7 +76,7 @@ impl ContractImportArgs {
         let local_or_explorer = match &self.local_or_explorer {
             Some(v) => v.clone(),
             None => {
-                let options = LocalOrExplorerImport::iter().collect::<Vec<_>>();
+                let options = LocalOrExplorerImport::iter().collect();
 
                 Select::new(
                     "Would you like to import from a block explorer or a local abi?",
@@ -112,19 +113,16 @@ impl ContractImportArgs {
                                     .find(|&sn| n as u64 == sn as u64)
                                     .is_some()
                             })
-                            .map(|network| network.to_string())
-                            .collect::<Vec<String>>();
+                            .collect();
 
-                        let input_network = Select::new(
+                        Select::new(
                             "Which blockchain would you like to import a contract from?",
                             options,
                         )
-                        .prompt()?;
-
-                        NetworkWithExplorer::from_str(&input_network)
-                            .context("Parsing network from user selected network name")?
+                        .prompt()?
                     }
                 };
+
                 AutoConfigSelection::from_etherscan(
                     project_name,
                     language,
@@ -195,6 +193,9 @@ impl ContractImportArgs {
                 let contract_name = match contract_name {
                     Some(n) => n,
                     None => Text::new("What is the name of this contract?")
+                        .with_validator(contains_no_whitespace_validator)
+                        .with_validator(is_only_alpha_numeric_characters_validator)
+                        .with_validator(first_char_is_alphabet_validator)
                         .prompt()
                         .context("Failed during contract name prompt")?,
                 };
@@ -223,7 +224,10 @@ impl InitArgs {
             Some(args_name) => args_name.clone(),
             None => {
                 // todo input validation for name
-                Text::new("Name your indexer:").prompt()?
+                Text::new("Name your indexer:")
+                    .with_default("My Envio Indexer")
+                    .with_validator(is_not_empty_string_validator)
+                    .prompt()?
             }
         };
 
@@ -236,6 +240,7 @@ impl InitArgs {
                     .with_validator(is_valid_foldername_inquire_validator)
                     // validate the directory doesn't already exist
                     .with_validator(is_directory_new_validator)
+                    .with_validator(contains_no_whitespace_validator)
                     .prompt()?
             }
         };
@@ -281,17 +286,11 @@ async fn get_init_args(
                     let chosen_template = match &args.template {
                         Some(template_name) => template_name.clone(),
                         None => {
-                            let options = InitTemplate::iter()
-                                .map(|template| template.to_string())
-                                .collect::<Vec<String>>();
+                            let options = InitTemplate::iter().collect();
 
-                            let user_response =
-                                Select::new("Which template would you like to use?", options)
-                                    .prompt()
-                                    .context("Prompting user for template selection")?;
-
-                            InitTemplate::from_str(&user_response)
-                                .context("parsing InitTemplate from user response string")?
+                            Select::new("Which template would you like to use?", options)
+                                .prompt()
+                                .context("Prompting user for template selection")?
                         }
                     };
                     InitilizationTypeWithArgs::Template(chosen_template)
@@ -319,17 +318,12 @@ async fn get_init_args(
         }
         None => {
             //start prompt to ask the user which initialization option they want
-            let user_response_options = InitFlow::iter()
-                .map(|init_cmd| init_cmd.to_string())
-                .collect::<Vec<String>>();
+            let user_response_options = InitFlow::iter().collect();
 
             let user_response =
                 Select::new("Choose an initialization option", user_response_options).prompt()?;
 
-            let chosen_init_option = InitFlow::from_str(&user_response)
-                .context("Parsing InitFlow from user input string")?;
-
-            get_init_args(&Some(chosen_init_option), project_name, language).await
+            get_init_args(&Some(user_response), project_name, language).await
         }
     }
 }

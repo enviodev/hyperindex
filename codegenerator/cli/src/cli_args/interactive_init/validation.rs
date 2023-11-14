@@ -59,6 +59,43 @@ pub fn is_abi_file_validator(abi_file_path: &str) -> Result<Validation, CustomUs
     }
 }
 
+pub fn is_not_empty_string_validator(s: &str) -> Result<Validation, CustomUserError> {
+    if s.trim().is_empty() {
+        Ok(Validation::Invalid("Invalid empty string input".into()))
+    } else {
+        Ok(Validation::Valid)
+    }
+}
+
+pub fn contains_no_whitespace_validator(s: &str) -> Result<Validation, CustomUserError> {
+    if s.contains(char::is_whitespace) {
+        Ok(Validation::Invalid(
+            "Invalid input cannot contain spaces".into(),
+        ))
+    } else {
+        Ok(Validation::Valid)
+    }
+}
+
+pub fn is_only_alpha_numeric_characters_validator(s: &str) -> Result<Validation, CustomUserError> {
+    if !s.chars().all(|s| s.is_ascii_alphanumeric()) {
+        Ok(Validation::Invalid(
+            "Invalid input, must use alpha-numeric characters".into(),
+        ))
+    } else {
+        Ok(Validation::Valid)
+    }
+}
+
+pub fn first_char_is_alphabet_validator(s: &str) -> Result<Validation, CustomUserError> {
+    match s.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() => Ok(Validation::Valid),
+        _ => Ok(Validation::Invalid(
+            "Invalid input, first character must be alphabetic".into(),
+        )),
+    }
+}
+
 mod tests {
     #[test]
     fn valid_folder_name() {
