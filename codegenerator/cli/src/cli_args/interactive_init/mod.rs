@@ -92,7 +92,7 @@ impl ContractImportArgs {
             match &self.contract_address {
                 Some(c) => Ok(c.clone()),
                 None => {
-                    let address_str = Text::new("What is the address of the contract?")
+                    let address_str = Text::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
                         .prompt()
                         .context("Prompting user for contract address")?;
 
