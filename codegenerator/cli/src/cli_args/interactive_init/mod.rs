@@ -1,6 +1,8 @@
 mod inquire_helpers;
 mod validation;
 
+use self::validation::{is_directory_new_validator, is_valid_foldername_inquire_validator};
+
 use super::clap_definitions::{
     ContractImportArgs, ExplorerImportArgs, InitArgs, InitFlow, Language, LocalImportArgs,
     LocalOrExplorerImport, ProjectPaths, Template as InitTemplate,
@@ -20,7 +22,6 @@ use inquire::{Select, Text};
 use inquire_helpers::FilePathCompleter;
 use std::{path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
-use validation::{is_directory_new, is_valid_foldername_inquire_validation_result};
 
 #[derive(Clone)]
 pub enum InitilizationTypeWithArgs {
@@ -238,7 +239,7 @@ impl InitArgs {
             Some(args_name) => args_name.clone(),
             None => {
                 // todo input validation for name
-                Text::new("Name your indexer: ").prompt()?
+                Text::new("Name your indexer:").prompt()?
             }
         };
 
@@ -248,9 +249,9 @@ impl InitArgs {
                 Text::new("Specify a folder name (ENTER to skip): ")
                     .with_default(DEFAULT_PROJECT_ROOT_PATH)
                     // validate string is valid directory name
-                    .with_validator(is_valid_foldername_inquire_validation_result)
+                    .with_validator(is_valid_foldername_inquire_validator)
                     // validate the directory doesn't already exist
-                    .with_validator(is_directory_new)
+                    .with_validator(is_directory_new_validator)
                     .prompt()?
             }
         };

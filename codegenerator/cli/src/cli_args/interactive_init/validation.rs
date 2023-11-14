@@ -1,6 +1,5 @@
 use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
-use inquire::validator::Validation;
-use serde::ser::StdError;
+use inquire::{validator::Validation, CustomUserError};
 use std::fs;
 
 pub fn is_valid_folder_name(name: &str) -> bool {
@@ -19,32 +18,33 @@ pub fn is_valid_folder_name(name: &str) -> bool {
 }
 
 // todo: consider returning invalid rather than error ?
-pub fn is_valid_foldername_inquire_validation_result(
-    name: &str,
-) -> Result<Validation, Box<(dyn StdError + Send + Sync + 'static)>> {
+pub fn is_valid_foldername_inquire_validator(name: &str) -> Result<Validation, CustomUserError> {
     if !is_valid_folder_name(name) {
-        return Err(Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "EE400: Invalid folder name. The folder name cannot contain any of the following special characters: / \\ : * ? \" < > |",
-        )));
+        Ok(Validation::Invalid(
+            "EE400: Invalid folder name. The folder name cannot contain any of the following special characters: / \\ : * ? \" < > |"
+            .into(),
+        ))
+    } else {
+        Ok(Validation::Valid)
     }
-    Ok(Validation::Valid)
 }
 
-pub fn is_directory_new(
-    directory: &str,
-) -> Result<Validation, Box<(dyn StdError + Send + Sync + 'static)>> {
-    if fs::metadata(directory).is_ok() && directory != DEFAULT_PROJECT_ROOT_PATH {
-        return Err(Box::new(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "EE401: Directory '{}' already exists. Please use a new directory.",
-                directory
-            ),
-        )));
-    }
+pub fn is_directory_new(directory: &str) -> bool {
+    !(fs::metadata(directory).is_ok() && directory != DEFAULT_PROJECT_ROOT_PATH)
+}
 
-    Ok(Validation::Valid)
+pub fn is_directory_new_validator(directory: &str) -> Result<Validation, CustomUserError> {
+    if !is_directory_new(directory) {
+        Ok(Validation::Invalid(
+            format!(
+                "Directory '{}' already exists. Please use a new directory.",
+                directory
+            )
+            .into(),
+        ))
+    } else {
+        Ok(Validation::Valid)
+    }
 }
 
 mod tests {
