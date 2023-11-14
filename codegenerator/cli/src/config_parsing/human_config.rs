@@ -252,7 +252,8 @@ impl EventNameOrSig {
 }
 
 pub fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
-    let abi_file = std::fs::read_to_string(&abi_path).context(format!("Failed to read abi"))?;
+    let abi_file = std::fs::read_to_string(&abi_path)
+        .context(format!("Failed to read abi file at {:?}", abi_path))?;
 
     let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
         "Failed to deserialize ABI at {:?} \

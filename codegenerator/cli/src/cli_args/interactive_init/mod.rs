@@ -1,7 +1,9 @@
 mod inquire_helpers;
 mod validation;
 
-use self::validation::{is_directory_new_validator, is_valid_foldername_inquire_validator};
+use self::validation::{
+    is_abi_file_validator, is_directory_new_validator, is_valid_foldername_inquire_validator,
+};
 
 use super::clap_definitions::{
     ContractImportArgs, ExplorerImportArgs, InitArgs, InitFlow, Language, LocalImportArgs,
@@ -18,7 +20,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
-use inquire::{Select, Text};
+use inquire::{CustomType, Select, Text};
 use inquire_helpers::FilePathCompleter;
 use std::{path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
@@ -73,19 +75,14 @@ impl ContractImportArgs {
         let local_or_explorer = match &self.local_or_explorer {
             Some(v) => v.clone(),
             None => {
-                let options = LocalOrExplorerImport::iter()
-                    .map(|choice| choice.to_string())
-                    .collect::<Vec<String>>();
+                let options = LocalOrExplorerImport::iter().collect::<Vec<_>>();
 
-                let input_network = Select::new(
+                Select::new(
                     "Would you like to import from a block explorer or a local abi?",
                     options,
                 )
                 .prompt()
-                .context("Failed prompting for import from block explorer or local abi")?;
-
-                LocalOrExplorerImport::from_str(&input_network)
-                    .context("Parsing local or explorer choice from string")?
+                .context("Failed prompting for import from block explorer or local abi")?
             }
         };
 
@@ -93,15 +90,10 @@ impl ContractImportArgs {
             match &self.contract_address {
                 Some(c) => Ok(c.clone()),
                 None => {
-                    let address_str = Text::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
+                    CustomType::<Address>::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
+                        .with_error_message("Please input a valid contract address (should be a hexadecimal starting with (0x))")
                         .prompt()
-                        .context("Prompting user for contract address")?;
-
-                    parse_or_reprompt(
-                        address_str,
-                        |s| s.as_str().parse(),
-                        "Invalid contract address input, please try again",
-                    )
+                        .context("Prompting user for contract address")
                 }
             }
         };
@@ -147,19 +139,12 @@ impl ContractImportArgs {
                 contract_name,
                 rpc_url,
             }) => {
-                let parse_and_reprompt_abi_path = |path: String| -> Result<_> {
-                    parse_or_reprompt(
-                        path,
-                        |s| parse_contract_abi(PathBuf::from(s)),
-                        "Invalid abi file path input, please try again",
-                    )
-                };
-
                 let abi_path_string = match abi_file {
                     Some(p) => p,
                     None => {
                         let abi_path = Text::new("What is the path to your json abi file?")
                             .with_autocomplete(FilePathCompleter::default())
+                            .with_validator(is_abi_file_validator)
                             .prompt()
                             .context("Failed during prompt for abi file path")?;
 
@@ -167,7 +152,8 @@ impl ContractImportArgs {
                     }
                 };
 
-                let parsed_abi = parse_and_reprompt_abi_path(abi_path_string)?;
+                let parsed_abi = parse_contract_abi(PathBuf::from(abi_path_string))
+                    .context("Failed to parse abi")?;
 
                 let network: converters::Network = match blockchain {
                     Some(b) => {
@@ -188,13 +174,11 @@ impl ContractImportArgs {
 
                         match choose_from_networks.as_str() {
                             choice if choice == enter_id => {
-                                let id_string = Text::new("Enter the network id:").prompt()?;
-
-                                let network_id: u64 = parse_or_reprompt(
-                                    id_string,
-                                    |s| Ok(s.as_str().parse()?),
-                                    "Invalid network id input, please enter a number",
-                                )?;
+                                let network_id = CustomType::<u64>::new("Enter the network id:")
+                                    .with_error_message(
+                                        "Invalid network id input, please enter a number",
+                                    )
+                                    .prompt()?;
 
                                 Self::get_converter_network_from_network_id_prompt(
                                     network_id, rpc_url,
@@ -281,25 +265,6 @@ impl InitArgs {
             template,
             language,
         })
-    }
-}
-
-fn parse_or_reprompt<T>(
-    val: String,
-    parse_fn: fn(String) -> Result<T>,
-    reprompt_msg: &str,
-) -> Result<T> {
-    let mut string = val;
-
-    loop {
-        match parse_fn(string) {
-            Ok(parsed_val) => break Ok(parsed_val),
-            Err(_) => {
-                string = Text::new(reprompt_msg)
-                    .prompt()
-                    .context(format!("Failed during reprompt: {}", reprompt_msg))?;
-            }
-        }
     }
 }
 
