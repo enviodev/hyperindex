@@ -5,8 +5,16 @@
 @spice @genType.as("Id")
 type id = string
 
-@spice @genType.import(("./bindings/OpaqueTypes", "Nullable"))
+@genType.import(("./bindings/OpaqueTypes", "Nullable"))
 type nullable<'a> = option<'a>
+
+let nullable_encode = (encoder: Spice.encoder<'a>, n: nullable<'a>): Js.Json.t =>
+  switch n {
+  | None => Js.Json.null
+  | Some(v) => v->encoder
+  }
+
+let nullable_decode = Spice.optionFromJson
 
 //nested subrecord types
 
@@ -73,15 +81,9 @@ type entity =
 
 type dbOp = Read | Set | Delete
 
-type eventData = {
-  @as("event_chain_id") chainId: int,
-  @as("event_id") eventId: string,
-}
-
 type inMemoryStoreRow<'a> = {
   dbOp: dbOp,
   entity: 'a,
-  eventData: eventData,
 }
 
 //*************

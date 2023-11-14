@@ -139,7 +139,6 @@ module DynamicContractRegistry = {
 
 type readEntityData<'a> = {
    entity: 'a,
-   eventData: Types.eventData
 }
 
 {{#each entities as |entity|}}
@@ -152,8 +151,6 @@ module {{entity.name.capitalized}} = {
       {{param.key}} : {{param.type_rescript}},
     {{/unless}}
   {{/each}}
-  @spice.key("event_chain_id") chainId: int,
-  @spice.key("event_id") eventId: Ethers.BigInt.t,
   }
 
   let readRowToReadEntityData = (readRowJson: Js.Json.t): readEntityData<Types.{{entity.name.uncapitalized}}Entity> => {
@@ -168,8 +165,6 @@ module {{entity.name.capitalized}} = {
       {{#each entity.params as | param |}}
       {{#unless param.is_derived_from}}{{param.key}},{{/unless}}
       {{/each}}
-      chainId,
-      eventId
     } = readRow
 
     {
@@ -178,15 +173,11 @@ module {{entity.name.capitalized}} = {
         {{#unless param.is_derived_from}}{{param.key}},{{/unless}}
         {{/each}}
       },
-      eventData: {
-        chainId,
-        eventId: eventId->Ethers.BigInt.toString,
-      }
     }
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSet{{entity.name.capitalized}}: (Postgres.sql, array<Types.inMemoryStoreRow<Js.Json.t>>) => promise<(unit)> = "batchSet{{entity.name.capitalized}}"
+  external batchSet{{entity.name.capitalized}}: (Postgres.sql, array<Js.Json.t>) => promise<(unit)> = "batchSet{{entity.name.capitalized}}"
 
   @module("./DbFunctionsImplementation.js")
   external batchDelete{{entity.name.capitalized}}: (Postgres.sql, array<Types.id>) => promise<(unit)> = "batchDelete{{entity.name.capitalized}}"

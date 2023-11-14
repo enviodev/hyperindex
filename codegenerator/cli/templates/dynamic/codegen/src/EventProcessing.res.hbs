@@ -34,7 +34,6 @@ let addEventToRawEvents = (
 
   inMemoryStore.rawEvents->IO.InMemoryStore.RawEvents.set(
     ~key={chainId, eventId: eventIdStr},
-    ~eventData={chainId, eventId: eventIdStr},
     ~entity=rawEvent,
     ~dbOp=Set,
   )
@@ -46,7 +45,6 @@ let updateEventSyncState = (
   ~inMemoryStore: IO.InMemoryStore.t,
 ) => {
   let {blockNumber, logIndex, transactionIndex, blockTimestamp} = event
-  let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)->Ethers.BigInt.toString
   let _ = inMemoryStore.eventSyncState->IO.InMemoryStore.EventSyncState.set(
     ~key=chainId,
     ~entity={
@@ -57,7 +55,6 @@ let updateEventSyncState = (
       transactionIndex,
     },
     ~dbOp=Set,
-    ~eventData={chainId, eventId},
   )
 }
 
@@ -247,9 +244,7 @@ let rec loadReadEntitiesInner = async (
               }
 
             let {logIndex, blockNumber} = event
-            let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
             let context = contextHelper.getContext(
-              ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
             )
 
             let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()

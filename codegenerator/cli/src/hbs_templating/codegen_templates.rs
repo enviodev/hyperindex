@@ -120,6 +120,12 @@ pub struct EntityParamTypeTemplate {
     pub is_derived_from: bool,
 }
 
+impl HasIsDerivedFrom for EntityParamTypeTemplate {
+    fn get_is_derived_from(&self) -> bool {
+        self.is_derived_from
+    }
+}
+
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, config: &SystemConfig) -> Result<Self> {
         let entity_names_set = config.get_entity_names_set();
@@ -163,11 +169,12 @@ pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EntityParamTypeTemplate>,
     pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
+    pub filtered_params: FilteredTemplateLists<EntityParamTypeTemplate>,
 }
 
 impl EntityRecordTypeTemplate {
     fn from_config_entity(entity: &Entity, config: &SystemConfig) -> Result<Self> {
-        let params = entity
+        let params: Vec<EntityParamTypeTemplate> = entity
             .fields
             .iter()
             .map(|field| EntityParamTypeTemplate::from_entity_field(field, config))
@@ -191,10 +198,13 @@ impl EntityRecordTypeTemplate {
 
         let relational_params = FilteredTemplateLists::new(entity_relational_types_templates);
 
+        let filtered_params = FilteredTemplateLists::new(params.clone());
+
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             params,
             relational_params,
+            filtered_params,
         })
     }
 }

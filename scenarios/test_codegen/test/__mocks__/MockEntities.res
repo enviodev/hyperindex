@@ -14,18 +14,14 @@ let gravatarEntity2: Types.gravatarEntity = {
   updatesCount: Ethers.BigInt.fromInt(1),
 }
 
-let mockEventData1: Types.eventData = {chainId: 123, eventId: "456"}
-let mockEventData2: Types.eventData = {chainId: 123, eventId: "789"}
 let gravatarSerialized1 = gravatarEntity1->Types.gravatarEntity_encode
 let gravatarSerialized2 = gravatarEntity2->Types.gravatarEntity_encode
 let mockInMemRow1: Types.inMemoryStoreRow<Js.Json.t> = {
   entity: gravatarSerialized1,
-  eventData: mockEventData1,
   dbOp: Types.Set,
 }
 
 let mockInMemRow2: Types.inMemoryStoreRow<Js.Json.t> = {
   entity: gravatarSerialized2,
-  eventData: mockEventData2,
   dbOp: Types.Set,
 }

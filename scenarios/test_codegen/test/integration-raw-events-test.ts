@@ -5,8 +5,11 @@ import { expect } from "chai";
 //CODEGEN
 import { nftFactoryAbi, simpleNftAbi } from "../generated/src/Abis.bs";
 import { registerAllHandlers } from "../generated/src/RegisterHandlers.bs";
-import { runDownMigrations } from "../generated/src/Migrations.bs";
 import { setLogLevel } from "../generated/src/Logging.bs";
+import {
+  runDownMigrations,
+  runUpMigrations,
+} from "../generated/src/Migrations.bs";
 
 //HELPERS
 import {
@@ -67,7 +70,7 @@ describe("Raw Events Integration", () => {
     };
   };
 
-  before(async function() {
+  before(async function () {
     this.timeout(30 * 1000);
     // setLogLevel("trace");
 
@@ -138,22 +141,12 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async function() {
+  it("RawEvents table contains rows after indexer runs", async function () {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
-  it("Entities have metrics and relate to their raw events", async function() {
-    let joinedMetricsRows = await sql`
-    SELECT t.db_write_timestamp AS t_write, t.event_chain_id, t.event_id, r.block_timestamp, r.db_write_timestamp AS r_write
-    FROM public."Token" AS t
-    JOIN public.raw_events AS r
-    ON t.event_chain_id = r.chain_id AND t.event_id = r.event_id;
-    `;
-    expect(joinedMetricsRows.count).to.be.gt(0);
-  });
-
-  it("should ensure Entites are created correctly", async function() {
+  it("should ensure Entites are created correctly", async function () {
     let rowsNftCollection = await sql`SELECT * FROM public."NftCollection"`;
     expect(rowsNftCollection.count).to.be.gt(0);
     let rowsUsers = await sql`SELECT * FROM public."User"`;
@@ -205,7 +198,7 @@ describe("Raw Events Integration", () => {
     await runDownMigrations(false, true);
     let rawEventsRows = await sql`
         SELECT EXISTS (
-          SELECT FROM information_schema.tables 
+          SELECT FROM information_schema.tables
           WHERE table_name = 'public.raw_events'
         );
       `;

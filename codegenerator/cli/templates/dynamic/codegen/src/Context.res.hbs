@@ -7,7 +7,7 @@ module {{contract.name.capitalized}}Contract = {
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
       //
-      getContext: (~eventData: Types.eventData) => unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
+      getContext: () => unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
       getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
@@ -73,7 +73,6 @@ module {{contract.name.capitalized}}Contract = {
             inMemoryStore.dynamicContractRegistry->IO.InMemoryStore.DynamicContractRegistry.set(
               ~key={chainId, contractAddress},
               ~entity=dynamicContractRegistration,
-              ~eventData={chainId, eventId: eventId->Ethers.BigInt.toString},
               ~dbOp=Set,
             )
           },
@@ -111,8 +110,7 @@ module {{contract.name.capitalized}}Contract = {
       }
 
       let getHandlerContext: (
-        ~eventData: Types.eventData,
-      ) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context = (~eventData) => {
+      ) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context = () => {
           {{#each ../../entities as | entity |}}
             {{#each event.required_entities as | required_entity |}}
               {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
@@ -144,7 +142,7 @@ module {{contract.name.capitalized}}Contract = {
           log: contextLogger,
           {{#each ../../entities as | entity |}}
             {{entity.name.uncapitalized}}: {
-              set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(~key=entity.id, ~entity, ~dbOp = Types.Set, ~eventData)},
+              set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(~key=entity.id, ~entity, ~dbOp = Types.Set)},
               delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
                 {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
@@ -225,7 +223,7 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
         getEntitiesToLoad: () => entitiesToLoad,
         getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
-        getContext: (~eventData) => {() => getHandlerContext(~eventData)},
+        getContext: () => {() => getHandlerContext()},
       }
     }
   }

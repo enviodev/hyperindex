@@ -45,7 +45,7 @@ describe("E2E Db check", () => {
 
     let _ = await DbFunctions.Gravatar.batchSetGravatar(
       Migrations.sql,
-      [MockEntities.mockInMemRow1, MockEntities.mockInMemRow2],
+      [MockEntities.gravatarSerialized1, MockEntities.gravatarSerialized2],
     )
 
     let arbitraryMaxQueueSize = 100
@@ -78,10 +78,6 @@ describe("E2E Db check", () => {
       [
         {
           dbOp: Set,
-          eventData: {
-            chainId: 1337,
-            eventId: "65537",
-          },
           entity: {
             id: "1001",
             owner: "0x1230000000000000000000000000000000000000",
@@ -92,10 +88,6 @@ describe("E2E Db check", () => {
         },
         {
           dbOp: Set,
-          eventData: {
-            chainId: 1337,
-            eventId: "65537",
-          },
           entity: {
             id: "1002",
             owner: "0x4560000000000000000000000000000000000000",
@@ -106,10 +98,6 @@ describe("E2E Db check", () => {
         },
         {
           dbOp: Set,
-          eventData: {
-            chainId: 1337,
-            eventId: "65537",
-          },
           entity: {
             id: "1003",
             owner: "0x7890000000000000000000000000000000000000",

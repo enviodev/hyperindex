@@ -222,42 +222,26 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
 module.exports.read{{entity.name.capitalized
 }}Entities = (sql, entityIdArray) => sql`
 SELECT 
-{{#each entity.params as |param|}}
-{{#unless param.is_derived_from}}"{{param.key}}",{{/unless}}
+{{#each entity.filtered_params.filtered_not_derived_from as |param|}}
+"{{param.key}}"{{#unless @last}},{{/unless}}
 {{/each}}
-event_chain_id, 
-event_id
 FROM "public"."{{entity.name.original}}"
 WHERE id IN ${sql(entityIdArray)};`;
 
 const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
-  const combinedEntityAndEventData = entityDataArray.map((entityData) => ({
-    ...entityData.entity,
-    ...entityData.eventData,
-    {{#each entity.params as |param|}}
-    {{#unless param.is_derived_from}}
-    {{#if param.is_optional}}
-    {{param.key}}: entityData.entity.{{param.key}} !== undefined ? entityData.entity.{{param.key}} : null,
-    {{/if}}
-    {{/unless}}
-    {{/each}} 
-  }));
   return sql`
     INSERT INTO "public"."{{entity.name.original}}"
-${sql(combinedEntityAndEventData,
-  {{#each entity.params as |param|}}
-    {{#unless param.is_derived_from}}"{{param.key}}",{{/unless}}
+${sql(entityDataArray,
+  {{#each entity.filtered_params.filtered_not_derived_from as |param|}}
+    "{{param.key}}"{{#unless @last}},{{/unless}}
   {{/each}}
-    "event_chain_id",
-    "event_id",
   )}
   ON CONFLICT(id) DO UPDATE
   SET
-{{#each entity.params as |param|}}
-  {{#unless param.is_derived_from}}"{{param.key}}" = EXCLUDED."{{param.key}}",{{/unless}}
+{{#each entity.filtered_params.filtered_not_derived_from as |param|}}
+  "{{param.key}}" = EXCLUDED."{{param.key}}"{{#unless @last}},{{/unless}}
 {{/each}}
-  "event_chain_id" = EXCLUDED."event_chain_id",
-  "event_id" = EXCLUDED."event_id";`;
+  `;
 }
 
 module.exports.batchSet{{entity.name.capitalized

@@ -29,29 +29,15 @@ describe("Linked Entity Loader Integration Test", () => {
   MochaPromise.it("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
     let sql = DbFunctions.sql
 
-    let testEventData: Types.eventData = {chainId: 123, eventId: "123456"}
-
     // NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
-    let createEventA: createEntityFunction<Types.aEntity> = entity => {
-      {
-        dbOp: Types.Set,
-        entity: entity->Types.aEntity_encode,
-        eventData: testEventData,
-      }
+    let createEventA = entity => {
+      entity->Types.aEntity_encode
     }
-    let createEventB: createEntityFunction<Types.bEntity> = entity => {
-      {
-        dbOp: Types.Set,
-        entity: entity->Types.bEntity_encode,
-        eventData: testEventData,
-      }
+    let createEventB = entity => {
+      entity->Types.bEntity_encode
     }
-    let createEventC: createEntityFunction<Types.cEntity> = entity => {
-      {
-        dbOp: Types.Set,
-        entity: entity->Types.cEntity_encode,
-        eventData: testEventData,
-      }
+    let createEventC = entity => {
+      entity->Types.cEntity_encode
     }
 
     /// Setup DB
@@ -104,7 +90,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-    let handlerContext = context.getContext(~eventData=testEventData, ())
+    let handlerContext = context.getContext((), ())
     let testingA = handlerContext.a.all
 
     Assert.deep_equal(
@@ -150,29 +136,15 @@ describe("Linked Entity Loader Integration Test", () => {
   MochaPromise.it("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
     let sql = DbFunctions.sql
 
-    let testEventData: Types.eventData = {chainId: 123, eventId: "123456"}
-
     /// NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
-    let createEventA: createEntityFunction<Types.aEntity> = entity => {
-      {
-        dbOp: Types.Set,
-        entity: entity->Types.aEntity_encode,
-        eventData: testEventData,
-      }
+    let createEventA = entity => {
+      entity->Types.aEntity_encode
     }
-    let createEventB: createEntityFunction<Types.bEntity> = entity => {
-      {
-        dbOp: Types.Set,
-        entity: entity->Types.bEntity_encode,
-        eventData: testEventData,
-      }
+    let createEventB = entity => {
+      entity->Types.bEntity_encode
     }
-    let createEventC: createEntityFunction<Types.cEntity> = entity => {
-      {
-        dbOp: Types.Set,
-        entity: entity->Types.cEntity_encode,
-        eventData: testEventData,
-      }
+    let createEventC = entity => {
+      entity->Types.cEntity_encode
     }
 
     /// Setup DB
@@ -213,7 +185,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-    let handlerContext = context.getContext(~eventData=testEventData, ())
+    let handlerContext = context.getContext((), ())
     let testingA = handlerContext.a.all
 
     Assert.deep_equal(testingA, [Some(a1)], ~message="testingA should have correct entities")

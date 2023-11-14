@@ -29,7 +29,7 @@ describe("Raw Events Integration", () => {
   const { provider } = hre.ethers;
   const getlocalChainConfig = (
     nftFactoryContractAddress: string,
-    simpleNftContractAddress: string
+    simpleNftContractAddress: string,
   ) => ({
     provider,
     startBlock: 0,
@@ -48,8 +48,7 @@ describe("Raw Events Integration", () => {
         events: [EventVariants.SimpleNftContract_TransferEvent],
       },
     ],
-    syncConfig:
-    {
+    syncConfig: {
       initialBlockInterval: 10000,
       backoffMultiplicative: 0.8,
       accelerationAdditive: 2000,
@@ -59,7 +58,7 @@ describe("Raw Events Integration", () => {
     queryTimeoutMillis: 20000,
   });
 
-  before(async function () {
+  before(async function() {
     this.timeout(30 * 1000);
     await runMigrationsNoLogs();
     console.log("deploying Nft Factory");
@@ -67,7 +66,7 @@ describe("Raw Events Integration", () => {
     nftFactoryContractAddress = await deployedNftFactory.getAddress();
     console.log(
       "Successfully deployed nftFactory at",
-      nftFactoryContractAddress
+      nftFactoryContractAddress,
     );
 
     console.log("Creating Nft");
@@ -82,7 +81,7 @@ describe("Raw Events Integration", () => {
       deployedNftFactory.getEvent("SimpleNftCreated");
     const eventQuery = await deployedNftFactory.queryFilter(
       simpleNftCreatedEventFilter,
-      createNftTx.hash
+      createNftTx.hash,
     );
     const simplNftCreatedEvent = eventQuery[0];
     simpleNftContractAddress = simplNftCreatedEvent.args.contractAddress;
@@ -95,7 +94,7 @@ describe("Raw Events Integration", () => {
       { user: Users.User2, quantity: 3 },
       { user: Users.User3, quantity: 5 },
     ].map((params) =>
-      mintSimpleNft(params.user, simpleNftContractAddress, params.quantity)
+      mintSimpleNft(params.user, simpleNftContractAddress, params.quantity),
     );
 
     await Promise.all(mintTxs);
@@ -106,7 +105,7 @@ describe("Raw Events Integration", () => {
     console.log("processing events");
     const localChainConfig = getlocalChainConfig(
       nftFactoryContractAddress,
-      simpleNftContractAddress
+      simpleNftContractAddress,
     );
     await processAllEvents(localChainConfig);
     console.log("Successfully processed events");
@@ -115,22 +114,12 @@ describe("Raw Events Integration", () => {
     await runMigrationsNoLogs();
   });
 
-  it("RawEvents table contains rows after indexer runs", async function () {
+  it("RawEvents table contains rows after indexer runs", async function() {
     let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
     expect(rawEventsRows.count).to.be.gt(0);
   });
 
-  it("Entities have metrics and relate to their raw events", async function () {
-    let joinedMetricsRows = await sql`
-    SELECT t.db_write_timestamp AS t_write, t.event_chain_id, t.event_id, r.block_timestamp, r.db_write_timestamp AS r_write
-    FROM public.token AS t
-    JOIN public.raw_events AS r
-    ON t.event_chain_id = r.chain_id AND t.event_id = r.event_id;
-    `;
-    expect(joinedMetricsRows.count).to.be.gt(0);
-  });
-
-  it("should ensure Entites are created correctly", async function () {
+  it("should ensure Entites are created correctly", async function() {
     let rowsNftcollection = await sql`SELECT * FROM public.nftcollection`;
     expect(rowsNftcollection.count).to.be.gt(0);
     let rowsUsers = await sql`SELECT * FROM public.user`;
@@ -139,7 +128,7 @@ describe("Raw Events Integration", () => {
     expect(rowsToken.count).to.be.gt(0);
   });
 
-  it("should return the highest blockNumber processed processeing event", async function () {
+  it("should return the highest blockNumber processed processeing event", async function() {
     type blockNumberRow = {
       block_number: number;
     };
@@ -147,23 +136,22 @@ describe("Raw Events Integration", () => {
     let latestBlockRows: blockNumberRow[] =
       await RawEvents.readLatestRawEventsBlockNumberProcessedOnChainId(
         sql,
-        chainId
+        chainId,
       );
 
     let latestBlock = latestBlockRows[0].block_number;
     expect(latestBlock).to.be.eq(5);
   });
 
-  it("latest block number function returns expected", async function () {
+  it("latest block number function returns expected", async function() {
     let chainId = 1337;
-    let latestBlockNumber = await RawEvents.getLatestProcessedBlockNumber(
-      chainId
-    );
+    let latestBlockNumber =
+      await RawEvents.getLatestProcessedBlockNumber(chainId);
 
     expect(latestBlockNumber).to.be.eq(5);
   });
 
-  // 
+  //
   //TODO- this is a valid test but needs some refactoring for the latest envio function signatures?
   // consider if these tests are worth maintaining?
   //it("reprocesses only new blocks after new events", async function () {

@@ -29,8 +29,8 @@ module InMemoryStore = {
 
     let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
 
-    let set = (self: t, ~key: StoreItem.key, ~eventData, ~dbOp, ~entity: StoreItem.t) =>
-      self.dict->Js.Dict.set(key->self.hasher, {eventData, entity, dbOp})
+    let set = (self: t, ~key: StoreItem.key, ~dbOp, ~entity: StoreItem.t) =>
+      self.dict->Js.Dict.set(key->self.hasher, {entity, dbOp})
 
     let get = (self: t, key: StoreItem.key) =>
       self.dict->Js.Dict.get(key->self.hasher)->Belt.Option.map(row => row.entity)
@@ -185,12 +185,11 @@ let loadEntities = async (
         await sql->DbFunctions.{{entity.name.capitalized}}.read{{entity.name.capitalized}}Entities(unique{{entity.name.capitalized}}AsEntityFieldArray.contents)
 
       {{entity.name.uncapitalized}}FieldEntitiesArray->Belt.Array.forEach(readRow => {
-        let {entity, eventData} = DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData(readRow)
+        let {entity} = DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData(readRow)
 
         inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(
           ~key=entity.id,
           ~entity,
-          ~eventData,
           ~dbOp=Types.Read,
         )
       })
@@ -230,8 +229,7 @@ let executeDelete = executeEntityFunction(~dbOp=Delete)
 let executeSetSchemaEntity = (~entityEncoder) =>
   executeSet(
    ~getInputValFromRow=row => {
-    ...row,
-    entity: row.entity->entityEncoder,
+    row.entity->entityEncoder
   })
 
 let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
