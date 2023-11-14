@@ -64,7 +64,7 @@ pub enum CommandType {
 #[derive(Debug, Args)]
 pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
-    #[arg(short = 'r', long, default_value_t = false)]
+    #[arg(short = 'r', long, action)]
     pub restart: bool,
 }
 

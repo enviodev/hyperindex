@@ -9,6 +9,8 @@ This document contains the help content for the `envio` command-line program.
 * [`envio init template`↴](#envio-init-template)
 * [`envio init subgraph-migration`↴](#envio-init-subgraph-migration)
 * [`envio init contract-import`↴](#envio-init-contract-import)
+* [`envio init contract-import explorer`↴](#envio-init-contract-import-explorer)
+* [`envio init contract-import local`↴](#envio-init-contract-import-local)
 * [`envio dev`↴](#envio-dev)
 * [`envio stop`↴](#envio-stop)
 * [`envio codegen`↴](#envio-codegen)
@@ -24,7 +26,7 @@ This document contains the help content for the `envio` command-line program.
 
 ## `envio`
 
-**Usage:** `envio <COMMAND>`
+**Usage:** `envio [OPTIONS] <COMMAND>`
 
 ###### **Subcommands:**
 
@@ -34,6 +36,16 @@ This document contains the help content for the `envio` command-line program.
 * `codegen` — Generate indexing code from user-defined configuration & schema files
 * `local` — Prepare local environment for envio testing
 * `start` — Start the indexer without any automatic codegen
+
+###### **Options:**
+
+* `-d`, `--directory <DIRECTORY>` — The directory of the project. Defaults to current dir ("./")
+* `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory within the project that generated code should output to
+
+  Default value: `generated/`
+* `--config <CONFIG>` — The file in the project containing config
+
+  Default value: `config.yaml`
 
 
 
@@ -51,7 +63,6 @@ Initialize an indexer with one of the initialization options
 
 ###### **Options:**
 
-* `-d`, `--directory <DIRECTORY>` — The directory of the project
 * `-n`, `--name <NAME>` — The name of your project
 * `-l`, `--language <LANGUAGE>` — The language used to write handlers
 
@@ -68,7 +79,7 @@ Initialize from an example template
 
 ###### **Options:**
 
-* `-n`, `--name <NAME>` — Name of the template to be used in initialization
+* `-t`, `--template <TEMPLATE>` — Name of the template to be used in initialization
 
   Possible values: `greeter`, `erc20`
 
@@ -91,15 +102,46 @@ Initialize by migrating config from an existing subgraph
 
 Initialize by importing config from a contract for a given chain
 
-**Usage:** `envio init contract-import [OPTIONS]`
+**Usage:** `envio init contract-import [OPTIONS] [COMMAND]`
+
+###### **Subcommands:**
+
+* `explorer` — Initialize by migrating config from an existing subgraph
+* `local` — Initialize from an example template
+
+###### **Options:**
+
+* `-c`, `--contract-address <CONTRACT_ADDRESS>` — Contract address to generate the config from
+
+
+
+## `envio init contract-import explorer`
+
+Initialize by migrating config from an existing subgraph
+
+**Usage:** `envio init contract-import explorer [OPTIONS]`
 
 ###### **Options:**
 
 * `-b`, `--blockchain <BLOCKCHAIN>` — Network from which contract address should be fetched for migration
 
-  Possible values: `mainnet`, `goerli`, `optimism`, `bsc`, `matic`, `optimism-goerli`, `arbitrum-one`, `arbitrum-goerli`, `avalanche`, `mumbai`, `sepolia`
+  Possible values: `ethereum-mainnet`, `goerli`, `optimism`, `base`, `bsc`, `gnosis`, `polygon`, `optimism-goerli`, `arbitrum-one`, `arbitrum-goerli`, `avalanche`, `mumbai`, `sepolia`, `linea`
 
-* `-c`, `--contract-address <CONTRACT_ADDRESS>` — Contract address to generate the config from
+
+
+
+## `envio init contract-import local`
+
+Initialize from an example template
+
+**Usage:** `envio init contract-import local [OPTIONS]`
+
+###### **Options:**
+
+* `-a`, `--abi-file <ABI_FILE>` — The path to a json abi file
+* `--contract-name <CONTRACT_NAME>` — The name of the contract
+* `-b`, `--blockchain <BLOCKCHAIN>` — Network from which contract address should be fetched for migration
+* `-r`, `--rpc-url <RPC_URL>` — The rpc url to use if the network id used is unsupported by our hypersync
 
 
 
@@ -123,19 +165,7 @@ Stop the local environment - delete the database and stop all processes (includi
 
 Generate indexing code from user-defined configuration & schema files
 
-**Usage:** `envio codegen [OPTIONS]`
-
-###### **Options:**
-
-* `-d`, `--directory <DIRECTORY>` — The directory of the project
-
-  Default value: `.`
-* `-o`, `--output-directory <OUTPUT_DIRECTORY>` — The directory within the project that generated code should output to
-
-  Default value: `generated/`
-* `-c`, `--config <CONFIG>` — The file in the project containing config
-
-  Default value: `config.yaml`
+**Usage:** `envio codegen`
 
 
 
@@ -228,11 +258,6 @@ Start the indexer without any automatic codegen
 ###### **Options:**
 
 * `-r`, `--restart` — Clear your database and restart indexing from scratch
-
-  Default value: `false`
-* `-d`, `--directory <DIRECTORY>` — The directory of the project
-
-  Default value: `.`
 
 
 
