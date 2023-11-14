@@ -141,6 +141,7 @@ let createSelectPermissions = async (~tableName: string) => {
       "permission": {
         "columns": "*",
         "filter": Js.Obj.empty(),
+        "limit": Config.hasuraResponseLimit
       },
     },
   }
