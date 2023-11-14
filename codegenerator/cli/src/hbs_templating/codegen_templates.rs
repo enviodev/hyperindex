@@ -738,7 +738,7 @@ mod test {
         let network1 = super::NetworkTemplate {
             id: 1,
             rpc_config: None,
-            skar_server_url: Some("http://eth.hypersync.bigdevenergy.link:1100".to_string()),
+            skar_server_url: Some("https://eth.hypersync.xyz".to_string()),
             eth_archive_server_url: None,
             start_block: 0,
         };
