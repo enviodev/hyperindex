@@ -174,7 +174,7 @@ impl ContractImportArgs {
                         Self::get_converter_network_from_network_id_prompt(network_id, rpc_url)?
                     }
                     None => {
-                        let enter_id = "Enter Network Id";
+                        let enter_id = "<Enter Network Id>";
                         let networks = SupportedNetwork::iter()
                             .map(|n| n.to_string())
                             .collect::<Vec<_>>();
