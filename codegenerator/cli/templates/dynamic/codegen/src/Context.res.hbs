@@ -1,22 +1,30 @@
+type genericContextCreatorFunctions<'loaderContext, 'handlerContext> = {
+  getLoaderContext: unit => 'loaderContext,
+  getHandlerContext: unit => 'handlerContext,
+  getEntitiesToLoad: unit => array<Types.entityRead>,
+  getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
+}
+
+type contextCreator<'eventArgs, 'loaderContext, 'handlerContext> = (
+  ~inMemoryStore: IO.InMemoryStore.t,
+  ~chainId: int,
+  ~event: Types.eventLog<'eventArgs>,
+  ~logger: Pino.t,
+) => genericContextCreatorFunctions<'loaderContext, 'handlerContext>
 {{#each contracts as | contract |}}
+
 module {{contract.name.capitalized}}Contract = {
 {{#each contract.events as | event |}}
+
   module {{event.name.capitalized}}Event = {
-    type handlerContextGetter = unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext
+    type handlerContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext
+    type loaderContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
 
-    type contextCreatorFunctions = {
-      getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
-      getHandlerContext: handlerContextGetter,
-      getEntitiesToLoad: unit => array<Types.entityRead>,
-      getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
-    }
-
-    let contextCreator: (
-      ~inMemoryStore: IO.InMemoryStore.t,
-      ~chainId: int,
-      ~event: Types.eventLog<'a>,
-      ~logger: Pino.t,
-    ) => contextCreatorFunctions = (~inMemoryStore, ~chainId, ~event, ~logger) => {
+    let contextCreator: contextCreator<
+      Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
+      loaderContext,
+      handlerContext,
+    > = (~inMemoryStore, ~chainId, ~event, ~logger) => {
       let logger =
         logger->Logging.createChildFrom(
           ~logger=_,
@@ -49,8 +57,9 @@ module {{contract.name.capitalized}}Contract = {
 
       let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
 
+      //Loader context can be defined as a value and the getter can return that value
       @warning("-16")
-      let loaderContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext = {
+      let loaderContext: loaderContext = {
         log: contextLogger,
         contractRegistration: {
         {{#each ../../contracts as |contract_inner| }}
@@ -109,7 +118,9 @@ module {{contract.name.capitalized}}Contract = {
       {{/each}}
       }
 
-      let getHandlerContext: handlerContextGetter = () => {
+      //handler context must be defined as a getter functoin so that it can construct the context
+      //without stale values whenever it is used
+      let getHandlerContext: unit => handlerContext = () => {
           {{#each ../../entities as | entity |}}
             {{#each event.required_entities as | required_entity |}}
               {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
