@@ -136,9 +136,9 @@ pub enum Network {
     PolygonZkevm = 1101,
     #[subenum(GraphNetwork)]
     ScrollSepolia = 534351,
-    #[subenum(GraphNetwork, SkarNetwork)]
+    #[subenum(GraphNetwork, SupportedNetwork, SkarNetwork, NetworkWithExplorer)]
     Scroll = 534352,
-    #[subenum(SkarNetwork)]
+    #[subenum(SupportedNetwork, SkarNetwork)]
     Metis = 1088,
 }
 
@@ -202,12 +202,16 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Gnosis => "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV",
             NetworkWithExplorer::Linea => "TYCR43IQ5U85DKZXQG8MQIJI7922DVHZX5",
             NetworkWithExplorer::Base => "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3",
+            NetworkWithExplorer::Scroll => "ZC5BE2NT8UU358184YSBMIFU3F9ZPG5CKX",
         };
 
         //Define all custom block explorer definitions at the top otherwise default with ethers api
         match self {
             NetworkWithExplorer::Gnosis => {
                 BlockExplorerApi::custom("gnosisscan.io", "api.gnosisscan.io", api_key)
+            }
+            NetworkWithExplorer::Scroll => {
+                BlockExplorerApi::custom("scrollscan.com", "api.scrollscan.com", api_key)
             }
             _ => BlockExplorerApi::default_ethers(api_key),
         }
