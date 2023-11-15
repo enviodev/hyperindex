@@ -18,6 +18,9 @@ module InMemoryStore = {
     let hasher: key => string
   }
 
+  //Binding used for deep cloning stores in tests
+  @val external structuredClone: 'a => 'a = "structuredClone"
+
   module MakeStore = (StoreItem: StoreItem) => {
     type value = StoreItem.t
     type key = StoreItem.key
@@ -36,6 +39,11 @@ module InMemoryStore = {
       self.dict->Js.Dict.get(key->self.hasher)->Belt.Option.map(row => row.entity)
 
     let values = (self: t) => self.dict->Js.Dict.values
+
+    let clone = (self: t) => {
+      ...self,
+      dict: self.dict->structuredClone,
+    }
   }
 
   module EventSyncState = MakeStore({
@@ -94,6 +102,15 @@ module InMemoryStore = {
     dynamicContractRegistry: DynamicContractRegistry.make(),
   {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {{entity.name.capitalized}}.make(),
+  {{/each}}
+  }
+
+  let clone = (self: t) => {
+    eventSyncState: self.eventSyncState->EventSyncState.clone,
+    rawEvents: self.rawEvents->RawEvents.clone,
+    dynamicContractRegistry: self.dynamicContractRegistry->DynamicContractRegistry.clone,
+  {{#each entities as | entity |}}
+    {{entity.name.uncapitalized}}: self.{{entity.name.uncapitalized}}->{{entity.name.capitalized}}.clone,
   {{/each}}
   }
 }
