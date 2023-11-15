@@ -92,7 +92,7 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
   switch event {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, getContext) => {
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context) => {
       event->updateEventSyncState(~chainId, ~inMemoryStore)
 
       let jsonSerializedParams =
@@ -106,7 +106,6 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
       )
 
     let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
-    let context = getContext()
 
     try {
       handler(~event, ~context)

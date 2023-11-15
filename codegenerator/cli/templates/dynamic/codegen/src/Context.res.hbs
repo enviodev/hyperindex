@@ -6,11 +6,11 @@ module {{contract.name.capitalized}}Contract = {
 
     type contextCreatorFunctions = {
       getLoaderContext: unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext,
-      //
-      getContext: () => unit => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
+      getContext: () => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
       getEntitiesToLoad: unit => array<Types.entityRead>,
       getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
     }
+
     let contextCreator: (
       ~inMemoryStore: IO.InMemoryStore.t,
       ~chainId: int,
@@ -109,8 +109,7 @@ module {{contract.name.capitalized}}Contract = {
       {{/each}}
       }
 
-      let getHandlerContext: (
-      ) => Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context = () => {
+      let handlerContext: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context = {
           {{#each ../../entities as | entity |}}
             {{#each event.required_entities as | required_entity |}}
               {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
@@ -223,7 +222,7 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
         getEntitiesToLoad: () => entitiesToLoad,
         getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
-        getContext: () => {() => getHandlerContext()},
+        getContext: () => handlerContext,
       }
     }
   }
