@@ -228,6 +228,8 @@ type event =
 //values in the context could be stale if the getter is not called after
 //the loader has run
 type handlerContextGetter<'context> = () => 'context
+
+@deriving(accessors)
 type eventAndContext =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
