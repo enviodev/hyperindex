@@ -136,7 +136,7 @@ pub enum Network {
     PolygonZkevm = 1101,
     #[subenum(GraphNetwork)]
     ScrollSepolia = 534351,
-    #[subenum(GraphNetwork, SkarNetwork, NetworkWithExplorer)]
+    #[subenum(GraphNetwork, SkarNetwork)]
     Scroll = 534352,
     #[subenum(SkarNetwork)]
     Metis = 1088,
@@ -153,95 +153,97 @@ impl Network {
     }
 }
 
-pub struct BlockExplorerApi {
-    pub base_url: String,
-    pub api_key: String,
+pub enum BlockExplorerApi {
+    DefaultEthers {
+        api_key: String,
+    },
+    Custom {
+        //eg. "https://gnosisscan.io/"
+        base_url: String,
+        //eg. "https://api.gnosisscan.io/api/"
+        api_url: String,
+        api_key: String,
+    },
+}
+
+impl BlockExplorerApi {
+    pub fn default_ethers(api_key: &str) -> Self {
+        Self::DefaultEthers {
+            api_key: api_key.to_string(),
+        }
+    }
+
+    fn custom(base_url: &str, api_url: &str, api_key: &str) -> Self {
+        let base_url = format!("https://{}/", base_url);
+        let api_url = format!("https://{}/api/", api_url);
+        Self::Custom {
+            base_url,
+            api_url,
+            api_key: api_key.to_string(),
+        }
+    }
 }
 
 impl NetworkWithExplorer {
     // Function to return the chain ID of the network based on the network name
     pub fn get_block_explorer_api(&self) -> BlockExplorerApi {
-        let (base_url_str, api_key_str) = match self {
-            NetworkWithExplorer::EthereumMainnet => {
-                ("api.etherscan.io", "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV")
-            }
-            NetworkWithExplorer::Goerli => (
-                "api-goerli.etherscan.io",
-                "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
-            ),
-            NetworkWithExplorer::Optimism => (
-                "api-optimistic.etherscan.io",
-                "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
-            ),
-            NetworkWithExplorer::Bsc => ("api.bscscan.com", "ZZMAWTWCP7T2MP855DA87A3ND6R13GT3K8"),
-            NetworkWithExplorer::Polygon => {
-                ("api.polygonscan.com", "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP")
-            }
-
-            NetworkWithExplorer::OptimismGoerli => (
-                "api-goerli-optimistic.etherscan.io",
-                "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
-            ),
-            NetworkWithExplorer::ArbitrumOne => {
-                ("api.arbiscan.io", "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D")
-            }
-
-            NetworkWithExplorer::ArbitrumGoerli => (
-                "api-goerli.arbiscan.io",
-                "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
-            ),
-            NetworkWithExplorer::Avalanche => {
-                ("api.snowtrace.io", "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK")
-            }
-            NetworkWithExplorer::Mumbai => (
-                "api-testnet.polygonscan.com",
-                "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP",
-            ),
-            NetworkWithExplorer::Sepolia => (
-                "api-sepolia.etherscan.io",
-                "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
-            ),
-            NetworkWithExplorer::Gnosis => {
-                ("api.gnosisscan.io", "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV")
-            }
-            NetworkWithExplorer::Linea => {
-                ("api.lineascan.build", "TYCR43IQ5U85DKZXQG8MQIJI7922DVHZX5")
-            }
-            NetworkWithExplorer::Base => ("api.basescan.org", "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3"),
-            NetworkWithExplorer::Scroll => {
-                ("api.basescan.org", "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3")
-            }
-            // TODO: uncomment this out when Celo is supported by Skar or ethArchive
-            // NetworkWithExplorer::Celo => ("api.celoscan.io", "D1S1S25RRC9J6ATMSCVYVXXAH2XXZV9ZJK"),
-
+        let api_key = match self {
+            NetworkWithExplorer::EthereumMainnet => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
+            NetworkWithExplorer::Goerli => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
+            NetworkWithExplorer::Optimism => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
+            NetworkWithExplorer::Bsc => "ZZMAWTWCP7T2MP855DA87A3ND6R13GT3K8",
+            NetworkWithExplorer::Polygon => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP",
+            NetworkWithExplorer::OptimismGoerli => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
+            NetworkWithExplorer::ArbitrumOne => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
+            NetworkWithExplorer::ArbitrumGoerli => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
+            NetworkWithExplorer::Avalanche => "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK",
+            NetworkWithExplorer::Mumbai => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP",
+            NetworkWithExplorer::Sepolia => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
+            NetworkWithExplorer::Gnosis => "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV",
+            NetworkWithExplorer::Linea => "TYCR43IQ5U85DKZXQG8MQIJI7922DVHZX5",
+            NetworkWithExplorer::Base => "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3",
         };
 
-        BlockExplorerApi {
-            base_url: base_url_str.to_string(),
-            api_key: api_key_str.to_string(),
+        //Define all custom block explorer definitions at the top otherwise default with ethers api
+        match self {
+            NetworkWithExplorer::Gnosis => {
+                BlockExplorerApi::custom("gnosisscan.io", "api.gnosisscan.io", api_key)
+            }
+            _ => BlockExplorerApi::default_ethers(api_key),
         }
     }
 }
 
 pub fn get_etherscan_client(network: &NetworkWithExplorer) -> anyhow::Result<etherscan::Client> {
-    let BlockExplorerApi { api_key, .. } = network.get_block_explorer_api();
-    let chain_id = Network::from(*network).get_network_id();
+    let client = match network.get_block_explorer_api() {
+        BlockExplorerApi::DefaultEthers { api_key } => {
+            let chain_id = Network::from(*network).get_network_id();
 
-    let ethers_chain = ethers::types::Chain::try_from(chain_id)
-        .context("converting network id to ethers chain")?;
+            let ethers_chain = ethers::types::Chain::try_from(chain_id)
+                .context("Failed converting network with explorer id to ethers chain")?;
 
-    let client = if let NetworkWithExplorer::Gnosis = network {
-        //Hack for now until
-        etherscan::Client::builder()
-            .with_api_url("https://api.gnosisscan.io/api/")
-            .context("api url")?
-            .with_url("https://gnosisscan.io/")
-            .context("url")?
+            etherscan::Client::new(ethers_chain, api_key)
+                .context("Failed creating client for network")?
+        }
+
+        BlockExplorerApi::Custom {
+            base_url,
+            api_url,
+            api_key,
+        } => etherscan::Client::builder()
+            .with_url(&base_url)
+            .context(format!(
+                "Failed building custom client at base url {}",
+                base_url
+            ))?
+            .with_api_url(&api_url)
+            .context(format!(
+                "Failed building custom client at api url {}",
+                api_url
+            ))?
             .with_api_key(api_key)
             .build()
-            .context("build")?
-    } else {
-        etherscan::Client::new(ethers_chain, api_key).context("creating client for network")?
+            .context("Failed build custom client")?,
     };
 
     Ok(client)
@@ -255,13 +257,6 @@ mod test {
     use super::{get_etherscan_client, GraphNetwork, NetworkWithExplorer, SupportedNetwork};
 
     use strum::IntoEnumIterator;
-
-    #[test]
-    fn all_network_names_have_ethers_chain() {
-        for network in NetworkWithExplorer::iter() {
-            ethers::types::Chain::try_from(network as u64).unwrap();
-        }
-    }
 
     #[test]
     fn all_networks_with_explorer_can_get_etherscan_client() {
