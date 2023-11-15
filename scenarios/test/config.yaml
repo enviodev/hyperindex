@@ -4,9 +4,15 @@ networks:
   - id: 1
     start_block: 0
     contracts:
-      - name: Pool
+      - name: Factory
         address:
-          - "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
+          - "0x1F98431c8aD98523631AE4a59f267346ea31F984"
+        handler: src/EventHandlers.ts
+        events:
+          - event: PoolCreated(index_topic_1 address token0, index_topic_2 address token1, index_topic_3 uint24 fee, int24 tickSpacing, address pool)
+      - name: Pool
+        # address:
+        #   - "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
         handler: src/EventHandlers.ts
         events:
           - event: Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick)
