@@ -1,0 +1,211 @@
+open Belt
+RegisterHandlers.registerAllHandlers()
+
+module MockDb = {
+  let deleteDictKey: (Js.Dict.t<'a>, string) => unit = %raw(`
+      function(dict, key) {
+        delete dict[key]
+      }
+    `)
+
+  @genType
+  type storeOperations<'entityKey, 'entity> = {
+    getAll: unit => array<'entity>,
+    get: 'entityKey => option<'entity>,
+    set: 'entity => unit,
+    delete: 'entityKey => unit,
+  }
+
+  @genType
+  type entityStoreOperations<'entity> = storeOperations<string, 'entity>
+
+  @genType
+  type entities = {
+    {{#each entities as | entity |}}
+      @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityStoreOperations<Types.{{entity.name.uncapitalized}}Entity>,
+    {{/each}}
+    }
+
+  @genType
+  type t = {
+    __dbInternal__: ref<IO.InMemoryStore.t>,
+    entities: entities,
+    rawEvents: storeOperations<IO.InMemoryStore.rawEventsKey, Types.rawEventsEntity>,
+    eventSyncState: storeOperations<Types.chainId, DbFunctions.EventSyncState.eventSyncState>,
+    dynamicContractRegistry: storeOperations<
+      IO.InMemoryStore.dynamicContractRegistryKey,
+      Types.dynamicContractRegistryEntity,
+    >,
+  }
+
+  let makeStoreOperator = (
+    store: 'store,
+    ~get: ('store, 'key) => option<'entity>,
+    ~values: 'store => array<Types.inMemoryStoreRow<'entity>>,
+    ~set: ('store, ~key: 'key, ~dbOp: Types.dbOp, ~entity: 'entity) => unit,
+    ~getKey: 'entity => 'key,
+  ): storeOperations<'entityKey, 'entity> => {
+    getAll: () => store->values->Array.map(row => row.entity),
+    get: store->get,
+    set: entity => store->set(~key=entity->getKey, ~entity, ~dbOp=Set),
+    delete: key => {
+      let unsafeStore = store->Obj.magic
+      let keyStr = key->unsafeStore["hasher"]
+      unsafeStore["dict"]->deleteDictKey(keyStr)
+    },
+  }
+
+  let makeWithInMemoryStore = (inMemoryStore: IO.InMemoryStore.t) => {
+    let dbInternal = ref(inMemoryStore)
+
+    let rawEvents =
+      dbInternal.contents.rawEvents->makeStoreOperator(
+        ~get=IO.InMemoryStore.RawEvents.get,
+        ~values=IO.InMemoryStore.RawEvents.values,
+        ~set=IO.InMemoryStore.RawEvents.set,
+        ~getKey=({chainId, eventId}) => {chainId, eventId},
+      )
+
+    let eventSyncState =
+      dbInternal.contents.eventSyncState->makeStoreOperator(
+        ~get=IO.InMemoryStore.EventSyncState.get,
+        ~values=IO.InMemoryStore.EventSyncState.values,
+        ~set=IO.InMemoryStore.EventSyncState.set,
+        ~getKey=({chainId}) => chainId,
+      )
+
+    let dynamicContractRegistry =
+      dbInternal.contents.dynamicContractRegistry->makeStoreOperator(
+        ~get=IO.InMemoryStore.DynamicContractRegistry.get,
+        ~values=IO.InMemoryStore.DynamicContractRegistry.values,
+        ~set=IO.InMemoryStore.DynamicContractRegistry.set,
+        ~getKey=({chainId, contractAddress}) => {chainId, contractAddress},
+      )
+
+    let entities = {
+    {{#each entities as | entity |}}
+      {{entity.name.uncapitalized}}: dbInternal.contents.{{entity.name.uncapitalized}}->makeStoreOperator(
+        ~get=IO.InMemoryStore.{{entity.name.capitalized}}.get,
+        ~values=IO.InMemoryStore.{{entity.name.capitalized}}.values,
+        ~set=IO.InMemoryStore.{{entity.name.capitalized}}.set,
+        ~getKey=({id}) => id,
+      ),
+    {{/each}}
+    }
+
+    {__dbInternal__: dbInternal, entities, rawEvents, eventSyncState, dynamicContractRegistry}
+  }
+
+  let createMockDb = () => makeWithInMemoryStore(IO.InMemoryStore.make())
+
+  let getInternalDb = (self: t) => self.__dbInternal__.contents
+
+  let cloneMockDb = (self: t) => {
+    let clonedInternalDb = self->getInternalDb->IO.InMemoryStore.clone
+    clonedInternalDb->makeWithInMemoryStore
+  }
+
+  let loadToInMemoryStore = (
+    self: t,
+    ~inMemoryStore: IO.InMemoryStore.t,
+    ~entitiesToLoad: array<Types.entityRead>,
+  ) => {
+    entitiesToLoad->Array.forEach(readEntity => {
+      switch readEntity {
+    {{#each entities as | entity |}}
+      | {{entity.name.capitalized}}Read(id) => {
+          let optEntity = self.entities.{{entity.name.uncapitalized}}.get(id)
+
+          switch optEntity {
+          | Some(entity) =>
+            inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
+              ~key=entity.id,
+              ~entity,
+              ~dbOp=Types.Read,
+            )
+          | None => //TODO: Add logging in case option type doesn't exist
+            ()
+          }
+        }
+    {{/each}}
+      }
+    })
+  }
+
+  let executeRows = (
+    mockDb: t,
+    ~inMemoryStore: IO.InMemoryStore.t,
+    ~getStore: IO.InMemoryStore.t => 'store,
+    ~getRows: 'store => array<Types.inMemoryStoreRow<'entity>>,
+    ~getKey: 'entity => 'key,
+    ~getHasher: ('store, 'key) => string,
+    ~getDict: 'store => Js.Dict.t<Types.inMemoryStoreRow<'entity>>,
+    ~setFunction: ('store, ~key: 'key, ~dbOp: Types.dbOp, ~entity: 'entity) => unit,
+  ) => {
+    inMemoryStore
+    ->getStore
+    ->getRows
+    ->Array.forEach(row => {
+      let store = mockDb->getInternalDb->getStore
+      switch row.dbOp {
+      | Set => store->setFunction(~dbOp=Read, ~key=getKey(row.entity), ~entity=row.entity)
+      | Delete =>
+        let keyHasher = store->getHasher
+
+        store->getDict->deleteDictKey(row.entity->getKey->keyHasher)
+      | Read => ()
+      }
+    })
+  }
+
+  let executeStoreRows = executeRows(
+    ~getDict=s => (s->Obj.magic)["dict"],
+    ~getHasher=s => (s->Obj.magic)["hasher"],
+  )
+
+  let executeEntityRows = executeStoreRows(~getKey=e => (e->Obj.magic)["id"])
+
+  let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: IO.InMemoryStore.t) => {
+    open IO
+    mockDb->executeStoreRows(
+      ~inMemoryStore,
+      ~getRows=InMemoryStore.RawEvents.values,
+      ~getStore=inMemStore => {inMemStore.rawEvents},
+      ~setFunction=InMemoryStore.RawEvents.set,
+      ~getKey=(entity): IO.InMemoryStore.rawEventsKey => {
+        chainId: entity.chainId,
+        eventId: entity.eventId,
+      },
+    )
+
+    mockDb->executeStoreRows(
+      ~inMemoryStore,
+      ~getStore=inMemStore => {inMemStore.eventSyncState},
+      ~getRows=InMemoryStore.EventSyncState.values,
+      ~setFunction=InMemoryStore.EventSyncState.set,
+      ~getKey=entity => entity.chainId,
+    )
+
+    mockDb->executeStoreRows(
+      ~inMemoryStore,
+      ~getRows=InMemoryStore.DynamicContractRegistry.values,
+      ~getStore=inMemStore => {inMemStore.dynamicContractRegistry},
+      ~setFunction=InMemoryStore.DynamicContractRegistry.set,
+      ~getKey=(entity): IO.InMemoryStore.dynamicContractRegistryKey => {
+        chainId: entity.chainId,
+        contractAddress: entity.contractAddress,
+      },
+    )
+
+  {{#each entities as | entity |}}
+    //All entities to be templated here
+    mockDb->executeStoreRows(
+      ~inMemoryStore,
+      ~getStore=self => {self.{{entity.name.uncapitalized}}},
+      ~getRows=IO.InMemoryStore.{{entity.name.capitalized}}.values,
+      ~setFunction=IO.InMemoryStore.{{entity.name.capitalized}}.set,
+      ~getKey=entity => entity.id,
+    )
+  {{/each}}
+  }
+}
