@@ -2,7 +2,7 @@ open Types.GravatarContract
 
 let setMock = Sinon.stub()
 
-let mockNewGravatarContext: NewGravatarEvent.context = {
+let mockNewGravatarContext: NewGravatarEvent.handlerContext = {
   //note the js use uppercased even though the rescript context is lower case gravatar due to @as
   "Gravatar": {
     NewGravatarEvent.set: gravatarSet => {
@@ -12,7 +12,7 @@ let mockNewGravatarContext: NewGravatarEvent.context = {
   },
 }->Obj.magic
 
-let mockUpdateGravatarContext: UpdatedGravatarEvent.context = {
+let mockUpdateGravatarContext: UpdatedGravatarEvent.handlerContext = {
   "log": {
     "debug": Js.log,
     "info": Js.log,

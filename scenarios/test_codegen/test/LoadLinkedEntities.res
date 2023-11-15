@@ -90,7 +90,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-    let handlerContext = context.getContext((), ())
+    let handlerContext = context.getHandlerContext()
     let testingA = handlerContext.a.all
 
     Assert.deep_equal(
@@ -185,7 +185,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-    let handlerContext = context.getContext((), ())
+    let handlerContext = context.getHandlerContext()
     let testingA = handlerContext.a.all
 
     Assert.deep_equal(testingA, [Some(a1)], ~message="testingA should have correct entities")
