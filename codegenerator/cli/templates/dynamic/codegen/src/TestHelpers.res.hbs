@@ -209,3 +209,106 @@ module MockDb = {
   {{/each}}
   }
 }
+
+@genType
+type eventProcessorArgs<'eventArgs> = {
+  event: Types.eventLog<'eventArgs>,
+  mockDb: MockDb.t,
+  chainId?: int,
+}
+
+@genType
+type eventProcessor<'eventArgs> = eventProcessorArgs<'eventArgs> => MockDb.t
+
+@genType
+type processEventContainer<'eventArgs> = {processEvent: eventProcessor<'eventArgs>}
+
+let makeEventProcessor = (
+  ~contextCreator: Context.contextCreator<'eventArgs, 'loaderContext, 'handlerContext>,
+  ~getLoader,
+  ~eventWithContextAccessor: (
+    Types.eventLog<'eventArgs>,
+    unit => 'handlerContext,
+  ) => Types.eventAndContext,
+  ~eventName: Types.eventName,
+): processEventContainer<'eventArgs> => {
+  let processEvent = ({event, mockDb, ?chainId}) => {
+    let chainId = chainId->Option.getWithDefault(1)
+
+    let logger = Logging.createChild(
+      ~params={
+        "Context": `Test Processor for ${eventName
+          ->Types.eventName_encode
+          ->Js.Json.stringify} Event`,
+        "Chain ID": chainId,
+        "event": event,
+      },
+    )
+
+    let mockDbClone = mockDb->MockDb.cloneMockDb
+
+    let inMemoryStore = IO.InMemoryStore.make()
+
+    let context = contextCreator(~event, ~inMemoryStore, ~chainId, ~logger)
+
+    let loaderContext = context.getLoaderContext()
+
+    let loader = getLoader()
+    //Run the loader
+    loader(~event, ~context=loaderContext)
+
+    //Get all the values from the mock db and put in the in memory store
+    let entitiesToLoad = context.getEntitiesToLoad()
+
+    mockDbClone->MockDb.loadToInMemoryStore(~entitiesToLoad, ~inMemoryStore)
+
+    let handlerContextGetter = context.getHandlerContext
+    let eventAndContext: Types.eventRouterEventAndContext = {
+      chainId,
+      event: eventWithContextAccessor(event, handlerContextGetter),
+    }
+
+    eventAndContext->EventProcessing.eventRouter(~inMemoryStore)
+
+    mockDbClone->MockDb.writeFromMemoryStore(~inMemoryStore)
+
+    mockDbClone
+  }
+
+  {processEvent: processEvent}
+}
+{{#each contracts as | contract |}}
+
+@genType
+type {{contract.name.uncapitalized}}EventProcessors = {
+{{#each contract.events as | event |}}
+  @as("{{event.name.capitalized}}")
+  {{event.name.uncapitalized}}: processEventContainer<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
+{{/each}}
+}
+
+let {{contract.name.uncapitalized}}EventProcessors = {
+{{#each contract.events as | event |}}
+  {{event.name.uncapitalized}}: makeEventProcessor(
+    ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
+    ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
+    ~eventWithContextAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+    ~eventName=Types.{{event.event_type.full}},
+  ),
+{{/each}}
+}
+{{/each}}
+
+@genType
+type eventProcessors = {
+{{#each contracts as | contract |}}
+  @as("{{contract.name.capitalized}}") {{contract.name.uncapitalized}}: {{contract.name.uncapitalized}}EventProcessors
+{{/each}}
+}
+
+@genType
+let eventProcessors = {
+{{#each contracts as | contract |}}
+  {{contract.name.uncapitalized}}: {{contract.name.uncapitalized}}EventProcessors,
+{{/each}}
+}
