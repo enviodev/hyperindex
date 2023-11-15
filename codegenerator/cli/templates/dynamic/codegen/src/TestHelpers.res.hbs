@@ -2,12 +2,19 @@ open Belt
 RegisterHandlers.registerAllHandlers()
 
 module MockDb = {
+  /**
+  A raw js binding to allow deleting from a dict. Used in store delete operation
+  */
   let deleteDictKey: (Js.Dict.t<'a>, string) => unit = %raw(`
       function(dict, key) {
         delete dict[key]
       }
     `)
 
+  /**
+  all the operator functions a user can access on an entity in the mock db
+  stores refer to the the module that MakeStore functor outputs in IO.res
+  */
   @genType
   type storeOperations<'entityKey, 'entity> = {
     getAll: unit => array<'entity>,
@@ -16,9 +23,16 @@ module MockDb = {
     delete: 'entityKey => unit,
   }
 
+  /**
+  User defined entities always have a string for an id which is used as the 
+  key for entity stores
+  */
   @genType
   type entityStoreOperations<'entity> = storeOperations<string, 'entity>
 
+  /**
+  Each user defined entity will be in this record with all the store or "mockdb" operators
+  */
   @genType
   type entities = {
     {{#each entities as | entity |}}
@@ -26,6 +40,11 @@ module MockDb = {
     {{/each}}
     }
 
+  /**
+  The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
+  to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
+  store
+  */
   @genType
   type t = {
     __dbInternal__: ref<IO.InMemoryStore.t>,
@@ -38,6 +57,10 @@ module MockDb = {
     >,
   }
 
+  /**
+  a composable function to make the "storeOperations" record to represent all the mock
+  db operations for each entity.
+  */
   let makeStoreOperator = (
     store: 'store,
     ~get: ('store, 'key) => option<'entity>,
@@ -55,6 +78,11 @@ module MockDb = {
     },
   }
 
+  /**
+  The internal make function which can be passed an in memory store and
+  instantiate a "MockDb". This is useful for cloning or making a MockDb
+  out of an existing inMemoryStore
+  */
   let makeWithInMemoryStore = (inMemoryStore: IO.InMemoryStore.t) => {
     let dbInternal = ref(inMemoryStore)
 
@@ -96,15 +124,34 @@ module MockDb = {
     {__dbInternal__: dbInternal, entities, rawEvents, eventSyncState, dynamicContractRegistry}
   }
 
+  /**
+  The constructor function for a mockDb. Call it and then set up the inital state by calling
+  any of the set functions it provides access to. A mockDb will be passed into a processEvent 
+  helper. Note, process event helpers will not mutate the mockDb but return a new mockDb with
+  new state so you can compare states before and after.
+  */
+  //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
   let createMockDb = () => makeWithInMemoryStore(IO.InMemoryStore.make())
 
+  /**
+  Accessor function for getting the internal inMemoryStore in the mockDb
+  */
   let getInternalDb = (self: t) => self.__dbInternal__.contents
 
+  /**
+  Deep copies the in memory store data and returns a new mockDb with the same
+  state and no references to data from the passed in mockDb
+  */
   let cloneMockDb = (self: t) => {
     let clonedInternalDb = self->getInternalDb->IO.InMemoryStore.clone
     clonedInternalDb->makeWithInMemoryStore
   }
 
+  /**
+  Given an isolated inMemoryStore and an array of read entities. This function loads the 
+  requested data from the mockDb into the inMemory store. Simulating how loading happens
+  from and external db into the inMemoryStore for a batch during event processing
+  */
   let loadToInMemoryStore = (
     self: t,
     ~inMemoryStore: IO.InMemoryStore.t,
@@ -132,6 +179,10 @@ module MockDb = {
     })
   }
 
+  /**
+  A function composer for simulating the writing of an inMemoryStore to the external db with a mockDb.
+  Runs all set and delete operations currently cached in an inMemory store against the mockDb
+  */
   let executeRows = (
     mockDb: t,
     ~inMemoryStore: IO.InMemoryStore.t,
@@ -158,15 +209,22 @@ module MockDb = {
     })
   }
 
+  /**
+  An unsafe function since all stores contain dict and hasher. To be reimplemented
+  in a typesafe way.
+  */
   let executeStoreRows = executeRows(
     ~getDict=s => (s->Obj.magic)["dict"],
     ~getHasher=s => (s->Obj.magic)["hasher"],
   )
 
-  let executeEntityRows = executeStoreRows(~getKey=e => (e->Obj.magic)["id"])
-
+  /**
+  Simulates the writing of processed data in the inMemoryStore to a mockDb. This function
+  executes all the rows on each "store" (or pg table) in the inMemoryStore
+  */
   let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: IO.InMemoryStore.t) => {
     open IO
+    //INTERNAL STORES/TABLES EXECUTION
     mockDb->executeStoreRows(
       ~inMemoryStore,
       ~getRows=InMemoryStore.RawEvents.values,
@@ -197,8 +255,8 @@ module MockDb = {
       },
     )
 
+  //ENTITY EXECUTION
   {{#each entities as | entity |}}
-    //All entities to be templated here
     mockDb->executeStoreRows(
       ~inMemoryStore,
       ~getStore=self => {self.{{entity.name.uncapitalized}}},
@@ -210,6 +268,11 @@ module MockDb = {
   }
 }
 
+/**
+The arguements that get passed to a "processEvent" helper function
+*/
+//Note these are made into a record to make operate in the same way
+//for Res, JS and TS.
 @genType
 type eventProcessorArgs<'eventArgs> = {
   event: Types.eventLog<'eventArgs>,
@@ -217,12 +280,30 @@ type eventProcessorArgs<'eventArgs> = {
   chainId?: int,
 }
 
+/**
+An event processor will process an event with a mockDb and return a new mockDb
+with the updated state
+*/
 @genType
 type eventProcessor<'eventArgs> = eventProcessorArgs<'eventArgs> => MockDb.t
 
+/**
+A container type to give an explicit "processEvent" name to the eventProcessor 
+method
+*/
 @genType
 type processEventContainer<'eventArgs> = {processEvent: eventProcessor<'eventArgs>}
 
+
+/**
+The default chain ID to use (ethereum mainnet) if a user does not specify int the 
+eventProcessor helper
+*/
+let \"DEFAULT_CHAIN_ID" = 1
+
+/**
+A function composer to help create individual processEvent functions
+*/
 let makeEventProcessor = (
   ~contextCreator: Context.contextCreator<'eventArgs, 'loaderContext, 'handlerContext>,
   ~getLoader,
@@ -233,8 +314,11 @@ let makeEventProcessor = (
   ~eventName: Types.eventName,
 ): processEventContainer<'eventArgs> => {
   let processEvent = ({event, mockDb, ?chainId}) => {
-    let chainId = chainId->Option.getWithDefault(1)
+    //The user can specify a chainId of an event or leave it off
+    //and it will default to "DEFAULT_CHAIN_ID"
+    let chainId = chainId->Option.getWithDefault(\"DEFAULT_CHAIN_ID")
 
+    //Create an individual logging context for traceability 
     let logger = Logging.createChild(
       ~params={
         "Context": `Test Processor for ${eventName
@@ -245,40 +329,61 @@ let makeEventProcessor = (
       },
     )
 
+    //Deep copy the data in mockDb, mutate the clone and return the clone
+    //So no side effects occur here and state can be compared between process
+    //steps
     let mockDbClone = mockDb->MockDb.cloneMockDb
 
+    //Construct a new instance of an in memory store to run for the given event
     let inMemoryStore = IO.InMemoryStore.make()
 
+    //Construct a context with the inMemory store for the given event to run
+    //loaders and handlers
     let context = contextCreator(~event, ~inMemoryStore, ~chainId, ~logger)
 
     let loaderContext = context.getLoaderContext()
 
     let loader = getLoader()
-    //Run the loader
+
+    //Run the loader, to get all the read values/contract registrations
+    //into the context
     loader(~event, ~context=loaderContext)
 
-    //Get all the values from the mock db and put in the in memory store
+    //Get all the entities are requested to be loaded from the mockDB
     let entitiesToLoad = context.getEntitiesToLoad()
 
+    //Load requested entities from the cloned mockDb into the inMemoryStore
     mockDbClone->MockDb.loadToInMemoryStore(~entitiesToLoad, ~inMemoryStore)
 
+    //Run the event and handler context through the eventRouter
+    //With inMemoryStore
     let handlerContextGetter = context.getHandlerContext
     let eventAndContext: Types.eventRouterEventAndContext = {
       chainId,
       event: eventWithContextAccessor(event, handlerContextGetter),
     }
-
     eventAndContext->EventProcessing.eventRouter(~inMemoryStore)
 
+    //Now that the processing is finished. Simulate writing a batch
+    //(Although in this case a batch of 1 event only) to the cloned mockDb
     mockDbClone->MockDb.writeFromMemoryStore(~inMemoryStore)
 
+    //Return the cloned mock db
     mockDbClone
   }
 
+  //Wrap the processEvent function in the
+  //processEventContainer for easy named access
+  //to the function
   {processEvent: processEvent}
 }
 {{#each contracts as | contract |}}
 
+/**
+All event processors helpers for contract {{contract.name.capitalized}}
+*/
+//Note in TS and JS the object will be capitalized. Wheras rescript it is
+//uncapitalized
 @genType
 type {{contract.name.uncapitalized}}EventProcessors = {
 {{#each contract.events as | event |}}
@@ -287,6 +392,9 @@ type {{contract.name.uncapitalized}}EventProcessors = {
 {{/each}}
 }
 
+/**
+All event processors helpers for contract {{contract.name.capitalized}}
+*/
 let {{contract.name.uncapitalized}}EventProcessors = {
 {{#each contract.events as | event |}}
   {{event.name.uncapitalized}}: makeEventProcessor(
@@ -299,6 +407,9 @@ let {{contract.name.uncapitalized}}EventProcessors = {
 }
 {{/each}}
 
+/**
+All event processor helpers for all contracts
+*/
 @genType
 type eventProcessors = {
 {{#each contracts as | contract |}}
@@ -306,6 +417,9 @@ type eventProcessors = {
 {{/each}}
 }
 
+/**
+All event processor helpers for all contracts
+*/
 @genType
 let eventProcessors = {
 {{#each contracts as | contract |}}
