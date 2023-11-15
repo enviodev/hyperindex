@@ -12,10 +12,16 @@ module InMemoryStore = {
     }
   }
 
+  type stringHasher<'val> = 'val => string
+  type storeState<'entity, 'entityKey> = {
+    dict: Js.Dict.t<Types.inMemoryStoreRow<'entity>>,
+    hasher: stringHasher<'entityKey>,
+  }
+
   module type StoreItem = {
     type t
     type key
-    let hasher: key => string
+    let hasher: stringHasher<key>
   }
 
   //Binding used for deep cloning stores in tests
@@ -24,11 +30,7 @@ module InMemoryStore = {
   module MakeStore = (StoreItem: StoreItem) => {
     type value = StoreItem.t
     type key = StoreItem.key
-    type hasher = StoreItem.key => string
-    type t = {
-      dict: Js.Dict.t<Types.inMemoryStoreRow<StoreItem.t>>,
-      hasher: hasher,
-    }
+    type t = storeState<value, key>
 
     let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
 

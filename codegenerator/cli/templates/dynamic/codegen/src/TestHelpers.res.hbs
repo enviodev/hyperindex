@@ -62,20 +62,21 @@ module MockDb = {
   db operations for each entity.
   */
   let makeStoreOperator = (
-    store: 'store,
-    ~get: ('store, 'key) => option<'entity>,
-    ~values: 'store => array<Types.inMemoryStoreRow<'entity>>,
-    ~set: ('store, ~key: 'key, ~dbOp: Types.dbOp, ~entity: 'entity) => unit,
+    store: IO.InMemoryStore.storeState<'entity, 'key>,
+    ~get: (IO.InMemoryStore.storeState<'entity, 'key>, 'key) => option<'entity>,
+    ~values: IO.InMemoryStore.storeState<'entity, 'key> => array<Types.inMemoryStoreRow<'entity>>,
+    ~set: (
+      IO.InMemoryStore.storeState<'entity, 'key>,
+      ~key: 'key,
+      ~dbOp: Types.dbOp,
+      ~entity: 'entity,
+    ) => unit,
     ~getKey: 'entity => 'key,
   ): storeOperations<'entityKey, 'entity> => {
     getAll: () => store->values->Array.map(row => row.entity),
     get: store->get,
     set: entity => store->set(~key=entity->getKey, ~entity, ~dbOp=Set),
-    delete: key => {
-      let unsafeStore = store->Obj.magic
-      let keyStr = key->unsafeStore["hasher"]
-      unsafeStore["dict"]->deleteDictKey(keyStr)
-    },
+    delete: key => store.dict->deleteDictKey(key->store.hasher),
   }
 
   /**
@@ -186,12 +187,15 @@ module MockDb = {
   let executeRows = (
     mockDb: t,
     ~inMemoryStore: IO.InMemoryStore.t,
-    ~getStore: IO.InMemoryStore.t => 'store,
-    ~getRows: 'store => array<Types.inMemoryStoreRow<'entity>>,
+    ~getStore: IO.InMemoryStore.t => IO.InMemoryStore.storeState<'entity, 'key>,
+    ~getRows: IO.InMemoryStore.storeState<'entity, 'key> => array<Types.inMemoryStoreRow<'entity>>,
     ~getKey: 'entity => 'key,
-    ~getHasher: ('store, 'key) => string,
-    ~getDict: 'store => Js.Dict.t<Types.inMemoryStoreRow<'entity>>,
-    ~setFunction: ('store, ~key: 'key, ~dbOp: Types.dbOp, ~entity: 'entity) => unit,
+    ~setFunction: (
+      IO.InMemoryStore.storeState<'entity, 'key>,
+      ~key: 'key,
+      ~dbOp: Types.dbOp,
+      ~entity: 'entity,
+    ) => unit,
   ) => {
     inMemoryStore
     ->getStore
@@ -200,23 +204,11 @@ module MockDb = {
       let store = mockDb->getInternalDb->getStore
       switch row.dbOp {
       | Set => store->setFunction(~dbOp=Read, ~key=getKey(row.entity), ~entity=row.entity)
-      | Delete =>
-        let keyHasher = store->getHasher
-
-        store->getDict->deleteDictKey(row.entity->getKey->keyHasher)
+      | Delete => store.dict->deleteDictKey(row.entity->getKey->store.hasher)
       | Read => ()
       }
     })
   }
-
-  /**
-  An unsafe function since all stores contain dict and hasher. To be reimplemented
-  in a typesafe way.
-  */
-  let executeStoreRows = executeRows(
-    ~getDict=s => (s->Obj.magic)["dict"],
-    ~getHasher=s => (s->Obj.magic)["hasher"],
-  )
 
   /**
   Simulates the writing of processed data in the inMemoryStore to a mockDb. This function
@@ -225,7 +217,7 @@ module MockDb = {
   let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: IO.InMemoryStore.t) => {
     open IO
     //INTERNAL STORES/TABLES EXECUTION
-    mockDb->executeStoreRows(
+    mockDb->executeRows(
       ~inMemoryStore,
       ~getRows=InMemoryStore.RawEvents.values,
       ~getStore=inMemStore => {inMemStore.rawEvents},
@@ -236,7 +228,7 @@ module MockDb = {
       },
     )
 
-    mockDb->executeStoreRows(
+    mockDb->executeRows(
       ~inMemoryStore,
       ~getStore=inMemStore => {inMemStore.eventSyncState},
       ~getRows=InMemoryStore.EventSyncState.values,
@@ -244,7 +236,7 @@ module MockDb = {
       ~getKey=entity => entity.chainId,
     )
 
-    mockDb->executeStoreRows(
+    mockDb->executeRows(
       ~inMemoryStore,
       ~getRows=InMemoryStore.DynamicContractRegistry.values,
       ~getStore=inMemStore => {inMemStore.dynamicContractRegistry},
@@ -257,7 +249,7 @@ module MockDb = {
 
   //ENTITY EXECUTION
   {{#each entities as | entity |}}
-    mockDb->executeStoreRows(
+    mockDb->executeRows(
       ~inMemoryStore,
       ~getStore=self => {self.{{entity.name.uncapitalized}}},
       ~getRows=IO.InMemoryStore.{{entity.name.capitalized}}.values,
