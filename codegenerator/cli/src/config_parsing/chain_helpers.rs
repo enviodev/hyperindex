@@ -136,8 +136,10 @@ pub enum Network {
     PolygonZkevm = 1101,
     #[subenum(GraphNetwork)]
     ScrollSepolia = 534351,
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, SkarNetwork, NetworkWithExplorer)]
     Scroll = 534352,
+    #[subenum(SkarNetwork)]
+    Metis = 1088,
 }
 
 impl Network {
@@ -206,8 +208,12 @@ impl NetworkWithExplorer {
                 ("api.lineascan.build", "TYCR43IQ5U85DKZXQG8MQIJI7922DVHZX5")
             }
             NetworkWithExplorer::Base => ("api.basescan.org", "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3"),
+            NetworkWithExplorer::Scroll => {
+                ("api.basescan.org", "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3")
+            }
             // TODO: uncomment this out when Celo is supported by Skar or ethArchive
             // NetworkWithExplorer::Celo => ("api.celoscan.io", "D1S1S25RRC9J6ATMSCVYVXXAH2XXZV9ZJK"),
+
         };
 
         BlockExplorerApi {

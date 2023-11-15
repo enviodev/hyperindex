@@ -49,6 +49,8 @@ pub fn network_to_skar_url(network: &SkarNetwork) -> String {
         SkarNetwork::Linea => "https://linea.hypersync.xyz".to_string(),
         SkarNetwork::Sepolia => "https://sepolia.hypersync.xyz".to_string(),
         SkarNetwork::Base => "https://base.hypersync.xyz".to_string(),
+        SkarNetwork::Scroll => "https://scroll.hypersync.xyz".to_string(),
+        SkarNetwork::Metis => "https://metis.hypersync.xyz".to_string(),
     }
 }
 
