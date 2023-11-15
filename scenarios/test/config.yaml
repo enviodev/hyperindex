@@ -1,0 +1,12 @@
+name: uniswap indexer
+description: My Awesome Contract
+networks:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Pool
+        address:
+          - "0x88e6A0c2dDD26FEEb64F039a2c41296FcB3f5640"
+        handler: src/EventHandlers.ts
+        events:
+          - event: Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick)
