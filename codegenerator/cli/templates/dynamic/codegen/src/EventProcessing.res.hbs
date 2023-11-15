@@ -92,7 +92,7 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
   switch event {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context) => {
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, contextGetter) => {
       event->updateEventSyncState(~chainId, ~inMemoryStore)
 
       let jsonSerializedParams =
@@ -106,6 +106,10 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
       )
 
     let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
+    
+    //Call the context getter here, ensures no stale values in the context
+    //Since loaders and previous handlers have already run
+    let context = contextGetter()
 
     try {
       handler(~event, ~context)
@@ -243,14 +247,13 @@ let rec loadReadEntitiesInner = async (
               }
 
             let {logIndex, blockNumber} = event
-            let context = contextHelper.getContext(
-            )
+            let contextGetter = contextHelper.getHandlerContext
 
             let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
 
             (
               contextHelper.getEntitiesToLoad(),
-              Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
+              Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, contextGetter),
               if Belt.Array.length(dynamicContracts) > 0 {
                 Some(
                   await loadNestedReadEntities(

@@ -171,7 +171,7 @@ module {{event.name.capitalized}}Event = {
     }
     {{/each}}
     @genType
-    type context = {
+    type handlerContext = {
       log: Logs.userLogger,
       {{#each ../../entities as | entity |}}
         @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
@@ -224,12 +224,17 @@ type event =
 {{/each}}
 {{/each}}
 
+//This needs to pass a getter rather than the context since some
+//values in the context could be stale if the getter is not called after
+//the loader has run
+type handlerContextGetter<'context> = () => 'context
 type eventAndContext =
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(
       eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-      {{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context
+      //See type handlerContextGetter alias
+      handlerContextGetter<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext>
       )
 {{/each}}
 {{/each}}

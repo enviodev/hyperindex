@@ -51,7 +51,7 @@ module {{contract.name.capitalized}}Contract = {
     @genType
     let handler = (userHandler: (
       ~event: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context,
+      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext,
     ) => unit) => {
       {{event.name.uncapitalized}}Handler := Some(userHandler)
     }
