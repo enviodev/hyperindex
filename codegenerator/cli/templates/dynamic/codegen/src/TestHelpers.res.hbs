@@ -405,7 +405,7 @@ All event processor helpers for all contracts
 @genType
 type eventProcessors = {
 {{#each contracts as | contract |}}
-  @as("{{contract.name.capitalized}}") {{contract.name.uncapitalized}}: {{contract.name.uncapitalized}}EventProcessors
+  @as("{{contract.name.capitalized}}") {{contract.name.uncapitalized}}: {{contract.name.uncapitalized}}EventProcessors,
 {{/each}}
 }
 
