@@ -1,5 +1,0 @@
-type Account @entity {
-  id: ID!
-  approval: BigInt!
-  balance: BigInt!
-}
