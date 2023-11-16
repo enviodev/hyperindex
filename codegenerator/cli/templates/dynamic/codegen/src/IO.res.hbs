@@ -201,11 +201,9 @@ let loadEntities = async (
   {{#each entities as | entity |}}
     if unique{{entity.name.capitalized}}AsEntityFieldArray.contents->Array.length > 0 {
       let {{entity.name.uncapitalized}}FieldEntitiesArray =
-        await sql->DbFunctions.{{entity.name.capitalized}}.read{{entity.name.capitalized}}Entities(unique{{entity.name.capitalized}}AsEntityFieldArray.contents)
+        await sql->DbFunctions.{{entity.name.capitalized}}.readEntities(unique{{entity.name.capitalized}}AsEntityFieldArray.contents)
 
-      {{entity.name.uncapitalized}}FieldEntitiesArray->Belt.Array.forEach(readRow => {
-        let {entity} = DbFunctions.{{entity.name.capitalized}}.readRowToReadEntityData(readRow)
-
+      {{entity.name.uncapitalized}}FieldEntitiesArray->Belt.Array.forEach(entity => {
         inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(
           ~key=entity.id,
           ~entity,
@@ -253,32 +251,32 @@ let executeSetSchemaEntity = (~entityEncoder) =>
 
 let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
   let setEventSyncState = executeSet(
-    ~dbFunction=DbFunctions.EventSyncState.batchSetEventSyncState,
+    ~dbFunction=DbFunctions.EventSyncState.batchSet,
     ~getInputValFromRow=row => row.entity,
     ~rows=inMemoryStore.eventSyncState->InMemoryStore.EventSyncState.values,
   )
 
   let setRawEvents = executeSet(
-    ~dbFunction=DbFunctions.RawEvents.batchSetRawEvents,
+    ~dbFunction=DbFunctions.RawEvents.batchSet,
     ~getInputValFromRow=row => row.entity,
     ~rows=inMemoryStore.rawEvents->InMemoryStore.RawEvents.values,
   )
 
   let setDynamicContracts = executeSet(
-    ~dbFunction=DbFunctions.DynamicContractRegistry.batchSetDynamicContractRegistry,
+    ~dbFunction=DbFunctions.DynamicContractRegistry.batchSet,
     ~rows=inMemoryStore.dynamicContractRegistry->InMemoryStore.DynamicContractRegistry.values,
     ~getInputValFromRow={row => row.entity},
   )
 
   {{#each entities as | entity |}}
   let delete{{entity.name.capitalized}}s = executeDelete(
-    ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchDelete{{entity.name.capitalized}},
+    ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchDelete,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
     ~getInputValFromRow={row => row.entity.id},
   )
 
   let set{{entity.name.capitalized}}s = executeSetSchemaEntity(
-    ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchSet{{entity.name.capitalized}},
+    ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchSet,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
     ~entityEncoder=Types.{{entity.name.uncapitalized}}Entity_encode,
   )

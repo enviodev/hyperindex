@@ -50,22 +50,22 @@ module EventSyncState = {
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSetEventSyncState: (Postgres.sql, array<eventSyncState>) => promise<unit> =
+  external batchSet: (Postgres.sql, array<eventSyncState>) => promise<unit> =
     "batchSetEventSyncState"
 }
 
 module RawEvents = {
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")
-  external batchSetRawEvents: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> =
+  external batchSet: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> =
     "batchSetRawEvents"
 
   @module("./DbFunctionsImplementation.js")
-  external batchDeleteRawEvents: (Postgres.sql, array<rawEventRowId>) => promise<unit> =
+  external batchDelete: (Postgres.sql, array<rawEventRowId>) => promise<unit> =
     "batchDeleteRawEvents"
 
   @module("./DbFunctionsImplementation.js")
-  external readRawEventsEntities: (
+  external readEntities: (
     Postgres.sql,
     array<rawEventRowId>,
   ) => promise<array<Types.rawEventsEntity>> = "readRawEventsEntities"
@@ -107,25 +107,25 @@ module DynamicContractRegistry = {
   type contractAddress = Ethers.ethAddress
   type dynamicContractRegistryRowId = (chainId, contractAddress)
   @module("./DbFunctionsImplementation.js")
-  external batchSetDynamicContractRegistry: (Postgres.sql, array<Types.dynamicContractRegistryEntity>) => promise<unit> =
+  external batchSet: (Postgres.sql, array<Types.dynamicContractRegistryEntity>) => promise<unit> =
     "batchSetDynamicContractRegistry"
 
   @module("./DbFunctionsImplementation.js")
-  external batchDeleteDynamicContractRegistry: (Postgres.sql, array<dynamicContractRegistryRowId>) => promise<unit> =
+  external batchDelete: (Postgres.sql, array<dynamicContractRegistryRowId>) => promise<unit> =
     "batchDeleteDynamicContractRegistry"
 
   @module("./DbFunctionsImplementation.js")
-  external readDynamicContractRegistryEntities: (
+  external readEntities: (
     Postgres.sql,
     array<dynamicContractRegistryRowId>,
   ) => promise<array<Types.dynamicContractRegistryEntity>> = "readDynamicContractRegistryEntities"
-
 
   type contractTypeAndAddress = {
     @as("contract_address") contractAddress: Ethers.ethAddress,
     @as("contract_type") contractType: string,
     @as("event_id") eventId: Ethers.BigInt.t,
   }
+
   ///Returns an array with 1 block number (the highest processed on the given chainId)
   @module("./DbFunctionsImplementation.js")
   external readDynamicContractsOnChainIdAtOrBeforeBlock: (
@@ -137,52 +137,33 @@ module DynamicContractRegistry = {
  
 }
 
-type readEntityData<'a> = {
-   entity: 'a,
-}
-
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   open Types
-  @spice
-  type {{entity.name.uncapitalized}}ReadRow = {
-  {{#each entity.params as |param|}}
-    {{#unless param.is_derived_from}}
-      {{param.key}} : {{param.type_rescript}},
-    {{/unless}}
-  {{/each}}
-  }
 
-  let readRowToReadEntityData = (readRowJson: Js.Json.t): readEntityData<Types.{{entity.name.uncapitalized}}Entity> => {
-    let readRow = switch readRowJson->{{entity.name.uncapitalized}}ReadRow_decode {
+  let decodeUnsafe = (entityJson: Js.Json.t): {{entity.name.uncapitalized}}Entity => {
+    let entityDecoded = switch entityJson->{{entity.name.uncapitalized}}Entity_decode {
         | Ok(v) => Ok(v)
         | Error(e) =>
-          Logging.error({"err":e, "msg": "EE700: Unable to parse row from database of entity {{entity.name.uncapitalized}} using spice", "raw_unparsed_object": readRowJson })
+          Logging.error({"err":e, "msg": "EE700: Unable to parse row from database of entity {{entity.name.uncapitalized}} using spice", "raw_unparsed_object": entityJson })
           Error(e)
       }->Belt.Result.getExn
 
-    let {
-      {{#each entity.params as | param |}}
-      {{#unless param.is_derived_from}}{{param.key}},{{/unless}}
-      {{/each}}
-    } = readRow
-
-    {
-      entity: {
-        {{#each entity.params as | param |}}
-        {{#unless param.is_derived_from}}{{param.key}},{{/unless}}
-        {{/each}}
-      },
-    }
+    entityDecoded
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSet{{entity.name.capitalized}}: (Postgres.sql, array<Js.Json.t>) => promise<(unit)> = "batchSet{{entity.name.capitalized}}"
+  external batchSet: (Postgres.sql, array<Js.Json.t>) => promise<(unit)> = "batchSet{{entity.name.capitalized}}"
 
   @module("./DbFunctionsImplementation.js")
-  external batchDelete{{entity.name.capitalized}}: (Postgres.sql, array<Types.id>) => promise<(unit)> = "batchDelete{{entity.name.capitalized}}"
+  external batchDelete: (Postgres.sql, array<Types.id>) => promise<(unit)> = "batchDelete{{entity.name.capitalized}}"
 
   @module("./DbFunctionsImplementation.js")
-  external read{{entity.name.capitalized}}Entities: (Postgres.sql, array<Types.id>) => promise<array<Js.Json.t>> = "read{{entity.name.capitalized}}Entities"
+  external readEntitiesFromDb: (Postgres.sql, array<Types.id>) => promise<array<Js.Json.t>> = "read{{entity.name.capitalized}}Entities"
+
+  let readEntities = async (sql: Postgres.sql, ids: array<Types.id>): array<{{entity.name.uncapitalized}}Entity> => {
+    let res = await readEntitiesFromDb(sql, ids)
+    res->Belt.Array.map(entityJson => entityJson->decodeUnsafe)
+  }
 }
 {{/each}}
