@@ -402,7 +402,11 @@ pub fn is_rescript(config: &SystemConfig) -> anyhow::Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{EventNameOrSig, LocalContractConfig, NetworkContractConfig, NormalizedList};
+    use std::path::PathBuf;
+
+    use super::{
+        EventNameOrSig, HumanConfig, LocalContractConfig, NetworkContractConfig, NormalizedList,
+    };
     use ethers::abi::{Event, EventParam, ParamType};
 
     #[test]
@@ -420,6 +424,51 @@ events: []
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
             ]),
+            local_contract_config: Some(LocalContractConfig {
+                abi_file_path: None,
+                handler: "./src/EventHandler.js".to_string(),
+                events: vec![],
+            }),
+        };
+
+        assert_eq!(expected, deserialized);
+    }
+
+    #[test]
+    fn test_flatten_deserialize_local_contract_with_no_address() {
+        let yaml = r#"
+name: Contract1
+handler: ./src/EventHandler.js
+events: []
+    "#;
+
+        let deserialized: NetworkContractConfig = serde_yaml::from_str(yaml).unwrap();
+        let expected = NetworkContractConfig {
+            name: "Contract1".to_string(),
+            address: vec![].into(),
+            local_contract_config: Some(LocalContractConfig {
+                abi_file_path: None,
+                handler: "./src/EventHandler.js".to_string(),
+                events: vec![],
+            }),
+        };
+
+        assert_eq!(expected, deserialized);
+    }
+
+    #[test]
+    fn test_flatten_deserialize_local_contract_with_single_address() {
+        let yaml = r#"
+name: Contract1
+handler: ./src/EventHandler.js
+address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
+events: []
+    "#;
+
+        let deserialized: NetworkContractConfig = serde_yaml::from_str(yaml).unwrap();
+        let expected = NetworkContractConfig {
+            name: "Contract1".to_string(),
+            address: vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()].into(),
             local_contract_config: Some(LocalContractConfig {
                 abi_file_path: None,
                 handler: "./src/EventHandler.js".to_string(),
@@ -533,5 +582,21 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(name_with_space, expected_name_with_space);
         assert_eq!(name_with_special_chars, expected_name_with_special_chars);
         assert_eq!(name_with_numbers, expected_name_with_numbers);
+    }
+
+    #[test]
+    fn deserializes_factory_contract_config() {
+        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test/configs/factory-contract-config.yaml");
+
+        let file_str = std::fs::read_to_string(config_path).unwrap();
+
+        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
+
+        println!("{:?}", cfg.networks[0].contracts[0]);
+
+        assert!(cfg.networks[0].contracts[0].local_contract_config.is_some());
+        assert!(cfg.networks[0].contracts[1].local_contract_config.is_some());
+        assert_eq!(cfg.networks[0].contracts[1].address, None.into());
     }
 }

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(untagged)]
-enum SingleOrList<T: Clone> {
+pub enum SingleOrList<T: Clone> {
     Single(T),
     List(Vec<T>),
 }
@@ -16,22 +16,15 @@ impl<T: Clone> From<SingleOrList<T>> for Vec<T> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-struct OptSingleOrList<T: Clone>(Option<SingleOrList<T>>);
+type OptSingleOrList<T> = Option<SingleOrList<T>>;
 
-impl<T: Clone> From<OptSingleOrList<T>> for Vec<T> {
-    fn from(single_or_list: OptSingleOrList<T>) -> Self {
-        single_or_list.0.map_or_else(|| vec![], |v| v.into())
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(from = "OptSingleOrList<T>")]
 pub struct NormalizedList<T: Clone>(Vec<T>);
 
 impl<T: Clone> From<OptSingleOrList<T>> for NormalizedList<T> {
     fn from(single_or_list: OptSingleOrList<T>) -> Self {
-        NormalizedList(single_or_list.0.map_or_else(|| vec![], |v| v.into()))
+        NormalizedList(single_or_list.map_or_else(|| vec![], |v| v.into()))
     }
 }
 
@@ -52,5 +45,66 @@ impl<T: Clone> IntoIterator for NormalizedList<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{NormalizedList, OptSingleOrList};
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct TestStruct {
+        val: i32,
+        list_val: NormalizedList<i32>,
+    }
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct TestStruct2 {
+        val: i32,
+        list_val: OptSingleOrList<i32>,
+    }
+
+    #[test]
+    fn deserializes_from_list() {
+        let json = r#"{"val": 1, "list_val": [2]}"#;
+        let de: TestStruct = serde_json::from_str(json).unwrap();
+        let expected = TestStruct {
+            val: 1,
+            list_val: vec![2].into(),
+        };
+        assert_eq!(expected, de);
+    }
+
+    #[test]
+    fn deserializes_from_single() {
+        let json = r#"{"val": 1, "list_val": 2}"#;
+        let de: TestStruct = serde_json::from_str(json).unwrap();
+        let expected = TestStruct {
+            val: 1,
+            list_val: vec![2].into(),
+        };
+        assert_eq!(expected, de);
+    }
+
+    #[test]
+    fn deserializes_from_none() {
+        let json = r#"{"val": 1}"#;
+        let de: TestStruct = serde_json::from_str(json).unwrap();
+        let expected = TestStruct {
+            val: 1,
+            list_val: vec![].into(),
+        };
+        assert_eq!(expected, de);
+    }
+
+    #[test]
+    fn deserializes_opt_single_list_from_none() {
+        let json = r#"{"val": 1}"#;
+        let de: TestStruct2 = serde_json::from_str(json).unwrap();
+        let expected = TestStruct2 {
+            val: 1,
+            list_val: None,
+        };
+        assert_eq!(expected, de);
     }
 }
