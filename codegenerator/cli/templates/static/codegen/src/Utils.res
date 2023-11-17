@@ -86,3 +86,101 @@ module Tuple = {
   @warning("-27")
   let get = (tuple: 'a, index: int): option<'b> => %raw(`tuple[index]`)
 }
+
+/**
+Used for an ordered key value insert, where only unique values by
+key are added and they can be iterated over in the same insertion
+order.
+*/
+module UniqueArray = {
+  type keyHasher<'key> = 'key => string
+
+  type t_custom<'key, 'val> = {
+    dict: Js.Dict.t<'val>,
+    idArr: Js.Array2.t<'val>,
+    keyHasher: keyHasher<'key>,
+  }
+
+  type t<'val> = t_custom<string, 'val>
+
+  let emptyCustom = (~keyHasher: keyHasher<'key>): t_custom<'key, 'val> => {
+    dict: Js.Dict.empty(),
+    idArr: [],
+    keyHasher,
+  }
+  let empty = (): t<'val> => emptyCustom(~keyHasher=Obj.magic)
+
+  let push = (self: t_custom<'key, 'val>, key: 'key, val: 'val) => {
+    let id = key->self.keyHasher
+    if self.dict->Js.Dict.get(id)->Belt.Option.isNone {
+      self.dict->Js.Dict.set(id, val)
+      self.idArr->Js.Array2.push(id)->ignore
+    }
+  }
+
+  let getIndex = (self: t_custom<'key, 'val>, index: int): option<'val> => {
+    self.idArr->Belt.Array.get(index)->Belt.Option.flatMap(id => self.dict->Js.Dict.get(id))
+  }
+
+  let getKey = (self: t_custom<'key, 'val>, key: 'key) => {
+    let id = key->self.keyHasher
+    self.dict->Js.Dict.get(id)
+  }
+
+  let forEach = (self: t_custom<'key, 'val>, fn: 'val => unit): unit => {
+    self.idArr->Belt.Array.forEach(id => {
+      let optVal = self.dict->Js.Dict.get(id)
+      switch optVal {
+      | Some(val) => val->fn
+      | None => () // unexpected
+      }
+    })
+    ()
+  }
+
+  let map = (self: t_custom<'key, 'val>, fn: 'val => 'valB): t_custom<'key, 'valB> => {
+    let newSelf = emptyCustom(~keyHasher=self.keyHasher)
+    self.idArr->Belt.Array.forEach(id => {
+      let optVal = self.dict->Js.Dict.get(id)
+      switch optVal {
+      | Some(val) => {
+          let mapped = val->fn
+          newSelf.dict->Js.Dict.set(id, mapped)
+          newSelf.idArr->Js.Array2.push(id)->ignore
+        }
+      | None => () // unexpected
+      }
+    })
+    newSelf
+  }
+
+  let values = (self: t_custom<'key, 'val>): array<'val> => {
+    let arr = []
+    self.idArr->Belt.Array.forEach(id => {
+      let optVal = self.dict->Js.Dict.get(id)
+      switch optVal {
+      | Some(val) => arr->Js.Array2.push(val)->ignore
+      | None => () // unexpected
+      }
+    })
+    arr
+  }
+
+  let extend = (self: t_custom<'key, 'val>, key: 'key, val: 'val): t_custom<'key, 'val> => {
+    let id = key->self.keyHasher
+    if self.dict->Js.Dict.get(id)->Belt.Option.isNone {
+      let dictEntries = self.dict->Js.Dict.entries
+      dictEntries->Js.Array2.push((id, val))->ignore
+      let newDict = dictEntries->Js.Dict.fromArray
+      let newIdArr = self.idArr->Belt.Array.concat([id])
+
+      {
+        ...self,
+        dict: newDict,
+        idArr: newIdArr,
+      }
+    } else {
+      self
+    }
+  }
+}

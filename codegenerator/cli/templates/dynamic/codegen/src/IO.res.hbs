@@ -117,110 +117,157 @@ module InMemoryStore = {
   }
 }
 
-type uniqueEntityReadIds = Js.Dict.t<Types.id>
-type allEntityReads = Js.Dict.t<uniqueEntityReadIds>
 
-let loadEntities = async (
-  sql,
+module LoadLayer = {
+  type idsToLoad = Utils.UniqueArray.t<Types.id>
+  type rec dataLoadedActionsGetters = array<dataLoadedActionsGetter>
+  and dataLoadedActionsGetter = unit => array<t => t>
+  and t = {
+    dataLoadedActionsGetters: dataLoadedActionsGetters,
+  {{#each entities as | entity |}}
+    {{entity.name.uncapitalized}}IdsToLoad: idsToLoad,
+  {{/each}}
+  }
+
+  let emptyLoadLayer = () => {
+  {{#each entities as | entity |}}
+    {{entity.name.uncapitalized}}IdsToLoad: Utils.UniqueArray.empty(),
+  {{/each}}
+    dataLoadedActionsGetters: [],
+  }
+
+  let extendIdsToLoad = (idsToLoad: idsToLoad, entityId: Types.id): idsToLoad =>
+    idsToLoad->Utils.UniqueArray.extend(entityId, entityId)
+
+  let extendDataLoadedActionsGetters = (
+    dataLoadedActionsGetters: dataLoadedActionsGetters,
+    newDataLoadedActionsGetters: dataLoadedActionsGetters,
+  ): dataLoadedActionsGetters =>
+    dataLoadedActionsGetters->Belt.Array.concat(newDataLoadedActionsGetters)
+}
+
+let rec{{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
+  loadLayer: LoadLayer.t,
+  ~entityId: string,
   ~inMemoryStore: InMemoryStore.t,
-  ~entityBatch: array<Types.entityRead>,
-) => {
-  let loadLayer = ref(false)
+  ~{{entity.name.uncapitalized}}LoaderConfig: Types.{{entity.name.uncapitalized}}LoaderConfig,
+): LoadLayer.t => {
+  {{#if entity.relational_params.filtered_not_derived_from.[0]}}
+  let dataLoadedActionsGetters = [
+  {{#each entity.relational_params.filtered_not_derived_from as | relational_param |}}
+    {{entity.name.uncapitalized}}LoaderConfig.load{{relational_param.relational_key.capitalized}}->Belt.Option.map({{relational_param.mapped_entity.uncapitalized}}LoaderConfig => {
+      () =>
+      inMemoryStore.{{entity.name.uncapitalized}}
+      ->InMemoryStore.{{entity.name.capitalized}}.get(entityId)
+      ->Belt.Option.mapWithDefault([],entity => {
 
-  {{#each entities as | entity |}}
-  let unique{{entity.name.capitalized}}Dict = Js.Dict.empty()
-  {{/each}}
-
-  let populateLoadAsEntityFunctions: ref<array<unit => unit>> = ref([])
-
-  {{#each entities as | entity |}}
-  let unique{{entity.name.capitalized}}AsEntityFieldArray: ref<array<string>> = ref([])
-  {{/each}}
-
-  @warning("-39")
-
-  let rec{{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
-    entityId: string,
-    {{#if entity.relational_params.filtered_not_derived_from.[0]}}{{entity.name.uncapitalized}}Load: Types.{{entity.name.uncapitalized}}LoaderConfig,{{/if}}
-  ) => {
-    if (!loadLayer.contents) {
-      // NOTE: Always set this to true if it is false, I'm sure there are optimizations. Correctness over optimization for now.
-      loadLayer := true
-    }
-    if Js.Dict.get(unique{{entity.name.capitalized}}Dict, entityId)->Belt.Option.isNone {
-      let _ = unique{{entity.name.capitalized}}AsEntityFieldArray.contents->Js.Array2.push(entityId)
-      let _ = Js.Dict.set(unique{{entity.name.capitalized}}Dict, entityId, entityId)
-    }
-
-    {{#each entity.relational_params.filtered_not_derived_from as | relational_param |}}
-    //Loader is not used in every generated case
-    //Suppressing unused variable warning 27 for these cases
-    @warning("-27")
-    switch {{entity.name.uncapitalized}}Load.load{{relational_param.relational_key.capitalized}} {
-    | Some(load{{relational_param.mapped_entity.capitalized}}) =>
-      let _ = populateLoadAsEntityFunctions.contents->Js.Array2.push(() => {
-        let _ = inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.get(entityId)->Belt.Option.map(
-          {{entity.name.uncapitalized}}Entity => {
-            {{#if (eq relational_param.relationship_type "array")}}
-              let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Array.map(
-                    {{relational_param.relational_key.uncapitalized}}Id =>
-                {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}})
-              )
-            {{else}}
-              {{#if relational_param.is_optional}}
-                let _ = {{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}->Belt.Option.map(
-                  {{relational_param.relational_key.uncapitalized}}Id =>
-                    {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{relational_param.relational_key.uncapitalized}}Id, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}})
-                )
-              {{else}}
-                let _ = {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader({{entity.name.uncapitalized}}Entity.{{relational_param.relational_key.uncapitalized}}, {{#each ../../entities as | internal_entity |}}{{#if (eq internal_entity.name.capitalized relational_param.mapped_entity.capitalized)}}{{#if internal_entity.relational_params.filtered_not_derived_from.[0]}}load{{relational_param.mapped_entity.capitalized}}, {{/if}}{{/if}}{{/each}})
-              {{/if}}
-            {{/if}}
-          })
+        let getLoader = 
+              (entityId) => 
+                {{relational_param.mapped_entity.uncapitalized}}LinkedEntityLoader(
+                    ~{{relational_param.mapped_entity.uncapitalized}}LoaderConfig,
+                    ~entityId,
+                    ~inMemoryStore
+                  )
+    {{#if (eq relational_param.relationship_type "array")}}
+        entity.{{relational_param.relational_key.uncapitalized}}->Belt.Array.map(entityId => entityId->getLoader)
+    {{else}}
+      {{#if relational_param.is_optional}}
+        entity.{{relational_param.relational_key.uncapitalized}}->Belt.Option.mapWithDefault([], entityId => [entityId->getLoader])
+      {{else}}
+        [entity.{{relational_param.relational_key.uncapitalized}}->getLoader]
+      {{/if}}
+    {{/if}}
       })
-    | None => ()
+    }),
+  {{/each}}
+    ]->Belt.Array.keepMap(v => v)
+
+  {
+    ...loadLayer,
+    {{entity.name.uncapitalized}}IdsToLoad: loadLayer.{{entity.name.uncapitalized}}IdsToLoad->LoadLayer.extendIdsToLoad(entityId),
+    dataLoadedActionsGetters: loadLayer.dataLoadedActionsGetters->LoadLayer.extendDataLoadedActionsGetters(
+      dataLoadedActionsGetters,
+    ),
+  }
+  {{else}}
+  //No side dataLoadedActionsGetters need to happen on the in memory
+  //since there are no relational non-derivedfrom params
+  let _ = inMemoryStore //ignore inMemoryStore and stop warning
+  //In this case the "{{entity.name.uncapitalized}}LoaderConfig" type is a boolean.
+  if !{{entity.name.uncapitalized}}LoaderConfig {
+    //If {{entity.name.uncapitalized}}LoaderConfig is false, don't load the entity
+    //simply return the current load layer
+    loadLayer
+  } else {
+    //If {{entity.name.uncapitalized}}LoaderConfig is true, 
+    //extend the entity ids to load field
+    //There can be no dataLoadedActionsGetters to add since this type does not contain
+    //any non derived from relational params
+    {
+      ...loadLayer,
+      {{entity.name.uncapitalized}}IdsToLoad: loadLayer.{{entity.name.uncapitalized}}IdsToLoad->LoadLayer.extendIdsToLoad(entityId),
     }
-    {{/each}}
-    ()
-  }{{/each}}
+  }
+  {{/if}}
+}
+{{/each}}
 
-  @warning("+39")
-
-  entityBatch->Belt.Array.forEach(readEntity => {
-        switch readEntity {
+let getLoadLayer = (~entityBatch: array<Types.entityRead>, ~inMemoryStore) => {
+  entityBatch->Belt.Array.reduce(LoadLayer.emptyLoadLayer(), (loadLayer, readEntity) => {
+    switch readEntity {
     {{#each entities as | entity |}}
-    | {{entity.name.capitalized}}Read(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}Load{{/if}}) =>
-      {{entity.name.uncapitalized}}LinkedEntityLoader(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}Load{{/if}})
+    | {{entity.name.capitalized}}Read(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}}) =>
+      loadLayer->{{entity.name.uncapitalized}}LinkedEntityLoader(~entityId, ~inMemoryStore, ~{{entity.name.uncapitalized}}LoaderConfig{{#unless entity.relational_params.filtered_not_derived_from.[0]}}=true{{/unless}})
     {{/each}}
     }
   })
+}
 
-  while loadLayer.contents {
-    loadLayer := false
+type nextLayer = NextLayer(LoadLayer.t) | LastLayer
 
+let executeLoadLayer = async (
+  ~sql,
+  ~loadLayer: LoadLayer.t,
+  ~inMemoryStore: InMemoryStore.t,
+): nextLayer => {
+  //Load in entities
   {{#each entities as | entity |}}
-    if unique{{entity.name.capitalized}}AsEntityFieldArray.contents->Array.length > 0 {
-      let {{entity.name.uncapitalized}}FieldEntitiesArray =
-        await sql->DbFunctions.{{entity.name.capitalized}}.readEntities(unique{{entity.name.capitalized}}AsEntityFieldArray.contents)
-
-      {{entity.name.uncapitalized}}FieldEntitiesArray->Belt.Array.forEach(entity => {
-        inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(
-          ~key=entity.id,
-          ~entity,
-          ~dbOp=Types.Read,
-        )
+  switch loadLayer.{{entity.name.uncapitalized}}IdsToLoad->Utils.UniqueArray.values {
+  | [] => () //Check if there are values so we don't create an unnecessary empty query
+  | idsToLoad => {
+      let entities = await sql->DbFunctions.{{entity.name.capitalized}}.readEntities(idsToLoad)
+      entities->Belt.Array.forEach(entity => {
+        inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(~key=entity.id, ~entity, ~dbOp=Types.Read)
       })
-
-      unique{{entity.name.capitalized}}AsEntityFieldArray := []
     }
+  }
   {{/each}}
 
-  let functionsToExecute = populateLoadAsEntityFunctions.contents
-
-  populateLoadAsEntityFunctions := []
-
-  functionsToExecute->Belt.Array.forEach(func => func())
+  //Run data loaded actions
+  switch loadLayer.dataLoadedActionsGetters {
+  | [] => LastLayer
+  | dataLoadedActionsGetters =>
+    dataLoadedActionsGetters
+    ->Belt.Array.reduce(LoadLayer.emptyLoadLayer(), (loadLayer, getLoadedActions) => {
+      //call getLoadedActions returns array of of actions to run against the load layer
+      getLoadedActions()->Belt.Array.reduce(loadLayer, (loadLayer, action) => {
+        action(loadLayer)
+      })
+    })
+    ->NextLayer
   }
+}
+
+let rec executeNestedLoadLayers = async (~loadLayer, ~sql, ~inMemoryStore) => {
+  switch await executeLoadLayer(~inMemoryStore, ~loadLayer, ~sql) {
+  | LastLayer => ()
+  | NextLayer(loadLayer) => await executeNestedLoadLayers(~loadLayer, ~sql, ~inMemoryStore)
+  }
+}
+
+let loadEntitiesToInMemStore = async (sql, ~entityBatch, ~inMemoryStore) => {
+  let loadLayer = getLoadLayer(~inMemoryStore, ~entityBatch)
+  await executeNestedLoadLayers(~inMemoryStore, ~sql, ~loadLayer)
 }
 
 let executeEntityFunction = (

@@ -43,7 +43,7 @@ describe("E2E Db check", () => {
   before_promise(async () => {
     RegisterHandlers.registerAllHandlers()
 
-    let _ = await DbFunctions.Gravatar.batchSetGravatar(
+    let _ = await DbFunctions.Gravatar.batchSet(
       Migrations.sql,
       [MockEntities.gravatarSerialized1, MockEntities.gravatarSerialized2],
     )

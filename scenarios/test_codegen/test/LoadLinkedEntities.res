@@ -28,18 +28,6 @@ describe("Linked Entity Loader Integration Test", () => {
 
   MochaPromise.it("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
     let sql = DbFunctions.sql
-
-    // NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
-    let createEventA = entity => {
-      entity->Types.aEntity_encode
-    }
-    let createEventB = entity => {
-      entity->Types.bEntity_encode
-    }
-    let createEventC = entity => {
-      entity->Types.cEntity_encode
-    }
-
     /// Setup DB
     let a1: Types.aEntity = {optionalBigInt: None, id: "a1", b: "b1"}
     let a2: Types.aEntity = {optionalBigInt: None, id: "a2", b: "b2"}
@@ -66,9 +54,9 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "TODO_TURN_THIS_INTO_NONE", a: "aWontLoad"},
     ]
 
-    await DbFunctions.A.batchSetA(sql, aEntities->Belt.Array.map(createEventA))
-    await DbFunctions.B.batchSetB(sql, bEntities->Belt.Array.map(createEventB))
-    await DbFunctions.C.batchSetC(sql, cEntities->Belt.Array.map(createEventC))
+    await DbFunctions.A.batchSet(sql, aEntities->Belt.Array.map(Types.aEntity_encode))
+    await DbFunctions.B.batchSet(sql, bEntities->Belt.Array.map(Types.bEntity_encode))
+    await DbFunctions.C.batchSet(sql, cEntities->Belt.Array.map(Types.cEntity_encode))
 
     let inMemoryStore = IO.InMemoryStore.make()
 
@@ -88,7 +76,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let entitiesToLoad = context.getEntitiesToLoad()
 
-    await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=entitiesToLoad)
+    await DbFunctions.sql->IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
     let handlerContext = context.getHandlerContext()
     let testingA = handlerContext.a.all
@@ -105,7 +93,7 @@ describe("Linked Entity Loader Integration Test", () => {
     // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
     let b1 = handlerContext.a.getB(a1)
 
-    Assert.equal(b1.id, a1.b, ~message="b1.id should equal testingA.b")
+    Assert.deep_equal(b1.id, a1.b, ~message="b1.id should equal testingA.b")
 
     let c1 = handlerContext.b.getC(b1)
     Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
@@ -162,9 +150,9 @@ describe("Linked Entity Loader Integration Test", () => {
     ]
     let cEntities: array<Types.cEntity> = [{id: "c1", a: "aWontLoad"}]
 
-    await DbFunctions.A.batchSetA(sql, aEntities->Belt.Array.map(createEventA))
-    await DbFunctions.B.batchSetB(sql, bEntities->Belt.Array.map(createEventB))
-    await DbFunctions.C.batchSetC(sql, cEntities->Belt.Array.map(createEventC))
+    await DbFunctions.A.batchSet(sql, aEntities->Belt.Array.map(createEventA))
+    await DbFunctions.B.batchSet(sql, bEntities->Belt.Array.map(createEventB))
+    await DbFunctions.C.batchSet(sql, cEntities->Belt.Array.map(createEventC))
 
     let inMemoryStore = IO.InMemoryStore.make()
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
@@ -183,12 +171,12 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let entitiesToLoad = context.getEntitiesToLoad()
 
-    await DbFunctions.sql->IO.loadEntities(~inMemoryStore, ~entityBatch=entitiesToLoad)
+    await DbFunctions.sql->IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
     let handlerContext = context.getHandlerContext()
     let testingA = handlerContext.a.all
 
-    Assert.deep_equal(testingA, [Some(a1)], ~message="testingA should have correct entities")
+    Assert.deep_equal([Some(a1)], testingA, ~message="testingA should have correct entities")
 
     let optA1 = testingA->Belt.Array.getUnsafe(0)
     Assert.deep_equal(optA1, Some(a1), ~message="Incorrect entity loaded")
