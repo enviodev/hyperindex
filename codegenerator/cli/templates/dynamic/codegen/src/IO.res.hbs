@@ -120,7 +120,7 @@ module InMemoryStore = {
 
 module LoadLayer = {
   /**The ids to load for a particular entity*/
-  type idsToLoad = Utils.UniqueArray.t<Types.id>
+  type idsToLoad = Belt.Set.String.t
 
   /**
   A round of entities to load from the DB. Depending on what entities come back
@@ -147,14 +147,14 @@ module LoadLayer = {
   /**Instantiates a load layer*/
   let emptyLoadLayer = () => {
   {{#each entities as | entity |}}
-    {{entity.name.uncapitalized}}IdsToLoad: Utils.UniqueArray.empty(),
+    {{entity.name.uncapitalized}}IdsToLoad: Belt.Set.String.empty,
   {{/each}}
     dataLoadedActionsGetters: [],
   }
 
   /*Helper to append an ID to load for a given entity to the loadLayer*/
   let extendIdsToLoad = (idsToLoad: idsToLoad, entityId: Types.id): idsToLoad =>
-    idsToLoad->Utils.UniqueArray.extend(entityId, entityId)
+    idsToLoad->Belt.Set.String.add(entityId)
 
   /*Helper to append a getter for DataLoadedActions to load for a given entity to the loadLayer*/
   let extendDataLoadedActionsGetters = (
@@ -167,6 +167,7 @@ module LoadLayer = {
 /**
 Loader functions for each entity. The loader function extends a load layer with the given id and config.
 */
+@warning("-39") //remove warning 39 for unused "rec" flag in case of no other related loaders
 let rec{{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/unless}} {{entity.name.uncapitalized}}LinkedEntityLoader = (
   loadLayer: LoadLayer.t,
   ~entityId: string,
@@ -340,7 +341,7 @@ let makeEntityExecuterComposer = (
 ) => {
   idsToLoad,
   executor: idsToLoad => {
-    switch idsToLoad->Utils.UniqueArray.values {
+    switch idsToLoad->Belt.Set.String.toArray {
     | [] => unit //Check if there are values so we don't create an unnecessary empty query
     | idsToLoad =>
       idsToLoad
