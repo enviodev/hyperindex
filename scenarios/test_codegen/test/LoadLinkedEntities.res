@@ -76,7 +76,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let entitiesToLoad = context.getEntitiesToLoad()
 
-    await DbFunctions.sql->IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
+    await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
     let handlerContext = context.getHandlerContext()
     let testingA = handlerContext.a.all
@@ -171,7 +171,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let entitiesToLoad = context.getEntitiesToLoad()
 
-    await DbFunctions.sql->IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
+    await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
     let handlerContext = context.getHandlerContext()
     let testingA = handlerContext.a.all
