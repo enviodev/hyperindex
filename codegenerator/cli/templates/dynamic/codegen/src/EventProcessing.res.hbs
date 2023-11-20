@@ -359,7 +359,7 @@ let loadReadEntities = async (
 
   let readEntities = readEntitiesGrouped->Belt.Array.concatMany
 
-  await DbFunctions.sql->IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=readEntities)
+  await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=readEntities)
 
   contexts
 }

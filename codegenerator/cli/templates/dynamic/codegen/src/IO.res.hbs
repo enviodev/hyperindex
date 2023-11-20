@@ -259,28 +259,7 @@ has been executed
 */
 type nextLayer = NextLayer(LoadLayer.t) | LastLayer
 
-/**
-Executes a single load layer
-*/
-let executeLoadLayer = async (
-  ~sql,
-  ~loadLayer: LoadLayer.t,
-  ~inMemoryStore: InMemoryStore.t,
-): nextLayer => {
-  //Load in entities
-  {{#each entities as | entity |}}
-  switch loadLayer.{{entity.name.uncapitalized}}IdsToLoad->Utils.UniqueArray.values {
-  | [] => () //Check if there are values so we don't create an unnecessary empty query
-  | idsToLoad => {
-      let entities = await sql->DbFunctions.{{entity.name.capitalized}}.readEntities(idsToLoad)
-      entities->Belt.Array.forEach(entity => {
-        inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(~key=entity.id, ~entity, ~dbOp=Types.Read)
-      })
-    }
-  }
-  {{/each}}
-
-  //Run data loaded actions
+let getNextLayer = (~loadLayer: LoadLayer.t) =>
   switch loadLayer.dataLoadedActionsGetters {
   | [] => LastLayer
   | dataLoadedActionsGetters =>
@@ -293,20 +272,144 @@ let executeLoadLayer = async (
     })
     ->NextLayer
   }
+
+/**
+Used for composing a loadlayer executor
+*/
+type entityExecutor<'executorRes> = {
+  idsToLoad: LoadLayer.idsToLoad,
+  executor: LoadLayer.idsToLoad => 'executorRes,
 }
 
-/**Recursively load layers*/
-let rec executeNestedLoadLayers = async (~loadLayer, ~sql, ~inMemoryStore) => {
-  switch await executeLoadLayer(~inMemoryStore, ~loadLayer, ~sql) {
-  | LastLayer => ()
-  | NextLayer(loadLayer) => await executeNestedLoadLayers(~loadLayer, ~sql, ~inMemoryStore)
-  }
+/**
+Compose an execute load layer function. Used to compose an executor
+for a postgres db or a mock db in the testing framework.
+*/
+let executeLoadLayerComposer = (
+  ~entityExecutors: array<entityExecutor<'exectuorRes>>,
+  ~handleResponses: array<'exectuorRes> => 'nextLoadlayer,
+) => {
+  entityExecutors
+  ->Belt.Array.map(({idsToLoad, executor}) => {
+    idsToLoad->executor
+  })
+  ->handleResponses
+}
+
+
+/**Recursively load layers with execute fn composer. Can be used with async or sync functions*/
+let rec executeNestedLoadLayersComposer = (
+  ~loadLayer,
+  ~inMemoryStore,
+  //Could be an execution function that is async or sync
+  ~executeLoadLayerFn,
+  //A call back function, for async or sync
+  ~then,
+  //Unit value, either wrapped in a promise or not
+  ~unit,
+) => {
+  executeLoadLayerFn(~loadLayer, ~inMemoryStore)->then(res =>
+    switch res {
+    | LastLayer => unit
+    | NextLayer(loadLayer) =>
+      executeNestedLoadLayersComposer(~loadLayer, ~inMemoryStore, ~executeLoadLayerFn, ~then, ~unit)
+    }
+  )
 }
 
 /**Load all entities in the entity batch from the db to the inMemoryStore */
-let loadEntitiesToInMemStore = async (sql, ~entityBatch, ~inMemoryStore) => {
+let loadEntitiesToInMemStoreComposer = (
+  ~entityBatch,
+  ~inMemoryStore,
+  ~executeLoadLayerFn,
+  ~then,
+  ~unit,
+) => {
   let loadLayer = getLoadLayer(~inMemoryStore, ~entityBatch)
-  await executeNestedLoadLayers(~inMemoryStore, ~sql, ~loadLayer)
+  executeNestedLoadLayersComposer(~inMemoryStore, ~loadLayer, ~executeLoadLayerFn, ~then, ~unit)
+}
+
+let makeEntityExecuterComposer = (
+  ~idsToLoad,
+  ~dbReadFn,
+  ~inMemStoreSetFn,
+  ~store,
+  ~getEntiyId,
+  ~unit,
+  ~then,
+) => {
+  idsToLoad,
+  executor: idsToLoad => {
+    switch idsToLoad->Utils.UniqueArray.values {
+    | [] => unit //Check if there are values so we don't create an unnecessary empty query
+    | idsToLoad =>
+      idsToLoad
+      ->dbReadFn
+      ->then(entities =>
+        entities->Belt.Array.forEach(entity => {
+          store->inMemStoreSetFn(~key=entity->getEntiyId, ~dbOp=Types.Read, ~entity)
+        })
+      )
+    }
+  },
+}
+
+/**
+Specifically create an sql executor with async functionality
+*/
+let makeSqlEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemStoreSetFn, ~store, ~getEntiyId) => {
+  let dbReadFn = DbFunctions.sql->dbReadFn
+  let then = Promise.thenResolve
+  let unit = Promise.resolve()
+
+  makeEntityExecuterComposer(
+    ~dbReadFn,
+    ~idsToLoad,
+    ~getEntiyId,
+    ~store,
+    ~inMemStoreSetFn,
+    ~then,
+    ~unit,
+  )
+}
+
+/**
+Executes a single load layer using the async sql functions
+*/
+let executeSqlLoadLayer = (~loadLayer: LoadLayer.t, ~inMemoryStore: InMemoryStore.t) => {
+  let entityExecutors = [
+  {{#each entities as | entity |}}
+    makeSqlEntityExecuter(
+      ~idsToLoad=loadLayer.{{entity.name.uncapitalized}}IdsToLoad,
+      ~dbReadFn=DbFunctions.{{entity.name.capitalized}}.readEntities,
+      ~inMemStoreSetFn=InMemoryStore.{{entity.name.capitalized}}.set,
+      ~store=inMemoryStore.{{entity.name.uncapitalized}},
+      ~getEntiyId=entity => entity.id,
+    ),
+  {{/each}}
+  ]
+  let handleResponses = responses => {
+    responses
+    ->Promise.all
+    ->Promise.thenResolve(_ => {
+      getNextLayer(~loadLayer)
+    })
+  }
+
+  executeLoadLayerComposer(~entityExecutors, ~handleResponses)
+}
+
+/**Execute loading of entities using sql*/
+let loadEntitiesToInMemStore = (~entityBatch, ~inMemoryStore) => {
+  let executeLoadLayerFn = executeSqlLoadLayer
+  let then = Promise.then
+  loadEntitiesToInMemStoreComposer(
+    ~inMemoryStore,
+    ~entityBatch,
+    ~executeLoadLayerFn,
+    ~then,
+    ~unit=Promise.resolve(),
+  )
 }
 
 let executeEntityFunction = (
