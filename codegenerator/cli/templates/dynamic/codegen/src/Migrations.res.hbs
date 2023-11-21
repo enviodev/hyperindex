@@ -40,6 +40,23 @@ module ChainMetadata = {
   }
 }
 
+module PersistedState = {
+  let createPersistedStateTable: unit => promise<unit> = async () => {
+    let _ = await %raw("sql`
+      CREATE TABLE IF NOT EXISTS public.persisted_state (
+        id SERIAL PRIMARY KEY,
+        state JSON NOT NULL
+      );
+      `")
+  }
+
+  let dropPersistedStateTable = async () => {
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.persisted_state;
+    `")
+  }
+}
+
 module RawEventsTable = {
   let createEventTypeEnum: unit => promise<unit> = async () => {
     @warning("-21")
@@ -194,6 +211,11 @@ type exitCode = Success | Failure
 let runUpMigrations = async (~shouldExit) => {
 
   let exitCode = ref(Success)
+  await PersistedState.createPersistedStateTable()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err, `EE800: Error creating persisted_state table`)->Promise.resolve
+  })
+
   await EventSyncState.createEventSyncStateTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err, `EE800: Error creating event_sync_state table`)->Promise.resolve

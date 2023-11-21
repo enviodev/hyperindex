@@ -1,3 +1,4 @@
+mod db;
 mod hash_string;
 
 use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths};
