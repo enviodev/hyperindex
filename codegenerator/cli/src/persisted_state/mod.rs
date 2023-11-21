@@ -8,6 +8,7 @@ use std::{fs, path::PathBuf};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PersistedState {
+    pub envio_version: String,
     pub has_run_db_migrations: bool,
     pub config_hash: HashString,
     pub schema_hash: HashString,
@@ -15,6 +16,7 @@ pub struct PersistedState {
     pub abi_files_hash: HashString,
 }
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
+static CURRENT_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 impl PersistedState {
     pub fn try_default(config: &SystemConfig) -> anyhow::Result<Self> {
@@ -35,6 +37,7 @@ impl PersistedState {
 
         Ok(PersistedState {
             has_run_db_migrations: false,
+            envio_version: CURRENT_CRATE_VERSION.to_string(),
             config_hash: HashString::from_file_path(config.parsed_project_paths.config.clone())
                 .context("Failed hashing config file")?,
             schema_hash: HashString::from_file_path(schema_path.clone())
@@ -106,6 +109,7 @@ pub enum RerunOptions {
 //Used to determin what action should be taken
 //based on changes a user has made to parts of their code
 struct PersistedStateDiff {
+    envio_version_change: bool,
     config_change: bool,
     abi_change: bool,
     schema_change: bool,
@@ -115,6 +119,7 @@ struct PersistedStateDiff {
 impl PersistedStateDiff {
     pub fn new() -> Self {
         PersistedStateDiff {
+            envio_version_change: false,
             config_change: false,
             abi_change: false,
             schema_change: false,
@@ -125,7 +130,8 @@ impl PersistedStateDiff {
     pub fn get_rerun_option(&self) -> RerunOptions {
         match (
             //Config or Abi change -> Codegen & rerun sync from RPC
-            (self.config_change || self.abi_change),
+            //Version change could incur changes to migrations etc and needs to start from scratch
+            (self.config_change || self.abi_change || self.envio_version_change),
             //Schema change -> Rerun codegen, resync from stored raw events
             self.schema_change,
             //Handlers change -> resync from stored raw events (no codegen)
@@ -163,6 +169,11 @@ pub fn check_user_file_diff_match(
     let new_state = persisted_state
         .try_get_updated(config)
         .context("Getting updated persisted state")?;
+
+    if persisted_state.envio_version != new_state.envio_version {
+        println!("Change in envio versioon detected");
+        diff.envio_version_change = true;
+    }
 
     if persisted_state.config_hash != new_state.config_hash {
         println!("Change in config detected");
