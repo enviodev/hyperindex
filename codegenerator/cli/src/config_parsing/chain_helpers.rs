@@ -42,23 +42,11 @@ pub enum Network {
     EthereumMainnet = 1,
     #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Goerli = 5,
-    #[subenum(
-        SupportedNetwork,
-        NetworkWithExplorer,
-        EthArchiveNetwork,
-        SkarNetwork,
-        GraphNetwork
-    )]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Optimism = 10,
     #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Base = 8453,
-    #[subenum(
-        SupportedNetwork,
-        NetworkWithExplorer,
-        EthArchiveNetwork,
-        SkarNetwork,
-        GraphNetwork
-    )]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Bsc = 56,
     #[subenum(GraphNetwork)]
     PoaSokol = 77,
@@ -76,7 +64,6 @@ pub enum Network {
         SupportedNetwork,
         NetworkWithExplorer,
         SkarNetwork,
-        EthArchiveNetwork,
         GraphNetwork(serde(rename = "matic"))
     )]
     Polygon = 137,
@@ -93,13 +80,7 @@ pub enum Network {
     Mbase = 1287,
     #[subenum(GraphNetwork)]
     FantomTestnet = 4002,
-    #[subenum(
-        SupportedNetwork,
-        NetworkWithExplorer,
-        EthArchiveNetwork,
-        GraphNetwork,
-        SkarNetwork
-    )]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork, SkarNetwork)]
     ArbitrumOne = 42161,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
@@ -119,13 +100,13 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     AuroraTestnet = 1313161555,
     Harmony = 1666600000,
-    #[subenum(SupportedNetwork, EthArchiveNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, GraphNetwork)]
     BaseTestnet = 84531,
     #[subenum(GraphNetwork)]
     ZksyncEra = 324,
     #[subenum(NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Sepolia = 11155111,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, SkarNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork)]
     Linea = 59144,
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
@@ -147,7 +128,7 @@ pub enum Network {
     // w3w.ai: https://manta.socialscan.io/
     Manta = 169,
     #[subenum(SupportedNetwork, SkarNetwork)]
-    // Explorers: 
+    // Explorers:
     // blockscout: https://explorer.jolnir.taiko.xyz/
     TaikoJolnr = 167007,
     #[subenum(SupportedNetwork, SkarNetwork, NetworkWithExplorer)]
@@ -225,7 +206,7 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Gnosis => {
                 BlockExplorerApi::custom("gnosisscan.io", "api.gnosisscan.io", api_key)
             }
-             NetworkWithExplorer::Scroll => {
+            NetworkWithExplorer::Scroll => {
                 BlockExplorerApi::custom("scrollscan.com", "api.scrollscan.com", api_key)
             }
             NetworkWithExplorer::Kroma => {
