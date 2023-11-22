@@ -51,6 +51,11 @@ pub fn network_to_skar_url(network: &SkarNetwork) -> String {
         SkarNetwork::Base => "https://base.hypersync.xyz".to_string(),
         SkarNetwork::Scroll => "https://scroll.hypersync.xyz".to_string(),
         SkarNetwork::Metis => "https://metis.hypersync.xyz".to_string(),
+        SkarNetwork::TaikoJolnr => "https://taiko-jolnr.hypersync.xyz/".to_string(),
+        SkarNetwork::Manta => "https://manta.hypersync.xyz/".to_string(),
+        SkarNetwork::PolygonZkevm => "https://polygon-zkevm.hypersync.xyz/".to_string(),
+        SkarNetwork::Kroma => "https://kroma.hypersync.xyz/".to_string(),
+        SkarNetwork::Celo => "https://kroma.hypersync.xyz/".to_string(),
     }
 }
 

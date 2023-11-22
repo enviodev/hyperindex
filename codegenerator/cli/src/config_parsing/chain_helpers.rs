@@ -103,7 +103,8 @@ pub enum Network {
     ArbitrumOne = 42161,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, NetworkWithExplorer, SkarNetwork)]
+    // Blockscout: https://explorer.celo.org/mainnet/
     Celo = 42220,
     #[subenum(GraphNetwork)]
     Fuji = 43113,
@@ -132,7 +133,7 @@ pub enum Network {
     ZksyncEraTestnet = 280,
     #[subenum(GraphNetwork)]
     PolygonZkevmTestnet = 1422,
-    #[subenum(GraphNetwork)]
+    #[subenum(GraphNetwork, SupportedNetwork, SkarNetwork, NetworkWithExplorer)]
     PolygonZkevm = 1101,
     #[subenum(GraphNetwork)]
     ScrollSepolia = 534351,
@@ -140,6 +141,17 @@ pub enum Network {
     Scroll = 534352,
     #[subenum(SupportedNetwork, SkarNetwork)]
     Metis = 1088,
+    #[subenum(SupportedNetwork, SkarNetwork)]
+    // Explorers:
+    // blockscout: https://pacific-explorer.manta.network/
+    // w3w.ai: https://manta.socialscan.io/
+    Manta = 169,
+    #[subenum(SupportedNetwork, SkarNetwork)]
+    // Explorers: 
+    // blockscout: https://explorer.jolnir.taiko.xyz/
+    TaikoJolnr = 167007,
+    #[subenum(SupportedNetwork, SkarNetwork, NetworkWithExplorer)]
+    Kroma = 255,
 }
 
 impl Network {
@@ -203,6 +215,9 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Linea => "TYCR43IQ5U85DKZXQG8MQIJI7922DVHZX5",
             NetworkWithExplorer::Base => "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3",
             NetworkWithExplorer::Scroll => "ZC5BE2NT8UU358184YSBMIFU3F9ZPG5CKX",
+            NetworkWithExplorer::PolygonZkevm => "2GSEPCMXK4J9CMBMG2AFXJJZYMWA3J4A2Z",
+            NetworkWithExplorer::Celo => "PT6X2G4Q8YKFC2KU4FCDUUDCXPA57NC7NB",
+            NetworkWithExplorer::Kroma => "PNT5V8B3TR5V7AA2IRHD8YB81F5W83YG98",
         };
 
         //Define all custom block explorer definitions at the top otherwise default with ethers api
@@ -210,8 +225,11 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Gnosis => {
                 BlockExplorerApi::custom("gnosisscan.io", "api.gnosisscan.io", api_key)
             }
-            NetworkWithExplorer::Scroll => {
+             NetworkWithExplorer::Scroll => {
                 BlockExplorerApi::custom("scrollscan.com", "api.scrollscan.com", api_key)
+            }
+            NetworkWithExplorer::Kroma => {
+                BlockExplorerApi::custom("kromascan.com", "api.kromascan.com", api_key)
             }
             _ => BlockExplorerApi::default_ethers(api_key),
         }
