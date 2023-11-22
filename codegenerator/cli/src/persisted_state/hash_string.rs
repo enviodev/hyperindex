@@ -1,6 +1,7 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use sqlx;
 use std::{
     fmt::{self, Display},
     fs::File,
@@ -8,7 +9,9 @@ use std::{
     path::PathBuf,
 };
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, sqlx::FromRow, sqlx::Type)]
+#[sqlx(type_name = "Text")]
+#[serde(transparent)]
 pub struct HashString(String);
 
 impl HashString {

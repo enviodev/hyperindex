@@ -45,7 +45,12 @@ module PersistedState = {
     let _ = await %raw("sql`
       CREATE TABLE IF NOT EXISTS public.persisted_state (
         id SERIAL PRIMARY KEY,
-        state JSON NOT NULL
+        envio_version TEXT NOT NULL, 
+        config_hash TEXT NOT NULL,
+        schema_hash TEXT NOT NULL,
+        handler_files_hash TEXT NOT NULL,
+        abi_files_hash TEXT NOT NULL,
+        has_run_db_migrations BOOLEAN NOT NULL
       );
       `")
   }

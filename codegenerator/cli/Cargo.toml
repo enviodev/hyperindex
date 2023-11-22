@@ -38,8 +38,8 @@ colored = "2.0.4"
 sqlx = { version = "0.7.2", features = [
   "runtime-tokio-rustls",
   "postgres",
+  "macros",
 ] }
-
 [dev-dependencies]
 tempdir = "0.3"
 paste = "1.0.12"

@@ -5,9 +5,10 @@ use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedPr
 use anyhow::Context;
 use hash_string::HashString;
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use std::{fs, path::PathBuf};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct PersistedState {
     pub envio_version: String,
     pub has_run_db_migrations: bool,

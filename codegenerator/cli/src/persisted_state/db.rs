@@ -1,32 +1,67 @@
 use super::PersistedState;
-use anyhow::Result;
-use sqlx::{
-    postgres::{PgPool, PgRow},
-    Row,
-};
+use sqlx::postgres::{PgPool, PgQueryResult};
 
-async fn upsert_persisted_state_to_db(state: &PersistedState, pool: &PgPool) -> Result<()> {
-    let serialized = serde_json::to_value(state)?;
-    sqlx::query("INSERT INTO public.persisted_state (id, state) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET state = $2")
-        .bind(1)
-        .bind(serialized)
+impl PersistedState {
+    async fn upsert_to_db(&self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO public.persisted_state (
+            id, 
+            envio_version,
+            has_run_db_migrations,
+            config_hash,
+            schema_hash,
+            handler_files_hash,
+            abi_files_hash
+        ) VALUES (
+            $1, 
+            $2, 
+            $3, 
+            $4, 
+            $5, 
+            $6, 
+            $7 
+        ) ON CONFLICT (id) DO UPDATE SET (
+            envio_version,
+            has_run_db_migrations,
+            config_hash,
+            schema_hash,
+            handler_files_hash,
+            abi_files_hash
+        ) = (
+            $2, 
+            $3, 
+            $4, 
+            $5, 
+            $6, 
+            $7 
+        )",
+        )
+        .bind(1) //Always only 1 id to update
+        .bind(&self.envio_version)
+        .bind(&self.has_run_db_migrations)
+        .bind(&self.config_hash)
+        .bind(&self.schema_hash)
+        .bind(&self.handler_files_hash)
+        .bind(&self.abi_files_hash)
         .execute(pool)
-        .await?;
-    Ok(())
-}
+        .await
+    }
 
-async fn read_persisted_state_from_db(pool: &PgPool) -> Result<Option<PersistedState>> {
-    let res = sqlx::query("SELECT state from public.persisted_state WHERE id = 1")
-        .map(|row: PgRow| {
-            let state_json: serde_json::Value = row.try_get("state").unwrap();
-            let state: PersistedState = serde_json::from_value(state_json).unwrap();
-            state
-        })
+    async fn read_from_db(pool: &PgPool) -> Result<Option<Self>, sqlx::Error> {
+        sqlx::query_as::<_, PersistedState>(
+            "SELECT 
+            envio_version,
+            has_run_db_migrations,
+            config_hash,
+            schema_hash,
+            handler_files_hash,
+            abi_files_hash
+         from public.persisted_state WHERE id = 1",
+        )
         .fetch_optional(pool)
-        .await?;
-    Ok(res)
+        .await
+    }
 }
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -41,16 +76,10 @@ mod test {
     #[tokio::test]
     #[ignore]
     async fn writes_to_db() -> Result<()> {
-        let pg_password = std::env::var("PG_PASSWORD").unwrap_or("testing".to_string());
+        println!("This test only works if the db migrations have been run and the db config is 100% correct");
         let pool = PgPoolOptions::new()
             .max_connections(1)
-            .connect(
-                "postgres://postgres:testing@localhost:5433/envio-dev", // format!(
-                                                                        //     "postgres://postgres:{}@envio-postgres:5433/envio-dev",
-                                                                        //     pg_password
-                                                                        // )
-                                                                        // .as_str(),
-            )
+            .connect("postgres://postgres:testing@localhost:5433/envio-dev")
             .await
             .context("creating pool")?;
         let root = format!("{}/test/configs", env!("CARGO_MANIFEST_DIR"));
@@ -68,7 +97,8 @@ mod test {
         let persisted_state =
             PersistedState::try_default(&system_cfg).context("persisted_state")?;
 
-        upsert_persisted_state_to_db(&persisted_state, &pool)
+        persisted_state
+            .upsert_to_db(&pool)
             .await
             .context("write_to_db")?;
 
@@ -78,20 +108,14 @@ mod test {
     #[tokio::test]
     #[ignore]
     async fn reads_from_db() -> Result<()> {
-        let pg_password = std::env::var("PG_PASSWORD").unwrap_or("testing".to_string());
+        println!("This test only works if the db migrations have been run and the db config is 100% correct");
         let pool = PgPoolOptions::new()
             .max_connections(1)
-            .connect(
-                "postgres://postgres:testing@localhost:5433/envio-dev", // format!(
-                                                                        //     "postgres://postgres:{}@envio-postgres:5433/envio-dev",
-                                                                        //     pg_password
-                                                                        // )
-                                                                        // .as_str(),
-            )
+            .connect("postgres://postgres:testing@localhost:5433/envio-dev")
             .await
             .context("creating pool")?;
 
-        let val = read_persisted_state_from_db(&pool)
+        let val = PersistedState::read_from_db(&pool)
             .await
             .context("read from db")?;
 
