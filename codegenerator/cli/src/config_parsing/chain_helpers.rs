@@ -104,7 +104,7 @@ pub enum Network {
     BaseTestnet = 84531,
     #[subenum(GraphNetwork)]
     ZksyncEra = 324,
-    #[subenum(NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Sepolia = 11155111,
     #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork)]
     Linea = 59144,
