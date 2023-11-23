@@ -6,12 +6,16 @@ use anyhow::Context;
 use hash_string::HashString;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use std::{fs, path::PathBuf};
+use std::{
+    fmt::{self, Display},
+    path::PathBuf,
+};
+use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct PersistedState {
     pub envio_version: String,
-    pub has_run_db_migrations: bool,
     pub config_hash: HashString,
     pub schema_hash: HashString,
     pub handler_files_hash: HashString,
@@ -20,8 +24,38 @@ pub struct PersistedState {
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
 static CURRENT_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[derive(Debug, strum::Display, EnumIter, PartialEq, Clone)]
+pub enum StateField {
+    EnvioVersion,
+    Config,
+    Schema,
+    AbiFiles,
+    HandlerFiles,
+}
+
 impl PersistedState {
-    pub fn try_default(config: &SystemConfig) -> anyhow::Result<Self> {
+    fn compare_state_field(&self, other_state: &Self, field: &StateField) -> bool {
+        match field {
+            StateField::Config => self.config_hash == other_state.config_hash,
+            StateField::EnvioVersion => self.envio_version == other_state.envio_version,
+            StateField::Schema => self.schema_hash == other_state.schema_hash,
+            StateField::AbiFiles => self.abi_files_hash == other_state.abi_files_hash,
+            StateField::HandlerFiles => self.handler_files_hash == other_state.handler_files_hash,
+        }
+    }
+
+    fn get_non_matching_fields(
+        &self,
+        other_state: &Self,
+        fields: Vec<StateField>,
+    ) -> Vec<StateField> {
+        fields
+            .into_iter()
+            .filter(|f| !self.compare_state_field(other_state, f))
+            .collect()
+    }
+
+    pub fn get_current_state(config: &SystemConfig) -> anyhow::Result<Self> {
         let schema_path = config
             .get_path_to_schema()
             .context("Failed getting path to schema")?;
@@ -38,7 +72,6 @@ impl PersistedState {
         const ABI_FILES_MUST_EXIST: bool = true;
 
         Ok(PersistedState {
-            has_run_db_migrations: false,
             envio_version: CURRENT_CRATE_VERSION.to_string(),
             config_hash: HashString::from_file_path(config.parsed_project_paths.config.clone())
                 .context("Failed hashing config file")?,
@@ -54,190 +87,78 @@ impl PersistedState {
         })
     }
 
-    pub fn try_get_updated(&self, config: &SystemConfig) -> anyhow::Result<Self> {
-        let default =
-            Self::try_default(config).context("Failed getting default in try get update")?;
-
-        Ok(PersistedState {
-            has_run_db_migrations: self.has_run_db_migrations,
-            ..default
-        })
-    }
-
-    fn to_json_string(&self) -> String {
-        serde_json::to_string(self).expect("PersistedState struct should always be serializable")
-    }
-
     fn get_generated_file_path(project_paths: &ParsedProjectPaths) -> PathBuf {
         project_paths.generated.join(PERSISTED_STATE_FILE_NAME)
     }
 
-    pub fn get_from_generated_file(project_paths: &ParsedProjectPaths) -> anyhow::Result<Self> {
-        let file_path = Self::get_generated_file_path(project_paths);
-        let file_str = std::fs::read_to_string(file_path)
-            .context(format!("Unable to find {}", PERSISTED_STATE_FILE_NAME,))?;
-
-        serde_json::from_str(&file_str)
-            .context(format!("Unable to parse {}", PERSISTED_STATE_FILE_NAME,))
-    }
-
-    fn write_to_generated_file(&self, project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
-        let file_path = Self::get_generated_file_path(project_paths);
-        let contents = self.to_json_string();
-        std::fs::write(file_path, contents)
-            .context(format!("Unable to write {}", PERSISTED_STATE_FILE_NAME))
-    }
-
-    pub fn set_has_run_db_migrations(
+    pub fn get_persisted_state_file(
         project_paths: &ParsedProjectPaths,
-        has_run_db_migrations: bool,
-    ) -> anyhow::Result<()> {
-        let mut persisted_state = Self::get_from_generated_file(project_paths)?;
-        if persisted_state.has_run_db_migrations != has_run_db_migrations {
-            persisted_state.has_run_db_migrations = has_run_db_migrations;
-            return persisted_state.write_to_generated_file(project_paths);
-        }
-        Ok(())
-    }
-}
+    ) -> anyhow::Result<Option<Self>> {
+        let file_path = Self::get_generated_file_path(project_paths);
 
-pub enum RerunOptions {
-    CodegenAndSyncFromRpc,
-    CodegenAndResyncFromStoredEvents,
-    ResyncFromStoredEvents,
-    ContinueSync,
-}
-
-//Used to determin what action should be taken
-//based on changes a user has made to parts of their code
-struct PersistedStateDiff {
-    envio_version_change: bool,
-    config_change: bool,
-    abi_change: bool,
-    schema_change: bool,
-    handler_change: bool,
-}
-
-impl PersistedStateDiff {
-    pub fn new() -> Self {
-        PersistedStateDiff {
-            envio_version_change: false,
-            config_change: false,
-            abi_change: false,
-            schema_change: false,
-            handler_change: false,
+        match std::fs::read_to_string(file_path) {
+            Err(_) => Ok(None),
+            Ok(file_str) => {
+                let deserialized: Self = serde_json::from_str(&file_str)
+                    .context(format!("Unable to parse {}", PERSISTED_STATE_FILE_NAME))?;
+                Ok(Some(deserialized))
+            }
         }
     }
 
-    pub fn get_rerun_option(&self) -> RerunOptions {
-        match (
-            //Config or Abi change -> Codegen & rerun sync from RPC
-            //Version change could incur changes to migrations etc and needs to start from scratch
-            (self.config_change || self.abi_change || self.envio_version_change),
-            //Schema change -> Rerun codegen, resync from stored raw events
-            self.schema_change,
-            //Handlers change -> resync from stored raw events (no codegen)
-            self.handler_change,
-        ) {
-            (true, _, _) => RerunOptions::CodegenAndSyncFromRpc,
-            (false, true, _) => RerunOptions::CodegenAndResyncFromStoredEvents,
-            (false, false, true) => RerunOptions::ResyncFromStoredEvents,
-            (false, false, false) => RerunOptions::ContinueSync,
+    pub fn should_run_codegen(&self, persisted_state_file: &Self) -> (bool, Vec<StateField>) {
+        let codegen_affecting_fields = vec![
+            //If the config has changed, this could affect values in generated code
+            StateField::Config,
+            //If abi files have changed it could affect event types
+            StateField::AbiFiles,
+            //If schema has changed this will affect generated entity types
+            StateField::Schema,
+            //If the version envio changes, this could infer differences that need to be re-code
+            //generated
+            StateField::EnvioVersion,
+        ];
+
+        let non_matching_fields =
+            self.get_non_matching_fields(persisted_state_file, codegen_affecting_fields);
+
+        (!non_matching_fields.is_empty(), non_matching_fields)
+    }
+
+    pub fn should_run_db_migrations(&self, persisted_state_db: &Self) -> (bool, Vec<StateField>) {
+        //Check if any changes to the state and report which fields. All should invoke a migration
+        let codegen_affecting_fields: Vec<_> = StateField::iter().collect();
+
+        let non_matching_fields =
+            self.get_non_matching_fields(persisted_state_db, codegen_affecting_fields);
+
+        (!non_matching_fields.is_empty(), non_matching_fields)
+    }
+
+    pub fn should_sync_from_raw_events(&self, persisted_state_db: &Self) -> bool {
+        let any_changes = StateField::iter().collect::<Vec<_>>();
+        let non_matching_fields = self.get_non_matching_fields(persisted_state_db, any_changes);
+
+        let only_handler_file_change = vec![StateField::HandlerFiles];
+
+        match non_matching_fields {
+            changes if changes == only_handler_file_change => true,
+            _ => false,
         }
     }
 }
 
-pub enum ExistingPersistedState {
-    NoFile,
-    ExistingFile(PersistedState),
+impl Display for PersistedState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let json_string = serde_json::to_string(self).map_err(|_| fmt::Error)?;
+        write!(f, "{}", json_string)
+    }
 }
-
-pub fn check_user_file_diff_match(
-    existing_persisted_state: &ExistingPersistedState,
-    config: &SystemConfig,
-    project_paths: &ParsedProjectPaths,
-) -> anyhow::Result<RerunOptions> {
-    //If there is no existing file, the whole process needs to
-    //be run so we can skip diff checking
-    let persisted_state = match existing_persisted_state {
-        ExistingPersistedState::NoFile => {
-            return Ok(RerunOptions::CodegenAndSyncFromRpc);
-        }
-        ExistingPersistedState::ExistingFile(f) => f,
-    };
-
-    let mut diff = PersistedStateDiff::new();
-
-    let new_state = persisted_state
-        .try_get_updated(config)
-        .context("Getting updated persisted state")?;
-
-    if persisted_state.envio_version != new_state.envio_version {
-        println!("Change in envio versioon detected");
-        diff.envio_version_change = true;
-    }
-
-    if persisted_state.config_hash != new_state.config_hash {
-        println!("Change in config detected");
-        diff.config_change = true;
-    }
-    if persisted_state.schema_hash != new_state.schema_hash {
-        println!("Change in schema detected");
-        diff.schema_change = true;
-    }
-
-    if persisted_state.handler_files_hash != new_state.handler_files_hash {
-        println!("Change in handlers detected");
-        diff.handler_change = true;
-    }
-
-    if persisted_state.abi_files_hash != new_state.abi_files_hash {
-        println!("Change in abis detected");
-        diff.abi_change = true;
-    }
-
-    new_state
-        .write_to_generated_file(project_paths)
-        .context("Writing new persisted state")?;
-    Ok(diff.get_rerun_option())
-}
-
-pub fn handler_file_has_changed(
-    existing_persisted_state: &ExistingPersistedState,
-    config: &SystemConfig,
-) -> anyhow::Result<bool> {
-    let persisted_state = match existing_persisted_state {
-        ExistingPersistedState::NoFile => {
-            return Ok(false);
-        }
-        ExistingPersistedState::ExistingFile(f) => f,
-    };
-
-    let all_handler_paths = config
-        .get_all_paths_to_handlers()
-        .context("Failed getting all handler paths")?;
-
-    let current_handlers_hash = HashString::from_file_paths(all_handler_paths, false)
-        .context("Failed hashing handler files")?;
-
-    Ok(persisted_state.handler_files_hash != current_handlers_hash)
-}
-
-pub fn persisted_state_file_exists(project_paths: &ParsedProjectPaths) -> bool {
-    let file_path = project_paths.generated.join(PERSISTED_STATE_FILE_NAME);
-
-    fs::metadata(file_path).is_ok()
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PersistedStateJsonString(String);
 
-impl PersistedStateJsonString {
-    pub fn try_default(config: &SystemConfig) -> anyhow::Result<Self> {
-        Ok(PersistedStateJsonString(
-            PersistedState::try_default(config)
-                .context("Failed getting default persisted state")?
-                .to_json_string(),
-        ))
+impl From<PersistedState> for PersistedStateJsonString {
+    fn from(val: PersistedState) -> Self {
+        Self(val.to_string())
     }
 }

@@ -1,13 +1,7 @@
 use crate::{
     commands,
-    config_parsing::{
-        human_config::{self, is_rescript},
-        system_config::SystemConfig,
-    },
-    persisted_state::{
-        check_user_file_diff_match, handler_file_has_changed, persisted_state_file_exists,
-        ExistingPersistedState, PersistedState, RerunOptions,
-    },
+    config_parsing::{human_config, system_config::SystemConfig},
+    persisted_state::{self, PersistedState},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
@@ -19,16 +13,56 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
 
     let config = SystemConfig::parse_from_human_config(&human_config, &project_paths)
         .context("Failed parsing config")?;
+
+    let current_state = PersistedState::get_current_state(&config)
+        .context("Failed getting current indexer state")?;
+
+    let opt_persisted_state_file = PersistedState::get_persisted_state_file(&project_paths)
+        .context("Failed getting persisted state file from generated folder")?;
+
+    let (should_run_codegen, changes_detected) = opt_persisted_state_file
+        .as_ref()
+        .map_or((true, vec![]), |p| current_state.should_run_codegen(&p));
+
+    let print_changes_detected = |changes_detected: Vec<persisted_state::StateField>| {
+        println!(
+            "Changes to {} detected",
+            //Changes will "Config" or "Schema" etc.
+            changes_detected
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    };
+
+    if should_run_codegen {
+        if opt_persisted_state_file.is_none() {
+            println!("No generated files detected");
+        } else {
+            print_changes_detected(changes_detected);
+        }
+        println!("Running codegen");
+
+        commands::codegen::run_codegen(&config, &project_paths)
+            .await
+            .context("Failed running codegen")?;
+        commands::codegen::run_post_codegen_command_sequence(&project_paths)
+            .await
+            .context("Failed running post codegen command sequence")?;
+    }
     // if hasura healhz check returns not found assume docker isnt running and start it up {
     let hasura_health_check_is_error = service_health::fetch_hasura_healthz().await.is_err();
 
-    let mut docker_started_on_run = false;
-
-    if hasura_health_check_is_error {
+    let should_open_hasura_console = if hasura_health_check_is_error {
         //Run docker commands to spin up container
-        commands::docker::docker_compose_up_d(&project_paths).await?;
-        docker_started_on_run = true;
-    }
+        commands::docker::docker_compose_up_d(&project_paths)
+            .await
+            .context("Failed running docker compose up after server liveness check")?;
+        true
+    } else {
+        false
+    };
 
     let hasura_health = service_health::fetch_hasura_healthz_with_retry().await;
 
@@ -38,101 +72,52 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         }
         EndpointHealth::Healthy => {
             {
-                let existing_persisted_state = if persisted_state_file_exists(&project_paths) {
-                    let persisted_state = PersistedState::get_from_generated_file(&project_paths)?;
-                    ExistingPersistedState::ExistingFile(persisted_state)
-                } else {
-                    ExistingPersistedState::NoFile
-                };
+                println!("healthy, continuing");
 
-                if handler_file_has_changed(&existing_persisted_state, &config)
-                    .context("Failed checking if handler file has changes")?
-                    && is_rescript(&config)
-                        .context("Failed checking if handler file is rescript")?
-                {
-                    commands::rescript::build(&project_paths.project_root).await?;
+                let opt_persisted_state_db = PersistedState::read_from_db()
+                    .await
+                    .context("Failed to read persisted state from the DB")?;
+
+                let (should_run_db_migrations, changes_detected) =
+                    opt_persisted_state_db.as_ref().map_or((true, vec![]), |p| {
+                        current_state.should_run_db_migrations(&p)
+                    });
+
+                let should_sync_from_raw_events = opt_persisted_state_db
+                    .as_ref()
+                    .map_or(false, |p| current_state.should_sync_from_raw_events(&p));
+
+                if should_run_db_migrations {
+                    //print changes and running db migrations
+                    if opt_persisted_state_db.is_some() {
+                        print_changes_detected(changes_detected);
+                    }
+                    println!("Running db migrations");
+
+                    let should_drop_raw_events = !should_sync_from_raw_events;
+
+                    commands::db_migrate::run_db_setup(
+                        &project_paths,
+                        should_drop_raw_events,
+                        &current_state,
+                    )
+                    .await
+                    .context("Failed running db setup command")?;
                 }
 
-                match check_user_file_diff_match(
-                    &existing_persisted_state,
-                    &config,
+                if should_sync_from_raw_events {
+                    println!("Resyncing from raw_events");
+                }
+
+                println!("Starting indexer");
+
+                commands::start::start_indexer(
                     &project_paths,
-                )? {
-                    RerunOptions::CodegenAndSyncFromRpc => {
-                        println!("Running codegen and resyncing from source");
-                        commands::codegen::run_codegen(&config, &project_paths).await?;
-                        commands::codegen::run_post_codegen_command_sequence(&project_paths)
-                            .await?;
-                        const SHOULD_DROP_RAW_EVENTS: bool = true;
-                        commands::db_migrate::run_db_setup(&project_paths, SHOULD_DROP_RAW_EVENTS)
-                            .await?;
-
-                        const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
-                        commands::start::start_indexer(
-                            &project_paths,
-                            SHOULD_SYNC_FROM_RAW_EVENTS,
-                            docker_started_on_run,
-                        )
-                        .await?;
-                    }
-                    RerunOptions::CodegenAndResyncFromStoredEvents => {
-                        println!("Running codegen and resyncing from cached events");
-                        //TODO: Implement command for rerunning from stored events
-                        //and action from this match arm
-                        commands::codegen::run_codegen(&config, &project_paths).await?;
-                        commands::codegen::run_post_codegen_command_sequence(&project_paths)
-                            .await?;
-                        const SHOULD_DROP_RAW_EVENTS: bool = false;
-                        commands::db_migrate::run_db_setup(&project_paths, SHOULD_DROP_RAW_EVENTS)
-                            .await?;
-
-                        const SHOULD_SYNC_FROM_RAW_EVENTS: bool = true;
-                        commands::start::start_indexer(
-                            &project_paths,
-                            SHOULD_SYNC_FROM_RAW_EVENTS,
-                            docker_started_on_run,
-                        )
-                        .await?;
-                    }
-                    RerunOptions::ResyncFromStoredEvents => {
-                        println!("Resyncing from cached events");
-                        //TODO: Implement command for rerunning from stored events
-                        //and action from this match arm
-                        const SHOULD_DROP_RAW_EVENTS: bool = false;
-                        commands::db_migrate::run_db_setup(&project_paths, SHOULD_DROP_RAW_EVENTS)
-                            .await?; // does this need to be run?
-                        const SHOULD_SYNC_FROM_RAW_EVENTS: bool = true;
-                        commands::start::start_indexer(
-                            &project_paths,
-                            SHOULD_SYNC_FROM_RAW_EVENTS,
-                            docker_started_on_run,
-                        )
-                        .await?;
-                    }
-                    RerunOptions::ContinueSync => {
-                        println!("Continuing sync");
-                        let has_run_db_migrations = match existing_persisted_state {
-                            ExistingPersistedState::NoFile => false,
-                            ExistingPersistedState::ExistingFile(ps) => ps.has_run_db_migrations,
-                        };
-
-                        if !has_run_db_migrations || docker_started_on_run {
-                            const SHOULD_DROP_RAW_EVENTS: bool = true;
-                            commands::db_migrate::run_db_setup(
-                                &project_paths,
-                                SHOULD_DROP_RAW_EVENTS,
-                            )
-                            .await?;
-                        }
-                        const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
-                        commands::start::start_indexer(
-                            &project_paths,
-                            SHOULD_SYNC_FROM_RAW_EVENTS,
-                            docker_started_on_run,
-                        )
-                        .await?;
-                    }
-                }
+                    should_sync_from_raw_events,
+                    should_open_hasura_console,
+                )
+                .await
+                .context("Failed running start on the indexer")?;
             }
         }
     }

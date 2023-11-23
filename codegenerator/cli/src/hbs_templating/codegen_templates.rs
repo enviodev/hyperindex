@@ -8,7 +8,7 @@ use crate::{
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
     },
-    persisted_state::PersistedStateJsonString,
+    persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{handler_paths::HandlerPathsTemplate, ParsedProjectPaths},
     template_dirs::TemplateDirs,
 };
@@ -573,8 +573,9 @@ impl ProjectTemplate {
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
 
-        let persisted_state = PersistedStateJsonString::try_default(cfg)
-            .context("Failed creating default persisted state")?;
+        let persisted_state = PersistedState::get_current_state(cfg)
+            .context("Failed creating default persisted state")?
+            .into();
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),

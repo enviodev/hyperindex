@@ -1,4 +1,4 @@
-use super::{hypersync_endpoints, system_config::SystemConfig, validation};
+use super::{hypersync_endpoints, validation};
 use crate::{
     constants::links,
     project_paths::{path_utils, ParsedProjectPaths},
@@ -386,22 +386,6 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Hum
     validation::validate_deserialized_config_yaml(config_path, &deserialized_yaml)?;
 
     Ok(deserialized_yaml)
-}
-
-pub fn is_rescript(config: &SystemConfig) -> anyhow::Result<bool> {
-    let is_rescript = config
-        .get_all_paths_to_handlers()?
-        .iter()
-        .flat_map(|path| path.file_name())
-        .any(|file_name| {
-            if let Ok(path_str) = file_name.to_os_string().into_string() {
-                path_str.ends_with(".bs.js")
-            } else {
-                false
-            }
-        });
-
-    Ok(is_rescript)
 }
 
 #[cfg(test)]

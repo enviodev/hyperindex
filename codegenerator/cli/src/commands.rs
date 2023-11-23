@@ -202,10 +202,16 @@ pub mod docker {
 }
 
 pub mod db_migrate {
+
+    use std::process::ExitStatus;
+
     use super::execute_command;
     use crate::{persisted_state::PersistedState, project_paths::ParsedProjectPaths};
 
-    pub async fn run_up_migrations(project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
+    pub async fn run_up_migrations(
+        project_paths: &ParsedProjectPaths,
+        persisted_state: &PersistedState,
+    ) -> anyhow::Result<()> {
         let cmd = "node";
         let args = vec![
             "-e",
@@ -217,13 +223,12 @@ pub mod db_migrate {
         let exit = execute_command(cmd, args, current_dir).await?;
 
         if exit.success() {
-            let has_run_db_migrations = true;
-            PersistedState::set_has_run_db_migrations(project_paths, has_run_db_migrations)?;
+            persisted_state.upsert_to_db().await?;
         }
         Ok(())
     }
 
-    pub async fn run_drop_schema(project_paths: &ParsedProjectPaths) -> anyhow::Result<()> {
+    pub async fn run_drop_schema(project_paths: &ParsedProjectPaths) -> anyhow::Result<ExitStatus> {
         let cmd = "node";
         let args = vec![
             "-e",
@@ -232,17 +237,13 @@ pub mod db_migrate {
 
         let current_dir = &project_paths.generated;
 
-        let exit = execute_command(cmd, args, current_dir).await?;
-        if exit.success() {
-            let has_run_db_migrations = false;
-            PersistedState::set_has_run_db_migrations(project_paths, has_run_db_migrations)?;
-        }
-        Ok(())
+        execute_command(cmd, args, current_dir).await
     }
 
     pub async fn run_db_setup(
         project_paths: &ParsedProjectPaths,
         should_drop_raw_events: bool,
+        persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
         let cmd = "node";
 
@@ -258,8 +259,7 @@ pub mod db_migrate {
         let exit = execute_command(cmd, args, current_dir).await?;
 
         if exit.success() {
-            let has_run_db_migrations = true;
-            PersistedState::set_has_run_db_migrations(project_paths, has_run_db_migrations)?;
+            persisted_state.upsert_to_db().await?;
         }
         Ok(())
     }

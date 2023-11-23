@@ -1,6 +1,8 @@
 use crate::{
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
+    config_parsing::{human_config, system_config::SystemConfig},
+    persisted_state::PersistedState,
     project_paths::ParsedProjectPaths,
 };
 
@@ -34,9 +36,25 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
         CommandType::Start(start_args) => {
             if start_args.restart {
+                let yaml_config =
+                    human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
+                        .context("Failed deserializing config")?;
+
+                let config =
+                    SystemConfig::parse_from_human_config(&yaml_config, &parsed_project_paths)
+                        .context("Failed parsing config")?;
+
+                let persisted_state = PersistedState::get_current_state(&config)
+                    .context("Failed constructing persisted state")?;
+
                 const SHOULD_DROP_RAW_EVENTS: bool = true;
-                commands::db_migrate::run_db_setup(&parsed_project_paths, SHOULD_DROP_RAW_EVENTS)
-                    .await?;
+
+                commands::db_migrate::run_db_setup(
+                    &parsed_project_paths,
+                    SHOULD_DROP_RAW_EVENTS,
+                    &persisted_state,
+                )
+                .await?;
             }
             const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
             const SHOULD_OPEN_HASURA: bool = false;

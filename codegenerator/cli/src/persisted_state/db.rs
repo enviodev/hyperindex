@@ -1,13 +1,42 @@
 use super::PersistedState;
-use sqlx::postgres::{PgPool, PgQueryResult};
+use sqlx::postgres::{PgPool, PgPoolOptions, PgQueryResult};
+use std::env;
+
+fn get_env_with_default(var: &str, default: &str) -> String {
+    env::var(var).unwrap_or_else(|_| default.to_string())
+}
 
 impl PersistedState {
-    async fn upsert_to_db(&self, pool: &PgPool) -> Result<PgQueryResult, sqlx::Error> {
+    pub async fn upsert_to_db(&self) -> Result<PgQueryResult, sqlx::Error> {
+        let pool = Self::get_pg_pool().await?;
+        self.upsert_to_db_with_pool(&pool).await
+    }
+
+    pub async fn read_from_db() -> Result<Option<Self>, sqlx::Error> {
+        let pool = Self::get_pg_pool().await?;
+        Self::read_from_db_with_pool(&pool).await
+    }
+
+    async fn get_pg_pool() -> Result<PgPool, sqlx::Error> {
+        let host = get_env_with_default("PG_HOST", "localhost");
+        let port = get_env_with_default("PG_PORT", "5433");
+        let user = get_env_with_default("PG_USER", "postgres");
+        let password = get_env_with_default("PG_PASSWORD", "testing");
+        let database = get_env_with_default("PG_DATABASE", "envio-dev");
+
+        let connection_url = format!("postgres://{user}:{password}@{host}:{port}/{database}");
+
+        PgPoolOptions::new().connect(&connection_url).await
+    }
+
+    pub async fn upsert_to_db_with_pool(
+        &self,
+        pool: &PgPool,
+    ) -> Result<PgQueryResult, sqlx::Error> {
         sqlx::query(
             "INSERT INTO public.persisted_state (
             id, 
             envio_version,
-            has_run_db_migrations,
             config_hash,
             schema_hash,
             handler_files_hash,
@@ -18,11 +47,9 @@ impl PersistedState {
             $3, 
             $4, 
             $5, 
-            $6, 
-            $7 
+            $6 
         ) ON CONFLICT (id) DO UPDATE SET (
             envio_version,
-            has_run_db_migrations,
             config_hash,
             schema_hash,
             handler_files_hash,
@@ -32,13 +59,11 @@ impl PersistedState {
             $3, 
             $4, 
             $5, 
-            $6, 
-            $7 
+            $6 
         )",
         )
         .bind(1) //Always only 1 id to update
         .bind(&self.envio_version)
-        .bind(&self.has_run_db_migrations)
         .bind(&self.config_hash)
         .bind(&self.schema_hash)
         .bind(&self.handler_files_hash)
@@ -47,11 +72,10 @@ impl PersistedState {
         .await
     }
 
-    async fn read_from_db(pool: &PgPool) -> Result<Option<Self>, sqlx::Error> {
+    pub async fn read_from_db_with_pool(pool: &PgPool) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as::<_, PersistedState>(
             "SELECT 
             envio_version,
-            has_run_db_migrations,
             config_hash,
             schema_hash,
             handler_files_hash,
@@ -70,18 +94,14 @@ mod test {
         project_paths::ParsedProjectPaths,
     };
     use anyhow::{Context, Result};
-    use sqlx::postgres::PgPoolOptions;
     use std::path::PathBuf;
 
     #[tokio::test]
     #[ignore]
     async fn writes_to_db() -> Result<()> {
-        println!("This test only works if the db migrations have been run and the db config is 100% correct");
-        let pool = PgPoolOptions::new()
-            .max_connections(1)
-            .connect("postgres://postgres:testing@localhost:5433/envio-dev")
-            .await
-            .context("creating pool")?;
+        println!(
+            "This test only works if the db migrations have been run and the db is up and running"
+        );
         let root = format!("{}/test/configs", env!("CARGO_MANIFEST_DIR"));
         let path = format!("{}/config1.yaml", &root);
         let config_path = PathBuf::from(path);
@@ -95,10 +115,10 @@ mod test {
         )
         .context("system_cfg")?;
         let persisted_state =
-            PersistedState::try_default(&system_cfg).context("persisted_state")?;
+            PersistedState::get_current_state(&system_cfg).context("persisted_state")?;
 
         persisted_state
-            .upsert_to_db(&pool)
+            .upsert_to_db()
             .await
             .context("write_to_db")?;
 
@@ -108,14 +128,10 @@ mod test {
     #[tokio::test]
     #[ignore]
     async fn reads_from_db() -> Result<()> {
-        println!("This test only works if the db migrations have been run and the db config is 100% correct");
-        let pool = PgPoolOptions::new()
-            .max_connections(1)
-            .connect("postgres://postgres:testing@localhost:5433/envio-dev")
-            .await
-            .context("creating pool")?;
-
-        let val = PersistedState::read_from_db(&pool)
+        println!(
+            "This test only works if the db migrations have been run and the db is up and running"
+        );
+        let val = PersistedState::read_from_db()
             .await
             .context("read from db")?;
 
