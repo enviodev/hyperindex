@@ -2,7 +2,9 @@ use crate::{
     config_parsing::human_config::parse_contract_abi,
     constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
 };
+use colored::*;
 use inquire::{validator::Validation, CustomUserError};
+use std::collections::BTreeMap;
 use std::{fs, path::PathBuf};
 
 pub fn is_valid_folder_name(name: &str) -> bool {
@@ -117,4 +119,45 @@ mod tests {
         assert!(!is_invalid_colon);
         assert!(!is_invalid_empty);
     }
+}
+
+fn are_events_equivalent(event1: &ethers::abi::Event, event2: &ethers::abi::Event) -> bool {
+    event1.name == event2.name
+        && event1
+            .inputs
+            .iter()
+            .zip(&event2.inputs)
+            .all(|(input1, input2)| input1.kind == input2.kind && input1.indexed == input2.indexed)
+}
+
+pub fn filter_duplicate_events(
+    events: BTreeMap<String, Vec<ethers::abi::Event>>,
+) -> BTreeMap<String, Vec<ethers::abi::Event>> {
+    let mut filtered_events: BTreeMap<String, Vec<ethers::abi::Event>> = BTreeMap::new();
+
+    for (event_name, event_list) in events {
+        if event_list.len() > 1 {
+            let first_event = event_list[0].clone();
+            for event in event_list {
+                if !are_events_equivalent(&first_event, &event) {
+                    let warning_message =
+                        "Note this is unimplemented! The code might behave unexpectedly.\n"
+                            .red()
+                            .bold();
+                    println!("{}", warning_message);
+                    println!(
+                        "Found duplicate event: {} in contract abi. This event will be ignored. However, this second ignored event has the same name as the first event, but different inputs. This isn't possible in solidity, but technically possible through proxy contracts with multiple implementations. Handling his is currently unimplemented. Please ask the team on discord, or comment on our github issue if this is affecting you.\n\nhttps://github.com/enviodev/envio-hyperindexer-issues/issues/1\n",
+                        event_name
+                    );
+                }
+            }
+
+            filtered_events.insert(event_name, vec![first_event]);
+        } else {
+            filtered_events.insert(event_name, event_list);
+            continue;
+        }
+    }
+
+    filtered_events
 }

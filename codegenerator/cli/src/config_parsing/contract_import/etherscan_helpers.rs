@@ -1,5 +1,7 @@
 use super::converters::{self, ContractImportNetworkSelection, ContractImportSelection};
 use crate::{
+    cli_args::interactive_init::validation::filter_duplicate_events,
+    // cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::chain_helpers::{self, NetworkWithExplorer},
     utils::address_type::Address,
 };
@@ -10,8 +12,34 @@ use ethers::{
     prelude::errors::EtherscanError,
     types::H160,
 };
+use std::collections::BTreeMap;
+
 use tokio::time::Duration;
 
+// fn filter_duplicate_events<'a>(
+//     events: impl Iterator<Item = ethers::abi::Event>,
+// ) -> impl Iterator<Item = ethers::abi::Event> + 'a {
+
+// }
+// fn group_events_into_btree_map<'a>(
+//     events: ethers::abi::Events,
+// ) -> BTreeMap<String, Vec<ethers::abi::Event>> {
+//     // events
+//     //     .into_iter()
+//     //     .group_by(|event| event.name.clone())
+//     //     .into_iter()
+//     //     .map(|(name, group)| (name, group.collect()))
+// }
+// pub fn events_to_btree_map(events: ethers::abi::Events) -> BTreeMap<String, Vec<Event>> {
+//     let mut map = BTreeMap::new();
+
+//     // Assuming `self.0` is an iterator. Replace with actual iteration logic.
+//     for (name, events) in self.0 {
+//         map.insert(name, events);
+//     }
+
+//     map
+// }
 pub async fn fetch_contract_auto_selection_from_etherscan(
     contract_address: Address,
     network: &NetworkWithExplorer,
@@ -21,12 +49,14 @@ pub async fn fetch_contract_auto_selection_from_etherscan(
             .try_into()
             .context("Unexpected, network with explorer should be a supported network")?;
 
-    let contract_data = get_contract_data_from_contract(network, contract_address.as_h160())
+    let mut contract_data = get_contract_data_from_contract(network, contract_address.as_h160())
         .await
         .context(format!(
             "Failed fetching implementation abi of contract {} on network {}",
             contract_address, network
         ))?;
+
+    contract_data.abi.events = filter_duplicate_events(contract_data.abi.events);
 
     let events = contract_data.abi.events().cloned().collect();
 

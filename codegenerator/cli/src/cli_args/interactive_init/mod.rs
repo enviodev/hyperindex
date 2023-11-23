@@ -1,5 +1,5 @@
 mod inquire_helpers;
-mod validation;
+pub mod validation;
 
 use self::validation::{
     contains_no_whitespace_validator, first_char_is_alphabet_validator, is_abi_file_validator,
@@ -11,6 +11,7 @@ use super::clap_definitions::{
     LocalOrExplorerImport, ProjectPaths, Template as InitTemplate,
 };
 use crate::{
+    cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
         chain_helpers::{Network, NetworkWithExplorer, SupportedNetwork},
         contract_import::converters::{self, AutoConfigSelection},
@@ -123,13 +124,14 @@ impl ContractImportArgs {
                     }
                 };
 
-                AutoConfigSelection::from_etherscan(
+                let result = AutoConfigSelection::from_etherscan(
                     project_name,
                     language,
                     &chosen_blockchain,
                     get_chosen_contract_address()?,
                 )
-                .await
+                .await;
+                result
             }
             LocalOrExplorerImport::Local(LocalImportArgs {
                 blockchain,
@@ -150,8 +152,12 @@ impl ContractImportArgs {
                     }
                 };
 
-                let parsed_abi = parse_contract_abi(PathBuf::from(abi_path_string))
+                let mut parsed_abi = parse_contract_abi(PathBuf::from(abi_path_string))
                     .context("Failed to parse abi")?;
+
+                println!("\n\nabi events {:?}", parsed_abi.events);
+
+                parsed_abi.events = filter_duplicate_events(parsed_abi.events);
 
                 let network: converters::Network = match blockchain {
                     Some(b) => {

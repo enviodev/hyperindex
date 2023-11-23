@@ -34,6 +34,7 @@ open = "5.0.0"
 subenum = "1.1.1"
 async-recursion = "1.0.5"
 itertools = "0.11.0"
+colored = "2.0.4"
 
 [dev-dependencies]
 tempdir = "0.3"
