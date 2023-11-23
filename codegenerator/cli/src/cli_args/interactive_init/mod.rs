@@ -155,8 +155,6 @@ impl ContractImportArgs {
                 let mut parsed_abi = parse_contract_abi(PathBuf::from(abi_path_string))
                     .context("Failed to parse abi")?;
 
-                println!("\n\nabi events {:?}", parsed_abi.events);
-
                 parsed_abi.events = filter_duplicate_events(parsed_abi.events);
 
                 let network: converters::Network = match blockchain {
