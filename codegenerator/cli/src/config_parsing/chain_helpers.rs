@@ -100,7 +100,7 @@ pub enum Network {
     #[subenum(GraphNetwork)]
     AuroraTestnet = 1313161555,
     Harmony = 1666600000,
-    #[subenum(SupportedNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, EthArchiveNetwork, GraphNetwork)]
     BaseTestnet = 84531,
     #[subenum(GraphNetwork)]
     ZksyncEra = 324,

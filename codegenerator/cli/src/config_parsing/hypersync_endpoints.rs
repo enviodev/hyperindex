@@ -28,6 +28,7 @@ fn get_hypersync_network_from_supported(
 pub fn network_to_eth_archive_url(network: &EthArchiveNetwork) -> String {
     match network {
         EthArchiveNetwork::Avalanche => "http://46.4.5.110:72".to_string(),
+        EthArchiveNetwork::BaseTestnet => "http://46.4.5.110:78".to_string(),
     }
 }
 
@@ -56,14 +57,18 @@ pub fn network_to_skar_url(network: &SkarNetwork) -> String {
 pub fn get_default_hypersync_endpoint(
     chain_id: u64,
 ) -> anyhow::Result<human_config::HypersyncConfig> {
-    let network_name =
-        Network::from_network_id(chain_id).context("getting network name from id")?;
+    let network_name = Network::from_network_id(chain_id)
+        .context(format!("Getting network name from id ({})", chain_id))?;
 
-    let network = SupportedNetwork::try_from(network_name)
-        .context("Unsupported network provided for hypersync")?;
+    let network = SupportedNetwork::try_from(network_name).context(format!(
+        "Unsupported network (name: {}, id: {}) provided for hypersync",
+        network_name, chain_id
+    ))?;
 
-    let hypersync_network = get_hypersync_network_from_supported(&network)
-        .context("Converting supported network to hypersync network")?;
+    let hypersync_network = get_hypersync_network_from_supported(&network).context(format!(
+        "Converting supported network to hypersync network, chainId: {}",
+        chain_id
+    ))?;
 
     let endpoint = match hypersync_network {
         HyperSyncNetwork::Skar(n) => human_config::HypersyncConfig {
