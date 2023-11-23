@@ -28,7 +28,6 @@ fn get_hypersync_network_from_supported(
 pub fn network_to_eth_archive_url(network: &EthArchiveNetwork) -> String {
     match network {
         EthArchiveNetwork::Avalanche => "http://46.4.5.110:72".to_string(),
-        EthArchiveNetwork::BaseTestnet => "http://46.4.5.110:78".to_string(),
     }
 }
 
