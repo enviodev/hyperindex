@@ -36,9 +36,9 @@ async-recursion = "1.0.5"
 itertools = "0.11.0"
 colored = "2.0.4"
 sqlx = { version = "0.7.2", features = [
-  "runtime-tokio-rustls",
+  "runtime-tokio",
+  "tls-rustls", 
   "postgres",
-  "macros",
 ] }
 [dev-dependencies]
 tempdir = "0.3"
