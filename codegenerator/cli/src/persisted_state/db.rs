@@ -1,4 +1,4 @@
-use super::PersistedState;
+use super::{PersistedState, PersistedStateExists};
 use sqlx::postgres::{PgPool, PgPoolOptions, PgQueryResult};
 use std::env;
 
@@ -6,27 +6,22 @@ fn get_env_with_default(var: &str, default: &str) -> String {
     env::var(var).unwrap_or_else(|_| default.to_string())
 }
 
+async fn get_pg_pool() -> Result<PgPool, sqlx::Error> {
+    let host = get_env_with_default("PG_HOST", "localhost");
+    let port = get_env_with_default("PG_PORT", "5433");
+    let user = get_env_with_default("PG_USER", "postgres");
+    let password = get_env_with_default("PG_PASSWORD", "testing");
+    let database = get_env_with_default("PG_DATABASE", "envio-dev");
+
+    let connection_url = format!("postgres://{user}:{password}@{host}:{port}/{database}");
+
+    PgPoolOptions::new().connect(&connection_url).await
+}
+
 impl PersistedState {
     pub async fn upsert_to_db(&self) -> Result<PgQueryResult, sqlx::Error> {
-        let pool = Self::get_pg_pool().await?;
+        let pool = get_pg_pool().await?;
         self.upsert_to_db_with_pool(&pool).await
-    }
-
-    pub async fn read_from_db() -> Result<Option<Self>, sqlx::Error> {
-        let pool = Self::get_pg_pool().await?;
-        Self::read_from_db_with_pool(&pool).await
-    }
-
-    async fn get_pg_pool() -> Result<PgPool, sqlx::Error> {
-        let host = get_env_with_default("PG_HOST", "localhost");
-        let port = get_env_with_default("PG_PORT", "5433");
-        let user = get_env_with_default("PG_USER", "postgres");
-        let password = get_env_with_default("PG_PASSWORD", "testing");
-        let database = get_env_with_default("PG_DATABASE", "envio-dev");
-
-        let connection_url = format!("postgres://{user}:{password}@{host}:{port}/{database}");
-
-        PgPoolOptions::new().connect(&connection_url).await
     }
 
     pub async fn upsert_to_db_with_pool(
@@ -71,9 +66,17 @@ impl PersistedState {
         .execute(pool)
         .await
     }
+}
 
-    pub async fn read_from_db_with_pool(pool: &PgPool) -> Result<Option<Self>, sqlx::Error> {
-        sqlx::query_as::<_, PersistedState>(
+impl PersistedStateExists {
+    pub async fn read_from_db() -> Result<PersistedStateExists, sqlx::Error> {
+        let pool = get_pg_pool().await?;
+        Self::read_from_db_with_pool(&pool).await
+    }
+    pub async fn read_from_db_with_pool(
+        pool: &PgPool,
+    ) -> Result<PersistedStateExists, sqlx::Error> {
+        let val = sqlx::query_as::<_, PersistedState>(
             "SELECT 
             envio_version,
             config_hash,
@@ -83,7 +86,23 @@ impl PersistedState {
          from public.persisted_state WHERE id = 1",
         )
         .fetch_optional(pool)
-        .await
+        .await;
+
+        match val {
+            Err(e) => match e {
+                //In the following cases treat it as a corrupt persisted state
+                sqlx::Error::Decode(_)
+                | sqlx::Error::ColumnNotFound(_)
+                | sqlx::Error::Database(_)
+                | sqlx::Error::ColumnDecode { .. }
+                | sqlx::Error::TypeNotFound { .. } => Ok(PersistedStateExists::Corrupted),
+                _ => Err(e),
+            },
+            Ok(opt_state) => match opt_state {
+                None => Ok(PersistedStateExists::NotExists),
+                Some(p) => Ok(PersistedStateExists::Exists(p)),
+            },
+        }
     }
 }
 #[cfg(test)]
@@ -131,13 +150,13 @@ mod test {
         println!(
             "This test only works if the db migrations have been run and the db is up and running"
         );
-        let val = PersistedState::read_from_db()
+        let val = PersistedStateExists::read_from_db()
             .await
             .context("read from db")?;
 
         println!("{:?}", val);
 
-        assert!(val.is_some());
+        assert!(matches!(val, PersistedStateExists::Exists(_)));
 
         Ok(())
     }

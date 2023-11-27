@@ -1,7 +1,7 @@
 use crate::{
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
-    persisted_state::{self, PersistedState},
+    persisted_state::{self, PersistedState, PersistedStateExists},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
@@ -17,12 +17,14 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     let current_state = PersistedState::get_current_state(&config)
         .context("Failed getting current indexer state")?;
 
-    let opt_persisted_state_file = PersistedState::get_persisted_state_file(&project_paths)
-        .context("Failed getting persisted state file from generated folder")?;
+    let persisted_state_file = PersistedStateExists::get_persisted_state_file(&project_paths);
 
-    let (should_run_codegen, changes_detected) = opt_persisted_state_file
-        .as_ref()
-        .map_or((true, vec![]), |p| current_state.should_run_codegen(&p));
+    let (should_run_codegen, changes_detected) = match &persisted_state_file {
+        PersistedStateExists::Exists(persisted_state) => {
+            current_state.should_run_codegen(persisted_state)
+        }
+        PersistedStateExists::NotExists | PersistedStateExists::Corrupted => (true, vec![]),
+    };
 
     let print_changes_detected = |changes_detected: Vec<persisted_state::StateField>| {
         println!(
@@ -37,10 +39,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     };
 
     if should_run_codegen {
-        if opt_persisted_state_file.is_none() {
-            println!("No generated files detected");
-        } else {
-            print_changes_detected(changes_detected);
+        match persisted_state_file {
+            PersistedStateExists::NotExists => println!("No generated files detected"),
+            PersistedStateExists::Corrupted => println!("Persisted state is invalid"),
+            PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
         }
         println!("Running codegen");
 
@@ -71,52 +73,70 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
             Err(anyhow!(err_message)).context("Failed to start hasura")?;
         }
         EndpointHealth::Healthy => {
-            {
-                let opt_persisted_state_db = PersistedState::read_from_db()
-                    .await
-                    .context("Failed to read persisted state from the DB")?;
+            //Get the persisted state from the db
+            let persisted_state_db = PersistedStateExists::read_from_db()
+                .await
+                .context("Failed to read persisted state from the DB")?;
 
-                let (should_run_db_migrations, changes_detected) =
-                    opt_persisted_state_db.as_ref().map_or((true, vec![]), |p| {
-                        current_state.should_run_db_migrations(&p)
-                    });
+            let (should_sync_from_raw_events, should_run_db_migrations, changes_detected) =
+                match &persisted_state_db {
+                    PersistedStateExists::Exists(persisted_state) =>
+                    //In the case where the persisted state exists, compare it to current state
+                    //determine whether to run migrations and which changes have occured to
+                    //cause that.
+                    {
+                        let (should_run_db_migrations, changes_detected) =
+                            current_state.should_run_db_migrations(persisted_state);
 
-                let should_sync_from_raw_events = opt_persisted_state_db
-                    .as_ref()
-                    .map_or(false, |p| current_state.should_sync_from_raw_events(&p));
+                        let should_sync_from_raw_events =
+                            current_state.should_sync_from_raw_events(persisted_state);
 
-                if should_run_db_migrations {
-                    //print changes and running db migrations
-                    if opt_persisted_state_db.is_some() {
-                        print_changes_detected(changes_detected);
+                        (
+                            should_sync_from_raw_events,
+                            should_run_db_migrations,
+                            changes_detected,
+                        )
                     }
-                    println!("Running db migrations");
+                    //Otherwise we should run db migrations
+                    PersistedStateExists::NotExists | PersistedStateExists::Corrupted => {
+                        (false, true, vec![])
+                    }
+                };
 
-                    let should_drop_raw_events = !should_sync_from_raw_events;
-
-                    commands::db_migrate::run_db_setup(
-                        &project_paths,
-                        should_drop_raw_events,
-                        &current_state,
-                    )
-                    .await
-                    .context("Failed running db setup command")?;
+            if should_run_db_migrations {
+                match persisted_state_db {
+                    PersistedStateExists::NotExists => {
+                        println!("Db Migrations have not been run")
+                    }
+                    PersistedStateExists::Corrupted => println!("Invalid DB persisted state"),
+                    PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
                 }
+                println!("Running db migrations");
 
-                if should_sync_from_raw_events {
-                    println!("Resyncing from raw_events");
-                }
+                let should_drop_raw_events = !should_sync_from_raw_events;
 
-                println!("Starting indexer");
-
-                commands::start::start_indexer(
+                commands::db_migrate::run_db_setup(
                     &project_paths,
-                    should_sync_from_raw_events,
-                    should_open_hasura_console,
+                    should_drop_raw_events,
+                    &current_state,
                 )
                 .await
-                .context("Failed running start on the indexer")?;
+                .context("Failed running db setup command")?;
             }
+
+            if should_sync_from_raw_events {
+                println!("Resyncing from raw_events");
+            }
+
+            println!("Starting indexer");
+
+            commands::start::start_indexer(
+                &project_paths,
+                should_sync_from_raw_events,
+                should_open_hasura_console,
+            )
+            .await
+            .context("Failed running start on the indexer")?;
         }
     }
 
