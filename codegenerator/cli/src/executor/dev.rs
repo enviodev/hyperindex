@@ -72,8 +72,6 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         }
         EndpointHealth::Healthy => {
             {
-                println!("healthy, continuing");
-
                 let opt_persisted_state_db = PersistedState::read_from_db()
                     .await
                     .context("Failed to read persisted state from the DB")?;
