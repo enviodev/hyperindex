@@ -162,3 +162,165 @@ impl From<PersistedState> for PersistedStateJsonString {
         Self(val.to_string())
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::PersistedState;
+    use serde_json::json;
+
+    #[test]
+    fn should_run_codegen() {
+        let persisted_file: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let current_state: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<CHANGED_HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let (should_run_codegen, _changed_fields) =
+            current_state.should_run_codegen(&persisted_file);
+
+        assert!(
+            should_run_codegen,
+            "should run codegen should be true since config hash changed"
+        );
+    }
+
+    #[test]
+    fn should_not_run_codegen() {
+        let persisted_file: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let current_state: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<CHANGED_HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let (should_run_codegen, _changed_fields) =
+            current_state.should_run_codegen(&persisted_file);
+
+        assert!(
+            !should_run_codegen,
+            "should run codegen should be false since only handler file changed"
+        );
+    }
+
+    #[test]
+    fn should_run_db_migrations() {
+        let persisted_db: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let current_state: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<CHANGED_HASH_STRING>",
+            "handler_files_hash": "<CHANGED_HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let (should_run_db_migrations, _changed_fields) =
+            current_state.should_run_db_migrations(&persisted_db);
+
+        assert!(
+            should_run_db_migrations,
+            "should run codegen should be true due since a change occurred"
+        );
+
+        let should_sync_from_raw_events = current_state.should_sync_from_raw_events(&persisted_db);
+
+        assert!(!should_sync_from_raw_events, "should_sync_from_raw_events should be false since there were additional changes other than handler_files_hash");
+    }
+
+    #[test]
+    fn should_sync_from_raw_events() {
+        let persisted_db: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let current_state: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<CHANGED_HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let (should_run_db_migrations, _changed_fields) =
+            current_state.should_run_db_migrations(&persisted_db);
+
+        assert!(
+            should_run_db_migrations,
+            "should run codegen should be true due since a change occurred"
+        );
+
+        let should_sync_from_raw_events = current_state.should_sync_from_raw_events(&persisted_db);
+
+        assert!(
+            should_sync_from_raw_events,
+            "should_sync_from_raw_events should be true since only handler files changed"
+        );
+    }
+
+    #[test]
+    fn should_not_run_db_migrations() {
+        let persisted_db: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let current_state: PersistedState = serde_json::from_value(json!({
+            "envio_version": "0.0.1",
+            "config_hash": "<HASH_STRING>",
+            "schema_hash": "<HASH_STRING>",
+            "handler_files_hash": "<HASH_STRING>",
+            "abi_files_hash": "<HASH_STRING>"
+        }))
+        .unwrap();
+
+        let (should_run_db_migrations, _changed_fields) =
+            current_state.should_run_db_migrations(&persisted_db);
+
+        assert!(
+            !should_run_db_migrations,
+            "should run codegen should be false since nothing changed"
+        );
+    }
+}
