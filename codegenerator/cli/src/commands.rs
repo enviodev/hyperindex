@@ -84,7 +84,7 @@ pub mod codegen {
         project_paths: &ParsedProjectPaths,
     ) -> Result<std::process::ExitStatus> {
         println!("Checking for pnpm package...");
-        let current_dir = &project_paths.generated;
+        let current_dir = &project_paths.project_root;
         check_and_install_pnpm(current_dir).await?;
 
         let args = vec!["install", "--no-frozen-lockfile"];
