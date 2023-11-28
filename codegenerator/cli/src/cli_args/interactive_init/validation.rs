@@ -2,7 +2,7 @@ use crate::{
     config_parsing::human_config::parse_contract_abi,
     constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
 };
-use colored::*;
+use colored::Colorize;
 use inquire::{validator::Validation, CustomUserError};
 use std::collections::BTreeMap;
 use std::{fs, path::PathBuf};
