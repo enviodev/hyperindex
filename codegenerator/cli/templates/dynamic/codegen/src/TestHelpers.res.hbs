@@ -152,8 +152,6 @@ module MockDb = {
   Specifically create an executor for the mockDb
   */
   let makeMockDbEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemStoreSetFn, ~store, ~getEntiyId) => {
-    let unit = ()
-    let then = (res, fn) => res->fn
     let dbReadFn = idsArr => idsArr->Belt.Array.keepMap(id => id->dbReadFn)
     IO.makeEntityExecuterComposer(
       ~idsToLoad,
@@ -161,8 +159,8 @@ module MockDb = {
       ~inMemStoreSetFn,
       ~store,
       ~getEntiyId,
-      ~then,
-      ~unit,
+      ~unit=(),
+      ~then=(res, fn) => res->fn,
     )
   }
 

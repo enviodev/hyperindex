@@ -326,8 +326,13 @@ let loadEntitiesToInMemStoreComposer = (
   ~then,
   ~unit,
 ) => {
-  let loadLayer = getLoadLayer(~inMemoryStore, ~entityBatch)
-  executeNestedLoadLayersComposer(~inMemoryStore, ~loadLayer, ~executeLoadLayerFn, ~then, ~unit)
+  executeNestedLoadLayersComposer(
+    ~inMemoryStore,
+    ~loadLayer=getLoadLayer(~inMemoryStore, ~entityBatch),
+    ~executeLoadLayerFn,
+    ~then,
+    ~unit,
+  )
 }
 
 let makeEntityExecuterComposer = (
@@ -359,18 +364,14 @@ let makeEntityExecuterComposer = (
 Specifically create an sql executor with async functionality
 */
 let makeSqlEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemStoreSetFn, ~store, ~getEntiyId) => {
-  let dbReadFn = DbFunctions.sql->dbReadFn
-  let then = Promise.thenResolve
-  let unit = Promise.resolve()
-
   makeEntityExecuterComposer(
-    ~dbReadFn,
+    ~dbReadFn=DbFunctions.sql->dbReadFn,
     ~idsToLoad,
     ~getEntiyId,
     ~store,
     ~inMemStoreSetFn,
-    ~then,
-    ~unit,
+    ~then=Promise.thenResolve,
+    ~unit=Promise.resolve(),
   )
 }
 
@@ -402,13 +403,11 @@ let executeSqlLoadLayer = (~loadLayer: LoadLayer.t, ~inMemoryStore: InMemoryStor
 
 /**Execute loading of entities using sql*/
 let loadEntitiesToInMemStore = (~entityBatch, ~inMemoryStore) => {
-  let executeLoadLayerFn = executeSqlLoadLayer
-  let then = Promise.then
   loadEntitiesToInMemStoreComposer(
     ~inMemoryStore,
     ~entityBatch,
-    ~executeLoadLayerFn,
-    ~then,
+    ~executeLoadLayerFn=executeSqlLoadLayer,
+    ~then=Promise.then,
     ~unit=Promise.resolve(),
   )
 }
