@@ -43,53 +43,76 @@ pub struct InitInteractive {
 }
 
 impl ContractImportArgs {
-    fn get_converter_network_from_network_id_prompt(
-        network_id: u64,
-        rpc_url: Option<String>,
-    ) -> Result<converters::Network> {
-        let maybe_supported_network =
-            Network::from_network_id(network_id).and_then(|n| Ok(SupportedNetwork::try_from(n)?));
-
-        let network = match maybe_supported_network {
-            Ok(s) => converters::Network::Supported(s),
-            Err(_) => {
-                let rpc_url = match rpc_url {
-                    Some(r) => r,
-                    None => Text::new(
-                        "You have entered a network that is unsupported by our servers. \
-                        Please provide an rpc url (this can be edited later in config.yaml):",
-                    )
-                    .prompt()
-                    .context("Failed during rpc url prompt")?,
-                };
-                converters::Network::Unsupported(network_id, rpc_url)
-            }
-        };
-
-        Ok(network)
-    }
-
     pub async fn get_auto_config_selection(
         &self,
         project_name: String,
         language: Language,
     ) -> Result<AutoConfigSelection> {
-        let local_or_explorer = match &self.local_or_explorer {
-            Some(v) => v.clone(),
-            None => {
-                let options = LocalOrExplorerImport::iter().collect();
-
-                Select::new(
-                    "Would you like to import from a block explorer or a local abi?",
-                    options,
+        match &self.get_local_or_explorer()? {
+            LocalOrExplorerImport::Explorer(explorer_import_args) => {
+                self.get_auto_config_selection_from_explore_import_args(
+                    explorer_import_args,
+                    project_name,
+                    language,
                 )
-                .prompt()
-                .context("Failed prompting for import from block explorer or local abi")?
+                .await
             }
-        };
+            LocalOrExplorerImport::Local(local_import_args) => {
+                self.get_auto_config_selection_from_local_import_args(
+                    local_import_args,
+                    project_name,
+                    language,
+                )
+                .await
+            }
+        }
+    }
 
-        let get_chosen_contract_address = || -> Result<Address> {
-            match &self.contract_address {
+    async fn get_auto_config_selection_from_local_import_args(
+        &self,
+        local_import_args: &LocalImportArgs,
+        project_name: String,
+        language: Language,
+    ) -> Result<AutoConfigSelection> {
+        let parsed_abi = local_import_args.get_parsed_abi()?;
+
+        let network = local_import_args.get_network()?;
+
+        let contract_name = local_import_args.get_contract_name()?;
+
+        let address = self.get_contract_address()?;
+
+        Ok(AutoConfigSelection::from_abi(
+            project_name,
+            language,
+            network,
+            address,
+            contract_name,
+            parsed_abi,
+        ))
+    }
+
+    async fn get_auto_config_selection_from_explore_import_args(
+        &self,
+        explorer_import_args: &ExplorerImportArgs,
+        project_name: String,
+        language: Language,
+    ) -> Result<AutoConfigSelection> {
+        let network_with_explorer = explorer_import_args.get_network_with_explorer()?;
+
+        let chosen_contract_address = self.get_contract_address()?;
+
+        AutoConfigSelection::from_etherscan(
+            project_name,
+            language,
+            &network_with_explorer,
+            chosen_contract_address,
+        )
+        .await
+    }
+
+    fn get_contract_address(&self) -> Result<Address> {
+        match &self.contract_address {
                 Some(c) => Ok(c.clone()),
                 None => {
                     CustomType::<Address>::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
@@ -98,123 +121,156 @@ impl ContractImportArgs {
                         .context("Prompting user for contract address")
                 }
             }
+    }
+
+    fn get_local_or_explorer(&self) -> Result<LocalOrExplorerImport> {
+        match &self.local_or_explorer {
+            Some(v) => Ok(v.clone()),
+            None => {
+                let options = LocalOrExplorerImport::iter().collect();
+
+                Select::new(
+                    "Would you like to import from a block explorer or a local abi?",
+                    options,
+                )
+                .prompt()
+                .context("Failed prompting for import from block explorer or local abi")
+            }
+        }
+    }
+}
+
+impl ExplorerImportArgs {
+    fn get_network_with_explorer(&self) -> Result<NetworkWithExplorer> {
+        let chosen_network = match &self.blockchain {
+            Some(chain) => chain.clone(),
+            None => {
+                let options = NetworkWithExplorer::iter()
+                    //Filter only our supported networks
+                    .filter(|&n| {
+                        SupportedNetwork::iter()
+                            //able to cast as u64 because networks enum
+                            //uses repr(u64) attribute
+                            .find(|&sn| n as u64 == sn as u64)
+                            .is_some()
+                    })
+                    .collect();
+
+                Select::new(
+                    "Which blockchain would you like to import a contract from?",
+                    options,
+                )
+                .prompt()?
+            }
         };
 
-        match local_or_explorer {
-            LocalOrExplorerImport::Explorer(ExplorerImportArgs { blockchain }) => {
-                let chosen_blockchain = match &blockchain {
-                    Some(chain) => chain.clone(),
-                    None => {
-                        let options = NetworkWithExplorer::iter()
-                            //Filter only our supported networks
-                            .filter(|&n| {
-                                SupportedNetwork::iter()
-                                    //able to cast as u64 because networks enum
-                                    //uses repr(u64) attribute
-                                    .find(|&sn| n as u64 == sn as u64)
-                                    .is_some()
-                            })
-                            .collect();
+        Ok(chosen_network)
+    }
+}
 
-                        Select::new(
-                            "Which blockchain would you like to import a contract from?",
-                            options,
-                        )
-                        .prompt()?
-                    }
-                };
+impl LocalImportArgs {
+    fn get_abi_path_string(&self) -> Result<String> {
+        match &self.abi_file {
+            Some(p) => Ok(p.to_owned()),
+            None => {
+                let abi_path = Text::new("What is the path to your json abi file?")
+                    .with_autocomplete(FilePathCompleter::default())
+                    .with_validator(is_abi_file_validator)
+                    .prompt()
+                    .context("Failed during prompt for abi file path")?;
 
-                let result = AutoConfigSelection::from_etherscan(
-                    project_name,
-                    language,
-                    &chosen_blockchain,
-                    get_chosen_contract_address()?,
-                )
-                .await;
-                result
+                Ok(abi_path)
             }
-            LocalOrExplorerImport::Local(LocalImportArgs {
-                blockchain,
-                abi_file,
-                contract_name,
-                rpc_url,
-            }) => {
-                let abi_path_string = match abi_file {
-                    Some(p) => p,
-                    None => {
-                        let abi_path = Text::new("What is the path to your json abi file?")
-                            .with_autocomplete(FilePathCompleter::default())
-                            .with_validator(is_abi_file_validator)
-                            .prompt()
-                            .context("Failed during prompt for abi file path")?;
+        }
+    }
 
-                        abi_path
-                    }
-                };
+    fn get_parsed_abi(&self) -> Result<ethers::abi::Abi> {
+        let abi_path_string = self.get_abi_path_string()?;
 
-                let mut parsed_abi = parse_contract_abi(PathBuf::from(abi_path_string))
-                    .context("Failed to parse abi")?;
+        let mut parsed_abi =
+            parse_contract_abi(PathBuf::from(abi_path_string)).context("Failed to parse abi")?;
 
-                parsed_abi.events = filter_duplicate_events(parsed_abi.events);
+        parsed_abi.events = filter_duplicate_events(parsed_abi.events);
 
-                let network: converters::Network = match blockchain {
-                    Some(b) => {
-                        let network_id: u64 = b.into();
-                        Self::get_converter_network_from_network_id_prompt(network_id, rpc_url)?
-                    }
-                    None => {
-                        let enter_id = "<Enter Network Id>";
-                        let networks = SupportedNetwork::iter()
-                            .map(|n| n.to_string())
-                            .collect::<Vec<_>>();
+        Ok(parsed_abi)
+    }
 
-                        let options = vec![vec![enter_id.to_string()], networks].concat();
+    fn get_rpc_url(&self) -> Result<String> {
+        match &self.rpc_url {
+            Some(r) => Ok(r.to_owned()),
+            None => Text::new(
+                "You have entered a network that is unsupported by our servers. \
+                        Please provide an rpc url (this can be edited later in config.yaml):",
+            )
+            .prompt()
+            .context("Failed during rpc url prompt"),
+        }
+    }
 
-                        let choose_from_networks = Select::new("Choose network:", options)
-                            .prompt()
-                            .context("Failed during prompt for abi file path")?;
+    fn get_converter_network_from_network_id_prompt(
+        &self,
+        network_id: u64,
+    ) -> Result<converters::Network> {
+        let maybe_supported_network =
+            Network::from_network_id(network_id).and_then(|n| Ok(SupportedNetwork::try_from(n)?));
 
-                        match choose_from_networks.as_str() {
-                            choice if choice == enter_id => {
-                                let network_id = CustomType::<u64>::new("Enter the network id:")
-                                    .with_error_message(
-                                        "Invalid network id input, please enter a number",
-                                    )
-                                    .prompt()?;
-
-                                Self::get_converter_network_from_network_id_prompt(
-                                    network_id, rpc_url,
-                                )?
-                            }
-                            choice => converters::Network::Supported(
-                                SupportedNetwork::from_str(&choice)
-                                    .context("Unexpected input, not a supported network.")?,
-                            ),
-                        }
-                    }
-                };
-
-                let contract_name = match contract_name {
-                    Some(n) => n,
-                    None => Text::new("What is the name of this contract?")
-                        .with_validator(contains_no_whitespace_validator)
-                        .with_validator(is_only_alpha_numeric_characters_validator)
-                        .with_validator(first_char_is_alphabet_validator)
-                        .prompt()
-                        .context("Failed during contract name prompt")?,
-                };
-
-                let address = get_chosen_contract_address()?;
-
-                Ok(AutoConfigSelection::from_abi(
-                    project_name,
-                    language,
-                    network,
-                    address,
-                    contract_name,
-                    parsed_abi,
-                ))
+        let network = match maybe_supported_network {
+            Ok(s) => converters::Network::Supported(s),
+            Err(_) => {
+                let rpc_url = self.get_rpc_url()?;
+                converters::Network::Unsupported(network_id, rpc_url)
             }
+        };
+
+        Ok(network)
+    }
+
+    fn get_network(&self) -> Result<converters::Network> {
+        match &self.blockchain {
+            Some(b) => {
+                let network_id: u64 = (b.clone()).into();
+                self.get_converter_network_from_network_id_prompt(network_id)
+            }
+            None => {
+                let enter_id = "<Enter Network Id>";
+                let networks = SupportedNetwork::iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>();
+
+                let options = vec![vec![enter_id.to_string()], networks].concat();
+
+                let choose_from_networks = Select::new("Choose network:", options)
+                    .prompt()
+                    .context("Failed during prompt for abi file path")?;
+
+                let selected = match choose_from_networks.as_str() {
+                    choice if choice == enter_id => {
+                        let network_id = CustomType::<u64>::new("Enter the network id:")
+                            .with_error_message("Invalid network id input, please enter a number")
+                            .prompt()?;
+
+                        self.get_converter_network_from_network_id_prompt(network_id)?
+                    }
+                    choice => converters::Network::Supported(
+                        SupportedNetwork::from_str(&choice)
+                            .context("Unexpected input, not a supported network.")?,
+                    ),
+                };
+
+                Ok(selected)
+            }
+        }
+    }
+
+    fn get_contract_name(&self) -> Result<String> {
+        match &self.contract_name {
+            Some(n) => Ok(n.clone()),
+            None => Text::new("What is the name of this contract?")
+                .with_validator(contains_no_whitespace_validator)
+                .with_validator(is_only_alpha_numeric_characters_validator)
+                .with_validator(first_char_is_alphabet_validator)
+                .prompt()
+                .context("Failed during contract name prompt"),
         }
     }
 }
