@@ -80,3 +80,9 @@ let optionMapNone = (opt: option<'a>, val: 'b): option<'b> => {
   | Some(_) => None
   }
 }
+
+module Tuple = {
+  /**Access a tuple value by its index*/
+  @warning("-27")
+  let get = (tuple: 'a, index: int): option<'b> => %raw(`tuple[index]`)
+}

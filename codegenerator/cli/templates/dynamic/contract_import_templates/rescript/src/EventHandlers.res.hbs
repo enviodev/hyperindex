@@ -30,7 +30,13 @@ Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handle
   let {{event.name.uncapitalized}}Entity: Types.{{event.name.uncapitalized}}Entity = {
     id: event.transactionHash ++ event.logIndex->Belt.Int.toString,
     {{#each event.params as |param|}}
-    {{param.key.uncapitalized}}: event.params.{{param.key.uncapitalized}}{{#if param.is_eth_address}}->Ethers.ethAddressToString{{/if}},
+    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}
+      {{#if param.tuple_param_accessor_indexes}}
+        {{#each param.tuple_param_accessor_indexes as | index |}}
+        ->Utils.Tuple.get({{index}})->Belt.Option.getUnsafe
+        {{/each}}
+      {{/if}}
+    {{#if param.is_eth_address}}->Ethers.ethAddressToString{{/if}},
     {{/each}}
     eventsSummary: globalEventsSummaryKey,
   }

@@ -13,7 +13,7 @@ type EventsSummary {
 type {{event.name.capitalized}} {
   id: ID!
   {{#each event.params as |param|}}
-  {{param.key.uncapitalized}}: {{param.graphql_type}}
+  {{param.entity_key.uncapitalized}}: {{param.graphql_type}}
   {{/each}}
   eventsSummary: String!
 }

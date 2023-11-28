@@ -36,7 +36,7 @@ const INITIAL_EVENTS_SUMMARY = {
   let {{event.name.uncapitalized}}Entity = {
     id: event.transactionHash + event.logIndex.toString(),
     {{#each event.params as |param|}}
-    {{param.key.uncapitalized}}: event.params.{{param.key.uncapitalized}},
+    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if param.tuple_param_accessor_indexes}}{{#each param.tuple_param_accessor_indexes as | index |}}[{{index}}]{{/each}}{{/if}},
     {{/each}}
     eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
   };
