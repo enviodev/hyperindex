@@ -11,7 +11,10 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use itertools::{self, Itertools};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt::{self, Display},
+};
 
 use super::etherscan_helpers::fetch_contract_auto_selection_from_etherscan;
 
@@ -50,20 +53,6 @@ impl AutoConfigSelection {
 
         Ok(Self::new(project_name, language, selected_contract))
     }
-
-    pub fn from_abi(
-        project_name: String,
-        language: Language,
-        network: Network,
-        address: Address,
-        contract_name: String,
-        abi: ethers::abi::Contract,
-    ) -> Self {
-        let selected_contract =
-            ContractImportSelection::from_abi(network, address, contract_name, abi);
-
-        Self::new(project_name, language, selected_contract)
-    }
 }
 
 ///The hierarchy is based on how you would add items to
@@ -72,8 +61,8 @@ impl AutoConfigSelection {
 ///networks
 #[derive(Clone)]
 pub struct ContractImportSelection {
-    name: String,
-    networks: Vec<ContractImportNetworkSelection>,
+    pub name: String,
+    pub networks: Vec<ContractImportNetworkSelection>,
     events: Vec<ethers::abi::Event>,
 }
 
@@ -91,12 +80,10 @@ impl ContractImportSelection {
     }
 
     pub fn from_abi(
-        network: Network,
-        address: Address,
+        network_selection: ContractImportNetworkSelection,
         contract_name: String,
         abi: ethers::abi::Contract,
     ) -> Self {
-        let network_selection = ContractImportNetworkSelection::new(network, address);
         let events = abi.events().cloned().collect();
         Self::new(contract_name, network_selection, events)
     }
@@ -128,10 +115,19 @@ impl Network {
     }
 }
 
+impl Display for Network {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self {
+            Self::Supported(n) => write!(f, "{}", n),
+            Self::Unsupported(n, _) => write!(f, "{}", n),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ContractImportNetworkSelection {
-    network: Network,
-    addresses: Vec<Address>,
+    pub network: Network,
+    pub addresses: Vec<Address>,
 }
 
 impl ContractImportNetworkSelection {

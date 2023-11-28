@@ -149,6 +149,10 @@ pub struct ContractImportArgs {
     ///Contract address to generate the config from
     #[arg(global = true, short, long)]
     pub contract_address: Option<Address>,
+
+    ///If selected, prompt will not ask for additional contracts/addresses/networks
+    #[arg(long, action)]
+    pub single_contract: bool,
 }
 
 #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]

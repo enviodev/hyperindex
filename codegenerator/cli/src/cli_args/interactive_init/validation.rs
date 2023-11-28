@@ -1,8 +1,10 @@
+use crate::utils::address_type::Address;
 use crate::{
     config_parsing::human_config::parse_contract_abi,
     constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
 };
 use colored::Colorize;
+use inquire::validator::CustomTypeValidator;
 use inquire::{validator::Validation, CustomUserError};
 use std::collections::BTreeMap;
 use std::{fs, path::PathBuf};
@@ -58,6 +60,29 @@ pub fn is_abi_file_validator(abi_file_path: &str) -> Result<Validation, CustomUs
     match maybe_parsed_abi {
         Ok(_) => Ok(Validation::Valid),
         Err(e) => Ok(Validation::Invalid(e.into())),
+    }
+}
+
+#[derive(Clone)]
+pub struct UniqueAddressValidator {
+    other_addresses: Vec<Address>,
+}
+
+impl CustomTypeValidator<Address> for UniqueAddressValidator {
+    fn validate(&self, address: &Address) -> Result<Validation, CustomUserError> {
+        if self.other_addresses.contains(address) {
+            Ok(Validation::Invalid(
+                format!("Address {address} has already been added").into(),
+            ))
+        } else {
+            Ok(Validation::Valid)
+        }
+    }
+}
+
+impl UniqueAddressValidator {
+    pub fn new(other_addresses: Vec<Address>) -> UniqueAddressValidator {
+        Self { other_addresses }
     }
 }
 

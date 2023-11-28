@@ -5,6 +5,7 @@ use self::validation::{
     contains_no_whitespace_validator, first_char_is_alphabet_validator, is_abi_file_validator,
     is_directory_new_validator, is_not_empty_string_validator,
     is_only_alpha_numeric_characters_validator, is_valid_foldername_inquire_validator,
+    UniqueAddressValidator,
 };
 use super::clap_definitions::{
     ContractImportArgs, ExplorerImportArgs, InitArgs, InitFlow, Language, LocalImportArgs,
@@ -14,15 +15,18 @@ use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
         chain_helpers::{Network, NetworkWithExplorer, SupportedNetwork},
-        contract_import::converters::{self, AutoConfigSelection},
+        contract_import::converters::{
+            self, AutoConfigSelection, ContractImportNetworkSelection, ContractImportSelection,
+        },
         human_config::parse_contract_abi,
     },
     constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
     utils::address_type::Address,
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
-use inquire::{CustomType, Select, Text};
+use inquire::{Confirm, CustomType, Select, Text};
+
 use inquire_helpers::FilePathCompleter;
 use std::{path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
@@ -43,84 +47,127 @@ pub struct InitInteractive {
 }
 
 impl ContractImportArgs {
-    pub async fn get_auto_config_selection(
-        &self,
-        project_name: String,
-        language: Language,
-    ) -> Result<AutoConfigSelection> {
+    pub async fn get_contract_import_selection(&self) -> Result<ContractImportSelection> {
         match &self.get_local_or_explorer()? {
             LocalOrExplorerImport::Explorer(explorer_import_args) => {
-                self.get_auto_config_selection_from_explore_import_args(
-                    explorer_import_args,
-                    project_name,
-                    language,
-                )
-                .await
+                self.get_contract_import_selection_from_explore_import_args(explorer_import_args)
+                    .await
             }
             LocalOrExplorerImport::Local(local_import_args) => {
-                self.get_auto_config_selection_from_local_import_args(
-                    local_import_args,
-                    project_name,
-                    language,
-                )
-                .await
+                self.get_contract_import_selection_from_local_import_args(local_import_args)
+                    .await
             }
         }
     }
 
-    async fn get_auto_config_selection_from_local_import_args(
-        &self,
-        local_import_args: &LocalImportArgs,
-        project_name: String,
-        language: Language,
-    ) -> Result<AutoConfigSelection> {
-        let parsed_abi = local_import_args.get_parsed_abi()?;
-
-        let network = local_import_args.get_network()?;
-
-        let contract_name = local_import_args.get_contract_name()?;
-
-        let address = self.get_contract_address()?;
-
-        Ok(AutoConfigSelection::from_abi(
-            project_name,
-            language,
-            network,
-            address,
-            contract_name,
-            parsed_abi,
-        ))
+    fn contract_address_prompter() -> CustomType<'static, Address> {
+        CustomType::<Address>::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
+                        .with_error_message("Please input a valid contract address (should be a hexadecimal starting with (0x))")
     }
 
-    async fn get_auto_config_selection_from_explore_import_args(
+    fn contract_address_prompt() -> Result<Address> {
+        Self::contract_address_prompter()
+            .prompt()
+            .context("Prompting user for contract address")
+    }
+
+    fn prompt_add_contract_address_to_network_selection(
+        network_selection: &mut ContractImportNetworkSelection,
+        contract_name: &str,
+    ) -> Result<()> {
+        let question = format!(
+            "Would you like to add another address for contract {} on network {}? (y/n)",
+            contract_name, network_selection.network
+        );
+
+        if Confirm::new(&question).prompt()? {
+            let address = Self::contract_address_prompter()
+                .with_validator(UniqueAddressValidator::new(
+                    network_selection.addresses.clone(),
+                ))
+                .prompt()
+                .context("Failed prompting user for new address")?;
+            network_selection.add_address(address);
+
+            Self::prompt_add_contract_address_to_network_selection(network_selection, contract_name)
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn get_contract_import_selection_from_local_import_args(
+        &self,
+        local_import_args: &LocalImportArgs,
+    ) -> Result<ContractImportSelection> {
+        let parsed_abi = local_import_args
+            .get_parsed_abi()
+            .context("Failed getting parsed abi")?;
+
+        let network = local_import_args
+            .get_network()
+            .context("Failed getting chosen network")?;
+
+        let contract_name = local_import_args
+            .get_contract_name()
+            .context("Failed getting contract name")?;
+
+        let address = self
+            .get_contract_address()
+            .context("Failed getting contract address")?;
+
+        let mut network_selection = ContractImportNetworkSelection::new(network, address);
+
+        if !self.single_contract {
+            Self::prompt_add_contract_address_to_network_selection(
+                &mut network_selection,
+                &contract_name,
+            )?;
+        }
+
+        let selection =
+            ContractImportSelection::from_abi(network_selection, contract_name, parsed_abi);
+
+        Ok(selection)
+    }
+
+    async fn get_contract_import_selection_from_explore_import_args(
         &self,
         explorer_import_args: &ExplorerImportArgs,
-        project_name: String,
-        language: Language,
-    ) -> Result<AutoConfigSelection> {
-        let network_with_explorer = explorer_import_args.get_network_with_explorer()?;
+    ) -> Result<ContractImportSelection> {
+        let network_with_explorer = explorer_import_args
+            .get_network_with_explorer()
+            .context("Failed getting NetworkWithExporer")?;
 
-        let chosen_contract_address = self.get_contract_address()?;
+        let chosen_contract_address = self
+            .get_contract_address()
+            .context("Failed getting contract address")?;
 
-        AutoConfigSelection::from_etherscan(
-            project_name,
-            language,
+        let mut contract_selection = ContractImportSelection::from_etherscan(
             &network_with_explorer,
             chosen_contract_address,
         )
         .await
+        .context("Failed getting ContractImportSelection from explorer")?;
+
+        let last_network_selection = contract_selection.networks.last_mut().ok_or_else(|| {
+            anyhow!("Expected a network seletion to be constructed with ContractImportSelection")
+        })?;
+
+        if !self.single_contract {
+            Self::prompt_add_contract_address_to_network_selection(
+                last_network_selection,
+                &contract_selection.name,
+            )?;
+        }
+
+        Ok(contract_selection)
     }
 
     fn get_contract_address(&self) -> Result<Address> {
         match &self.contract_address {
-                Some(c) => Ok(c.clone()),
-                None => {
-                    CustomType::<Address>::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
-                        .with_error_message("Please input a valid contract address (should be a hexadecimal starting with (0x))")
-                        .prompt()
-                        .context("Prompting user for contract address")
-                }
-            }
+            Some(c) => Ok(c.clone()),
+            None => Self::contract_address_prompt(),
+        }
     }
 
     fn get_local_or_explorer(&self) -> Result<LocalOrExplorerImport> {
@@ -367,10 +414,14 @@ async fn get_init_args(
                 }
 
                 InitFlow::ContractImport(args) => {
-                    InitilizationTypeWithArgs::ContractImportWithArgs(
-                        args.get_auto_config_selection(project_name.clone(), language.clone())
-                            .await?,
-                    )
+                    let contract_import_selection = args.get_contract_import_selection().await?;
+
+                    let auto_config_selection = AutoConfigSelection::new(
+                        project_name.clone(),
+                        language.clone(),
+                        contract_import_selection,
+                    );
+                    InitilizationTypeWithArgs::ContractImportWithArgs(auto_config_selection)
                 }
             };
 
