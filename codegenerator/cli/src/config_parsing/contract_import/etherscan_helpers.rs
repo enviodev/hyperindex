@@ -1,7 +1,6 @@
 use super::converters::{self, ContractImportNetworkSelection, ContractImportSelection};
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
-    // cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::chain_helpers::{self, NetworkWithExplorer},
     utils::address_type::Address,
 };
