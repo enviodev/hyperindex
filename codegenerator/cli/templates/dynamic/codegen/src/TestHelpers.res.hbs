@@ -447,3 +447,53 @@ let eventProcessors = {
   {{contract.name.uncapitalized}}: {{contract.name.uncapitalized}}EventProcessors,
 {{/each}}
 }
+
+/**
+All mock event helpers for all contracts
+*/
+
+let defaultEthersBigInt = 1
+let defaultString = "Hello World"
+let defaultHashString = "0x12345"
+let defaultEthersAddress = Ethers.getAddressFromStringUnsafe("0x0000000000000000000000000000000000000000")
+let defaultBool = true
+
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+@genType
+type argsFor{{event.name.capitalized}} = {
+{{#each event.params as | param |}}
+  {{param.key}}?: {{param.type_rescript}},
+{{/each}}
+}
+
+let createMock{{event.name.capitalized}}Event = (
+  ~args: argsFor{{event.name.capitalized}},
+): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.log => {
+  let {
+      {{#each event.params as | param |}}
+      ?{{param.key}}{{#unless @last}},{{/unless}}
+      {{/each}}
+      } = args
+
+  {{#each event.params as | param |}}
+  let {{param.key}} = {{param.key}}->Belt.Option.getWithDefault()
+  {{/each}}
+
+  {
+    params: {
+      {{#each event.params as | param |}}
+      {{param.key}},
+      {{/each}}
+    },
+    blockNumber: defaultEthersBigInt,
+    blockTimestamp: defaultEthersBigInt,
+    blockHash: defaultHashString,
+    srcAddress: defaultEthersAddress,
+    transactionHash: defaultHashString,
+    transactionIndex: defaultEthersBigInt,
+    logIndex: defaultEthersBigInt,
+  }
+}
+{{/each}}
+{{/each}}
