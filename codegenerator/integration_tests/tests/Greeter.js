@@ -79,8 +79,8 @@ const pollGraphQL = async () => {
   fetchQuery(rawEventsQuery, (data) => {
     assert(
       data.raw_events_by_pk.event_type ===
-      "PolygonGreeterContract_NewGreetingEvent",
-      "event_type should be PolygonGreeterContract_NewGreetingEvent"
+      "Greeter_NewGreeting",
+      "event_type should be Greeter_NewGreeting"
     );
     console.log("First test passed, running the second one.");
 

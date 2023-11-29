@@ -325,7 +325,7 @@ jobs:
           # These values need to be lowwer case for the cli arguments.
           lower_case_template=$(echo "${{ matrix.template }}" | tr '[:upper:]' '[:lower:]')
           lower_case_language=$(echo "${{ matrix.language }}" | tr '[:upper:]' '[:lower:]')
-          envio init --template $lower_case_template --language $lower_case_language --name "test" --directory "./integration_test_output/${{ matrix.template }}/${{ matrix.language }}"
+          envio init template --template $lower_case_template --language $lower_case_language --name "test" --directory "./integration_test_output/${{ matrix.template }}/${{ matrix.language }}"
 
       - name: Pre-pull docker-compose images
         run: |

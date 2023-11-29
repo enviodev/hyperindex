@@ -21,7 +21,7 @@ const pollGraphQL = async () => {
   const accountEntityQuery = `
     {
       Account_by_pk(id: "0x26921A182Cf9D6F33730D7F37E1a86fd430863Af") {
-        approvals(order_by: {event_id: asc}, limit: 2) {
+        approvals(order_by: {db_write_timestamp: asc}, limit: 2) {
           amount
           owner
           spender
@@ -83,8 +83,8 @@ const pollGraphQL = async () => {
   // TODO: make this use promises rather than callbacks.
   fetchQuery(rawEventsQuery, (data) => {
     assert(
-      data.raw_events_by_pk.event_type === "ERC20Contract_ApprovalEvent",
-      "event_type should be an ApprovalEvent"
+      data.raw_events_by_pk.event_type === "ERC20_Approval",
+      "event_type should be an Approval"
     );
     console.log("First test passed, running the second one.");
 
