@@ -45,6 +45,83 @@ pub struct InitInteractive {
     pub language: Language,
 }
 
+///Returns the prompter which can call .prompt() to action, or add validators/other
+///properties
+fn contract_address_prompter() -> CustomType<'static, Address> {
+    CustomType::<Address>::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
+                        .with_error_message("Please input a valid contract address (should be a hexadecimal starting with (0x))")
+}
+
+///Immediately calls the prompter
+fn contract_address_prompt() -> Result<Address> {
+    contract_address_prompter()
+        .prompt()
+        .context("Prompting user for contract address")
+}
+
+impl ContractImportNetworkSelection {
+    ///Recursively asks to add an address to ContractImportNetworkSelection
+    fn prompt_add_contract_address_to_network_selection(
+        &mut self,
+        contract_name: &str,
+    ) -> Result<()> {
+        let question = format!(
+            "Would you like to add a new address for contract {} on network {}? (y/n)",
+            contract_name, self.network
+        );
+
+        if Confirm::new(&question).prompt()? {
+            let address = contract_address_prompter()
+                .with_validator(UniqueValueValidator::new(self.addresses.clone()))
+                .prompt()
+                .context("Failed prompting user for new address")?;
+            self.add_address(address);
+
+            self.prompt_add_contract_address_to_network_selection(contract_name)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl ContractImportSelection {
+    //Recursively asks to add networks with addresses to ContractImportNetworkSelection
+    fn prompt_add_network_to_contract_import_selection(&mut self) -> Result<()> {
+        let question = format!(
+            "Would you like to add a new network for contract {}? (y/n)",
+            self.name
+        );
+
+        //Confirm if a user would like to add a new network for the given contract
+        if Confirm::new(&question).prompt()? {
+            //In a new network case, no RPC url could be
+            //derived from CLI flags
+            const NO_RPC_URL: Option<String> = None;
+
+            //Select a new network (not from the list of existing network ids already added)
+            let selected_network = prompt_for_network_id(&NO_RPC_URL, self.get_network_ids())
+                .context("Failed selecting network")?;
+
+            //Instantiate a network_selection without any  contract addresses
+            let mut network_selection =
+                ContractImportNetworkSelection::new_without_addresses(selected_network);
+            //Populate contract addresses with prompt
+            network_selection
+                .prompt_add_contract_address_to_network_selection(&self.name)
+                .context("Failed adding new contract address")?;
+
+            //Add the network to the contract selection
+            self.add_network(network_selection);
+
+            //Reprompt to add more or exit
+            self.prompt_add_network_to_contract_import_selection()
+        } else {
+            //Exit if the user does not want to add more networks
+            Ok(())
+        }
+    }
+}
+
 impl ContractImportArgs {
     pub async fn get_contract_import_selection(&self) -> Result<ContractImportSelection> {
         match &self.get_local_or_explorer()? {
@@ -56,84 +133,6 @@ impl ContractImportArgs {
                 self.get_contract_import_selection_from_local_import_args(local_import_args)
                     .await
             }
-        }
-    }
-
-    ///Returns the prompter which can call .prompt() to action, or add validators/other
-    ///properties
-    fn contract_address_prompter() -> CustomType<'static, Address> {
-        CustomType::<Address>::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
-                        .with_error_message("Please input a valid contract address (should be a hexadecimal starting with (0x))")
-    }
-
-    ///Immediately calls the prompter
-    fn contract_address_prompt() -> Result<Address> {
-        Self::contract_address_prompter()
-            .prompt()
-            .context("Prompting user for contract address")
-    }
-
-    fn prompt_add_contract_address_to_network_selection(
-        network_selection: &mut ContractImportNetworkSelection,
-        contract_name: &str,
-    ) -> Result<()> {
-        let question = format!(
-            "Would you like to add a new address for contract {} on network {}? (y/n)",
-            contract_name, network_selection.network
-        );
-
-        if Confirm::new(&question).prompt()? {
-            let address = Self::contract_address_prompter()
-                .with_validator(UniqueValueValidator::new(
-                    network_selection.addresses.clone(),
-                ))
-                .prompt()
-                .context("Failed prompting user for new address")?;
-            network_selection.add_address(address);
-
-            Self::prompt_add_contract_address_to_network_selection(network_selection, contract_name)
-        } else {
-            Ok(())
-        }
-    }
-
-    fn prompt_add_network_to_contract_import_selection(
-        contract_selection: &mut ContractImportSelection,
-    ) -> Result<()> {
-        let question = format!(
-            "Would you like to add a new network for contract {}? (y/n)",
-            contract_selection.name
-        );
-
-        //Confirm if a user would like to add a new network for the given contract
-        if Confirm::new(&question).prompt()? {
-            //In a new network case, no RPC url could be
-            //derived from CLI flags
-            const NO_RPC_URL: Option<String> = None;
-
-            //Select a new network (not from the list of existing network ids already added)
-            let selected_network =
-                prompt_for_network_id(&NO_RPC_URL, contract_selection.get_network_ids())
-                    .context("Failed selecting network")?;
-
-            //Instantiate a network_selection without any  contract addresses
-            let mut network_selection =
-                ContractImportNetworkSelection::new_without_addresses(selected_network);
-            //Populate contract addresses with prompt
-            Self::prompt_add_contract_address_to_network_selection(
-                &mut network_selection,
-                &contract_selection.name,
-            )
-            .context("Failed adding new contract address")?;
-
-            //Add the network to the contract selection
-            contract_selection.add_network(network_selection);
-
-            //Reprompt to add more or exit
-            Self::prompt_add_network_to_contract_import_selection(contract_selection)
-        } else {
-            //Exit if the user does not want to add more networks
-            Ok(())
         }
     }
 
@@ -162,22 +161,13 @@ impl ContractImportArgs {
         //If the flag for --single-contract was not added, continue to prompt for adding
         //addresses to the given network for this contract
         if !self.single_contract {
-            Self::prompt_add_contract_address_to_network_selection(
-                &mut network_selection,
-                &contract_name,
-            )
-            .context("Failed prompting for more contract addresses on network")?;
+            network_selection
+                .prompt_add_contract_address_to_network_selection(&contract_name)
+                .context("Failed prompting for more contract addresses on network")?;
         }
 
-        let mut contract_selection =
+        let contract_selection =
             ContractImportSelection::from_abi(network_selection, contract_name, parsed_abi);
-
-        //If the flag for --single-contract was not added, continue to prompt for adding
-        //networks (with addresses) to to the given contract selection
-        if !self.single_contract {
-            Self::prompt_add_network_to_contract_import_selection(&mut contract_selection)
-                .context("Failed prompting for more networks")?;
-        }
 
         Ok(contract_selection)
     }
@@ -208,13 +198,8 @@ impl ContractImportArgs {
         if !self.single_contract {
             //If the flag for --single-contract was not added, continue to prompt for adding
             //addresses to the given network for this contract
-            Self::prompt_add_contract_address_to_network_selection(
-                last_network_selection,
-                &contract_selection.name,
-            )?;
-
-            //Prompt for adding networks (with addresses) to the given contract_selectiong
-            Self::prompt_add_network_to_contract_import_selection(&mut contract_selection)?;
+            last_network_selection
+                .prompt_add_contract_address_to_network_selection(&contract_selection.name)?;
         }
 
         Ok(contract_selection)
@@ -225,7 +210,7 @@ impl ContractImportArgs {
     fn get_contract_address(&self) -> Result<Address> {
         match &self.contract_address {
             Some(c) => Ok(c.clone()),
-            None => Self::contract_address_prompt(),
+            None => contract_address_prompt(),
         }
     }
 
@@ -535,7 +520,16 @@ impl InitFlow {
             }
 
             InitFlow::ContractImport(args) => {
-                let contract_import_selection = args.get_contract_import_selection().await?;
+                let mut contract_import_selection = args
+                    .get_contract_import_selection()
+                    .await
+                    .context("Failed getting contract import selection")?;
+
+                if !args.single_contract {
+                    contract_import_selection
+                        .prompt_add_network_to_contract_import_selection()
+                        .context("Failed adding networks")?;
+                }
 
                 let auto_config_selection =
                     AutoConfigSelection::new(project_name, language, contract_import_selection);
