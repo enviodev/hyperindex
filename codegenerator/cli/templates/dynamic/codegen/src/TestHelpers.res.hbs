@@ -452,23 +452,17 @@ let eventProcessors = {
 All mock event helpers for all contracts
 */
 
-let defaultEthersBigInt = 1
-let defaultString = "Hello World"
-let defaultHashString = "0x12345"
-let defaultEthersAddress = Ethers.getAddressFromStringUnsafe("0x0000000000000000000000000000000000000000")
-let defaultBool = true
-
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
 @genType
-type argsFor{{event.name.capitalized}} = {
+type argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event = {
 {{#each event.params as | param |}}
   {{param.key}}?: {{param.type_rescript}},
 {{/each}}
 }
 
-let createMock{{event.name.capitalized}}Event = (
-  ~args: argsFor{{event.name.capitalized}},
+let createMock{{contract.name.capitalized}}{{event.name.capitalized}}Event = (
+  ~args: argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event,
 ): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.log => {
   let {
       {{#each event.params as | param |}}
@@ -477,7 +471,7 @@ let createMock{{event.name.capitalized}}Event = (
       } = args
 
   {{#each event.params as | param |}}
-  let {{param.key}} = {{param.key}}->Belt.Option.getWithDefault()
+  let {{param.key}} = {{param.key}}->Belt.Option.getWithDefault({{param.default_value}})
   {{/each}}
 
   {
@@ -486,14 +480,15 @@ let createMock{{event.name.capitalized}}Event = (
       {{param.key}},
       {{/each}}
     },
-    blockNumber: defaultEthersBigInt,
-    blockTimestamp: defaultEthersBigInt,
-    blockHash: defaultHashString,
-    srcAddress: defaultEthersAddress,
-    transactionHash: defaultHashString,
-    transactionIndex: defaultEthersBigInt,
-    logIndex: defaultEthersBigInt,
+    blockNumber: Ethers.BigInt.zero->Ethers.BigInt.toInt->Belt.Option.getWithDefault(0),
+    blockTimestamp: Ethers.BigInt.zero->Ethers.BigInt.toInt->Belt.Option.getWithDefault(0),
+    blockHash: Ethers.Constants.zeroHash->Ethers.ethAddressToString,
+    srcAddress: Ethers.Addresses.defaultAddress,
+    transactionHash: Ethers.Constants.zeroHash->Ethers.ethAddressToString,
+    transactionIndex: Ethers.BigInt.zero->Ethers.BigInt.toInt->Belt.Option.getWithDefault(0),
+    logIndex: Ethers.BigInt.zero->Ethers.BigInt.toInt->Belt.Option.getWithDefault(0),
   }
 }
+
 {{/each}}
 {{/each}}

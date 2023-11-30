@@ -2,7 +2,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{strip_option_from_rescript_type_str, Entity, Field, RescriptType},
+        entity_parsing::{strip_option_from_rescript_type_str, Entity, Field},
         event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -22,7 +22,7 @@ pub trait HasName {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
     pub key: String,
-    pub type_rescript: RescriptType,
+    pub type_rescript: String,
     pub default_value: String,
 }
 
@@ -313,7 +313,7 @@ impl EventTemplate {
                 EventParamTypeTemplate {
                     key,
                     default_value: type_rescript.get_default_value(),
-                    type_rescript,
+                    type_rescript: type_rescript.to_string(),
                 }
             })
             .collect();
@@ -601,8 +601,9 @@ mod test {
         config_parsing::{
             chain_helpers::EthArchiveNetwork, human_config, human_config::RpcConfig,
             system_config::SystemConfig,
+            entity_parsing::RescriptType
         },
-        project_paths::ParsedProjectPaths,
+        project_paths::ParsedProjectPaths
     };
 
     fn get_per_contract_events_vec_helper(
@@ -845,22 +846,22 @@ mod test {
             params: vec![
                 EventParamTypeTemplate {
                     key: "id".to_string(),
-                    type_rescript: RESCRIPT_BIG_INT_TYPE,
+                    type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
                     default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "owner".to_string(),
-                    type_rescript: RESCRIPT_ADDRESS_TYPE,
+                    type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
                     default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "displayName".to_string(),
-                    type_rescript: RESCRIPT_STRING_TYPE,
+                    type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "imageUrl".to_string(),
-                    type_rescript: RESCRIPT_STRING_TYPE,
+                    type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
             ],
@@ -885,22 +886,22 @@ mod test {
             params: vec![
                 EventParamTypeTemplate {
                     key: "id".to_string(),
-                    type_rescript: RESCRIPT_BIG_INT_TYPE,
+                    type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
                     default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "owner".to_string(),
-                    type_rescript: RESCRIPT_ADDRESS_TYPE,
+                    type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
                     default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "displayName".to_string(),
-                    type_rescript: RESCRIPT_STRING_TYPE,
+                    type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "imageUrl".to_string(),
-                    type_rescript: RESCRIPT_STRING_TYPE,
+                    type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
             ],
