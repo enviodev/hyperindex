@@ -41,7 +41,7 @@ jobs:
           filters: |
             testChanges:
               - "codegenerator/**"
-              - "scenarios/**"
+              - "scenarios/test_codegen/**"
 
       - name: Setup rust cache
         if: steps.changes.outputs.testChanges == 'true'

@@ -1,0 +1,108 @@
+name: Build & Test Scenario
+
+on:
+  push:
+    branches:
+      - main
+      # The following two branch names can be used to force build a version for development and sharing a patch.
+      - "integration-testing-*"
+
+
+defaults:
+  run:
+    working-directory: codegenerator
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup rust cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            # using both of these paths to hedge bets on which is correct.
+            ./codegenerator/target
+            ./target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            ${{ runner.os }}-cargo-
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8.9
+
+      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+        if: steps.changes.outputs.testChanges == 'true'
+        id: pnpm-cache
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+            ${{ runner.os }}-pnpm-store-
+
+      # - name: Cargo Build
+      #   if: steps.changes.outputs.testChanges == 'true'
+      #   run: cargo build --verbose
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18.15.0
+ 
+      - name: Pre-pull docker-compose images
+        run: |
+          cd ../cli/templates/static/codegen # we use the docker-compose.yml in the static folder
+          docker-compose pull
+
+      - name: Mock gio
+        run: |
+          mkdir -p /home/runner/.local/bin # This is on the path by default
+          echo 'echo "running mock gio"' > /home/runner/.local/bin/gio && chmod +x /home/runner/.local/bin/gio
+          echo 'echo "running mock xdg-open"' > /home/runner/.local/bin/xdg-open && chmod +x /home/runner/.local/bin/xdg-open
+            
+
+      - name: test_codegen build
+        working-directory: codegenerator/integration_tests
+        env:
+          LANGUAGE: ${{ matrix.language }}
+          TEMPLATE: ${{ matrix.template }}
+          LOG_LEVEL: trace
+          ENVIO_CMD: envio # This gives us flexibilty to use `pnpm envio` or the 'cargo run' version of envio.
+        run: |
+          ./tests/runAll.sh
+
+      - name: Test Failure
+        uses: rjstone/discord-webhook-notify@v1
+        if: failure()
+        with:
+          severity: error
+          details: "Integration test Failed - in main (make sure to fix before releasing a new version)! (CC: <@&Devs> )"
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+
+      - name: Test Cancelled
+        uses: rjstone/discord-webhook-notify@v1
+        if: cancelled()
+        with:
+          severity: warn
+          details: Integration Test Cancelled - make sure the cancelation was intentional
+          webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
+
