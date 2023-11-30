@@ -1,4 +1,4 @@
-name: Build & Test Scenario
+name: Template Integration Tests
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
 
 defaults:
   run:
-    working-directory: codegenerator
+    working-directory: codegenerator/integration_tests
 
 env:
   CARGO_TERM_COLOR: always
@@ -78,10 +78,8 @@ jobs:
           mkdir -p /home/runner/.local/bin # This is on the path by default
           echo 'echo "running mock gio"' > /home/runner/.local/bin/gio && chmod +x /home/runner/.local/bin/gio
           echo 'echo "running mock xdg-open"' > /home/runner/.local/bin/xdg-open && chmod +x /home/runner/.local/bin/xdg-open
-            
 
       - name: test_codegen build
-        working-directory: codegenerator/integration_tests
         env:
           LANGUAGE: ${{ matrix.language }}
           TEMPLATE: ${{ matrix.template }}
