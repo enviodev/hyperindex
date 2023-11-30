@@ -114,7 +114,7 @@ pub struct InitArgs {
     pub language: Option<Language>,
 }
 
-#[derive(Subcommand, Debug, EnumIter, Display, EnumString)]
+#[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum InitFlow {
     ///Initialize from an example template
     Template(TemplateArgs),
@@ -124,7 +124,7 @@ pub enum InitFlow {
     ContractImport(ContractImportArgs),
 }
 
-#[derive(Args, Debug, Default)]
+#[derive(Args, Debug, Default, Clone)]
 pub struct TemplateArgs {
     ///Name of the template to be used in initialization
     #[arg(short, long)]
@@ -132,14 +132,14 @@ pub struct TemplateArgs {
     pub template: Option<Template>,
 }
 
-#[derive(Args, Debug, Default)]
+#[derive(Args, Debug, Default, Clone)]
 pub struct SubgraphMigrationArgs {
     ///Subgraph ID to start a migration from
     #[arg(short, long)]
     pub subgraph_id: Option<SubgraphMigrationID>,
 }
 
-#[derive(Args, Debug, Default)]
+#[derive(Args, Debug, Default, Clone)]
 pub struct ContractImportArgs {
     ///Choose to import a contract from a local abi or
     ///using get values from an explorer using a contract address

@@ -24,7 +24,6 @@ use crate::{
     utils::address_type::Address,
 };
 use anyhow::{anyhow, Context, Result};
-use async_recursion::async_recursion;
 use inquire::{Confirm, CustomType, Select, Text};
 
 use inquire_helpers::FilePathCompleter;
@@ -431,6 +430,8 @@ impl LocalImportArgs {
 }
 
 impl InitArgs {
+    //Turns the cli init args with optional values into
+    //fixed values via interactive prompts
     pub async fn get_init_args_interactive(
         &self,
         project_paths: &ProjectPaths,
@@ -476,8 +477,22 @@ impl InitArgs {
             }
         };
 
-        let template: InitilizationTypeWithArgs =
-            get_init_args(&self.init_commands, &name, &language).await?;
+        let init_flow = match &self.init_commands {
+            Some(v) => v.clone(),
+            None => {
+                //start prompt to ask the user which initialization option they want
+                let user_response_options = InitFlow::iter().collect();
+
+                Select::new("Choose an initialization option", user_response_options)
+                    .prompt()
+                    .context("Failed prompting for initialization option")?
+            }
+        };
+
+        let template = init_flow
+            .get_init_args(name.clone(), language.clone())
+            .await
+            .context("Failed getting template")?;
 
         Ok(InitInteractive {
             name,
@@ -488,61 +503,46 @@ impl InitArgs {
     }
 }
 
-#[async_recursion]
-async fn get_init_args(
-    opt_init_flow: &Option<InitFlow>,
-    project_name: &String,
-    language: &Language,
-) -> Result<InitilizationTypeWithArgs> {
-    match opt_init_flow {
-        Some(init_flow) => {
-            let initialization = match init_flow {
-                InitFlow::Template(args) => {
-                    let chosen_template = match &args.template {
-                        Some(template_name) => template_name.clone(),
-                        None => {
-                            let options = InitTemplate::iter().collect();
+impl InitFlow {
+    async fn get_init_args(
+        &self,
+        project_name: String,
+        language: Language,
+    ) -> Result<InitilizationTypeWithArgs> {
+        let initialization = match self {
+            InitFlow::Template(args) => {
+                let chosen_template = match &args.template {
+                    Some(template_name) => template_name.clone(),
+                    None => {
+                        let options = InitTemplate::iter().collect();
 
-                            Select::new("Which template would you like to use?", options)
-                                .prompt()
-                                .context("Prompting user for template selection")?
-                        }
-                    };
-                    InitilizationTypeWithArgs::Template(chosen_template)
-                }
-                InitFlow::SubgraphMigration(args) => {
-                    let input_subgraph_id = match &args.subgraph_id {
-                        Some(id) => id.clone(),
-                        None => Text::new("[BETA VERSION] What is the subgraph ID?")
+                        Select::new("Which template would you like to use?", options)
                             .prompt()
-                            .context("Prompting user for subgraph id")?,
-                    };
+                            .context("Prompting user for template selection")?
+                    }
+                };
+                InitilizationTypeWithArgs::Template(chosen_template)
+            }
+            InitFlow::SubgraphMigration(args) => {
+                let input_subgraph_id = match &args.subgraph_id {
+                    Some(id) => id.clone(),
+                    None => Text::new("[BETA VERSION] What is the subgraph ID?")
+                        .prompt()
+                        .context("Prompting user for subgraph id")?,
+                };
 
-                    InitilizationTypeWithArgs::SubgraphID(input_subgraph_id)
-                }
+                InitilizationTypeWithArgs::SubgraphID(input_subgraph_id)
+            }
 
-                InitFlow::ContractImport(args) => {
-                    let contract_import_selection = args.get_contract_import_selection().await?;
+            InitFlow::ContractImport(args) => {
+                let contract_import_selection = args.get_contract_import_selection().await?;
 
-                    let auto_config_selection = AutoConfigSelection::new(
-                        project_name.clone(),
-                        language.clone(),
-                        contract_import_selection,
-                    );
-                    InitilizationTypeWithArgs::ContractImportWithArgs(auto_config_selection)
-                }
-            };
+                let auto_config_selection =
+                    AutoConfigSelection::new(project_name, language, contract_import_selection);
+                InitilizationTypeWithArgs::ContractImportWithArgs(auto_config_selection)
+            }
+        };
 
-            Ok(initialization)
-        }
-        None => {
-            //start prompt to ask the user which initialization option they want
-            let user_response_options = InitFlow::iter().collect();
-
-            let user_response =
-                Select::new("Choose an initialization option", user_response_options).prompt()?;
-
-            get_init_args(&Some(user_response), project_name, language).await
-        }
+        Ok(initialization)
     }
 }
