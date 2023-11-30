@@ -95,6 +95,13 @@ impl ContractImportSelection {
     pub async fn from_etherscan(network: &NetworkWithExplorer, address: Address) -> Result<Self> {
         fetch_contract_auto_selection_from_etherscan(address, network).await
     }
+
+    pub fn get_network_ids(&self) -> Vec<u64> {
+        self.networks
+            .iter()
+            .map(|n| n.network.get_network_id())
+            .collect()
+    }
 }
 
 type NetworkId = u64;
@@ -107,7 +114,7 @@ pub enum Network {
 }
 
 impl Network {
-    fn get_network_id(&self) -> NetworkId {
+    pub fn get_network_id(&self) -> NetworkId {
         match self {
             Network::Supported(n) => n.clone() as u64,
             Network::Unsupported(n, _) => *n,
@@ -135,6 +142,13 @@ impl ContractImportNetworkSelection {
         Self {
             network,
             addresses: vec![address],
+        }
+    }
+
+    pub fn new_without_addresses(network: Network) -> Self {
+        Self {
+            network,
+            addresses: vec![],
         }
     }
 

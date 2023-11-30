@@ -1,4 +1,3 @@
-use crate::utils::address_type::Address;
 use crate::{
     config_parsing::human_config::parse_contract_abi,
     constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
@@ -7,6 +6,7 @@ use colored::Colorize;
 use inquire::validator::CustomTypeValidator;
 use inquire::{validator::Validation, CustomUserError};
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::{fs, path::PathBuf};
 
 pub fn is_valid_folder_name(name: &str) -> bool {
@@ -64,15 +64,15 @@ pub fn is_abi_file_validator(abi_file_path: &str) -> Result<Validation, CustomUs
 }
 
 #[derive(Clone)]
-pub struct UniqueAddressValidator {
-    other_addresses: Vec<Address>,
+pub struct UniqueValueValidator<T> {
+    other_values: Vec<T>,
 }
 
-impl CustomTypeValidator<Address> for UniqueAddressValidator {
-    fn validate(&self, address: &Address) -> Result<Validation, CustomUserError> {
-        if self.other_addresses.contains(address) {
+impl<T: Clone + Display + PartialEq> CustomTypeValidator<T> for UniqueValueValidator<T> {
+    fn validate(&self, input: &T) -> Result<Validation, CustomUserError> {
+        if self.other_values.contains(input) {
             Ok(Validation::Invalid(
-                format!("Address {address} has already been added").into(),
+                format!("{input} has already been added").into(),
             ))
         } else {
             Ok(Validation::Valid)
@@ -80,9 +80,9 @@ impl CustomTypeValidator<Address> for UniqueAddressValidator {
     }
 }
 
-impl UniqueAddressValidator {
-    pub fn new(other_addresses: Vec<Address>) -> UniqueAddressValidator {
-        Self { other_addresses }
+impl<T> UniqueValueValidator<T> {
+    pub fn new(other_values: Vec<T>) -> UniqueValueValidator<T> {
+        Self { other_values }
     }
 }
 
