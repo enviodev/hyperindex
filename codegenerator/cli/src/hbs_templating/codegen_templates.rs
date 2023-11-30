@@ -557,7 +557,7 @@ impl ProjectTemplate {
                 ContractTemplate::from_config_contract(cfg_contract, project_paths, cfg)
             })
             .collect::<Result<_>>()
-            .context("Failed generating conract template types")?;
+            .context("Failed generating contract template types")?;
 
         let entities: Vec<EntityRecordTypeTemplate> = cfg
             .get_entities()
