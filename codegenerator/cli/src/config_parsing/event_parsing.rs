@@ -1,3 +1,4 @@
+use crate::config_parsing::entity_parsing::RescriptType;
 use ethers::abi::{EventParam as EthAbiEventParam, ParamType as EthAbiParamType};
 
 pub struct EthereumEventParam<'a> {
@@ -14,21 +15,21 @@ impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
     }
 }
 
-pub fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
+pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptType {
     match &param.abi_type {
-        EthAbiParamType::Uint(_size) => String::from("Ethers.BigInt.t"),
-        EthAbiParamType::Int(_size) => String::from("Ethers.BigInt.t"),
-        EthAbiParamType::Bool => String::from("bool"),
-        EthAbiParamType::Address => String::from("Ethers.ethAddress"),
-        EthAbiParamType::Bytes => String::from("string"),
-        EthAbiParamType::String => String::from("string"),
-        EthAbiParamType::FixedBytes(_) => String::from("string"),
+        EthAbiParamType::Uint(_size) => RescriptType::BigInt,
+        EthAbiParamType::Int(_size) => RescriptType::BigInt,
+        EthAbiParamType::Bool => RescriptType::Bool,
+        EthAbiParamType::Address => RescriptType::Address,
+        EthAbiParamType::Bytes => RescriptType::String,
+        EthAbiParamType::String => RescriptType::String,
+        EthAbiParamType::FixedBytes(_) => RescriptType::String,
         EthAbiParamType::Array(abi_type) => {
             let sub_param = EthereumEventParam {
                 abi_type,
                 name: param.name,
             };
-            format!("array<{}>", abi_type_to_rescript_string(&sub_param))
+            RescriptType::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
         EthAbiParamType::FixedArray(abi_type, _) => {
             let sub_param = EthereumEventParam {
@@ -36,10 +37,10 @@ pub fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
                 name: param.name,
             };
 
-            format!("array<{}>", abi_type_to_rescript_string(&sub_param))
+            RescriptType::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
         EthAbiParamType::Tuple(abi_types) => {
-            let rescript_types: Vec<String> = abi_types
+            let rescript_types: Vec<RescriptType> = abi_types
                 .iter()
                 .map(|abi_type| {
                     let ethereum_param = EthereumEventParam {
@@ -49,14 +50,11 @@ pub fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
                         abi_type,
                     };
 
-                    abi_type_to_rescript_string(&ethereum_param)
+                    abi_to_rescript_type(&ethereum_param)
                 })
                 .collect();
 
-            let tuple_inner = rescript_types.join(", ");
-
-            let tuple = format!("({})", tuple_inner);
-            tuple
+            RescriptType::Tuple(rescript_types)
         }
     }
 }
@@ -65,9 +63,9 @@ pub fn abi_type_to_rescript_string(param: &EthereumEventParam) -> String {
 mod tests {
     //TODO: Recreate these tests where the converters are used
 
-    use ethers::abi::ParamType;
+    use ethers::abi::{HumanReadableParser, ParamType};
 
-    use super::abi_type_to_rescript_string;
+    use super::{abi_to_rescript_type, EthereumEventParam};
 
     #[test]
     fn test_record_type_array() {
@@ -77,9 +75,12 @@ mod tests {
             name: "myArray",
         };
 
-        let parsed_rescript_string = abi_type_to_rescript_string(&param);
+        let parsed_rescript_string = abi_to_rescript_type(&param);
 
-        assert_eq!(parsed_rescript_string, String::from("array<string>"))
+        assert_eq!(
+            parsed_rescript_string.to_string(),
+            String::from("array<string>")
+        )
     }
 
     #[test]
@@ -89,9 +90,12 @@ mod tests {
             abi_type: &array_fixed_arr_type,
             name: "myArrayFixed",
         };
-        let parsed_rescript_string = abi_type_to_rescript_string(&param);
+        let parsed_rescript_string = abi_to_rescript_type(&param);
 
-        assert_eq!(parsed_rescript_string, String::from("array<string>"))
+        assert_eq!(
+            parsed_rescript_string.to_string(),
+            String::from("array<string>")
+        )
     }
 
     #[test]
@@ -102,11 +106,58 @@ mod tests {
             name: "myArrayFixed",
         };
 
-        let parsed_rescript_string = abi_type_to_rescript_string(&param);
+        let parsed_rescript_string = abi_to_rescript_type(&param);
 
         assert_eq!(
-            parsed_rescript_string,
+            parsed_rescript_string.to_string(),
             String::from("(string, Ethers.BigInt.t)")
         )
+    }
+
+    #[test]
+    fn test_abi_default_rescript_int() {
+        let event = HumanReadableParser::parse_event(
+            "event MyEvent(address user, uint256 amount, (bool, address) myTuple, bytes[] myArr)",
+        )
+        .expect("parsing event");
+
+        let params: Vec<EthereumEventParam> = event.inputs.iter().map(|p| p.into()).collect();
+        let user_address = &params[0];
+        let amount_uint256 = &params[1];
+        let tuple_bool_string = &params[2];
+        let bytes_arr = &params[3];
+
+        let user_address_res_type = abi_to_rescript_type(user_address);
+        let amount_uint256_res_type = abi_to_rescript_type(amount_uint256);
+        let tuple_bool_string_res_type = abi_to_rescript_type(tuple_bool_string);
+        let bytes_arr_res_type = abi_to_rescript_type(bytes_arr);
+
+        assert_eq!(
+            user_address_res_type.to_string(),
+            "Ethers.ethAddress".to_string()
+        );
+        assert_eq!(
+            amount_uint256_res_type.to_string(),
+            "Ethers.BigInt.t".to_string()
+        );
+        assert_eq!(
+            tuple_bool_string_res_type.to_string(),
+            "(bool, Ethers.ethAddress)".to_string()
+        );
+        assert_eq!(bytes_arr_res_type.to_string(), "array<string>".to_string());
+
+        assert_eq!(
+            user_address_res_type.get_default_value(),
+            "Ethers.Addresses.defaultAddress".to_string()
+        );
+        assert_eq!(
+            amount_uint256_res_type.get_default_value(),
+            "Ethers.BigInt.zero".to_string()
+        );
+        assert_eq!(
+            tuple_bool_string_res_type.get_default_value(),
+            "(false, Ethers.Addresses.defaultAddress)".to_string()
+        );
+        assert_eq!(bytes_arr_res_type.get_default_value(), "[]".to_string());
     }
 }

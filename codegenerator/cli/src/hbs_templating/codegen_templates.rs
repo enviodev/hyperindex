@@ -2,9 +2,8 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::strip_option_from_rescript_type_str,
-        entity_parsing::{Entity, Field},
-        event_parsing::abi_type_to_rescript_string,
+        entity_parsing::{strip_option_from_rescript_type_str, Entity, Field, RescriptType},
+        event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
     },
@@ -23,7 +22,8 @@ pub trait HasName {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
     pub key: String,
-    pub type_rescript: String,
+    pub type_rescript: RescriptType,
+    pub default_value: String,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -132,7 +132,8 @@ impl EntityParamTypeTemplate {
         let type_rescript = field
             .field_type
             .to_rescript_type(&entity_names_set)
-            .context("Failed getting rescript type")?;
+            .context("Failed getting rescript type")?
+            .to_string();
 
         let type_rescript_non_optional = strip_option_from_rescript_type_str(&type_rescript);
 
@@ -307,9 +308,12 @@ impl EventTemplate {
                 } else {
                     input.name.to_string()
                 };
+                let type_rescript = abi_to_rescript_type(&input.into());
+
                 EventParamTypeTemplate {
                     key,
-                    type_rescript: abi_type_to_rescript_string(&input.into()),
+                    default_value: type_rescript.get_default_value(),
+                    type_rescript,
                 }
             })
             .collect();
@@ -591,10 +595,7 @@ impl ProjectTemplate {
 
 #[cfg(test)]
 mod test {
-    use super::{
-        EventParamTypeTemplate, EventTemplate, EventType, FilteredTemplateLists,
-        PerNetworkContractEventTemplate, RequiredEntityTemplate,
-    };
+    use super::*;
     use crate::{
         capitalization::Capitalize,
         config_parsing::{
@@ -825,6 +826,10 @@ mod test {
         get_project_template_helper("config5.yaml");
     }
 
+    const RESCRIPT_BIG_INT_TYPE: RescriptType = RescriptType::BigInt;
+    const RESCRIPT_ADDRESS_TYPE: RescriptType = RescriptType::Address;
+    const RESCRIPT_STRING_TYPE: RescriptType = RescriptType::String;
+
     #[test]
     fn abi_event_to_record_1() {
         let project_template = get_project_template_helper("config1.yaml");
@@ -840,19 +845,23 @@ mod test {
             params: vec![
                 EventParamTypeTemplate {
                     key: "id".to_string(),
-                    type_rescript: String::from("Ethers.BigInt.t"),
+                    type_rescript: RESCRIPT_BIG_INT_TYPE,
+                    default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "owner".to_string(),
-                    type_rescript: String::from("Ethers.ethAddress"),
+                    type_rescript: RESCRIPT_ADDRESS_TYPE,
+                    default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "displayName".to_string(),
-                    type_rescript: String::from("string"),
+                    type_rescript: RESCRIPT_STRING_TYPE,
+                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "imageUrl".to_string(),
-                    type_rescript: String::from("string"),
+                    type_rescript: RESCRIPT_STRING_TYPE,
+                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
             ],
             required_entities: vec![],
@@ -876,19 +885,23 @@ mod test {
             params: vec![
                 EventParamTypeTemplate {
                     key: "id".to_string(),
-                    type_rescript: String::from("Ethers.BigInt.t"),
+                    type_rescript: RESCRIPT_BIG_INT_TYPE,
+                    default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "owner".to_string(),
-                    type_rescript: String::from("Ethers.ethAddress"),
+                    type_rescript: RESCRIPT_ADDRESS_TYPE,
+                    default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "displayName".to_string(),
-                    type_rescript: String::from("string"),
+                    type_rescript: RESCRIPT_STRING_TYPE,
+                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
                     key: "imageUrl".to_string(),
-                    type_rescript: String::from("string"),
+                    type_rescript: RESCRIPT_STRING_TYPE,
+                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
             ],
             required_entities: vec![RequiredEntityTemplate {

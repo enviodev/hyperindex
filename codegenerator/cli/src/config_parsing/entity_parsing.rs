@@ -179,6 +179,77 @@ impl Field {
     }
 }
 
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub enum RescriptType {
+    ID,
+    Int,
+    Float,
+    BigInt,
+    Address,
+    String,
+    Bool,
+    Array(Box<RescriptType>),
+    Option(Box<RescriptType>),
+    Tuple(Vec<RescriptType>),
+}
+
+impl RescriptType {
+    fn to_string_with_option_type(&self, option_type_of: &str) -> String {
+        match self {
+            RescriptType::Int => "int".to_string(),
+            RescriptType::Float => "float".to_string(),
+            RescriptType::BigInt => "Ethers.BigInt.t".to_string(),
+            RescriptType::Address => "Ethers.ethAddress".to_string(),
+            RescriptType::String => "string".to_string(),
+            RescriptType::ID => "id".to_string(),
+            RescriptType::Bool => "bool".to_string(),
+            RescriptType::Array(inner_type) => format!("array<{}>", inner_type.to_string()),
+            RescriptType::Option(inner_type) => {
+                format!("{}<{}>", option_type_of, inner_type.to_string())
+            }
+            RescriptType::Tuple(inner_types) => {
+                let inner_types_str = inner_types
+                    .iter()
+                    .map(|inner_type| inner_type.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                format!("({})", inner_types_str)
+            }
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        self.to_string_with_option_type("option")
+    }
+
+    pub fn to_string_with_nullable_as_option(&self) -> String {
+        self.to_string_with_option_type("nullable")
+    }
+
+    pub fn get_default_value(&self) -> String {
+        match self {
+            RescriptType::Int => "0".to_string(),
+            RescriptType::Float => "0.0".to_string(),
+            RescriptType::BigInt => "Ethers.BigInt.zero".to_string(),
+            RescriptType::Address => "Ethers.Addresses.defaultAddress".to_string(),
+            RescriptType::String => "\"foo\"".to_string(),
+            RescriptType::ID => "\"my_id\"".to_string(),
+            RescriptType::Bool => "false".to_string(),
+            RescriptType::Array(_) => "[]".to_string(),
+            RescriptType::Option(_) => "None".to_string(),
+            RescriptType::Tuple(inner_types) => {
+                let inner_types_str = inner_types
+                    .iter()
+                    .map(|inner_type| inner_type.get_default_value())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+
+                format!("({})", inner_types_str)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FieldType {
     Single(GqlScalar),
@@ -233,13 +304,13 @@ impl FieldType {
             )
     }
 
-    pub fn to_rescript_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<String> {
+    pub fn to_rescript_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<RescriptType> {
         let composed_type_name = match self {
             //Only types in here should be non optional
             Self::NonNullType(field_type) => match field_type.as_ref() {
                 Self::Single(gql_scalar) => gql_scalar.to_rescript_type(entities_set)?,
                 Self::ListType(field_type) => {
-                    format!("array<{}>", field_type.to_rescript_type(entities_set)?)
+                    RescriptType::Array(Box::new(field_type.to_rescript_type(entities_set)?))
                 }
                 //This case shouldn't happen, and should recurse without adding any types if so
                 //A double non null would be !! in gql
@@ -247,15 +318,12 @@ impl FieldType {
             },
             //If we match this case it missed the non null path entirely and should be optional
             Self::Single(gql_scalar) => {
-                format!("option<{}>", gql_scalar.to_rescript_type(entities_set)?)
+                RescriptType::Option(Box::new(gql_scalar.to_rescript_type(entities_set)?))
             }
             //If we match this case it missed the non null path entirely and should be optional
-            Self::ListType(field_type) => {
-                format!(
-                    "option<array<{}>>",
-                    field_type.to_rescript_type(entities_set)?
-                )
-            }
+            Self::ListType(field_type) => RescriptType::Option(Box::new(RescriptType::Array(
+                Box::new(field_type.to_rescript_type(entities_set)?),
+            ))),
         };
         Ok(composed_type_name)
     }
@@ -380,18 +448,18 @@ impl GqlScalar {
         Ok(converted.to_string())
     }
 
-    fn to_rescript_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<String> {
+    fn to_rescript_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<RescriptType> {
         let res_type = match self {
-            GqlScalar::ID => "string",
-            GqlScalar::String => "string",
-            GqlScalar::Int => "int",
-            GqlScalar::BigInt => "Ethers.BigInt.t",
-            GqlScalar::Float => "float",
-            GqlScalar::Bytes => "string",
-            GqlScalar::Boolean => "bool",
+            GqlScalar::ID => RescriptType::ID,
+            GqlScalar::String => RescriptType::String,
+            GqlScalar::Int => RescriptType::Int,
+            GqlScalar::BigInt => RescriptType::BigInt,
+            GqlScalar::Float => RescriptType::Float,
+            GqlScalar::Bytes => RescriptType::String,
+            GqlScalar::Boolean => RescriptType::Bool,
             GqlScalar::Custom(entity_name) => {
                 if entities_set.contains(entity_name) {
-                    "id"
+                    RescriptType::ID
                 } else {
                     Err(anyhow!(
                         "EE207: Failed to parse undefined type: {}",
@@ -400,7 +468,7 @@ impl GqlScalar {
                 }
             }
         };
-        Ok(res_type.to_string())
+        Ok(res_type)
     }
 }
 
@@ -427,7 +495,7 @@ mod tests {
             .to_rescript_type(&empty_set)
             .expect("expected rescript option string");
 
-        assert_eq!(rescript_type, "option<string>".to_owned());
+        assert_eq!(rescript_type.to_string(), "option<string>".to_owned());
     }
 
     #[test]
@@ -437,7 +505,7 @@ mod tests {
             .to_rescript_type(&empty_set)
             .expect("expected rescript option string");
 
-        assert_eq!(rescript_type, "option<int>".to_owned());
+        assert_eq!(rescript_type.to_string(), "option<int>".to_owned());
     }
 
     #[test]
@@ -447,7 +515,7 @@ mod tests {
             .to_rescript_type(&empty_set)
             .expect("expected rescript type string");
 
-        assert_eq!(rescript_type, "int".to_owned());
+        assert_eq!(rescript_type.to_string(), "int".to_owned());
     }
 
     #[test]
@@ -459,7 +527,7 @@ mod tests {
         .to_rescript_type(&empty_set)
         .expect("expected rescript type string");
 
-        assert_eq!(rescript_type, "array<int>".to_owned());
+        assert_eq!(rescript_type.to_string(), "array<int>".to_owned());
     }
 
     #[test]
@@ -470,7 +538,10 @@ mod tests {
             .to_rescript_type(&empty_set)
             .expect("expected rescript type string");
 
-        assert_eq!(rescript_type, "option<array<option<int>>>".to_owned());
+        assert_eq!(
+            rescript_type.to_string(),
+            "option<array<option<int>>>".to_owned()
+        );
     }
 
     #[test]
@@ -482,7 +553,7 @@ mod tests {
             .to_rescript_type(&entity_set)
             .expect("expected rescript type string");
 
-        assert_eq!(rescript_type, "option<id>".to_owned());
+        assert_eq!(rescript_type.to_string(), "option<id>".to_owned());
     }
 
     #[test]
