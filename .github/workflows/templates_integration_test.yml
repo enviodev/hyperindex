@@ -81,10 +81,7 @@ jobs:
 
       - name: test_codegen build
         env:
-          LANGUAGE: ${{ matrix.language }}
-          TEMPLATE: ${{ matrix.template }}
           LOG_LEVEL: trace
-          ENVIO_CMD: envio # This gives us flexibilty to use `pnpm envio` or the 'cargo run' version of envio.
         run: |
           ./tests/runAll.sh
 
