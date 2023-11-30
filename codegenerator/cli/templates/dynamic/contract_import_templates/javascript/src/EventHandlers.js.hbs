@@ -2,48 +2,65 @@
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
 
-{{#each contracts as | contract |}}
-let { {{contract.name.capitalized}}Contract } = require("../generated/src/Handlers.bs.js");
+{{#each contracts as |contract|}}
+  let { {{contract.name.capitalized
+  }}Contract } = require("../generated/src/Handlers.bs.js");
 {{/each}}
 
 const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 
 const INITIAL_EVENTS_SUMMARY = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
-  {{#each contracts as | contract |}}
+{{#each contracts as |contract|}}
   {{#each contract.events as |event|}}
-  {{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount: BigInt(0),
+    {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: BigInt(0),
   {{/each}}
-  {{/each}}
+{{/each}}
 };
 
-{{#each contracts as | contract |}}
-{{#each contract.events as |event|}}
-{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader((event, context) => {
+{{#each contracts as |contract|}}
+  {{#each contract.events as |event|}}
+    {{contract.name.capitalized}}Contract.{{event.name.capitalized
+    }}.loader((event, context) => {
   context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
 });
 
-{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler((event, context) => {
+    {{contract.name.capitalized}}Contract.{{event.name.capitalized
+    }}.handler((event, context) => {
   const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
   const currentSummaryEntity = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
-    {{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount: currentSummaryEntity.{{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount + BigInt(1),
+    {{contract.name.uncapitalized}}_{{event.name.capitalized
+    }}Count: currentSummaryEntity.{{contract.name.uncapitalized
+    }}_{{event.name.capitalized
+    }}Count + BigInt(1),
   };
 
-  const {{contract.name.uncapitalized}}_{{event.name.capitalized}}Entity = {
+  const {{contract.name.uncapitalized
+    }}_{{event.name.capitalized
+    }}Entity = {
     id: event.transactionHash + event.logIndex.toString(),
     {{#each event.params as |param|}}
-    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if param.tuple_param_accessor_indexes}}{{#each param.tuple_param_accessor_indexes as | index |}}[{{index}}]{{/each}}{{/if}},
+      {{param.entity_key.uncapitalized
+      }}: event.params.{{param.event_key.uncapitalized}}{{#if
+        param.tuple_param_accessor_indexes
+      }}
+        {{#each param.tuple_param_accessor_indexes as |index|}}
+          [{{index}}]
+        {{/each}}
+      {{/if}}
+      ,
     {{/each}}
     eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
   };
 
   context.EventsSummary.set(nextSummaryEntity);
-  context.{{contract.name.capitalized}}_{{event.name.capitalized}}.set({{contract.name.uncapitalized}}_{{event.name.capitalized}}Entity);
+  context.{{contract.name.capitalized
+    }}_{{event.name.capitalized}}.set({{contract.name.uncapitalized
+    }}_{{event.name.capitalized}}Entity);
 });
-
-{{/each}}
+  {{/each}}
 {{/each}}

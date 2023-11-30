@@ -4,46 +4,61 @@ module BigInt = Ethers.BigInt
 
 let initialEventsSummary: Types.eventsSummaryEntity = {
   id: globalEventsSummaryKey,
-  {{#each contracts as | contract |}}
+{{#each contracts as |contract|}}
   {{#each contract.events as |event|}}
-  {{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount: BigInt.fromInt(0),
+    {{contract.name.uncapitalized}}_{{event.name.capitalized
+    }}Count: BigInt.fromInt(0),
   {{/each}}
-  {{/each}}
+{{/each}}
 }
 
-{{#each contracts as | contract |}}
-{{#each contract.events as |event|}}
-Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader((~event, ~context) => {
+{{#each contracts as |contract|}}
+  {{#each contract.events as |event|}}
+    Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized
+    }}.loader((~event, ~context) => {
   context.eventsSummary.load(globalEventsSummaryKey)
 })
 
-Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler((~event, ~context) => {
+Handlers.{{contract.name.capitalized
+    }}Contract.{{event.name.capitalized
+    }}.handler((~event, ~context) => {
   let summary = context.eventsSummary.get(globalEventsSummaryKey)
 
   let currentSummaryEntity = summary->Belt.Option.getWithDefault(initialEventsSummary)
 
   let nextSummaryEntity = {
     ...currentSummaryEntity,
-    {{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount: currentSummaryEntity.{{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount->BigInt.add(BigInt.fromInt(1)),
+    {{contract.name.uncapitalized}}_{{event.name.capitalized
+    }}Count: currentSummaryEntity.{{contract.name.uncapitalized
+    }}_{{event.name.capitalized
+    }}Count->BigInt.add(BigInt.fromInt(1)),
   }
 
-  let {{contract.name.uncapitalized}}_{{event.name.capitalized}}Entity: Types.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Entity = {
+  let {{contract.name.uncapitalized
+    }}_{{event.name.capitalized}}Entity: Types.{{contract.name.uncapitalized
+    }}_{{event.name.capitalized
+    }}Entity = {
     id: event.transactionHash ++ event.logIndex->Belt.Int.toString,
     {{#each event.params as |param|}}
-    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}
+      {{param.entity_key.uncapitalized
+      }}: event.params.{{param.event_key.uncapitalized}}
       {{#if param.tuple_param_accessor_indexes}}
-        {{#each param.tuple_param_accessor_indexes as | index |}}
-        ->Utils.Tuple.get({{index}})->Belt.Option.getUnsafe
+        {{#each param.tuple_param_accessor_indexes as |index|}}
+          ->Utils.Tuple.get({{index}})->Belt.Option.getUnsafe
         {{/each}}
       {{/if}}
-    {{#if param.is_eth_address}}->Ethers.ethAddressToString{{/if}},
+      {{#if param.is_eth_address}}
+        ->Ethers.ethAddressToString
+      {{/if}}
+      ,
     {{/each}}
     eventsSummary: globalEventsSummaryKey,
   }
 
   context.eventsSummary.set(nextSummaryEntity)
-  context.{{contract.name.uncapitalized}}_{{event.name.capitalized}}.set({{contract.name.uncapitalized}}_{{event.name.capitalized}}Entity)
+  context.{{contract.name.uncapitalized
+    }}_{{event.name.capitalized}}.set({{contract.name.uncapitalized
+    }}_{{event.name.capitalized}}Entity)
 })
-
-{{/each}}
+  {{/each}}
 {{/each}}
