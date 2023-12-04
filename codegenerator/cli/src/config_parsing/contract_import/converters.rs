@@ -1,3 +1,4 @@
+use super::etherscan_helpers::fetch_contract_auto_selection_from_etherscan;
 use crate::{
     cli_args::clap_definitions::Language,
     config_parsing::{
@@ -9,23 +10,28 @@ use crate::{
     },
     utils::{address_type::Address, unique_hashmap},
 };
-use anyhow::{Context, Result};
+use anyhow::Context;
 use itertools::{self, Itertools};
 use std::{
     collections::HashMap,
     fmt::{self, Display},
 };
-
-use super::etherscan_helpers::fetch_contract_auto_selection_from_etherscan;
+use thiserror;
 
 ///A an object that holds all the values a user can select during
 ///the auto config generation. Values can come from etherscan or
 ///abis etc.
 #[derive(Clone)]
 pub struct AutoConfigSelection {
-    project_name: String,
+    pub project_name: String,
     selected_contracts: Vec<ContractImportSelection>,
     language: Language,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum AutoConfigError {
+    #[error("Contract '{}' already exists in AutoConfigSelection", .0.name)]
+    ContractNameExists(ContractImportSelection),
 }
 
 impl AutoConfigSelection {
@@ -41,12 +47,35 @@ impl AutoConfigSelection {
         }
     }
 
+    pub fn add_contract(
+        &mut self,
+        contract: ContractImportSelection,
+    ) -> Result<(), AutoConfigError> {
+        let contract_name_lower = contract.name.to_lowercase();
+        let contract_name_exists = self
+            .selected_contracts
+            .iter()
+            .find(|c| &c.name.to_lowercase() == &contract_name_lower)
+            .is_some();
+
+        if contract_name_exists {
+            //TODO: Handle more cases gracefully like:
+            // - contract + event is exact match, in which case it should just merge networks and
+            // addresses
+            // - Contract has some matching addresses to another contract but all different events
+            // - Contract has some matching events as another contract?
+            Err(AutoConfigError::ContractNameExists(contract))?
+        } else {
+            Ok(self.selected_contracts.push(contract))
+        }
+    }
+
     pub async fn from_etherscan(
         project_name: String,
         language: Language,
         network: &NetworkWithExplorer,
         address: Address,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         let selected_contract = fetch_contract_auto_selection_from_etherscan(address, network)
             .await
             .context("Failed fetching selected contract")?;
@@ -59,7 +88,7 @@ impl AutoConfigSelection {
 ///your selection as you go. Ie. Once you have constructed
 ///the selection of a contract you can add more addresses or
 ///networks
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ContractImportSelection {
     pub name: String,
     pub networks: Vec<ContractImportNetworkSelection>,
@@ -83,7 +112,10 @@ impl ContractImportSelection {
         self.networks.push(network_selection)
     }
 
-    pub async fn from_etherscan(network: &NetworkWithExplorer, address: Address) -> Result<Self> {
+    pub async fn from_etherscan(
+        network: &NetworkWithExplorer,
+        address: Address,
+    ) -> anyhow::Result<Self> {
         fetch_contract_auto_selection_from_etherscan(address, network).await
     }
 
@@ -98,7 +130,7 @@ impl ContractImportSelection {
 type NetworkId = u64;
 type RpcUrl = String;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Network {
     Supported(SupportedNetwork),
     Unsupported(NetworkId, RpcUrl),
@@ -122,7 +154,7 @@ impl Display for Network {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ContractImportNetworkSelection {
     pub network: Network,
     pub addresses: Vec<Address>,

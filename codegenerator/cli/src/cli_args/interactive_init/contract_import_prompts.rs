@@ -9,17 +9,20 @@ use super::{
     },
 };
 use crate::{
+    clap_definitions::Language,
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
         chain_helpers::{Network, NetworkWithExplorer, SupportedNetwork},
         contract_import::converters::{
-            self, ContractImportNetworkSelection, ContractImportSelection,
+            self, AutoConfigError, AutoConfigSelection, ContractImportNetworkSelection,
+            ContractImportSelection,
         },
         human_config::{parse_contract_abi, ToHumanReadable},
     },
     utils::address_type::Address,
 };
 use anyhow::{anyhow, Context, Result};
+use async_recursion::async_recursion;
 use inquire::{Confirm, CustomType, MultiSelect, Select, Text};
 use std::{fmt::Display, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
@@ -126,7 +129,7 @@ impl ContractImportNetworkSelection {
 
 impl ContractImportSelection {
     //Recursively asks to add networks with addresses to ContractImportNetworkSelection
-    pub fn prompt_add_network_to_contract_import_selection(&mut self) -> Result<()> {
+    fn prompt_add_network_to_contract_import_selection(&mut self) -> Result<()> {
         let question = format!(
             "Would you like to add a new network for contract {}?",
             self.name
@@ -166,20 +169,107 @@ impl ContractImportSelection {
     }
 }
 
-impl ContractImportArgs {
-    pub async fn get_contract_import_selection(&self) -> Result<ContractImportSelection> {
-        match &self.get_local_or_explorer()? {
-            LocalOrExplorerImport::Explorer(explorer_import_args) => {
-                self.get_contract_import_selection_from_explore_import_args(explorer_import_args)
-                    .await
-            }
-            LocalOrExplorerImport::Local(local_import_args) => {
-                self.get_contract_import_selection_from_local_import_args(local_import_args)
-                    .await
-            }
+impl AutoConfigSelection {
+    ///Recursively prompts to import a new contract or exits
+    #[async_recursion]
+    async fn prompt_for_add_contract_import_selection(&mut self) -> Result<()> {
+        let question = format!(
+            "Would you like to import a new Contract for project {}?",
+            self.project_name
+        );
+        //Prompt for confirmation and default to "No"
+        if Confirm::new(&question)
+            .with_default(false)
+            .with_placeholder("N")
+            .prompt()
+            .context("Failed prompting for new Contract import")?
+        {
+            //Import a new contract
+            let contract_import_selection = ContractImportArgs::default()
+                .get_contract_import_selection()
+                .await
+                .context("Failed getting new contract import selection")?;
+
+            //Add contract to AutoConfigSelection, method will handle duplicate names
+            //and prompting for new names
+            self.add_contract_with_prompt(contract_import_selection)
+                .context("Failed adding contract import selection to AutoConfigSelection")?;
+
+            self.prompt_for_add_contract_import_selection().await
+        } else {
+            Ok(())
         }
     }
 
+    ///Calls add_contract but handles case where these is a name collision and prompts for a new
+    ///name
+    fn add_contract_with_prompt(
+        &mut self,
+        contract_import_selection: ContractImportSelection,
+    ) -> Result<()> {
+        self.add_contract(contract_import_selection).or_else(|e|
+            match e {
+                AutoConfigError::ContractNameExists(mut contract) => {
+                    let prompt_text = format!("Contract with name {} already exists in your project. Please provide an alternative name: ", contract.name);
+                    contract.name = Text::new(&prompt_text).prompt().context("Failed prompting for new Contract name")?;
+                    self.add_contract_with_prompt(contract)
+                }
+            }
+        )
+    }
+}
+
+impl ContractImportArgs {
+    ///Constructs AutoConfigSelection vial cli args and prompts
+    pub async fn get_auto_config_selection(
+        &self,
+        project_name: String,
+        language: Language,
+    ) -> Result<AutoConfigSelection> {
+        let contract_import_selection = self
+            .get_contract_import_selection()
+            .await
+            .context("Failed getting ContractImportSelection")?;
+
+        let mut auto_config_selection =
+            AutoConfigSelection::new(project_name, language, contract_import_selection);
+
+        if !self.single_contract {
+            auto_config_selection
+                .prompt_for_add_contract_import_selection()
+                .await
+                .context("Failed adding contracts to AutoConfigSelection")?;
+        }
+        Ok(auto_config_selection)
+    }
+
+    ///Constructs ContractImportSelection via cli args and prompts
+    async fn get_contract_import_selection(&self) -> Result<ContractImportSelection> {
+        //Construct ContractImportSelection via explorer or local import
+        let mut contract_import_selection = match &self.get_local_or_explorer()? {
+            LocalOrExplorerImport::Explorer(explorer_import_args) => self
+                .get_contract_import_selection_from_explore_import_args(explorer_import_args)
+                .await
+                .context("Failed getting ContractImportSelection from explorer")?,
+            LocalOrExplorerImport::Local(local_import_args) => self
+                .get_contract_import_selection_from_local_import_args(local_import_args)
+                .await
+                .context("Failed getting ContractImportSelection from local")?,
+        };
+
+        //If --single-contract flag was not passed in, prompt to ask the user
+        //if they would like to add networks to their contract selection
+        if !self.single_contract {
+            contract_import_selection
+                .prompt_add_network_to_contract_import_selection()
+                .context("Failed adding networks to ContractImportSelection")?;
+        }
+
+        Ok(contract_import_selection)
+    }
+
+    //Constructs ContractImportSelection via local prompt. Uses abis and manual
+    //network/contract config
     async fn get_contract_import_selection_from_local_import_args(
         &self,
         local_import_args: &LocalImportArgs,
@@ -222,6 +312,7 @@ impl ContractImportArgs {
         Ok(contract_selection)
     }
 
+    ///Constructs ContractImportSelection via block explorer requests.
     async fn get_contract_import_selection_from_explore_import_args(
         &self,
         explorer_import_args: &ExplorerImportArgs,

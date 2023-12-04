@@ -139,19 +139,11 @@ impl InitFlow {
             }
 
             InitFlow::ContractImport(args) => {
-                let mut contract_import_selection = args
-                    .get_contract_import_selection()
+                let auto_config_selection = args
+                    .get_auto_config_selection(project_name, language)
                     .await
-                    .context("Failed getting contract import selection")?;
+                    .context("Failed getting AutoConfigSelection selection")?;
 
-                if !args.single_contract {
-                    contract_import_selection
-                        .prompt_add_network_to_contract_import_selection()
-                        .context("Failed adding networks")?;
-                }
-
-                let auto_config_selection =
-                    AutoConfigSelection::new(project_name, language, contract_import_selection);
                 InitilizationTypeWithArgs::ContractImportWithArgs(auto_config_selection)
             }
         };

@@ -13,7 +13,7 @@ import {
 import {
   {{#each contracts as | contract |}}
   {{#each contract.events as |event|}}
-  {{event.name.capitalized}}Entity,
+  {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
   {{/each}}
   {{/each}}
   EventsSummaryEntity
@@ -25,7 +25,7 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
   {{#each contracts as | contract |}}
   {{#each contract.events as |event|}}
-  {{event.name.uncapitalized}}sCount: BigInt(0),
+  {{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount: BigInt(0),
   {{/each}}
   {{/each}}
 };
@@ -37,17 +37,17 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
 });
 
 {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler(({ event, context }) => {
-  let summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  let currentSummaryEntity: EventsSummaryEntity =
+  const currentSummaryEntity: EventsSummaryEntity =
     summary ?? INITIAL_EVENTS_SUMMARY;
 
-  let nextSummaryEntity = {
+  const nextSummaryEntity = {
     ...currentSummaryEntity,
-    {{event.name.uncapitalized}}sCount: currentSummaryEntity.{{event.name.uncapitalized}}sCount + BigInt(1),
+    {{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount: currentSummaryEntity.{{contract.name.uncapitalized}}_{{event.name.capitalized}}sCount + BigInt(1),
   };
 
-  let {{event.name.uncapitalized}}Entity: {{event.name.capitalized}}Entity = {
+  const {{contract.name.uncapitalized}}_{{event.name.capitalized}}Entity: {{contract.name.capitalized}}_{{event.name.capitalized}}Entity = {
     id: event.transactionHash + event.logIndex.toString(),
     {{#each event.params as |param|}}
     {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if param.tuple_param_accessor_indexes}}{{#each param.tuple_param_accessor_indexes as | index |}}[{{index}}]{{/each}}{{/if}},
@@ -56,7 +56,7 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
   };
 
   context.EventsSummary.set(nextSummaryEntity);
-  context.{{event.name.capitalized}}.set({{event.name.uncapitalized}}Entity);
+  context.{{contract.name.capitalized}}_{{event.name.capitalized}}.set({{contract.name.uncapitalized}}_{{event.name.capitalized}}Entity);
 });
 
 {{/each}}
