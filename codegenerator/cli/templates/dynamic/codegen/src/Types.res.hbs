@@ -16,18 +16,6 @@ let nullable_encode = (encoder: Spice.encoder<'a>, n: nullable<'a>): Js.Json.t =
 
 let nullable_decode = Spice.optionFromJson
 
-//nested subrecord types
-
-{{#each sub_record_dependencies as | subrecord |}}
-  @spice
-   type {{subrecord.name.uncapitalized}} = {
-    {{#each subrecord.params as | param |}}
-      {{param.key}}: {{param.type_rescript}},
-    {{/each}}
-   }
-
-{{/each}}
-
 @@warning("-30")
 @genType
 type rec {{#each entities as | entity |}}{{#unless @first}}
@@ -69,7 +57,7 @@ type dynamicContractRegistryEntity = {
 @spice @genType.as("{{entity.name.original}}Entity")
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{#unless param.is_derived_from }}{{param.key}}: {{#if param.is_optional}}nullable<{{/if}}{{param.type_rescript_non_optional}}{{#if param.is_optional}}>{{/if}}, {{/unless}}
+  {{#unless param.is_derived_from }}{{param.key}}: {{param.type_rescript_nullable}}, {{/unless}}
   {{/each}}
 }
 

@@ -6,7 +6,11 @@ use graphql_parser::schema::{
     TypeDefinition, Value,
 };
 use serde::{Serialize, Serializer};
-use std::{collections::HashSet, fmt, path::PathBuf};
+use std::{
+    collections::HashSet,
+    fmt::{self, Display},
+    path::PathBuf,
+};
 use subenum::subenum;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -179,7 +183,7 @@ impl Field {
     }
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RescriptType {
     ID,
     Int,
@@ -203,14 +207,21 @@ impl RescriptType {
             RescriptType::String => "string".to_string(),
             RescriptType::ID => "id".to_string(),
             RescriptType::Bool => "bool".to_string(),
-            RescriptType::Array(inner_type) => format!("array<{}>", inner_type.to_string()),
+            RescriptType::Array(inner_type) => format!(
+                "array<{}>",
+                inner_type.to_string_with_option_type(option_type_of)
+            ),
             RescriptType::Option(inner_type) => {
-                format!("{}<{}>", option_type_of, inner_type.to_string())
+                format!(
+                    "{}<{}>",
+                    option_type_of,
+                    inner_type.to_string_with_option_type(option_type_of)
+                )
             }
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
-                    .map(|inner_type| inner_type.to_string())
+                    .map(|inner_type| inner_type.to_string_with_option_type(option_type_of))
                     .collect::<Vec<String>>()
                     .join(", ");
                 format!("({})", inner_types_str)
@@ -247,6 +258,55 @@ impl RescriptType {
                 format!("({})", inner_types_str)
             }
         }
+    }
+}
+
+impl Display for RescriptType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
+
+///Implementation of Serialize allows handlebars get a stringified
+///version of the string representation of the rescript type
+impl Serialize for RescriptType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize as display value
+        self.to_string().serialize(serializer)
+    }
+}
+
+///A wrapper around RescriptType with a Display implementation that uses
+///custom "nullable" instead of "option" for optional types.
+///See Types.res template: nullable is just an alias for option with a binding
+///to typescript that forces defining a "null" value for a field.
+#[derive(Debug, PartialEq, Clone)]
+pub struct RescriptNullableOpt(RescriptType);
+
+impl From<RescriptType> for RescriptNullableOpt {
+    fn from(value: RescriptType) -> Self {
+        Self(value)
+    }
+}
+
+impl Display for RescriptNullableOpt {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0.to_string_with_nullable_as_option())
+    }
+}
+
+///Implementation of Serialize allows handlebars get a stringified
+///version of the string representation of the rescript type
+impl Serialize for RescriptNullableOpt {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // Serialize as display value
+        self.to_string().serialize(serializer)
     }
 }
 
@@ -472,19 +532,10 @@ impl GqlScalar {
     }
 }
 
-pub fn strip_option_from_rescript_type_str(s: &str) -> String {
-    let prefix = "option<";
-    let suffix = ">";
-    if s.starts_with(prefix) && s.ends_with(suffix) {
-        let without_prefix = s.strip_prefix(prefix).unwrap();
-        let without_suffix = without_prefix.strip_suffix(suffix).unwrap();
-        return without_suffix.to_string();
-    }
-    s.to_string()
-}
-
 #[cfg(test)]
 mod tests {
+    use crate::config_parsing::entity_parsing::RescriptNullableOpt;
+
     use super::{FieldType, GqlScalar, Schema};
     use std::collections::HashSet;
 
@@ -580,7 +631,7 @@ mod tests {
         );
     }
 
-    fn gql_type_to_postgres_type_test_helper(gql_field_str: &str) -> String {
+    fn get_field_type_helper(gql_field_str: &str) -> FieldType {
         let schema_string = format!(
             r#"
         type TestEntity @entity {{
@@ -590,14 +641,19 @@ mod tests {
             gql_field_str
         );
         let schema_doc = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
-        let empty_entities_set = HashSet::new();
 
         let schema = Schema::from_document(schema_doc).expect("bad schema");
 
         let test_field = schema.entities[0].fields[0].clone();
 
-        test_field
-            .field_type
+        test_field.field_type
+    }
+
+    fn gql_type_to_postgres_type_test_helper(gql_field_str: &str) -> String {
+        let field_type = get_field_type_helper(gql_field_str);
+        let empty_entities_set = HashSet::new();
+
+        field_type
             .to_postgres_type(&empty_entities_set)
             .expect("unable to get postgres type")
     }
@@ -631,33 +687,6 @@ mod tests {
     }
 
     #[test]
-    fn strip_option_removes_option() {
-        assert_eq!(
-            super::strip_option_from_rescript_type_str("option<bool>"),
-            "bool"
-        );
-
-        assert_eq!(
-            super::strip_option_from_rescript_type_str("option<array<string>>"),
-            "array<string>"
-        );
-
-        assert_eq!(
-            super::strip_option_from_rescript_type_str("array<string>"),
-            "array<string>"
-        );
-        assert_eq!(
-            super::strip_option_from_rescript_type_str("array<string>"),
-            "array<string>"
-        );
-        assert_eq!(super::strip_option_from_rescript_type_str("option<>"), "");
-        assert_eq!(
-            super::strip_option_from_rescript_type_str("option<"),
-            "option<"
-        );
-    }
-
-    #[test]
     fn test_nullability_to_string() {
         use FieldType::{ListType, NonNullType, Single};
         let scalar = NonNullType(Box::new(ListType(Box::new(Single(GqlScalar::Int)))));
@@ -665,5 +694,40 @@ mod tests {
         let expected_output = "[Int]!".to_string();
 
         assert_eq!(scalar.to_string(), expected_output);
+    }
+
+    #[test]
+    fn gql_type_to_rescript_nullable() {
+        let field_type = get_field_type_helper("Int");
+
+        let empty_entities_set = HashSet::new();
+        let rescript_type = field_type.to_rescript_type(&empty_entities_set).unwrap();
+        assert_eq!("option<int>".to_string(), rescript_type.to_string());
+
+        let rescript_type_nullable_opt = RescriptNullableOpt::from(rescript_type);
+
+        assert_eq!(
+            "nullable<int>".to_string(),
+            rescript_type_nullable_opt.to_string()
+        );
+    }
+
+    #[test]
+    fn gql_type_to_rescript_array_nullable_string() {
+        let field_type = get_field_type_helper("[String]!");
+
+        let empty_entities_set = HashSet::new();
+        let rescript_type = field_type.to_rescript_type(&empty_entities_set).unwrap();
+        assert_eq!(
+            "array<option<string>>".to_string(),
+            rescript_type.to_string()
+        );
+
+        let rescript_type_nullable_opt = RescriptNullableOpt::from(rescript_type);
+
+        assert_eq!(
+            "array<nullable<string>>".to_string(),
+            rescript_type_nullable_opt.to_string()
+        );
     }
 }

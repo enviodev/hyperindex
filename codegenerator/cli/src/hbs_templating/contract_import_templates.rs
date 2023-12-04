@@ -320,7 +320,7 @@ impl AutoSchemaHandlerTemplate {
 #[cfg(test)]
 mod test {
     use super::*;
-    use ethers::abi::{EventParam, HumanReadableParser};
+    use ethers::abi::EventParam;
 
     impl FlattenedEventParam {
         fn new(name: &str, kind: ParamType, indexed: bool, accessor_indexes: Vec<usize>) -> Self {

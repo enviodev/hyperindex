@@ -2,7 +2,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{strip_option_from_rescript_type_str, Entity, Field},
+        entity_parsing::{Entity, Field, RescriptNullableOpt},
         event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -110,9 +110,7 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub key: String,
-    pub is_optional: bool,
-    pub type_rescript: String,
-    pub type_rescript_non_optional: String,
+    pub type_rescript_nullable: RescriptNullableOpt,
     pub type_pg: String,
     pub maybe_entity_name: Option<CapitalizedOptions>,
     ///Used in template to tell whether it is a field looked up from another table or a value in
@@ -129,13 +127,11 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, config: &SystemConfig) -> Result<Self> {
         let entity_names_set = config.get_entity_names_set();
-        let type_rescript = field
+        let type_rescript_nullable = field
             .field_type
             .to_rescript_type(&entity_names_set)
             .context("Failed getting rescript type")?
-            .to_string();
-
-        let type_rescript_non_optional = strip_option_from_rescript_type_str(&type_rescript);
+            .into();
 
         let type_pg = field
             .field_type
@@ -149,10 +145,8 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             key: field.name.clone(),
-            is_optional: field.field_type.is_optional(),
+            type_rescript_nullable,
             is_derived_from: field.derived_from_field.is_some(),
-            type_rescript,
-            type_rescript_non_optional,
             type_pg,
             maybe_entity_name,
         })
@@ -524,7 +518,6 @@ impl NetworkConfigTemplate {
 #[derive(Serialize)]
 pub struct ProjectTemplate {
     project_name: String,
-    sub_record_dependencies: Vec<EventRecordTypeTemplate>,
     contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
@@ -583,7 +576,6 @@ impl ProjectTemplate {
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
-            sub_record_dependencies: vec![], //unused atm, use empty vec to not break template
             contracts,
             entities,
             chain_configs,
@@ -599,11 +591,10 @@ mod test {
     use crate::{
         capitalization::Capitalize,
         config_parsing::{
-            chain_helpers::EthArchiveNetwork, human_config, human_config::RpcConfig,
-            system_config::SystemConfig,
-            entity_parsing::RescriptType
+            chain_helpers::EthArchiveNetwork, entity_parsing::RescriptType, human_config,
+            human_config::RpcConfig, system_config::SystemConfig,
         },
-        project_paths::ParsedProjectPaths
+        project_paths::ParsedProjectPaths,
     };
 
     fn get_per_contract_events_vec_helper(
