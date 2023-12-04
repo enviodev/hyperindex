@@ -480,13 +480,13 @@ let createMock{{contract.name.capitalized}}{{event.name.capitalized}}Event = (
       {{param.key}},
       {{/each}}
     },
-    blockNumber: Ethers.BigInt.zero->Ethers.BigInt.toInt->Belt.Option.getWithDefault(0),
-    blockTimestamp: Ethers.BigInt.zero->Ethers.BigInt.toInt->Belt.Option.getWithDefault(0),
-    blockHash: Ethers.Constants.zeroHash->Ethers.ethAddressToString,
+    blockNumber: 0,
+    blockTimestamp: 0,
+    blockHash: Ethers.Constants.zeroHash,
     srcAddress: Ethers.Addresses.defaultAddress,
-    transactionHash: Ethers.Constants.zeroHash->Ethers.ethAddressToString,
-    transactionIndex: Ethers.BigInt.zero->Ethers.BigInt.toInt->Belt.Option.getWithDefault(0),
-    logIndex: Ethers.BigInt.zero->Ethers.BigInt.toInt->Belt.Option.getWithDefault(0),
+    transactionHash: Ethers.Constants.zeroHash,
+    transactionIndex: 0,
+    logIndex: 0,
   }
 }
 

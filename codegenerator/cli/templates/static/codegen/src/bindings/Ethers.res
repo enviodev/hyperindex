@@ -105,7 +105,8 @@ let ethAddressToStringLower = (address: ethAddress): string =>
 type txHash = string
 
 module Constants = {
-  @module("ethers") @scope(("ethers", "constants")) external zeroHash: ethAddress = "HashZero"
+  @module("ethers") @scope(("ethers", "constants")) external zeroHash: string = "HashZero"
+  @module("ethers") @scope(("ethers", "constants")) external zeroAddress: ethAddress = "AddressZero"
 }
 
 module Addresses = {
