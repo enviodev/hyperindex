@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use envio::{cli_args::clap_definitions::CommandLineArgs, executor};
+use envio::{clap_definitions::CommandLineArgs, executor};
 
 #[tokio::main]
 async fn main() -> Result<()> {

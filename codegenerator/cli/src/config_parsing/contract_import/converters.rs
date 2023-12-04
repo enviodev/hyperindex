@@ -63,7 +63,7 @@ impl AutoConfigSelection {
 pub struct ContractImportSelection {
     pub name: String,
     pub networks: Vec<ContractImportNetworkSelection>,
-    events: Vec<ethers::abi::Event>,
+    pub events: Vec<ethers::abi::Event>,
 }
 
 impl ContractImportSelection {
@@ -77,15 +77,6 @@ impl ContractImportSelection {
             networks: vec![network_selection],
             events,
         }
-    }
-
-    pub fn from_abi(
-        network_selection: ContractImportNetworkSelection,
-        contract_name: String,
-        abi: ethers::abi::Contract,
-    ) -> Self {
-        let events = abi.events().cloned().collect();
-        Self::new(contract_name, network_selection, events)
     }
 
     pub fn add_network(&mut self, network_selection: ContractImportNetworkSelection) {

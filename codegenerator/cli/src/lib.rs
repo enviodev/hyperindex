@@ -1,5 +1,6 @@
 mod capitalization;
-pub mod cli_args;
+mod cli_args;
+pub use cli_args::clap_definitions;
 mod commands;
 mod config_parsing;
 pub mod constants;

@@ -15,13 +15,13 @@ use crate::{
         contract_import::converters::{
             self, ContractImportNetworkSelection, ContractImportSelection,
         },
-        human_config::parse_contract_abi,
+        human_config::{parse_contract_abi, ToHumanReadable},
     },
     utils::address_type::Address,
 };
 use anyhow::{anyhow, Context, Result};
-use inquire::{Confirm, CustomType, Select, Text};
-use std::{path::PathBuf, str::FromStr};
+use inquire::{Confirm, CustomType, MultiSelect, Select, Text};
+use std::{fmt::Display, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
 
 ///Returns the prompter which can call .prompt() to action, or add validators/other
@@ -38,6 +38,63 @@ fn contract_address_prompt() -> Result<Address> {
         .context("Prompting user for contract address")
 }
 
+///Used a wrapper to implement own Display (Display formats to a string of the
+///human readable event signature)
+struct DisplayEventWrapper(ethers::abi::Event);
+
+impl Display for DisplayEventWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.to_human_readable())
+    }
+}
+
+///Convert to and from ethers Event
+impl From<ethers::abi::Event> for DisplayEventWrapper {
+    fn from(value: ethers::abi::Event) -> Self {
+        Self(value)
+    }
+}
+
+///Convert to and from ethers Event
+impl From<DisplayEventWrapper> for ethers::abi::Event {
+    fn from(value: DisplayEventWrapper) -> Self {
+        value.0
+    }
+}
+
+///Takes a vec of Events and sets up a multi selecet prompt
+///with all selected by default. Whatever is selected in the prompt
+///is returned
+fn prompt_for_event_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<ethers::abi::Event>> {
+    //Wrap events with Display wrapper
+    let wrapped_events: Vec<_> = events
+        .into_iter()
+        .map(|event| DisplayEventWrapper::from(event))
+        .collect();
+
+    //Collect all the indexes of the vector in another vector which will be used
+    //to preselect all events
+    let all_indexes_of_events = wrapped_events
+        .iter()
+        .enumerate()
+        .map(|(i, _)| i)
+        .collect::<Vec<usize>>();
+
+    //Prompt for selection with all events selected by default
+    let selected_wrapped_events =
+        MultiSelect::new("Which events would you like to index?", wrapped_events)
+            .with_default(&all_indexes_of_events)
+            .prompt()?;
+
+    //Unwrap the selected events and return
+    let selected_events = selected_wrapped_events
+        .into_iter()
+        .map(|w_event| w_event.into())
+        .collect();
+
+    Ok(selected_events)
+}
+
 impl ContractImportNetworkSelection {
     ///Recursively asks to add an address to ContractImportNetworkSelection
     fn prompt_add_contract_address_to_network_selection(
@@ -45,11 +102,15 @@ impl ContractImportNetworkSelection {
         contract_name: &str,
     ) -> Result<()> {
         let question = format!(
-            "Would you like to add a new address for contract {} on network {}? (y/n)",
+            "Would you like to add a new address for contract {} on network {}?",
             contract_name, self.network
         );
 
-        if Confirm::new(&question).prompt()? {
+        if Confirm::new(&question)
+            .with_default(false)
+            .with_placeholder("N")
+            .prompt()?
+        {
             let address = contract_address_prompter()
                 .with_validator(UniqueValueValidator::new(self.addresses.clone()))
                 .prompt()
@@ -67,12 +128,16 @@ impl ContractImportSelection {
     //Recursively asks to add networks with addresses to ContractImportNetworkSelection
     pub fn prompt_add_network_to_contract_import_selection(&mut self) -> Result<()> {
         let question = format!(
-            "Would you like to add a new network for contract {}? (y/n)",
+            "Would you like to add a new network for contract {}?",
             self.name
         );
 
         //Confirm if a user would like to add a new network for the given contract
-        if Confirm::new(&question).prompt()? {
+        if Confirm::new(&question)
+            .with_default(false)
+            .with_placeholder("N")
+            .prompt()?
+        {
             //In a new network case, no RPC url could be
             //derived from CLI flags
             const NO_RPC_URL: Option<String> = None;
@@ -122,6 +187,12 @@ impl ContractImportArgs {
         let parsed_abi = local_import_args
             .get_parsed_abi()
             .context("Failed getting parsed abi")?;
+        let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
+
+        if !self.all_events {
+            abi_events =
+                prompt_for_event_selection(abi_events).context("Failed selecting events")?;
+        }
 
         let network = local_import_args
             .get_network()
@@ -146,7 +217,7 @@ impl ContractImportArgs {
         }
 
         let contract_selection =
-            ContractImportSelection::from_abi(network_selection, contract_name, parsed_abi);
+            ContractImportSelection::new(contract_name, network_selection, abi_events);
 
         Ok(contract_selection)
     }
@@ -169,6 +240,11 @@ impl ContractImportArgs {
         )
         .await
         .context("Failed getting ContractImportSelection from explorer")?;
+
+        if !self.all_events {
+            contract_selection.events = prompt_for_event_selection(contract_selection.events)
+                .context("Failed selecting events")?;
+        }
 
         let last_network_selection = contract_selection.networks.last_mut().ok_or_else(|| {
             anyhow!("Expected a network seletion to be constructed with ContractImportSelection")

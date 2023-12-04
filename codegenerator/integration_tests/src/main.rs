@@ -1,19 +1,12 @@
 mod hypersync_health;
 use envio::{
-    cli_args::clap_definitions::{
-        InitArgs, InitFlow, Language, ProjectPaths, Template, TemplateArgs,
-    },
+    clap_definitions::{InitArgs, InitFlow, Language, ProjectPaths, Template, TemplateArgs},
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
     executor::init::run_init_args,
 };
-use std::time::Duration;
+use std::{fs, io, path::Path, time::Duration};
 use strum::IntoEnumIterator;
-use tokio::task::JoinSet;
-use tokio::time::timeout;
-
-use std::fs;
-use std::io;
-use std::path::Path;
+use tokio::{task::JoinSet, time::timeout};
 
 fn delete_contents_of_folder<P: AsRef<std::path::Path>>(path: P) -> io::Result<()> {
     for entry in fs::read_dir(path)? {

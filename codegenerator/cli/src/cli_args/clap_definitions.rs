@@ -153,6 +153,10 @@ pub struct ContractImportArgs {
     ///If selected, prompt will not ask for additional contracts/addresses/networks
     #[arg(long, action)]
     pub single_contract: bool,
+
+    ///If selected, prompt will not ask to confirm selection of events on a contract
+    #[arg(long, action)]
+    pub all_events: bool,
 }
 
 #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]

@@ -292,7 +292,7 @@ impl Serialize for EventNameOrSig {
     }
 }
 
-trait ToHumanReadable {
+pub trait ToHumanReadable {
     fn to_human_readable(&self) -> String;
 }
 
