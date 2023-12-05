@@ -537,6 +537,20 @@ module {{entity.name.capitalized}} = {
     await %raw("sql`
       CREATE TABLE \"public\".\"{{entity.name.original}}\" (
       {{#each entity.params as |param|}}
+        {{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}\" {{param.type_pg}},{{/unless}}
+      {{/each}} 
+        db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
+        PRIMARY KEY (\"id\"));`")
+  }
+
+  let create{{entity.name.capitalized}}HistoryTable:unit => promise<unit> = async () => {
+    // Rather using chain_id + log_index + block_number and not also "transaction_hash TEXT NOT NULL"
+    await %raw("sql`
+      CREATE TABLE \"public\".\"{{entity.name.original}}_history\" (
+        chain_id INTEGER NOT NULL,
+        block_number INTEGER NOT NULL,
+        log_index INTEGER NOT NULL,
+      {{#each entity.params as |param|}}
         {{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}\" {{param.type_pg}},{{/unless}}
       {{/each}} 
         db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
