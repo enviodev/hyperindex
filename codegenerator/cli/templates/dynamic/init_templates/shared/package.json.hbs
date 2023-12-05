@@ -14,6 +14,7 @@
   {{/if}}
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
+    "test": "{{#if is_rescript}}pnpm build && {{/if}}mocha {{#if is_typescript}}--require ts-node/register test/**/*.ts{{else}}test/**/*.js{{/if}}",
     "start": "{{#if is_rescript}}pnpm build && {{/if}}{{#if is_typescript}}ts-{{/if}}node generated/src/Index.bs.js"
   },
   "devDependencies": {
@@ -25,11 +26,17 @@
     "rescript-envsafe": "1.3.0",
     "rescript-express": "0.4.1",
     "rescript-struct": "4.1.1",
+    "rescript-mocha": "^0.9.0",
   {{/if}}
   {{#if is_typescript}}
     "@types/node": "20.8.8",
     "typescript": "5.2.2",
-  {{/if}}
+    "@types/chai": "4.3.11",
+    "@types/mocha": "10.0.6",
+  {{/if}}    
+    "chai": "4.3.10",
+    "ethers": "6.8.0",
+    "mocha": "10.2.0",
     "rescript": "10.1.4"
   },
   "dependencies": {

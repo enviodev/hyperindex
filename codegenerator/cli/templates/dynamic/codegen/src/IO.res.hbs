@@ -54,6 +54,7 @@ module InMemoryStore = {
     let hasher = Belt.Int.toString
   })
 
+  @genType 
   type rawEventsKey = {
     chainId: int,
     eventId: string,
@@ -66,6 +67,7 @@ module InMemoryStore = {
       EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
   })
 
+  @genType 
   type dynamicContractRegistryKey = {
     chainId: int,
     contractAddress: Ethers.ethAddress,
@@ -88,7 +90,7 @@ module InMemoryStore = {
 
 {{/each}}
 
-
+  @genType 
   type t = {
     eventSyncState: EventSyncState.t,
     rawEvents: RawEvents.t,

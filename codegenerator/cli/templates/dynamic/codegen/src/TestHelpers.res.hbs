@@ -132,6 +132,7 @@ module MockDb = {
   new state so you can compare states before and after.
   */
   //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
+  @genType 
   let createMockDb = () => makeWithInMemoryStore(IO.InMemoryStore.make())
 
   /**
@@ -461,6 +462,7 @@ type argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event = {
 {{/each}}
 }
 
+@genType 
 let createMock{{contract.name.capitalized}}{{event.name.capitalized}}Event = (
   ~args: argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event,
 ): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.log => {

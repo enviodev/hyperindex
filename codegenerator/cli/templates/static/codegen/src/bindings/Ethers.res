@@ -105,12 +105,12 @@ let ethAddressToStringLower = (address: ethAddress): string =>
 type txHash = string
 
 module Constants = {
-  @module("ethers") @scope(("ethers", "constants")) external zeroHash: string = "HashZero"
-  @module("ethers") @scope(("ethers", "constants")) external zeroAddress: ethAddress = "AddressZero"
+  @module("ethers") @scope(("ethers")) external zeroHash: string = "zeroHash"
+  @module("ethers") @scope(("ethers")) external zeroAddress: ethAddress = "zeroAddress"
 }
 
 module Addresses = {
-
+  @genType
   let mockAddresses =
     [
       "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
@@ -134,7 +134,7 @@ module Addresses = {
       "0xdD2FD4581271e230360230F9337D5c0430Bf44C0",
       "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199",
     ]->Belt.Array.map(getAddressFromStringUnsafe)
-
+  @genType
   let defaultAddress = mockAddresses[0]
 }
 

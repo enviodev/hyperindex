@@ -26,6 +26,7 @@ module ChainMetadata = {
 }
 
 module EventSyncState = {
+  @genType 
   type eventSyncState = {
     @as("chain_id") chainId: int,
     @as("block_number") blockNumber: int,

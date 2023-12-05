@@ -31,6 +31,7 @@ type entityRead =
 | {{entity.name.capitalized}}Read(id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}})
 {{/each}}
 
+@genType
 type rawEventsEntity = {
   @as("chain_id") chainId: int,
   @as("event_id") eventId: string,
@@ -45,6 +46,7 @@ type rawEventsEntity = {
   params: string,
 }
 
+@genType
 type dynamicContractRegistryEntity = {
   @as("chain_id") chainId: int,
   @as("event_id") eventId: Ethers.BigInt.t,
@@ -249,6 +251,7 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{/each}}
 }
 
+@genType
 type chainId = int
 
 type eventBatchQueueItem = {
