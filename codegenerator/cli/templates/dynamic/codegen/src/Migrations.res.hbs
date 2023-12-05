@@ -69,8 +69,8 @@ module SyncBatchMetadata = {
         chain_id INTEGER NOT NULL,
         block_timestamp_range_end INTEGER NOT NULL,
         block_number_range_end INTEGER NOT NULL,
-        block_hash_range_end INTEGER NOT NULL,
-        PRIMARY KEY (chain_id, event_id)
+        block_hash_range_end TEXT NOT NULL,
+        PRIMARY KEY (chain_id, block_number_range_end)
       );
       `")
   }
