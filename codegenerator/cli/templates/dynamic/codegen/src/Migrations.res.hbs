@@ -181,6 +181,40 @@ module DynamicContractRegistryTable = {
   @@warning("+21")
 }
 
+module EntityHistory = {
+  let createEntityTypeEnum: unit => promise<unit> = async () => {
+    @warning("-21")
+    let _ = await %raw("sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'entity_type') THEN
+          CREATE TYPE ENTITY_TYPE AS ENUM(
+          {{#each entities as |entity|}}
+            '{{entity.name.capitalized}}'{{#unless @last}},{{/unless}}
+          {{/each}}
+          );
+        END IF;
+      END $$;
+      `")
+  }
+
+  let createEntityHistoryTable: unit => promise<unit> = async () => {
+    let _ = await createEntityTypeEnum()
+
+    // NULL for an `entity_id` means that the entity was deleted.
+    await %raw("sql`
+      CREATE TABLE \"public\".\"A\" (
+        chain_id INTEGER NOT NULL,
+        block_number INTEGER NOT NULL,
+        log_index INTEGER NOT NULL,
+        transaction_hash BYTEA NOT NULL,
+        entity_type ENTITY_TYPE NOT NULL,
+        entity_id TEXT,
+        PRIMARY KEY (entity_id, chain_id, block_number, log_index));
+      `")
+  }
+
+  // NOTE: didn't add 'delete' functions here - delete functions aren't being used currently.
+}
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
@@ -188,6 +222,20 @@ module {{entity.name.capitalized}} = {
       CREATE TABLE \"public\".\"{{entity.name.original}}\" ({{#each entity.params as |param|}}{{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}\" {{param.type_pg}},{{/unless}}{{/each}} 
         db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
         PRIMARY KEY (\"id\"));`")
+  }
+
+  let create{{entity.name.capitalized}}HistoryTable:unit => promise<unit> = async () => {
+    // Rather using chain_id + log_index + block_number and not also "transaction_hash TEXT NOT NULL"
+    await %raw("sql`
+      CREATE TABLE \"public\".\"{{entity.name.original}}_history\" (
+        chain_id INTEGER NOT NULL,
+        block_number INTEGER NOT NULL,
+        log_index INTEGER NOT NULL,
+      {{#each entity.params as |param|}}
+        {{#unless param.is_derived_from}}\"{{param.key}}\" {{param.type_pg}},{{/unless}}
+      {{/each}} 
+        db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
+        PRIMARY KEY (\"id\", chain_id, block_number, log_index));`")
   }
 
   let delete{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
@@ -268,6 +316,10 @@ let runUpMigrations = async (~shouldExit) => {
   await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err,`EE802: Error creating {{entity.name.original}} table`)->Promise.resolve
+  })
+  await {{entity.name.capitalized}}.create{{entity.name.capitalized}}HistoryTable()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err,`EE802: Error creating {{entity.name.original}} entity history table`)->Promise.resolve
   })
 {{/each}}
   await TrackTables.trackAllTables()->Promise.catch(err => {
