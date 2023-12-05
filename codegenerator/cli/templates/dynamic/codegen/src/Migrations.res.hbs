@@ -61,6 +61,29 @@ module PersistedState = {
   }
 }
 
+module SyncBatchMetadata = {
+  let createSyncBatchTable: unit => promise<unit> = async () => {
+    @warning("-21")
+    let _ = await %raw("sql`
+      CREATE TABLE IF NOT EXISTS public.sync_batch (
+        chain_id INTEGER NOT NULL,
+        block_timestamp_range_end INTEGER NOT NULL,
+        block_number_range_end INTEGER NOT NULL,
+        block_hash_range_end INTEGER NOT NULL,
+        PRIMARY KEY (chain_id, event_id)
+      );
+      `")
+  }
+
+  @@warning("-21")
+  let dropSyncStateTable = async () => {
+    let _ = await %raw("sql`
+      DROP TABLE IF EXISTS public.sync_batch;
+    `")
+  }
+  @@warning("+21")
+}
+
 module RawEventsTable = {
   let createEventTypeEnum: unit => promise<unit> = async () => {
     @warning("-21")
@@ -227,6 +250,10 @@ let runUpMigrations = async (~shouldExit) => {
   await ChainMetadata.createChainMetadataTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err, `EE800: Error creating chain_metadata table`)->Promise.resolve
+  })
+  await SyncBatchMetadata.createSyncBatchTable()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err, `EE800: Error creating sync_batch table`)->Promise.resolve
   })
   await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
     exitCode := Failure
