@@ -458,56 +458,73 @@ let loadEntitiesToInMemStore = (~entityBatch, ~inMemoryStore) => {
   )
 }
 
-let executeEntityFunction = (
+let executeSet = (
   sql: Postgres.sql,
   ~rows: array<Types.inMemoryStoreRow<'a>>,
-  ~dbOp: Types.dbOp,
   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
-  ~getInputValFromRow: Types.inMemoryStoreRow<'a> => 'b,
 ) => {
-  let entityIds =
-    rows->Belt.Array.keepMap(row => row.dbOp == dbOp ? Some(row->getInputValFromRow) : None)
+  let executeSets = rows->Belt.Array.keepMap(row => row.current.entityData)
 
-  if entityIds->Array.length > 0 {
-    sql->dbFunction(entityIds)
+  if executeSets->Array.length > 0 {
+    sql->dbFunction(executeSets)
   } else {
     Promise.resolve()
   }
 }
 
-let executeSet = executeEntityFunction(~dbOp=Set)
-let executeDelete = executeEntityFunction(~dbOp=Delete)
+let executeDelete = (
+  sql: Postgres.sql,
+  ~rows: array<Types.inMemoryStoreRow<'a>>,
+  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
+) => {
+  // TODO: implement me please (after hackathon)
 
-let executeSetSchemaEntity = (~entityEncoder) =>
-  executeSet(
-   ~getInputValFromRow=row => {
-    row.entity->entityEncoder
-  })
+  Promise.resolve()
+}
 
+let executeSetSchemaEntity = (
+  sql: Postgres.sql,
+  ~rows: array<Types.inMemoryStoreRow<'a>>,
+  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
+  ~entityEncoder,
+) => {
+  // ~getInputValFromRow: Types.inMemoryStoreRow<'a> => 'b,
+
+  let executeSets =
+    rows->Belt.Array.keepMap(row => row.current.entityData->Belt.Option.map(entityEncoder))
+
+  // let executeSetsFunction = (
+  //   sql: Postgres.sql,
+  //   ~rows: array<Types.inMemoryStoreRow<'a>>,
+  //   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
+  // ) => {
+  if executeSets->Array.length > 0 {
+    sql->dbFunction(executeSets)
+  } else {
+    Promise.resolve()
+  }
+  // }
+}
 let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
   let setEventSyncState = executeSet(
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
-    ~getInputValFromRow=row => row.entity,
     ~rows=inMemoryStore.eventSyncState->InMemoryStore.EventSyncState.values,
   )
 
   let setRawEvents = executeSet(
     ~dbFunction=DbFunctions.RawEvents.batchSet,
-    ~getInputValFromRow=row => row.entity,
     ~rows=inMemoryStore.rawEvents->InMemoryStore.RawEvents.values,
   )
 
   let setDynamicContracts = executeSet(
     ~dbFunction=DbFunctions.DynamicContractRegistry.batchSet,
     ~rows=inMemoryStore.dynamicContractRegistry->InMemoryStore.DynamicContractRegistry.values,
-    ~getInputValFromRow={row => row.entity},
   )
 
   {{#each entities as | entity |}}
   let delete{{entity.name.capitalized}}s = executeDelete(
     ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchDelete,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
-    ~getInputValFromRow={row => row.entity.id},
   )
 
   let set{{entity.name.capitalized}}s = executeSetSchemaEntity(
