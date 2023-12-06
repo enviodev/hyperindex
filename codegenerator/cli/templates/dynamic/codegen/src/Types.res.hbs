@@ -64,12 +64,17 @@ type entity =
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
 {{/each}}
 
-type dbOp = Read | Set | Delete
+type eventIdentifier = {
+  chainId: int,
+  blockNumber: int,
+  logIndex: int,
+}
+type eventUpdate<'entityType> = {event: option<eventIdentifier>, entityData: option<'entityType>}
 
-@genType
-type inMemoryStoreRow<'a> = {
-  dbOp: dbOp,
-  entity: 'a,
+
+type inMemoryStoreRow<'entityType> = {
+  current: eventUpdate<'entityType>,
+  history: array<eventUpdate<'entityType>>,
 }
 
 //*************
