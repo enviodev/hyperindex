@@ -461,11 +461,12 @@ let loadEntitiesToInMemStore = (~entityBatch, ~inMemoryStore) => {
 let executeSet = (
   sql: Postgres.sql,
   ~rows: array<Types.inMemoryStoreRow<'a>>,
-  ~dbFunction: (Postgres.sql, array<'a>) => promise<unit>,
+  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
 ) => {
-  let entities = rows->Belt.Array.keepMap(row => row.dbOp === Set ? Some(row.entity) : None)
-  if entities->Array.length > 0 {
-    sql->dbFunction(entities)
+  let executeSets = rows->Belt.Array.keepMap(row => row.current.entityData)
+
+  if executeSets->Array.length > 0 {
+    sql->dbFunction(executeSets)
   } else {
     Promise.resolve()
   }
@@ -474,20 +475,37 @@ let executeSet = (
 let executeDelete = (
   sql: Postgres.sql,
   ~rows: array<Types.inMemoryStoreRow<'a>>,
-  ~dbFunction: (Postgres.sql, array<string>) => promise<unit>,
+  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
 ) => {
-  let entities = rows->Belt.Array.keepMap(row =>
-    // Unsafely assume the id is always in the `id` field
-    row.dbOp === Delete ? Some((row.entity->Obj.magic)["id"]) : None
-  )
-  if entities->Array.length > 0 {
-    sql->dbFunction(entities)
+  // TODO: implement me please (after hackathon)
+
+  Promise.resolve()
+}
+
+let executeSetSchemaEntity = (
+  sql: Postgres.sql,
+  ~rows: array<Types.inMemoryStoreRow<'a>>,
+  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
+  ~entityEncoder,
+) => {
+  // ~getInputValFromRow: Types.inMemoryStoreRow<'a> => 'b,
+
+  let executeSets =
+    rows->Belt.Array.keepMap(row => row.current.entityData->Belt.Option.map(entityEncoder))
+
+  // let executeSetsFunction = (
+  //   sql: Postgres.sql,
+  //   ~rows: array<Types.inMemoryStoreRow<'a>>,
+  //   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
+  // ) => {
+  if executeSets->Array.length > 0 {
+    sql->dbFunction(executeSets)
   } else {
     Promise.resolve()
   }
+  // }
 }
-
-let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
+let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
   let setEventSyncState = executeSet(
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
     ~rows=inMemoryStore.eventSyncState->InMemoryStore.EventSyncState.values,
