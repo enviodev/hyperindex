@@ -290,257 +290,194 @@ module MockDb = {
   }
 }
 
-/**
-The arguements that get passed to a "processEvent" helper function
-*/
-//Note these are made into a record to make operate in the same way
-//for Res, JS and TS.
-@genType
-type eventProcessorArgs<'eventArgs> = {
-  event: Types.eventLog<'eventArgs>,
-  mockDb: MockDb.t,
-  chainId?: int,
-}
-
-/**
-An event processor will process an event with a mockDb and return a new mockDb
-with the updated state
-*/
-@genType
-type eventProcessor<'eventArgs> = eventProcessorArgs<'eventArgs> => MockDb.t
-
-/**
-A container type to give an explicit "processEvent" name to the eventProcessor 
-method
-*/
-@genType
-type processEventContainer<'eventArgs> = {processEvent: eventProcessor<'eventArgs>}
-
-
-/**
-The default chain ID to use (ethereum mainnet) if a user does not specify int the 
-eventProcessor helper
-*/
-let \"DEFAULT_CHAIN_ID" = 1
-
-/**
-A function composer to help create individual processEvent functions
-*/
-let makeEventProcessor = (
-  ~contextCreator: Context.contextCreator<'eventArgs, 'loaderContext, 'handlerContext>,
-  ~getLoader,
-  ~eventWithContextAccessor: (
-    Types.eventLog<'eventArgs>,
-    unit => 'handlerContext,
-  ) => Types.eventAndContext,
-  ~eventName: Types.eventName,
-): processEventContainer<'eventArgs> => {
-  let processEvent = ({event, mockDb, ?chainId}) => {
-    //The user can specify a chainId of an event or leave it off
-    //and it will default to "DEFAULT_CHAIN_ID"
-    let chainId = chainId->Option.getWithDefault(\"DEFAULT_CHAIN_ID")
-
-    //Create an individual logging context for traceability 
-    let logger = Logging.createChild(
-      ~params={
-        "Context": `Test Processor for ${eventName
-          ->Types.eventName_encode
-          ->Js.Json.stringify} Event`,
-        "Chain ID": chainId,
-        "event": event,
-      },
-    )
-
-    //Deep copy the data in mockDb, mutate the clone and return the clone
-    //So no side effects occur here and state can be compared between process
-    //steps
-    let mockDbClone = mockDb->MockDb.cloneMockDb
-
-    //Construct a new instance of an in memory store to run for the given event
-    let inMemoryStore = IO.InMemoryStore.make()
-
-    //Construct a context with the inMemory store for the given event to run
-    //loaders and handlers
-    let context = contextCreator(~event, ~inMemoryStore, ~chainId, ~logger)
-
-    let loaderContext = context.getLoaderContext()
-
-    let loader = getLoader()
-
-    //Run the loader, to get all the read values/contract registrations
-    //into the context
-    loader(~event, ~context=loaderContext)
-
-    //Get all the entities are requested to be loaded from the mockDB
-    let entityBatch = context.getEntitiesToLoad()
-
-    //Load requested entities from the cloned mockDb into the inMemoryStore
-    mockDbClone->MockDb.loadEntitiesToInMemStore(~entityBatch, ~inMemoryStore)
-
-    //Run the event and handler context through the eventRouter
-    //With inMemoryStore
-    let handlerContextGetter = context.getHandlerContext
-    let eventAndContext: Types.eventRouterEventAndContext = {
-      chainId,
-      event: eventWithContextAccessor(event, handlerContextGetter),
-    }
-    eventAndContext->EventProcessing.eventRouter(~inMemoryStore)
-
-    //Now that the processing is finished. Simulate writing a batch
-    //(Although in this case a batch of 1 event only) to the cloned mockDb
-    mockDbClone->MockDb.writeFromMemoryStore(~inMemoryStore)
-
-    //Return the cloned mock db
-    mockDbClone
+module EventFunctions = {
+  /**
+  The arguements that get passed to a "processEvent" helper function
+  */
+  //Note these are made into a record to make operate in the same way
+  //for Res, JS and TS.
+  @genType
+  type eventProcessorArgs<'eventArgs> = {
+    event: Types.eventLog<'eventArgs>,
+    mockDb: MockDb.t,
+    chainId?: int,
   }
 
-  //Wrap the processEvent function in the
-  //processEventContainer for easy named access
-  //to the function
-  {processEvent: processEvent}
+  /**
+  An event processor will process an event with a mockDb and return a new mockDb
+  with the updated state
+  */
+  @genType
+  type eventProcessor<'eventArgs> = eventProcessorArgs<'eventArgs> => MockDb.t
+
+
+
+  /**
+  The default chain ID to use (ethereum mainnet) if a user does not specify int the 
+  eventProcessor helper
+  */
+  let \"DEFAULT_CHAIN_ID" = 1
+
+  /**
+  A function composer to help create individual processEvent functions
+  */
+  let makeEventProcessor = (
+    ~contextCreator: Context.contextCreator<'eventArgs, 'loaderContext, 'handlerContext>,
+    ~getLoader,
+    ~eventWithContextAccessor: (
+      Types.eventLog<'eventArgs>,
+      unit => 'handlerContext,
+    ) => Types.eventAndContext,
+    ~eventName: Types.eventName,
+  ): eventProcessor<'eventArgs> => {
+    ({event, mockDb, ?chainId}) => {
+      //The user can specify a chainId of an event or leave it off
+      //and it will default to "DEFAULT_CHAIN_ID"
+      let chainId = chainId->Option.getWithDefault(\"DEFAULT_CHAIN_ID")
+
+      //Create an individual logging context for traceability 
+      let logger = Logging.createChild(
+        ~params={
+          "Context": `Test Processor for ${eventName
+            ->Types.eventName_encode
+            ->Js.Json.stringify} Event`,
+          "Chain ID": chainId,
+          "event": event,
+        },
+      )
+
+      //Deep copy the data in mockDb, mutate the clone and return the clone
+      //So no side effects occur here and state can be compared between process
+      //steps
+      let mockDbClone = mockDb->MockDb.cloneMockDb
+
+      //Construct a new instance of an in memory store to run for the given event
+      let inMemoryStore = IO.InMemoryStore.make()
+
+      //Construct a context with the inMemory store for the given event to run
+      //loaders and handlers
+      let context = contextCreator(~event, ~inMemoryStore, ~chainId, ~logger)
+
+      let loaderContext = context.getLoaderContext()
+
+      let loader = getLoader()
+
+      //Run the loader, to get all the read values/contract registrations
+      //into the context
+      loader(~event, ~context=loaderContext)
+
+      //Get all the entities are requested to be loaded from the mockDB
+      let entityBatch = context.getEntitiesToLoad()
+
+      //Load requested entities from the cloned mockDb into the inMemoryStore
+      mockDbClone->MockDb.loadEntitiesToInMemStore(~entityBatch, ~inMemoryStore)
+
+      //Run the event and handler context through the eventRouter
+      //With inMemoryStore
+      let handlerContextGetter = context.getHandlerContext
+      let eventAndContext: Types.eventRouterEventAndContext = {
+        chainId,
+        event: eventWithContextAccessor(event, handlerContextGetter),
+      }
+      eventAndContext->EventProcessing.eventRouter(~inMemoryStore)
+
+      //Now that the processing is finished. Simulate writing a batch
+      //(Although in this case a batch of 1 event only) to the cloned mockDb
+      mockDbClone->MockDb.writeFromMemoryStore(~inMemoryStore)
+
+      //Return the cloned mock db
+      mockDbClone
+    }
+  }
+
+  /**
+  Optional params for all additional data related to an eventLog
+  */
+  @genType
+  type eventData = {
+    blockNumber?: int,
+    blockTimestamp?: int,
+    blockHash?: string,
+    srcAddress?: Ethers.ethAddress,
+    transactionHash?: string,
+    transactionIndex?: int,
+    logIndex?: int,
+  }
+
+  /**
+  Applies optional paramters with defaults for all common eventLog field
+  */
+  let makeEventMocker = (~params: 'eventParams, ~testEventData: option<eventData>): Types.eventLog<
+    'eventParams,
+  > => {
+    let {
+      ?blockNumber,
+      ?blockTimestamp,
+      ?blockHash,
+      ?srcAddress,
+      ?transactionHash,
+      ?transactionIndex,
+      ?logIndex,
+    } =
+      testEventData->Belt.Option.getWithDefault({})
+
+    {
+      params,
+      blockNumber: blockNumber->Belt.Option.getWithDefault(0),
+      blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),
+      blockHash: blockHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
+      srcAddress: srcAddress->Belt.Option.getWithDefault(Ethers.Addresses.defaultAddress),
+      transactionHash: transactionHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
+      transactionIndex: transactionIndex->Belt.Option.getWithDefault(0),
+      logIndex: logIndex->Belt.Option.getWithDefault(0),
+    }
+  }
 }
+
 {{#each contracts as | contract |}}
 
 module {{contract.name.capitalized}} = {
   {{#each contract.events as | event |}}
   module {{event.name.capitalized}} = {
     @genType
-    type processor = processEventContainer<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>
-    let processor: processor = makeEventProcessor(
+    let processEvent = EventFunctions.makeEventProcessor(
       ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
       ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
       ~eventWithContextAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
       ~eventName=Types.{{event.event_type.full}},
     )
-  }
 
-  {{/each}}
-
-  /**
-  All event processors helpers for contract {{contract.name.capitalized}}
-  */
-  //Note in TS and JS the object will be capitalized. Wheras rescript it is
-  //uncapitalized
-  @genType
-  type processors = {
-  {{#each contract.events as | event |}}
-    @as("{{event.name.capitalized}}")
-    {{event.name.uncapitalized}}: {{event.name.capitalized}}.processor,
-  {{/each}}
-  }
-
-  /**
-  All event processors helpers for contract {{contract.name.capitalized}}
-  */
-  let processors = {
-  {{#each contract.events as | event |}}
-    {{event.name.uncapitalized}}: {{event.name.capitalized}}.processor,
-  {{/each}}
-  }
-{{/each}}
-}
-
-/**
-All event processor helpers for all contracts
-*/
-@genType
-type eventProcessors = {
-{{#each contracts as | contract |}}
-  @as("{{contract.name.capitalized}}") {{contract.name.uncapitalized}}: {{contract.name.capitalized}}.processors,
-{{/each}}
-}
-
-/**
-All event processor helpers for all contracts
-*/
-@genType
-let eventProcessors = {
-{{#each contracts as | contract |}}
-  {{contract.name.uncapitalized}}: {{contract.name.capitalized}}.processors,
-{{/each}}
-}
-
-/**
-All mock event helpers for all contracts
-*/
-
-/**
-Optional params for all additional data related to an eventLog
-*/
-@genType
-type eventData = {
-  blockNumber?: int,
-  blockTimestamp?: int,
-  blockHash?: string,
-  srcAddress?: Ethers.ethAddress,
-  transactionHash?: string,
-  transactionIndex?: int,
-  logIndex?: int,
-}
-
-/**
-Applies optional paramters with defaults for all common eventLog field
-*/
-let createMockEventInternal = (
-  ~params: 'eventParams,
-  ~eventData: option<eventData>,
-): Types.eventLog<'eventParams> => {
-  let {
-    ?blockNumber,
-    ?blockTimestamp,
-    ?blockHash,
-    ?srcAddress,
-    ?transactionHash,
-    ?transactionIndex,
-    ?logIndex,
-  } =
-    eventData->Belt.Option.getWithDefault({})
-
-  {
-    params,
-    blockNumber: blockNumber->Belt.Option.getWithDefault(0),
-    blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),
-    blockHash: blockHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
-    srcAddress: srcAddress->Belt.Option.getWithDefault(Ethers.Addresses.defaultAddress),
-    transactionHash: transactionHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
-    transactionIndex: transactionIndex->Belt.Option.getWithDefault(0),
-    logIndex: logIndex->Belt.Option.getWithDefault(0),
-  }
-}
-
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
-@genType
-type argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event = {
-{{#each event.params as | param |}}
-{{!--
-TODO: handle potential namespace clash where "eventData" is
-also the named key of an event argument
---}}
-  {{param.key}}?: {{param.type_rescript}},
-{{/each}}
-  eventData?: eventData,
-}
-
-@genType 
-let createMock{{contract.name.capitalized}}{{event.name.capitalized}}Event = (
-  ~args: argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event,
-): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.log => {
-  let {
+    @genType
+    type createMockArgs = {
     {{#each event.params as | param |}}
-    ?{{param.key}},
+    {{!--
+    TODO: handle potential namespace clash where "testEventData" is
+    also the named key of an event argument
+    --}}
+      {{param.key}}?: {{param.type_rescript}},
     {{/each}}
-    ?eventData,
-  } = args
+      testEventData?: EventFunctions.eventData,
+    }
 
-  let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
-  {{#each event.params as | param |}}
-   {{param.key}}: {{param.key}}->Belt.Option.getWithDefault({{param.default_value}}),
-  {{/each}}
+    @genType
+    let createMockEvent = args => {
+      let {
+        {{#each event.params as | param |}}
+        ?{{param.key}},
+        {{/each}}
+        ?testEventData,
+      } = args
+
+      let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
+      {{#each event.params as | param |}}
+       {{param.key}}: {{param.key}}->Belt.Option.getWithDefault({{param.default_value}}),
+      {{/each}}
+      }
+
+      EventFunctions.makeEventMocker(~params, ~testEventData)
+    }
   }
 
-  createMockEventInternal(~params, ~eventData)
+  {{/each}}
 }
-
-{{/each}}
 {{/each}}
