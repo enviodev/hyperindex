@@ -454,18 +454,37 @@ All mock event helpers for all contracts
 */
 
 /**
+Optional params for all additional data related to an eventLog
+*/
+@genType
+type eventData = {
+  blockNumber?: int,
+  blockTimestamp?: int,
+  blockHash?: string,
+  srcAddress?: Ethers.ethAddress,
+  transactionHash?: string,
+  transactionIndex?: int,
+  logIndex?: int,
+}
+
+/**
 Applies optional paramters with defaults for all common eventLog field
 */
 let createMockEventInternal = (
-  params: 'eventParams,
-  ~blockNumber,
-  ~blockTimestamp,
-  ~blockHash,
-  ~srcAddress,
-  ~transactionHash,
-  ~transactionIndex,
-  ~logIndex,
+  ~params: 'eventParams,
+  ~eventData: option<eventData>,
 ): Types.eventLog<'eventParams> => {
+  let {
+    ?blockNumber,
+    ?blockTimestamp,
+    ?blockHash,
+    ?srcAddress,
+    ?transactionHash,
+    ?transactionIndex,
+    ?logIndex,
+  } =
+    eventData->Belt.Option.getWithDefault({})
+
   {
     params,
     blockNumber: blockNumber->Belt.Option.getWithDefault(0),
@@ -484,20 +503,12 @@ let createMockEventInternal = (
 type argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event = {
 {{#each event.params as | param |}}
 {{!--
-TODO: handle potential namespace clash
-** This could cause issues if there is a 
-namespace clash with any of the other hardcoded
-param names **
+TODO: handle potential namespace clash where "eventData" is
+also the named key of an event argument
 --}}
   {{param.key}}?: {{param.type_rescript}},
 {{/each}}
-  blockNumber?: int,
-  blockTimestamp?: int,
-  blockHash?: string,
-  srcAddress?: Ethers.ethAddress,
-  transactionHash?: string,
-  transactionIndex?: int,
-  logIndex?: int,
+  eventData?: eventData,
 }
 
 @genType 
@@ -508,13 +519,7 @@ let createMock{{contract.name.capitalized}}{{event.name.capitalized}}Event = (
     {{#each event.params as | param |}}
     ?{{param.key}},
     {{/each}}
-    ?blockNumber,
-    ?blockTimestamp,
-    ?blockHash,
-    ?srcAddress,
-    ?transactionHash,
-    ?transactionIndex,
-    ?logIndex,
+    ?eventData,
   } = args
 
   let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
@@ -523,15 +528,7 @@ let createMock{{contract.name.capitalized}}{{event.name.capitalized}}Event = (
   {{/each}}
   }
 
-  params->createMockEventInternal(
-    ~blockNumber,
-    ~blockTimestamp,
-    ~blockHash,
-    ~srcAddress,
-    ~transactionHash,
-    ~transactionIndex,
-    ~logIndex,
-  )
+  createMockEventInternal(~params, ~eventData)
 }
 
 {{/each}}
