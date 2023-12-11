@@ -401,33 +401,44 @@ let makeEventProcessor = (
 }
 {{#each contracts as | contract |}}
 
-/**
-All event processors helpers for contract {{contract.name.capitalized}}
-*/
-//Note in TS and JS the object will be capitalized. Wheras rescript it is
-//uncapitalized
-@genType
-type {{contract.name.uncapitalized}}EventProcessors = {
-{{#each contract.events as | event |}}
-  @as("{{event.name.capitalized}}")
-  {{event.name.uncapitalized}}: processEventContainer<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-{{/each}}
-}
+module {{contract.name.capitalized}} = {
+  {{#each contract.events as | event |}}
+  module {{event.name.capitalized}} = {
+    @genType
+    type processor = processEventContainer<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>
+    let processor: processor = makeEventProcessor(
+      ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
+      ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
+      ~eventWithContextAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+      ~eventName=Types.{{event.event_type.full}},
+    )
+  }
 
-/**
-All event processors helpers for contract {{contract.name.capitalized}}
-*/
-let {{contract.name.uncapitalized}}EventProcessors = {
-{{#each contract.events as | event |}}
-  {{event.name.uncapitalized}}: makeEventProcessor(
-    ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
-    ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-    ~eventWithContextAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
-    ~eventName=Types.{{event.event_type.full}},
-  ),
+  {{/each}}
+
+  /**
+  All event processors helpers for contract {{contract.name.capitalized}}
+  */
+  //Note in TS and JS the object will be capitalized. Wheras rescript it is
+  //uncapitalized
+  @genType
+  type processors = {
+  {{#each contract.events as | event |}}
+    @as("{{event.name.capitalized}}")
+    {{event.name.uncapitalized}}: {{event.name.capitalized}}.processor,
+  {{/each}}
+  }
+
+  /**
+  All event processors helpers for contract {{contract.name.capitalized}}
+  */
+  let processors = {
+  {{#each contract.events as | event |}}
+    {{event.name.uncapitalized}}: {{event.name.capitalized}}.processor,
+  {{/each}}
+  }
 {{/each}}
 }
-{{/each}}
 
 /**
 All event processor helpers for all contracts
@@ -435,7 +446,7 @@ All event processor helpers for all contracts
 @genType
 type eventProcessors = {
 {{#each contracts as | contract |}}
-  @as("{{contract.name.capitalized}}") {{contract.name.uncapitalized}}: {{contract.name.uncapitalized}}EventProcessors,
+  @as("{{contract.name.capitalized}}") {{contract.name.uncapitalized}}: {{contract.name.capitalized}}.processors,
 {{/each}}
 }
 
@@ -445,7 +456,7 @@ All event processor helpers for all contracts
 @genType
 let eventProcessors = {
 {{#each contracts as | contract |}}
-  {{contract.name.uncapitalized}}: {{contract.name.uncapitalized}}EventProcessors,
+  {{contract.name.uncapitalized}}: {{contract.name.capitalized}}.processors,
 {{/each}}
 }
 
