@@ -118,10 +118,12 @@ pub struct InitArgs {
 pub enum InitFlow {
     ///Initialize from an example template
     Template(TemplateArgs),
-    ///Initialize by migrating config from an existing subgraph
-    SubgraphMigration(SubgraphMigrationArgs),
     ///Initialize by importing config from a contract for a given chain
+    #[strum(serialize = "Contract Import")]
     ContractImport(ContractImportArgs),
+    ///Initialize by migrating config from an existing subgraph
+    #[strum(serialize = "Subgraph Migration (Experimental)")]
+    SubgraphMigration(SubgraphMigrationArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -162,8 +164,10 @@ pub struct ContractImportArgs {
 #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
 pub enum LocalOrExplorerImport {
     ///Initialize by migrating config from an existing subgraph
+    #[strum(serialize = "Block Explorer")]
     Explorer(ExplorerImportArgs),
     ///Initialize from an example template
+    #[strum(serialize = "Local ABI")]
     Local(LocalImportArgs),
 }
 

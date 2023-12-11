@@ -21,7 +21,7 @@ use thiserror;
 ///A an object that holds all the values a user can select during
 ///the auto config generation. Values can come from etherscan or
 ///abis etc.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AutoConfigSelection {
     pub project_name: String,
     selected_contracts: Vec<ContractImportSelection>,
@@ -31,7 +31,7 @@ pub struct AutoConfigSelection {
 #[derive(thiserror::Error, Debug)]
 pub enum AutoConfigError {
     #[error("Contract '{}' already exists in AutoConfigSelection", .0.name)]
-    ContractNameExists(ContractImportSelection),
+    ContractNameExists(ContractImportSelection, AutoConfigSelection),
 }
 
 impl AutoConfigSelection {
@@ -48,9 +48,9 @@ impl AutoConfigSelection {
     }
 
     pub fn add_contract(
-        &mut self,
+        mut self,
         contract: ContractImportSelection,
-    ) -> Result<(), AutoConfigError> {
+    ) -> Result<Self, AutoConfigError> {
         let contract_name_lower = contract.name.to_lowercase();
         let contract_name_exists = self
             .selected_contracts
@@ -64,9 +64,10 @@ impl AutoConfigSelection {
             // addresses
             // - Contract has some matching addresses to another contract but all different events
             // - Contract has some matching events as another contract?
-            Err(AutoConfigError::ContractNameExists(contract))?
+            Err(AutoConfigError::ContractNameExists(contract, self))?
         } else {
-            Ok(self.selected_contracts.push(contract))
+            self.selected_contracts.push(contract);
+            Ok(self)
         }
     }
 
@@ -108,8 +109,9 @@ impl ContractImportSelection {
         }
     }
 
-    pub fn add_network(&mut self, network_selection: ContractImportNetworkSelection) {
-        self.networks.push(network_selection)
+    pub fn add_network(mut self, network_selection: ContractImportNetworkSelection) -> Self {
+        self.networks.push(network_selection);
+        self
     }
 
     pub async fn from_etherscan(
@@ -175,8 +177,10 @@ impl ContractImportNetworkSelection {
         }
     }
 
-    pub fn add_address(&mut self, address: Address) {
-        self.addresses.push(address)
+    pub fn add_address(mut self, address: Address) -> Self {
+        self.addresses.push(address);
+
+        self
     }
 }
 

@@ -23,15 +23,19 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
-use inquire::{Confirm, CustomType, MultiSelect, Select, Text};
+use inquire::{CustomType, MultiSelect, Select, Text};
 use std::{fmt::Display, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
+use strum_macros::EnumIter;
 
 ///Returns the prompter which can call .prompt() to action, or add validators/other
 ///properties
 fn contract_address_prompter() -> CustomType<'static, Address> {
-    CustomType::<Address>::new("What is the address of the contract? (Use the proxy address if your abi is a proxy implementation)")
-                        .with_error_message("Please input a valid contract address (should be a hexadecimal starting with (0x))")
+    CustomType::<Address>::new("What is the address of the contract?")
+        .with_help_message("Use the proxy address if your abi is a proxy implementation")
+        .with_error_message(
+            "Please input a valid contract address (should be a hexadecimal starting with (0x))",
+        )
 }
 
 ///Immediately calls the prompter
@@ -98,49 +102,67 @@ fn prompt_for_event_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<eth
     Ok(selected_events)
 }
 
+///Represents the choice a user makes for adding values to
+///their auto config selection
+#[derive(strum_macros::Display, EnumIter, Default, PartialEq)]
+enum AddNewContractOption {
+    #[default]
+    #[strum(serialize = "I'm finished")]
+    Finished,
+    #[strum(serialize = "Add a new address for same contract on same network")]
+    AddAddress,
+    #[strum(serialize = "Add a new network for same contract")]
+    AddNetwork,
+    #[strum(serialize = "Add a new contract (with a different ABI)")]
+    AddContract,
+}
+
 impl ContractImportNetworkSelection {
     ///Recursively asks to add an address to ContractImportNetworkSelection
     fn prompt_add_contract_address_to_network_selection(
-        &mut self,
-        contract_name: &str,
-    ) -> Result<()> {
-        let question = format!(
-            "Would you like to add a new address for contract {} on network {}?",
-            contract_name, self.network
-        );
+        self,
+        current_contract_name: &str,
+        //Used in the case where we want to preselect add address
+        preselected_add_new_contract_option: Option<AddNewContractOption>,
+    ) -> Result<(Self, AddNewContractOption)> {
+        let selected_option = match preselected_add_new_contract_option {
+            Some(preselected) => preselected,
+            None => {
+                let options = AddNewContractOption::iter().collect::<Vec<_>>();
+                let help_message = format!(
+                    "Current contract: {}, on network: {}",
+                    current_contract_name, self.network
+                );
+                Select::new("Would you like to add another contract?", options)
+                    .with_starting_cursor(0)
+                    .with_help_message(&help_message)
+                    .prompt()
+                    .context("Failed prompting for add contract")?
+            }
+        };
 
-        if Confirm::new(&question)
-            .with_default(false)
-            .with_placeholder("N")
-            .prompt()?
-        {
+        if selected_option == AddNewContractOption::AddAddress {
             let address = contract_address_prompter()
                 .with_validator(UniqueValueValidator::new(self.addresses.clone()))
                 .prompt()
                 .context("Failed prompting user for new address")?;
-            self.add_address(address);
+            let updated_selection = self.add_address(address);
 
-            self.prompt_add_contract_address_to_network_selection(contract_name)
+            updated_selection
+                .prompt_add_contract_address_to_network_selection(current_contract_name, None)
         } else {
-            Ok(())
+            Ok((self, selected_option))
         }
     }
 }
 
 impl ContractImportSelection {
     //Recursively asks to add networks with addresses to ContractImportNetworkSelection
-    fn prompt_add_network_to_contract_import_selection(&mut self) -> Result<()> {
-        let question = format!(
-            "Would you like to add a new network for contract {}?",
-            self.name
-        );
-
-        //Confirm if a user would like to add a new network for the given contract
-        if Confirm::new(&question)
-            .with_default(false)
-            .with_placeholder("N")
-            .prompt()?
-        {
+    fn prompt_add_network_to_contract_import_selection(
+        self,
+        add_new_contract_option: AddNewContractOption,
+    ) -> Result<(Self, AddNewContractOption)> {
+        if add_new_contract_option == AddNewContractOption::AddNetwork {
             //In a new network case, no RPC url could be
             //derived from CLI flags
             const NO_RPC_URL: Option<String> = None;
@@ -150,21 +172,25 @@ impl ContractImportSelection {
                 .context("Failed selecting network")?;
 
             //Instantiate a network_selection without any  contract addresses
-            let mut network_selection =
+            let network_selection =
                 ContractImportNetworkSelection::new_without_addresses(selected_network);
             //Populate contract addresses with prompt
-            network_selection
-                .prompt_add_contract_address_to_network_selection(&self.name)
+            let (network_selection, add_new_contract_option) = network_selection
+                .prompt_add_contract_address_to_network_selection(
+                    &self.name,
+                    Some(AddNewContractOption::AddAddress),
+                )
                 .context("Failed adding new contract address")?;
 
             //Add the network to the contract selection
-            self.add_network(network_selection);
+            let contract_selection = self.add_network(network_selection);
 
             //Reprompt to add more or exit
-            self.prompt_add_network_to_contract_import_selection()
+            contract_selection
+                .prompt_add_network_to_contract_import_selection(add_new_contract_option)
         } else {
             //Exit if the user does not want to add more networks
-            Ok(())
+            Ok((self, add_new_contract_option))
         }
     }
 }
@@ -172,47 +198,44 @@ impl ContractImportSelection {
 impl AutoConfigSelection {
     ///Recursively prompts to import a new contract or exits
     #[async_recursion]
-    async fn prompt_for_add_contract_import_selection(&mut self) -> Result<()> {
-        let question = format!(
-            "Would you like to import a new Contract for project {}?",
-            self.project_name
-        );
-        //Prompt for confirmation and default to "No"
-        if Confirm::new(&question)
-            .with_default(false)
-            .with_placeholder("N")
-            .prompt()
-            .context("Failed prompting for new Contract import")?
-        {
+    async fn prompt_for_add_contract_import_selection(
+        self,
+        add_new_contract_option: AddNewContractOption,
+    ) -> Result<Self> {
+        if add_new_contract_option == AddNewContractOption::AddContract {
             //Import a new contract
-            let contract_import_selection = ContractImportArgs::default()
-                .get_contract_import_selection()
-                .await
-                .context("Failed getting new contract import selection")?;
+            let (contract_import_selection, add_new_contract_option) =
+                ContractImportArgs::default()
+                    .get_contract_import_selection()
+                    .await
+                    .context("Failed getting new contract import selection")?;
 
             //Add contract to AutoConfigSelection, method will handle duplicate names
             //and prompting for new names
-            self.add_contract_with_prompt(contract_import_selection)
+            let auto_config_selection = self
+                .add_contract_with_prompt(contract_import_selection)
                 .context("Failed adding contract import selection to AutoConfigSelection")?;
 
-            self.prompt_for_add_contract_import_selection().await
+            auto_config_selection
+                .prompt_for_add_contract_import_selection(add_new_contract_option)
+                .await
         } else {
-            Ok(())
+            Ok(self)
         }
     }
 
     ///Calls add_contract but handles case where these is a name collision and prompts for a new
     ///name
     fn add_contract_with_prompt(
-        &mut self,
+        self,
         contract_import_selection: ContractImportSelection,
-    ) -> Result<()> {
+    ) -> Result<Self> {
         self.add_contract(contract_import_selection).or_else(|e|
             match e {
-                AutoConfigError::ContractNameExists(mut contract) => {
+                AutoConfigError::ContractNameExists(mut contract, auto_config_selection) => {
                     let prompt_text = format!("Contract with name {} already exists in your project. Please provide an alternative name: ", contract.name);
                     contract.name = Text::new(&prompt_text).prompt().context("Failed prompting for new Contract name")?;
-                    self.add_contract_with_prompt(contract)
+                    auto_config_selection.add_contract_with_prompt(contract)
                 }
             }
         )
@@ -226,46 +249,54 @@ impl ContractImportArgs {
         project_name: String,
         language: Language,
     ) -> Result<AutoConfigSelection> {
-        let contract_import_selection = self
+        let (contract_import_selection, add_new_contract_option) = self
             .get_contract_import_selection()
             .await
             .context("Failed getting ContractImportSelection")?;
 
-        let mut auto_config_selection =
+        let auto_config_selection =
             AutoConfigSelection::new(project_name, language, contract_import_selection);
 
-        if !self.single_contract {
+        let auto_config_selection = if !self.single_contract {
             auto_config_selection
-                .prompt_for_add_contract_import_selection()
+                .prompt_for_add_contract_import_selection(add_new_contract_option)
                 .await
-                .context("Failed adding contracts to AutoConfigSelection")?;
-        }
+                .context("Failed adding contracts to AutoConfigSelection")?
+        } else {
+            auto_config_selection
+        };
+
         Ok(auto_config_selection)
     }
 
     ///Constructs ContractImportSelection via cli args and prompts
-    async fn get_contract_import_selection(&self) -> Result<ContractImportSelection> {
+    async fn get_contract_import_selection(
+        &self,
+    ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         //Construct ContractImportSelection via explorer or local import
-        let mut contract_import_selection = match &self.get_local_or_explorer()? {
-            LocalOrExplorerImport::Explorer(explorer_import_args) => self
-                .get_contract_import_selection_from_explore_import_args(explorer_import_args)
-                .await
-                .context("Failed getting ContractImportSelection from explorer")?,
-            LocalOrExplorerImport::Local(local_import_args) => self
-                .get_contract_import_selection_from_local_import_args(local_import_args)
-                .await
-                .context("Failed getting ContractImportSelection from local")?,
-        };
+        let (contract_import_selection, add_new_contract_option) =
+            match &self.get_local_or_explorer()? {
+                LocalOrExplorerImport::Explorer(explorer_import_args) => self
+                    .get_contract_import_selection_from_explore_import_args(explorer_import_args)
+                    .await
+                    .context("Failed getting ContractImportSelection from explorer")?,
+                LocalOrExplorerImport::Local(local_import_args) => self
+                    .get_contract_import_selection_from_local_import_args(local_import_args)
+                    .await
+                    .context("Failed getting ContractImportSelection from local")?,
+            };
 
         //If --single-contract flag was not passed in, prompt to ask the user
         //if they would like to add networks to their contract selection
-        if !self.single_contract {
+        let (contract_import_selection, add_new_contract_option) = if !self.single_contract {
             contract_import_selection
-                .prompt_add_network_to_contract_import_selection()
-                .context("Failed adding networks to ContractImportSelection")?;
-        }
+                .prompt_add_network_to_contract_import_selection(add_new_contract_option)
+                .context("Failed adding networks to ContractImportSelection")?
+        } else {
+            (contract_import_selection, AddNewContractOption::Finished)
+        };
 
-        Ok(contract_import_selection)
+        Ok((contract_import_selection, add_new_contract_option))
     }
 
     //Constructs ContractImportSelection via local prompt. Uses abis and manual
@@ -273,7 +304,7 @@ impl ContractImportArgs {
     async fn get_contract_import_selection_from_local_import_args(
         &self,
         local_import_args: &LocalImportArgs,
-    ) -> Result<ContractImportSelection> {
+    ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         let parsed_abi = local_import_args
             .get_parsed_abi()
             .context("Failed getting parsed abi")?;
@@ -296,27 +327,29 @@ impl ContractImportArgs {
             .get_contract_address()
             .context("Failed getting contract address")?;
 
-        let mut network_selection = ContractImportNetworkSelection::new(network, address);
+        let network_selection = ContractImportNetworkSelection::new(network, address);
 
         //If the flag for --single-contract was not added, continue to prompt for adding
         //addresses to the given network for this contract
-        if !self.single_contract {
+        let (network_selection, add_new_contract_option) = if !self.single_contract {
             network_selection
-                .prompt_add_contract_address_to_network_selection(&contract_name)
-                .context("Failed prompting for more contract addresses on network")?;
-        }
+                .prompt_add_contract_address_to_network_selection(&contract_name, None)
+                .context("Failed prompting for more contract addresses on network")?
+        } else {
+            (network_selection, AddNewContractOption::Finished)
+        };
 
         let contract_selection =
             ContractImportSelection::new(contract_name, network_selection, abi_events);
 
-        Ok(contract_selection)
+        Ok((contract_selection, add_new_contract_option))
     }
 
     ///Constructs ContractImportSelection via block explorer requests.
     async fn get_contract_import_selection_from_explore_import_args(
         &self,
         explorer_import_args: &ExplorerImportArgs,
-    ) -> Result<ContractImportSelection> {
+    ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         let network_with_explorer = explorer_import_args
             .get_network_with_explorer()
             .context("Failed getting NetworkWithExporer")?;
@@ -325,30 +358,45 @@ impl ContractImportArgs {
             .get_contract_address()
             .context("Failed getting contract address")?;
 
-        let mut contract_selection = ContractImportSelection::from_etherscan(
+        let contract_selection_from_etherscan = ContractImportSelection::from_etherscan(
             &network_with_explorer,
             chosen_contract_address,
         )
         .await
         .context("Failed getting ContractImportSelection from explorer")?;
 
-        if !self.all_events {
-            contract_selection.events = prompt_for_event_selection(contract_selection.events)
+        let ContractImportSelection {
+            name,
+            networks,
+            events,
+        } = if !self.all_events {
+            let events = prompt_for_event_selection(contract_selection_from_etherscan.events)
                 .context("Failed selecting events")?;
-        }
+            ContractImportSelection {
+                events,
+                ..contract_selection_from_etherscan
+            }
+        } else {
+            contract_selection_from_etherscan
+        };
 
-        let last_network_selection = contract_selection.networks.last_mut().ok_or_else(|| {
+        let last_network_selection = networks.last().cloned().ok_or_else(|| {
             anyhow!("Expected a network seletion to be constructed with ContractImportSelection")
         })?;
 
-        if !self.single_contract {
-            //If the flag for --single-contract was not added, continue to prompt for adding
-            //addresses to the given network for this contract
+        //If the flag for --single-contract was not added, continue to prompt for adding
+        //addresses to the given network for this contract
+        let (network_selection, add_new_contract_option) = if !self.single_contract {
             last_network_selection
-                .prompt_add_contract_address_to_network_selection(&contract_selection.name)?;
-        }
+                .prompt_add_contract_address_to_network_selection(&name, None)
+                .context("Failed prompting for more contract addresses on network")?
+        } else {
+            (last_network_selection, AddNewContractOption::Finished)
+        };
 
-        Ok(contract_selection)
+        let contract_selection = ContractImportSelection::new(name, network_selection, events);
+
+        Ok((contract_selection, add_new_contract_option))
     }
 
     ///Takes either the address passed in by cli flag or prompts
