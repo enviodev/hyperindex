@@ -394,7 +394,7 @@ module EventFunctions = {
   Optional params for all additional data related to an eventLog
   */
   @genType
-  type eventData = {
+  type mockEventData = {
     blockNumber?: int,
     blockTimestamp?: int,
     blockHash?: string,
@@ -407,7 +407,7 @@ module EventFunctions = {
   /**
   Applies optional paramters with defaults for all common eventLog field
   */
-  let makeEventMocker = (~params: 'eventParams, ~testEventData: option<eventData>): Types.eventLog<
+  let makeEventMocker = (~params: 'eventParams, ~mockEventData: option<mockEventData>): Types.eventLog<
     'eventParams,
   > => {
     let {
@@ -419,7 +419,7 @@ module EventFunctions = {
       ?transactionIndex,
       ?logIndex,
     } =
-      testEventData->Belt.Option.getWithDefault({})
+      mockEventData->Belt.Option.getWithDefault({})
 
     {
       params,
@@ -451,12 +451,12 @@ module {{contract.name.capitalized}} = {
     type createMockArgs = {
     {{#each event.params as | param |}}
     {{!--
-    TODO: handle potential namespace clash where "testEventData" is
+    TODO: handle potential namespace clash where "mockEventData" is
     also the named key of an event argument
     --}}
       {{param.key}}?: {{param.type_rescript}},
     {{/each}}
-      testEventData?: EventFunctions.eventData,
+      mockEventData?: EventFunctions.mockEventData,
     }
 
     @genType
@@ -465,7 +465,7 @@ module {{contract.name.capitalized}} = {
         {{#each event.params as | param |}}
         ?{{param.key}},
         {{/each}}
-        ?testEventData,
+        ?mockEventData,
       } = args
 
       let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
@@ -474,7 +474,7 @@ module {{contract.name.capitalized}} = {
       {{/each}}
       }
 
-      EventFunctions.makeEventMocker(~params, ~testEventData)
+      EventFunctions.makeEventMocker(~params, ~mockEventData)
     }
   }
 
