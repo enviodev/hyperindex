@@ -17,6 +17,10 @@
       "subdirs": true
     },
     {
+      "dir": "test",
+      "subdirs": true
+    },
+    {
       "dir": "generated/src",
       "subdirs": true
     }
@@ -32,12 +36,9 @@
     "rescript-struct",
     "@greenlabs/ppx-spice",
     "rescript-express",
-    "@glennsl/rescript-fetch"
+    "@glennsl/rescript-fetch",
+    "rescript-mocha"
   ],
-  "ppx-flags": [
-    "@greenlabs/ppx-spice/ppx"
-  ],
-  "bsc-flags": [
-    "-open RescriptStruct"
-  ]
+  "ppx-flags": ["@greenlabs/ppx-spice/ppx"],
+  "bsc-flags": ["-open RescriptStruct"]
 }
