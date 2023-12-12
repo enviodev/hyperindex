@@ -1,8 +1,8 @@
 import { expect } from "chai";
 import {
   MockDb,
-  createMockGreeterNewGreetingEvent,
-  eventProcessors,
+  Greeter_NewGreeting_createMockEvent,
+  Greeter_NewGreeting_processEvent,
 } from "../generated/src/TestHelpers.gen";
 import {
   GreetingEntity,
@@ -21,15 +21,13 @@ describe("Greeter template tests", () => {
 
     // Creating a mock event
     let mockNewGreetingEvent: GreeterContract_NewGreetingEvent_log =
-      createMockGreeterNewGreetingEvent({
-        args: {
-          greeting: greeting,
-          user: userAddress,
-        },
+      Greeter_NewGreeting_createMockEvent({
+        greeting: greeting,
+        user: userAddress,
       });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb = Greeter_NewGreeting_processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
@@ -59,30 +57,26 @@ describe("Greeter template tests", () => {
 
     // Creating a mock event
     let mockNewGreetingEvent: GreeterContract_NewGreetingEvent_log =
-      createMockGreeterNewGreetingEvent({
-        args: {
-          greeting: greeting,
-          user: userAddress,
-        },
+      Greeter_NewGreeting_createMockEvent({
+        greeting: greeting,
+        user: userAddress,
       });
 
     // Creating a mock event
     let mockNewGreetingEvent2: GreeterContract_NewGreetingEvent_log =
-      createMockGreeterNewGreetingEvent({
-        args: {
-          greeting: greetingAgain,
-          user: userAddress,
-        },
+      Greeter_NewGreeting_createMockEvent({
+        greeting: greetingAgain,
+        user: userAddress,
       });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb = Greeter_NewGreeting_processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
 
     // Processing the mock event on the updated mock database
-    let updatedMockDb2 = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb2 = Greeter_NewGreeting_processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     });
@@ -106,30 +100,26 @@ describe("Greeter template tests", () => {
 
     // Creating a mock event
     let mockNewGreetingEvent: GreeterContract_NewGreetingEvent_log =
-      createMockGreeterNewGreetingEvent({
-        args: {
-          greeting: greeting,
-          user: userAddress,
-        },
+      Greeter_NewGreeting_createMockEvent({
+        greeting: greeting,
+        user: userAddress,
       });
 
     // Creating a mock event
     let mockNewGreetingEvent2: GreeterContract_NewGreetingEvent_log =
-      createMockGreeterNewGreetingEvent({
-        args: {
-          greeting: greetingAgain,
-          user: userAddress,
-        },
+      Greeter_NewGreeting_createMockEvent({
+        greeting: greetingAgain,
+        user: userAddress,
       });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb = Greeter_NewGreeting_processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
 
     // Processing the mock event on the updated mock database
-    let updatedMockDb2 = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb2 = Greeter_NewGreeting_processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     });

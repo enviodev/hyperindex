@@ -1,9 +1,5 @@
 const { expect } = require("chai");
-const {
-  MockDb,
-  createMockGreeterNewGreetingEvent,
-  eventProcessors,
-} = require("../generated/src/TestHelpers.bs");
+const { MockDb, Greeter } = require("../generated/src/TestHelpers.bs");
 const { Addresses } = require("../generated/src/bindings/Ethers.bs");
 
 describe("Greeter template tests", () => {
@@ -16,13 +12,13 @@ describe("Greeter template tests", () => {
     let greeting = "Hi there";
 
     // Creating a mock event
-    let mockNewGreetingEvent = createMockGreeterNewGreetingEvent({
+    let mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
       greeting: greeting,
       user: userAddress,
     });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
@@ -52,25 +48,25 @@ describe("Greeter template tests", () => {
     let greetingAgain = "Oh hello again";
 
     // Creating a mock event
-    let mockNewGreetingEvent = createMockGreeterNewGreetingEvent({
+    let mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
       greeting: greeting,
       user: userAddress,
     });
 
     // Creating a mock event
-    let mockNewGreetingEvent2 = createMockGreeterNewGreetingEvent({
+    let mockNewGreetingEvent2 = Greeter.NewGreeting.createMockEvent({
       greeting: greetingAgain,
       user: userAddress,
     });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
 
     // Processing the mock event on the updated mock database
-    let updatedMockDb2 = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb2 = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     });
@@ -94,25 +90,25 @@ describe("Greeter template tests", () => {
     let greetingAgain = "Oh hello again";
 
     // Creating a mock event
-    let mockNewGreetingEvent = createMockGreeterNewGreetingEvent({
+    let mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
       greeting: greeting,
       user: userAddress,
     });
 
     // Creating a mock event
-    let mockNewGreetingEvent2 = createMockGreeterNewGreetingEvent({
+    let mockNewGreetingEvent2 = Greeter.NewGreeting.createMockEvent({
       greeting: greetingAgain,
       user: userAddress,
     });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
 
     // Processing the mock event on the updated mock database
-    let updatedMockDb2 = eventProcessors.Greeter.NewGreeting.processEvent({
+    let updatedMockDb2 = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     });

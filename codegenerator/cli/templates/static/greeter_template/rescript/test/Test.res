@@ -6,25 +6,23 @@ describe("Greeter template tests", () => {
   it("A NewGreeting event creates a Greeting entity", () => {
     // Initializing the mock database
     let mockDbInitial = TestHelpers.MockDb.createMockDb()
-    
+
     // Initializing values for mock event
     let userAddress = Ethers.Addresses.defaultAddress
     let greeting = "Hi there"
 
     // Creating a mock event
-    let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.createMockGreeterNewGreetingEvent(
-      ~args={
-        greeting,
-        user: userAddress,
-      },
-    )
+    let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+      greeting,
+      user: userAddress,
+    })
 
     // Processing the mock event on the mock database
-    let updatedMockDb = TestHelpers.eventProcessors.greeter.newGreeting.processEvent({
+    let updatedMockDb = TestHelpers.Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     })
-    
+
     // Expected entity that should be created
     let expectedGreetingEntity: Types.greetingEntity = {
       id: userAddress->Ethers.ethAddressToString,
@@ -51,29 +49,25 @@ describe("Greeter template tests", () => {
     let greetingAgain = "Oh hello again"
 
     // Creating a mock event
-    let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.createMockGreeterNewGreetingEvent(
-      ~args={
-        greeting,
-        user: userAddress,
-      },
-    )
+    let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+      greeting,
+      user: userAddress,
+    })
 
     // Creating a mock event
-    let mockNewGreetingEvent2: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.createMockGreeterNewGreetingEvent(
-      ~args={
-        greeting: greetingAgain,
-        user: userAddress,
-      },
-    )
+    let mockNewGreetingEvent2: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+      greeting: greetingAgain,
+      user: userAddress,
+    })
 
     // Processing the mock event on the mock database
-    let updatedMockDb = TestHelpers.eventProcessors.greeter.newGreeting.processEvent({
+    let updatedMockDb = TestHelpers.Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     })
 
     // Processing the mock event on the updated mock database
-    let updatedMockDb2 = TestHelpers.eventProcessors.greeter.newGreeting.processEvent({
+    let updatedMockDb2 = TestHelpers.Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     })
@@ -99,29 +93,25 @@ describe("Greeter template tests", () => {
       let greetingAgain = "Oh hello again"
 
       // Creating a mock event
-      let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.createMockGreeterNewGreetingEvent(
-        ~args={
-          greeting,
-          user: userAddress,
-        },
-      )
+      let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+        greeting,
+        user: userAddress,
+      })
 
       // Creating a mock event
-      let mockNewGreetingEvent2: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.createMockGreeterNewGreetingEvent(
-        ~args={
-          greeting: greetingAgain,
-          user: userAddress,
-        },
-      )
+      let mockNewGreetingEvent2: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+        greeting: greetingAgain,
+        user: userAddress,
+      })
 
       // Processing the mock event on the mock database
-      let updatedMockDb = TestHelpers.eventProcessors.greeter.newGreeting.processEvent({
+      let updatedMockDb = TestHelpers.Greeter.NewGreeting.processEvent({
         event: mockNewGreetingEvent,
         mockDb: mockDbInitial,
       })
 
       // Processing the mock event on the updated mock database
-      let updatedMockDb2 = TestHelpers.eventProcessors.greeter.newGreeting.processEvent({
+      let updatedMockDb2 = TestHelpers.Greeter.NewGreeting.processEvent({
         event: mockNewGreetingEvent2,
         mockDb: updatedMockDb,
       })
