@@ -1,33 +1,17 @@
 use anyhow::{anyhow, Context};
 
 use super::{
-    chain_helpers::{EthArchiveNetwork, Network, SkarNetwork, SupportedNetwork},
+    chain_helpers::{Network, SkarNetwork, SupportedNetwork},
     human_config,
 };
 
-enum HyperSyncNetwork {
-    Skar(SkarNetwork),
-    EthArchive(EthArchiveNetwork),
-}
-
-fn get_hypersync_network_from_supported(
-    network: &SupportedNetwork,
-) -> anyhow::Result<HyperSyncNetwork> {
+fn get_hypersync_network_from_supported(network: &SupportedNetwork) -> anyhow::Result<SkarNetwork> {
     let network_name = Network::from(network.clone());
     match SkarNetwork::try_from(network_name.clone()) {
-        Ok(n) => Ok(HyperSyncNetwork::Skar(n)),
-        Err(_) => match EthArchiveNetwork::try_from(network_name) {
-            Ok(n) => Ok(HyperSyncNetwork::EthArchive(n)),
-            Err(_) => Err(anyhow!(
-                "Unexpected! Supported network could not map to hypersync network"
-            )),
-        },
-    }
-}
-
-pub fn network_to_eth_archive_url(network: &EthArchiveNetwork) -> String {
-    match network {
-        EthArchiveNetwork::Avalanche => "http://46.4.5.110:72".to_string(),
+        Ok(n) => Ok(n),
+        Err(_) => Err(anyhow!(
+            "Unexpected! Supported network could not map to hypersync network"
+        )),
     }
 }
 
@@ -50,6 +34,10 @@ pub fn network_to_skar_url(network: &SkarNetwork) -> String {
         SkarNetwork::PolygonZkevm => "https://polygon-zkevm.hypersync.xyz".to_string(),
         SkarNetwork::Kroma => "https://kroma.hypersync.xyz".to_string(),
         SkarNetwork::Celo => "https://celo.hypersync.xyz".to_string(),
+        SkarNetwork::Avalanche => "https://avalanche.hypersync.xyz".to_string(),
+        SkarNetwork::Boba => "https://avalanche.hypersync.xyz".to_string(),
+        SkarNetwork::ZksyncEra => "https://avalanche.hypersync.xyz".to_string(),
+        SkarNetwork::Moonbeam => "https://avalanche.hypersync.xyz".to_string(),
     }
 }
 
@@ -69,15 +57,9 @@ pub fn get_default_hypersync_endpoint(
         chain_id
     ))?;
 
-    let endpoint = match hypersync_network {
-        HyperSyncNetwork::Skar(n) => human_config::HypersyncConfig {
-            endpoint_url: network_to_skar_url(&n),
-            worker_type: human_config::HypersyncWorkerType::Skar,
-        },
-        HyperSyncNetwork::EthArchive(n) => human_config::HypersyncConfig {
-            endpoint_url: network_to_eth_archive_url(&n),
-            worker_type: human_config::HypersyncWorkerType::EthArchive,
-        },
+    let endpoint = human_config::HypersyncConfig {
+        endpoint_url: network_to_skar_url(&hypersync_network),
+        worker_type: human_config::HypersyncWorkerType::Skar,
     };
 
     Ok(endpoint)
@@ -90,21 +72,15 @@ mod test {
         chain_helpers::Network, hypersync_endpoints::get_default_hypersync_endpoint,
     };
 
-    use super::{EthArchiveNetwork, SkarNetwork, SupportedNetwork};
+    use super::{SkarNetwork, SupportedNetwork};
     use strum::IntoEnumIterator;
 
     #[test]
-    fn all_supported_chain_networks_have_a_skar_or_eth_archive_network() {
+    fn all_supported_chain_networks_have_a_skar_network() {
         for network in SupportedNetwork::iter() {
             let skar_url = SkarNetwork::try_from(Network::from(network.clone())).is_ok();
-            let eth_archive_url =
-                EthArchiveNetwork::try_from(Network::from(network.clone())).is_ok();
 
-            assert!(
-                skar_url || eth_archive_url,
-                "{:?} does not have a skar or eth_archive_url",
-                network
-            );
+            assert!(skar_url, "{:?} does not have a skar", network);
         }
     }
 

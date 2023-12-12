@@ -58,8 +58,7 @@ impl GlobalContractConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub enum HypersyncWorkerType {
-    Skar,
-    EthArchive,
+    Skar, // unused here for backwards compatability. TODO: remove.
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

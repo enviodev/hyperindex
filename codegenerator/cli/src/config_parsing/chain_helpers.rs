@@ -7,13 +7,7 @@ use strum::FromRepr;
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
-#[subenum(
-    NetworkWithExplorer,
-    SupportedNetwork,
-    SkarNetwork,
-    EthArchiveNetwork,
-    GraphNetwork
-)]
+#[subenum(NetworkWithExplorer, SupportedNetwork, SkarNetwork, GraphNetwork)]
 #[derive(
     Clone,
     Debug,
@@ -67,12 +61,15 @@ pub enum Network {
         GraphNetwork(serde(rename = "matic"))
     )]
     Polygon = 137,
+    #[subenum(SupportedNetwork, SkarNetwork)]
+    // explorers:
+    // https://bobascan.com/ (not etherscan)
     Boba = 288,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     OptimismGoerli = 420,
     #[subenum(GraphNetwork)]
     Clover = 1023,
-    #[subenum(GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Moonbeam = 1284,
     #[subenum(GraphNetwork)]
     Moonriver = 1285,
@@ -89,7 +86,7 @@ pub enum Network {
     Celo = 42220,
     #[subenum(GraphNetwork)]
     Fuji = 43113,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, EthArchiveNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Avalanche = 43114,
     #[subenum(GraphNetwork)]
     CeloAlfajores = 44787,
@@ -102,7 +99,7 @@ pub enum Network {
     Harmony = 1666600000,
     #[subenum(GraphNetwork)]
     BaseTestnet = 84531,
-    #[subenum(GraphNetwork)]
+    #[subenum(SupportedNetwork, SkarNetwork, GraphNetwork)]
     ZksyncEra = 324,
     #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
     Sepolia = 11155111,
@@ -133,6 +130,17 @@ pub enum Network {
     TaikoJolnr = 167007,
     #[subenum(SupportedNetwork, SkarNetwork, NetworkWithExplorer)]
     Kroma = 255,
+    // #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    // // Explorers:
+    // // https://explorer.execution.mainnet.lukso.network/
+    // // https://blockscout.com/lukso/l14
+    // Lukso = 42,
+
+    // #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    // OkbcTestnet = 66, // Placeholder, couldn't find the exact network ID for OkbcTestnet.
+
+    // #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    // Holesky = 68, // Placeholder, Holesky's exact network ID not found.
 }
 
 impl Network {
@@ -199,6 +207,7 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::PolygonZkevm => "2GSEPCMXK4J9CMBMG2AFXJJZYMWA3J4A2Z",
             NetworkWithExplorer::Celo => "PT6X2G4Q8YKFC2KU4FCDUUDCXPA57NC7NB",
             NetworkWithExplorer::Kroma => "PNT5V8B3TR5V7AA2IRHD8YB81F5W83YG98",
+            NetworkWithExplorer::Moonbeam => "TODO",
         };
 
         //Define all custom block explorer definitions at the top otherwise default with ethers api

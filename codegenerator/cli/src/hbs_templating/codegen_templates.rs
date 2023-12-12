@@ -473,7 +473,6 @@ struct NetworkTemplate {
     pub id: u64,
     rpc_config: Option<RpcConfig>,
     skar_server_url: Option<ServerUrl>,
-    eth_archive_server_url: Option<ServerUrl>,
     start_block: i32,
 }
 
@@ -483,7 +482,6 @@ impl NetworkTemplate {
             id: network.id,
             rpc_config: network.get_rpc_config().map(|c| c.into()),
             skar_server_url: network.get_skar_url(),
-            eth_archive_server_url: network.get_eth_archive_url(),
             start_block: network.start_block,
         }
     }
@@ -593,8 +591,8 @@ mod test {
     use crate::{
         capitalization::Capitalize,
         config_parsing::{
-            chain_helpers::EthArchiveNetwork, entity_parsing::RescriptType, human_config,
-            human_config::RpcConfig, system_config::SystemConfig,
+            entity_parsing::RescriptType, human_config, human_config::RpcConfig,
+            system_config::SystemConfig,
         },
         project_paths::ParsedProjectPaths,
     };
@@ -662,7 +660,6 @@ mod test {
             id: 1,
             rpc_config: Some(rpc_config1),
             skar_server_url: None,
-            eth_archive_server_url: None,
             start_block: 0,
         };
 
@@ -701,7 +698,6 @@ mod test {
             id: 1,
             rpc_config: Some(rpc_config1.clone()),
             skar_server_url: None,
-            eth_archive_server_url: None,
             start_block: 0,
         };
 
@@ -709,7 +705,6 @@ mod test {
             id: 2,
             rpc_config: Some(rpc_config1),
             skar_server_url: None,
-            eth_archive_server_url: None,
             start_block: 0,
         };
 
@@ -753,7 +748,6 @@ mod test {
             id: 1,
             rpc_config: None,
             skar_server_url: Some("https://eth.hypersync.xyz".to_string()),
-            eth_archive_server_url: None,
             start_block: 0,
         };
 
@@ -784,16 +778,13 @@ mod test {
             id: 1,
             rpc_config: None,
             skar_server_url: Some("https://myskar.com".to_string()),
-            eth_archive_server_url: None,
             start_block: 0,
         };
 
         let network2 = super::NetworkTemplate {
-            id: EthArchiveNetwork::Avalanche as u64,
+            id: 5,
             rpc_config: None,
-            skar_server_url: None,
-            //Should default to eth archive since there is no skar endpoint at this id
-            eth_archive_server_url: Some("http://46.4.5.110:72".to_string()),
+            skar_server_url: Some("https://goerli.hypersync.xyz".to_string()),
             start_block: 0,
         };
 

@@ -290,16 +290,6 @@ impl Network {
             _ => None,
         }
     }
-
-    pub fn get_eth_archive_url(&self) -> Option<ServerUrl> {
-        match &self.sync_source {
-            SyncSourceConfig::HypersyncConfig(HypersyncConfig {
-                worker_type: HypersyncWorkerType::EthArchive,
-                endpoint_url,
-            }) => Some(endpoint_url.clone()),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
