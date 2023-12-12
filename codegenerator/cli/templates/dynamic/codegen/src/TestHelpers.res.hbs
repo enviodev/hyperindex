@@ -12,42 +12,13 @@ module MockDb = {
     `)
 
   /**
-  all the operator functions a user can access on an entity in the mock db
-  stores refer to the the module that MakeStore functor outputs in IO.res
-  */
-  @genType
-  type storeOperations<'entityKey, 'entity> = {
-    getAll: unit => array<'entity>,
-    get: 'entityKey => option<'entity>,
-    set: 'entity => unit,
-    delete: 'entityKey => unit,
-  }
-
-  /**
-  User defined entities always have a string for an id which is used as the 
-  key for entity stores
-  */
-  @genType
-  type entityStoreOperations<'entity> = storeOperations<string, 'entity>
-
-  /**
-  Each user defined entity will be in this record with all the store or "mockdb" operators
-  */
-  @genType
-  type entities = {
-    {{#each entities as | entity |}}
-      @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityStoreOperations<Types.{{entity.name.uncapitalized}}Entity>,
-    {{/each}}
-    }
-
-  /**
   The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a reference
   to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
   store
   */
   @genType
-  type t = {
-    __dbInternal__: ref<IO.InMemoryStore.t>,
+  type rec t = {
+    __dbInternal__: IO.InMemoryStore.t,
     entities: entities,
     rawEvents: storeOperations<IO.InMemoryStore.rawEventsKey, Types.rawEventsEntity>,
     eventSyncState: storeOperations<Types.chainId, DbFunctions.EventSyncState.eventSyncState>,
@@ -57,26 +28,74 @@ module MockDb = {
     >,
   }
 
-  /**
-  a composable function to make the "storeOperations" record to represent all the mock
-  db operations for each entity.
-  */
-  let makeStoreOperator = (
-    store: IO.InMemoryStore.storeState<'entity, 'key>,
-    ~get: (IO.InMemoryStore.storeState<'entity, 'key>, 'key) => option<'entity>,
-    ~values: IO.InMemoryStore.storeState<'entity, 'key> => array<Types.inMemoryStoreRow<'entity>>,
-    ~set: (
-      IO.InMemoryStore.storeState<'entity, 'key>,
-      ~key: 'key,
+  // Each user defined entity will be in this record with all the store or "mockdb" operators
+  and entities = {
+    {{#each entities as | entity |}}
+      @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityStoreOperations<Types.{{entity.name.uncapitalized}}Entity>,
+    {{/each}}
+    }
+  // User defined entities always have a string for an id which is used as the
+  // key for entity stores
+  and entityStoreOperations<'entity> = storeOperations<string, 'entity>
+  // all the operator functions a user can access on an entity in the mock db
+  // stores refer to the the module that MakeStore functor outputs in IO.res
+  and storeOperations<'entityKey, 'entity> = {
+    getAll: unit => array<'entity>,
+    get: 'entityKey => option<'entity>,
+    set: 'entity => t,
+    delete: 'entityKey => t,
+  }
+
+  module type StoreState = {
+    type value
+    type key
+    let get: (IO.InMemoryStore.storeState<value, key>, key) => option<value>
+    let values: IO.InMemoryStore.storeState<value, key> => array<Types.inMemoryStoreRow<value>>
+    let set: (
+      IO.InMemoryStore.storeState<value, key>,
+      ~key: key,
       ~dbOp: Types.dbOp,
-      ~entity: 'entity,
-    ) => unit,
-    ~getKey: 'entity => 'key,
-  ): storeOperations<'entityKey, 'entity> => {
-    getAll: () => store->values->Array.map(row => row.entity),
-    get: store->get,
-    set: entity => store->set(~key=entity->getKey, ~entity, ~dbOp=Set),
-    delete: key => store.dict->deleteDictKey(key->store.hasher),
+      ~entity: value,
+    ) => unit
+  }
+
+  // /**
+  // a composable function to make the "storeOperations" record to represent all the mock
+  // db operations for each entity.
+  // */
+  let makeStoreOperator = (
+    type entity key,
+    storeStateMod: module(StoreState with type value = entity and type key = key),
+    ~inMemoryStore: IO.InMemoryStore.t,
+    ~makeMockDb,
+    ~getStore: IO.InMemoryStore.t => IO.InMemoryStore.storeState<entity, key>,
+    ~getKey: entity => key,
+  ): storeOperations<key, entity> => {
+    let module(StoreState) = storeStateMod
+    let {get, values, set} = module(StoreState)
+
+    let get = inMemoryStore->getStore->get
+    let getAll = () => inMemoryStore->getStore->values->Array.map(row => row.entity)
+
+    let set = entity => {
+      let cloned = inMemoryStore->IO.InMemoryStore.clone
+      cloned->getStore->set(~key=entity->getKey, ~entity, ~dbOp=Set)
+      cloned->makeMockDb
+    }
+
+    let delete = key => {
+      let cloned = inMemoryStore->IO.InMemoryStore.clone
+      let store = cloned->getStore
+      store.dict->deleteDictKey(key->store.hasher)
+      cloned->makeMockDb
+    }
+
+    {
+      getAll,
+      get,
+      set,
+      delete,
+    }
   }
 
   /**
@@ -84,45 +103,45 @@ module MockDb = {
   instantiate a "MockDb". This is useful for cloning or making a MockDb
   out of an existing inMemoryStore
   */
-  let makeWithInMemoryStore = (inMemoryStore: IO.InMemoryStore.t) => {
-    let dbInternal = ref(inMemoryStore)
-
-    let rawEvents =
-      dbInternal.contents.rawEvents->makeStoreOperator(
-        ~get=IO.InMemoryStore.RawEvents.get,
-        ~values=IO.InMemoryStore.RawEvents.values,
-        ~set=IO.InMemoryStore.RawEvents.set,
-        ~getKey=({chainId, eventId}) => {chainId, eventId},
+  let rec makeWithInMemoryStore = (inMemoryStore: IO.InMemoryStore.t) => {
+    let rawEvents = module(IO.InMemoryStore.RawEvents)->makeStoreOperator(
+        ~inMemoryStore,
+        ~makeMockDb=makeWithInMemoryStore,
+        ~getStore=db => db.rawEvents,
+        ~getKey=({chainId, eventId}) => {
+          chainId,
+          eventId,
+        },
       )
 
-    let eventSyncState =
-      dbInternal.contents.eventSyncState->makeStoreOperator(
-        ~get=IO.InMemoryStore.EventSyncState.get,
-        ~values=IO.InMemoryStore.EventSyncState.values,
-        ~set=IO.InMemoryStore.EventSyncState.set,
+    let eventSyncState = module(IO.InMemoryStore.EventSyncState)->makeStoreOperator(
+        ~inMemoryStore,
+        ~makeMockDb=makeWithInMemoryStore,
+        ~getStore=db => db.eventSyncState,
         ~getKey=({chainId}) => chainId,
       )
 
-    let dynamicContractRegistry =
-      dbInternal.contents.dynamicContractRegistry->makeStoreOperator(
-        ~get=IO.InMemoryStore.DynamicContractRegistry.get,
-        ~values=IO.InMemoryStore.DynamicContractRegistry.values,
-        ~set=IO.InMemoryStore.DynamicContractRegistry.set,
+    let dynamicContractRegistry = module(IO.InMemoryStore.DynamicContractRegistry)->makeStoreOperator(
+        ~inMemoryStore,
+        ~getStore=db => db.dynamicContractRegistry,
+        ~makeMockDb=makeWithInMemoryStore,
         ~getKey=({chainId, contractAddress}) => {chainId, contractAddress},
       )
 
     let entities = {
     {{#each entities as | entity |}}
-      {{entity.name.uncapitalized}}: dbInternal.contents.{{entity.name.uncapitalized}}->makeStoreOperator(
-        ~get=IO.InMemoryStore.{{entity.name.capitalized}}.get,
-        ~values=IO.InMemoryStore.{{entity.name.capitalized}}.values,
-        ~set=IO.InMemoryStore.{{entity.name.capitalized}}.set,
-        ~getKey=({id}) => id,
-      ),
+        {{entity.name.uncapitalized}}: {
+          module(IO.InMemoryStore.{{entity.name.capitalized}})->makeStoreOperator(
+            ~inMemoryStore,
+            ~makeMockDb=makeWithInMemoryStore,
+            ~getStore=db => db.{{entity.name.uncapitalized}},
+            ~getKey=({id}) => id,
+          )
+        },
     {{/each}}
     }
 
-    {__dbInternal__: dbInternal, entities, rawEvents, eventSyncState, dynamicContractRegistry}
+    {__dbInternal__: inMemoryStore, entities, rawEvents, eventSyncState, dynamicContractRegistry}
   }
 
   /**
@@ -138,7 +157,7 @@ module MockDb = {
   /**
   Accessor function for getting the internal inMemoryStore in the mockDb
   */
-  let getInternalDb = (self: t) => self.__dbInternal__.contents
+  let getInternalDb = (self: t) => self.__dbInternal__
 
   /**
   Deep copies the in memory store data and returns a new mockDb with the same
