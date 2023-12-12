@@ -75,11 +75,7 @@ describe("Greeter template tests", () => {
     const dbEntity = updatedMockDb2.entities.Greeting.get(userAddress);
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    assert.equal(
-      2,
-      dbEntity?.numberOfGreetings,
-      "Greeting count should have incremented to 2",
-    );
+    assert.equal(2, dbEntity?.numberOfGreetings);
   });
 
   it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", () => {
@@ -114,10 +110,10 @@ describe("Greeter template tests", () => {
       mockDb: updatedMockDb,
     });
 
-    const expectedGreeting: string = greetingAgain;
-
     // Getting the entity from the mock database
     const dbEntity = updatedMockDb2.entities.Greeting.get(userAddress);
+
+    const expectedGreeting: string = greetingAgain;
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
     assert.equal(expectedGreeting, dbEntity?.latestGreeting);
