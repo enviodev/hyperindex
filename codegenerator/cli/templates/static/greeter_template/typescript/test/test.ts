@@ -1,13 +1,6 @@
-import { expect } from "chai";
-import {
-  MockDb,
-  Greeter_NewGreeting_createMockEvent,
-  Greeter_NewGreeting_processEvent,
-} from "../generated/src/TestHelpers.gen";
-import {
-  GreetingEntity,
-  GreeterContract_NewGreetingEvent_log,
-} from "../generated/src/Types.gen";
+import assert from "assert";
+import { MockDb, Greeter } from "../generated/src/TestHelpers.gen";
+import { GreetingEntity } from "../generated/src/Types.gen";
 import { Addresses } from "../generated/src/bindings/Ethers.gen";
 
 describe("Greeter template tests", () => {
@@ -20,14 +13,13 @@ describe("Greeter template tests", () => {
     let greeting = "Hi there";
 
     // Creating a mock event
-    let mockNewGreetingEvent: GreeterContract_NewGreetingEvent_log =
-      Greeter_NewGreeting_createMockEvent({
-        greeting: greeting,
-        user: userAddress,
-      });
+    let mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
+      greeting: greeting,
+      user: userAddress,
+    });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = Greeter_NewGreeting_processEvent({
+    let updatedMockDb = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
@@ -44,7 +36,7 @@ describe("Greeter template tests", () => {
     let dbEntity = updatedMockDb.entities.Greeting.get(userAddress);
 
     // Asserting that the entity in the mock database is the same as the expected entity
-    expect(expectedGreetingEntity).to.deep.equal(dbEntity);
+    assert.deepEqual(expectedGreetingEntity, dbEntity);
   });
 
   it("2 Greetings from the same users results in that user having a greeter count of 2", () => {
@@ -56,38 +48,38 @@ describe("Greeter template tests", () => {
     let greetingAgain = "Oh hello again";
 
     // Creating a mock event
-    let mockNewGreetingEvent: GreeterContract_NewGreetingEvent_log =
-      Greeter_NewGreeting_createMockEvent({
-        greeting: greeting,
-        user: userAddress,
-      });
+    let mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
+      greeting: greeting,
+      user: userAddress,
+    });
 
     // Creating a mock event
-    let mockNewGreetingEvent2: GreeterContract_NewGreetingEvent_log =
-      Greeter_NewGreeting_createMockEvent({
-        greeting: greetingAgain,
-        user: userAddress,
-      });
+    let mockNewGreetingEvent2 = Greeter.NewGreeting.createMockEvent({
+      greeting: greetingAgain,
+      user: userAddress,
+    });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = Greeter_NewGreeting_processEvent({
+    let updatedMockDb = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
 
     // Processing the mock event on the updated mock database
-    let updatedMockDb2 = Greeter_NewGreeting_processEvent({
+    let updatedMockDb2 = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     });
-
-    let expectedGreetingCount: number = 2;
 
     // Getting the entity from the mock database
     let dbEntity = updatedMockDb2.entities.Greeting.get(userAddress);
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    expect(dbEntity?.numberOfGreetings).to.deep.equal(expectedGreetingCount);
+    assert.equal(
+      2,
+      dbEntity?.numberOfGreetings,
+      "Greeting count should have incremented to 2",
+    );
   });
 
   it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", () => {
@@ -99,27 +91,25 @@ describe("Greeter template tests", () => {
     let greetingAgain = "Oh hello again";
 
     // Creating a mock event
-    let mockNewGreetingEvent: GreeterContract_NewGreetingEvent_log =
-      Greeter_NewGreeting_createMockEvent({
-        greeting: greeting,
-        user: userAddress,
-      });
+    let mockNewGreetingEvent = Greeter.NewGreeting.createMockEvent({
+      greeting: greeting,
+      user: userAddress,
+    });
 
     // Creating a mock event
-    let mockNewGreetingEvent2: GreeterContract_NewGreetingEvent_log =
-      Greeter_NewGreeting_createMockEvent({
-        greeting: greetingAgain,
-        user: userAddress,
-      });
+    let mockNewGreetingEvent2 = Greeter.NewGreeting.createMockEvent({
+      greeting: greetingAgain,
+      user: userAddress,
+    });
 
     // Processing the mock event on the mock database
-    let updatedMockDb = Greeter_NewGreeting_processEvent({
+    let updatedMockDb = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
 
     // Processing the mock event on the updated mock database
-    let updatedMockDb2 = Greeter_NewGreeting_processEvent({
+    let updatedMockDb2 = Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     });
@@ -130,6 +120,6 @@ describe("Greeter template tests", () => {
     let dbEntity = updatedMockDb2.entities.Greeting.get(userAddress);
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    expect(dbEntity?.latestGreeting).to.deep.equal(expectedGreeting);
+    assert.equal(expectedGreeting, dbEntity?.latestGreeting);
   });
 });
