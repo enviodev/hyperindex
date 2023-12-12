@@ -12,7 +12,7 @@ describe("Greeter template tests", () => {
     let greeting = "Hi there"
 
     // Creating a mock event
-    let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+    let mockNewGreetingEvent = TestHelpers.Greeter.NewGreeting.createMockEvent({
       greeting,
       user: userAddress,
     })
@@ -49,13 +49,13 @@ describe("Greeter template tests", () => {
     let greetingAgain = "Oh hello again"
 
     // Creating a mock event
-    let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+    let mockNewGreetingEvent = TestHelpers.Greeter.NewGreeting.createMockEvent({
       greeting,
       user: userAddress,
     })
 
     // Creating a mock event
-    let mockNewGreetingEvent2: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+    let mockNewGreetingEvent2 = TestHelpers.Greeter.NewGreeting.createMockEvent({
       greeting: greetingAgain,
       user: userAddress,
     })
@@ -72,7 +72,7 @@ describe("Greeter template tests", () => {
       mockDb: updatedMockDb,
     })
 
-    let expectedGreetingCount: int = 2
+    let expectedGreetingCount = 2
 
     // Getting the entity from the mock database
     let dbEntity =
@@ -81,6 +81,7 @@ describe("Greeter template tests", () => {
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
     Assert.equal(dbEntity.numberOfGreetings, expectedGreetingCount)
   })
+
   it(
     "2 Greetings from the same users results in the latest greeting being the greeting from the second event",
     () => {
@@ -93,13 +94,13 @@ describe("Greeter template tests", () => {
       let greetingAgain = "Oh hello again"
 
       // Creating a mock event
-      let mockNewGreetingEvent: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+      let mockNewGreetingEvent = TestHelpers.Greeter.NewGreeting.createMockEvent({
         greeting,
         user: userAddress,
       })
 
       // Creating a mock event
-      let mockNewGreetingEvent2: Types.GreeterContract.NewGreetingEvent.log = TestHelpers.Greeter.NewGreeting.createMockEvent({
+      let mockNewGreetingEvent2 = TestHelpers.Greeter.NewGreeting.createMockEvent({
         greeting: greetingAgain,
         user: userAddress,
       })
@@ -116,11 +117,11 @@ describe("Greeter template tests", () => {
         mockDb: updatedMockDb,
       })
 
-      let expectedGreeting: string = greetingAgain
-
       // Getting the entity from the mock database
       let dbEntity =
         updatedMockDb2.entities.greeting.get(userAddress->Ethers.ethAddressToString)->Option.getExn
+
+      let expectedGreeting = greetingAgain
 
       // Asserting that the field value of the entity in the mock database is the same as the expected field value
       Assert.equal(dbEntity.latestGreeting, expectedGreeting)
