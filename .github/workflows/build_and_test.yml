@@ -100,7 +100,7 @@ jobs:
 
       - name: Cargo Tests
         if: steps.changes.outputs.testChanges == 'true'
-        run: cargo test --verbose
+        run: cargo test --no-default-features --verbose
 
       - name: Setup Node.js
         if: steps.changes.outputs.testChanges == 'true'

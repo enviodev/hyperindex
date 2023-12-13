@@ -57,7 +57,7 @@ impl GlobalContractConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct HypersyncConfig {
-    #[serde(rename = "url")]
+    #[serde(alias = "url")]
     pub endpoint_url: String,
 }
 
