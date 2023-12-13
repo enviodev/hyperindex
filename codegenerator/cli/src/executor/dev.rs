@@ -78,30 +78,37 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
                 .await
                 .context("Failed to read persisted state from the DB")?;
 
-            let (should_sync_from_raw_events, should_run_db_migrations, changes_detected) =
-                match &persisted_state_db {
-                    PersistedStateExists::Exists(persisted_state) =>
-                    //In the case where the persisted state exists, compare it to current state
-                    //determine whether to run migrations and which changes have occured to
-                    //cause that.
-                    {
-                        let (should_run_db_migrations, changes_detected) =
-                            current_state.should_run_db_migrations(persisted_state);
+            //Temporarily disabled since it is causing issues
+            const TEMPORARY_SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
+            let should_sync_from_raw_events = TEMPORARY_SHOULD_SYNC_FROM_RAW_EVENTS;
 
-                        let should_sync_from_raw_events =
-                            current_state.should_sync_from_raw_events(persisted_state);
+            let (
+                /*DISABLED*/ _should_sync_from_raw_events,
+                should_run_db_migrations,
+                changes_detected,
+            ) = match &persisted_state_db {
+                PersistedStateExists::Exists(persisted_state) =>
+                //In the case where the persisted state exists, compare it to current state
+                //determine whether to run migrations and which changes have occured to
+                //cause that.
+                {
+                    let (should_run_db_migrations, changes_detected) =
+                        current_state.should_run_db_migrations(persisted_state);
 
-                        (
-                            should_sync_from_raw_events,
-                            should_run_db_migrations,
-                            changes_detected,
-                        )
-                    }
-                    //Otherwise we should run db migrations
-                    PersistedStateExists::NotExists | PersistedStateExists::Corrupted => {
-                        (false, true, vec![])
-                    }
-                };
+                    let should_sync_from_raw_events =
+                        current_state.should_sync_from_raw_events(persisted_state);
+
+                    (
+                        should_sync_from_raw_events,
+                        should_run_db_migrations,
+                        changes_detected,
+                    )
+                }
+                //Otherwise we should run db migrations
+                PersistedStateExists::NotExists | PersistedStateExists::Corrupted => {
+                    (false, true, vec![])
+                }
+            };
 
             if should_run_db_migrations {
                 match persisted_state_db {
