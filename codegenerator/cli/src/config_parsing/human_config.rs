@@ -56,14 +56,8 @@ impl GlobalContractConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-pub enum HypersyncWorkerType {
-    Skar, // unused here for backwards compatability. TODO: remove.
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct HypersyncConfig {
-    pub worker_type: HypersyncWorkerType,
+    #[serde(rename = "url")]
     pub endpoint_url: String,
 }
 

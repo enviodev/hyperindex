@@ -3,8 +3,7 @@ description: Gravatar for Ethereum
 networks:
   - id: 1
     hypersync_config:
-      worker_type: skar
-      endpoint_url: https://myskar.com # RPC URL that will be used to subscribe to blockchain data on this network
+      url: https://myskar.com # RPC URL that will be used to subscribe to blockchain data on this network
     start_block: 0
     contracts: []
   - id: 5 #Goerli will use skar

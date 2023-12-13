@@ -2,7 +2,7 @@ mod capitalization;
 mod cli_args;
 pub use cli_args::clap_definitions;
 mod commands;
-mod config_parsing;
+pub mod config_parsing;
 pub mod constants;
 pub mod executor;
 mod hbs_templating;

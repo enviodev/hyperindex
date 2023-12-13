@@ -7,7 +7,7 @@ use strum::FromRepr;
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
-#[subenum(NetworkWithExplorer, SupportedNetwork, SkarNetwork, GraphNetwork)]
+#[subenum(NetworkWithExplorer, SupportedNetwork, GraphNetwork)]
 #[derive(
     Clone,
     Debug,
@@ -30,17 +30,16 @@ pub enum Network {
     #[subenum(
         SupportedNetwork,
         NetworkWithExplorer,
-        SkarNetwork,
         GraphNetwork(serde(rename = "mainnet"))
     )]
     EthereumMainnet = 1,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     Goerli = 5,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     Optimism = 10,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     Bsc = 56,
     #[subenum(GraphNetwork)]
     PoaSokol = 77,
@@ -48,7 +47,7 @@ pub enum Network {
     Chapel = 97,
     #[subenum(GraphNetwork)]
     PoaCore = 99,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     Gnosis = 100,
     #[subenum(GraphNetwork)]
     Fuse = 122,
@@ -57,11 +56,10 @@ pub enum Network {
     #[subenum(
         SupportedNetwork,
         NetworkWithExplorer,
-        SkarNetwork,
         GraphNetwork(serde(rename = "matic"))
     )]
     Polygon = 137,
-    #[subenum(SupportedNetwork, SkarNetwork)]
+    #[subenum(SupportedNetwork)]
     // explorers:
     // https://bobascan.com/ (not etherscan)
     Boba = 288,
@@ -69,7 +67,7 @@ pub enum Network {
     OptimismGoerli = 420,
     #[subenum(GraphNetwork)]
     Clover = 1023,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
     #[subenum(GraphNetwork)]
     Moonriver = 1285,
@@ -77,16 +75,16 @@ pub enum Network {
     Mbase = 1287,
     #[subenum(GraphNetwork)]
     FantomTestnet = 4002,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork, SkarNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumOne = 42161,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
-    #[subenum(GraphNetwork, NetworkWithExplorer, SkarNetwork)]
+    #[subenum(SupportedNetwork, GraphNetwork, NetworkWithExplorer)]
     // Blockscout: https://explorer.celo.org/mainnet/
     Celo = 42220,
     #[subenum(GraphNetwork)]
     Fuji = 43113,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     Avalanche = 43114,
     #[subenum(GraphNetwork)]
     CeloAlfajores = 44787,
@@ -99,11 +97,11 @@ pub enum Network {
     Harmony = 1666600000,
     #[subenum(GraphNetwork)]
     BaseTestnet = 84531,
-    #[subenum(SupportedNetwork, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, GraphNetwork)]
     ZksyncEra = 324,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
     Sepolia = 11155111,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer)]
     Linea = 59144,
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
@@ -111,35 +109,35 @@ pub enum Network {
     ZksyncEraTestnet = 280,
     #[subenum(GraphNetwork)]
     PolygonZkevmTestnet = 1422,
-    #[subenum(GraphNetwork, SupportedNetwork, SkarNetwork, NetworkWithExplorer)]
+    #[subenum(GraphNetwork, SupportedNetwork, NetworkWithExplorer)]
     PolygonZkevm = 1101,
     #[subenum(GraphNetwork)]
     ScrollSepolia = 534351,
-    #[subenum(GraphNetwork, SupportedNetwork, SkarNetwork, NetworkWithExplorer)]
+    #[subenum(GraphNetwork, SupportedNetwork, NetworkWithExplorer)]
     Scroll = 534352,
-    #[subenum(SupportedNetwork, SkarNetwork)]
+    #[subenum(SupportedNetwork)]
     Metis = 1088,
-    #[subenum(SupportedNetwork, SkarNetwork)]
+    #[subenum(SupportedNetwork)]
     // Explorers:
     // blockscout: https://pacific-explorer.manta.network/
     // w3w.ai: https://manta.socialscan.io/
     Manta = 169,
-    #[subenum(SupportedNetwork, SkarNetwork)]
+    #[subenum(SupportedNetwork)]
     // Explorers:
     // blockscout: https://explorer.jolnir.taiko.xyz/
     TaikoJolnr = 167007,
-    #[subenum(SupportedNetwork, SkarNetwork, NetworkWithExplorer)]
+    #[subenum(SupportedNetwork, NetworkWithExplorer)]
     Kroma = 255,
-    // #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    // #[subenum(SupportedNetwork, NetworkWithExplorer,  GraphNetwork)]
     // // Explorers:
     // // https://explorer.execution.mainnet.lukso.network/
     // // https://blockscout.com/lukso/l14
     // Lukso = 42,
 
-    // #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    // #[subenum(SupportedNetwork, NetworkWithExplorer,  GraphNetwork)]
     // OkbcTestnet = 66, // Placeholder, couldn't find the exact network ID for OkbcTestnet.
 
-    // #[subenum(SupportedNetwork, NetworkWithExplorer, SkarNetwork, GraphNetwork)]
+    // #[subenum(SupportedNetwork, NetworkWithExplorer,  GraphNetwork)]
     // Holesky = 68, // Placeholder, Holesky's exact network ID not found.
 }
 

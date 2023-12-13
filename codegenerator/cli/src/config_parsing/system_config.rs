@@ -1,8 +1,6 @@
 use super::{
     entity_parsing::{Entity, Schema},
-    human_config::{
-        self, HumanConfig, HypersyncConfig, HypersyncWorkerType, RpcConfig, SyncSourceConfig,
-    },
+    human_config::{self, HumanConfig, HypersyncConfig, RpcConfig, SyncSourceConfig},
 };
 use crate::{
     project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
@@ -283,10 +281,9 @@ impl Network {
 
     pub fn get_skar_url(&self) -> Option<ServerUrl> {
         match &self.sync_source {
-            SyncSourceConfig::HypersyncConfig(HypersyncConfig {
-                worker_type: HypersyncWorkerType::Skar,
-                endpoint_url,
-            }) => Some(endpoint_url.clone()),
+            SyncSourceConfig::HypersyncConfig(HypersyncConfig { endpoint_url }) => {
+                Some(endpoint_url.clone())
+            }
             _ => None,
         }
     }
