@@ -7,7 +7,7 @@ use strum::FromRepr;
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
-#[subenum(NetworkWithExplorer, SupportedNetwork, GraphNetwork)]
+#[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork)]
 #[derive(
     Clone,
     Debug,
@@ -28,18 +28,18 @@ use subenum::subenum;
 #[repr(u64)]
 pub enum Network {
     #[subenum(
-        SupportedNetwork,
+        HypersyncNetwork,
         NetworkWithExplorer,
         GraphNetwork(serde(rename = "mainnet"))
     )]
     EthereumMainnet = 1,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Goerli = 5,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Optimism = 10,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Bsc = 56,
     #[subenum(GraphNetwork)]
     PoaSokol = 77,
@@ -47,19 +47,19 @@ pub enum Network {
     Chapel = 97,
     #[subenum(GraphNetwork)]
     PoaCore = 99,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Gnosis = 100,
     #[subenum(GraphNetwork)]
     Fuse = 122,
     #[subenum(GraphNetwork)]
     Fantom = 250,
     #[subenum(
-        SupportedNetwork,
+        HypersyncNetwork,
         NetworkWithExplorer,
         GraphNetwork(serde(rename = "matic"))
     )]
     Polygon = 137,
-    #[subenum(SupportedNetwork)]
+    #[subenum(HypersyncNetwork)]
     // explorers:
     // https://bobascan.com/ (not etherscan)
     Boba = 288,
@@ -67,7 +67,7 @@ pub enum Network {
     OptimismGoerli = 420,
     #[subenum(GraphNetwork)]
     Clover = 1023,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Moonbeam = 1284,
     #[subenum(GraphNetwork)]
     Moonriver = 1285,
@@ -75,16 +75,16 @@ pub enum Network {
     Mbase = 1287,
     #[subenum(GraphNetwork)]
     FantomTestnet = 4002,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumOne = 42161,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
-    #[subenum(SupportedNetwork, GraphNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     // Blockscout: https://explorer.celo.org/mainnet/
     Celo = 42220,
     #[subenum(GraphNetwork)]
     Fuji = 43113,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Avalanche = 43114,
     #[subenum(GraphNetwork)]
     CeloAlfajores = 44787,
@@ -97,11 +97,11 @@ pub enum Network {
     Harmony = 1666600000,
     #[subenum(GraphNetwork)]
     BaseTestnet = 84531,
-    #[subenum(SupportedNetwork, GraphNetwork)]
+    #[subenum(HypersyncNetwork, GraphNetwork)]
     ZksyncEra = 324,
-    #[subenum(SupportedNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Sepolia = 11155111,
-    #[subenum(SupportedNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Linea = 59144,
     #[subenum(GraphNetwork)]
     Rinkeby = 4,
@@ -109,36 +109,41 @@ pub enum Network {
     ZksyncEraTestnet = 280,
     #[subenum(GraphNetwork)]
     PolygonZkevmTestnet = 1422,
-    #[subenum(GraphNetwork, SupportedNetwork, NetworkWithExplorer)]
+    #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     PolygonZkevm = 1101,
     #[subenum(GraphNetwork)]
     ScrollSepolia = 534351,
-    #[subenum(GraphNetwork, SupportedNetwork, NetworkWithExplorer)]
+    #[subenum(GraphNetwork, HypersyncNetwork, NetworkWithExplorer)]
     Scroll = 534352,
-    #[subenum(SupportedNetwork)]
+    #[subenum(HypersyncNetwork)]
     Metis = 1088,
-    #[subenum(SupportedNetwork)]
+    #[subenum(HypersyncNetwork)]
     // Explorers:
     // blockscout: https://pacific-explorer.manta.network/
     // w3w.ai: https://manta.socialscan.io/
     Manta = 169,
-    #[subenum(SupportedNetwork)]
+    #[subenum(HypersyncNetwork)]
     // Explorers:
     // blockscout: https://explorer.jolnir.taiko.xyz/
     TaikoJolnr = 167007,
-    #[subenum(SupportedNetwork, NetworkWithExplorer)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
-    // #[subenum(SupportedNetwork, NetworkWithExplorer,  GraphNetwork)]
-    // // Explorers:
-    // // https://explorer.execution.mainnet.lukso.network/
-    // // https://blockscout.com/lukso/l14
-    // Lukso = 42,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.execution.mainnet.lukso.network/
+    // https://blockscout.com/lukso/l14
+    Lukso = 42,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://www.oklink.com/x1-test
+    OkbcTestnet = 195,
 
-    // #[subenum(SupportedNetwork, NetworkWithExplorer,  GraphNetwork)]
-    // OkbcTestnet = 66, // Placeholder, couldn't find the exact network ID for OkbcTestnet.
-
-    // #[subenum(SupportedNetwork, NetworkWithExplorer,  GraphNetwork)]
-    // Holesky = 68, // Placeholder, Holesky's exact network ID not found.
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    Holesky = 17000,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://gnosis-chiado.blockscout.com/
+    GnosisChiado = 10200,
 }
 
 impl Network {
@@ -189,6 +194,7 @@ impl NetworkWithExplorer {
         let api_key = match self {
             NetworkWithExplorer::EthereumMainnet => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
             NetworkWithExplorer::Goerli => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
+            NetworkWithExplorer::Holesky => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
             NetworkWithExplorer::Optimism => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
             NetworkWithExplorer::Bsc => "ZZMAWTWCP7T2MP855DA87A3ND6R13GT3K8",
             NetworkWithExplorer::Polygon => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP",
@@ -205,7 +211,7 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::PolygonZkevm => "2GSEPCMXK4J9CMBMG2AFXJJZYMWA3J4A2Z",
             NetworkWithExplorer::Celo => "PT6X2G4Q8YKFC2KU4FCDUUDCXPA57NC7NB",
             NetworkWithExplorer::Kroma => "PNT5V8B3TR5V7AA2IRHD8YB81F5W83YG98",
-            NetworkWithExplorer::Moonbeam => "TODO",
+            NetworkWithExplorer::Moonbeam => "47H94RVTAKCDKNSMBEX15F5AXDAB4DWRY5",
         };
 
         //Define all custom block explorer definitions at the top otherwise default with ethers api
@@ -213,6 +219,11 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Gnosis => {
                 BlockExplorerApi::custom("gnosisscan.io", "api.gnosisscan.io", api_key)
             }
+            NetworkWithExplorer::Holesky => BlockExplorerApi::custom(
+                "holesky.etherscan.io",
+                "api.holesky.etherscan.io",
+                api_key,
+            ),
             NetworkWithExplorer::Scroll => {
                 BlockExplorerApi::custom("scrollscan.com", "api.scrollscan.com", api_key)
             }
@@ -264,7 +275,7 @@ mod test {
 
     use crate::config_parsing::chain_helpers::Network;
 
-    use super::{get_etherscan_client, GraphNetwork, NetworkWithExplorer, SupportedNetwork};
+    use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
 
     use strum::IntoEnumIterator;
 
@@ -278,8 +289,8 @@ mod test {
     #[test]
     fn network_deserialize() {
         let names = r#"["ethereum-mainnet", "polygon"]"#;
-        let names_des: Vec<SupportedNetwork> = serde_json::from_str(names).unwrap();
-        let expected = vec![SupportedNetwork::EthereumMainnet, SupportedNetwork::Polygon];
+        let names_des: Vec<HypersyncNetwork> = serde_json::from_str(names).unwrap();
+        let expected = vec![HypersyncNetwork::EthereumMainnet, HypersyncNetwork::Polygon];
         assert_eq!(expected, names_des);
     }
     #[test]

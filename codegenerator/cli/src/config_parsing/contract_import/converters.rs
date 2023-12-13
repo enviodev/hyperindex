@@ -2,7 +2,7 @@ use super::etherscan_helpers::fetch_contract_auto_selection_from_etherscan;
 use crate::{
     cli_args::clap_definitions::Language,
     config_parsing::{
-        chain_helpers::{NetworkWithExplorer, SupportedNetwork},
+        chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
         human_config::{
             self, ConfigEvent, EventNameOrSig, GlobalContractConfig, HumanConfig,
             LocalContractConfig, RequiredEntity, RpcConfig, SyncSourceConfig,
@@ -134,7 +134,7 @@ type RpcUrl = String;
 
 #[derive(Clone, Debug)]
 pub enum Network {
-    Supported(SupportedNetwork),
+    Supported(HypersyncNetwork),
     Unsupported(NetworkId, RpcUrl),
 }
 

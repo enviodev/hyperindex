@@ -12,7 +12,7 @@ use crate::{
     clap_definitions::Language,
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
-        chain_helpers::{Network, NetworkWithExplorer, SupportedNetwork},
+        chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
         contract_import::converters::{
             self, AutoConfigError, AutoConfigSelection, ContractImportNetworkSelection,
             ContractImportSelection,
@@ -440,7 +440,7 @@ fn prompt_for_network_id(
     let enter_id = "<Enter Network Id>";
 
     //Select one of our supported networks
-    let networks = SupportedNetwork::iter()
+    let networks = HypersyncNetwork::iter()
         //Don't allow selection of networks that have been previously
         //selected.
         .filter(|n| {
@@ -477,7 +477,7 @@ fn prompt_for_network_id(
         //parse it back to a supported network since it was serialized as a
         //string
         choice => converters::Network::Supported(
-            SupportedNetwork::from_str(&choice)
+            HypersyncNetwork::from_str(&choice)
                 .context("Unexpected input, not a supported network.")?,
         ),
     };
@@ -493,7 +493,7 @@ fn get_converter_network_u64(
     rpc_url: &Option<String>,
 ) -> Result<converters::Network> {
     let maybe_supported_network =
-        Network::from_network_id(network_id).and_then(|n| Ok(SupportedNetwork::try_from(n)?));
+        Network::from_network_id(network_id).and_then(|n| Ok(HypersyncNetwork::try_from(n)?));
 
     let network = match maybe_supported_network {
         Ok(s) => converters::Network::Supported(s),
@@ -529,7 +529,7 @@ impl ExplorerImportArgs {
                 let options = NetworkWithExplorer::iter()
                     //Filter only our supported networks
                     .filter(|&n| {
-                        SupportedNetwork::iter()
+                        HypersyncNetwork::iter()
                             //able to cast as u64 because networks enum
                             //uses repr(u64) attribute
                             .find(|&sn| n as u64 == sn as u64)

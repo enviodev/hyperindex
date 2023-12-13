@@ -18,7 +18,7 @@ pub async fn fetch_contract_auto_selection_from_etherscan(
     contract_address: Address,
     network: &NetworkWithExplorer,
 ) -> Result<ContractImportSelection> {
-    let supported_network: chain_helpers::SupportedNetwork =
+    let supported_network: chain_helpers::HypersyncNetwork =
         chain_helpers::Network::from(network.clone())
             .try_into()
             .context("Unexpected, network with explorer should be a supported network")?;
