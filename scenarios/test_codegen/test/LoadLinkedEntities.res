@@ -41,11 +41,11 @@ describe("Linked Entity Loader Integration Test", () => {
       {optionalBigInt: None, id: "aWontLoad", b: "bWontLoad"},
     ]
     let bEntities: array<Types.bEntity> = [
-      {id: "b1", a: ["a2", "a3", "a4"], c: Some("c1")},
-      {id: "b2", a: [], c: Some("c2")},
-      {id: "b3", a: [], c: None},
-      {id: "b4", a: [], c: Some("c3")},
-      {id: "bWontLoad", a: [], c: None},
+      {id: "b1", c: Some("c1")},
+      {id: "b2", c: Some("c2")},
+      {id: "b3", c: None},
+      {id: "b4", c: Some("c3")},
+      {id: "bWontLoad", c: None},
     ]
     let cEntities: array<Types.cEntity> = [
       {id: "c1", a: "aWontLoad"},
@@ -69,10 +69,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let loaderContext = context.getLoaderContext()
     let idsToLoad = ["a1", "a2", "a7" /* a7 doesn't exist */]
-    let _aLoader = loaderContext.a.allLoad(
-      idsToLoad,
-      ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {loadA: {}}}}}},
-    )
+    let _aLoader = loaderContext.a.allLoad(idsToLoad, ~loaders={loadB: {loadC: {}}})
 
     let entitiesToLoad = context.getEntitiesToLoad()
 
@@ -97,28 +94,6 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let c1 = handlerContext.b.getC(b1)
     Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
-
-    let aArray = handlerContext.b.getA(b1)
-
-    aArray->Belt.Array.forEach(
-      a => {
-        let b = handlerContext.a.getB(a)
-
-        Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
-
-        let optC = handlerContext.b.getC(b)
-
-        Assert.equal(optC->Belt.Option.map(c => c.id), b.c, ~message="c.id should equal b.c!!")
-
-        let _ = optC->Belt.Option.map(
-          c => {
-            let a = handlerContext.c.getA(c)
-
-            Assert.equal(a.id, c.a, ~message="a.id should equal c.a")
-          },
-        )
-      },
-    )
   })
 
   MochaPromise.it("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
@@ -144,10 +119,7 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "a4", b: "b1", optionalBigInt: None},
       {id: "aWontLoad", b: "bWontLoad", optionalBigInt: None},
     ]
-    let bEntities: array<Types.bEntity> = [
-      {id: "b1", a: ["a2", "a3", "a4"], c: Some("c1")},
-      {id: "bWontLoad", a: [], c: None},
-    ]
+    let bEntities: array<Types.bEntity> = [{id: "b1", c: Some("c1")}, {id: "bWontLoad", c: None}]
     let cEntities: array<Types.cEntity> = [{id: "c1", a: "aWontLoad"}]
 
     await DbFunctions.A.batchSet(sql, aEntities->Belt.Array.map(createEventA))
@@ -164,10 +136,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let loaderContext = context.getLoaderContext()
 
-    loaderContext.a.allLoad(
-      ["a1"],
-      ~loaders={loadB: {loadC: {}, loadA: {loadB: {loadC: {}, loadA: {loadB: {loadC: {}}}}}}},
-    )
+    loaderContext.a.allLoad(["a1"], ~loaders={loadB: {loadC: {}}})
 
     let entitiesToLoad = context.getEntitiesToLoad()
 
@@ -189,24 +158,6 @@ describe("Linked Entity Loader Integration Test", () => {
     let c1 = handlerContext.b.getC(b1)
 
     Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
-
-    let aArray = handlerContext.b.getA(b1)
-
-    aArray->Belt.Array.forEach(
-      a => {
-        let b = handlerContext.a.getB(a)
-
-        Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
-
-        aArray->Belt.Array.forEach(
-          a => {
-            let b = handlerContext.a.getB(a)
-
-            Assert.equal(b.id, a.b, ~message="b.id should equal a.b")
-          },
-        )
-      },
-    )
 
     let resultAWontLoad = inMemoryStore.a->IO.InMemoryStore.A.get("aWontLoad")
     Assert.equal(resultAWontLoad, None, ~message="aWontLoad should not be in the store")

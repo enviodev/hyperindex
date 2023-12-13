@@ -3,7 +3,7 @@ type User {
   address: Bytes!
   gravatar: Gravatar
   updatesCountOnUserForTesting: Int!
-  tokens: [Token!]!
+  tokens: [Token!]! @derivedFrom(field: "owner")
 }
 
 type Gravatar {
@@ -38,7 +38,7 @@ type A {
 }
 type B {
   id: ID!
-  a: [A!]!
+  a: [A!]! @derivedFrom(field: "b")
   c: C
 }
 type C {

@@ -65,20 +65,10 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
 
   if (event.params.from !== zeroAddress) {
     let loadedUserFrom = context.User.get(event.params.from);
-    let userFromTokensOpt: Array<string> = loadedUserFrom?.tokens ?? [];
-    let userFromTokens: Array<string> = [];
-    if (typeof userFromTokensOpt !== "string") {
-      userFromTokens.concat(userFromTokensOpt);
-    }
-    let index = userFromTokens.indexOf(token.id, 0);
-    if (index > -1) {
-      userFromTokens.splice(index, 1);
-    }
 
     let userFrom = {
       id: event.params.from,
       address: event.params.from,
-      tokens: userFromTokens,
       updatesCountOnUserForTesting:
         loadedUserFrom?.updatesCountOnUserForTesting || 0,
       gravatar: null,
@@ -89,17 +79,9 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
   if (event.params.to !== zeroAddress) {
     let loadedUserTo = context.User.get(event.params.to);
 
-    let userToTokensOpt: Array<string> = loadedUserTo?.tokens ?? [];
-    let userToTokens: Array<string> = [token.id];
-
-    if (typeof userToTokensOpt !== "string") {
-      userToTokens.concat(userToTokensOpt);
-    }
-
     let userTo: UserEntity = {
       id: event.params.to,
       address: event.params.to,
-      tokens: userToTokens,
       updatesCountOnUserForTesting:
         loadedUserTo?.updatesCountOnUserForTesting || 0,
       gravatar: null,
