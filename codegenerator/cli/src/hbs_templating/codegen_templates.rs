@@ -133,9 +133,11 @@ impl EntityParamTypeTemplate {
             .context("Failed getting rescript type")?
             .into();
 
+        let is_derived_from = field.derived_from_field.is_some();
+
         let type_pg = field
             .field_type
-            .to_postgres_type(&entity_names_set)
+            .to_postgres_type(&entity_names_set, is_derived_from)
             .context("Failed getting postgres type")?;
 
         let maybe_entity_name = field
@@ -146,7 +148,7 @@ impl EntityParamTypeTemplate {
         Ok(EntityParamTypeTemplate {
             key: field.name.clone(),
             type_rescript_nullable,
-            is_derived_from: field.derived_from_field.is_some(),
+            is_derived_from,
             type_pg,
             maybe_entity_name,
         })

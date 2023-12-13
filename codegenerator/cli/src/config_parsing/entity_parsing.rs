@@ -330,7 +330,11 @@ impl FieldType {
         }
     }
 
-    pub fn to_postgres_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<String> {
+    pub fn to_postgres_type(
+        &self,
+        entities_set: &HashSet<String>,
+        is_derived_from: bool,
+    ) -> anyhow::Result<String> {
         let composed_type_name = match self {
         Self::Single(gql_scalar) => {
                 gql_scalar.to_postgres_type(entities_set)?
@@ -338,13 +342,13 @@ impl FieldType {
         Self::ListType(field_type) => match field_type.as_ref() {
             //Postgres doesn't support nullable types inside of arrays
             Self::NonNullType(field_type) =>
-              match field_type.as_ref() {
-                | Self::Single(GqlScalar::Custom(custom_field)) => 
-                Err(anyhow!(
-                "EE210: Arrays of entities is unsupported. Please use one of the methods for referencing entites outlined in the docs. The entity being referenced in the array is '{}'.", custom_field
-            ))?,
-                | _ => format!("{}[]",field_type.to_postgres_type(entities_set)?),
-              }
+                match (field_type.as_ref(), is_derived_from) {
+                    | (Self::Single(GqlScalar::Custom(custom_field)), false) =>
+                        Err(anyhow!(
+                            "EE210: Arrays of entities is unsupported. Please use one of the methods for referencing entites outlined in the docs. The entity being referenced in the array is '{}'.", custom_field
+                        ))?,
+                    | _ => format!("{}[]",field_type.to_postgres_type(entities_set, is_derived_from)?),
+                }
             Self::Single(gql_scalar)   => Err(anyhow!(
                 "EE208: Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", gql_scalar
             ))?,
@@ -353,7 +357,7 @@ impl FieldType {
         },
         Self::NonNullType(field_type) => format!(
             "{} NOT NULL",
-            field_type.to_postgres_type(entities_set)?
+            field_type.to_postgres_type(entities_set, is_derived_from)?
         ),
     };
         Ok(composed_type_name)
@@ -661,7 +665,7 @@ mod tests {
         let empty_entities_set = HashSet::new();
 
         field_type
-            .to_postgres_type(&empty_entities_set)
+            .to_postgres_type(&empty_entities_set, false)
             .expect("unable to get postgres type")
     }
 
