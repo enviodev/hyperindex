@@ -337,7 +337,14 @@ impl FieldType {
         }
         Self::ListType(field_type) => match field_type.as_ref() {
             //Postgres doesn't support nullable types inside of arrays
-            Self::NonNullType(field_type) =>format!("{}[]",field_type.to_postgres_type(entities_set)?),
+            Self::NonNullType(field_type) =>
+              match field_type.as_ref() {
+                | Self::Single(GqlScalar::Custom(custom_field)) => 
+                Err(anyhow!(
+                "EE210: Arrays of entities is unsupported. Please use one of the methods for referencing entites outlined in the docs. The entity being referenced in the array is '{}'.", custom_field
+            ))?,
+                | _ => format!("{}[]",field_type.to_postgres_type(entities_set)?),
+              }
             Self::Single(gql_scalar)   => Err(anyhow!(
                 "EE208: Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", gql_scalar
             ))?,
