@@ -5,7 +5,7 @@ const { Addresses } = require("../generated/src/bindings/Ethers.bs");
 describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", () => {
     //Instantiate a mock DB
-    const mockDb = MockDb.createMockDb();
+    const mockDbEmpty = MockDb.createMockDb();
 
     //Get mock addresses from helpers
     const userAddress1 = Addresses.mockAddresses[0];
@@ -18,7 +18,9 @@ describe("Transfers", () => {
     };
 
     //Set an initial state for the user
-    mockDb.entities.Account.set(mockAccountEntity);
+    //Note: set and delete functions do not mutate the mockDb, they return a new
+    //mockDb with with modified state
+    const mockDb = mockDbEmpty.entities.Account.set(mockAccountEntity);
 
     //Create a mock Transfer event from userAddress1 to userAddress2
     const mockTransfer = ERC20.Transfer.createMockEvent({

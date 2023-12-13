@@ -6,7 +6,7 @@ open TestHelpers
 describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", () => {
     //Instantiate a mock DB
-    let mockDb = MockDb.createMockDb()
+    let mockDbEmpty = MockDb.createMockDb()
 
     //Get mock addresses from helpers
     let userAddress1 = Ethers.Addresses.mockAddresses[0]->Option.getUnsafe
@@ -19,7 +19,9 @@ describe("Transfers", () => {
     }
 
     //Set an initial state for the user
-    mockDb.entities.account.set(mockAccountEntity)
+    //Note: set and delete functions do not mutate the mockDb, they return a new
+    //mockDb with with modified state
+    let mockDb = mockDbEmpty.entities.account.set(mockAccountEntity)
 
     //Create a mock Transfer event from userAddress1 to userAddress2
     let mockTransfer = ERC20.Transfer.createMockEvent({
@@ -29,8 +31,8 @@ describe("Transfers", () => {
     })
 
     //Process the mockEvent
-    //This takes in the mockDb and returns a new updated mockDb.
-    //The initial mockDb is not mutated with processEvent
+    //Note: processEvent functions do not mutate the mockDb, they return a new
+    //mockDb with with modified state
     let mockDbAfterTransfer = ERC20.Transfer.processEvent({
       event: mockTransfer,
       mockDb,
