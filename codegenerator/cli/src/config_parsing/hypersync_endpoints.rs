@@ -9,6 +9,7 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
     match network {
         HypersyncNetwork::EthereumMainnet => "https://eth.hypersync.xyz".to_string(),
         HypersyncNetwork::Polygon => "https://polygon.hypersync.xyz".to_string(),
+        HypersyncNetwork::Mumbai => "https://mumbai.hypersync.xyz".to_string(),
         HypersyncNetwork::Gnosis => "https://gnosis.hypersync.xyz".to_string(),
         HypersyncNetwork::Bsc => "https://bsc.hypersync.xyz".to_string(),
         HypersyncNetwork::Goerli => "https://goerli.hypersync.xyz".to_string(),

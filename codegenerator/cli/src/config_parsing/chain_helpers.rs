@@ -88,7 +88,7 @@ pub enum Network {
     Avalanche = 43114,
     #[subenum(GraphNetwork)]
     CeloAlfajores = 44787,
-    #[subenum(NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Mumbai = 80001,
     #[subenum(GraphNetwork)]
     Aurora = 1313161554,
