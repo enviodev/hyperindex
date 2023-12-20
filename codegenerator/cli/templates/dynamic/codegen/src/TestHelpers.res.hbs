@@ -125,7 +125,8 @@ module EventFunctions = {
         chainId,
         event: eventWithContextAccessor(event, handlerContextGetter),
       }
-      eventAndContext->EventProcessing.eventRouter(~inMemoryStore)
+      // TODO FIX THIS. THIS IS BROKEN, all this code is syncronous now.
+      let _ = eventAndContext->EventProcessing.eventRouter(~inMemoryStore)
 
       //Now that the processing is finished. Simulate writing a batch
       //(Although in this case a batch of 1 event only) to the cloned mockDb

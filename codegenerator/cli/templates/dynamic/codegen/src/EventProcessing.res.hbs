@@ -105,10 +105,12 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
         ~eventName={{event.event_type.full}}
       )
 
+    // TODO: pass in a bool for if it is async or syncronous
     let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
     
     //Call the context getter here, ensures no stale values in the context
     //Since loaders and previous handlers have already run
+    // TODO: pass in a bool for if it is async or syncronous
     let context = contextGetter()
 
     try {
@@ -120,7 +122,7 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
           userCodeException->getEventExnObj(~event, ~chainId, ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}")
         //Logger takes any type just currently bound to string
         let errorMessage = errorObj->Obj.magic
-        context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
+        context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)->Promise.resolve
     }
   }
 {{/each}}
@@ -410,7 +412,13 @@ let processEventBatch = async (
 
   let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-  eventBatchAndContext->Belt.Array.forEach(event => event->eventRouter(~inMemoryStore))
+  await eventBatchAndContext->Belt.Array.reduce(Promise.resolve(), async (
+    previousPromise,
+    event,
+  ) => {
+    await previousPromise
+    await event->eventRouter(~inMemoryStore)
+  })
 
   let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
   await DbFunctions.sql->IO.executeBatch(~inMemoryStore)

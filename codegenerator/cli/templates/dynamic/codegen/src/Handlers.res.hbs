@@ -32,9 +32,24 @@ let getDefaultLoaderHandler: (
 {{#each contracts as | contract |}}
 module {{contract.name.capitalized}}Contract = {
 
-  {{#each contract.events as | event |}}
-  
+  {{#each contract.events as | event |}}  
   module {{event.name.capitalized}} = {
+
+    type userHandlerType = (
+      ~event: Types.eventLog<
+        Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
+      >,
+      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext,
+    ) => unit
+    type userHandlerAsyncType = (
+      ~event: Types.eventLog<
+        Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
+      >,
+      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext,
+    ) => Promise.t<unit>
+
+    type handler = SyncHandler(userHandlerType) | AsyncHandler(userHandlerAsyncType)
+
     %%private(
       let {{event.name.uncapitalized}}Loader = ref(None)
       let {{event.name.uncapitalized}}Handler = ref(None)
@@ -49,20 +64,32 @@ module {{contract.name.capitalized}}Contract = {
       }
 
     @genType
-    let handler = (userHandler: (
-      ~event: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext,
-    ) => unit) => {
-      {{event.name.uncapitalized}}Handler := Some(userHandler)
+    let handler = (userHandler: userHandlerType) => {
+      {{event.name.uncapitalized}}Handler :=
+        Some(SyncHandler(userHandler))
+    }
+
+    @genType
+    let handlerAsync = (userHandler: userHandlerAsyncType) => {
+      {{event.name.uncapitalized}}Handler :=
+        Some(AsyncHandler(userHandler))
     }
 
     let getLoader = () =>
     {{event.name.uncapitalized}}Loader.contents->Belt.Option.getWithDefault(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Loader))
 
     
-    let getHandler = () => 
-    {{event.name.uncapitalized}}Handler.contents->Belt.Option.getWithDefault(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler))
-     
+    let getHandler = () =>
+      switch {{event.name.uncapitalized}}Handler.contents {
+        | Some(handler) => switch (handler) {
+          | AsyncHandler(asyncHandler) => asyncHandler
+          | SyncHandler(syncHandler) => (~event, ~context) => syncHandler(~event, ~context)->Promise.resolve
+        }
+        | None =>
+        (~event, ~context) =>
+          getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler, ~event, ~context)
+          ->Promise.resolve
+     }
   }
   {{/each}}
 }
