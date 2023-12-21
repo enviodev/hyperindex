@@ -43,6 +43,7 @@ let setGravatar3: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
 let newGravatarEventLog1: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs> = {
   params: newGravatar1,
   blockNumber: 1,
+  chainId: 54321,
   blockTimestamp: 1,
   blockHash: "deasne",
   // TODO: this should be an address type
@@ -55,6 +56,7 @@ let newGravatarEventLog1: Types.eventLog<Types.GravatarContract.NewGravatarEvent
 let newGravatarEventLog2: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs> = {
   params: newGravatar2,
   blockNumber: 1,
+  chainId: 54321,
   blockTimestamp: 1,
   blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
@@ -66,6 +68,7 @@ let newGravatarEventLog2: Types.eventLog<Types.GravatarContract.NewGravatarEvent
 let newGravatarEventLog3: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs> = {
   params: newGravatar3,
   blockNumber: 1,
+  chainId: 54321,
   blockTimestamp: 1,
   blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
@@ -77,6 +80,7 @@ let newGravatarEventLog3: Types.eventLog<Types.GravatarContract.NewGravatarEvent
 let setGravatarEventLog1: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
   params: setGravatar1,
   blockNumber: 1,
+  chainId: 54321,
   blockTimestamp: 1,
   blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
@@ -88,6 +92,7 @@ let setGravatarEventLog1: Types.eventLog<Types.GravatarContract.UpdatedGravatarE
 let setGravatarEventLog2: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
   params: setGravatar2,
   blockNumber: 1,
+  chainId: 54321,
   blockTimestamp: 1,
   blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
@@ -99,6 +104,7 @@ let setGravatarEventLog2: Types.eventLog<Types.GravatarContract.UpdatedGravatarE
 let setGravatarEventLog3: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
   params: setGravatar3,
   blockNumber: 1,
+  chainId: 54321,
   blockTimestamp: 1,
   blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,

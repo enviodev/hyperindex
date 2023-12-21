@@ -36,7 +36,7 @@ describe("Parsing Raw Events", () => {
       params: paramsEncoded,
     }
 
-    let parsedEvent = mockRawEventsEntity->Converters.parseRawEvent->Belt.Result.getExn
+    let parsedEvent = mockRawEventsEntity->Converters.parseRawEvent(~chainId)->Belt.Result.getExn
 
     let expectedParseResult: Types.eventBatchQueueItem = {
       timestamp: 1614631579,
@@ -45,6 +45,7 @@ describe("Parsing Raw Events", () => {
       logIndex,
       event: Types.GravatarContract_NewGravatar({
         blockNumber,
+        chainId,
         blockTimestamp: timestamp,
         blockHash,
         srcAddress,

@@ -9,6 +9,7 @@ let {
 
 let eventMock1: Types.event = GravatarContract_NewGravatar({
   blockNumber: 1,
+  chainId: 54321,
   blockHash: "0xdef",
   logIndex: 0,
   params: MockEvents.newGravatar1,
@@ -28,6 +29,7 @@ let qItemMock1: Types.eventBatchQueueItem = {
 
 let eventMock2: Types.event = GravatarContract_NewGravatar({
   blockNumber: 2,
+  chainId: 54321,
   blockHash: "0xabc",
   logIndex: 1,
   params: MockEvents.newGravatar2,
