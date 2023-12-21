@@ -105,7 +105,12 @@ let convertLogs = (
       blockNumber: log.blockNumber,
       logIndex: log.logIndex,
       eventPromise: timestampPromise->Promise.thenResolve(blockTimestamp => {
-        let parsed = Converters.parseEvent(~log, ~blockTimestamp, ~contractInterfaceManager)
+        let parsed = Converters.parseEvent(
+          ~log,
+          ~blockTimestamp,
+          ~contractInterfaceManager,
+          ~chainId,
+        ) 
         switch parsed {
         | Error(e) =>
           let ex = RpcEventParsing(e)

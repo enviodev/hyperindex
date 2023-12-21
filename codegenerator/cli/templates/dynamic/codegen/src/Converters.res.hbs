@@ -55,6 +55,7 @@ module {{contract.name.capitalized}} = {
     logDescription: Ethers.logDescription<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
     ~log: Ethers.log,
     ~blockTimestamp: int,
+    ~chainId: int,
   ) => {
     let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
     {{#if event.params}}
@@ -69,6 +70,7 @@ module {{contract.name.capitalized}} = {
 
     let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
       params,
+      chainId,
       blockNumber: log.blockNumber,
       blockTimestamp,
       blockHash: log.blockHash,
@@ -87,6 +89,7 @@ module {{contract.name.capitalized}} = {
     decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
     ~log: Ethers.log,
     ~blockTimestamp: int,
+    ~chainId: int,
   ) => {
     let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
     {{#if event.params}}
@@ -101,6 +104,7 @@ module {{contract.name.capitalized}} = {
 
     let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
       params,
+      chainId,
       blockNumber: log.blockNumber,
       blockTimestamp,
       blockHash: log.blockHash,
@@ -123,7 +127,7 @@ type parseEventError =
 
 exception ParseEventErrorExn(parseEventError)
 
-let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result.t<
+let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId): Belt.Result.t<
   Types.event,
   _,
 > => {
@@ -147,7 +151,7 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.
         | {{event.event_type.full}} =>
             logDescription
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp)
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp, ~chainId)
       {{/each}}
       {{/each}}
       }
@@ -157,7 +161,7 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.
   }
 }
 
-let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result.t<
+let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId): Belt.Result.t<
   Types.event,
   _,
 > => {
@@ -181,7 +185,7 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager): Belt.Result
         | {{event.event_type.full}} =>
             decodedEvent
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}ViemDecodedEvent
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogViem(~log, ~blockTimestamp)
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogViem(~log, ~blockTimestamp, ~chainId)
       {{/each}}
      {{/each}}
       }
@@ -195,6 +199,7 @@ let decodeRawEventWith = (
   rawEvent: Types.rawEventsEntity,
   ~decoder: Spice.decoder<'a>,
   ~variantAccessor: Types.eventLog<'a> => Types.event,
+  ~chainId: int,
 ): Spice.result<Types.eventBatchQueueItem> => {
   switch rawEvent.params->Js.Json.parseExn {
   | exception exn =>
@@ -212,6 +217,7 @@ let decodeRawEventWith = (
   })
   ->Belt.Result.map(params => {
     let event = {
+      chainId,
       blockNumber: rawEvent.blockNumber,
       blockTimestamp: rawEvent.blockTimestamp,
       blockHash: rawEvent.blockHash,
@@ -234,7 +240,9 @@ let decodeRawEventWith = (
   })
 }
 
-let parseRawEvent = (rawEvent: Types.rawEventsEntity): Spice.result<Types.eventBatchQueueItem> => {
+let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chainId: int): Spice.result<
+  Types.eventBatchQueueItem,
+> => {
   rawEvent.eventType
   ->Types.eventName_decode
   ->Belt.Result.flatMap(eventName => {
@@ -245,6 +253,7 @@ let parseRawEvent = (rawEvent: Types.rawEventsEntity): Spice.result<Types.eventB
       rawEvent->decodeRawEventWith(
         ~decoder=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_decode,
         ~variantAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}},
+        ~chainId,
       )
   {{/each}}
   {{/each}}

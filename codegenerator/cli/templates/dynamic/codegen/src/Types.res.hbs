@@ -83,6 +83,7 @@ type inMemoryStoreRow<'a> = {
 @genType.as("EventLog")
 type eventLog<'a> = {
   params: 'a,
+  chainId: int,
   blockNumber: int,
   blockTimestamp: int,
   blockHash: string,

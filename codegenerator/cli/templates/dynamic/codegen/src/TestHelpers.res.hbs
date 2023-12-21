@@ -144,6 +144,7 @@ module EventFunctions = {
     blockNumber?: int,
     blockTimestamp?: int,
     blockHash?: string,
+    chainId?: int,
     srcAddress?: Ethers.ethAddress,
     transactionHash?: string,
     transactionIndex?: int,
@@ -153,14 +154,16 @@ module EventFunctions = {
   /**
   Applies optional paramters with defaults for all common eventLog field
   */
-  let makeEventMocker = (~params: 'eventParams, ~mockEventData: option<mockEventData>): Types.eventLog<
-    'eventParams,
-  > => {
+  let makeEventMocker = (
+    ~params: 'eventParams,
+    ~mockEventData: option<mockEventData>,
+  ): Types.eventLog<'eventParams> => {
     let {
       ?blockNumber,
       ?blockTimestamp,
       ?blockHash,
       ?srcAddress,
+      ?chainId,
       ?transactionHash,
       ?transactionIndex,
       ?logIndex,
@@ -169,6 +172,7 @@ module EventFunctions = {
 
     {
       params,
+      chainId: chainId->Belt.Option.getWithDefault(1),
       blockNumber: blockNumber->Belt.Option.getWithDefault(0),
       blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),
       blockHash: blockHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),

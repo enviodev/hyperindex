@@ -330,11 +330,12 @@ module Make = (HyperSync: HyperSync.S) => {
           //event loop and each parse happens as a macro task. Meaning
           //promise resolves will take priority
           ->Deferred.mapArrayDeferred((item, resolve, reject) => {
-            switch Converters.parseEvent(
-              ~log=item.log,
-              ~blockTimestamp=item.blockTimestamp,
-              ~contractInterfaceManager,
-            ) {
+          switch Converters.parseEvent(
+            ~log=item.log,
+            ~blockTimestamp=item.blockTimestamp,
+            ~contractInterfaceManager,
+            ~chainId=self.chainConfig.chainId,
+          ) {
             | Ok(parsed) =>
               let queueItem: Types.eventBatchQueueItem = {
                 timestamp: item.blockTimestamp,
@@ -521,6 +522,7 @@ module Make = (HyperSync: HyperSync.S) => {
             ~log=item.log,
             ~blockTimestamp=item.blockTimestamp,
             ~contractInterfaceManager,
+            ~chainId=self.chainConfig.chainId,
           ) {
           | Ok(parsed) =>
             let queueItem: Types.eventBatchQueueItem = {
