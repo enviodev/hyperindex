@@ -132,7 +132,7 @@ impl SystemConfig {
                     .events
                     .iter()
                     .cloned()
-                    .map(|e| Event::try_from_config_event(e, &opt_abi))
+                    .map(|e| Event::try_from_config_event(e, &opt_abi, &schema))
                     .collect::<Result<Vec<_>>>()
                     .context(format!(
                         "Failed parsing abi types for events in global contract {}",
@@ -164,7 +164,7 @@ impl SystemConfig {
                             .events
                             .iter()
                             .cloned()
-                            .map(|e| Event::try_from_config_event(e, &opt_abi))
+                            .map(|e| Event::try_from_config_event(e, &opt_abi, &schema))
                             .collect::<Result<Vec<_>>>()?;
 
                         let contract = Contract {
@@ -384,9 +384,23 @@ impl Event {
     pub fn try_from_config_event(
         human_cfg_event: human_config::ConfigEvent,
         opt_abi: &Option<ethers::abi::Contract>,
+        schema: &Schema,
     ) -> Result<Self> {
         let event = human_cfg_event.event.get_abi_event(opt_abi)?;
-        let required_entities = human_cfg_event.required_entities.unwrap_or_else(|| vec![]);
+
+        let required_entities = human_cfg_event.required_entities.unwrap_or_else(|| {
+            // If no required entities are specified, we assume all entities are required
+            schema
+                .entities
+                .clone()
+                .into_iter()
+                .map(|entity| human_config::RequiredEntity {
+                    name: entity.name,
+                    labels: None,
+                    array_labels: None,
+                })
+                .collect()
+        });
 
         Ok(Event {
             event,

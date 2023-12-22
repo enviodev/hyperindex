@@ -849,7 +849,15 @@ mod test {
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
             ],
-            required_entities: vec![],
+            required_entities: vec![RequiredEntityTemplate {
+                name: "EmptyEntity".to_string().to_capitalized_options(),
+                labels: None,
+                array_labels: None,
+                entity_fields_of_required_entity: FilteredTemplateLists {
+                    all: vec![],
+                    filtered_not_derived_from: vec![],
+                },
+            }],
         };
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
