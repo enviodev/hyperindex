@@ -21,7 +21,7 @@ pub trait HasName {
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
-    pub key: String,
+    pub param_name: CapitalizedOptions,
     pub type_rescript: String,
     pub default_value: String,
 }
@@ -109,7 +109,7 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
-    pub key: String,
+    pub field_name: CapitalizedOptions,
     pub type_rescript_nullable: RescriptNullableOpt,
     pub type_pg: String,
     pub maybe_entity_name: Option<CapitalizedOptions>,
@@ -146,7 +146,7 @@ impl EntityParamTypeTemplate {
             .map(|s| s.to_capitalized_options());
 
         Ok(EntityParamTypeTemplate {
-            key: field.name.clone(),
+            field_name: field.name.to_capitalized_options(),
             type_rescript_nullable,
             is_derived_from,
             type_pg,
@@ -307,7 +307,7 @@ impl EventTemplate {
                 let type_rescript = abi_to_rescript_type(&input.into());
 
                 EventParamTypeTemplate {
-                    key,
+                    param_name: key.to_capitalized_options(),
                     default_value: type_rescript.get_default_value(),
                     type_rescript: type_rescript.to_string(),
                 }
@@ -829,22 +829,22 @@ mod test {
             },
             params: vec![
                 EventParamTypeTemplate {
-                    key: "id".to_string(),
+                    param_name: "id".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
                     default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
-                    key: "owner".to_string(),
+                    param_name: "owner".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
                     default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
-                    key: "displayName".to_string(),
+                    param_name: "displayName".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
-                    key: "imageUrl".to_string(),
+                    param_name: "imageUrl".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
@@ -869,22 +869,22 @@ mod test {
             },
             params: vec![
                 EventParamTypeTemplate {
-                    key: "id".to_string(),
+                    param_name: "id".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
                     default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
-                    key: "owner".to_string(),
+                    param_name: "owner".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
                     default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
-                    key: "displayName".to_string(),
+                    param_name: "displayName".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },
                 EventParamTypeTemplate {
-                    key: "imageUrl".to_string(),
+                    param_name: "imageUrl".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value: RESCRIPT_STRING_TYPE.get_default_value(),
                 },

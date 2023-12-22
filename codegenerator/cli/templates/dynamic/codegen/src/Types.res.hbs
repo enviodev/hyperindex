@@ -59,7 +59,7 @@ type dynamicContractRegistryEntity = {
 @spice @genType.as("{{entity.name.original}}Entity")
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{#unless param.is_derived_from }}{{param.key}}: {{param.type_rescript_nullable}}, {{/unless}}
+  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}: {{param.type_rescript_nullable}}, {{/unless}}
   {{/each}}
 }
 
@@ -104,7 +104,7 @@ module {{event.name.capitalized}}Event = {
     {{#if event.params}}
     {
       {{#each event.params as | param |}}
-      @as("{{@index}}") {{param.key}}: {{param.type_rescript}},
+      @as("{{@index}}") {{param.param_name.uncapitalized}}: {{param.type_rescript}},
       {{/each}}
     }
     {{else}}
@@ -116,7 +116,7 @@ module {{event.name.capitalized}}Event = {
     {{#if event.params}}
     {
       {{#each event.params as | param |}}
-      {{param.key}}: {{param.type_rescript}},
+      {{param.param_name.uncapitalized}}: {{param.type_rescript}},
       {{/each}}
     }
     {{else}}

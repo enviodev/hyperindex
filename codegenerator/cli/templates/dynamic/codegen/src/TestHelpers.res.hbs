@@ -204,7 +204,7 @@ module {{contract.name.capitalized}} = {
     TODO: handle potential namespace clash where "mockEventData" is
     also the named key of an event argument
     --}}
-      {{param.key}}?: {{param.type_rescript}},
+      {{param.param_name.uncapitalized}}?: {{param.type_rescript}},
     {{/each}}
       mockEventData?: EventFunctions.mockEventData,
     }
@@ -213,14 +213,14 @@ module {{contract.name.capitalized}} = {
     let createMockEvent = args => {
       let {
         {{#each event.params as | param |}}
-        ?{{param.key}},
+        ?{{param.param_name.uncapitalized}},
         {{/each}}
         ?mockEventData,
       } = args
 
       let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
       {{#each event.params as | param |}}
-       {{param.key}}: {{param.key}}->Belt.Option.getWithDefault({{param.default_value}}),
+       {{param.param_name.uncapitalized}}: {{param.param_name.uncapitalized}}->Belt.Option.getWithDefault({{param.default_value}}),
       {{/each}}
       }
 

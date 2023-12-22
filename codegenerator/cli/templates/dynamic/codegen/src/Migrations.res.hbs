@@ -162,7 +162,7 @@ module DynamicContractRegistryTable = {
 module {{entity.name.capitalized}} = {
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
     await %raw("sql`
-      CREATE TABLE \"public\".\"{{entity.name.original}}\" ({{#each entity.params as |param|}}{{#unless param.is_derived_from}}\"{{param.key}}\" {{param.type_pg}},{{/unless}}{{/each}} 
+      CREATE TABLE \"public\".\"{{entity.name.original}}\" ({{#each entity.params as |param|}}{{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}\" {{param.type_pg}},{{/unless}}{{/each}} 
         db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
         PRIMARY KEY (\"id\"));`")
   }

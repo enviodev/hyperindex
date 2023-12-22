@@ -39,7 +39,7 @@ module {{contract.name.capitalized}} = {
         {{#if event.params}}
         args: {
         {{#each event.params as | param |}}
-          {{param.key}}: args.{{param.key}},
+          {{param.param_name.uncapitalized}}: args.{{param.param_name.uncapitalized}},
         {{/each}}
         }
         {{else}}
@@ -61,7 +61,7 @@ module {{contract.name.capitalized}} = {
     {{#if event.params}}
     {
       {{#each event.params as | param |}}
-        {{param.key}}: logDescription.args.{{param.key}},
+        {{param.param_name.uncapitalized}}: logDescription.args.{{param.param_name.uncapitalized}},
       {{/each}}
     }
     {{else}}
@@ -95,7 +95,7 @@ module {{contract.name.capitalized}} = {
     {{#if event.params}}
     {
       {{#each event.params as | param |}}
-        {{param.key}}: decodedEvent.args.{{param.key}},
+        {{param.param_name.uncapitalized}}: decodedEvent.args.{{param.param_name.uncapitalized}},
       {{/each}}
     }
     {{else}}
