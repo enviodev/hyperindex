@@ -14,10 +14,12 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::Bsc => "https://bsc.hypersync.xyz".to_string(),
         HypersyncNetwork::Goerli => "https://goerli.hypersync.xyz".to_string(),
         HypersyncNetwork::Optimism => "https://optimism.hypersync.xyz".to_string(),
+        HypersyncNetwork::OptimismSepolia => "https://optimism-sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::ArbitrumOne => "https://arbitrum.hypersync.xyz".to_string(),
         HypersyncNetwork::Linea => "https://linea.hypersync.xyz".to_string(),
         HypersyncNetwork::Sepolia => "https://sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::Base => "https://base.hypersync.xyz".to_string(),
+        HypersyncNetwork::BaseSepolia => "https://base-sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::Scroll => "https://scroll.hypersync.xyz".to_string(),
         HypersyncNetwork::Metis => "https://metis.hypersync.xyz".to_string(),
         HypersyncNetwork::TaikoJolnr => "https://taiko-jolnr.hypersync.xyz".to_string(),
@@ -33,6 +35,9 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::Holesky => "https://holesky.hypersync.xyz".to_string(),
         HypersyncNetwork::GnosisChiado => "https://gnosis-chiado.hypersync.xyz".to_string(),
         HypersyncNetwork::OkbcTestnet => "https://okbc-testnet.hypersync.xyz".to_string(),
+        HypersyncNetwork::A1Milkomeda => "https://a1-milkomeda.hypersync.xyz".to_string(),
+        HypersyncNetwork::PublicGoods => "https://publicgoods.hypersync.xyz".to_string(),
+        HypersyncNetwork::Zora => "https://zora.hypersync.xyz".to_string(),
     }
 }
 

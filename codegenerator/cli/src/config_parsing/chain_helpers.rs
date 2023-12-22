@@ -39,6 +39,11 @@ pub enum Network {
     Optimism = 10,
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Base = 8453,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    // explorers:
+    // https://sepolia.basescan.org/
+    // https://base-sepolia.blockscout.com/
+    BaseSepolia = 84532,
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Bsc = 56,
     #[subenum(GraphNetwork)]
@@ -65,6 +70,10 @@ pub enum Network {
     Boba = 288,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     OptimismGoerli = 420,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    // Alt-explorer:
+    // https://optimism-sepolia.blockscout.com/
+    OptimismSepolia = 11155420,
     #[subenum(GraphNetwork)]
     Clover = 1023,
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -144,6 +153,18 @@ pub enum Network {
     // Explorers:
     // https://gnosis-chiado.blockscout.com/
     GnosisChiado = 10200,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.zora.energy/
+    Zora = 7777777,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.publicgoods.network/
+    PublicGoods = 424,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer-mainnet-algorand-rollup.a1.milkomeda.com/
+    A1Milkomeda = 2002,
 }
 
 impl Network {
@@ -199,6 +220,7 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Bsc => "ZZMAWTWCP7T2MP855DA87A3ND6R13GT3K8",
             NetworkWithExplorer::Polygon => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP",
             NetworkWithExplorer::OptimismGoerli => "Z1A9EP3DSM9SNZ2IDMAVPPGYDDG6FRYINA",
+            NetworkWithExplorer::OptimismSepolia => "Z1A9EP3DSM9SNZ2IDMAiVPPGYDDG6FRYINA",
             NetworkWithExplorer::ArbitrumOne => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
             NetworkWithExplorer::ArbitrumGoerli => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
             NetworkWithExplorer::Avalanche => "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK",
@@ -207,6 +229,7 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Gnosis => "5RHWVXQ7TQ1B4G1NPX4J7MF3B3ICDU3KEV",
             NetworkWithExplorer::Linea => "TYCR43IQ5U85DKZXQG8MQIJI7922DVHZX5",
             NetworkWithExplorer::Base => "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3",
+            NetworkWithExplorer::BaseSepolia => "EHB4U5A97C3EGDMSKDY8T5TQ9DXU9Q7HT3",
             NetworkWithExplorer::Scroll => "ZC5BE2NT8UU358184YSBMIFU3F9ZPG5CKX",
             NetworkWithExplorer::PolygonZkevm => "2GSEPCMXK4J9CMBMG2AFXJJZYMWA3J4A2Z",
             NetworkWithExplorer::Celo => "PT6X2G4Q8YKFC2KU4FCDUUDCXPA57NC7NB",
@@ -230,6 +253,16 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Kroma => {
                 BlockExplorerApi::custom("kromascan.com", "api.kromascan.com", api_key)
             }
+            NetworkWithExplorer::BaseSepolia => BlockExplorerApi::custom(
+                "sepolia.basescan.org",
+                "api.sepolia.basescan.org",
+                api_key,
+            ),
+            NetworkWithExplorer::OptimismSepolia => BlockExplorerApi::custom(
+                "sepolia-optimistic.etherscan.io",
+                "api.sepolia-optimistic.etherscan.io",
+                api_key,
+            ),
             _ => BlockExplorerApi::default_ethers(api_key),
         }
     }
