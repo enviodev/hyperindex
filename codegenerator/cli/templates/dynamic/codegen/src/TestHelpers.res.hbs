@@ -68,7 +68,7 @@ module EventFunctions = {
   A function composer to help create individual processEvent functions
   */
   let makeEventProcessor = (
-    ~contextCreator: Context.contextCreator<'eventArgs, 'loaderContext, 'handlerContext>,
+    ~contextCreator: Context.contextCreator<'eventArgs, 'loaderContext, 'handlerContext, 'handlerContextAsync>,
     ~getLoader,
     ~eventWithContextAccessor: (
       Types.eventLog<'eventArgs>,

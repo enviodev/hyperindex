@@ -128,7 +128,42 @@ module {{event.name.capitalized}}Event = {
   type log = eventLog<eventArgs>
 
     {{#each ../../entities as | entity |}}
+
+    // Entity: {{entity.name.original}}
     type {{entity.name.uncapitalized}}EntityHandlerContext = {
+    {{#each event.required_entities as | required_entity |}}
+      {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+        {{#if required_entity.labels}}
+        {{#each required_entity.labels as |label| }}
+        {{label}}: option<{{required_entity.name.uncapitalized}}Entity>,
+        {{/each}}
+        {{/if}}
+        {{#if required_entity.array_labels}}
+        {{#each required_entity.array_labels as |array_label| }}
+        {{array_label}}: array<option<{{required_entity.name.uncapitalized}}Entity>>,
+        {{/each}}
+        {{/if}}
+        get: id => option<{{required_entity.name.uncapitalized}}Entity>,
+      {{/if}}
+
+    {{/each}}
+    {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
+        get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}}Entity => 
+        {{#if entity_field.is_optional}}
+          option<{{entity_field.mapped_entity.uncapitalized}}Entity>
+        {{else}}
+          {{#if entity_field.is_array}}
+            array<{{entity_field.mapped_entity.uncapitalized}}Entity>
+          {{else}}
+            {{entity_field.mapped_entity.uncapitalized}}Entity
+          {{/if}}
+        {{/if}},
+      {{/each}}
+      set: {{entity.name.uncapitalized}}Entity => unit,
+      delete: id => unit,
+    }
+
+    type {{entity.name.uncapitalized}}EntityHandlerContextAsync = {
     {{#each event.required_entities as | required_entity |}}
       {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
         {{#if required_entity.labels}}
@@ -147,15 +182,17 @@ module {{event.name.capitalized}}Event = {
     {{/each}}
     {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
         get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}}Entity => 
-        {{#if entity_field.is_optional}}
+        promise<{{#if entity_field.is_optional}}
           option<{{entity_field.mapped_entity.uncapitalized}}Entity>,
         {{else}}
           {{#if entity_field.is_array}}
+          {{!-- NOTE: this case is currently impossible. However, we should make this work for `derivedFrom` fields. - see: https://github.com/Float-Capital/indexer/issues/1168 --}}
             array<{{entity_field.mapped_entity.uncapitalized}}Entity>,
           {{else}}
             {{entity_field.mapped_entity.uncapitalized}}Entity,
           {{/if}}
         {{/if}}
+        >,
       {{/each}}
       set: {{entity.name.uncapitalized}}Entity => unit,
       delete: id => unit,
@@ -166,6 +203,13 @@ module {{event.name.capitalized}}Event = {
       log: Logs.userLogger,
       {{#each ../../entities as | entity |}}
         @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
+      {{/each}}
+    }
+    @genType
+    type handlerContextAsync = {
+      log: Logs.userLogger,
+      {{#each ../../entities as | entity |}}
+        @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContextAsync,
       {{/each}}
     }
 

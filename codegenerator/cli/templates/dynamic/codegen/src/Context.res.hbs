@@ -1,16 +1,18 @@
-type genericContextCreatorFunctions<'loaderContext, 'handlerContext> = {
+type genericContextCreatorFunctions<'loaderContext, 'handlerContext, 'handlerContextAsync> = {
   getLoaderContext: unit => 'loaderContext,
   getHandlerContext: unit => 'handlerContext,
+  getHandlerContextAsync: unit => 'handlerContextAsync,
   getEntitiesToLoad: unit => array<Types.entityRead>,
   getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
 }
 
-type contextCreator<'eventArgs, 'loaderContext, 'handlerContext> = (
+type contextCreator<'eventArgs, 'loaderContext, 'handlerContext, 'handlerContextAsync> = (
   ~inMemoryStore: IO.InMemoryStore.t,
   ~chainId: int,
   ~event: Types.eventLog<'eventArgs>,
   ~logger: Pino.t,
-) => genericContextCreatorFunctions<'loaderContext, 'handlerContext>
+) => genericContextCreatorFunctions<'loaderContext, 'handlerContext, 'handlerContextAsync>
+
 {{#each contracts as | contract |}}
 
 module {{contract.name.capitalized}}Contract = {
@@ -18,12 +20,14 @@ module {{contract.name.capitalized}}Contract = {
 
   module {{event.name.capitalized}}Event = {
     type handlerContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext
+    type handlerContextAsync = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContextAsync
     type loaderContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
 
     let contextCreator: contextCreator<
       Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
       loaderContext,
       handlerContext,
+      handlerContextAsync,
     > = (~inMemoryStore, ~chainId, ~event, ~logger) => {
       // NOTE: we could optimise this code to onle create a logger if there was a log called.
       let logger = logger->Logging.createChildFrom(
@@ -172,34 +176,18 @@ module {{contract.name.capitalized}}Contract = {
                   {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
                   {{/each}}
                   {{/if}}
-                  get: async (id: Types.id) => {
+                  get: (id: Types.id) => {
                     if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
                       inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
                     } else {
-                      // TODO: return an error if used within a 'sync' context.
                       Logging.warn(
                         `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
                       )
 
                       // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
-                      switch inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id) {
-                      | Some(entity) => Some(entity)
-                      | None =>
-                        let entities = await DbFunctions.{{required_entity.name.capitalized}}.readEntities(DbFunctions.sql, [id])
+                      inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
 
-                        switch entities->Belt.Array.get(0) {
-                        | Some(entity) =>
-                          // TODO: make this work with the test framework too.
-                          IO.InMemoryStore.{{required_entity.name.capitalized}}.set(
-                            inMemoryStore.{{required_entity.name.uncapitalized}},
-                            ~key=entity.id,
-                            ~dbOp=Types.Read,
-                            ~entity,
-                          )
-                          Some(entity)
-                        | None => None
-                        }
-                      }
+                      // TODO: add a further step to syncronously try fetch this from the DB if it isn't in the in-memory store - similar to this PR: https://github.com/Float-Capital/indexer/pull/759
                     }
                  },
                 {{/if}}
@@ -251,11 +239,138 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
           {{/each}}
         }
       }
+
+      let getHandlerContextAsync: unit => handlerContextAsync = () => {
+          {{#each ../../entities as | entity |}}
+            {{#each event.required_entities as | required_entity |}}
+              {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+                {{#if required_entity.labels}}
+                  {{#each required_entity.labels as |label| }}
+                  let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
+                    | Some(id) => inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
+                    | None =>
+                      Logging.warn(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
+                      None
+                    }
+                  {{/each}}
+                {{/if}}
+                {{#if required_entity.array_labels}}
+                  {{#each required_entity.array_labels as |array_label| }}
+                  let {{array_label}}_{{required_entity.name.capitalized}} = switch optIdArrayOf_{{array_label}}.contents {
+                    | Some(ids) =>
+                      ids->Belt.Array.map(id => inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id))
+                    | None =>
+                      Logging.warn(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
+                      []
+                    }
+                  {{/each}}
+                {{/if}}
+              {{/if}}
+            {{/each}}
+          {{/each}}
+        {
+          log: contextLogger,
+          {{#each ../../entities as | entity |}}
+            {{entity.name.uncapitalized}}: {
+              set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(~key=entity.id, ~entity, ~dbOp = Types.Set)},
+              delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
+              {{#each event.required_entities as | required_entity |}}
+                {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
+                  {{#if required_entity.labels}}
+                  {{#each required_entity.labels as |label| }}
+                  {{label}}: {{label}}_{{required_entity.name.capitalized}},
+                  {{/each}}
+                  {{/if}}
+                  {{#if required_entity.array_labels}}
+                  {{#each required_entity.array_labels as |array_label| }}
+                  {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
+                  {{/each}}
+                  {{/if}}
+                  get: async (id: Types.id) => {
+                    if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
+                      inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
+                    } else {
+                      // TODO: return an error if used within a 'sync' context.
+                      Logging.warn(
+                        `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
+                      )
+
+                      // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
+                      switch inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id) {
+                      | Some(entity) => Some(entity)
+                      | None =>
+                        let entities = await DbFunctions.{{required_entity.name.capitalized}}.readEntities(DbFunctions.sql, [id])
+
+                        switch entities->Belt.Array.get(0) {
+                        | Some(entity) =>
+                          // TODO: make this work with the test framework too.
+                          IO.InMemoryStore.{{required_entity.name.capitalized}}.set(
+                            inMemoryStore.{{required_entity.name.uncapitalized}},
+                            ~key=entity.id,
+                            ~dbOp=Types.Read,
+                            ~entity,
+                          )
+                          Some(entity)
+                        | None => None
+                        }
+                      }
+                    }
+                 },
+                {{/if}}
+              {{/each}}
+              {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
+              get{{entity_field.relational_key.capitalized}}: async {{entity.name.uncapitalized}} => {
+                {{#if entity_field.is_array}} // NOTE: This case is now impossible since we don't do entity arrays, keeping here since we intend to implement derivedFrom entity loading.
+                  let {{entity_field.relational_key.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Array.map(entityId => {
+                    let optEntity = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get(entityId)
+
+                    switch optEntity {
+                  | Some({{entity_field.relational_key.uncapitalized}}) => Promise.resolve({{entity_field.relational_key.uncapitalized}})
+                  | None =>
+                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+`)
+            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
+            "NOT_IMPLEMENTED_YET"->Obj.magic
+          }})
+          {{entity_field.relational_key.uncapitalized}}Array
+                {{else}}
+                {{#if entity_field.is_optional}}
+                 switch {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}} {
+                  | Some({{entity_field.relational_key.uncapitalized}}_field) =>
+                    // TODO: we aren't handling the case where the code is an optional array. Maybe we should enforce that at the compile step, and force users to use an empty array instead.
+                    let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity_field.relational_key.uncapitalized}}_field)
+
+                    (
+                {{else}}
+                  let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}})
+                {{/if}}
+                  switch opt{{entity_field.relational_key.capitalized}} {
+                  | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
+                  | None =>
+                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+`)
+            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
+            "NOT_IMPLEMENTED_YET"->Obj.magic
+          }
+          {{#if entity_field.is_optional}})->Some
+          | None => None
+          }
+          {{/if}}
+              {{/if}}
+            },
+            {{/each}}
+            },
+          {{/each}}
+        }
+      }
       {
         getEntitiesToLoad: () => entitiesToLoad,
         getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
         getHandlerContext,
+        getHandlerContextAsync,
       }
     }
   }
