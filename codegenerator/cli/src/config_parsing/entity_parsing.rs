@@ -476,7 +476,7 @@ pub fn ethabi_type_to_field_type(abi_type: &EthAbiParamType) -> anyhow::Result<F
             let inner_type = ethabi_type_to_field_type(abi_type)?;
             Ok(NonNullType(Box::new(ListType(Box::new(inner_type)))))
         }
-        EthAbiParamType::Tuple(_abi_types) => Err(anyhow!("Tuples not handled currently.")),
+        EthAbiParamType::Tuple(_abi_types) => Err(anyhow!("Tuples are not handled currently using contract import.")),
     }
 }
 
