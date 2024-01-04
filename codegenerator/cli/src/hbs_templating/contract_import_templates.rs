@@ -2,19 +2,19 @@
 ///tuples in event params
 mod nested_params {
     use super::*;
-    pub type TupleParamIndex = usize;
+    pub type ParamIndex = usize;
 
     ///Recursive Representation of param token. With reference to it's own index
     ///if it is a tuple
     enum NestedEventParam {
-        Param(ethers::abi::EventParam),
-        TupleParam(TupleParamIndex, Box<NestedEventParam>),
+        Param(ethers::abi::EventParam, ParamIndex),
+        TupleParam(ParamIndex, Box<NestedEventParam>),
         Tuple(Vec<NestedEventParam>),
     }
 
-    ///Constructs NestedEventParam from an ethers abi EventParam
-    impl From<ethers::abi::EventParam> for NestedEventParam {
-        fn from(event_input: ethers::abi::EventParam) -> Self {
+    impl NestedEventParam {
+        ///Constructs NestedEventParam from an ethers abi EventParam
+        fn from(event_input: ethers::abi::EventParam, param_index: usize) -> Self {
             if let ParamType::Tuple(param_types) = event_input.kind {
                 //in the tuple case return a Tuple tape with an array of inner
                 //event params
@@ -31,26 +31,23 @@ mod nested_params {
                                 indexed: false,
                             };
                             //Recursively get the inner NestedEventParam type
-                            Self::TupleParam(i, Box::new(Self::from(event_input)))
+                            Self::TupleParam(i, Box::new(Self::from(event_input, param_index)))
                         })
                         .collect(),
                 )
             } else {
-                Self::Param(event_input)
+                Self::Param(event_input, param_index)
             }
         }
-    }
-
-    impl NestedEventParam {
         //Turns the recursive NestedEventParam structure into a vec of FlattenedEventParam structs
         //This is the internal function that takes an array as a second param. The public function
         //calls this with an empty vec.
         fn into_flattened_inputs_inner(
             &self,
-            mut accessor_indexes: Vec<TupleParamIndex>,
+            mut accessor_indexes: Vec<ParamIndex>,
         ) -> Vec<FlattenedEventParam> {
             match &self {
-                Self::Param(e) => {
+                Self::Param(e, i) => {
                     let accessor_indexes = if accessor_indexes.is_empty() {
                         None
                     } else {
@@ -58,6 +55,7 @@ mod nested_params {
                     };
 
                     vec![FlattenedEventParam {
+                        event_param_pos: *i,
                         event_param: e.clone(),
                         accessor_indexes,
                     }]
@@ -86,11 +84,20 @@ mod nested_params {
     ///within its parent tuple/struct
     #[derive(Debug, Clone, PartialEq)]
     pub struct FlattenedEventParam {
+        event_param_pos: usize,
         pub event_param: ethers::abi::EventParam,
-        pub accessor_indexes: Option<Vec<TupleParamIndex>>,
+        pub accessor_indexes: Option<Vec<ParamIndex>>,
     }
 
     impl FlattenedEventParam {
+        ///Gets a named paramter or constructs a name using the parameter's index
+        ///if the param is nameless
+        fn get_param_name(&self) -> String {
+            match &self.event_param.name {
+                name if name.is_empty() => format!("_{}", self.event_param_pos),
+                name => name.clone(),
+            }
+        }
         ///Gets the key of the param for the entity representing thes event
         ///If this is not a tuple it will be the same as the "event_param_key"
         ///eg. MyEventEntity has a param called myTupleParam_1_2, where as the
@@ -116,7 +123,7 @@ mod nested_params {
 
             //Join the param name with the accessor_indexes_string
             //eg. myTupleParam_1_2 or myNonTupleParam if there are no accessor indexes
-            format!("{}{}", self.event_param.name, accessor_indexes_string).to_capitalized_options()
+            format!("{}{}", self.get_param_name(), accessor_indexes_string).to_capitalized_options()
         }
 
         ///Gets the event param "key" for the event type. Will be the same
@@ -125,7 +132,33 @@ mod nested_params {
         ///the event param key will not append this and will need to access that tuple at the given
         ///index
         pub fn get_event_param_key(&self) -> CapitalizedOptions {
-            self.event_param.name.to_capitalized_options()
+            self.get_param_name().to_capitalized_options()
+        }
+
+        ///Used for constructing in tests
+        #[cfg(test)]
+        pub fn new(
+            name: &str,
+            kind: ParamType,
+            indexed: bool,
+            accessor_indexes: Vec<usize>,
+            event_param_pos: usize,
+        ) -> Self {
+            let accessor_indexes = if accessor_indexes.is_empty() {
+                None
+            } else {
+                Some(accessor_indexes)
+            };
+
+            FlattenedEventParam {
+                event_param_pos,
+                event_param: ethers::abi::EventParam {
+                    name: name.to_string(),
+                    kind,
+                    indexed,
+                },
+                accessor_indexes,
+            }
         }
     }
 
@@ -139,7 +172,10 @@ mod nested_params {
     ) -> Vec<FlattenedEventParam> {
         event_inputs
             .into_iter()
-            .flat_map(|event_input| NestedEventParam::from(event_input).into_flattened_inputs())
+            .enumerate()
+            .flat_map(|(i, event_input)| {
+                NestedEventParam::from(event_input, i).into_flattened_inputs()
+            })
             .collect()
     }
 }
@@ -156,7 +192,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use ethers::abi::ParamType;
-use nested_params::{flatten_event_inputs, FlattenedEventParam, TupleParamIndex};
+use nested_params::{flatten_event_inputs, FlattenedEventParam, ParamIndex};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -254,7 +290,7 @@ pub struct Param {
     event_key: CapitalizedOptions,
     ///List of nested acessors so for a nested tuple Some([0, 1]) this can be used combined with
     ///the event key ie. event.params.myTupleParam[0][1]
-    tuple_param_accessor_indexes: Option<Vec<TupleParamIndex>>,
+    tuple_param_accessor_indexes: Option<Vec<ParamIndex>>,
     graphql_type: FieldType,
     is_eth_address: bool,
 }
@@ -322,24 +358,6 @@ mod test {
     use super::*;
     use ethers::abi::EventParam;
 
-    impl FlattenedEventParam {
-        fn new(name: &str, kind: ParamType, indexed: bool, accessor_indexes: Vec<usize>) -> Self {
-            let accessor_indexes = if accessor_indexes.is_empty() {
-                None
-            } else {
-                Some(accessor_indexes)
-            };
-
-            Self {
-                event_param: EventParam {
-                    name: name.to_string(),
-                    kind,
-                    indexed,
-                },
-                accessor_indexes,
-            }
-        }
-    }
     #[test]
     fn flatten_event_with_tuple() {
         let event_inputs = vec![
@@ -356,9 +374,9 @@ mod test {
         ];
 
         let expected_flat_inputs = vec![
-            FlattenedEventParam::new("user", ParamType::Address, false, vec![]),
-            FlattenedEventParam::new("myTupleParam", ParamType::Uint(256), false, vec![0]),
-            FlattenedEventParam::new("myTupleParam", ParamType::Bool, false, vec![1]),
+            FlattenedEventParam::new("user", ParamType::Address, false, vec![], 0),
+            FlattenedEventParam::new("myTupleParam", ParamType::Uint(256), false, vec![0], 1),
+            FlattenedEventParam::new("myTupleParam", ParamType::Bool, false, vec![1], 1),
         ];
 
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
@@ -381,7 +399,8 @@ mod test {
     fn flatten_event_with_nested_tuple() {
         let event_inputs = vec![
             EventParam {
-                name: "user".to_string(),
+                //nameless param should compute to "_0"
+                name: "".to_string(),
                 kind: ParamType::Address,
                 indexed: false,
             },
@@ -396,16 +415,16 @@ mod test {
         ];
 
         let expected_flat_inputs = vec![
-            FlattenedEventParam::new("user", ParamType::Address, false, vec![]),
-            FlattenedEventParam::new("myTupleParam", ParamType::Uint(8), false, vec![0, 0]),
-            FlattenedEventParam::new("myTupleParam", ParamType::Uint(8), false, vec![0, 1]),
-            FlattenedEventParam::new("myTupleParam", ParamType::Bool, false, vec![1]),
+            FlattenedEventParam::new("", ParamType::Address, false, vec![], 0),
+            FlattenedEventParam::new("myTupleParam", ParamType::Uint(8), false, vec![0, 0], 1),
+            FlattenedEventParam::new("myTupleParam", ParamType::Uint(8), false, vec![0, 1], 1),
+            FlattenedEventParam::new("myTupleParam", ParamType::Bool, false, vec![1], 1),
         ];
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
         assert_eq!(expected_flat_inputs, actual_flat_inputs);
 
         let expected_entity_keys: Vec<_> = vec![
-            "user",
+            "_0",
             "myTupleParam_0_0",
             "myTupleParam_0_1",
             "myTupleParam_1",
