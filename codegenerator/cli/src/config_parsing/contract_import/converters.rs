@@ -200,12 +200,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                 .into_iter()
                 .map(|event| human_config::ConfigEvent {
                     event: EventNameOrSig::Event(event.clone()),
-                    required_entities: Some(vec![RequiredEntity {
-                        //Required entity needed for autogen schema
-                        name: "EventsSummary".to_string(),
-                        labels: None,
-                        array_labels: None,
-                    }]),
+                    required_entities: None,
                 })
                 .collect();
 
