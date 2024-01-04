@@ -49,14 +49,6 @@ module EventFunctions = {
     chainId?: int,
   }
 
-  /**
-  An event processor will process an event with a mockDb and return a new mockDb
-  with the updated state
-  */
-  @genType
-  type eventProcessor<'eventArgs> = eventProcessorArgs<'eventArgs> => TestHelpers_MockDb.t
-
-
 
   /**
   The default chain ID to use (ethereum mainnet) if a user does not specify int the 
@@ -75,7 +67,8 @@ module EventFunctions = {
       unit => 'handlerContext,
     ) => Types.eventAndContext,
     ~eventName: Types.eventName,
-  ): eventProcessor<'eventArgs> => {
+    ~cb: TestHelpers_MockDb.t => unit,
+  ) => {
     ({event, mockDb, ?chainId}) => {
       //The user can specify a chainId of an event or leave it off
       //and it will default to "DEFAULT_CHAIN_ID"
@@ -125,15 +118,66 @@ module EventFunctions = {
         chainId,
         event: eventWithContextAccessor(event, handlerContextGetter),
       }
-      // TODO FIX THIS. THIS IS BROKEN, all this code is syncronous now.
-      let _ = eventAndContext->EventProcessing.eventRouter(~inMemoryStore)
 
-      //Now that the processing is finished. Simulate writing a batch
-      //(Although in this case a batch of 1 event only) to the cloned mockDb
-      mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
+      eventAndContext->EventProcessing.eventRouter(~inMemoryStore, ~cb=() => {
+        //Now that the processing is finished. Simulate writing a batch
+        //(Although in this case a batch of 1 event only) to the cloned mockDb
+        mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
 
-      //Return the cloned mock db
-      mockDbClone
+        //Return the cloned mock db
+        cb(mockDbClone)
+      })
+    }
+  }
+
+
+  /**Creates a mock event processor, wrapping the callback in a Promise for async use*/
+  let makeAsyncEventProcessor = (
+    ~contextCreator,
+    ~getLoader,
+    ~eventWithContextAccessor,
+    ~eventName,
+    eventProcessorArgs,
+  ) => {
+    Promise.make((res, _rej) => {
+      makeEventProcessor(
+        ~contextCreator,
+        ~getLoader,
+        ~eventWithContextAccessor,
+        ~eventName,
+        ~cb=mockDb => res(. mockDb),
+        eventProcessorArgs,
+      )
+    })
+  }
+
+  /**
+  Creates a mock event processor, exposing the return of the callback in the return,
+  raises an exception if the handler is async
+  */
+  let makeSyncEventProcessor = (
+    ~contextCreator,
+    ~getLoader,
+    ~eventWithContextAccessor,
+    ~eventName,
+    eventProcessorArgs,
+  ) => {
+    //Dangerously set to None, nextMockDb will be set in the callback
+    let nextMockDb = ref(None)
+    makeEventProcessor(
+      ~contextCreator,
+      ~getLoader,
+      ~eventWithContextAccessor,
+      ~eventName,
+      ~cb=mockDb => nextMockDb := Some(mockDb),
+      eventProcessorArgs,
+    )
+    switch nextMockDb.contents {
+    | Some(mockDb) => mockDb
+    | None =>
+      Js.Exn.raiseError(
+        "porcessEvent failed because handler is not synchronous, please use processEventAsync instead",
+      )
     }
   }
 
@@ -191,7 +235,15 @@ module {{contract.name.capitalized}} = {
   {{#each contract.events as | event |}}
   module {{event.name.capitalized}} = {
     @genType
-    let processEvent = EventFunctions.makeEventProcessor(
+    let processEvent = EventFunctions.makeSyncEventProcessor(
+      ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
+      ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
+      ~eventWithContextAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+      ~eventName=Types.{{event.event_type.full}},
+    )
+
+    @genType
+    let processEventAsync = EventFunctions.makeAsyncEventProcessor(
       ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
       ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
       ~eventWithContextAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,

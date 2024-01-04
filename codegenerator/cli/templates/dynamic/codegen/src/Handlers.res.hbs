@@ -81,14 +81,9 @@ module {{contract.name.capitalized}}Contract = {
     
     let getHandler = () =>
       switch {{event.name.uncapitalized}}Handler.contents {
-        | Some(handler) => switch (handler) {
-          | AsyncHandler(asyncHandler) => asyncHandler
-          | SyncHandler(syncHandler) => (~event, ~context) => syncHandler(~event, ~context)->Promise.resolve
-        }
+        | Some(handler) => handler        
         | None =>
-        (~event, ~context) =>
-          getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler, ~event, ~context)
-          ->Promise.resolve
+          SyncHandler(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler))
      }
   }
   {{/each}}

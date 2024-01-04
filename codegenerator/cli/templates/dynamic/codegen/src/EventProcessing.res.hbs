@@ -87,7 +87,7 @@ let getEventExnObj = (exn, ~event: Types.eventLog<'a>, ~chainId, ~eventName) => 
   })
 }
 
-let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
+let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore, ~cb) => {
   let {event, chainId} = item
   switch event {
 {{#each contracts as | contract |}}
@@ -114,7 +114,12 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
     let context = contextGetter()
 
     try {
-      handler(~event, ~context)
+      switch handler {
+      | SyncHandler(h) =>
+        h(~event, ~context)
+        cb()->ignore
+      | AsyncHandler(h) => h(~event, ~context)->Promise.thenResolve(cb)->ignore
+      }
     } catch {
     // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
     | userCodeException =>
@@ -122,7 +127,8 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore) => {
           userCodeException->getEventExnObj(~event, ~chainId, ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}")
         //Logger takes any type just currently bound to string
         let errorMessage = errorObj->Obj.magic
-        context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)->Promise.resolve
+        context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
+        cb()->ignore
     }
   }
 {{/each}}
@@ -417,7 +423,9 @@ let processEventBatch = async (
     event,
   ) => {
     await previousPromise
-    await event->eventRouter(~inMemoryStore)
+    await Promise.make((resolve, _reject) =>
+      event->eventRouter(~inMemoryStore, ~cb={() => resolve(. ())})
+    )
   })
 
   let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
