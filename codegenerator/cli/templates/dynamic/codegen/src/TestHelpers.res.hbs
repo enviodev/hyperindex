@@ -60,11 +60,16 @@ module EventFunctions = {
   A function composer to help create individual processEvent functions
   */
   let makeEventProcessor = (
-    ~contextCreator: Context.contextCreator<'eventArgs, 'loaderContext, 'handlerContext, 'handlerContextAsync>,
+    ~contextCreator: Context.contextCreator<
+      'eventArgs,
+      'loaderContext,
+      'handlerContextSync,
+      'handlerContextAsync,
+    >,
     ~getLoader,
     ~eventWithContextAccessor: (
       Types.eventLog<'eventArgs>,
-      unit => 'handlerContext,
+      unit => SyncAsync.t<'handlerContextSync, 'handlerContextAsync>,
     ) => Types.eventAndContext,
     ~eventName: Types.eventName,
     ~cb: TestHelpers_MockDb.t => unit,
@@ -172,11 +177,15 @@ module EventFunctions = {
       ~cb=mockDb => nextMockDb := Some(mockDb),
       eventProcessorArgs,
     )
+
+    //The callback is called synchronously so nextMockDb should be set.
+    //In the case it's not set it would mean that the user is using an async handler
+    //in which case we want to error and alert the user.
     switch nextMockDb.contents {
     | Some(mockDb) => mockDb
     | None =>
       Js.Exn.raiseError(
-        "porcessEvent failed because handler is not synchronous, please use processEventAsync instead",
+        "processEvent failed because handler is not synchronous, please use processEventAsync instead",
       )
     }
   }

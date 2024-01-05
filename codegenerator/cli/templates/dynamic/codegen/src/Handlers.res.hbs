@@ -29,62 +29,65 @@ let getDefaultLoaderHandler: (
   }
 }
 
+type handlerFunction<'eventArgs, 'context, 'return> = (
+  ~event: Types.eventLog<'eventArgs>,
+  ~context: 'context,
+) => 'return
+
+type handlerSyncAsync<'eventArgs, 'syncContext, 'asyncContext> = SyncAsync.t<
+  handlerFunction<'eventArgs, 'syncContext, unit>,
+  handlerFunction<'eventArgs, 'asyncContext, promise<unit>>,
+>
+
+type loader<'eventArgs, 'loaderContext> = (
+  ~event: Types.eventLog<'eventArgs>,
+  ~context: 'loaderContext,
+) => unit
+
 {{#each contracts as | contract |}}
 module {{contract.name.capitalized}}Contract = {
-
   {{#each contract.events as | event |}}  
   module {{event.name.capitalized}} = {
+    open Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event
 
-    type userHandlerType = (
-      ~event: Types.eventLog<
-        Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
-      >,
-      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext,
-    ) => unit
-    type userHandlerAsyncType = (
-      ~event: Types.eventLog<
-        Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
-      >,
-      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext,
-    ) => Promise.t<unit>
-
-    type handler = SyncHandler(userHandlerType) | AsyncHandler(userHandlerAsyncType)
+    type handler = handlerSyncAsync<eventArgs, handlerContextSync, handlerContextAsync>
 
     %%private(
-      let {{event.name.uncapitalized}}Loader = ref(None)
-      let {{event.name.uncapitalized}}Handler = ref(None)
+      let {{event.name.uncapitalized}}Loader: ref<option<loader<eventArgs, loaderContext>>> = ref(None)
+      let {{event.name.uncapitalized}}Handler: ref<option<handler>> = ref(None)
     )
 
     @genType
-    let loader = (userLoader: (
-      ~event: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-      ~context: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
-      ) => unit) => {
-      {{event.name.uncapitalized}}Loader := Some(userLoader)
+    let loader = loader => {
+      {{event.name.uncapitalized}}Loader := Some(loader)
       }
 
     @genType
-    let handler = (userHandler: userHandlerType) => {
+    let handlerSync = handler => {
       {{event.name.uncapitalized}}Handler :=
-        Some(SyncHandler(userHandler))
+        Some(Sync(handler))
     }
 
     @genType
-    let handlerAsync = (userHandler: userHandlerAsyncType) => {
+    let handlerAsync = handler => {
       {{event.name.uncapitalized}}Handler :=
-        Some(AsyncHandler(userHandler))
+        Some(Async(handler))
     }
 
     let getLoader = () =>
-    {{event.name.uncapitalized}}Loader.contents->Belt.Option.getWithDefault(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Loader))
+      {{event.name.uncapitalized}}Loader.contents->Belt.Option.getWithDefault(
+        getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Loader)
+      )
 
     
     let getHandler = () =>
       switch {{event.name.uncapitalized}}Handler.contents {
         | Some(handler) => handler        
         | None =>
-          SyncHandler(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler))
+          Sync(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler))
      }
+
+    let handlerIsAsync = () => getHandler()->SyncAsync.isAsync
   }
   {{/each}}
 }

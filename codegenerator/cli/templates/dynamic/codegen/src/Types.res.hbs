@@ -199,7 +199,7 @@ module {{event.name.capitalized}}Event = {
     }
     {{/each}}
     @genType
-    type handlerContext = {
+    type handlerContextSync = {
       log: Logs.userLogger,
       {{#each ../../entities as | entity |}}
         @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
@@ -212,6 +212,13 @@ module {{event.name.capitalized}}Event = {
         @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContextAsync,
       {{/each}}
     }
+
+    type handlerContext = SyncAsync.t<handlerContextSync, handlerContextAsync>
+
+    let log = (handlerContext: handlerContext) =>
+      switch handlerContext {
+      | Sync({log}) | Async({log}) => log
+      }
 
     {{#each event.required_entities as | required_entity |}}
     @genType

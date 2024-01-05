@@ -58,7 +58,7 @@ let updateEventSyncState = (
   )
 }
 
-let getEventExnObj = (exn, ~event: Types.eventLog<'a>, ~chainId, ~eventName) => {
+let getEventExnWithMessage = (~msg, ~error, ~event: Types.eventLog<'a>, ~chainId, ~eventName) => {
   let eventInfoObj = {
     "eventName": eventName,
     "txHash": event.transactionHash,
@@ -67,24 +67,71 @@ let getEventExnObj = (exn, ~event: Types.eventLog<'a>, ~chainId, ~eventName) => 
     "transactionIndex": event.transactionIndex->Belt.Int.toString,
     "networkId": chainId,
   }
+  {
+    "msg": msg,
+    "error": error,
+    "event-details": eventInfoObj,
+  }
+}
 
-  switch exn {
+let getEventExnObj = exn => {
+  let (msg, error) = switch exn {
   | Js.Exn.Error(obj) =>
     switch Js.Exn.message(obj) {
-    | Some(message) =>
-      Some({
-        "msg": "Caught a JS exception in your ${eventName}.handler, please fix the error to keep the indexer running smoothly",
-        "error": message,
-        "event-details": eventInfoObj,
-      })
+    | Some(errMsg) =>
+      Some((
+        "Caught a JS exception in your ${eventName}.handler, please fix the error to keep the indexer running smoothly",
+        errMsg,
+      ))
     | None => None
     }
   | _ => None
-  }->Belt.Option.getWithDefault({
-    "msg": `Unknown error in your ${eventName}.handler, please review your code carefully and use the stack trace to help you find the issue.`,
-    "error": "Unknown",
-    "event-details": eventInfoObj,
-  })
+  }->Belt.Option.getWithDefault((
+    "Unknown error in your ${eventName}.handler, please review your code carefully and use the stack trace to help you find the issue.",
+    "Unknown",
+  ))
+
+  getEventExnWithMessage(~msg, ~error)
+}
+
+let getSyncAsyncMismatchErr = (~event) =>
+  getEventExnWithMessage(
+    ~error="Mismatched sync/async handler and context",
+    ~msg="Unexpected mismatch between sync/async handler and context. Please contact the team.",
+    ~event,
+  )
+
+let runHandler = (
+  ~handler,
+  ~context,
+  ~event,
+  ~cb,
+  ~chainId,
+  ~eventName,
+  ~contextLog: 'context => Logs.userLogger,
+) => {
+  try {
+    switch (handler, context) {
+    | (SyncAsync.Sync(handler), SyncAsync.Sync(context)) =>
+      handler(~event, ~context)
+      cb()->ignore
+    | (Async(handler), Async(context)) => handler(~event, ~context)->Promise.thenResolve(cb)->ignore
+    | _ =>
+      //Logger takes any type just currently bound to string
+      let errorMessage = getSyncAsyncMismatchErr(~event, ~chainId, ~eventName)->Obj.magic
+      contextLog(context).error(errorMessage)
+      cb()->ignore
+    }
+  } catch {
+  // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
+  | userCodeException =>
+    let errorObj = userCodeException->getEventExnObj(~event, ~chainId, ~eventName)
+    //Logger takes any type just currently bound to string
+    let errorMessage = errorObj->Obj.magic
+
+    contextLog(context).errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
+    cb()->ignore
+  }
 }
 
 let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore, ~cb) => {
@@ -113,23 +160,15 @@ let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore, ~cb) 
     // TODO: pass in a bool for if it is async or syncronous
     let context = contextGetter()
 
-    try {
-      switch handler {
-      | SyncHandler(h) =>
-        h(~event, ~context)
-        cb()->ignore
-      | AsyncHandler(h) => h(~event, ~context)->Promise.thenResolve(cb)->ignore
-      }
-    } catch {
-    // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
-    | userCodeException =>
-        let errorObj =
-          userCodeException->getEventExnObj(~event, ~chainId, ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}")
-        //Logger takes any type just currently bound to string
-        let errorMessage = errorObj->Obj.magic
-        context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
-        cb()->ignore
-    }
+    runHandler(
+      ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}",
+      ~contextLog=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.log,
+      ~context,
+      ~chainId,
+      ~cb,
+      ~event,
+      ~handler,
+    )
   }
 {{/each}}
 {{/each}}
