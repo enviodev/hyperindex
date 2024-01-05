@@ -41,34 +41,31 @@ let makeCombinedEventFilterQuery = (
     contractInterfaceManager->ContractInterfaceManager.getCombinedEthersFilter(~fromBlock, ~toBlock)
 
   let numBlocks = toBlock - fromBlock + 1
+  
+  let loggerWithContext = Logging.createChildFrom(~logger,~params={
+      "fromBlock": fromBlock,
+      "toBlock": toBlock,
+      "numBlocks": numBlocks,
+    })
 
-  logger->Logging.childTrace({
-    "msg": "Initiating Combined Query Filter",
-    "from": fromBlock,
-    "to": toBlock,
-    "numBlocks": numBlocks,
-  })
+  loggerWithContext->Logging.childTrace(
+    "Initiating Combined Query Filter"
+  )
 
   provider
   ->Ethers.JsonRpcProvider.getLogs(
     ~filter={combinedFilter->Ethers.CombinedFilter.combinedFilterToFilter},
   )
   ->Promise.thenResolve(res => {
-    logger->Logging.childTrace({
-      "msg": "Successful Combined Query Filter",
-      "from": fromBlock,
-      "to": toBlock,
-      "numBlocks": numBlocks,
+    loggerWithContext->Logging.childTrace({
+      "Successful Combined Query Filter"
     })
     res
   })
   ->Promise.catch(err => {
-    logger->Logging.childWarn({
-      "msg": "Failed Combined Query Filter from block",
-      "from": fromBlock,
-      "to": toBlock,
-      "numBlocks": numBlocks,
-    })
+    loggerWithContext->Logging.childWarn(
+      "Failed Combined Query Filter from block"
+    )
     err->Promise.reject
   })
 }
