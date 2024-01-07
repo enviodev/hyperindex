@@ -87,6 +87,51 @@ let clearHasuraMetadata = async () => {
   }
 }
 
+let trackFunction= async () => {
+  let body = {
+        "type": "pg_track_function",
+        "args": {
+            "source": "default",
+            "function": {
+                "schema": "public",
+                "name": "get_entity_history_filter"
+                },
+            "comment": "This function helps search for articles"
+            }
+          }
+
+  let response = await fetch(
+    hasuraGraphqlEndpoint,
+    {
+      method: #POST,
+      body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
+      headers: Headers.fromObject(headers),
+    },
+  )
+
+  let responseJson = await response->Response.json
+  let statusCode = response->Response.status
+
+  switch validateHasuraResponse(~statusCode, ~responseJson) {
+  | Error(_) =>
+    Logging.error({
+      "msg": `EE807: There was an issue tracking the get_entity_history_filter function in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  | Ok(case) =>
+    let msg = switch case {
+    | QuerySucceeded => "Table Tracked"
+    | AlreadyDone => "Table Already Tracked"
+    }
+    Logging.trace({
+      "msg": msg,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  }
+}
+
 let trackTable = async (~tableName: string) => {
   let body = {
     "type": "pg_track_table",
@@ -180,6 +225,174 @@ let createSelectPermissions = async (~tableName: string) => {
   }
 }
 
+let createRawEventsArrayRelationship = async () => {
+  let body = {
+    "type": "pg_create_array_relationship",
+    "args": {
+      "table": {
+        "name": "raw_events",
+        "schema": "public",
+      },
+      "name": "event_history", // Name of the new relationship
+      "using": {
+            "manual_configuration" : {
+                "remote_table" : "entity_history",
+                "column_mapping" : {
+                    "chain_id" : "chain_id",
+                    "block_number": "block_number",
+                    "log_index": "log_index"
+                  }
+               }
+            }
+        }
+      }
+  
+
+  let response = await fetch(
+    hasuraGraphqlEndpoint,
+    {
+      method: #POST,
+      body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
+      headers: Headers.fromObject(headers),
+    },
+  )
+
+  let responseJson = await response->Response.json
+  let statusCode = response->Response.status
+
+  switch validateHasuraResponse(~statusCode, ~responseJson) {
+  | Error(_) =>
+    Logging.error({
+      "msg": `EE808: There was an issue setting up view permissions for the table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  | Ok(case) =>
+    let msg = switch case {
+    | QuerySucceeded => "Hasura select permissions created"
+    | AlreadyDone => "Hasura select permissions already created"
+    }
+    Logging.trace({
+      "msg": msg,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  }
+}
+
+let createEntityHistoryObjectRelationship = async () => {
+  let body = {
+    "type": "pg_create_object_relationship",
+    "args": {
+      "table": {
+        "name": "entity_history",
+        "schema": "public",
+      },
+      "name": "event", // Name of the new relationship
+      "using": {
+            "manual_configuration" : {
+                "remote_table" : "raw_events",
+                "column_mapping" : {
+                    "chain_id" : "chain_id",
+                    "block_number": "block_number",
+                    "log_index": "log_index"
+                  }
+               }
+            }
+        }
+      }
+  
+
+  let response = await fetch(
+    hasuraGraphqlEndpoint,
+    {
+      method: #POST,
+      body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
+      headers: Headers.fromObject(headers),
+    },
+  )
+
+  let responseJson = await response->Response.json
+  let statusCode = response->Response.status
+
+  switch validateHasuraResponse(~statusCode, ~responseJson) {
+  | Error(_) =>
+    Logging.error({
+      "msg": `EE808: There was an issue setting up view permissions for the table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  | Ok(case) =>
+    let msg = switch case {
+    | QuerySucceeded => "Hasura select permissions created"
+    | AlreadyDone => "Hasura select permissions already created"
+    }
+    Logging.trace({
+      "msg": msg,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  }
+}
+
+let createEntityHistoryFilterObjectRelationship = async () => {
+  let body = {
+    "type": "pg_create_object_relationship",
+    "args": {
+      "table": {
+        "name": "entity_history_filter",
+        "schema": "public",
+      },
+      "name": "event", // Name of the new relationship
+      "using": {
+            "manual_configuration" : {
+                "remote_table" : "raw_events",
+                "column_mapping" : {
+                    "chain_id" : "chain_id",
+                    "block_number": "block_number",
+                    "log_index": "log_index"
+                  }
+               }
+            }
+        }
+      }
+  
+
+  let response = await fetch(
+    hasuraGraphqlEndpoint,
+    {
+      method: #POST,
+      body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
+      headers: Headers.fromObject(headers),
+    },
+  )
+
+  let responseJson = await response->Response.json
+  let statusCode = response->Response.status
+
+  switch validateHasuraResponse(~statusCode, ~responseJson) {
+  | Error(_) =>
+    Logging.error({
+      "msg": `EE808: There was an issue setting up view permissions for the table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  | Ok(case) =>
+    let msg = switch case {
+    | QuerySucceeded => "Hasura select permissions created"
+    | AlreadyDone => "Hasura select permissions already created"
+    }
+    Logging.trace({
+      "msg": msg,
+      "requestStatusCode": statusCode,
+      "requestResponseJson": responseJson,
+    })
+  }
+}
+
 let createEntityRelationship = async (
   ~tableName: string,
   ~relationshipType: string,
@@ -237,8 +450,16 @@ let trackAllTables = async () => {
   let _ = await createSelectPermissions(~tableName="dynamic_contract_registry")
   let _ = await trackTable(~tableName="persisted_state")
   let _ = await createSelectPermissions(~tableName="persisted_state")
+  let _ = await trackTable(~tableName="entity_history")
+  let _ = await createSelectPermissions(~tableName="entity_history")
+  let _ = await trackTable(~tableName="entity_history_filter")
+  let _ = await createSelectPermissions(~tableName="entity_history_filter")
+  let _ = await trackFunction()
   let _ = await trackTable(~tableName="event_sync_state")
   let _ = await createSelectPermissions(~tableName="event_sync_state")
+  let _ = await createEntityHistoryObjectRelationship()
+  let _ = await createRawEventsArrayRelationship()
+  let _ = await createEntityHistoryFilterObjectRelationship()
   {{#each entities as |entity|}}
   let _ = await trackTable(~tableName="{{entity.name.original}}")
   let _ = await createSelectPermissions(~tableName="{{entity.name.original}}")

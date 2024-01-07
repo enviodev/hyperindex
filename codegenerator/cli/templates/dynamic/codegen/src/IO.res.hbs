@@ -23,48 +23,75 @@ module InMemoryStore = {
 
     let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
 
-    let set = (
-      self: t,
-      ~key: StoreItem.key,
-      ~eventId: option<Types.eventIdentifier>,
-      ~entity: option<StoreItem.t>,
-    ) => {
+    let set = (self: t, ~key: StoreItem.key, ~entity: Types.entityData<StoreItem.t>) => {
+      let getOptEventIdentifier = (entity: Types.entityData<StoreItem.t>) => {
+        switch entity {
+        | Delete(_, eventIdentifier)
+        | Set(_, eventIdentifier) =>
+          Some(eventIdentifier)
+        | Read(_) => None
+        }
+      }
       if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
         let mapKey = key->self.hasher
-        let entityData = switch self.dict->Js.Dict.get(mapKey) {
+        let entityData: Types.inMemoryStoreRow<StoreItem.t> = switch self.dict->Js.Dict.get(
+          mapKey,
+        ) {
         | Some(existingEntityUpdate) =>
-          let result: Types.inMemoryStoreRow<StoreItem.t> = {
-            current: {
-              event: eventId,
-              entityData: entity,
-            },
-            history: [],
+          switch entity {
+          | Delete(_, eventIdentifier)
+          | Set(_, eventIdentifier) =>
+            // Use -1 as defaults for now
+            let oldEntityIdentifier = getOptEventIdentifier(entity)->Belt.Option.getWithDefault({
+              chainId: -1,
+              blockNumber: -1,
+              logIndex: -1,
+            })
+            if (
+              eventIdentifier.blockNumber == oldEntityIdentifier.blockNumber &&
+                eventIdentifier.logIndex == oldEntityIdentifier.logIndex
+            ) {
+              // If it is in the same event, override the current event with the new one
+              {
+                ...existingEntityUpdate,
+                current: entity,
+              }
+            } else {
+              // in a different event, add it to the histor.
+              {
+                current: entity,
+                history: existingEntityUpdate.history->Belt.Array.concat([
+                  existingEntityUpdate.current,
+                ]),
+              }
+            }
+          | Read(_) => {
+              current: entity,
+              history: existingEntityUpdate.history,
+            }
           }
-          result
         | None => {
-            current: {
-              event: eventId,
-              entityData: entity,
-            },
+            current: entity,
             history: [],
           }
         }
+        self.dict->Js.Dict.set(mapKey, entityData)
       } else {
-        self.dict->Js.Dict.set(
-          key->self.hasher,
-          {
-            current: {
-              event: eventId,
-              entityData: entity,
-            },
-            history: [],
-          },
-        )
+        //Wont do for hackathon
+        ()
       }
     }
 
     let get = (self: t, key: StoreItem.key) =>
-      self.dict->Js.Dict.get(key->self.hasher)->Belt.Option.flatMap(row => row.current.entityData)
+      self.dict
+      ->Js.Dict.get(key->self.hasher)
+      ->Belt.Option.flatMap(row => {
+        switch row.current {
+        | Set(entity, _eventIdentifier) => Some(entity)
+        | Delete(_key, _eventid) => None
+        | Read(entity) => Some(entity)
+        }
+      })
 
     let values = (self: t) => self.dict->Js.Dict.values
 
@@ -399,7 +426,7 @@ let makeEntityExecuterComposer = (
       ->dbReadFn
       ->then(entities =>
         entities->Belt.Array.forEach(entity => {
-          store->inMemStoreSetFn(~key=entity->getEntiyId, ~eventId=None, ~entity=Some(entity))
+          store->inMemStoreSetFn(~key=entity->getEntiyId, ~entity=Types.Read(entity))
         })
       )
     }
@@ -463,7 +490,12 @@ let executeSet = (
   ~rows: array<Types.inMemoryStoreRow<'a>>,
   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
 ) => {
-  let executeSets = rows->Belt.Array.keepMap(row => row.current.entityData)
+  let executeSets = rows->Belt.Array.keepMap(row =>
+    switch row.current {
+    | Set(entity, _) => Some(entity)
+    | _ => None
+    }
+  )
 
   if executeSets->Array.length > 0 {
     sql->dbFunction(executeSets)
@@ -478,7 +510,9 @@ let executeDelete = (
   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
 ) => {
   // TODO: implement me please (after hackathon)
-
+  let _ = rows
+  let _ = sql
+  let _ = dbFunction
   Promise.resolve()
 }
 
@@ -487,24 +521,91 @@ let executeSetSchemaEntity = (
   ~rows: array<Types.inMemoryStoreRow<'a>>,
   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
   ~entityEncoder,
+  ~entityType,
 ) => {
-  // ~getInputValFromRow: Types.inMemoryStoreRow<'a> => 'b,
+  let historyArrayWithPrev = ref([])
+  let historyArrayWithoutPrev = ref([])
 
-  let executeSets =
-    rows->Belt.Array.keepMap(row => row.current.entityData->Belt.Option.map(entityEncoder))
+  let executeSets = rows->Belt.Array.keepMap(row =>
+    switch row.current {
+    | Set(entity, _eventIdentifier) => {
+        let _ =
+          row.history
+          ->Belt.Array.concat([row.current])
+          ->Belt.Array.reduce(None, (optPrev: option<(int, int)>, entity) => {
+            let processEntity = (
+              eventIdentifier: Types.eventIdentifier,
+              entity_id,
+              params: option<string>,
+            ) => {
+              switch optPrev {
+              | Some((previous_block_number, previous_log_index)) =>
+                let historyItem: DbFunctions.entityHistoryItem = {
+                  chain_id: eventIdentifier.chainId,
+                  block_number: eventIdentifier.blockNumber,
+                  previous_block_number: Some(previous_block_number),
+                  previous_log_index: Some(previous_log_index),
+                  log_index: eventIdentifier.logIndex,
+                  transaction_hash: "string",
+                  entity_type: entityType,
+                  entity_id,
+                  params,
+                }
+                historyArrayWithPrev :=
+                  historyArrayWithPrev.contents->Belt.Array.concat([historyItem])
+              | None =>
+                let historyItem: DbFunctions.entityHistoryItem = {
+                  chain_id: eventIdentifier.chainId,
+                  block_number: eventIdentifier.blockNumber,
+                  previous_block_number: None,
+                  previous_log_index: None,
+                  log_index: eventIdentifier.logIndex,
+                  transaction_hash: "string",
+                  entity_type: entityType,
+                  entity_id,
+                  params,
+                }
+                historyArrayWithoutPrev :=
+                  historyArrayWithoutPrev.contents->Belt.Array.concat([historyItem])
+              }
 
-  // let executeSetsFunction = (
-  //   sql: Postgres.sql,
-  //   ~rows: array<Types.inMemoryStoreRow<'a>>,
-  //   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
-  // ) => {
+              Some((eventIdentifier.blockNumber, eventIdentifier.logIndex))
+            }
+            switch entity {
+            | Set(entity, eventIdentifier) =>
+              processEntity(
+                (eventIdentifier: Types.eventIdentifier),
+                (entity->Obj.magic)["id"],
+                Some(entity->entityEncoder->Js.Json.stringify),
+              )
+            | Delete(entityId, eventIdentifier) =>
+              processEntity((eventIdentifier: Types.eventIdentifier), entityId, None)
+            | Read(_) =>
+              Js.log("This IS an impossible state")
+              None
+            }
+          })
+        Some(entity->entityEncoder)
+      }
+    | _ => None
+    }
+  )
+
   if executeSets->Array.length > 0 {
-    sql->dbFunction(executeSets)
+    [
+      sql->dbFunction(executeSets),
+      sql->DbFunctions.EntityHistory.batchSet(
+        ~withPrev=historyArrayWithPrev.contents,
+        ~withoutPrev=historyArrayWithoutPrev.contents,
+      ),
+    ]
+    ->Promise.all
+    ->Promise.thenResolve(_ => ())
   } else {
     Promise.resolve()
   }
-  // }
 }
+
 let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
   let setEventSyncState = executeSet(
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
@@ -531,6 +632,7 @@ let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
     ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchSet,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
     ~entityEncoder=Types.{{entity.name.uncapitalized}}Entity_encode,
+    ~entityType="{{entity.name.capitalized}}"
   )
 
   {{/each}}

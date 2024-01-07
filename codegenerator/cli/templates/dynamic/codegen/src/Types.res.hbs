@@ -62,12 +62,14 @@ type eventIdentifier = {
   blockNumber: int,
   logIndex: int,
 }
-type eventUpdate<'entityType> = {event: option<eventIdentifier>, entityData: option<'entityType>}
+
+type entityData<'entityType> =
+  Set('entityType, eventIdentifier) | Delete(string, eventIdentifier) | Read('entityType) //make delete take a EntityStore.key type
 
 
 type inMemoryStoreRow<'entityType> = {
-  current: eventUpdate<'entityType>,
-  history: array<eventUpdate<'entityType>>,
+  current: entityData<'entityType>,
+  history: array<entityData<'entityType>>,
 }
 
 //*************

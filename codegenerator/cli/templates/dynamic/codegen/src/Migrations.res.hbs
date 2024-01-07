@@ -222,14 +222,139 @@ module EntityHistory = {
 
     // NULL for an `entity_id` means that the entity was deleted.
     await %raw("sql`
-      CREATE TABLE \"public\".\"A\" (
+      CREATE TABLE \"public\".\"entity_history\" (
         chain_id INTEGER NOT NULL,
+        previous_block_number INTEGER,
+        previous_log_index INTEGER,
         block_number INTEGER NOT NULL,
         log_index INTEGER NOT NULL,
-        transaction_hash BYTEA NOT NULL,
+        params JSON,
+        transaction_hash TEXT NOT NULL,
         entity_type ENTITY_TYPE NOT NULL,
         entity_id TEXT,
-        PRIMARY KEY (entity_id, chain_id, block_number, log_index));
+        PRIMARY KEY (entity_id, chain_id, block_number, log_index, entity_type));
+      `")
+  }
+let createEntityHistoryPostgresFunction: unit => promise<unit> = async () => {
+
+// NULL for an `entity_id` means that the entity was deleted.
+    await %raw("sql`
+    CREATE OR REPLACE FUNCTION get_entity_history_filter(
+        sort_chain_id integer,
+        start_block integer,
+        start_log_index integer,
+        end_block integer,
+        end_log_index integer
+    )
+    RETURNS SETOF entity_history_filter AS $$
+    BEGIN
+        RETURN QUERY
+        SELECT
+            DISTINCT ON (coalesce(old.entity_id, new.entity_id))
+            coalesce(old.entity_id, new.entity_id) as entity_id,
+            new.chain_id as chain_id,
+            coalesce(old.params, 'null') as old_val,
+            coalesce(new.params, 'null') as new_val,
+            new.block_number as block_number,
+            old.block_number as previous_block_number,
+            new.log_index as log_index,
+            old.log_index as previous_log_index,
+            new.entity_type as entity_type
+        FROM
+            entity_history old
+            INNER JOIN entity_history next ON 
+            sort_chain_id = next.chain_id 
+            AND
+            (
+                next.block_number > start_block
+                OR (
+                    next.block_number = start_block
+                    AND next.log_index >= start_log_index
+                )
+            )
+            AND (
+                old.block_number < start_block
+                OR (
+                    old.block_number = start_block
+                    AND old.log_index <= start_log_index
+                )
+            )
+            AND (
+                next.block_number < end_block
+                OR (
+                    next.block_number = end_block
+                    AND next.log_index <= end_log_index
+                )
+            )
+            AND old.chain_id = next.chain_id
+            AND old.entity_id = next.entity_id
+            AND old.entity_type = next.entity_type
+            AND old.block_number = next.previous_block_number
+            AND old.log_index = next.previous_log_index
+            FULL OUTER JOIN entity_history new ON old.entity_id = new.entity_id
+            AND sort_chain_id = new.chain_id
+            AND (
+                new.previous_block_number > old.block_number
+                OR (
+                    new.previous_block_number = old.block_number
+                    AND new.previous_log_index >= old.log_index
+                )
+            )
+            AND (
+                new.block_number < end_block
+                OR (
+                    new.block_number = end_block
+                    AND new.log_index <= end_log_index
+                )
+            )
+        WHERE
+            sort_chain_id = new.chain_id
+            AND 
+            (
+                new.block_number <= end_block
+                OR (
+                    new.block_number = end_block
+                    AND new.log_index <= end_log_index
+                )
+            )
+            AND (
+                coalesce(old.block_number, 0) <= start_block
+                OR (
+                    old.block_number = start_block
+                    AND old.log_index <= start_log_index
+                )
+            )
+            AND (
+                coalesce(new.block_number, start_block + 1) > start_block
+                OR (
+                    new.block_number = start_block
+                    AND new.log_index > start_log_index
+                )
+            )
+        ORDER BY
+            coalesce(old.entity_id, new.entity_id),
+            new.block_number DESC,
+            new.log_index DESC;
+    END;
+    $$ LANGUAGE plpgsql STABLE;
+    `")
+  }
+
+  let createEntityHistoryFilterTable: unit => promise<unit> = async () => {
+    // NULL for an `entity_id` means that the entity was deleted.
+    await %raw("sql`
+      CREATE TABLE \"public\".\"entity_history_filter\" (
+          entity_id TEXT NOT NULL,
+          chain_id INTEGER NOT NULL,
+          old_val JSON,
+          new_val JSON,
+          block_number INTEGER NOT NULL,
+          previous_block_number INTEGER,
+          log_index INTEGER NOT NULL,
+          previous_log_index INTEGER,
+          entity_type ENTITY_TYPE NOT NULL,
+          PRIMARY KEY (entity_id, chain_id, block_number,previous_block_number, previous_log_index, log_index)
+          );
       `")
   }
 
@@ -322,6 +447,19 @@ let runUpMigrations = async (~shouldExit) => {
   await ChainMetadata.createChainMetadataTable()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err, `EE800: Error creating chain_metadata table`)->Promise.resolve
+  })
+
+  await EntityHistory.createEntityHistoryTable()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err, `EE800: Error creating entity history table`)->Promise.resolve
+  })
+  await EntityHistory.createEntityHistoryFilterTable()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err, `EE800: Error creating entity history filter table`)->Promise.resolve
+  })
+  await EntityHistory.createEntityHistoryPostgresFunction()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err, `EE800: Error creating entity history db function table`)->Promise.resolve
   })
   await SyncBatchMetadata.createSyncBatchTable()->Promise.catch(err => {
     exitCode := Failure

@@ -1,6 +1,0 @@
-Rough outline:
-
-1. Run load handlers on each event as it becomes ready
-2. Prioritise block loading
-3. Process sub-batches as they complete
-4. Update sync config
