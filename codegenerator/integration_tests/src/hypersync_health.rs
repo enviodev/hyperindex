@@ -32,12 +32,20 @@ mod tests {
         // TODO: implement a 'chain_id' method in hypersync, and test that the chain_id is correct too.
         for network in envio::config_parsing::chain_helpers::HypersyncNetwork::iter() {
             let rpc_url = envio::config_parsing::hypersync_endpoints::network_to_skar_url(&network);
-            let is_healthy = fetch_hypersync_health(String::from(rpc_url).as_str())
-                .await
-                .unwrap();
-
-            // Assert that the endpoint health is Healthy
-            assert!(matches!(is_healthy, EndpointHealth::Healthy));
+            match fetch_hypersync_health(&rpc_url).await {
+                Ok(is_healthy) => {
+                    // Assert that the endpoint health is Healthy
+                    assert!(
+                        matches!(is_healthy, EndpointHealth::Healthy),
+                        "Endpoint for {} is not healthy, but was expected to be.",
+                        rpc_url
+                    );
+                }
+                Err(e) => {
+                    println!("Error fetching health for {}: {:?}", rpc_url, e); // Print error details
+                    panic!("Failed to fetch health for {}: {:?}", rpc_url, e); // Panic with error details
+                }
+            }
         }
     }
 }

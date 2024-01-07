@@ -56,7 +56,7 @@ pub enum Network {
     Gnosis = 100,
     #[subenum(GraphNetwork)]
     Fuse = 122,
-    #[subenum(GraphNetwork)]
+    #[subenum(HypersyncNetwork, GraphNetwork)]
     Fantom = 250,
     #[subenum(
         HypersyncNetwork,
@@ -86,6 +86,8 @@ pub enum Network {
     FantomTestnet = 4002,
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     ArbitrumOne = 42161,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    ArbitrumNova = 42170,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
@@ -99,13 +101,18 @@ pub enum Network {
     CeloAlfajores = 44787,
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Mumbai = 80001,
-    #[subenum(GraphNetwork)]
+    #[subenum(HypersyncNetwork, GraphNetwork)]
+    // Blockscout: https://explorer.aurora.dev/
     Aurora = 1313161554,
     #[subenum(GraphNetwork)]
     AuroraTestnet = 1313161555,
-    Harmony = 1666600000,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.harmony.one/
+    // https://getblock.io/explorers/harmony/
+    Harmony = 1666600000, // shard 0
     #[subenum(GraphNetwork)]
-    BaseTestnet = 84531,
+    BaseGoerli = 84531,
     #[subenum(HypersyncNetwork, GraphNetwork)]
     ZksyncEra = 324,
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -163,8 +170,22 @@ pub enum Network {
     PublicGoods = 424,
     #[subenum(HypersyncNetwork)]
     // Explorers:
-    // https://explorer-mainnet-algorand-rollup.a1.milkomeda.com/
+    // Blockscout: https://explorer-mainnet-algorand-rollup.a1.milkomeda.com/
     A1Milkomeda = 2002,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // Blockscout: https://explorer-mainnet-cardano-evm.c1.milkomeda.com/
+    C1Milkomeda = 2001,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // Blockscout: https://flare-explorer.flare.network/
+    // Routescan: https://flarescan.com/
+    Flare = 14,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.mantle.xyz/
+    // Routescan: https://mantlescan.info/
+    Mantle = 5000,
 }
 
 impl Network {
@@ -223,6 +244,7 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::OptimismSepolia => "Z1A9EP3DSM9SNZ2IDMAiVPPGYDDG6FRYINA",
             NetworkWithExplorer::ArbitrumOne => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
             NetworkWithExplorer::ArbitrumGoerli => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
+            NetworkWithExplorer::ArbitrumNova => "1W3AF7G7TRTGSPASM11SHZSIZRII5EX92D",
             NetworkWithExplorer::Avalanche => "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK",
             NetworkWithExplorer::Mumbai => "I9CKKRUZBHCI1TWN8R44EIUBY6U2GI48FP",
             NetworkWithExplorer::Sepolia => "WR5JNQKI5HJ8EP9EGCBY544AH8Y6G8KFZV",
@@ -235,6 +257,7 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Celo => "PT6X2G4Q8YKFC2KU4FCDUUDCXPA57NC7NB",
             NetworkWithExplorer::Kroma => "PNT5V8B3TR5V7AA2IRHD8YB81F5W83YG98",
             NetworkWithExplorer::Moonbeam => "47H94RVTAKCDKNSMBEX15F5AXDAB4DWRY5",
+            // NetworkWithExplorer::Fantom => "RYMFGHMTZNBGAI6G71G3UHM4F11MEQU28F",
         };
 
         //Define all custom block explorer definitions at the top otherwise default with ethers api
@@ -367,7 +390,7 @@ mod test {
         "optimism-goerli",
         "aurora",
         "aurora-testnet",
-        "base-testnet",
+        "base-goerli",
         "base",
         "zksync-era",
         "zksync-era-testnet",

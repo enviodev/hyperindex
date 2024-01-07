@@ -38,6 +38,13 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::A1Milkomeda => "https://a1-milkomeda.hypersync.xyz".to_string(),
         HypersyncNetwork::PublicGoods => "https://publicgoods.hypersync.xyz".to_string(),
         HypersyncNetwork::Zora => "https://zora.hypersync.xyz".to_string(),
+        HypersyncNetwork::Fantom => "https://fantom.hypersync.xyz".to_string(),
+        HypersyncNetwork::ArbitrumNova => "https://arbitrum-nova.hypersync.xyz".to_string(),
+        HypersyncNetwork::Harmony => "https://harmony-shard-0.hypersync.xyz".to_string(),
+        HypersyncNetwork::Aurora => "https://aurora.hypersync.xyz".to_string(),
+        HypersyncNetwork::C1Milkomeda => "https://c1-milkomeda.hypersync.xyz".to_string(),
+        HypersyncNetwork::Flare => "https://flare.hypersync.xyz".to_string(),
+        HypersyncNetwork::Mantle => "https://mantle.hypersync.xyz".to_string(),
     }
 }
 
