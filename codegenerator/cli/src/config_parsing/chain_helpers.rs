@@ -56,7 +56,7 @@ pub enum Network {
     Gnosis = 100,
     #[subenum(GraphNetwork)]
     Fuse = 122,
-    #[subenum(HypersyncNetwork, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
     Fantom = 250,
     #[subenum(
         HypersyncNetwork,
@@ -257,7 +257,7 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Celo => "PT6X2G4Q8YKFC2KU4FCDUUDCXPA57NC7NB",
             NetworkWithExplorer::Kroma => "PNT5V8B3TR5V7AA2IRHD8YB81F5W83YG98",
             NetworkWithExplorer::Moonbeam => "47H94RVTAKCDKNSMBEX15F5AXDAB4DWRY5",
-            // NetworkWithExplorer::Fantom => "RYMFGHMTZNBGAI6G71G3UHM4F11MEQU28F",
+            NetworkWithExplorer::Fantom => "RYMFGHMTZNBGAI6G71G3UHM4F11MEQU28F",
         };
 
         //Define all custom block explorer definitions at the top otherwise default with ethers api
