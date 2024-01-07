@@ -186,6 +186,91 @@ const chunkBatchQuery = (
     throw e;
     });
 };
+const arrayToSqlValues = (dataArray) => {
+  return dataArray.map(item => {
+    return `(${item.chain_id}, '${item.entity_id}', ${item.block_number}, ${item.log_index}, '${item.transaction_hash}', '${item.entity_type}', (SELECT block_number FROM "public"."entity_history" 
+              WHERE entity_id = '${item.entity_id}'
+              ORDER BY block_number DESC 
+              LIMIT 1))`;
+  }).join(', ');
+}
+
+function mergeArrays(array1, array2) {
+  const array2Map = new Map(array2.map(item => [item.entity_id, item]));
+
+  return array1.map(item => {
+    const match = array2Map.get(item.entity_id);
+    if (match) {
+      return {
+        ...item,
+        previous_block_number: match.previous_block_number,
+        previous_log_index: match.previous_log_index
+      };
+    }
+    else {
+      return item;
+    }
+  });
+}
+
+const fetchPreviousBlockNumbersAndLogIndices = async (sql, entityDataArray) => {
+  const entityIds = entityDataArray.map(item => item.entity_id);
+  const uniqueEntityIds = [...new Set(entityIds)]; // Remove duplicates
+  {{!-- console.log("uniqueEntityIds")
+  console.log(uniqueEntityIds)
+  console.log("sqlstatement")
+  console.log(sql.array(uniqueEntityIds)) --}}
+
+  const previousBlockNumbersAndLogIndices = await sql`
+    SELECT entity_id, block_number as previous_block_number, log_index as previous_log_index
+    FROM "public"."entity_history"
+    WHERE (entity_id, block_number, log_index) IN (
+      SELECT entity_id, MAX(block_number), MAX(log_index)
+      FROM "public"."entity_history"
+      WHERE entity_id = ANY(${sql.array(uniqueEntityIds)})
+      GROUP BY entity_id
+    )
+  `;
+
+  {{!-- console.log("previousBlockNumbersAndLogIndices")
+  console.log(previousBlockNumbersAndLogIndices) --}}
+  let merge = mergeArrays(entityDataArray, previousBlockNumbersAndLogIndices)
+  {{!-- console.log("merge")
+  console.log(merge) --}}
+  return merge
+  // let prevResult = previousBlockNumbersAndLogIndices.reduce((acc, row) => {
+  //   console.log("row")
+  //   console.log(row)
+  //   acc[row.entity_id] = {
+  //     previous_block_number: row.previous_block_number,
+  //     previous_log_index: row.previous_log_index
+  //   };
+  //   return acc;
+  // }, {});
+
+  // console.log("prevResult")
+  // console.log(prevResult)
+  // return prevResult
+};
+
+const batchSetEntityHistory = async (sql, entityDataArray) => {
+  return sql`
+    INSERT INTO "public"."entity_history"
+  ${sql(
+    entityDataArray,
+    "chain_id", "entity_id", "block_number", "log_index", "transaction_hash", "entity_type", "previous_block_number", "previous_log_index", "params"
+  )};`
+};
+
+module.exports.batchSetEntityHistoryTable =  async (sql, entityDataArrayWithPrev, entityDataArrayWithoutPrev) => {
+   const result = await fetchPreviousBlockNumbersAndLogIndices(sql, entityDataArrayWithoutPrev)
+  const previousData = [...result, ...entityDataArrayWithPrev];
+  return chunkBatchQuery(
+    sql,
+    previousData,
+    batchSetEntityHistory
+  );
+};
 
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   return chunkBatchQuery(
