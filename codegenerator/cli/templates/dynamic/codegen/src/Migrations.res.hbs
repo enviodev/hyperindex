@@ -233,6 +233,8 @@ module EntityHistory = {
       CREATE TABLE \"public\".\"entity_history\" (
         block_timestamp INTEGER NOT NULL,
         chain_id INTEGER NOT NULL,
+        previous_block_number INTEGER,
+        previous_log_index INTEGER,
         block_number INTEGER NOT NULL,
         log_index INTEGER NOT NULL,
         previous_block_timestamp INTEGER,

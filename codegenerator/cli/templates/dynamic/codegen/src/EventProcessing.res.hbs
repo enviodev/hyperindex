@@ -83,7 +83,7 @@ let updateEventSyncState = (
   let {blockNumber, logIndex, transactionIndex, blockTimestamp} = event
   let _ = inMemoryStore.eventSyncState->IO.InMemoryStore.EventSyncState.set(
     ~key=chainId,
-    ~entity={
+    ~entity=Set({
       chainId,
       blockTimestamp,
       blockNumber,
