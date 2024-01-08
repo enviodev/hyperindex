@@ -58,7 +58,8 @@ let updateEventSyncState = (
   )
 }
 
-let getEventExnWithMessage = (~msg, ~error, ~event: Types.eventLog<'a>, ~chainId, ~eventName) => {
+/** Construct an error object for the logger with event prameters*/
+let getEventErr = (~msg, ~error, ~event: Types.eventLog<'a>, ~chainId, ~eventName) => {
   let eventInfoObj = {
     "eventName": eventName,
     "txHash": event.transactionHash,
@@ -74,7 +75,8 @@ let getEventExnWithMessage = (~msg, ~error, ~event: Types.eventLog<'a>, ~chainId
   }
 }
 
-let getEventExnObj = exn => {
+/** Constructs an error object with a caught exception related to an event*/
+let getEventErrWithExn = exn => {
   let (msg, error) = switch exn {
   | Js.Exn.Error(obj) =>
     switch Js.Exn.message(obj) {
@@ -91,25 +93,41 @@ let getEventExnObj = exn => {
     "Unknown",
   ))
 
-  getEventExnWithMessage(~msg, ~error)
+  getEventErr(~msg, ~error)
 }
 
+/** Constructs specific sync/async mismatch error */
 let getSyncAsyncMismatchErr = (~event) =>
-  getEventExnWithMessage(
+  getEventErr(
     ~error="Mismatched sync/async handler and context",
     ~msg="Unexpected mismatch between sync/async handler and context. Please contact the team.",
     ~event,
   )
 
-let runHandler = (
-  ~handler,
-  ~context,
-  ~event,
-  ~cb,
+
+/** Function composer for handling an event*/
+let handleEvent = (
+  ~inMemoryStore,
   ~chainId,
+  ~serializer,
+  ~handlerGetter,
+  ~contextGetter,
+  ~event,
   ~eventName,
   ~contextLog: 'context => Logs.userLogger,
+  ~cb,
 ) => {
+  event->updateEventSyncState(~chainId, ~inMemoryStore)
+
+  let jsonSerializedParams = event.params->serializer
+
+  event->addEventToRawEvents(~inMemoryStore, ~chainId, ~jsonSerializedParams, ~eventName)
+
+  let handler = handlerGetter()
+
+  //Call the context getter here, ensures no stale values in the context
+  //Since loaders and previous handlers have already run
+  let context = contextGetter()
   try {
     switch (handler, context) {
     | (SyncAsync.Sync(handler), SyncAsync.Sync(context)) =>
@@ -125,7 +143,12 @@ let runHandler = (
   } catch {
   // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
   | userCodeException =>
-    let errorObj = userCodeException->getEventExnObj(~event, ~chainId, ~eventName)
+    let errorObj =
+      userCodeException->getEventErrWithExn(
+        ~event,
+        ~chainId,
+        ~eventName=eventName->Types.eventName_encode,
+      )
     //Logger takes any type just currently bound to string
     let errorMessage = errorObj->Obj.magic
 
@@ -136,40 +159,25 @@ let runHandler = (
 
 let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore, ~cb) => {
   let {event, chainId} = item
+
   switch event {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, contextGetter) => {
-      event->updateEventSyncState(~chainId, ~inMemoryStore)
+      let {log, eventArgs_encode} = module(Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event)
 
-      let jsonSerializedParams =
-        event.params->Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode
-
-      event->addEventToRawEvents(
-        ~inMemoryStore, 
-        ~chainId, 
-        ~jsonSerializedParams, 
-        ~eventName={{event.event_type.full}}
+      handleEvent(
+        ~event,
+        ~eventName={{event.event_type.full}},
+        ~contextLog=log,
+        ~serializer=eventArgs_encode,
+        ~contextGetter,
+        ~handlerGetter=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler,
+        ~chainId,
+        ~inMemoryStore,
+        ~cb,
       )
-
-    // TODO: pass in a bool for if it is async or syncronous
-    let handler = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler()
-    
-    //Call the context getter here, ensures no stale values in the context
-    //Since loaders and previous handlers have already run
-    // TODO: pass in a bool for if it is async or syncronous
-    let context = contextGetter()
-
-    runHandler(
-      ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}",
-      ~contextLog=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.log,
-      ~context,
-      ~chainId,
-      ~cb,
-      ~event,
-      ~handler,
-    )
-  }
+    }
 {{/each}}
 {{/each}}
   }
@@ -288,7 +296,7 @@ let rec loadReadEntitiesInner = async (
               // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
               | userCodeException =>
                 let errorObj =
-                  userCodeException->getEventExnObj(~event, ~chainId, ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}")
+                  userCodeException->getEventErrWithExn(~event, ~chainId, ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}")
                 // NOTE: we could use the user `uerror` function instead rather than using a system error. This is debatable.
                 logger->Logging.childErrorWithExn(userCodeException, errorObj)
               }
