@@ -396,12 +396,6 @@ let processEventBatch = async (
   let logger = Logging.createChild(
     ~params={
       "context": "batch",
-      // Used to uniquely identify each batch.
-      "from_block_index": eventBatch
-      ->Belt.Array.get(0)
-      ->Belt.Option.map(({blockNumber, logIndex}) =>
-        `${blockNumber->Belt.Int.toString}-${logIndex->Belt.Int.toString}`
-      ),
     },
   )
 

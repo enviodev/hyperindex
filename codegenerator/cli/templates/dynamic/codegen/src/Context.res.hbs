@@ -25,13 +25,14 @@ module {{contract.name.capitalized}}Contract = {
       loaderContext,
       handlerContext,
     > = (~inMemoryStore, ~chainId, ~event, ~logger) => {
-      // NOTE: we could optimise this code to onle create an indexer if there was a log called.
+      // NOTE: we could optimise this code to onle create a logger if there was a log called.
       let logger = logger->Logging.createChildFrom(
         ~logger=_,
         ~params={
-          "userLog": "Gravatar.TestEventWithLongNameBeyondThePostgresEnumCharacterLimit",
+          "context": "Gravatar.TestEventWithLongNameBeyondThePostgresEnumCharacterLimit",
           "chainId": chainId,
           "block": event.blockNumber,
+          "logIndex": event.logIndex,
           "txHash": event.transactionHash,
         },
       )
