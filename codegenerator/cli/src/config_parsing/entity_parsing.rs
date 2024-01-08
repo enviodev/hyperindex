@@ -75,7 +75,7 @@ impl Schema {
         let reserved_keywords_used = check_names_from_schema_for_reserved_words(all_names);
         if !reserved_keywords_used.is_empty() {
             return Err(anyhow!(
-                "Schema contains the following reserved keywords: {}",
+                "EE210: Schema contains the following reserved keywords: {}",
                 reserved_keywords_used.join(", ")
             ));
         }
@@ -345,7 +345,7 @@ impl FieldType {
                 match (field_type.as_ref(), is_derived_from) {
                     | (Self::Single(GqlScalar::Custom(custom_field)), false) =>
                         Err(anyhow!(
-                            "EE210: Arrays of entities is unsupported. Please use one of the methods for referencing entites outlined in the docs. The entity being referenced in the array is '{}'.", custom_field
+                            "EE211: Arrays of entities is unsupported. Please use one of the methods for referencing entities outlined in the docs. The entity being referenced in the array is '{}'.", custom_field
                         ))?,
                     | _ => format!("{}[]",field_type.to_postgres_type(entities_set, is_derived_from)?),
                 }
@@ -476,7 +476,9 @@ pub fn ethabi_type_to_field_type(abi_type: &EthAbiParamType) -> anyhow::Result<F
             let inner_type = ethabi_type_to_field_type(abi_type)?;
             Ok(NonNullType(Box::new(ListType(Box::new(inner_type)))))
         }
-        EthAbiParamType::Tuple(_abi_types) => Err(anyhow!("Tuples are not handled currently using contract import.")),
+        EthAbiParamType::Tuple(_abi_types) => Err(anyhow!(
+            "Tuples are not handled currently using contract import."
+        )),
     }
 }
 

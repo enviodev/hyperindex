@@ -44,7 +44,7 @@ pub fn is_directory_new_validator(directory: &str) -> Result<Validation, CustomU
     if !is_directory_new(directory) {
         Ok(Validation::Invalid(
             format!(
-                "Directory '{}' already exists. Please use a new directory.",
+                "EE401: Directory '{}' already exists. Please use a new directory.",
                 directory
             )
             .into(),
