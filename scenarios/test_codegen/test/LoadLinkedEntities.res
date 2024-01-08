@@ -63,7 +63,7 @@ describe("Linked Entity Loader Integration Test", () => {
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
       ~inMemoryStore,
       ~chainId=123,
-      ~event=Obj.magic(),
+      ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
       ~logger=Logging.logger,
     )
 
@@ -130,7 +130,7 @@ describe("Linked Entity Loader Integration Test", () => {
     let context = Context.GravatarContract.TestEventEvent.contextCreator(
       ~inMemoryStore,
       ~chainId=123,
-      ~event=Obj.magic(),
+      ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
       ~logger=Logging.logger,
     )
 
