@@ -150,18 +150,27 @@ let getNewGravatarContext = () => {
 let getUpdatedGravatarContext = () => {
   ContextMock.mockUpdateGravatarContext
 }
-let eventBatchWithContext: array<Types.eventAndContext> = [
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog1, getNewGravatarContext),
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog2, getNewGravatarContext),
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog3, getNewGravatarContext),
-  GravatarContract_UpdatedGravatarWithContext(setGravatarEventLog1, getUpdatedGravatarContext),
-  GravatarContract_UpdatedGravatarWithContext(setGravatarEventLog2, getUpdatedGravatarContext),
-  GravatarContract_UpdatedGravatarWithContext(setGravatarEventLog3, getUpdatedGravatarContext),
+let eventBatchWithContext: array<Context.eventAndContext> = [
+  GravatarContract_NewGravatarWithContext(newGravatarEventLog1, ContextMock.mockNewGravatarContext),
+  GravatarContract_NewGravatarWithContext(newGravatarEventLog2, ContextMock.mockNewGravatarContext),
+  GravatarContract_NewGravatarWithContext(newGravatarEventLog3, ContextMock.mockNewGravatarContext),
+  GravatarContract_UpdatedGravatarWithContext(
+    setGravatarEventLog1,
+    ContextMock.mockUpdateGravatarContext,
+  ),
+  GravatarContract_UpdatedGravatarWithContext(
+    setGravatarEventLog2,
+    ContextMock.mockUpdateGravatarContext,
+  ),
+  GravatarContract_UpdatedGravatarWithContext(
+    setGravatarEventLog3,
+    ContextMock.mockUpdateGravatarContext,
+  ),
 ]
 
 let eventRouterBatch: array<
-  Types.eventRouterEventAndContext,
-> = eventBatchWithContext->Belt.Array.map((event): Types.eventRouterEventAndContext => {
+  Context.eventRouterEventAndContext,
+> = eventBatchWithContext->Belt.Array.map((event): Context.eventRouterEventAndContext => {
   chainId: eventBatchChainId,
   event,
 })

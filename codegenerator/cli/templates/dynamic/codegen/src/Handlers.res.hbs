@@ -10,6 +10,60 @@ let mapFunctionRegisterName = (functionRegister: functionRegister) => {
 // This set makes sure that the warning doesn't print for every event of a type, but rather only prints the first time.
 let hasPrintedWarning = Set.make()
 
+@genType
+type handlerFunction<'eventArgs, 'context, 'returned> = (
+  ~event: Types.eventLog<'eventArgs>,
+  ~context: 'context,
+) => 'returned
+
+@genType
+type handlerWithContextGetter<
+  'eventArgs,
+  'context,
+  'returned,
+  'loaderContext,
+  'handlerContextSync,
+  'handlerContextAsync,
+> = {
+  handler: handlerFunction<'eventArgs, 'context, 'returned>,
+  contextGetter: Context.genericContextCreatorFunctions<
+    'loaderContext,
+    'handlerContextSync,
+    'handlerContextAsync,
+  > => 'context,
+}
+
+@genType
+type handlerWithContextGetterSyncAsync<
+  'eventArgs,
+  'loaderContext,
+  'handlerContextSync,
+  'handlerContextAsync,
+> = SyncAsync.t<
+  handlerWithContextGetter<
+    'eventArgs,
+    'handlerContextSync,
+    unit,
+    'loaderContext,
+    'handlerContextSync,
+    'handlerContextAsync,
+  >,
+  handlerWithContextGetter<
+    'eventArgs,
+    'handlerContextAsync,
+    promise<unit>,
+    'loaderContext,
+    'handlerContextSync,
+    'handlerContextAsync,
+  >,
+>
+
+@genType
+type loader<'eventArgs, 'loaderContext> = (
+  ~event: Types.eventLog<'eventArgs>,
+  ~context: 'loaderContext,
+) => unit
+
 let getDefaultLoaderHandler: (
   ~functionRegister: functionRegister,
   ~eventName: string,
@@ -29,23 +83,10 @@ let getDefaultLoaderHandler: (
   }
 }
 
-@genType
-type handlerFunction<'eventArgs, 'context, 'returned> = (
-  ~event: Types.eventLog<'eventArgs>,
-  ~context: 'context,
-) => 'returned
-
-@genType
-type handlerSyncAsync<'eventArgs, 'syncContext, 'asyncContext> = SyncAsync.t<
-  handlerFunction<'eventArgs, 'syncContext, unit>,
-  handlerFunction<'eventArgs, 'asyncContext, promise<unit>>,
->
-
-@genType
-type loader<'eventArgs, 'loaderContext> = (
-  ~event: Types.eventLog<'eventArgs>,
-  ~context: 'loaderContext,
-) => unit
+let getDefaultLoaderHandlerWithContextGetter = (~functionRegister, ~eventName) => SyncAsync.Sync({
+  handler: getDefaultLoaderHandler(~functionRegister, ~eventName),
+  contextGetter: ctx => ctx.getHandlerContextSync(),
+})
 
 {{#each contracts as | contract |}}
 module {{contract.name.capitalized}}Contract = {
@@ -53,11 +94,16 @@ module {{contract.name.capitalized}}Contract = {
   module {{event.name.capitalized}} = {
     open Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event
 
-    type handler = handlerSyncAsync<eventArgs, handlerContextSync, handlerContextAsync>
+    type handlerWithContextGetter = handlerWithContextGetterSyncAsync<
+      eventArgs,
+      loaderContext,
+      handlerContextSync,
+      handlerContextAsync,
+    >
 
     %%private(
       let {{event.name.uncapitalized}}Loader: ref<option<loader<eventArgs, loaderContext>>> = ref(None)
-      let {{event.name.uncapitalized}}Handler: ref<option<handler>> = ref(None)
+      let {{event.name.uncapitalized}}Handler: ref<option<handlerWithContextGetter>> = ref(None)
     )
 
     @genType
@@ -68,13 +114,13 @@ module {{contract.name.capitalized}}Contract = {
     @genType
     let handler = handler => {
       {{event.name.uncapitalized}}Handler :=
-        Some(Sync(handler))
+        Some(Sync({handler, contextGetter: ctx => ctx.getHandlerContextSync()}))
     }
 
     @genType
     let handlerAsync = handler => {
       {{event.name.uncapitalized}}Handler :=
-        Some(Async(handler))
+        Some(Async({handler, contextGetter: ctx => ctx.getHandlerContextAsync()}))
     }
 
     let getLoader = () =>
@@ -87,7 +133,7 @@ module {{contract.name.capitalized}}Contract = {
       switch {{event.name.uncapitalized}}Handler.contents {
         | Some(handler) => handler        
         | None =>
-          Sync(getDefaultLoaderHandler(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler))
+          getDefaultLoaderHandlerWithContextGetter(~eventName="{{event.name.capitalized}}", ~functionRegister=Handler)
      }
 
     let handlerIsAsync = () => getHandler()->SyncAsync.isAsync

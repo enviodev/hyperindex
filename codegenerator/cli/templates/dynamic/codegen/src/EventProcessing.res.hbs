@@ -110,11 +110,10 @@ let handleEvent = (
   ~inMemoryStore,
   ~chainId,
   ~serializer,
-  ~handlerGetter,
-  ~contextGetter,
+  ~context: Context.genericContextCreatorFunctions<'b, 'c, 'd>,
+  ~handlerWithContextGetter: Handlers.handlerWithContextGetterSyncAsync<'a, 'b, 'c, 'd>,
   ~event,
   ~eventName,
-  ~contextLog: 'context => Logs.userLogger,
   ~cb,
 ) => {
   event->updateEventSyncState(~chainId, ~inMemoryStore)
@@ -123,22 +122,19 @@ let handleEvent = (
 
   event->addEventToRawEvents(~inMemoryStore, ~chainId, ~jsonSerializedParams, ~eventName)
 
-  let handler = handlerGetter()
-
-  //Call the context getter here, ensures no stale values in the context
-  //Since loaders and previous handlers have already run
-  let context = contextGetter()
   try {
-    switch (handler, context) {
-    | (SyncAsync.Sync(handler), SyncAsync.Sync(context)) =>
+    switch handlerWithContextGetter {
+    | Sync({handler, contextGetter}) =>
+      //Call the context getter here, ensures no stale values in the context
+      //Since loaders and previous handlers have already run
+      let context = contextGetter(context)
       handler(~event, ~context)
       cb()->ignore
-    | (Async(handler), Async(context)) => handler(~event, ~context)->Promise.thenResolve(cb)->ignore
-    | _ =>
-      //Logger takes any type just currently bound to string
-      let errorMessage = getSyncAsyncMismatchErr(~event, ~chainId, ~eventName)->Obj.magic
-      contextLog(context).error(errorMessage)
-      cb()->ignore
+    | Async({handler, contextGetter}) =>
+      //Call the context getter here, ensures no stale values in the context
+      //Since loaders and previous handlers have already run
+      let context = contextGetter(context)
+      handler(~event, ~context)->Promise.thenResolve(cb)->ignore
     }
   } catch {
   // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
@@ -152,32 +148,31 @@ let handleEvent = (
     //Logger takes any type just currently bound to string
     let errorMessage = errorObj->Obj.magic
 
-    contextLog(context).errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
+    context.log.errorWithExn(Js.Exn.asJsExn(userCodeException), errorMessage)
     cb()->ignore
   }
 }
 
-let eventRouter = (item: Types.eventRouterEventAndContext, ~inMemoryStore, ~cb) => {
+let eventRouter = (item: Context.eventRouterEventAndContext, ~inMemoryStore, ~cb) => {
   let {event, chainId} = item
 
   switch event {
 {{#each contracts as | contract |}}
 {{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, contextGetter) => {
-      let {log, eventArgs_encode} = module(Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event)
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(
+      event,
+      context,
+    ) => handleEvent(
+      ~event,
+      ~eventName={{event.event_type.full}},
+      ~serializer=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode,
+      ~handlerWithContextGetter=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler(),
+      ~chainId,
+      ~inMemoryStore,
+      ~cb,
+      ~context,
+    )
 
-      handleEvent(
-        ~event,
-        ~eventName={{event.event_type.full}},
-        ~contextLog=log,
-        ~serializer=eventArgs_encode,
-        ~contextGetter,
-        ~handlerGetter=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler,
-        ~chainId,
-        ~inMemoryStore,
-        ~cb,
-      )
-    }
 {{/each}}
 {{/each}}
   }
@@ -189,7 +184,7 @@ type readEntitiesResult = {
   blockNumber: int,
   logIndex: int,
   entityReads: array<Types.entityRead>,
-  eventAndContext: Types.eventAndContext,
+  eventAndContext: Context.eventAndContext,
 }
 
 type rec readEntitiesResultPromise = {
@@ -197,7 +192,7 @@ type rec readEntitiesResultPromise = {
   chainId: int,
   blockNumber: int,
   logIndex: int,
-  data: (array<Types.entityRead>, Types.eventAndContext, option<array<readEntitiesResultPromise>>),
+  data: (array<Types.entityRead>, Context.eventAndContext, option<array<readEntitiesResultPromise>>),
 }
 
 let rec loadReadEntitiesInner = async (
@@ -302,13 +297,12 @@ let rec loadReadEntitiesInner = async (
               }
 
             let {logIndex, blockNumber} = event
-            let contextGetter = contextHelper.getHandlerContext
 
             let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
 
             (
               contextHelper.getEntitiesToLoad(),
-              Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, contextGetter),
+              Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, contextHelper),
               if Belt.Array.length(dynamicContracts) > 0 {
                 Some(
                   await loadNestedReadEntities(
@@ -389,7 +383,7 @@ let loadReadEntities = async (
   ~eventBatch: array<Types.eventBatchQueueItem>,
   ~chainManager: ChainManager.t,
   ~logger: Pino.t,
-): array<Types.eventRouterEventAndContext> => {
+): array<Context.eventRouterEventAndContext> => {
   let batch = await loadReadEntitiesInner(
     ~inMemoryStore,
     ~eventBatch,
@@ -403,12 +397,12 @@ let loadReadEntities = async (
   // Project the result record into a tuple, so that we can unzip the two payloads.
   let resultToPair = ({entityReads, eventAndContext, chainId}): (
     array<Types.entityRead>,
-    Types.eventRouterEventAndContext,
+    Context.eventRouterEventAndContext,
   ) => (entityReads, {chainId, event: eventAndContext})
 
   let (readEntitiesGrouped, contexts): (
     array<array<Types.entityRead>>,
-    array<Types.eventRouterEventAndContext>,
+    array<Context.eventRouterEventAndContext>,
   ) =
     mergedResults->Belt.Array.map(resultToPair)->Belt.Array.unzip
 

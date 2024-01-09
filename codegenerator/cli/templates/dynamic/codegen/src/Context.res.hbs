@@ -1,6 +1,9 @@
+@genType
 type genericContextCreatorFunctions<'loaderContext, 'handlerContextSync, 'handlerContextAsync> = {
+  log: Logs.userLogger,
   getLoaderContext: unit => 'loaderContext,
-  getHandlerContext: unit => SyncAsync.t<'handlerContextSync, 'handlerContextAsync>,
+  getHandlerContextSync: unit => 'handlerContextSync,
+  getHandlerContextAsync: unit => 'handlerContextAsync,
   getEntitiesToLoad: unit => array<Types.entityRead>,
   getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
 }
@@ -18,9 +21,14 @@ module {{contract.name.capitalized}}Contract = {
 {{#each contract.events as | event |}}
 
   module {{event.name.capitalized}}Event = {
+    type loaderContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
     type handlerContextSync = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContextSync
     type handlerContextAsync = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContextAsync
-    type loaderContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
+    type context = genericContextCreatorFunctions<
+      loaderContext,
+      handlerContextSync,
+      handlerContextAsync,
+    >
 
     let contextCreator: contextCreator<
       Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
@@ -366,22 +374,32 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
         }
       }
       
-      let getHandlerContext = () =>
-        if (
-          Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handlerIsAsync()
-        ) {
-          SyncAsync.Async(getHandlerContextAsync())
-        } else {
-          Sync(getHandlerContextSync())
-        }
       {
+        log: contextLogger,
         getEntitiesToLoad: () => entitiesToLoad,
         getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
         getLoaderContext: () => loaderContext,
-        getHandlerContext,
+        getHandlerContextSync,
+        getHandlerContextAsync,
       }
     }
   }
 {{/each}}
 }
 {{/each}}
+
+@deriving(accessors)
+type eventAndContext =
+{{#each contracts as | contract |}}
+{{#each contract.events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(
+      Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
+      {{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context
+      )
+{{/each}}
+{{/each}}
+
+type eventRouterEventAndContext = {
+  chainId: int,
+  event: eventAndContext,
+}

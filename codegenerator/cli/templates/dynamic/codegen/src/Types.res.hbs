@@ -25,7 +25,7 @@ and {{/unless}}{{entity.name.uncapitalized}}LoaderConfig = {{#if entity.relation
 }{{else}}bool{{/if}}{{/each}}
 
 @@warning("+30")
-
+@genType
 type entityRead = 
 {{#each entities as | entity |}}
 | {{entity.name.capitalized}}Read(id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}})
@@ -214,13 +214,6 @@ module {{event.name.capitalized}}Event = {
       {{/each}}
     }
 
-    type handlerContext = SyncAsync.t<handlerContextSync, handlerContextAsync>
-
-    let log = (handlerContext: handlerContext) =>
-      switch handlerContext {
-      | Sync({log}) | Async({log}) => log
-      }
-
     {{#each event.required_entities as | required_entity |}}
     @genType
     type {{required_entity.name.uncapitalized}}EntityLoaderContext = {
@@ -267,27 +260,6 @@ type event =
 {{/each}}
 {{/each}}
 
-//This needs to pass a getter rather than the context since some
-//values in the context could be stale if the getter is not called after
-//the loader has run
-type handlerContextGetter<'context> = () => 'context
-
-@deriving(accessors)
-type eventAndContext =
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(
-      eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-      //See type handlerContextGetter alias
-      handlerContextGetter<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext>
-      )
-{{/each}}
-{{/each}}
-
-type eventRouterEventAndContext = {
-  chainId: int,
-  event: eventAndContext,
-}
 @spice
 type eventName =
 {{#each contracts as | contract |}}

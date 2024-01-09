@@ -69,8 +69,12 @@ module EventFunctions = {
     ~getLoader,
     ~eventWithContextAccessor: (
       Types.eventLog<'eventArgs>,
-      unit => SyncAsync.t<'handlerContextSync, 'handlerContextAsync>,
-    ) => Types.eventAndContext,
+      Context.genericContextCreatorFunctions<
+        'loaderContext,
+        'handlerContextSync,
+        'handlerContextAsync,
+      >,
+    ) => Context.eventAndContext,
     ~eventName: Types.eventName,
     ~cb: TestHelpers_MockDb.t => unit,
   ) => {
@@ -118,10 +122,9 @@ module EventFunctions = {
 
       //Run the event and handler context through the eventRouter
       //With inMemoryStore
-      let handlerContextGetter = context.getHandlerContext
-      let eventAndContext: Types.eventRouterEventAndContext = {
+      let eventAndContext: Context.eventRouterEventAndContext = {
         chainId,
-        event: eventWithContextAccessor(event, handlerContextGetter),
+        event: eventWithContextAccessor(event, context),
       }
 
       eventAndContext->EventProcessing.eventRouter(~inMemoryStore, ~cb=() => {
@@ -247,7 +250,7 @@ module {{contract.name.capitalized}} = {
     let processEvent = EventFunctions.makeSyncEventProcessor(
       ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
       ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-      ~eventWithContextAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+      ~eventWithContextAccessor=Context.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
       ~eventName=Types.{{event.event_type.full}},
     )
 
@@ -255,7 +258,7 @@ module {{contract.name.capitalized}} = {
     let processEventAsync = EventFunctions.makeAsyncEventProcessor(
       ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
       ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-      ~eventWithContextAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+      ~eventWithContextAccessor=Context.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
       ~eventName=Types.{{event.event_type.full}},
     )
 

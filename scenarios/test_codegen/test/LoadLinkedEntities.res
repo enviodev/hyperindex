@@ -75,10 +75,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-    let handlerContext = switch context.getHandlerContext() {
-    | Sync(ctx) => ctx
-    | Async(_) => Js.Exn.raiseError("Expected sync context")
-    }
+    let handlerContext = context.getHandlerContextSync()
 
     let testingA = handlerContext.a.all
 
@@ -146,10 +143,7 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-    let handlerContext = switch context.getHandlerContext() {
-    | Sync(ctx) => ctx
-    | Async(_) => Js.Exn.raiseError("Expected sync context")
-    }
+    let handlerContext = context.getHandlerContextSync()
 
     let testingA = handlerContext.a.all
 
