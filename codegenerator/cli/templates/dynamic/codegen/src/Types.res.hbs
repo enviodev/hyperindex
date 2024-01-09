@@ -198,6 +198,7 @@ module {{event.name.capitalized}}Event = {
       delete: id => unit,
     }
     {{/each}}
+
     @genType
     type handlerContextSync = {
       log: Logs.userLogger,

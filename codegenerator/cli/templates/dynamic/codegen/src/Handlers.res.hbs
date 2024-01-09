@@ -29,16 +29,19 @@ let getDefaultLoaderHandler: (
   }
 }
 
-type handlerFunction<'eventArgs, 'context, 'return> = (
+@genType
+type handlerFunction<'eventArgs, 'context, 'returned> = (
   ~event: Types.eventLog<'eventArgs>,
   ~context: 'context,
-) => 'return
+) => 'returned
 
+@genType
 type handlerSyncAsync<'eventArgs, 'syncContext, 'asyncContext> = SyncAsync.t<
   handlerFunction<'eventArgs, 'syncContext, unit>,
   handlerFunction<'eventArgs, 'asyncContext, promise<unit>>,
 >
 
+@genType
 type loader<'eventArgs, 'loaderContext> = (
   ~event: Types.eventLog<'eventArgs>,
   ~context: 'loaderContext,
@@ -63,7 +66,7 @@ module {{contract.name.capitalized}}Contract = {
       }
 
     @genType
-    let handlerSync = handler => {
+    let handler = handler => {
       {{event.name.uncapitalized}}Handler :=
         Some(Sync(handler))
     }

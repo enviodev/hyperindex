@@ -75,7 +75,11 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-    let handlerContext = context.getHandlerContext()
+    let handlerContext = switch context.getHandlerContext() {
+    | Sync(ctx) => ctx
+    | Async(_) => Js.Exn.raiseError("Expected sync context")
+    }
+
     let testingA = handlerContext.a.all
 
     Assert.deep_equal(
@@ -142,7 +146,11 @@ describe("Linked Entity Loader Integration Test", () => {
 
     await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-    let handlerContext = context.getHandlerContext()
+    let handlerContext = switch context.getHandlerContext() {
+    | Sync(ctx) => ctx
+    | Async(_) => Js.Exn.raiseError("Expected sync context")
+    }
+
     let testingA = handlerContext.a.all
 
     Assert.deep_equal([Some(a1)], testingA, ~message="testingA should have correct entities")

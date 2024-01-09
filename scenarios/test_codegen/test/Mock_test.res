@@ -13,7 +13,7 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
     MockEvents.eventRouterBatch->Belt.Array.forEach(
-      event => event->EventProcessing.eventRouter(~inMemoryStore),
+      event => event->EventProcessing.eventRouter(~inMemoryStore, ~cb=() => ()),
     )
   })
 

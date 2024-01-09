@@ -1,3 +1,4 @@
+@genType
 type t<'sync, 'async> = Sync('sync) | Async('async)
 
 let isAsync = syncAsync =>
