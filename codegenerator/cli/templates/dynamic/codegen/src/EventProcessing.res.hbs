@@ -195,6 +195,12 @@ type rec readEntitiesResultPromise = {
   data: (array<Types.entityRead>, Context.eventAndContext, option<array<readEntitiesResultPromise>>),
 }
 
+let asyncGetters: Context.entityGetters = {
+{{#each entities as | entity |}}
+ get{{entity.name.capitalized}}: id => DbFunctions.{{entity.name.capitalized}}.readEntities(DbFunctions.sql, [id]),
+{{/each}}
+}
+
 let rec loadReadEntitiesInner = async (
   ~inMemoryStore,
   ~eventBatch: array<Types.eventBatchQueueItem>,
@@ -279,7 +285,7 @@ let rec loadReadEntitiesInner = async (
         {{#each contracts as | contract |}}
         {{#each contract.events as | event |}}
           | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
-            let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~inMemoryStore, ~chainId, ~event, ~logger)
+            let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~inMemoryStore, ~chainId, ~event, ~logger, ~asyncGetters)
 
             let context = contextHelper.getLoaderContext()
 

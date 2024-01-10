@@ -65,6 +65,7 @@ describe("Linked Entity Loader Integration Test", () => {
       ~chainId=123,
       ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
       ~logger=Logging.logger,
+      ~asyncGetters=EventProcessing.asyncGetters,
     )
 
     let loaderContext = context.getLoaderContext()
@@ -133,6 +134,7 @@ describe("Linked Entity Loader Integration Test", () => {
       ~chainId=123,
       ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
       ~logger=Logging.logger,
+      ~asyncGetters=EventProcessing.asyncGetters,
     )
 
     let loaderContext = context.getLoaderContext()

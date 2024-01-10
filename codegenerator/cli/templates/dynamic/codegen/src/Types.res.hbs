@@ -62,7 +62,7 @@ type {{entity.name.uncapitalized}}Entity = {
   {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}: {{param.type_rescript_nullable}}, {{/unless}}
   {{/each}}
 }
-
+ 
 {{/each}}
 type entity = 
 {{#each entities as | entity |}}
@@ -200,7 +200,7 @@ module {{event.name.capitalized}}Event = {
     {{/each}}
 
     @genType
-    type handlerContextSync = {
+    type handlerContext = {
       log: Logs.userLogger,
       {{#each ../../entities as | entity |}}
         @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,

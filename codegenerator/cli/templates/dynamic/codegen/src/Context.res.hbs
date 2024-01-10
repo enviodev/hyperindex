@@ -1,3 +1,9 @@
+type entityGetters = {
+{{#each entities as | entity |}}
+ get{{entity.name.capitalized}}: Types.id => promise<array<Types.{{entity.name.uncapitalized}}Entity>>,
+{{/each}}
+}
+
 @genType
 type genericContextCreatorFunctions<'loaderContext, 'handlerContextSync, 'handlerContextAsync> = {
   log: Logs.userLogger,
@@ -13,6 +19,7 @@ type contextCreator<'eventArgs, 'loaderContext, 'handlerContext, 'handlerContext
   ~chainId: int,
   ~event: Types.eventLog<'eventArgs>,
   ~logger: Pino.t,
+  ~asyncGetters: entityGetters,
 ) => genericContextCreatorFunctions<'loaderContext, 'handlerContext, 'handlerContextAsync>
 
 {{#each contracts as | contract |}}
@@ -22,20 +29,20 @@ module {{contract.name.capitalized}}Contract = {
 
   module {{event.name.capitalized}}Event = {
     type loaderContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
-    type handlerContextSync = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContextSync
+    type handlerContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext
     type handlerContextAsync = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContextAsync
     type context = genericContextCreatorFunctions<
       loaderContext,
-      handlerContextSync,
+      handlerContext,
       handlerContextAsync,
     >
 
     let contextCreator: contextCreator<
       Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
       loaderContext,
-      handlerContextSync,
+      handlerContext,
       handlerContextAsync,
-    > = (~inMemoryStore, ~chainId, ~event, ~logger) => {
+    > = (~inMemoryStore, ~chainId, ~event, ~logger, ~asyncGetters) => {
       // NOTE: we could optimise this code to onle create a logger if there was a log called.
       let logger = logger->Logging.createChildFrom(
         ~logger=_,
@@ -138,7 +145,7 @@ module {{contract.name.capitalized}}Contract = {
 
       //handler context must be defined as a getter functoin so that it can construct the context
       //without stale values whenever it is used
-      let getHandlerContextSync: unit => handlerContextSync = () => {
+      let getHandlerContextSync: unit => handlerContext = () => {
           {{#each ../../entities as | entity |}}
             {{#each event.required_entities as | required_entity |}}
               {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
@@ -248,7 +255,7 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
         }
       }
 
-      let getHandlerContextAsync: unit => handlerContextAsync = () => {
+      let getHandlerContextAsync= (): handlerContextAsync => {
           {{#each ../../entities as | entity |}}
             {{#each event.required_entities as | required_entity |}}
               {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
@@ -298,16 +305,11 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
                     if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
                       inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
                     } else {
-                      // TODO: return an error if used within a 'sync' context.
-                      Logging.warn(
-                        `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
-                      )
-
                       // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
                       switch inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id) {
                       | Some(entity) => Some(entity)
                       | None =>
-                        let entities = await DbFunctions.{{required_entity.name.capitalized}}.readEntities(DbFunctions.sql, [id])
+                        let entities = await asyncGetters.get{{required_entity.name.capitalized}}(id)
 
                         switch entities->Belt.Array.get(0) {
                         | Some(entity) =>
@@ -373,7 +375,7 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
           {{/each}}
         }
       }
-      
+
       {
         log: contextLogger,
         getEntitiesToLoad: () => entitiesToLoad,
