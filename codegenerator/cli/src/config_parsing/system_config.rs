@@ -378,6 +378,7 @@ impl Contract {
 pub struct Event {
     pub event: EthAbiEvent,
     pub required_entities: Vec<human_config::RequiredEntity>,
+    pub is_async: bool,
 }
 
 impl Event {
@@ -401,10 +402,12 @@ impl Event {
                 })
                 .collect()
         });
+        let is_async = human_cfg_event.is_async.unwrap_or_else(|| false);
 
         Ok(Event {
             event,
             required_entities,
+            is_async,
         })
     }
 }

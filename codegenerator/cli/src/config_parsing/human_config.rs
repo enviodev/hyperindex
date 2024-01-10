@@ -211,6 +211,8 @@ impl LocalContractConfig {
 pub struct ConfigEvent {
     pub event: EventNameOrSig,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_async: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub required_entities: Option<Vec<RequiredEntity>>,
 }
 

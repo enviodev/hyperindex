@@ -284,6 +284,7 @@ pub struct EventTemplate {
     pub event_type: EventType,
     pub params: Vec<EventParamTypeTemplate>,
     pub required_entities: Vec<RequiredEntityTemplate>,
+    pub is_async: bool,
 }
 
 impl EventTemplate {
@@ -360,6 +361,7 @@ impl EventTemplate {
             event_type: EventType::new(contract_name.clone(), config_event.event.name.clone()),
             params,
             required_entities,
+            is_async: config_event.is_async,
         })
     }
 }
@@ -858,6 +860,7 @@ mod test {
                     filtered_not_derived_from: vec![],
                 },
             }],
+            is_async: false,
         };
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
@@ -903,6 +906,7 @@ mod test {
                 array_labels: None,
                 entity_fields_of_required_entity: FilteredTemplateLists::empty(),
             }],
+            is_async: false,
         };
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);

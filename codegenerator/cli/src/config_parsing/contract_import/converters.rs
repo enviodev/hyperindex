@@ -201,6 +201,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                 .map(|event| human_config::ConfigEvent {
                     event: EventNameOrSig::Event(event.clone()),
                     required_entities: None,
+                    is_async: None,
                 })
                 .collect();
 
