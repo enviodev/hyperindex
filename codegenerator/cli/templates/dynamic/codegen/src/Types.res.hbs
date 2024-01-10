@@ -277,6 +277,18 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{/each}}
 }
 
+exception UnknownEvent(string, string)
+let eventTopicToEventName = (contractName, topic0) =>
+  switch (contractName, topic0) {
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+  | ("{{contract.name.capitalized}}", "{{event.topic0}}") => {{event.event_type.full}}
+{{/each}}
+{{/each}}
+  | (contractName, topic0) => UnknownEvent(contractName, topic0)->raise
+  }
+
+
 @genType
 type chainId = int
 

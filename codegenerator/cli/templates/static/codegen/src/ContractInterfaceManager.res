@@ -28,6 +28,12 @@ let make = (
   {contractAddressMapping, contractNameInterfaceMapping}
 }
 
+let getAbiMapping = (self: t) => {
+  self.contractAddressMapping.nameByAddress->Js.Dict.entries->Belt.Array.keepMap(((addr, name)) => {
+    self.contractNameInterfaceMapping->Js.Dict.get(name)->Belt.Option.map(v => (addr, v.abi))
+  })->Js.Dict.fromArray
+}
+
 let getInterfaceByName = (self: t, ~contractName) =>
   self.contractNameInterfaceMapping->Js.Dict.get(contractName)
 

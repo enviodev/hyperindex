@@ -239,32 +239,35 @@ let fetchBlockRange = async (
 
   let parsingTimeRef = Hrtime.makeTimer()
   //Parse page items into queue items
+  let decoder =
+    contractInterfaceManager
+    ->ContractInterfaceManager.getAbiMapping
+    ->HyperSyncClient.Decoder.make
+
+  //Parse page items into queue items
+  let parsedEvents = await decoder->HyperSyncClient.Decoder.decodeEvents(pageUnsafe.events)
+
   let parsedQueueItems =
-    await pageUnsafe.items
-    //Defer all this parsing into separate deferred callbacks
-    //on the macro task queue so that parsing doesn't block the
-    //event loop and each parse happens as a macro task. Meaning
-    //promise resolves will take priority
-    ->Deferred.mapArrayDeferred((item, resolve, reject) => {
-      switch Converters.parseEvent(
-        ~log=item.log,
-        ~blockTimestamp=item.blockTimestamp,
-        ~contractInterfaceManager,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-      ) {
-      | Ok(parsed) =>
-        let queueItem: Types.eventBatchQueueItem = {
-          timestamp: item.blockTimestamp,
-          chain,
-          blockNumber: item.log.blockNumber,
-          logIndex: item.log.logIndex,
-          event: parsed,
-        }
-        resolve(queueItem)
-      | Error(e) => reject(Converters.ParseEventErrorExn(e))
+    pageUnsafe.items
+    ->Belt.Array.zip(parsedEvents)
+    ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
+      {
+        timestamp: item.blockTimestamp,
+        chain,
+        blockNumber: item.log.blockNumber,
+        logIndex: item.log.logIndex,
+        event: event
+        ->Belt.Option.getExn
+        ->Converters.convertDecodedEvent(
+          ~contractInterfaceManager,
+          ~log=item.log,
+          ~blockTimestamp=item.blockTimestamp,
+          ~chainId=chain->ChainMap.Chain.toChainId,
+        )
+        ->Belt.Result.getExn,
       }
     })
-    ->Deferred.asPromise
+
 
   let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 

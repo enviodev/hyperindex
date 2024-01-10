@@ -12,6 +12,7 @@ use crate::{
     template_dirs::TemplateDirs,
 };
 use anyhow::{anyhow, Context, Result};
+use ethers::abi::{EventExt, Event};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -291,6 +292,7 @@ pub struct EventTemplate {
     pub body_params: Vec<EventParamTypeTemplate>,
     pub required_entities: Vec<RequiredEntityTemplate>,
     pub is_async: bool,
+    pub topic0: String,
 }
 
 impl EventTemplate {
@@ -378,6 +380,8 @@ impl EventTemplate {
             })
             .collect::<Result<_>>()?;
 
+        let topic0 = event_selector(&config_event.event);
+
         Ok(EventTemplate {
             name,
             event_type: EventType::new(contract_name.clone(), config_event.event.name.clone()),
@@ -386,8 +390,15 @@ impl EventTemplate {
             is_async: config_event.is_async,
             body_params,
             indexed_params,
+            topic0,
         })
     }
+}
+
+fn event_selector(event: &Event) -> String {
+    ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
+        event.abi_signature().as_bytes(),
+    ))
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -853,6 +864,7 @@ mod test {
                 full: "Contract1_NewGravatar".to_string(),
                 truncated_for_pg_enum_limit: "Contract1_NewGravatar".to_string(),
             },
+            topic0: new_gavatar_event_template.topic0,
             params: vec![
                 EventParamTypeTemplate {
                     param_name: "id".to_string().to_capitalized_options(),

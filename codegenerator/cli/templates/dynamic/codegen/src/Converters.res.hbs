@@ -139,9 +139,11 @@ module {{contract.name.capitalized}} = {
     }
   {{/if}}
 
-  let convert{{event.name.capitalized}}DecodedEventParams = (
-    decodedEvent: HyperSyncClient.Decoder.decodedEvent<'a>,
+  let convert{{event.name.capitalized}}DecodedEventParams = ( 
+  {{!-- Add underscore if there are no params, to avoid compiler warning of unused argument --}}
+    {{#unless event.params[0]}}_{{/unless}}decodedEvent: HyperSyncClient.Decoder.decodedEvent<'a>,
   ): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs => {
+    {{#if event.params[0]}}{{!--Only create this body if there are params.  Otherwise its always unit--}}
     {{#if event.indexed_params[0]}}
       let {
         {{#each event.indexed_params as | param |}}
@@ -163,6 +165,9 @@ module {{contract.name.capitalized}} = {
         {{param.param_name.uncapitalized}}: {{param.param_name.uncapitalized}}->getVal(getVal),
       {{/each}}
     }
+    {{else}}
+      ()
+    {{/if}}
   }
 {{/each}}
 }
@@ -205,6 +210,50 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chain
 
       Ok(event)
     }
+  }
+}
+
+let makeEventLog = (
+  params: 'args,
+  ~log: Ethers.log,
+  ~blockTimestamp: int,
+  ~chainId: int,
+): Types.eventLog<'args> => {
+  chainId,
+  params,
+  blockNumber: log.blockNumber,
+  blockTimestamp,
+  blockHash: log.blockHash,
+  srcAddress: log.address,
+  transactionHash: log.transactionHash,
+  transactionIndex: log.transactionIndex,
+  logIndex: log.logIndex,
+}
+
+let convertDecodedEvent = (
+  event: HyperSyncClient.Decoder.decodedEvent<'t>,
+  ~contractInterfaceManager,
+  ~log: Ethers.log,
+  ~blockTimestamp,
+  ~chainId,
+): result<Types.event, _> => {
+  switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
+    ~contractAddress=log.address,
+  ) {
+  | None => Error(UnregisteredContract(log.address))
+  | Some(contractName) =>
+    let event = switch Types.eventTopicToEventName(contractName, log.topics[0]) {
+      {{#each codegen_contracts as |contract|}}
+      {{#each contract.codegen_events as |event|}}
+        | {{event.event_type.full}} =>
+            event
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}DecodedEventParams
+            ->makeEventLog(~log, ~blockTimestamp, ~chainId)
+            ->Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}
+      {{/each}}
+     {{/each}}
+    }
+    Ok(event)
   }
 }
 

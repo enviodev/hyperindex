@@ -14,51 +14,51 @@ module QueryTypes = {
   type blockFieldOptions =
     | @spice.as("number") Number
     | @spice.as("hash") Hash
-    | @spice.as("parentHash") ParentHash
+    | @spice.as("parent_hash") ParentHash
     | @spice.as("nonce") Nonce
-    | @spice.as("sha3Uncles") Sha3Uncles
-    | @spice.as("logsBloom") LogsBloom
-    | @spice.as("transactionsRoot") TransactionsRoot
-    | @spice.as("stateRoot") StateRoot
-    | @spice.as("receiptsRoot") ReceiptsRoot
+    | @spice.as("sha3_uncles") Sha3Uncles
+    | @spice.as("logs_bloom") LogsBloom
+    | @spice.as("transactions_root") TransactionsRoot
+    | @spice.as("state_root") StateRoot
+    | @spice.as("receipts_root") ReceiptsRoot
     | @spice.as("miner") Miner
     | @spice.as("difficulty") Difficulty
-    | @spice.as("totalDifficulty") TotalDifficulty
-    | @spice.as("extraData") ExtraData
+    | @spice.as("total_difficulty") TotalDifficulty
+    | @spice.as("extra_data") ExtraData
     | @spice.as("size") Size
-    | @spice.as("gasLimit") GasLimit
-    | @spice.as("gasUsed") GasUsed
+    | @spice.as("gas_limit") GasLimit
+    | @spice.as("gas_used") GasUsed
     | @spice.as("timestamp") Timestamp
     | @spice.as("uncles") Uncles
-    | @spice.as("baseFeePerGas") BaseFeePerGas
+    | @spice.as("base_fee_per_gas") BaseFeePerGas
 
   @spice
   type blockFieldSelection = array<blockFieldOptions>
 
   @spice
   type transactionFieldOptions =
-    | @spice.as("blockHash") BlockHash
-    | @spice.as("blockNumber") BlockNumber
+    | @spice.as("block_hash") BlockHash
+    | @spice.as("block_number") BlockNumber
     | @spice.as("from") From
     | @spice.as("gas") Gas
-    | @spice.as("gasPrice") GasPrice
+    | @spice.as("gas_price") GasPrice
     | @spice.as("hash") Hash
     | @spice.as("input") Input
     | @spice.as("nonce") Nonce
     | @spice.as("to") To
-    | @spice.as("transactionIndex") TransactionIndex
+    | @spice.as("transaction_index") TransactionIndex
     | @spice.as("value") Value
     | @spice.as("v") V
     | @spice.as("r") R
     | @spice.as("s") S
-    | @spice.as("maxPriorityFeePerGas") MaxPriorityFeePerGas
-    | @spice.as("maxFeePerGas") MaxFeePerGas
+    | @spice.as("max_priority_fee_per_gas") MaxPriorityFeePerGas
+    | @spice.as("max_fee_per_gas") MaxFeePerGas
     | @spice.as("chainId") ChainId
-    | @spice.as("cumulativeGasUsed") CumulativeGasUsed
-    | @spice.as("effectiveGasPrice") EffectiveGasPrice
-    | @spice.as("gasUsed") GasUsed
-    | @spice.as("contractAddress") ContractAddress
-    | @spice.as("logsBloom") LogsBloom
+    | @spice.as("cumulative_gas_used") CumulativeGasUsed
+    | @spice.as("effective_gas_price") EffectiveGasPrice
+    | @spice.as("gas_used") GasUsed
+    | @spice.as("contract_address") ContractAddress
+    | @spice.as("logs_bloom") LogsBloom
     | @spice.as("type") Type
     | @spice.as("root") Root
     | @spice.as("status") Status
@@ -70,11 +70,11 @@ module QueryTypes = {
   @spice
   type logFieldOptions =
     | @spice.as("removed") Removed
-    | @spice.as("logIndex") LogIndex
-    | @spice.as("transactionIndex") TransactionIndex
-    | @spice.as("transactionHash") TransactionHash
-    | @spice.as("blockHash") BlockHash
-    | @spice.as("blockNumber") BlockNumber
+    | @spice.as("log_index") LogIndex
+    | @spice.as("transaction_index") TransactionIndex
+    | @spice.as("transaction_hash") TransactionHash
+    | @spice.as("block_hash") BlockHash
+    | @spice.as("block_number") BlockNumber
     | @spice.as("address") Address
     | @spice.as("data") Data
     | @spice.as("topic0") Topic0
@@ -221,8 +221,11 @@ let make = (cfg: cfg) => {
   constructor->make(cfg_with_token)
 }
 
-let sendEventsReq = (self: t, req: QueryTypes.postQueryBody) => {
-  self->Internal.sendEventsReq(req->QueryTypes.postQueryBody_encode)
+let sendEventsReq = async (self: t, req: QueryTypes.postQueryBody) => {
+  let body = req->QueryTypes.postQueryBody_encode
+  let res = await self->Internal.sendEventsReq(body)
+
+  res
 }
 
 module Decoder = {
