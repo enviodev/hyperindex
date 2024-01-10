@@ -5,7 +5,7 @@ use crate::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
         human_config::{
             self, ConfigEvent, EventNameOrSig, GlobalContractConfig, HumanConfig,
-            LocalContractConfig, RequiredEntity, RpcConfig, SyncSourceConfig,
+            LocalContractConfig, RpcConfig, SyncSourceConfig,
         },
     },
     utils::{address_type::Address, unique_hashmap},

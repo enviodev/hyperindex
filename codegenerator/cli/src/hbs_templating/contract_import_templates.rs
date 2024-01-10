@@ -91,14 +91,15 @@ mod nested_params {
 
     impl FlattenedEventParam {
         ///Gets a named paramter or constructs a name using the parameter's index
-        ///if the param is nameless
+        ///if the param is nameless or equal to "id"
         fn get_param_name(&self) -> String {
             match &self.event_param.name {
                 name if name.is_empty() => format!("_{}", self.event_param_pos),
+                name if name == "id" => format!("event_id"),
                 name => name.clone(),
             }
         }
-        ///Gets the key of the param for the entity representing thes event
+        ///Gets the key of the param for the entity representing the event
         ///If this is not a tuple it will be the same as the "event_param_key"
         ///eg. MyEventEntity has a param called myTupleParam_1_2, where as the
         ///event_param_key is myTupleParam with accessor_indexes of [1, 2]
@@ -412,6 +413,12 @@ mod test {
                 ]),
                 indexed: false,
             },
+            EventParam {
+                //param named "id" should compute to "event_id"
+                name: "id".to_string(),
+                kind: ParamType::String,
+                indexed: false,
+            },
         ];
 
         let expected_flat_inputs = vec![
@@ -419,6 +426,7 @@ mod test {
             FlattenedEventParam::new("myTupleParam", ParamType::Uint(8), false, vec![0, 0], 1),
             FlattenedEventParam::new("myTupleParam", ParamType::Uint(8), false, vec![0, 1], 1),
             FlattenedEventParam::new("myTupleParam", ParamType::Bool, false, vec![1], 1),
+            FlattenedEventParam::new("id", ParamType::String, false, vec![], 2),
         ];
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
         assert_eq!(expected_flat_inputs, actual_flat_inputs);
@@ -428,6 +436,7 @@ mod test {
             "myTupleParam_0_0",
             "myTupleParam_0_1",
             "myTupleParam_1",
+            "event_id",
         ]
         .into_iter()
         .map(|s| s.to_string().to_capitalized_options())
