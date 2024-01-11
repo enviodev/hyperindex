@@ -22,6 +22,9 @@ type contextCreator<'eventArgs, 'loaderContext, 'handlerContext, 'handlerContext
   ~asyncGetters: entityGetters,
 ) => genericContextCreatorFunctions<'loaderContext, 'handlerContext, 'handlerContextAsync>
 
+exception UnableToLoadNonNullableLinkedEntity(string)
+exception LinkedEntityNotAvailableInSyncHandler(string)
+
 {{#each contracts as | contract |}}
 
 module {{contract.name.capitalized}}Contract = {
@@ -216,12 +219,19 @@ module {{contract.name.capitalized}}Contract = {
                     switch optEntity {
                   | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
                   | None =>
-                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+                Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
 Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
 `)
-            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
-            "NOT_IMPLEMENTED_YET"->Obj.magic
-          }})
+
+                raise(
+                  LinkedEntityNotAvailableInSyncHandler(
+                    "The required linked entity of {{entity.name.capitalized}} is undefined.",
+                  ),
+                )
+              }
+            }
+          }
+        })
           {{entity_field.relational_key.uncapitalized}}Array
                 {{else}}
                 {{#if entity_field.is_optional}}
@@ -240,9 +250,13 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
                     Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
 Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
 `)
-            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
-            "NOT_IMPLEMENTED_YET"->Obj.magic
-          }
+
+                raise(
+                  LinkedEntityNotAvailableInSyncHandler(
+                    "The required linked entity of {{entity.name.capitalized}} is undefined.",
+                  ),
+                )
+                 }
           {{#if entity_field.is_optional}})->Some
           | None => None
           }
@@ -330,41 +344,57 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
               {{/each}}
               {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
               get{{entity_field.relational_key.capitalized}}: async {{entity.name.uncapitalized}} => {
-                {{#if entity_field.is_array}} // NOTE: This case is now impossible since we don't do entity arrays, keeping here since we intend to implement derivedFrom entity loading.
-                  let {{entity_field.relational_key.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Array.map(entityId => {
-                    let optEntity = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get(entityId)
+                {{#if entity_field.is_array}}
+                ////// NOTE: This case is now impossible since we don't do entity arrays, keeping here since we intend to implement derivedFrom entity loading.
+                ////  let {{entity_field.relational_key.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}->Belt.Array.map(entityId => {
+                ////    let optEntity = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get(entityId)
 
-                    switch optEntity {
-                  | Some({{entity_field.relational_key.uncapitalized}}) => Promise.resolve({{entity_field.relational_key.uncapitalized}})
-                  | None =>
-                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
-Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
-`)
-            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
-            "NOT_IMPLEMENTED_YET"->Obj.magic
-          }})
-          {{entity_field.relational_key.uncapitalized}}Array
+                ////    switch optEntity {
+                ////    | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
+                ////    | None =>  /*is something meant to be here?*/None //... What// Arrays aren't implemented
+                ////    }
+                ////})
+                ////{{entity_field.relational_key.uncapitalized}}Array
                 {{else}}
                 {{#if entity_field.is_optional}}
                  switch {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}} {
                   | Some({{entity_field.relational_key.uncapitalized}}_field) =>
                     // TODO: we aren't handling the case where the code is an optional array. Maybe we should enforce that at the compile step, and force users to use an empty array instead.
                     let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity_field.relational_key.uncapitalized}}_field)
-
-                    (
+                 
                 {{else}}
-                  let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}})
+                  let {{entity_field.relational_key.uncapitalized}}_field = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}
+                  let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity_field.relational_key.uncapitalized}}_field)
                 {{/if}}
                   switch opt{{entity_field.relational_key.capitalized}} {
                   | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
-                  | None =>
-                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
-Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+                  | None => 
+                    let entities = await asyncGetters.get{{entity_field.mapped_entity.capitalized}}({{entity_field.relational_key.uncapitalized}}_field)
+
+                    switch entities->Belt.Array.get(0) {
+                    | Some(entity) =>
+                      // TODO: make this work with the test framework too.
+                      IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.set(
+                        inMemoryStore.{{entity_field.mapped_entity.uncapitalized}},
+                        ~key=entity.id,
+                        ~dbOp=Types.Read,
+                        ~entity,
+                      )
+                      entity
+                    | None =>
+                      Logging.error(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+This is likely due to a database corruption. Please reach out to the team on discord.
 `)
-            // TODO: this isn't implemented yet. We should fetch a {{entity_field.mapped_entity.uncapitalized}} with this ID from the database.
-            "NOT_IMPLEMENTED_YET"->Obj.magic
-          }
-          {{#if entity_field.is_optional}})->Some
+
+                  raise(
+                    UnableToLoadNonNullableLinkedEntity(
+                      "The required linked entity {{entity_field.relational_key.uncapitalized}} of {{entity.name.capitalized}} is undefined.",
+                    ),
+                  )
+                }
+               }
+          {{#if entity_field.is_optional}}
+          ->Some
           | None => None
           }
           {{/if}}
