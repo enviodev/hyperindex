@@ -78,3 +78,30 @@ Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
 
   context.gravatar.set(gravatar)
 })
+
+let aIdWithGrandChildC = "aIdWithGrandChildC"
+let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
+
+Handlers.GravatarContract.TestEventThatCopiesBigIntViaLinkedEntities.handlerAsync(async (
+  ~event as _,
+  ~context,
+) => {
+  let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
+    switch await context.a.get(idOfGrandparent) {
+    | Some(a) =>
+      let b = await a->context.a.getB
+
+      switch await b->context.b.getC {
+      | Some(cWithText) =>
+        context.a.set({
+          ...a,
+          optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
+        })
+      | None => ()
+      }
+    | None => ()
+    }
+
+  await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
+  await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
+})

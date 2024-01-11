@@ -29,16 +29,16 @@ describe("Linked Entity Loader Integration Test", () => {
   MochaPromise.it("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
     let sql = DbFunctions.sql
     /// Setup DB
-    let a1: Types.aEntity = {optionalBigInt: None, id: "a1", b: "b1"}
-    let a2: Types.aEntity = {optionalBigInt: None, id: "a2", b: "b2"}
+    let a1: Types.aEntity = {optionalStringToTestLinkedEntities: None, id: "a1", b: "b1"}
+    let a2: Types.aEntity = {optionalStringToTestLinkedEntities: None, id: "a2", b: "b2"}
     let aEntities: array<Types.aEntity> = [
       a1,
       a2,
-      {optionalBigInt: None, id: "a3", b: "b3"},
-      {optionalBigInt: None, id: "a4", b: "b4"},
-      {optionalBigInt: None, id: "a5", b: "bWontLoad"},
-      {optionalBigInt: None, id: "a6", b: "bWontLoad"},
-      {optionalBigInt: None, id: "aWontLoad", b: "bWontLoad"},
+      {optionalStringToTestLinkedEntities: None, id: "a3", b: "b3"},
+      {optionalStringToTestLinkedEntities: None, id: "a4", b: "b4"},
+      {optionalStringToTestLinkedEntities: None, id: "a5", b: "bWontLoad"},
+      {optionalStringToTestLinkedEntities: None, id: "a6", b: "bWontLoad"},
+      {optionalStringToTestLinkedEntities: None, id: "aWontLoad", b: "bWontLoad"},
     ]
     let bEntities: array<Types.bEntity> = [
       {id: "b1", c: Some("c1")},
@@ -48,10 +48,10 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "bWontLoad", c: None},
     ]
     let cEntities: array<Types.cEntity> = [
-      {id: "c1", a: "aWontLoad"},
-      {id: "c2", a: "a5"},
-      {id: "c3", a: "a6"},
-      {id: "TODO_TURN_THIS_INTO_NONE", a: "aWontLoad"},
+      {id: "c1", a: "aWontLoad", stringThatIsMirroredToA: ""},
+      {id: "c2", a: "a5", stringThatIsMirroredToA: ""},
+      {id: "c3", a: "a6", stringThatIsMirroredToA: ""},
+      {id: "TODO_TURN_THIS_INTO_NONE", a: "aWontLoad", stringThatIsMirroredToA: ""},
     ]
 
     await DbFunctions.A.batchSet(sql, aEntities->Belt.Array.map(Types.aEntity_encode))
@@ -113,16 +113,16 @@ describe("Linked Entity Loader Integration Test", () => {
     }
 
     /// Setup DB
-    let a1: Types.aEntity = {id: "a1", b: "b1", optionalBigInt: None}
+    let a1: Types.aEntity = {id: "a1", b: "b1", optionalStringToTestLinkedEntities: None}
     let aEntities: array<Types.aEntity> = [
       a1,
-      {id: "a2", b: "b1", optionalBigInt: None},
-      {id: "a3", b: "b1", optionalBigInt: None},
-      {id: "a4", b: "b1", optionalBigInt: None},
-      {id: "aWontLoad", b: "bWontLoad", optionalBigInt: None},
+      {id: "a2", b: "b1", optionalStringToTestLinkedEntities: None},
+      {id: "a3", b: "b1", optionalStringToTestLinkedEntities: None},
+      {id: "a4", b: "b1", optionalStringToTestLinkedEntities: None},
+      {id: "aWontLoad", b: "bWontLoad", optionalStringToTestLinkedEntities: None},
     ]
     let bEntities: array<Types.bEntity> = [{id: "b1", c: Some("c1")}, {id: "bWontLoad", c: None}]
-    let cEntities: array<Types.cEntity> = [{id: "c1", a: "aWontLoad"}]
+    let cEntities: array<Types.cEntity> = [{id: "c1", a: "aWontLoad", stringThatIsMirroredToA: ""}]
 
     await DbFunctions.A.batchSet(sql, aEntities->Belt.Array.map(createEventA))
     await DbFunctions.B.batchSet(sql, bEntities->Belt.Array.map(createEventB))
@@ -168,5 +168,65 @@ describe("Linked Entity Loader Integration Test", () => {
 
     let resultBWontLoad = inMemoryStore.b->IO.InMemoryStore.B.get("bWontLoad")
     Assert.equal(resultBWontLoad, None, ~message="bWontLoad should not be in the store")
+  })
+})
+describe("Async linked entity loaders", () => {
+  Promise.it("should update the big int to be the same ", async () => {
+    // Initializing values for mock db
+    let messageFromC = "Hi there I was in C originally"
+    // mockDbInitial->Testhelpers.MockDb.
+    let c: Types.cEntity = {
+      id: "hasStringToCopy",
+      stringThatIsMirroredToA: messageFromC,
+      a: "",
+    }
+    let b: Types.bEntity = {
+      id: "hasC",
+      c: Some(c.id),
+    }
+    let a: Types.aEntity = {
+      id: EventHandlers.aIdWithGrandChildC,
+      b: b.id,
+      optionalStringToTestLinkedEntities: None,
+    }
+    let bNoC: Types.bEntity = {
+      id: "noC",
+      c: None,
+    }
+    let aNoGrandchild: Types.aEntity = {
+      id: EventHandlers.aIdWithNoGrandChildC,
+      b: bNoC.id,
+      optionalStringToTestLinkedEntities: None,
+    }
+    // Initializing the mock database
+    let mockDbInitial = TestHelpers.MockDb.createMockDb().entities.a.set(a).entities.a.set(
+      aNoGrandchild,
+    ).entities.b.set(b).entities.b.set(bNoC).entities.c.set(c)
+
+    // Creating a mock event
+    let mockNewGreetingEvent = TestHelpers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.createMockEvent({
+      param_that_should_be_removed_when_issue_1026_is_fixed: "",
+    })
+
+    // Processing the mock event on the mock database
+    let updatedMockDb = await TestHelpers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.processEventAsync({
+      event: mockNewGreetingEvent,
+      mockDb: mockDbInitial,
+    })
+
+    // Expected string copied from C
+    let stringInAFromC =
+      updatedMockDb.entities.a.get(EventHandlers.aIdWithGrandChildC)->Belt.Option.flatMap(
+        a => a.optionalStringToTestLinkedEntities,
+      )
+    Assert.deep_equal(stringInAFromC, Some(messageFromC))
+
+    // Expected string to be null still since no c grandchild.
+    let optionalStringToTestLinkedEntitiesNoGrandchild =
+      updatedMockDb.entities.a.get(EventHandlers.aIdWithNoGrandChildC)->Belt.Option.flatMap(
+        a => a.optionalStringToTestLinkedEntities,
+      )
+    Js.log(optionalStringToTestLinkedEntitiesNoGrandchild)
+    Assert.deep_equal(optionalStringToTestLinkedEntitiesNoGrandchild, None)
   })
 })

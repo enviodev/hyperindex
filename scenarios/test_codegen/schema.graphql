@@ -34,7 +34,7 @@ type Token {
 type A {
   id: ID!
   b: B!
-  optionalBigInt: BigInt
+  optionalStringToTestLinkedEntities: String
 }
 type B {
   id: ID!
@@ -44,4 +44,5 @@ type B {
 type C {
   id: ID!
   a: A!
+  stringThatIsMirroredToA: String!
 }

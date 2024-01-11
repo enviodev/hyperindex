@@ -19,6 +19,10 @@ networks:
         handler: ./src/EventHandlers.bs.js
         events:
           - event: "TestEventWithLongNameBeyondThePostgresEnumCharacterLimit(address testField)"
+          - event: "TestEventThatCopiesBigIntViaLinkedEntities(string param_that_should_be_removed_when_issue_1026_is_fixed)"
+            isAsync: true
+            requiredEntities:
+              - name: A
           - event: "TestEvent"
             requiredEntities:
               - name: "A"
