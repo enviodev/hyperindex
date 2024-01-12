@@ -237,6 +237,8 @@ let trackAllTables = async () => {
   let _ = await createSelectPermissions(~tableName="chain_metadata")
   let _ = await trackTable(~tableName="dynamic_contract_registry")
   let _ = await createSelectPermissions(~tableName="dynamic_contract_registry")
+  let _ = await trackTable(~tableName="persisted_state")
+  let _ = await createSelectPermissions(~tableName="persisted_state")
   let _ = await trackTable(~tableName="event_sync_state")
   let _ = await createSelectPermissions(~tableName="event_sync_state")
   {{#each entities as |entity|}}
