@@ -39,12 +39,10 @@ module type S = {
 @@warnings("+27")
 
 module SkarWorker: S = HyperSyncWorker.Make(HyperSync.SkarHyperSync)
-module EthArchiveWorker: S = HyperSyncWorker.Make(HyperSync.EthArchiveHyperSync)
 
 type chainWorker =
   | Rpc(RpcWorker.t)
   | Skar(SkarWorker.t)
-  | EthArchive(EthArchiveWorker.t)
   | RawEvents(RawEventsWorker.t)
 
 module PolyMorphicChainWorkerFunctions = {
@@ -131,14 +129,12 @@ module PolyMorphicChainWorkerFunctions = {
   type chainWorkerMod =
     | RpcWorkerMod(chainWorkerModTuple<RpcWorker.t>)
     | SkarWorkerMod(chainWorkerModTuple<SkarWorker.t>)
-    | EthArchiveWorkerMod(chainWorkerModTuple<EthArchiveWorker.t>)
     | RawEventsWorkerMod(chainWorkerModTuple<RawEventsWorker.t>)
 
   let chainWorkerToChainMod = (worker: chainWorker) => {
     switch worker {
     | Rpc(w) => RpcWorkerMod((w, module(RpcWorker)))
     | Skar(w) => SkarWorkerMod((w, module(SkarWorker)))
-    | EthArchive(w) => EthArchiveWorkerMod((w, module(EthArchiveWorker)))
     | RawEvents(w) => RawEventsWorkerMod((w, module(RawEventsWorker)))
     }
   }
@@ -150,7 +146,6 @@ let startWorker = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->startWorker
   | SkarWorkerMod(w) => w->startWorker
-  | EthArchiveWorkerMod(w) => w->startWorker
   | RawEventsWorkerMod(w) => w->startWorker
   }
 }
@@ -161,7 +156,6 @@ let startFetchingEvents = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->startFetchingEvents
   | SkarWorkerMod(w) => w->startFetchingEvents
-  | EthArchiveWorkerMod(w) => w->startFetchingEvents
   | RawEventsWorkerMod(w) => w->startFetchingEvents
   }
 }
@@ -172,7 +166,6 @@ let addNewRangeQueriedCallback = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->addNewRangeQueriedCallback
   | SkarWorkerMod(w) => w->addNewRangeQueriedCallback
-  | EthArchiveWorkerMod(w) => w->addNewRangeQueriedCallback
   | RawEventsWorkerMod(w) => w->addNewRangeQueriedCallback
   }
 }
@@ -183,7 +176,6 @@ let getLatestFetchedBlockTimestamp = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   | SkarWorkerMod(w) => w->getLatestFetchedBlockTimestamp
-  | EthArchiveWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   | RawEventsWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   }
 }
@@ -194,7 +186,6 @@ let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   | SkarWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
-  | EthArchiveWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   | RawEventsWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   }
 }
@@ -203,7 +194,6 @@ type caughtUpToHeadCallback<'worker> = option<'worker => promise<unit>>
 type workerSelectionWithCallback =
   | RpcSelectedWithCallback(caughtUpToHeadCallback<RpcWorker.t>)
   | SkarSelectedWithCallback(caughtUpToHeadCallback<SkarWorker.t>)
-  | EthArchiveSelectedWithCallback(caughtUpToHeadCallback<EthArchiveWorker.t>)
   | RawEventsSelectedWithCallback(caughtUpToHeadCallback<RawEventsWorker.t>)
 
 let make = (
@@ -216,8 +206,6 @@ let make = (
     Rpc(RpcWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   | SkarSelectedWithCallback(caughtUpToHeadHook) =>
     Skar(SkarWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
-  | EthArchiveSelectedWithCallback(caughtUpToHeadHook) =>
-    EthArchive(EthArchiveWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   | RawEventsSelectedWithCallback(caughtUpToHeadHook) =>
     RawEvents(RawEventsWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   }

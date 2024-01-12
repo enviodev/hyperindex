@@ -17,7 +17,6 @@ let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawE
     switch chainConfig.syncSource {
     | Rpc(_) => ChainWorker.RpcSelectedWithCallback(noneCallback)
     | Skar(_) => ChainWorker.SkarSelectedWithCallback(noneCallback)
-    | EthArchive(_) => ChainWorker.EthArchiveSelectedWithCallback(noneCallback)
     }
   }
   let fetchedEventQueue = ChainEventQueue.make(~maxQueueSize)

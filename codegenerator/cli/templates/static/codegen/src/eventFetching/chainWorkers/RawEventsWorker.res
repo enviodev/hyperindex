@@ -95,7 +95,6 @@ let make = (~caughtUpToHeadHook=?, ~contractAddressMapping=?, chainConfig: Confi
     open SourceWorker
     switch chainConfig.syncSource {
     | Rpc(_) => Rpc(RpcWorker.make(~contractAddressMapping, chainConfig))
-    | EthArchive(_) => EthArchive(EthArchiveWorker.make(~contractAddressMapping, chainConfig))
     | Skar(_) => Skar(SkarWorker.make(~contractAddressMapping, chainConfig))
     }
   }
@@ -151,7 +150,10 @@ let startWorker = async (
       )
 
     let parsedEventsUnsafe =
-      page->Belt.Array.map(Converters.parseRawEvent(~chainId=self.chainId))->Utils.mapArrayOfResults->Belt.Result.getExn
+      page
+      ->Belt.Array.map(Converters.parseRawEvent(~chainId=self.chainId))
+      ->Utils.mapArrayOfResults
+      ->Belt.Result.getExn
 
     for i in 0 to parsedEventsUnsafe->Belt.Array.length - 1 {
       let parsedEvent = parsedEventsUnsafe[i]

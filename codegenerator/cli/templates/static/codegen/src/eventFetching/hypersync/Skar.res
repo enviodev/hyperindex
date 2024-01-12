@@ -219,4 +219,13 @@ let executeSkarQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBody): p
   )
 }
 
-let getArchiveHeight = EthArchive.getArchiveHeight
+let getArchiveHeight = async (~serverUrl): result<int, QueryHelpers.queryError> => {
+  let res = await QueryHelpers.executeFetchRequest(
+    ~endpoint=serverUrl ++ "/height",
+    ~method=#GET,
+    ~responseDecoder=ResponseTypes.heightResponse_decode,
+    (),
+  )
+
+  res->Belt.Result.map(res => res.height)
+}

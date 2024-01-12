@@ -154,8 +154,6 @@ module LogsQuery: HyperSyncTypes.LogsQuery = {
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
-    //Use ethArchive converter since the response is currently
-    //Using the same layout
     res->convertResponse
   }
 }
@@ -230,16 +228,48 @@ module BlockTimestampQuery: HyperSyncTypes.BlockTimestampQuery = {
 
     let res = await Skar.executeSkarQuery(~postQueryBody=body, ~serverUrl)
 
-    //Use ethArchive converter since the response is currently
-    //Using the same layout
     res->convertResponse
   }
 }
 
 module HeightQuery: HyperSyncTypes.HeightQuery = {
-  let getHeightWithRetry = EthArchiveQueryBuilder.HeightQuery.getHeightWithRetry
+  let getHeightWithRetry = async (~serverUrl, ~logger) => {
+    //Amount the retry interval is multiplied between each retry
+    let backOffMultiplicative = 2
+    //Interval after which to retry request (multiplied by backOffMultiplicative between each retry)
+    let retryIntervalMillis = ref(500)
+    //height to be set in loop
+    let height = ref(0)
 
-  //Poll for a height greater than the given blocknumber.
+    //Retry if the heigth is 0 (expect height to be greater)
+    while height.contents <= 0 {
+      let res = await Skar.getArchiveHeight(~serverUrl)
+      switch res {
+      | Ok(h) => height := h
+      | Error(e) =>
+        logger->Logging.childWarn({
+          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Belt.Int.toString}ms...`,
+          "error": e,
+        })
+        await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
+        retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
+      }
+    }
+
+    height.contents
+  }
+
+  //Poll for a height greater or equal to the given blocknumber.
   //Used for waiting until there is a new block to index
-  let pollForHeightGtOrEq = EthArchiveQueryBuilder.HeightQuery.pollForHeightGtOrEq
+  let pollForHeightGtOrEq = async (~serverUrl, ~blockNumber, ~logger) => {
+    let pollHeight = ref(await getHeightWithRetry(~serverUrl, ~logger))
+    let pollIntervalMillis = 100
+
+    while pollHeight.contents <= blockNumber {
+      await Time.resolvePromiseAfterDelay(~delayMilliseconds=pollIntervalMillis)
+      pollHeight := (await getHeightWithRetry(~serverUrl, ~logger))
+    }
+
+    pollHeight.contents
+  }
 }

@@ -9,6 +9,6 @@ networks:
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network
     start_block: 0
     contracts: []
-  - id: 59144 #Linea only on eth archive
+  - id: 59144 #Linea
     start_block: 0
     contracts: []

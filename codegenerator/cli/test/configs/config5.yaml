@@ -4,6 +4,6 @@ networks:
   - id: 2 #ID does not exist and no config provided
     start_block: 0
     contracts: []
-  - id: 1564830818 #SKALECalypso only on eth archive
+  - id: 1564830818 #SKALECalypso
     start_block: 0
     contracts: []

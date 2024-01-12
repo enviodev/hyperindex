@@ -32,12 +32,10 @@ module type S = {
 }
 
 module SkarWorker: S
-module EthArchiveWorker: S
 
 type chainWorker =
   | Rpc(RpcWorker.t)
   | Skar(SkarWorker.t)
-  | EthArchive(EthArchiveWorker.t)
   | RawEvents(RawEventsWorker.t)
 
 let startWorker: (
@@ -65,7 +63,6 @@ let addDynamicContractAndFetchMissingEvents: (
 type workerSelectionWithCallback =
   | RpcSelectedWithCallback(option<RpcWorker.t => promise<unit>>)
   | SkarSelectedWithCallback(option<SkarWorker.t => promise<unit>>)
-  | EthArchiveSelectedWithCallback(option<EthArchiveWorker.t => promise<unit>>)
   | RawEventsSelectedWithCallback(option<RawEventsWorker.t => promise<unit>>)
 
 let make: (

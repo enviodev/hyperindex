@@ -25,4 +25,3 @@ module MakeHyperSyncFromBuilder = (Builder: HyperSyncTypes.QueryBuilder): S => {
 }
 
 module SkarHyperSync = MakeHyperSyncFromBuilder(SkarQueryBuilder)
-module EthArchiveHyperSync = MakeHyperSyncFromBuilder(EthArchiveQueryBuilder)

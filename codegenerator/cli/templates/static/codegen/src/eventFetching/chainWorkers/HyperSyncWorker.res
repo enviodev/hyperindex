@@ -93,7 +93,6 @@ module Make = (HyperSync: HyperSync.S) => {
     }
 
     let serverUrl = switch chainConfig.syncSource {
-    | EthArchive(serverUrl)
     | Skar(serverUrl) => serverUrl
     | syncSource =>
       let exn = IncorrectSyncSource(syncSource)
@@ -330,12 +329,12 @@ module Make = (HyperSync: HyperSync.S) => {
           //event loop and each parse happens as a macro task. Meaning
           //promise resolves will take priority
           ->Deferred.mapArrayDeferred((item, resolve, reject) => {
-          switch Converters.parseEvent(
-            ~log=item.log,
-            ~blockTimestamp=item.blockTimestamp,
-            ~contractInterfaceManager,
-            ~chainId=self.chainConfig.chainId,
-          ) {
+            switch Converters.parseEvent(
+              ~log=item.log,
+              ~blockTimestamp=item.blockTimestamp,
+              ~contractInterfaceManager,
+              ~chainId=self.chainConfig.chainId,
+            ) {
             | Ok(parsed) =>
               let queueItem: Types.eventBatchQueueItem = {
                 timestamp: item.blockTimestamp,
