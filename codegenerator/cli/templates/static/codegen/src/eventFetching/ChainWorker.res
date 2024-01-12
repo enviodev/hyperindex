@@ -38,11 +38,9 @@ module type S = {
 
 @@warnings("+27")
 
-module SkarWorker: S = HyperSyncWorker.Make(HyperSync.SkarHyperSync)
-
 type chainWorker =
   | Rpc(RpcWorker.t)
-  | Skar(SkarWorker.t)
+  | HyperSync(HyperSyncWorker.t)
   | RawEvents(RawEventsWorker.t)
 
 module PolyMorphicChainWorkerFunctions = {
@@ -128,13 +126,13 @@ module PolyMorphicChainWorkerFunctions = {
 
   type chainWorkerMod =
     | RpcWorkerMod(chainWorkerModTuple<RpcWorker.t>)
-    | SkarWorkerMod(chainWorkerModTuple<SkarWorker.t>)
+    | HyperSyncWorkerMod(chainWorkerModTuple<HyperSyncWorker.t>)
     | RawEventsWorkerMod(chainWorkerModTuple<RawEventsWorker.t>)
 
   let chainWorkerToChainMod = (worker: chainWorker) => {
     switch worker {
     | Rpc(w) => RpcWorkerMod((w, module(RpcWorker)))
-    | Skar(w) => SkarWorkerMod((w, module(SkarWorker)))
+    | HyperSync(w) => HyperSyncWorkerMod((w, module(HyperSyncWorker)))
     | RawEvents(w) => RawEventsWorkerMod((w, module(RawEventsWorker)))
     }
   }
@@ -145,7 +143,7 @@ let startWorker = (worker: chainWorker) => {
   open PolyMorphicChainWorkerFunctions
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->startWorker
-  | SkarWorkerMod(w) => w->startWorker
+  | HyperSyncWorkerMod(w) => w->startWorker
   | RawEventsWorkerMod(w) => w->startWorker
   }
 }
@@ -155,7 +153,7 @@ let startFetchingEvents = (worker: chainWorker) => {
   open PolyMorphicChainWorkerFunctions
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->startFetchingEvents
-  | SkarWorkerMod(w) => w->startFetchingEvents
+  | HyperSyncWorkerMod(w) => w->startFetchingEvents
   | RawEventsWorkerMod(w) => w->startFetchingEvents
   }
 }
@@ -165,7 +163,7 @@ let addNewRangeQueriedCallback = (worker: chainWorker) => {
   open PolyMorphicChainWorkerFunctions
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->addNewRangeQueriedCallback
-  | SkarWorkerMod(w) => w->addNewRangeQueriedCallback
+  | HyperSyncWorkerMod(w) => w->addNewRangeQueriedCallback
   | RawEventsWorkerMod(w) => w->addNewRangeQueriedCallback
   }
 }
@@ -175,7 +173,7 @@ let getLatestFetchedBlockTimestamp = (worker: chainWorker) => {
   open PolyMorphicChainWorkerFunctions
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->getLatestFetchedBlockTimestamp
-  | SkarWorkerMod(w) => w->getLatestFetchedBlockTimestamp
+  | HyperSyncWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   | RawEventsWorkerMod(w) => w->getLatestFetchedBlockTimestamp
   }
 }
@@ -185,7 +183,7 @@ let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
   open PolyMorphicChainWorkerFunctions
   switch worker->chainWorkerToChainMod {
   | RpcWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
-  | SkarWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
+  | HyperSyncWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   | RawEventsWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
   }
 }
@@ -193,7 +191,7 @@ let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
 type caughtUpToHeadCallback<'worker> = option<'worker => promise<unit>>
 type workerSelectionWithCallback =
   | RpcSelectedWithCallback(caughtUpToHeadCallback<RpcWorker.t>)
-  | SkarSelectedWithCallback(caughtUpToHeadCallback<SkarWorker.t>)
+  | HyperSyncSelectedWithCallback(caughtUpToHeadCallback<HyperSyncWorker.t>)
   | RawEventsSelectedWithCallback(caughtUpToHeadCallback<RawEventsWorker.t>)
 
 let make = (
@@ -204,8 +202,8 @@ let make = (
   switch selectedWorker {
   | RpcSelectedWithCallback(caughtUpToHeadHook) =>
     Rpc(RpcWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
-  | SkarSelectedWithCallback(caughtUpToHeadHook) =>
-    Skar(SkarWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
+  | HyperSyncSelectedWithCallback(caughtUpToHeadHook) =>
+    HyperSync(HyperSyncWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   | RawEventsSelectedWithCallback(caughtUpToHeadHook) =>
     RawEvents(RawEventsWorker.make(~caughtUpToHeadHook?, ~contractAddressMapping?, chainConfig))
   }

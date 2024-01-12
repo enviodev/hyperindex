@@ -16,7 +16,7 @@ let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawE
     let noneCallback = None
     switch chainConfig.syncSource {
     | Rpc(_) => ChainWorker.RpcSelectedWithCallback(noneCallback)
-    | Skar(_) => ChainWorker.SkarSelectedWithCallback(noneCallback)
+    | HyperSync(_) => ChainWorker.HyperSyncSelectedWithCallback(noneCallback)
     }
   }
   let fetchedEventQueue = ChainEventQueue.make(~maxQueueSize)

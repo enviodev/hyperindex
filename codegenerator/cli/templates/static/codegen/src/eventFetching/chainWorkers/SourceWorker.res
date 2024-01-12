@@ -20,16 +20,14 @@ module type S = {
 
 @@warnings("+27")
 
-module SkarWorker: S = HyperSyncWorker.Make(HyperSync.SkarHyperSync)
-
 type sourceWorker =
   | Rpc(RpcWorker.t)
-  | Skar(SkarWorker.t)
+  | HyperSync(HyperSyncWorker.t)
 
 let fetchArbitraryEvents = (worker: sourceWorker) => {
   //See note in description of PolyMorphicChainWorkerFunctions
   switch worker {
   | Rpc(w) => w->RpcWorker.fetchArbitraryEvents
-  | Skar(w) => w->SkarWorker.fetchArbitraryEvents
+  | HyperSync(w) => w->HyperSyncWorker.fetchArbitraryEvents
   }
 }

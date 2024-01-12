@@ -207,7 +207,7 @@ module ResponseTypes = {
   type heightResponse = {height: int}
 }
 
-let executeSkarQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBody): promise<
+let executeHyperSyncQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBody): promise<
   result<ResponseTypes.queryResponse, QueryHelpers.queryError>,
 > => {
   QueryHelpers.executeFetchRequest(

@@ -1,4 +1,3 @@
-
 type eventLog = {
   abi: Ethers.abi,
   data: string,

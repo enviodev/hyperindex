@@ -21,7 +21,7 @@ addresses: array<Ethers.ethAddress>,
     syncConfig: syncConfig,
     }
 
-    type syncSource = Rpc(rpcConfig) | Skar(serverUrl) 
+    type syncSource = Rpc(rpcConfig) | HyperSync(serverUrl)
 
     type chainConfig = {
     syncSource: syncSource,
@@ -151,7 +151,7 @@ addresses: array<Ethers.ethAddress>,
         }),
         {{/if}}
         {{#if chain_config.network_config.skar_server_url}}
-        Skar("{{chain_config.network_config.skar_server_url}}"),
+        HyperSync("{{chain_config.network_config.skar_server_url}}"),
         {{/if}}
         startBlock: {{chain_config.network_config.start_block}},
         chainId: {{chain_config.network_config.id}},

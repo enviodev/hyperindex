@@ -31,11 +31,9 @@ module type S = {
   ) => promise<array<Types.eventBatchQueueItem>>
 }
 
-module SkarWorker: S
-
 type chainWorker =
   | Rpc(RpcWorker.t)
-  | Skar(SkarWorker.t)
+  | HyperSync(HyperSyncWorker.t)
   | RawEvents(RawEventsWorker.t)
 
 let startWorker: (
@@ -62,7 +60,7 @@ let addDynamicContractAndFetchMissingEvents: (
 
 type workerSelectionWithCallback =
   | RpcSelectedWithCallback(option<RpcWorker.t => promise<unit>>)
-  | SkarSelectedWithCallback(option<SkarWorker.t => promise<unit>>)
+  | HyperSyncSelectedWithCallback(option<HyperSyncWorker.t => promise<unit>>)
   | RawEventsSelectedWithCallback(option<RawEventsWorker.t => promise<unit>>)
 
 let make: (

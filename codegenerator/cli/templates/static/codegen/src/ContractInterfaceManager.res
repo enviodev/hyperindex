@@ -149,7 +149,7 @@ let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
   {addresses, topics}
 }
 
-type contractAdressesAndTopics = array<Skar.QueryTypes.logParams>
+type contractAdressesAndTopics = array<HyperSyncApi.QueryTypes.logParams>
 let getAllContractTopicsAndAddresses = (self: t): contractAdressesAndTopics => {
   self.contractAddressMapping.addressesByName
   ->Js.Dict.keys
@@ -163,7 +163,7 @@ let getAllContractTopicsAndAddresses = (self: t): contractAdressesAndTopics => {
         "EE901: Unexpected case. Contract name does not exist in interface mapping.",
       )
       exn->raise
-    | Some({ interface }) => {
+    | Some({interface}) => {
         let topics = []
         //Add the topic hash from each event on the interface
         interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
@@ -176,7 +176,7 @@ let getAllContractTopicsAndAddresses = (self: t): contractAdressesAndTopics => {
         ->ContractAddressingMap.getAddressesFromContractName(~contractName)
         ->Belt.Array.forEach(address => addresses->Js.Array2.push(address)->ignore)
 
-        ({address: addresses, topics: [topics]}: Skar.QueryTypes.logParams)
+        ({address: addresses, topics: [topics]}: HyperSyncApi.QueryTypes.logParams)
       }
     }
   })
