@@ -91,11 +91,10 @@ mod nested_params {
 
     impl FlattenedEventParam {
         ///Gets a named paramter or constructs a name using the parameter's index
-        ///if the param is nameless or equal to "id"
+        ///if the param is nameless
         fn get_param_name(&self) -> String {
             match &self.event_param.name {
                 name if name.is_empty() => format!("_{}", self.event_param_pos),
-                name if name == "id" => format!("event_id"),
                 name => name.clone(),
             }
         }
@@ -124,7 +123,14 @@ mod nested_params {
 
             //Join the param name with the accessor_indexes_string
             //eg. myTupleParam_1_2 or myNonTupleParam if there are no accessor indexes
-            format!("{}{}", self.get_param_name(), accessor_indexes_string).to_capitalized_options()
+            let mut entity_key = format!("{}{}", self.get_param_name(), accessor_indexes_string);
+
+            // Check if entity_key is "id" and rename to "event_id"
+            if entity_key == "id" {
+                entity_key = "event_id".to_string();
+            }
+
+            entity_key.to_capitalized_options()
         }
 
         ///Gets the event param "key" for the event type. Will be the same
@@ -431,6 +437,7 @@ mod test {
         let actual_flat_inputs = flatten_event_inputs(event_inputs);
         assert_eq!(expected_flat_inputs, actual_flat_inputs);
 
+        // test that `entity_key`s are correct
         let expected_entity_keys: Vec<_> = vec![
             "_0",
             "myTupleParam_0_0",
@@ -448,5 +455,19 @@ mod test {
             .collect();
 
         assert_eq!(expected_entity_keys, actual_entity_keys);
+
+        // test that `event_key`s are correct
+        let expected_event_keys: Vec<_> =
+            vec!["_0", "myTupleParam", "myTupleParam", "myTupleParam", "id"]
+                .into_iter()
+                .map(|s| s.to_string().to_capitalized_options())
+                .collect();
+
+        let actual_event_keys: Vec<_> = actual_flat_inputs
+            .iter()
+            .map(|f| f.get_event_param_key())
+            .collect();
+
+        assert_eq!(expected_event_keys, actual_event_keys);
     }
 }
