@@ -71,6 +71,7 @@ type entity =
 
 type dbOp = Read | Set | Delete
 
+@genType
 type inMemoryStoreRow<'a> = {
   dbOp: dbOp,
   entity: 'a,

@@ -28,7 +28,9 @@ module InMemoryStore = {
   @val external structuredClone: 'a => 'a = "structuredClone"
 
   module MakeStore = (StoreItem: StoreItem) => {
+    @genType
     type value = StoreItem.t
+    @genType
     type key = StoreItem.key
     type t = storeState<value, key>
 
