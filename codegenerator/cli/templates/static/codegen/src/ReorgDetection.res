@@ -7,7 +7,7 @@ type lastBlockScannedData = {
   blockTimestamp: int,
 }
 
-let getLastBlockScannedDataStub = (page: HyperSyncTypes.hyperSyncPage<'item>) => {
+let getLastBlockScannedDataStub = (page: HyperSync.hyperSyncPage<'item>) => {
   let _ = page
 
   {
