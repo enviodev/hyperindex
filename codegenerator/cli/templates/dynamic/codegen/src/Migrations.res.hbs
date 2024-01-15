@@ -232,7 +232,7 @@ module {{entity.name.capitalized}} = {
         block_number INTEGER NOT NULL,
         log_index INTEGER NOT NULL,
       {{#each entity.params as |param|}}
-        {{#unless param.is_derived_from}}\"{{param.key}}\" {{param.type_pg}},{{/unless}}
+        {{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}\" {{param.type_pg}},{{/unless}}
       {{/each}} 
         db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
         PRIMARY KEY (\"id\", chain_id, block_number, log_index));`")
