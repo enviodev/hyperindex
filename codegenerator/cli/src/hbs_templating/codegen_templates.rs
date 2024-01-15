@@ -23,7 +23,8 @@ pub trait HasName {
 pub struct EventParamTypeTemplate {
     pub param_name: CapitalizedOptions,
     pub type_rescript: String,
-    pub default_value: String,
+    pub default_value_rescript: String,
+    pub default_value_non_rescript: String,
     pub is_eth_address: bool
 }
 
@@ -310,7 +311,8 @@ impl EventTemplate {
 
                 EventParamTypeTemplate {
                     param_name: key.to_capitalized_options(),
-                    default_value: type_rescript.get_default_value(),
+                    default_value_rescript: type_rescript.get_default_value_rescript(),
+                    default_value_non_rescript: type_rescript.get_default_value_non_rescript(),
                     type_rescript: type_rescript.to_string(),
                     is_eth_address: type_rescript == RescriptType::Address,
                 }
@@ -835,26 +837,34 @@ mod test {
                 EventParamTypeTemplate {
                     param_name: "id".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
-                    default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
                 EventParamTypeTemplate {
                     param_name: "owner".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
-                    default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: true,
                 },
                 EventParamTypeTemplate {
                     param_name: "displayName".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
                 EventParamTypeTemplate {
                     param_name: "imageUrl".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
-            ],
-            required_entities: vec![RequiredEntityTemplate {
-                name: "EmptyEntity".to_string().to_capitalized_options(),
+                ],
+                required_entities: vec![RequiredEntityTemplate {
+                    name: "EmptyEntity".to_string().to_capitalized_options(),
                 labels: None,
                 array_labels: None,
                 entity_fields_of_required_entity: FilteredTemplateLists {
@@ -864,7 +874,7 @@ mod test {
             }],
             is_async: false,
         };
-
+        
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }
 
@@ -873,7 +883,7 @@ mod test {
         let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
 
         let new_gavatar_event_template = &project_template.contracts[0].events[0];
-
+        
         let expected_event_template = EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
             event_type: EventType {
@@ -884,22 +894,30 @@ mod test {
                 EventParamTypeTemplate {
                     param_name: "id".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
-                    default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
                 EventParamTypeTemplate {
                     param_name: "owner".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
-                    default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: true
                 },
                 EventParamTypeTemplate {
                     param_name: "displayName".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
                 EventParamTypeTemplate {
                     param_name: "imageUrl".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
             ],
             required_entities: vec![RequiredEntityTemplate {

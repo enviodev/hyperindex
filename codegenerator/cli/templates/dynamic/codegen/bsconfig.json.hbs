@@ -27,7 +27,9 @@
   "bs-dependencies": [
     "@ryyppy/rescript-promise",
     "rescript-envsafe",
+    {{#if is_rescript}}
     "rescript-mocha",
+    {{/if}}
     "rescript-struct",
     "@greenlabs/ppx-spice",
     "rescript-express",

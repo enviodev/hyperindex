@@ -28,7 +28,7 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
   // Creating mock {{contract.name.capitalized}} contract {{event.name.capitalized}} event
   let mock{{contract.name.capitalized}}{{event.name.capitalized}}Event = {{contract.name.capitalized}}.{{event.name.capitalized}}.createMockEvent({
     {{#each event.params as | param |}}
-    {{param.param_name.uncapitalized}}: {{param.default_value}},
+    {{param.param_name.uncapitalized}}: {{param.default_value_rescript}},
     {{/each}}
     mockEventData: {
       chainId: 1,

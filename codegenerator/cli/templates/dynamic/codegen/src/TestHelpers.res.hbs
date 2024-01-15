@@ -293,7 +293,7 @@ module {{contract.name.capitalized}} = {
       {{#if event.params}}
       {
       {{#each event.params as | param |}}
-       {{param.param_name.uncapitalized}}: {{param.param_name.uncapitalized}}->Belt.Option.getWithDefault({{param.default_value}}),
+       {{param.param_name.uncapitalized}}: {{param.param_name.uncapitalized}}->Belt.Option.getWithDefault({{param.default_value_rescript}}),
       {{/each}}
       }
       {{else}}

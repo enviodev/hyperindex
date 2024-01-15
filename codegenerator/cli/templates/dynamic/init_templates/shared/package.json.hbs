@@ -31,6 +31,7 @@
     "rescript": "10.1.4",
   {{/if}}
   {{#if is_typescript}}
+    "@types/chai": "^4.3.11",
     "@types/expect": "^24.3.0",
     "@types/mocha": "10.0.6",
     "@types/node": "20.8.8",
@@ -41,6 +42,9 @@
     "mocha": "10.2.0"
   },
   "dependencies": {
+    {{#if is_typescript}}
+    "chai": "4.3.10",
+    {{/if}}    
     "envio": "{{envio_version}}",
     "ethers": "6.8.0"
   }
