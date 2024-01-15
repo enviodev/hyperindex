@@ -1,5 +1,11 @@
 exception UndefinedEvent(string)
 
+let getVal = (_typ, _fn) =>
+  %raw(`
+    Array.isArray(_typ) ?
+       _typ.map(inner => getVal(inner, _fn)) : _typ.val
+`)
+
 let eventStringToEvent = (eventName: string, contractName: string): Types.eventName => {
   switch (eventName, contractName) {
     {{#each codegen_contracts as |contract|}}
@@ -117,6 +123,47 @@ module {{contract.name.capitalized}} = {
     Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}({{event.name.uncapitalized}}Log)
   }
 
+  {{#if event.indexed_params[0]}}
+    type decoded{{event.name.capitalized}}Indexed = {
+      {{#each event.indexed_params as | param |}}
+        @as("{{@index}}") {{param.param_name.uncapitalized}}: {{param.type_rescript_skar_decoded_param}},
+      {{/each}}
+    }
+  {{/if}}
+
+  {{#if event.body_params[0]}}
+    type decoded{{event.name.capitalized}}Body = {
+      {{#each event.body_params as | param |}}
+        @as("{{@index}}") {{param.param_name.uncapitalized}}: {{param.type_rescript_skar_decoded_param}},
+      {{/each}}
+    }
+  {{/if}}
+
+  let convert{{event.name.capitalized}}DecodedEventParams = (
+    decodedEvent: HyperSyncClient.Decoder.decodedEvent<'a>,
+  ): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs => {
+    {{#if event.indexed_params[0]}}
+      let {
+        {{#each event.indexed_params as | param |}}
+          {{param.param_name.uncapitalized}},
+        {{/each}}
+      }: decoded{{event.name.capitalized}}Indexed = decodedEvent.indexed->Obj.magic
+    {{/if}}
+
+    {{#if event.body_params[0]}}
+      let {
+        {{#each event.body_params as | param |}}
+          {{param.param_name.uncapitalized}},
+        {{/each}}
+      }: decoded{{event.name.capitalized}}Body = decodedEvent.body->Obj.magic
+    {{/if}}
+
+    {
+      {{#each event.params as | param |}}
+        {{param.param_name.uncapitalized}}: {{param.param_name.uncapitalized}}->getVal(getVal),
+      {{/each}}
+    }
+  }
 {{/each}}
 }
 

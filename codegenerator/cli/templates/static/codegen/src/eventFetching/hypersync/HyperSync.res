@@ -2,6 +2,7 @@ type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
   archiveHeight: int,
+  events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
 type logsQueryPageItem = {
@@ -86,7 +87,7 @@ module LogsQuery = {
     ~fromBlock,
     ~toBlockInclusive,
     ~addressesWithTopics: ContractInterfaceManager.contractAdressesAndTopics,
-  ): HyperSyncJsonApi.QueryTypes.postQueryBody => {
+  ): HyperSyncClient.QueryTypes.postQueryBody => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
     logs: addressesWithTopics,
@@ -186,6 +187,7 @@ module LogsQuery = {
         items,
         nextBlock,
         archiveHeight,
+        events: res.events,
       }
 
       Ok(page)
@@ -213,7 +215,7 @@ module LogsQuery = {
       ~params={"type": "hypersync query", "fromBlock": fromBlock, "serverUrl": serverUrl},
     )
 
-    let executeQuery = () => hyperSyncClient->HyperSyncClient.sendReq(body)
+    let executeQuery = () => hyperSyncClient->HyperSyncClient.sendEventsReq(body)
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
@@ -281,6 +283,7 @@ module BlockTimestampQuery = {
         nextBlock,
         archiveHeight,
         items,
+        events: [], //tempory return empty events since this query contains no events
       })
     }
   }

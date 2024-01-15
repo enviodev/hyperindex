@@ -198,6 +198,29 @@ pub enum RescriptType {
 }
 
 impl RescriptType {
+    pub fn to_string_decoded_skar(&self) -> String {
+        match self {
+            RescriptType::Array(inner_type) => format!(
+                "array<HyperSyncClient.Decoder.decodedSolType<{}>>",
+                inner_type.to_string_decoded_skar()
+            ),
+            RescriptType::Tuple(inner_types) => {
+                let inner_types_str = inner_types
+                    .iter()
+                    .map(|inner_type| inner_type.to_string_decoded_skar())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                format!(
+                    "HyperSyncClient.Decoder.decodedSolType<({})>",
+                    inner_types_str
+                )
+            }
+            v => {
+                format!("HyperSyncClient.Decoder.decodedSolType<{}>", v.to_string())
+            }
+        }
+    }
+
     fn to_string_with_option_type(&self, option_type_of: &str) -> String {
         match self {
             RescriptType::Int => "int".to_string(),

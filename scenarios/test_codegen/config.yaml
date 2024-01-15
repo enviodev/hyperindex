@@ -48,6 +48,7 @@ networks:
         address: null
         handler: src/EventHandlers.ts
         events:
+          - event: "Erc20Transfer(address indexed from, address indexed to, uint256 amount)"
           - event: "Transfer"
             requiredEntities:
               - name: "User"
