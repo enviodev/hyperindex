@@ -111,6 +111,6 @@ let make = (cfg: cfg) => {
   constructor->make(cfg->cfg_encode)
 }
 
-let sendReq = (self: t, req: HyperSyncApi.QueryTypes.postQueryBody) => {
-  self->Internal.sendReq(req->HyperSyncApi.QueryTypes.postQueryBody_encode)
+let sendReq = (self: t, req: HyperSyncJsonApi.QueryTypes.postQueryBody) => {
+  self->Internal.sendReq(req->HyperSyncJsonApi.QueryTypes.postQueryBody_encode)
 }

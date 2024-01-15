@@ -81,7 +81,7 @@ module LogsQuery = {
     ~fromBlock,
     ~toBlockInclusive,
     ~addressesWithTopics: ContractInterfaceManager.contractAdressesAndTopics,
-  ): HyperSyncApi.QueryTypes.postQueryBody => {
+  ): HyperSyncJsonApi.QueryTypes.postQueryBody => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
     logs: addressesWithTopics,
@@ -217,7 +217,10 @@ module LogsQuery = {
 }
 
 module BlockTimestampQuery = {
-  let makeRequestBody = (~fromBlock, ~toBlockInclusive): HyperSyncApi.QueryTypes.postQueryBody => {
+  let makeRequestBody = (
+    ~fromBlock,
+    ~toBlockInclusive,
+  ): HyperSyncJsonApi.QueryTypes.postQueryBody => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
     transactions: [{}],
@@ -227,7 +230,7 @@ module BlockTimestampQuery = {
   }
 
   let convertResponse = (
-    res: result<HyperSyncApi.ResponseTypes.queryResponse, QueryHelpers.queryError>,
+    res: result<HyperSyncJsonApi.ResponseTypes.queryResponse, QueryHelpers.queryError>,
   ): queryResponse<blockTimestampPage> => {
     switch res {
     | Error(e) => Error(QueryError(e))
@@ -282,7 +285,7 @@ module BlockTimestampQuery = {
   > => {
     let body = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock)
 
-    let res = await HyperSyncApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
+    let res = await HyperSyncJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
 
     res->convertResponse
   }
@@ -299,7 +302,7 @@ module HeightQuery = {
 
     //Retry if the heigth is 0 (expect height to be greater)
     while height.contents <= 0 {
-      let res = await HyperSyncApi.getArchiveHeight(~serverUrl)
+      let res = await HyperSyncJsonApi.getArchiveHeight(~serverUrl)
       switch res {
       | Ok(h) => height := h
       | Error(e) =>

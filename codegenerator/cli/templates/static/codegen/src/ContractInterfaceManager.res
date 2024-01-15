@@ -149,7 +149,7 @@ let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
   {addresses, topics}
 }
 
-type contractAdressesAndTopics = array<HyperSyncApi.QueryTypes.logParams>
+type contractAdressesAndTopics = array<HyperSyncJsonApi.QueryTypes.logParams>
 let getAllContractTopicsAndAddresses = (self: t): contractAdressesAndTopics => {
   self.contractAddressMapping.addressesByName
   ->Js.Dict.keys
@@ -176,7 +176,7 @@ let getAllContractTopicsAndAddresses = (self: t): contractAdressesAndTopics => {
         ->ContractAddressingMap.getAddressesFromContractName(~contractName)
         ->Belt.Array.forEach(address => addresses->Js.Array2.push(address)->ignore)
 
-        ({address: addresses, topics: [topics]}: HyperSyncApi.QueryTypes.logParams)
+        ({address: addresses, topics: [topics]}: HyperSyncJsonApi.QueryTypes.logParams)
       }
     }
   })
