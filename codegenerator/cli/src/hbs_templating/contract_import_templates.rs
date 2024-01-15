@@ -181,6 +181,7 @@ mod nested_params {
     }
 }
 
+use super::codegen_templates::EventTemplate;
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
@@ -222,10 +223,11 @@ impl Into<Schema> for AutoSchemaHandlerTemplate {
 pub struct Contract {
     name: CapitalizedOptions,
     imported_events: Vec<Event>,
+    codegen_events: Vec<EventTemplate>,
 }
 
 impl Contract {
-    fn from_config_contract(contract: &system_config::Contract) -> Result<Self> {
+    fn from_config_contract(contract: &system_config::Contract, config: &SystemConfig) -> Result<Self> {
         let imported_events = contract
             .events
             .iter()
@@ -236,9 +238,20 @@ impl Contract {
                 contract.name
             ))?;
 
+        let codegen_events = contract
+            .events
+            .iter()
+            .map(|event| EventTemplate::from_config_event(event, config, &contract.name.to_string()))
+            .collect::<Result<_>>()
+            .context(format!(
+                "Failed getting events for contract {}",
+                contract.name
+            ))?;
+
         Ok(Contract {
             name: contract.name.to_capitalized_options(),
             imported_events,
+            codegen_events
         })
     }
 }
@@ -324,7 +337,7 @@ impl AutoSchemaHandlerTemplate {
         let imported_contracts = config
             .get_contracts()
             .iter()
-            .map(|c| Contract::from_config_contract(c))
+            .map(|contract| Contract::from_config_contract(contract, &config))
             .collect::<Result<_>>()?;
         Ok(AutoSchemaHandlerTemplate { imported_contracts })
     }

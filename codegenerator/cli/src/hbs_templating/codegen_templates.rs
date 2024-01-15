@@ -2,7 +2,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{Entity, Field, RescriptNullableOpt},
+        entity_parsing::{Entity, Field, RescriptNullableOpt, RescriptType},
         event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -24,6 +24,7 @@ pub struct EventParamTypeTemplate {
     pub param_name: CapitalizedOptions,
     pub type_rescript: String,
     pub default_value: String,
+    pub is_eth_address: bool
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -288,7 +289,7 @@ pub struct EventTemplate {
 }
 
 impl EventTemplate {
-    fn from_config_event(
+    pub fn from_config_event(
         config_event: &system_config::Event,
         config: &SystemConfig,
         contract_name: &String,
@@ -311,6 +312,7 @@ impl EventTemplate {
                     param_name: key.to_capitalized_options(),
                     default_value: type_rescript.get_default_value(),
                     type_rescript: type_rescript.to_string(),
+                    is_eth_address: type_rescript == RescriptType::Address,
                 }
             })
             .collect();
