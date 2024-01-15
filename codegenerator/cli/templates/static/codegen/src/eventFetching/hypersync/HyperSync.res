@@ -228,10 +228,10 @@ module BlockTimestampQuery = {
   ): HyperSyncJsonApi.QueryTypes.postQueryBody => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
-    transactions: [{}],
     fieldSelection: {
       block: [Timestamp, Number],
     },
+    includeAllBlocks: true,
   }
 
   let convertResponse = (
@@ -342,10 +342,10 @@ module BlockHashes = {
   let makeRequestBody = (~blockNumber): HyperSyncJsonApi.QueryTypes.postQueryBody => {
     fromBlock: blockNumber,
     toBlockExclusive: blockNumber + 1,
-    transactions: [{}],
     fieldSelection: {
       block: [Number, Hash],
     },
+    includeAllBlocks: true,
   }
 
   let convertResponse = (

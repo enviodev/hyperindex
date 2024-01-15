@@ -106,6 +106,7 @@ module QueryTypes = {
     transactions?: array<transactionParams>,
     @spice.key("field_selection") fieldSelection: fieldSelection,
     @spice.key("max_num_logs") maxNumLogs?: int,
+    @spice.key("include_all_blocks") includeAllBlocks?: bool,
   }
 }
 
