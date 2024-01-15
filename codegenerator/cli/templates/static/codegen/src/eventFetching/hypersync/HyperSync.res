@@ -223,7 +223,6 @@ module BlockTimestampQuery = {
   ): HyperSyncJsonApi.QueryTypes.postQueryBody => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
-    transactions: [{}],
     fieldSelection: {
       block: [Timestamp, Number],
     },
