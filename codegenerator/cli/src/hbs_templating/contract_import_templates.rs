@@ -201,13 +201,13 @@ use std::path::PathBuf;
 ///populating the contract import templates
 #[derive(Serialize)]
 pub struct AutoSchemaHandlerTemplate {
-    contracts: Vec<Contract>,
+    imported_contracts: Vec<Contract>,
 }
 
 impl Into<Schema> for AutoSchemaHandlerTemplate {
     fn into(self) -> Schema {
         let entities = self
-            .contracts
+            .imported_contracts
             .into_iter()
             .flat_map(|c| {
                 let schema: Schema = c.into();
@@ -221,12 +221,12 @@ impl Into<Schema> for AutoSchemaHandlerTemplate {
 #[derive(Serialize)]
 pub struct Contract {
     name: CapitalizedOptions,
-    events: Vec<Event>,
+    imported_events: Vec<Event>,
 }
 
 impl Contract {
     fn from_config_contract(contract: &system_config::Contract) -> Result<Self> {
-        let events = contract
+        let imported_events = contract
             .events
             .iter()
             .map(|event| Event::from_config_event(event))
@@ -238,14 +238,14 @@ impl Contract {
 
         Ok(Contract {
             name: contract.name.to_capitalized_options(),
-            events,
+            imported_events,
         })
     }
 }
 
 impl Into<Schema> for Contract {
     fn into(self) -> Schema {
-        let entities = self.events.into_iter().map(|e| e.into()).collect();
+        let entities = self.imported_events.into_iter().map(|e| e.into()).collect();
         Schema { entities }
     }
 }
@@ -321,12 +321,12 @@ impl Into<Field> for Param {
 
 impl AutoSchemaHandlerTemplate {
     pub fn try_from(config: SystemConfig) -> Result<Self> {
-        let contracts = config
+        let imported_contracts = config
             .get_contracts()
             .iter()
             .map(|c| Contract::from_config_contract(c))
             .collect::<Result<_>>()?;
-        Ok(AutoSchemaHandlerTemplate { contracts })
+        Ok(AutoSchemaHandlerTemplate { imported_contracts })
     }
 
     pub fn generate_templates(&self, lang: &Language, project_root: &PathBuf) -> Result<()> {
