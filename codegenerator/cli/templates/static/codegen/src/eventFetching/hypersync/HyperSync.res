@@ -14,6 +14,11 @@ type blockNumberAndTimestamp = {
   blockNumber: int,
 }
 
+type blockNumberAndHash = {
+  blockNumber: int,
+  hash: string,
+}
+
 type blockTimestampPage = hyperSyncPage<blockNumberAndTimestamp>
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
 
@@ -333,7 +338,88 @@ module HeightQuery = {
   }
 }
 
+module BlockHashes = {
+  let makeRequestBody = (~blockNumber): HyperSyncJsonApi.QueryTypes.postQueryBody => {
+    fromBlock: blockNumber,
+    toBlockExclusive: blockNumber + 1,
+    transactions: [{}],
+    fieldSelection: {
+      block: [Number, Hash],
+    },
+  }
+
+  let convertResponse = (
+    res: result<HyperSyncJsonApi.ResponseTypes.queryResponse, QueryHelpers.queryError>,
+  ): queryResponse<array<blockNumberAndHash>> => {
+    switch res {
+    | Error(e) => Error(QueryError(e))
+    | Ok(successRes) =>
+      successRes.data
+      ->Belt.Array.flatMap(item => {
+        item.blocks->Belt.Option.mapWithDefault([], blocks => {
+          blocks->Belt.Array.map(
+            block => {
+              switch (block.number, block.hash) {
+              | (Some(blockNumber), Some(hash)) =>
+                Ok(
+                  (
+                    {
+                      blockNumber,
+                      hash,
+                    }: blockNumberAndHash
+                  ),
+                )
+              | _ =>
+                let missingParams =
+                  [
+                    block.number->Utils.optionMapNone("block.number"),
+                    block.hash->Utils.optionMapNone("block.hash"),
+                  ]->Belt.Array.keepMap(p => p)
+
+                Error(
+                  UnexpectedMissingParams({
+                    queryName: "query block hash HyperSync",
+                    missingParams,
+                  }),
+                )
+              }
+            },
+          )
+        })
+      })
+      ->Utils.mapArrayOfResults
+    }
+  }
+
+  let queryBlockHash = async (~serverUrl, ~blockNumber): queryResponse<
+    array<blockNumberAndHash>,
+  > => {
+    let body = makeRequestBody(~blockNumber)
+
+    let executeQuery = () => HyperSyncJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
+
+    let logger = Logging.createChild(
+      ~params={"type": "hypersync get blockhash query", "blockNumber": blockNumber},
+    )
+
+    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+
+    res->convertResponse
+  }
+
+  let queryBlockHashes = async (~serverUrl, ~blockNumbers) => {
+    let res =
+      await blockNumbers
+      ->Belt.Array.map(blockNumber => queryBlockHash(~blockNumber, ~serverUrl))
+      ->Promise.all
+    res
+    ->Utils.mapArrayOfResults
+    ->Belt.Result.map(blockHashesNested => blockHashesNested->Belt.Array.concatMany)
+  }
+}
+
 let queryLogsPage = LogsQuery.queryLogsPage
 let queryBlockTimestampsPage = BlockTimestampQuery.queryBlockTimestampsPage
 let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
+let queryBlockHashes = BlockHashes.queryBlockHashes

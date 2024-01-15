@@ -14,6 +14,11 @@ type blockNumberAndTimestamp = {
   blockNumber: int,
 }
 
+type blockNumberAndHash = {
+  blockNumber: int,
+  hash: string,
+}
+
 type blockTimestampPage = hyperSyncPage<blockNumberAndTimestamp>
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
 
@@ -43,3 +48,7 @@ let queryBlockTimestampsPage: (
 
 let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>
 let pollForHeightGtOrEq: (~serverUrl: string, ~blockNumber: int, ~logger: Pino.t) => promise<int>
+let queryBlockHashes: (
+  ~serverUrl: string,
+  ~blockNumbers: array<int>,
+) => promise<queryResponse<array<blockNumberAndHash>>>
