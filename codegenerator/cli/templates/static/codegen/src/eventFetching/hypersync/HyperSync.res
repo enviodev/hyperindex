@@ -227,6 +227,7 @@ module BlockTimestampQuery = {
     fieldSelection: {
       block: [Timestamp, Number],
     },
+    includeAllBlocks: true,
   }
 
   let convertResponse = (
