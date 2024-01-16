@@ -19,7 +19,6 @@ let getLastBlockScannedDataStub = (page: HyperSync.hyperSyncPage<'item>) => {
 
 module LastBlockScannedHashes: {
   type t
-
   /**Instantiat t with existing data*/
   let makeWithData: (array<lastBlockScannedData>, ~confirmedBlockThreshold: int) => t
 
@@ -36,11 +35,17 @@ module LastBlockScannedHashes: {
   */
   let getEarlistTimestampInThreshold: (~currentHeight: int, t) => option<int>
 
-  /**Prunes the back of the unneeded data on the queue*/
+  /**
+  Prunes the back of the unneeded data on the queue.
+
+  In the case of a multichain indexer, pass in the earliest needed timestamp that
+  occurs within the chains threshold. Ensure that we keep track of one range before that
+  as this is that could be the target range block for a reorg
+  */
   let pruneStaleBlockData: (
-    t,
     ~currentHeight: int,
-    ~earliestMultiChainTimestampInThreshold: option<int>,
+    ~earliestMultiChainTimestampInThreshold: int=?,
+    t,
   ) => t
 
   let rollBackToValidHash: (
@@ -125,7 +130,7 @@ module LastBlockScannedHashes: {
   //Prunes the back of the unneeded data on the queue
   let rec pruneStaleBlockDataInternal = (
     ~currentHeight,
-    ~earliestMultiChainTimestampInThreshold: option<int>,
+    ~earliestMultiChainTimestampInThreshold,
     ~confirmedBlockThreshold,
     lastBlockDataListReversed: list<lastBlockScannedData>,
   ) => {
@@ -185,9 +190,9 @@ module LastBlockScannedHashes: {
 
   //Prunes the back of the unneeded data on the queue
   let pruneStaleBlockData = (
-    {confirmedBlockThreshold, lastBlockDataList}: t,
     ~currentHeight,
-    ~earliestMultiChainTimestampInThreshold,
+    ~earliestMultiChainTimestampInThreshold=?,
+    {confirmedBlockThreshold, lastBlockDataList}: t,
   ) => {
     lastBlockDataList
     ->Belt.List.reverse
