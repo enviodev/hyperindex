@@ -86,8 +86,7 @@ module type StoreState = {
   let set: (
     IO.InMemoryStore.storeState<value, key>,
     ~key: key,
-    ~dbOp: Types.dbOp,
-    ~entity: value,
+    ~entity: Types.entityData<value>,
   ) => unit
 }
 
@@ -107,11 +106,23 @@ let makeStoreOperator = (
   let {get, values, set} = module(StoreState)
 
   let get = inMemoryStore->getStore->get
-  let getAll = () => inMemoryStore->getStore->values->Array.map(row => row.entity)
+  let getAll = () => inMemoryStore
+    ->getStore
+    ->values
+    ->Array.keepMap(row =>
+      switch row.current {
+      | Set(entity, _) => Some(entity)
+      | Read(entity) => Some(entity)
+      | Delete(_, _) => None
+      }
+    )
 
   let set = entity => {
     let cloned = inMemoryStore->IO.InMemoryStore.clone
-    cloned->getStore->set(~key=entity->getKey, ~entity, ~dbOp=Set)
+    cloned->getStore->set(
+      ~key=entity->getKey,
+      ~entity=Set(entity, {chainId: -1, blockNumber: -1, logIndex: -1}),
+    )
     cloned->makeMockDb
   }
 
@@ -135,7 +146,7 @@ The internal make function which can be passed an in memory store and
 instantiate a "MockDb". This is useful for cloning or making a MockDb
 out of an existing inMemoryStore
 */
-let rec makeWithInMemoryStore = (inMemoryStore: IO.InMemoryStore.t) => {
+let rec makeWithInMemoryStore: IO.InMemoryStore.t => t = (inMemoryStore: IO.InMemoryStore.t) => {
   let rawEvents = module(IO.InMemoryStore.RawEvents)->makeStoreOperator(
       ~inMemoryStore,
       ~makeMockDb=makeWithInMemoryStore,
@@ -274,8 +285,7 @@ let executeRows = (
   ~setFunction: (
     IO.InMemoryStore.storeState<'entity, 'key>,
     ~key: 'key,
-    ~dbOp: Types.dbOp,
-    ~entity: 'entity,
+    ~entity: Types.entityData<'entity>,
   ) => unit,
 ) => {
   inMemoryStore
@@ -283,10 +293,10 @@ let executeRows = (
   ->getRows
   ->Array.forEach(row => {
     let store = mockDb->getInternalDb->getStore
-    switch row.dbOp {
-    | Set => store->setFunction(~dbOp=Read, ~key=getKey(row.entity), ~entity=row.entity)
-    | Delete => store.dict->deleteDictKey(row.entity->getKey->store.hasher)
-    | Read => ()
+    switch row.current {
+    | Set(entity, _) => store->setFunction(~key=getKey(entity), ~entity=Read(entity))
+    | Delete(entityId, _) => store.dict->deleteDictKey(entityId)
+    | Read(_) => ()
     }
   })
 }
