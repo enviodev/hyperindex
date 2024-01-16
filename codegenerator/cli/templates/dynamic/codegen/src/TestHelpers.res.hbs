@@ -99,12 +99,11 @@ module EventFunctions = {
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-     // let asyncGetters: Context.entityGetters = {
-     // {{#each entities as | entity |}}
-     //   get{{entity.name.capitalized}}: async id => mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-     // {{/each}}
-     // }
-     let asyncGetters: Context.entityGetters = Obj.magic() // TODO fix!!
+     let asyncGetters: Context.entityGetters = {
+     {{#each entities as | entity |}}
+       get{{entity.name.capitalized}}: async id => mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
+     {{/each}}
+     }
 
       //Construct a new instance of an in memory store to run for the given event
       let inMemoryStore = IO.InMemoryStore.make()
