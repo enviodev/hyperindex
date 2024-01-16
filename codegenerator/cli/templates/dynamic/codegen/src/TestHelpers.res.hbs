@@ -77,134 +77,6 @@ module EventFunctions = {
     ) => Context.eventAndContext,
     ~eventName: Types.eventName,
     ~cb: TestHelpers_MockDb.t => unit,
-  }
-
-  /**
-  a composable function to make the "storeOperations" record to represent all the mock
-  db operations for each entity.
-  */
-  let makeStoreOperator = (
-    store: IO.InMemoryStore.storeState<'entity, 'key>,
-    ~get: (IO.InMemoryStore.storeState<'entity, 'key>, 'key) => option<'entity>,
-    ~values: IO.InMemoryStore.storeState<'entity, 'key> => array<Types.inMemoryStoreRow<'entity>>,
-        ~set: (
-      IO.InMemoryStore.storeState<'entity, 'key>,
-      ~key: 'key,
-      ~entity: Types.entityData<'entity>,
-    ) => unit,
-    ~getKey: 'entity => 'key,
-  ): storeOperations<'entityKey, 'entity> => {
-    getAll: () =>
-      store
-      ->values
-      ->Array.keepMap(row =>
-        switch row.current {
-        | Set(entity, _) => Some(entity)
-        | Read(entity) => Some(entity)
-        | Delete(_, _) => None
-        }
-      ),
-    get: store->get,
-    set: entity =>
-      store->set(
-        ~key=entity->getKey,
-        ~entity=Set(entity, {chainId: -1, blockNumber: -1, logIndex: -1}),
-      ),
-    delete: key => store.dict->deleteDictKey(key->store.hasher),
-  }
-
-  /**
-  The internal make function which can be passed an in memory store and
-  instantiate a "MockDb". This is useful for cloning or making a MockDb
-  out of an existing inMemoryStore
-  */
-  let makeWithInMemoryStore = (inMemoryStore: IO.InMemoryStore.t) => {
-    let dbInternal = ref(inMemoryStore)
-
-    let rawEvents =
-      dbInternal.contents.rawEvents->makeStoreOperator(
-        ~get=IO.InMemoryStore.RawEvents.get,
-        ~values=IO.InMemoryStore.RawEvents.values,
-        ~set=IO.InMemoryStore.RawEvents.set,
-        ~getKey=({chainId, eventId}) => {chainId, eventId},
-      )
-
-    let eventSyncState =
-      dbInternal.contents.eventSyncState->makeStoreOperator(
-        ~get=IO.InMemoryStore.EventSyncState.get,
-        ~values=IO.InMemoryStore.EventSyncState.values,
-        ~set=IO.InMemoryStore.EventSyncState.set,
-        ~getKey=({chainId}) => chainId,
-      )
-
-    let dynamicContractRegistry =
-      dbInternal.contents.dynamicContractRegistry->makeStoreOperator(
-        ~get=IO.InMemoryStore.DynamicContractRegistry.get,
-        ~values=IO.InMemoryStore.DynamicContractRegistry.values,
-        ~set=IO.InMemoryStore.DynamicContractRegistry.set,
-        ~getKey=({chainId, contractAddress}) => {chainId, contractAddress},
-      )
-
-    let entities = {
-    {{#each entities as | entity |}}
-      {{entity.name.uncapitalized}}: dbInternal.contents.{{entity.name.uncapitalized}}->makeStoreOperator(
-        ~get=IO.InMemoryStore.{{entity.name.capitalized}}.get,
-        ~values=IO.InMemoryStore.{{entity.name.capitalized}}.values,
-        ~set=IO.InMemoryStore.{{entity.name.capitalized}}.set,
-        ~getKey=({id}) => id,
-      ),
-    {{/each}}
-    }
-
-    {__dbInternal__: dbInternal, entities, rawEvents, eventSyncState, dynamicContractRegistry}
-  }
-
-  /**
-  The constructor function for a mockDb. Call it and then set up the inital state by calling
-  any of the set functions it provides access to. A mockDb will be passed into a processEvent 
-  helper. Note, process event helpers will not mutate the mockDb but return a new mockDb with
-  new state so you can compare states before and after.
-  */
-  //Note: It's called createMockDb over "make" to make it more intuitive in JS and TS
-  let createMockDb = () => makeWithInMemoryStore(IO.InMemoryStore.make())
-
-  /**
-  Accessor function for getting the internal inMemoryStore in the mockDb
-  */
-  let getInternalDb = (self: t) => self.__dbInternal__.contents
-
-  /**
-  Deep copies the in memory store data and returns a new mockDb with the same
-  state and no references to data from the passed in mockDb
-  */
-  let cloneMockDb = (self: t) => {
-    let clonedInternalDb = self->getInternalDb->IO.InMemoryStore.clone
-    clonedInternalDb->makeWithInMemoryStore
-  }
-
-  /**
-  Specifically create an executor for the mockDb
-  */
-  let makeMockDbEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemStoreSetFn, ~store, ~getEntiyId) => {
-    let dbReadFn = idsArr => idsArr->Belt.Array.keepMap(id => id->dbReadFn)
-    IO.makeEntityExecuterComposer(
-      ~idsToLoad,
-      ~dbReadFn,
-      ~inMemStoreSetFn,
-      ~store,
-      ~getEntiyId,
-      ~unit=(),
-      ~then=(res, fn) => res->fn,
-    )
-  }
-
-  /**
-  Executes a single load layer using the mockDb functions
-  */
-  let executeMockDbLoadLayer = (
-    mockDb: t,
-    ~loadLayer: IO.LoadLayer.t,
-    ~inMemoryStore: IO.InMemoryStore.t,
   ) => {
     ({event, mockDb, ?chainId}) => {
       //The user can specify a chainId of an event or leave it off
@@ -227,37 +99,12 @@ module EventFunctions = {
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-      let asyncGetters: Context.entityGetters = {
-      {{#each entities as | entity |}}
-        get{{entity.name.capitalized}}: async id => mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-      {{/each}}
-  /**
-  A function composer for simulating the writing of an inMemoryStore to the external db with a mockDb.
-  Runs all set and delete operations currently cached in an inMemory store against the mockDb
-  */
-  let executeRows = (
-    mockDb: t,
-    ~inMemoryStore: IO.InMemoryStore.t,
-    ~getStore: IO.InMemoryStore.t => IO.InMemoryStore.storeState<'entity, 'key>,
-    ~getRows: IO.InMemoryStore.storeState<'entity, 'key> => array<Types.inMemoryStoreRow<'entity>>,
-    ~getKey: 'entity => 'key,
-    ~setFunction: (
-      IO.InMemoryStore.storeState<'entity, 'key>,
-      ~key: 'key,
-      ~entity: Types.entityData<'entity>,
-    ) => unit,
-  ) => {
-    let gottenStore: IO.InMemoryStore.storeState<'entity, 'key> = inMemoryStore->getStore
-    let gottenRows: array<Types.inMemoryStoreRow<'entity>> = gottenStore->getRows
-
-    gottenRows->Array.forEach(row => {
-      let store = mockDb->getInternalDb->getStore
-      let currentRow: Types.entityData<'entity> = row.current
-      switch currentRow {
-      | Set(entity: 'entity, _) => store->setFunction(~key=getKey(entity), ~entity=currentRow)
-      | Delete(deleteKey, _) => store.dict->deleteDictKey(deleteKey->Obj.magic->store.hasher)
-      | Read(_) => ()
-      }
+     // let asyncGetters: Context.entityGetters = {
+     // {{#each entities as | entity |}}
+     //   get{{entity.name.capitalized}}: async id => mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
+     // {{/each}}
+     // }
+     let asyncGetters: Context.entityGetters = Obj.magic() // TODO fix!!
 
       //Construct a new instance of an in memory store to run for the given event
       let inMemoryStore = IO.InMemoryStore.make()
@@ -324,12 +171,6 @@ module EventFunctions = {
         eventProcessorArgs,
       )
     })
-
-    // switch row.dbOp {
-    // | Set => store->setFunction(~dbOp=Read, ~key=getKey(row.entity), ~entity=row.entity)
-    // | Delete => store.dict->deleteDictKey(row.entity->getKey->store.hasher)
-    // | Read => ()
-    // }
   }
 
   /**
@@ -352,24 +193,6 @@ module EventFunctions = {
       ~eventName,
       ~cb=mockDb => nextMockDb := Some(mockDb),
       eventProcessorArgs,
-  let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: IO.InMemoryStore.t) => {
-    open IO
-    let getRows: IO.InMemoryStore.RawEvents.t => array<
-      Types.inMemoryStoreRow<IO.InMemoryStore.RawEvents.value>,
-    > = InMemoryStore.RawEvents.values
-    let getStore: IO.InMemoryStore.t => IO.InMemoryStore.storeState<'entity, 'key> = inMemStore => {
-      inMemStore.rawEvents
-    }
-    // INTERNAL STORES/TABLES EXECUTION
-    mockDb->executeRows(
-      ~inMemoryStore,
-      ~getRows,
-      ~getStore,
-      ~setFunction=InMemoryStore.RawEvents.set,
-      ~getKey=(entity): IO.InMemoryStore.rawEventsKey => {
-        chainId: entity.chainId,
-        eventId: entity.eventId,
-      },
     )
 
     //The callback is called synchronously so nextMockDb should be set.
@@ -475,37 +298,6 @@ module {{contract.name.capitalized}} = {
         ?{{param.param_name.uncapitalized}},
         {{/each}}
         ?mockEventData,
-/**
-All event processor helpers for all contracts
-*/
-@genType
-let eventProcessors = {
-{{#each contracts as | contract |}}
-  {{contract.name.uncapitalized}}: {{contract.name.uncapitalized}}EventProcessors,
-{{/each}}
-}
-
-/**
-All mock event helpers for all contracts
-*/
-
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
-@genType
-type argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event = {
-{{#each event.params as | param |}}
-  {{param.key}}?: {{param.type_rescript}},
-{{/each}}
-}
-
-@genType
-let createMock{{contract.name.capitalized}}{{event.name.capitalized}}Event = (
-  ~args: argsFor{{contract.name.capitalized}}{{event.name.capitalized}}Event,
-): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.log => {
-  let {
-      {{#each event.params as | param |}}
-      ?{{param.key}}{{#unless @last}},{{/unless}}
-      {{/each}}
       } = args
 
       let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
