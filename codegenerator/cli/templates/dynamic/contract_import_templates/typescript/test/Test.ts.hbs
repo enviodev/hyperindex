@@ -1,19 +1,18 @@
-import { expect } from "chai";
-
 {{#with imported_contracts.[0] as | contract |}}
     {{#with contract.codegen_events.[0] as | event |}}
+import assert = require("assert")
 import { MockDb, {{contract.name.capitalized}} } from "../generated/src/TestHelpers.gen";
-
 import {
   EventsSummaryEntity,
   {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
 } from "../generated/src/Types.gen";
 
 import { Addresses } from "../generated/src/bindings/Ethers.bs";
+
+import { GLOBAL_EVENTS_SUMMARY_KEY } from "../src/EventHandlers";
     {{/with}}
 {{/with}}
 
-import { GLOBAL_EVENTS_SUMMARY_KEY } from "../src/EventHandlers";
 
 const mockEventsSummaryEntity: EventsSummaryEntity = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
@@ -76,7 +75,7 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
       eventsSummary: "GlobalEventsSummary",
     };
     // Asserting that the entity in the mock database is the same as the expected entity
-    expect(actual{{contract.name.capitalized}}{{event.name.capitalized}}Entity).to.deep.equal(expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity);
+    assert.deepEqual(actual{{contract.name.capitalized}}{{event.name.capitalized}}Entity, expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity, "Actual {{contract.name.capitalized}}{{event.name.capitalized}}Entity should be the same as the expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity");
   });
 
   it("EventsSummaryEntity is updated correctly", () => {
@@ -91,9 +90,7 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
       {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: mockEventsSummaryEntity.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Count + BigInt(1),
     };
     // Asserting that the entity in the mock database is the same as the expected entity
-    expect(actualEventsSummaryEntity).to.deep.equal(
-      expectedEventsSummaryEntity
-    );
+    assert.deepEqual(actualEventsSummaryEntity, expectedEventsSummaryEntity, "Actual {{contract.name.capitalized}}{{event.name.capitalized}}Entity should be the same as the expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity");
   });
 });
     {{/with}}
