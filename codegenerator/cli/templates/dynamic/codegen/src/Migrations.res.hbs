@@ -607,6 +607,8 @@ module DbIndexes = {
 }
 
 let deleteAllTables:unit => promise<unit> = async () => {
+  // await EntityHistory.dropEntityHistoryTable()
+
   Logging.trace("Dropping all tables")
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
   @warning("-21")
