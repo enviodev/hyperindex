@@ -21,7 +21,7 @@ module LastBlockScannedHashes: {
   type t
 
   /**Instantiat t with existing data*/
-  let makeWithData: (list<lastBlockScannedData>, ~confirmedBlockThreshold: int) => t
+  let makeWithData: (array<lastBlockScannedData>, ~confirmedBlockThreshold: int) => t
 
   /**Instantiat empty t with no block data*/
   let empty: (~confirmedBlockThreshold: int) => t
@@ -61,19 +61,20 @@ module LastBlockScannedHashes: {
   }
 
   //Instantiates LastBlockHashes.t
-  let makeWithData = (lastBlockDataList, ~confirmedBlockThreshold) => {
+  let makeWithDataInternal = (lastBlockDataList, ~confirmedBlockThreshold) => {
     confirmedBlockThreshold,
     lastBlockDataList,
   }
+
+  let makeWithData = lastBlockDataListArr =>
+    lastBlockDataListArr->Belt.List.fromArray->Belt.List.reverse->makeWithDataInternal
   //Instantiates empty LastBlockHashes
-  let empty = (~confirmedBlockThreshold) => makeWithData(list{}, ~confirmedBlockThreshold)
+  let empty = (~confirmedBlockThreshold) => makeWithDataInternal(list{}, ~confirmedBlockThreshold)
 
   /** Given the head block number, find the earliest timestamp from the data where the data
       is still within the given block threshold from the head
   */
   let rec getEarlistTimestampInThresholdInternal = (
-    // Always, starts with None, optional param should not be applied where called
-    ~lastEarlistTimestamp=None,
     // The current block number at the head of the chain
     ~currentHeight,
     ~confirmedBlockThreshold,
@@ -82,19 +83,15 @@ module LastBlockScannedHashes: {
   ): option<int> => {
     switch reversedLastBlockDataList {
     | list{lastBlockData, ...tail} =>
-      // If the blocknumber is in the threshold recurse with given blockdata's
+      // If the blocknumber is not in the threshold recurse with given blockdata's
       // timestamp , incrementing the from index
-      if lastBlockData.blockNumber < currentHeight - confirmedBlockThreshold {
-        tail->getEarlistTimestampInThresholdInternal(
-          ~lastEarlistTimestamp=Some(lastBlockData.blockTimestamp),
-          ~currentHeight,
-          ~confirmedBlockThreshold,
-        )
+      if lastBlockData.blockNumber >= currentHeight - confirmedBlockThreshold {
+        // If it's in the threshold return the last earliest timestamp
+        Some(lastBlockData.blockTimestamp)
       } else {
-        // If it's not in the threshold return the last earliest timestamp
-        lastEarlistTimestamp
+        tail->getEarlistTimestampInThresholdInternal(~currentHeight, ~confirmedBlockThreshold)
       }
-    | list{} => lastEarlistTimestamp
+    | list{} => None
     }
   }
 
@@ -104,11 +101,7 @@ module LastBlockScannedHashes: {
   ) =>
     lastBlockDataList
     ->Belt.List.reverse
-    ->getEarlistTimestampInThresholdInternal(
-      ~currentHeight,
-      ~lastEarlistTimestamp=None,
-      ~confirmedBlockThreshold,
-    )
+    ->getEarlistTimestampInThresholdInternal(~currentHeight, ~confirmedBlockThreshold)
 
   // Adds the latest blockData to the end of the array
   let addLatestLastBlockData = (
@@ -119,7 +112,7 @@ module LastBlockScannedHashes: {
   ) =>
     lastBlockDataList
     ->Belt.List.add({blockNumber, blockHash, blockTimestamp})
-    ->makeWithData(~confirmedBlockThreshold)
+    ->makeWithDataInternal(~confirmedBlockThreshold)
 
   let getLatestLastBlockData = (self: t) => self.lastBlockDataList->Belt.List.head
 
@@ -204,7 +197,7 @@ module LastBlockScannedHashes: {
       ~earliestMultiChainTimestampInThreshold,
     )
     ->Belt.List.reverse
-    ->makeWithData(~confirmedBlockThreshold)
+    ->makeWithDataInternal(~confirmedBlockThreshold)
   }
 
   type blockNumberToHashMap = Belt.Map.Int.t<string>
@@ -250,6 +243,6 @@ module LastBlockScannedHashes: {
 
     lastBlockDataList
     ->rollBackToValidHashInternal(~latestBlockHashes)
-    ->Belt.Result.map(makeWithData(~confirmedBlockThreshold))
+    ->Belt.Result.map(makeWithDataInternal(~confirmedBlockThreshold))
   }
 }
