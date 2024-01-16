@@ -10,14 +10,17 @@ describe("Validate reorg detection functions", () => {
     (300, "0x789", 789),
     (500, "0x5432", 5432),
   ]
-  // list{(50, "0x456", 456), (1, "0x123", 123)}
-  ->Array.map(((blockNumber, blockHash, blockTimestamp)) => {
-    blockNumber,
-    blockHash,
-    blockTimestamp,
-  })
-  let lastBlockScannedHashes =
-    lastBlockScannedHashesArr->LastBlockScannedHashes.makeWithData(~confirmedBlockThreshold=200)
+
+  let intoLastBlockScannedHashesHelper = arr =>
+    arr
+    ->Array.map(((blockNumber, blockHash, blockTimestamp)) => {
+      blockNumber,
+      blockHash,
+      blockTimestamp,
+    })
+    ->LastBlockScannedHashes.makeWithData(~confirmedBlockThreshold=200)
+
+  let lastBlockScannedHashes = lastBlockScannedHashesArr->intoLastBlockScannedHashesHelper
 
   it("Get Latest and Add Latest Work", () => {
     Assert.deep_equal(
@@ -45,12 +48,62 @@ describe("Validate reorg detection functions", () => {
     )
   })
 
-  it("Earliest timestamp in threshold works", () => {
+  it("Earliest timestamp in threshold works as expected", () => {
     Assert.deep_equal(
       Some(789),
       lastBlockScannedHashes->LastBlockScannedHashes.getEarlistTimestampInThreshold(
         ~currentHeight=500,
       ),
     )
+  })
+
+  it("Pruning works as expected", () => {
+    let pruned =
+      lastBlockScannedHashes->LastBlockScannedHashes.pruneStaleBlockData(~currentHeight=500)
+
+    let expected = [(300, "0x789", 789), (500, "0x5432", 5432)]->intoLastBlockScannedHashesHelper
+
+    Assert.deep_equal(expected, pruned, ~message="Should prune up to the block threshold")
+
+    let prunedWithMinTimestamp =
+      lastBlockScannedHashes->LastBlockScannedHashes.pruneStaleBlockData(
+        ~currentHeight=500,
+        ~earliestMultiChainTimestampInThreshold=470,
+      )
+    let expected =
+      [
+        (50, "0x456", 456),
+        (300, "0x789", 789),
+        (500, "0x5432", 5432),
+      ]->intoLastBlockScannedHashesHelper
+
+    Assert.deep_equal(
+      expected,
+      prunedWithMinTimestamp,
+      ~message="Should keep one range end before the earliestMultiChainTimestampInThreshold",
+    )
+  })
+
+  it("Rolling back to matching hashes works as expected", () => {
+    let blockNumbersAndHashes = [
+      (1, "0x123"),
+      (50, "0x456"),
+      (300, "0x789differnt"),
+      (500, "0x5432differnt"),
+    ]->Array.map(
+      ((blockNumber, hash)): HyperSync.blockNumberAndHash => {
+        blockNumber,
+        hash,
+      },
+    )
+
+    let rolledBack =
+      lastBlockScannedHashes
+      ->LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
+      ->Result.getExn
+
+    let expected = [(1, "0x123", 123), (50, "0x456", 456)]->intoLastBlockScannedHashesHelper
+
+    Assert.deep_equal(expected, rolledBack, ~message="Should prune up to the block threshold")
   })
 })
