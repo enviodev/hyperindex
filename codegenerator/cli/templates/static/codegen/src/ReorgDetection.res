@@ -21,18 +21,13 @@ module LastBlockScannedHashes: {
   type t
 
   /**Instantiat t with existing data*/
-  let makeWithData: (array<lastBlockScannedData>, ~confirmedBlockThreshold: int) => t
+  let makeWithData: (list<lastBlockScannedData>, ~confirmedBlockThreshold: int) => t
 
   /**Instantiat empty t with no block data*/
   let empty: (~confirmedBlockThreshold: int) => t
 
   /**Add the latest scanned block data to t*/
-  let addLatestLastBlockData: (
-    t,
-    ~blockNumber: int,
-    ~blockHash: string,
-    ~blockTimestamp: int,
-  ) => unit
+  let addLatestLastBlockData: (t, ~blockNumber: int, ~blockHash: string, ~blockTimestamp: int) => t
 
   /**Read the latest last block scanned data at the from the front of the queue*/
   let getLatestLastBlockData: t => option<lastBlockScannedData>
@@ -46,7 +41,12 @@ module LastBlockScannedHashes: {
     t,
     ~currentHeight: int,
     ~earliestMultiChainTimestampInThreshold: option<int>,
-  ) => unit
+  ) => t
+
+  let rollBackToValidHash: (
+    t,
+    ~blockNumbersAndHashes: array<HyperSync.blockNumberAndHash>,
+  ) => result<t, exn>
 } = {
   type t = {
     // Number of blocks behind head, we want to keep track
@@ -55,66 +55,73 @@ module LastBlockScannedHashes: {
     // behind the head
     confirmedBlockThreshold: int,
     // A cached list of recent blockdata to make comparison checks
-    // for reorgs. Used like a DeQueue, but should be quite short data set
+    // for reorgs. Should be quite short data set
     // so using built in array for data structure.
-    lastBlockDataQueue: array<lastBlockScannedData>,
+    lastBlockDataList: list<lastBlockScannedData>,
   }
 
   //Instantiates LastBlockHashes.t
-  let makeWithData = (lastBlockDataQueue, ~confirmedBlockThreshold) => {
+  let makeWithData = (lastBlockDataList, ~confirmedBlockThreshold) => {
     confirmedBlockThreshold,
-    lastBlockDataQueue,
+    lastBlockDataList,
   }
   //Instantiates empty LastBlockHashes
-  let empty = (~confirmedBlockThreshold) => makeWithData([], ~confirmedBlockThreshold)
-
-  let getBack = (self: t) => self.lastBlockDataQueue->Belt.Array.get(0)
-  let getSecondFromBack = (self: t) => self.lastBlockDataQueue->Belt.Array.get(1)
-  let popBack = (self: t) => self.lastBlockDataQueue->Js.Array2.shift
-  let getFront = (self: t) =>
-    self.lastBlockDataQueue->Belt.Array.get(Array.length(self.lastBlockDataQueue) - 1)
-  let pushFront = (self: t, blockData) => self.lastBlockDataQueue->Js.Array2.push(blockData)
+  let empty = (~confirmedBlockThreshold) => makeWithData(list{}, ~confirmedBlockThreshold)
 
   /** Given the head block number, find the earliest timestamp from the data where the data
       is still within the given block threshold from the head
   */
   let rec getEarlistTimestampInThresholdInternal = (
-    // Always, starts from 0, optional parameter should not be applied where called
-    ~fromIndex=0,
     // Always, starts with None, optional param should not be applied where called
     ~lastEarlistTimestamp=None,
     // The current block number at the head of the chain
     ~currentHeight,
-    self: t,
+    ~confirmedBlockThreshold,
+    //reversed so that head to tail is earlist to latest
+    reversedLastBlockDataList: list<lastBlockScannedData>,
   ): option<int> => {
-    switch self.lastBlockDataQueue->Belt.Array.get(fromIndex) {
-    | Some(lastBlockData) =>
+    switch reversedLastBlockDataList {
+    | list{lastBlockData, ...tail} =>
       // If the blocknumber is in the threshold recurse with given blockdata's
       // timestamp , incrementing the from index
-      if lastBlockData.blockNumber < currentHeight - self.confirmedBlockThreshold {
-        self->getEarlistTimestampInThresholdInternal(
-          ~fromIndex=fromIndex + 1,
+      if lastBlockData.blockNumber < currentHeight - confirmedBlockThreshold {
+        tail->getEarlistTimestampInThresholdInternal(
           ~lastEarlistTimestamp=Some(lastBlockData.blockTimestamp),
           ~currentHeight,
+          ~confirmedBlockThreshold,
         )
       } else {
         // If it's not in the threshold return the last earliest timestamp
         lastEarlistTimestamp
       }
-    | None => lastEarlistTimestamp
+    | list{} => lastEarlistTimestamp
     }
   }
 
-  let getEarlistTimestampInThreshold = getEarlistTimestampInThresholdInternal(
-    ~fromIndex=0,
-    ~lastEarlistTimestamp=None,
-  )
+  let getEarlistTimestampInThreshold = (
+    ~currentHeight,
+    {lastBlockDataList, confirmedBlockThreshold}: t,
+  ) =>
+    lastBlockDataList
+    ->Belt.List.reverse
+    ->getEarlistTimestampInThresholdInternal(
+      ~currentHeight,
+      ~lastEarlistTimestamp=None,
+      ~confirmedBlockThreshold,
+    )
 
   // Adds the latest blockData to the end of the array
-  let addLatestLastBlockData = (self: t, ~blockNumber, ~blockHash, ~blockTimestamp) =>
-    self->pushFront({blockNumber, blockHash, blockTimestamp})->ignore
+  let addLatestLastBlockData = (
+    {confirmedBlockThreshold, lastBlockDataList}: t,
+    ~blockNumber,
+    ~blockHash,
+    ~blockTimestamp,
+  ) =>
+    lastBlockDataList
+    ->Belt.List.add({blockNumber, blockHash, blockTimestamp})
+    ->makeWithData(~confirmedBlockThreshold)
 
-  let getLatestLastBlockData = getFront
+  let getLatestLastBlockData = (self: t) => self.lastBlockDataList->Belt.List.head
 
   let blockDataIsPastThreshold = (
     blockData: lastBlockScannedData,
@@ -123,48 +130,126 @@ module LastBlockScannedHashes: {
   ) => blockData.blockNumber < currentHeight - confirmedBlockThreshold
 
   //Prunes the back of the unneeded data on the queue
-  let rec pruneStaleBlockData = (
-    self: t,
+  let rec pruneStaleBlockDataInternal = (
     ~currentHeight,
     ~earliestMultiChainTimestampInThreshold: option<int>,
+    ~confirmedBlockThreshold,
+    lastBlockDataListReversed: list<lastBlockScannedData>,
   ) => {
     switch earliestMultiChainTimestampInThreshold {
     // If there is no "earlist multichain timestamp in threshold"
     // simply prune the earliest block in the case that the block is
     // outside of the confirmedBlockThreshold
-    | None => self->pruneEarliestBlockData(~currentHeight, ~earliestMultiChainTimestampInThreshold)
+    | None =>
+      lastBlockDataListReversed->pruneEarliestBlockData(
+        ~currentHeight,
+        ~earliestMultiChainTimestampInThreshold,
+        ~confirmedBlockThreshold,
+      )
     | Some(timestampThresholdNeeded) =>
-      self
-      ->getSecondFromBack
-      ->Belt.Option.map(secondFromBack => {
+      switch lastBlockDataListReversed {
+      | list{_head, second, ..._tail} =>
         // Ony prune in the case where the second lastBlockData from the back
         // Has an earlier timestamp than the timestampThresholdNeeded (this is
         // the earliest timestamp across all chains where the lastBlockData is
         // still within the confirmedBlockThreshold)
-        if secondFromBack.blockTimestamp < timestampThresholdNeeded {
-          self->pruneEarliestBlockData(~currentHeight, ~earliestMultiChainTimestampInThreshold)
+        if second.blockTimestamp < timestampThresholdNeeded {
+          lastBlockDataListReversed->pruneEarliestBlockData(
+            ~currentHeight,
+            ~earliestMultiChainTimestampInThreshold,
+            ~confirmedBlockThreshold,
+          )
+        } else {
+          lastBlockDataListReversed
         }
-      })
-      ->ignore
+      | list{_} | list{} => lastBlockDataListReversed
+      }
     }
   }
-  and pruneEarliestBlockData = (self: t, ~currentHeight, ~earliestMultiChainTimestampInThreshold) =>
-    self
-    ->getBack
-    ->Belt.Option.map(earliestLastBlockData => {
+  and pruneEarliestBlockData = (
+    ~currentHeight,
+    ~earliestMultiChainTimestampInThreshold,
+    ~confirmedBlockThreshold,
+    lastBlockDataListReversed: list<lastBlockScannedData>,
+  ) => {
+    switch lastBlockDataListReversed {
+    | list{earliestLastBlockData, ...tail} =>
       // In the case that back is past the threshold, remove it and
       // recurse
-      if (
-        earliestLastBlockData->blockDataIsPastThreshold(
-          ~currentHeight,
-          ~confirmedBlockThreshold=self.confirmedBlockThreshold,
-        )
-      ) {
-        // Data at the back is stale, pop it off
-        self->popBack->ignore
+      if earliestLastBlockData->blockDataIsPastThreshold(~currentHeight, ~confirmedBlockThreshold) {
         // Recurse to check the next item
-        self->pruneStaleBlockData(~currentHeight, ~earliestMultiChainTimestampInThreshold)
+        tail->pruneStaleBlockDataInternal(
+          ~currentHeight,
+          ~earliestMultiChainTimestampInThreshold,
+          ~confirmedBlockThreshold,
+        )
+      } else {
+        lastBlockDataListReversed
       }
-    })
-    ->ignore
+    | list{} => list{}
+    }
+  }
+
+  //Prunes the back of the unneeded data on the queue
+  let pruneStaleBlockData = (
+    {confirmedBlockThreshold, lastBlockDataList}: t,
+    ~currentHeight,
+    ~earliestMultiChainTimestampInThreshold,
+  ) => {
+    lastBlockDataList
+    ->Belt.List.reverse
+    ->pruneStaleBlockDataInternal(
+      ~confirmedBlockThreshold,
+      ~currentHeight,
+      ~earliestMultiChainTimestampInThreshold,
+    )
+    ->Belt.List.reverse
+    ->makeWithData(~confirmedBlockThreshold)
+  }
+
+  type blockNumberToHashMap = Belt.Map.Int.t<string>
+  exception BlockNotIncludedInMap(int)
+
+  let doBlockHashesMatch = (lastBlockScannedData, ~latestBlockHashes: blockNumberToHashMap) => {
+    let {blockNumber, blockHash} = lastBlockScannedData
+    let matchingBlock = latestBlockHashes->Belt.Map.Int.get(blockNumber)
+
+    switch matchingBlock {
+    | None => Error(BlockNotIncludedInMap(blockNumber))
+    | Some(latestBlockHash) => Ok(blockHash == latestBlockHash)
+    }
+  }
+  let rec rollBackToValidHashInternal = (
+    latestBlockScannedData: list<lastBlockScannedData>,
+    ~latestBlockHashes: blockNumberToHashMap,
+  ) => {
+    switch latestBlockScannedData {
+    | list{} => Ok(list{}) //Nothing on the front to rollback to
+    | list{lastBlockScannedData, ...tail} =>
+      lastBlockScannedData
+      ->doBlockHashesMatch(~latestBlockHashes)
+      ->Belt.Result.flatMap(blockHashesDoMatch => {
+        if blockHashesDoMatch {
+          Ok(list{lastBlockScannedData, ...tail})
+        } else {
+          tail->rollBackToValidHashInternal(~latestBlockHashes)
+        }
+      })
+    }
+  }
+
+  let rollBackToValidHash = (
+    self: t,
+    ~blockNumbersAndHashes: array<HyperSync.blockNumberAndHash>,
+  ) => {
+    let {confirmedBlockThreshold, lastBlockDataList} = self
+    let latestBlockHashes =
+      blockNumbersAndHashes
+      ->Belt.Array.map(({blockNumber, hash}) => (blockNumber, hash))
+      ->Belt.Map.Int.fromArray
+
+    lastBlockDataList
+    ->rollBackToValidHashInternal(~latestBlockHashes)
+    ->Belt.Result.map(makeWithData(~confirmedBlockThreshold))
+  }
 }
