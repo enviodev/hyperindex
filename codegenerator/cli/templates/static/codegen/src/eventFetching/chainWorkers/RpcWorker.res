@@ -383,3 +383,11 @@ let addNewRangeQueriedCallback = (self: t): promise<unit> => {
 }
 
 let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTimestamp
+
+/**
+Currently just a stub to conform to signature
+*/
+let getBlockHashes = (self: t, ~blockNumbers) => {
+  let _ = (self, blockNumbers)
+  Ok([])->Promise.resolve
+}

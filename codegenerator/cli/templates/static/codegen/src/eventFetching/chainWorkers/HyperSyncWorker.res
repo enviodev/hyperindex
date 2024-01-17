@@ -611,3 +611,5 @@ let addDynamicContractAndFetchMissingEvents = async (
     ~toBlock,
   )
 }
+
+let getBlockHashes = ({serverUrl}: t) => HyperSync.queryBlockHashes(~serverUrl)
