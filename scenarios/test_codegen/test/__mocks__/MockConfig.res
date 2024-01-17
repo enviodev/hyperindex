@@ -1,4 +1,5 @@
 let mockChainConfig: Config.chainConfig = {
+  confirmedBlockThreshold: 200,
   syncSource: Rpc({
     provider: Hardhat.hardhatProvider,
     syncConfig: {

@@ -28,6 +28,7 @@ describe("E2E Integration Test", () => {
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
     let provider = Hardhat.hardhatProvider
     let localChainConfig: Config.chainConfig = {
+      confirmedBlockThreshold: 200,
       syncSource: Rpc({
         provider,
         syncConfig: {

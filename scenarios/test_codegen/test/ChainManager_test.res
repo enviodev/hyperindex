@@ -94,6 +94,9 @@ let populateChainQueuesWithRandomEvents = (
       chainWorker: ref(
         ChainWorker.Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->Obj.magic),
       ),
+      lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
+        ~confirmedBlockThreshold=200,
+      ),
     }
     chainFetchers->Js.Dict.set(chainId->Belt.Int.toString, mockChainFetcher)
   }

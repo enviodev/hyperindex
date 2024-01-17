@@ -33,13 +33,10 @@ describe("Validate reorg detection functions", () => {
       blockHash: "0x7654",
       blockTimestamp: 7654,
     }
-    let {blockNumber, blockHash, blockTimestamp} = nextLastBlockScanned
 
     let lastBlockScannedHashes =
       lastBlockScannedHashes->LastBlockScannedHashes.addLatestLastBlockData(
-        ~blockTimestamp,
-        ~blockHash,
-        ~blockNumber,
+        ~lastBlockScannedData=nextLastBlockScanned,
       )
 
     Assert.deep_equal(
