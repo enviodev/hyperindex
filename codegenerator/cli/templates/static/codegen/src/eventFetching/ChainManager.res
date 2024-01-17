@@ -126,6 +126,13 @@ let reorgStub = (chainManager: t, ~chainId, ~lastBlockScannedData) => {
   })
 }
 
+/**
+For each chain with a confirmed block threshold, find the earliest block ranged scanned that exists
+in that threshold
+
+Returns None in the case of no block range entries and in the case that there is only 1 chain since
+there is no need to consider other chains with prunining in this case
+*/
 let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
   chainManager.chainFetchers
   ->Js.Dict.values
@@ -133,6 +140,9 @@ let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
   ->ReorgDetection.LastBlockScannedHashes.getEarliestMultiChainTimestampInThreshold
 }
 
+/**
+Checks whether reorg has accured by comparing the parent hash with the last saved block hash.
+*/
 let hasReorgOccurred = (chainFetcher: ChainFetcher.t, ~parentHash) => {
   let recentLastBlockData =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
@@ -144,16 +154,17 @@ let hasReorgOccurred = (chainFetcher: ChainFetcher.t, ~parentHash) => {
   }
 }
 
+/**
+adds latest "lastBlockScannedData" to LastBlockScannedHashes and prunes old unneeded data
+*/
 let addLastBlockScannedData = (
   chainFetcher: ChainFetcher.t,
   ~chainManager: t,
-  ~recentLastBlockData: ReorgDetection.lastBlockScannedData,
+  ~lastBlockScannedData: ReorgDetection.lastBlockScannedData,
   ~currentHeight,
 ) => {
   let earliestMultiChainTimestampInThreshold =
     chainManager->getEarliestMultiChainTimestampInThreshold(~currentHeight)
-
-  let {blockTimestamp, blockHash, blockNumber} = recentLastBlockData
 
   chainFetcher.lastBlockScannedHashes =
     chainFetcher.lastBlockScannedHashes
@@ -161,11 +172,7 @@ let addLastBlockScannedData = (
       ~currentHeight,
       ~earliestMultiChainTimestampInThreshold?,
     )
-    ->ReorgDetection.LastBlockScannedHashes.addLatestLastBlockData(
-      ~blockNumber,
-      ~blockHash,
-      ~blockTimestamp,
-    )
+    ->ReorgDetection.LastBlockScannedHashes.addLatestLastBlockData(~lastBlockScannedData)
 }
 
 /**
@@ -175,19 +182,16 @@ chain manager to chain fetcher to chain worker
 let checkHasReorgOccurred = (
   chainManager: t,
   chainFetcher: ChainFetcher.t,
-  recentLastBlockData,
+  lastBlockScannedData,
   ~parentHash,
   ~currentHeight,
 ) => {
   let hasReorgOccurred = chainFetcher->hasReorgOccurred(~parentHash)
 
   if hasReorgOccurred {
-    chainManager->reorgStub(
-      ~lastBlockScannedData=recentLastBlockData,
-      ~chainId=chainFetcher.chainConfig.chainId,
-    )
+    chainManager->reorgStub(~lastBlockScannedData, ~chainId=chainFetcher.chainConfig.chainId)
   } else {
-    chainFetcher->addLastBlockScannedData(~chainManager, ~currentHeight, ~recentLastBlockData)
+    chainFetcher->addLastBlockScannedData(~chainManager, ~currentHeight, ~lastBlockScannedData)
   }
 }
 
