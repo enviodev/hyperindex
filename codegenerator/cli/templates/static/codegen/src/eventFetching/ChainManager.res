@@ -113,15 +113,43 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize, ~shouldSyncFromRawEven
   }
 }
 
+exception NotASourceWorker
+let toSourceWorker = (worker: ChainWorker.chainWorker): SourceWorker.sourceWorker =>
+  switch worker {
+  | HyperSync(w) => HyperSync(w)
+  | Rpc(w) => Rpc(w)
+  | RawEvents(_) => NotASourceWorker->raise
+  }
+
 //TODO this needs to action a roll back
-let reorgStub = (chainManager: t, ~chainId, ~lastBlockScannedData) => {
+let reorgStub = async (chainManager: t, ~chainFetcher: ChainFetcher.t, ~lastBlockScannedData) => {
+  //get a list of block hashes via the chainworker
+  let blockNumbers =
+    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
+  let blockNumbersAndHashes =
+    await chainFetcher.chainWorker.contents
+    ->toSourceWorker
+    ->SourceWorker.getBlockHashes(~blockNumbers)
+    ->Promise.thenResolve(Belt.Result.getExn)
+
+  let rolledBack =
+    chainFetcher.lastBlockScannedHashes
+    ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
+    ->Belt.Result.getExn
+
+  let reorgStartPlace = rolledBack->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
+
+  switch reorgStartPlace {
+  | Some({blockNumber, blockTimestamp}) => () //Rollback to here
+  | None => () //roll back to start of chain. Can't really happen
+  }
   //Stop workers
   //Roll back
   //Start workers again
   let _ = chainManager
   Logging.warn({
     "msg": "A Reorg Has occurred",
-    "chainId": chainId,
+    "chainId": chainFetcher.chainConfig.chainId,
     "lastBlockScannedData": lastBlockScannedData,
   })
 }
@@ -189,7 +217,7 @@ let checkHasReorgOccurred = (
   let hasReorgOccurred = chainFetcher->hasReorgOccurred(~parentHash)
 
   if hasReorgOccurred {
-    chainManager->reorgStub(~lastBlockScannedData, ~chainId=chainFetcher.chainConfig.chainId)
+    chainManager->reorgStub(~chainFetcher, ~lastBlockScannedData)->ignore
   } else {
     chainFetcher->addLastBlockScannedData(~chainManager, ~currentHeight, ~lastBlockScannedData)
   }

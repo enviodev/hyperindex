@@ -54,11 +54,18 @@ module LastBlockScannedHashes: {
     t,
   ) => t
 
+  /**
+  Return a BlockNumbersAndHashes.t rolled back to where hashes
+  match the provided blockNumberAndHashes
+  */
   let rollBackToValidHash: (
     t,
     ~blockNumbersAndHashes: array<HyperSync.blockNumberAndHash>,
   ) => result<t, exn>
+
   let getEarliestMultiChainTimestampInThreshold: (array<t>, ~currentHeight: int) => option<int>
+
+  let getAllBlockNumbers: t => Belt.Array.t<int>
 } = {
   type t = {
     // Number of blocks behind head, we want to keep track
@@ -222,6 +229,7 @@ module LastBlockScannedHashes: {
     | Some(latestBlockHash) => Ok(blockHash == latestBlockHash)
     }
   }
+
   let rec rollBackToValidHashInternal = (
     latestBlockScannedData: list<lastBlockScannedData>,
     ~latestBlockHashes: blockNumberToHashMap,
@@ -241,6 +249,10 @@ module LastBlockScannedHashes: {
     }
   }
 
+  /**
+  Return a BlockNumbersAndHashes.t rolled back to where hashes
+  match the provided blockNumberAndHashes
+  */
   let rollBackToValidHash = (
     self: t,
     ~blockNumbersAndHashes: array<HyperSync.blockNumberAndHash>,
@@ -265,6 +277,13 @@ module LastBlockScannedHashes: {
     })
   }
 
+  /**
+  Find the the earliest block time across multiple instances of self where the block timestamp
+  falls within its own confirmed block threshold
+
+  Return None if there is only one chain (since we don't want to take this val into account for a
+  single chain indexer) or if there are no chains (should never be the case)
+  */
   let getEarliestMultiChainTimestampInThreshold = (multiSelf: array<t>, ~currentHeight) => {
     switch multiSelf {
     | [_singleVal] =>
@@ -279,4 +298,9 @@ module LastBlockScannedHashes: {
       ->min
     }
   }
+
+  let getAllBlockNumbers = (self: t) =>
+    self.lastBlockDataList->Belt.List.reduceReverse([], (acc, v) => {
+      Belt.Array.concat(acc, [v.blockNumber])
+    })
 }
