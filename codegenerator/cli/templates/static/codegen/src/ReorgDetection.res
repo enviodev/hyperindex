@@ -32,7 +32,7 @@ module LastBlockScannedHashes: {
   let empty: (~confirmedBlockThreshold: int) => t
 
   /**Add the latest scanned block data to t*/
-  let addLatestLastBlockData: (t, ~blockNumber: int, ~blockHash: string, ~blockTimestamp: int) => t
+  let addLatestLastBlockData: (t, ~lastBlockScannedData: lastBlockScannedData) => t
 
   /**Read the latest last block scanned data at the from the front of the queue*/
   let getLatestLastBlockData: t => option<lastBlockScannedData>
@@ -118,12 +118,10 @@ module LastBlockScannedHashes: {
   // Adds the latest blockData to the end of the array
   let addLatestLastBlockData = (
     {confirmedBlockThreshold, lastBlockDataList}: t,
-    ~blockNumber,
-    ~blockHash,
-    ~blockTimestamp,
+    ~lastBlockScannedData,
   ) =>
     lastBlockDataList
-    ->Belt.List.add({blockNumber, blockHash, blockTimestamp})
+    ->Belt.List.add(lastBlockScannedData)
     ->makeWithDataInternal(~confirmedBlockThreshold)
 
   let getLatestLastBlockData = (self: t) => self.lastBlockDataList->Belt.List.head
