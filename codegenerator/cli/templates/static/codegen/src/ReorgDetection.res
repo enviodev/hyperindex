@@ -17,6 +17,12 @@ let getLastBlockScannedDataStub = (page: HyperSync.hyperSyncPage<'item>) => {
   }
 }
 
+let getParentHashStub = (page: HyperSync.hyperSyncPage<'item>) => {
+  let _ = page
+  let blockHash = "0x1234"
+  Some(blockHash)
+}
+
 module LastBlockScannedHashes: {
   type t
   /**Instantiat t with existing data*/
@@ -52,6 +58,7 @@ module LastBlockScannedHashes: {
     t,
     ~blockNumbersAndHashes: array<HyperSync.blockNumberAndHash>,
   ) => result<t, exn>
+  let getEarliestMultiChainTimestampInThreshold: (array<t>, ~currentHeight: int) => option<int>
 } = {
   type t = {
     // Number of blocks behind head, we want to keep track
@@ -249,5 +256,29 @@ module LastBlockScannedHashes: {
     lastBlockDataList
     ->rollBackToValidHashInternal(~latestBlockHashes)
     ->Belt.Result.map(makeWithDataInternal(~confirmedBlockThreshold))
+  }
+
+  let min = (arrInt: array<int>) => {
+    arrInt->Belt.Array.reduce(None, (current, val) => {
+      switch current {
+      | None => Some(val)
+      | Some(current) => Js.Math.min_int(current, val)->Some
+      }
+    })
+  }
+
+  let getEarliestMultiChainTimestampInThreshold = (multiSelf: array<t>, ~currentHeight) => {
+    switch multiSelf {
+    | [_singleVal] =>
+      //In the case where there is only one chain, return none as there would be no need to aggregate
+      //or keep track of the lowest timestamp. The chain can purge as far back as its confirmed block range
+      None
+    | multiSelf =>
+      multiSelf
+      ->Belt.Array.keepMap(self => {
+        self->getEarlistTimestampInThreshold(~currentHeight)
+      })
+      ->min
+    }
   }
 }

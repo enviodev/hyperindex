@@ -94,7 +94,17 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize, ~shouldSyncFromRawEven
     configs
     ->Js.Dict.entries
     ->Belt.Array.map(((key, chainConfig)) => {
-      (key, ChainFetcher.make(~chainConfig, ~maxQueueSize, ~shouldSyncFromRawEvents))
+      let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
+        ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
+      )
+
+      let chainFetcher = ChainFetcher.make(
+        ~chainConfig,
+        ~maxQueueSize,
+        ~shouldSyncFromRawEvents,
+        ~lastBlockScannedHashes,
+      )
+      (key, chainFetcher)
     })
     ->Js.Dict.fromArray
   {
@@ -103,12 +113,92 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize, ~shouldSyncFromRawEven
   }
 }
 
+//TODO this needs to action a roll back
+let reorgStub = (chainManager: t, ~chainId, ~lastBlockScannedData) => {
+  //Stop workers
+  //Roll back
+  //Start workers again
+  let _ = chainManager
+  Logging.warn({
+    "msg": "A Reorg Has occurred",
+    "chainId": chainId,
+    "lastBlockScannedData": lastBlockScannedData,
+  })
+}
+
+let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
+  chainManager.chainFetchers
+  ->Js.Dict.values
+  ->Belt.Array.map(v => v.lastBlockScannedHashes)
+  ->ReorgDetection.LastBlockScannedHashes.getEarliestMultiChainTimestampInThreshold
+}
+
+let hasReorgOccurred = (chainFetcher: ChainFetcher.t, ~parentHash) => {
+  let recentLastBlockData =
+    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
+
+  switch (parentHash, recentLastBlockData) {
+  | (None, None) => false
+  | (None, Some(_)) | (Some(_), None) => true
+  | (Some(parentHash), Some({blockHash})) => parentHash == blockHash
+  }
+}
+
+let addLastBlockScannedData = (
+  chainFetcher: ChainFetcher.t,
+  ~chainManager: t,
+  ~recentLastBlockData: ReorgDetection.lastBlockScannedData,
+  ~currentHeight,
+) => {
+  let earliestMultiChainTimestampInThreshold =
+    chainManager->getEarliestMultiChainTimestampInThreshold(~currentHeight)
+
+  let {blockTimestamp, blockHash, blockNumber} = recentLastBlockData
+
+  chainFetcher.lastBlockScannedHashes =
+    chainFetcher.lastBlockScannedHashes
+    ->ReorgDetection.LastBlockScannedHashes.pruneStaleBlockData(
+      ~currentHeight,
+      ~earliestMultiChainTimestampInThreshold?,
+    )
+    ->ReorgDetection.LastBlockScannedHashes.addLatestLastBlockData(
+      ~blockNumber,
+      ~blockHash,
+      ~blockTimestamp,
+    )
+}
+
+/**
+A function that gets partially applied as it is handed down from
+chain manager to chain fetcher to chain worker
+*/
+let checkHasReorgOccurred = (
+  chainManager: t,
+  chainFetcher: ChainFetcher.t,
+  recentLastBlockData,
+  ~parentHash,
+  ~currentHeight,
+) => {
+  let hasReorgOccurred = chainFetcher->hasReorgOccurred(~parentHash)
+
+  if hasReorgOccurred {
+    chainManager->reorgStub(
+      ~lastBlockScannedData=recentLastBlockData,
+      ~chainId=chainFetcher.chainConfig.chainId,
+    )
+  } else {
+    chainFetcher->addLastBlockScannedData(~chainManager, ~currentHeight, ~recentLastBlockData)
+  }
+}
+
 let startFetchers = (self: t) => {
   self.chainFetchers
   ->Js.Dict.values
   ->Belt.Array.forEach(fetcher => {
     //Start the fetchers
-    fetcher->ChainFetcher.startFetchingEvents->ignore
+    fetcher
+    ->ChainFetcher.startFetchingEvents(~checkHasReorgOccurred=self->checkHasReorgOccurred)
+    ->ignore
   })
 }
 

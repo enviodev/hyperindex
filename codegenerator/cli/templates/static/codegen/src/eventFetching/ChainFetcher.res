@@ -3,10 +3,16 @@ type t = {
   fetchedEventQueue: ChainEventQueue.t,
   chainConfig: Config.chainConfig,
   chainWorker: ref<ChainWorker.chainWorker>,
+  mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
 }
 
 //CONSTRUCTION
-let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawEvents: bool): t => {
+let make = (
+  ~chainConfig: Config.chainConfig,
+  ~lastBlockScannedHashes,
+  ~maxQueueSize,
+  ~shouldSyncFromRawEvents: bool,
+): t => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chainId})
 
   //Dangerous! Ref is not defined yet but will be defined in the next step
@@ -20,27 +26,31 @@ let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawE
     }
   }
   let fetchedEventQueue = ChainEventQueue.make(~maxQueueSize)
-  let chainWorkerWithCallback = if shouldSyncFromRawEvents {
-    let finishedSyncCallback = async (worker: RawEventsWorker.t) => {
-      await worker->RawEventsWorker.stopFetchingEvents
-      logger->Logging.childInfo("Finished reprocessed cached events, starting fetcher")
-      let contractAddressMapping = worker.contractAddressMapping
 
-      let latestFetchedEventId = await worker.latestFetchedEventId
-      let {blockNumber} = latestFetchedEventId->EventUtils.unpackEventIndex
-      let startBlock = blockNumber + 1
-      chainWorkerRef :=
-        chainConfigWorkerNoCallback->ChainWorker.make(~chainConfig, ~contractAddressMapping)
-
-      chainWorkerRef.contents
-      ->ChainWorker.startWorker(~startBlock, ~fetchedEventQueue, ~logger)
-      ->ignore
-    }
-
-    ChainWorker.RawEventsSelectedWithCallback(Some(finishedSyncCallback))
-  } else {
-    chainConfigWorkerNoCallback
-  }
+  //TODO: Purge resync code or reimplement
+  let chainWorkerWithCallback = chainConfigWorkerNoCallback
+  let _ = shouldSyncFromRawEvents
+  // if shouldSyncFromRawEvents {
+  //   let finishedSyncCallback = async (worker: RawEventsWorker.t) => {
+  //     await worker->RawEventsWorker.stopFetchingEvents
+  //     logger->Logging.childInfo("Finished reprocessed cached events, starting fetcher")
+  //     let contractAddressMapping = worker.contractAddressMapping
+  //
+  //     let latestFetchedEventId = await worker.latestFetchedEventId
+  //     let {blockNumber} = latestFetchedEventId->EventUtils.unpackEventIndex
+  //     let startBlock = blockNumber + 1
+  //     chainWorkerRef :=
+  //       chainConfigWorkerNoCallback->ChainWorker.make(~chainConfig, ~contractAddressMapping)
+  //
+  //     chainWorkerRef.contents
+  //     ->ChainWorker.startWorker(~startBlock, ~fetchedEventQueue, ~logger, ~checkHasReorgOccurred)
+  //     ->ignore
+  //   }
+  //
+  //   ChainWorker.RawEventsSelectedWithCallback(Some(finishedSyncCallback))
+  // } else {
+  //   chainConfigWorkerNoCallback
+  // }
 
   chainWorkerRef := chainWorkerWithCallback->ChainWorker.make(~chainConfig)
 
@@ -49,14 +59,16 @@ let make = (~chainConfig: Config.chainConfig, ~maxQueueSize, ~shouldSyncFromRawE
     logger,
     chainConfig,
     chainWorker: chainWorkerRef,
+    lastBlockScannedHashes,
   }
 }
 
 //Public methods
-let startFetchingEvents = async (self: t) => {
+let startFetchingEvents = async (self: t, ~checkHasReorgOccurred) => {
   switch self.chainWorker.contents->ChainWorker.startFetchingEvents(
     ~logger=self.logger,
     ~fetchedEventQueue=self.fetchedEventQueue,
+    ~checkHasReorgOccurred=self->checkHasReorgOccurred,
   ) {
   | exception err =>
     self.logger->Logging.childError({

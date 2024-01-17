@@ -26,6 +26,7 @@ addresses: array<Ethers.ethAddress>,
     type chainConfig = {
     syncSource: syncSource,
     startBlock: int,
+    confirmedBlockThreshold: int,
     chainId: int,
     contracts: array<contract>,
       }
@@ -114,6 +115,7 @@ addresses: array<Ethers.ethAddress>,
         (
         "{{chain_config.network_config.id}}",
         {
+        confirmedBlockThreshold: 200, //TODO: This is currently hardcoded, it should be determined per chain
         syncSource:
         {{#if chain_config.network_config.rpc_config}}
         Rpc({

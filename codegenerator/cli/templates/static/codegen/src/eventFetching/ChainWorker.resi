@@ -13,12 +13,22 @@ module type S = {
     ~startBlock: int,
     ~logger: Pino.t,
     ~fetchedEventQueue: ChainEventQueue.t,
+    ~checkHasReorgOccurred: (
+      ReorgDetection.lastBlockScannedData,
+      ~parentHash: option<string>,
+      ~currentHeight: int,
+    ) => unit,
   ) => promise<unit>
 
   let startFetchingEvents: (
     t,
     ~logger: Pino.t,
     ~fetchedEventQueue: ChainEventQueue.t,
+    ~checkHasReorgOccurred: (
+      ReorgDetection.lastBlockScannedData,
+      ~parentHash: option<string>,
+      ~currentHeight: int,
+    ) => unit,
   ) => promise<unit>
   let addNewRangeQueriedCallback: t => promise<unit>
   let getLatestFetchedBlockTimestamp: t => int
@@ -41,12 +51,22 @@ let startWorker: (
   ~startBlock: int,
   ~logger: Pino.t,
   ~fetchedEventQueue: ChainEventQueue.t,
+  ~checkHasReorgOccurred: (
+    ReorgDetection.lastBlockScannedData,
+    ~parentHash: option<string>,
+    ~currentHeight: int,
+  ) => unit,
 ) => promise<unit>
 
 let startFetchingEvents: (
   chainWorker,
   ~logger: Pino.t,
   ~fetchedEventQueue: ChainEventQueue.t,
+  ~checkHasReorgOccurred: (
+    ReorgDetection.lastBlockScannedData,
+    ~parentHash: option<string>,
+    ~currentHeight: int,
+  ) => unit,
 ) => promise<unit>
 let addNewRangeQueriedCallback: chainWorker => promise<unit>
 let getLatestFetchedBlockTimestamp: chainWorker => int
