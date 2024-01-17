@@ -119,9 +119,10 @@ let startWorker = async (
   ~startBlock: int,
   ~logger: Pino.t,
   ~fetchedEventQueue: ChainEventQueue.t,
+  ~checkHasReorgOccurred,
 ) => {
   //ignore these two values
-  let _ = (startBlock, logger)
+  let _ = (startBlock, logger, checkHasReorgOccurred)
 
   let eventIdRef = ref(0->Ethers.BigInt.fromInt)
 
@@ -200,6 +201,7 @@ let startFetchingEvents = async (
   self: t,
   ~logger: Pino.t,
   ~fetchedEventQueue: ChainEventQueue.t,
+  ~checkHasReorgOccurred,
 ) => {
   logger->Logging.childTrace({
     "msg": "Starting resync from cached events.",
@@ -225,6 +227,7 @@ let startFetchingEvents = async (
     ~startBlock=0,
     ~logger,
     ~fetchedEventQueue,
+    ~checkHasReorgOccurred,
   )
 }
 

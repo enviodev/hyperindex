@@ -3,13 +3,23 @@ type t = {
   fetchedEventQueue: ChainEventQueue.t,
   chainConfig: Config.chainConfig,
   chainWorker: ref<ChainWorker.chainWorker>,
+  mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
 }
 let make: (
   ~chainConfig: Config.chainConfig,
+  ~lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
   ~maxQueueSize: int,
   ~shouldSyncFromRawEvents: bool,
 ) => t
-let startFetchingEvents: t => promise<result<unit, exn>>
+let startFetchingEvents: (
+  t,
+  ~checkHasReorgOccurred: (
+    t,
+    ReorgDetection.lastBlockScannedData,
+    ~parentHash: option<string>,
+    ~currentHeight: int,
+  ) => unit,
+) => promise<result<unit, exn>>
 /**
 Pops the front item on the fetchedEventQueue and awaits an item if there is none.
 */

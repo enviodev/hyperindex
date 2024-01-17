@@ -106,7 +106,11 @@ let startWorker = async (
   ~startBlock: int,
   ~logger: Pino.t,
   ~fetchedEventQueue: ChainEventQueue.t,
+  ~checkHasReorgOccurred,
 ) => {
+  //TODO: use this to handle reorg
+  let _ = checkHasReorgOccurred
+
   let {rpcConfig, chainConfig, contractAddressMapping, blockLoader} = self
   self.shouldContinueFetching = true
   self.isFetching = true
@@ -246,6 +250,7 @@ let startFetchingEvents = async (
   self: t,
   ~logger: Pino.t,
   ~fetchedEventQueue: ChainEventQueue.t,
+  ~checkHasReorgOccurred,
 ) => {
   let {chainConfig, contractAddressMapping} = self
 
@@ -278,7 +283,7 @@ let startFetchingEvents = async (
     )
   )
 
-  await self->startWorker(~startBlock, ~logger, ~fetchedEventQueue)
+  await self->startWorker(~startBlock, ~logger, ~fetchedEventQueue, ~checkHasReorgOccurred)
 
   self.hasStoppedFetchingCallBack()
 }

@@ -15,12 +15,22 @@ module type S = {
     ~startBlock: int,
     ~logger: Pino.t,
     ~fetchedEventQueue: ChainEventQueue.t,
+    ~checkHasReorgOccurred: (
+      ReorgDetection.lastBlockScannedData,
+      ~parentHash: option<string>,
+      ~currentHeight: int,
+    ) => unit,
   ) => promise<unit>
 
   let startFetchingEvents: (
     t,
     ~logger: Pino.t,
     ~fetchedEventQueue: ChainEventQueue.t,
+    ~checkHasReorgOccurred: (
+      ReorgDetection.lastBlockScannedData,
+      ~parentHash: option<string>,
+      ~currentHeight: int,
+    ) => unit,
   ) => promise<unit>
 
   let addNewRangeQueriedCallback: t => promise<unit>
@@ -68,60 +78,57 @@ module PolyMorphicChainWorkerFunctions = {
 
   type chainWorkerModTuple<'workerType> = ('workerType, module(S with type t = 'workerType))
 
-  let startWorker = (
-    type workerType,
-    chainWorkerModTuple: chainWorkerModTuple<workerType>,
-    ~startBlock,
-    ~logger: Pino.t,
-    ~fetchedEventQueue: ChainEventQueue.t,
-  ) => {
-    let (worker, workerMod) = chainWorkerModTuple
-    let module(ChainWorker) = workerMod
-    worker->ChainWorker.startWorker(~startBlock, ~logger, ~fetchedEventQueue)
+  /**
+  First class polymorphic functions do not exist in OCaml. IE we can't pass a polymorphic function
+  as a param to another function and still use it polymorphically within scope of that function.
+
+  There is a workaround to use "explicit universally quantified" param (using the "." after the type in do)
+  inside a record. 
+
+  This allows us to call "do" as if it were a first class polymorphic function when it gets
+  passed to another function
+  */
+  type firstClassPoly<'a> = {do: 'workerType. chainWorkerModTuple<'workerType> => 'a}
+
+  let startWorker = {
+    do: (type workerType, chainWorkerModTuple: chainWorkerModTuple<workerType>) => {
+      let (worker, workerMod) = chainWorkerModTuple
+      let module(ChainWorker) = workerMod
+      worker->ChainWorker.startWorker
+    },
   }
 
-  let startFetchingEvents = (
-    type workerType,
-    chainWorkerModTuple: chainWorkerModTuple<workerType>,
-    ~logger: Pino.t,
-    ~fetchedEventQueue: ChainEventQueue.t,
-  ) => {
-    let (worker, workerMod) = chainWorkerModTuple
-    let module(ChainWorker) = workerMod
-    worker->ChainWorker.startFetchingEvents(~logger, ~fetchedEventQueue)
+  let startFetchingEvents = {
+    do: (type workerType, chainWorkerModTuple: chainWorkerModTuple<workerType>) => {
+      let (worker, workerMod) = chainWorkerModTuple
+      let module(ChainWorker) = workerMod
+      worker->ChainWorker.startFetchingEvents
+    },
   }
 
-  let addNewRangeQueriedCallback = (
-    type workerType,
-    chainWorkerModTuple: chainWorkerModTuple<workerType>,
-  ) => {
-    let (worker, workerMod) = chainWorkerModTuple
-    let module(M) = workerMod
-    worker->M.addNewRangeQueriedCallback
+  let addNewRangeQueriedCallback = {
+    do: (type workerType, chainWorkerModTuple: chainWorkerModTuple<workerType>) => {
+      let (worker, workerMod) = chainWorkerModTuple
+      let module(M) = workerMod
+      worker->M.addNewRangeQueriedCallback
+    },
   }
 
-  let getLatestFetchedBlockTimestamp = (
-    type workerType,
-    chainWorkerModTuple: chainWorkerModTuple<workerType>,
-  ) => {
-    let (worker, workerMod) = chainWorkerModTuple
-    let module(M) = workerMod
-    worker->M.getLatestFetchedBlockTimestamp
+  let getLatestFetchedBlockTimestamp = {
+    do: (type workerType, chainWorkerModTuple: chainWorkerModTuple<workerType>) => {
+      let (worker, workerMod) = chainWorkerModTuple
+      let module(M) = workerMod
+      worker->M.getLatestFetchedBlockTimestamp
+    },
   }
 
-  let addDynamicContractAndFetchMissingEvents = (
-    type workerType,
-    chainWorkerModTuple: chainWorkerModTuple<workerType>,
-    ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
-    ~fromBlock,
-    ~fromLogIndex,
-    ~logger,
-  ): promise<array<Types.eventBatchQueueItem>> => {
-    let (worker, workerMod) = chainWorkerModTuple
-    let module(M) = workerMod
-    //Note: Only defining f so my syntax highlighting doesn't break -> Jono
-    let f = worker->M.addDynamicContractAndFetchMissingEvents
-    f(~dynamicContracts, ~fromBlock, ~fromLogIndex, ~logger)
+  let addDynamicContractAndFetchMissingEvents = {
+    do: (type workerType, chainWorkerModTuple: chainWorkerModTuple<workerType>) => {
+      let (worker, workerMod) = chainWorkerModTuple
+      let module(M) = workerMod
+      //Note: Only defining f so my syntax highlighting doesn't break -> Jono
+      worker->M.addDynamicContractAndFetchMissingEvents
+    },
   }
 
   type chainWorkerMod =
@@ -136,57 +143,33 @@ module PolyMorphicChainWorkerFunctions = {
     | RawEvents(w) => RawEventsWorkerMod((w, module(RawEventsWorker)))
     }
   }
-}
 
-let startWorker = (worker: chainWorker) => {
-  //See note in description of PolyMorphicChainWorkerFunctions
-  open PolyMorphicChainWorkerFunctions
-  switch worker->chainWorkerToChainMod {
-  | RpcWorkerMod(w) => w->startWorker
-  | HyperSyncWorkerMod(w) => w->startWorker
-  | RawEventsWorkerMod(w) => w->startWorker
+  /**
+  Takes a firstClassPoly and composes it with a chainWorker type
+  */
+  let polyComposer = (f, worker: chainWorker) => {
+    switch worker->chainWorkerToChainMod {
+    | RpcWorkerMod(w) => f.do(w)
+    | HyperSyncWorkerMod(w) => f.do(w)
+    | RawEventsWorkerMod(w) => f.do(w)
+    }
   }
 }
 
-let startFetchingEvents = (worker: chainWorker) => {
-  //See note in description of PolyMorphicChainWorkerFunctions
-  open PolyMorphicChainWorkerFunctions
-  switch worker->chainWorkerToChainMod {
-  | RpcWorkerMod(w) => w->startFetchingEvents
-  | HyperSyncWorkerMod(w) => w->startFetchingEvents
-  | RawEventsWorkerMod(w) => w->startFetchingEvents
-  }
-}
+let {
+  polyComposer,
+  startWorker,
+  startFetchingEvents,
+  addNewRangeQueriedCallback,
+  getLatestFetchedBlockTimestamp,
+  addDynamicContractAndFetchMissingEvents,
+} = module(PolyMorphicChainWorkerFunctions)
 
-let addNewRangeQueriedCallback = (worker: chainWorker) => {
-  //See note in description of PolyMorphicChainWorkerFunctions
-  open PolyMorphicChainWorkerFunctions
-  switch worker->chainWorkerToChainMod {
-  | RpcWorkerMod(w) => w->addNewRangeQueriedCallback
-  | HyperSyncWorkerMod(w) => w->addNewRangeQueriedCallback
-  | RawEventsWorkerMod(w) => w->addNewRangeQueriedCallback
-  }
-}
-
-let getLatestFetchedBlockTimestamp = (worker: chainWorker) => {
-  //See note in description of PolyMorphicChainWorkerFunctions
-  open PolyMorphicChainWorkerFunctions
-  switch worker->chainWorkerToChainMod {
-  | RpcWorkerMod(w) => w->getLatestFetchedBlockTimestamp
-  | HyperSyncWorkerMod(w) => w->getLatestFetchedBlockTimestamp
-  | RawEventsWorkerMod(w) => w->getLatestFetchedBlockTimestamp
-  }
-}
-
-let addDynamicContractAndFetchMissingEvents = (worker: chainWorker) => {
-  //See note in description of PolyMorphicChainWorkerFunctions
-  open PolyMorphicChainWorkerFunctions
-  switch worker->chainWorkerToChainMod {
-  | RpcWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
-  | HyperSyncWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
-  | RawEventsWorkerMod(w) => w->addDynamicContractAndFetchMissingEvents
-  }
-}
+let startWorker = polyComposer(startWorker)
+let startFetchingEvents = polyComposer(startFetchingEvents)
+let addNewRangeQueriedCallback = polyComposer(addNewRangeQueriedCallback)
+let getLatestFetchedBlockTimestamp = polyComposer(getLatestFetchedBlockTimestamp)
+let addDynamicContractAndFetchMissingEvents = polyComposer(addDynamicContractAndFetchMissingEvents)
 
 type caughtUpToHeadCallback<'worker> = option<'worker => promise<unit>>
 type workerSelectionWithCallback =

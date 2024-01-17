@@ -126,7 +126,13 @@ type getNextPageRes = {
   pageFetchTime: int,
 }
 
-let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
+let startWorker = async (
+  self: t,
+  ~startBlock,
+  ~logger,
+  ~fetchedEventQueue,
+  ~checkHasReorgOccurred,
+) => {
   logger->Logging.childInfo("Hypersync worker starting")
   let {chainConfig, contractAddressMapping, serverUrl} = self
   let initialHeight = await HyperSync.getHeightWithRetry(~serverUrl=self.serverUrl, ~logger)
@@ -204,6 +210,17 @@ let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
     //fetch batch
     let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await nextPagePromise.contents
+
+    //TODO: This is a stub, it will need to be returned in a single query from hypersync
+    let parentHash = pageUnsafe->ReorgDetection.getParentHashStub
+
+    //TODO: This is a stub, it will need to be returned in a single query from hypersync
+    let lastBlockScannedData = pageUnsafe->ReorgDetection.getLastBlockScannedDataStub
+
+    lastBlockScannedData->checkHasReorgOccurred(
+      ~parentHash,
+      ~currentHeight=pageUnsafe.archiveHeight,
+    )
 
     let currentBatchFromBlock = fromBlock.contents
 
@@ -400,6 +417,7 @@ let startFetchingEvents = async (
   self: t,
   ~logger: Pino.t,
   ~fetchedEventQueue: ChainEventQueue.t,
+  ~checkHasReorgOccurred,
 ) => {
   logger->Logging.childTrace("Starting event fetching on HyperSync worker")
 
@@ -433,7 +451,7 @@ let startFetchingEvents = async (
     )
   )
 
-  await self->startWorker(~fetchedEventQueue, ~logger, ~startBlock)
+  await self->startWorker(~fetchedEventQueue, ~logger, ~startBlock, ~checkHasReorgOccurred)
 
   self.hasStoppedFetchingCallBack()
 }
