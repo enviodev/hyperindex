@@ -2,25 +2,14 @@ open RescriptMocha
 module MochaPromise = RescriptMocha.Promise
 open Mocha
 
-@@warning("-21")
-let resetPostgresClient: unit => unit = () => {
-  // This is a hack to reset the postgres client between tests. postgres.js seems to cache some types, and if tests clear the DB you need to also reset sql.
-
-  %raw(
-    "require('../generated/src/DbFunctions.bs.js').sql = require('postgres')(require('../generated/src/Config.bs.js').db)"
-  )
-}
-
 describe("E2E Integration Test", () => {
   MochaPromise.before(async () => {
-    resetPostgresClient()
-    (await Migrations.runDownMigrations(~shouldExit=false, ~shouldDropRawEvents=true))->ignore
-    (await Migrations.runUpMigrations(~shouldExit=false))->ignore
+    await DbHelpers.runUpDownMigration()
   })
 
   MochaPromise.after(async () => {
-    (await Migrations.runDownMigrations(~shouldExit=false, ~shouldDropRawEvents=true))->ignore
-    (await Migrations.runUpMigrations(~shouldExit=false))->ignore
+    // It is probably overkill that we are running these 'after' also
+    await DbHelpers.runUpDownMigration()
   })
 
   MochaPromise.it("Complete E2E", ~timeout=5 * 1000, async () => {

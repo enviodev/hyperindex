@@ -155,19 +155,6 @@ module EntityHistory = {
     ~withPrev: array<entityHistoryItem>,
     ~withoutPrev: array<entityHistoryItem>,
   ) => promise<unit> = "batchSetEntityHistoryTable"
-
-
-  // @module("./DbFunctionsImplementation.js")
-  // external batchDelete: (Postgres.sql, array<dynamicContractRegistryRowId>) => promise<unit> =
-  //   "batchDeleteDynamicContractRegistry"
-
-  // @module("./DbFunctionsImplementation.js")
-  // external readEntities: (
-  //   Postgres.sql,
-  //   array<dynamicContractRegistryRowId>,
-  // ) => promise<array<Types.dynamicContractRegistryEntity>> = "readDynamicContractRegistryEntities"
-
-  ///Returns an array with 1 block number (the highest processed on the given chainId)
 }
 
 {{#each entities as |entity|}}

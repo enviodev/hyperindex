@@ -45,8 +45,10 @@ describe("E2E Mock Event Batch", () => {
 
 // NOTE: skipping this test for now since there seems to be some invalid DB state. Need to investigate again.
 // TODO: add a similar kind of test back again.
-describe_skip("E2E Db check", () => {
+describe("E2E Db check", () => {
   before_promise(async () => {
+    await DbHelpers.runUpDownMigration()
+
     RegisterHandlers.registerAllHandlers()
 
     let _ = await DbFunctions.Gravatar.batchSet(
@@ -73,13 +75,16 @@ describe_skip("E2E Db check", () => {
   it("Validate inmemory store state", () => {
     let inMemoryStoreRows = inMemoryStore.gravatar->IO.InMemoryStore.Gravatar.values
 
+    let chainId = MockConfig.mockChainConfig.chain->ChainMap.Chain.toChainId
+    let startBlock = MockConfig.mockChainConfig.startBlock
+
     Assert.deep_equal(
       inMemoryStoreRows,
       [
         MockEntities.makeDefaultSet(
-          ~chainId=1,
-          ~blockNumber=2,
-          ~logIndex=3,
+          ~chainId,
+          ~blockNumber=startBlock,
+          ~logIndex=4,
           {
             id: "1001",
             owner_id: "0x1230000000000000000000000000000000000000",
@@ -89,22 +94,32 @@ describe_skip("E2E Db check", () => {
             size: #MEDIUM,
           },
         ),
-        MockEntities.makeDefaultSet({
-          id: "1002",
-          owner_id: "0x4560000000000000000000000000000000000000",
-          displayName: "update2",
-          imageUrl: "https://gravatar2.com",
-          updatesCount: Ethers.BigInt.fromInt(2),
-          size: #MEDIUM,
-        }),
-        MockEntities.makeDefaultSet({
-          id: "1003",
-          owner_id: "0x7890000000000000000000000000000000000000",
-          displayName: "update3",
-          imageUrl: "https://gravatar3.com",
-          updatesCount: Ethers.BigInt.fromInt(2),
-          size: #MEDIUM,
-        }),
+        MockEntities.makeDefaultSet(
+          ~chainId,
+          ~blockNumber=startBlock,
+          ~logIndex=5,
+          {
+            id: "1002",
+            owner_id: "0x4560000000000000000000000000000000000000",
+            displayName: "update2",
+            imageUrl: "https://gravatar2.com",
+            updatesCount: Ethers.BigInt.fromInt(2),
+            size: #MEDIUM,
+          },
+        ),
+        MockEntities.makeDefaultSet(
+          ~chainId,
+          ~blockNumber=startBlock,
+          ~logIndex=6,
+          {
+            id: "1003",
+            owner_id: "0x7890000000000000000000000000000000000000",
+            displayName: "update3",
+            imageUrl: "https://gravatar3.com",
+            updatesCount: Ethers.BigInt.fromInt(2),
+            size: #MEDIUM,
+          },
+        ),
       ],
     )
   })
