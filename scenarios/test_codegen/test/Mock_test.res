@@ -81,6 +81,9 @@ describe("E2E Db check", () => {
   it("Validate inmemory store state", () => {
     let inMemoryStoreRows = inMemoryStore.gravatar->IO.InMemoryStore.Gravatar.values
 
+    let chainId = MockConfig.mockChainConfig.chainId
+    let startBlock = MockConfig.mockChainConfig.startBlock
+
     Assert.deep_equal(
       inMemoryStoreRows->Belt.Array.map(
         row =>
