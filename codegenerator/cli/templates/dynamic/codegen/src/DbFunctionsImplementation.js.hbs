@@ -216,10 +216,6 @@ function mergeArrays(array1, array2) {
 const fetchPreviousBlockNumbersAndLogIndices = async (sql, entityDataArray) => {
   const entityIds = entityDataArray.map(item => item.entity_id);
   const uniqueEntityIds = [...new Set(entityIds)]; // Remove duplicates
-  {{!-- console.log("uniqueEntityIds")
-  console.log(uniqueEntityIds)
-  console.log("sqlstatement")
-  console.log(sql.array(uniqueEntityIds)) --}}
 
   const previousBlockNumbersAndLogIndices = await sql`
     SELECT entity_id, block_number as previous_block_number, log_index as previous_log_index
@@ -232,28 +228,23 @@ const fetchPreviousBlockNumbersAndLogIndices = async (sql, entityDataArray) => {
     )
   `;
 
-  {{!-- console.log("previousBlockNumbersAndLogIndices")
-  console.log(previousBlockNumbersAndLogIndices) --}}
   let merge = mergeArrays(entityDataArray, previousBlockNumbersAndLogIndices)
-  {{!-- console.log("merge")
-  console.log(merge) --}}
-  return merge
-  // let prevResult = previousBlockNumbersAndLogIndices.reduce((acc, row) => {
-  //   console.log("row")
-  //   console.log(row)
-  //   acc[row.entity_id] = {
-  //     previous_block_number: row.previous_block_number,
-  //     previous_log_index: row.previous_log_index
-  //   };
-  //   return acc;
-  // }, {});
 
-  // console.log("prevResult")
-  // console.log(prevResult)
-  // return prevResult
+  return merge
 };
 
 const batchSetEntityHistory = async (sql, entityDataArray) => {
+  // NOTE: unfortunately the transform to automatically transform undefined to null in postgres doesn't work with queries constructed with arrays like this.
+  //       https://github.com/porsager/postgres/blob/v3.4.3/README.md#transform-undefined-values
+  //       This code is a workaround for that.
+  for (let i = 0; i < entityDataArray.length; i++) {
+    if (entityDataArray[i].previous_block_number === undefined)
+      entityDataArray[i].previous_block_number = null
+
+    if (entityDataArray[i].previous_log_index === undefined)
+      entityDataArray[i].previous_log_index = null
+  }
+
   return sql`
     INSERT INTO "public"."entity_history"
   ${sql(
