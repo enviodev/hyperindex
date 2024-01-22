@@ -202,10 +202,10 @@ module {{contract.name.capitalized}}Contract = {
                         `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
                       )
 
-                      // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
+                      // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
                       inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
 
-                      // TODO: add a further step to syncronously try fetch this from the DB if it isn't in the in-memory store - similar to this PR: https://github.com/Float-Capital/indexer/pull/759
+                      // TODO: add a further step to synchronously try fetch this from the DB if it isn't in the in-memory store - similar to this PR: https://github.com/Float-Capital/indexer/pull/759
                     }
                  },
                 {{/if}}
@@ -319,7 +319,7 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
                     if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
                       inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
                     } else {
-                      // NOTE: this will still retern the value if it exists in the in-memory store (despite the loader not being run).
+                      // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
                       switch inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id) {
                       | Some(entity) => Some(entity)
                       | None =>

@@ -230,18 +230,18 @@ let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
       "number of logs": pageUnsafe.items->Array.length,
     })
 
-    //The heighest (biggest) blocknumber that was accounted for in
+    //The highest (biggest) blocknumber that was accounted for in
     //Our query. Not necessarily the blocknumber of the last log returned
     //In the query
-    let heighestBlockQueried = pageUnsafe.nextBlock - 1
+    let highestBlockQueried = pageUnsafe.nextBlock - 1
 
-    //Helper function to fetch the timestamp of the heighest block queried
+    //Helper function to fetch the timestamp of the highest block queried
     //In the case that it is unknown
-    let getHeighestBlockAndTimestampWithDefault = (~default: HyperSync.blockNumberAndTimestamp) => {
+    let gethighestBlockAndTimestampWithDefault = (~default: HyperSync.blockNumberAndTimestamp) => {
       HyperSync.queryBlockTimestampsPage(
         ~serverUrl,
-        ~fromBlock=heighestBlockQueried,
-        ~toBlock=heighestBlockQueried,
+        ~fromBlock=highestBlockQueried,
+        ~toBlock=highestBlockQueried,
       )->Promise.thenResolve(res =>
         res->Belt.Result.mapWithDefault(default, page => {
           //Expected only 1 item but just taking last in case things change and we return
@@ -255,7 +255,7 @@ let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
 
     //The optional block and timestamp of the last item returned by the query
     //(Optional in the case that there are no logs returned in the query)
-    let logItemsHeighestBlockOpt =
+    let logItemshighestBlockOpt =
       pageUnsafe.items
       ->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1)
       ->Belt.Option.map((item): HyperSync.blockNumberAndTimestamp => {
@@ -263,32 +263,32 @@ let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
         timestamp: item.blockTimestamp,
       })
 
-    let heighestBlockQueriedPromise: promise<
+    let highestBlockQueriedPromise: promise<
       HyperSync.blockNumberAndTimestamp,
-    > = switch logItemsHeighestBlockOpt {
+    > = switch logItemshighestBlockOpt {
     | Some(val) =>
       let {blockNumber, timestamp} = val
-      if blockNumber == heighestBlockQueried {
+      if blockNumber == highestBlockQueried {
         //If the last log item in the current page is equal to the
-        //heighest block acounted for in the query. Simply return this
+        //highest block acounted for in the query. Simply return this
         //value without making an extra query
         Promise.resolve(val)
       } else {
         //If it does not match it means that there were no matching logs in the last
-        //block so we should fetch the block timestamp with a default of our heighest
-        //timestamp (the value in our heighest log)
-        getHeighestBlockAndTimestampWithDefault(
-          ~default={timestamp, blockNumber: heighestBlockQueried},
+        //block so we should fetch the block timestamp with a default of our highest
+        //timestamp (the value in our highest log)
+        gethighestBlockAndTimestampWithDefault(
+          ~default={timestamp, blockNumber: highestBlockQueried},
         )
       }
 
     | None =>
       //If there were no logs at all in the current page query then fetch the
-      //timestamp of the heighest block accounted for,
+      //timestamp of the highest block accounted for,
       //defaulting to our current latest blocktimestamp
-      getHeighestBlockAndTimestampWithDefault(
+      gethighestBlockAndTimestampWithDefault(
         ~default={
-          blockNumber: heighestBlockQueried,
+          blockNumber: highestBlockQueried,
           timestamp: self.latestFetchedBlockTimestamp,
         },
       )
@@ -366,12 +366,12 @@ let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
 
       //set latestFetchedBlockNumber and latestFetchedBlockTimestamp
       let {
-        blockNumber: heighestQueriedBlockNumber,
-        timestamp: heighestQueriedBlockTimestamp,
-      } = await heighestBlockQueriedPromise
+        blockNumber: highestQueriedBlockNumber,
+        timestamp: highestQueriedBlockTimestamp,
+      } = await highestBlockQueriedPromise
 
-      self.latestFetchedBlockTimestamp = heighestQueriedBlockTimestamp
-      latestBlockNumbersResolve(heighestQueriedBlockNumber)
+      self.latestFetchedBlockTimestamp = highestQueriedBlockTimestamp
+      latestBlockNumbersResolve(highestQueriedBlockNumber)
 
       //Loop through any callbacks on the queue waiting for confirmation of a new
       //range queried and run callbacks since there will be an updated timestamp even
