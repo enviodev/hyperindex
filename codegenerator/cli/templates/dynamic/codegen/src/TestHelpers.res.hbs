@@ -289,11 +289,18 @@ module {{contract.name.capitalized}} = {
         ?mockEventData,
       } = args
 
-      let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = {
+      let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
+      {{#if event.params}}
+      {
       {{#each event.params as | param |}}
        {{param.param_name.uncapitalized}}: {{param.param_name.uncapitalized}}->Belt.Option.getWithDefault({{param.default_value}}),
       {{/each}}
       }
+      {{else}}
+      ()
+      {{/if}}
+
+
 
       EventFunctions.makeEventMocker(~params, ~mockEventData)
     }
