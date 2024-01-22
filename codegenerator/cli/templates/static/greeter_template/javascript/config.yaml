@@ -8,12 +8,12 @@ contracts:
     abi_file_path: ./abis/greeter-abi.json
     handler: ./src/EventHandlers.js
     events:
-      - event: "NewGreeting"
+      - event: NewGreeting
         requiredEntities:
-          - name: "Greeting"
-      - event: "ClearGreeting"
+          - name: User
+      - event: ClearGreeting
         requiredEntities:
-          - name: "Greeting"
+          - name: User
 networks:
   - id: 137 # Polygon
     start_block: 45336336

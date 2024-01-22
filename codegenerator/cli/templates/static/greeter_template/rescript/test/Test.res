@@ -3,7 +3,7 @@ open Mocha
 open Belt
 
 describe("Greeter template tests", () => {
-  it("A NewGreeting event creates a Greeting entity", () => {
+  it("A NewGreeting event creates a User entity", () => {
     // Initializing the mock database
     let mockDbInitial = TestHelpers.MockDb.createMockDb()
 
@@ -24,7 +24,7 @@ describe("Greeter template tests", () => {
     })
 
     // Expected entity that should be created
-    let expectedGreetingEntity: Types.greetingEntity = {
+    let expectedUserEntity: Types.userEntity = {
       id: userAddress->Ethers.ethAddressToString,
       latestGreeting: greeting,
       numberOfGreetings: 1,
@@ -32,11 +32,11 @@ describe("Greeter template tests", () => {
     }
 
     // Getting the entity from the mock database
-    let actualGreetingEntity =
+    let actualUserEntity =
       updatedMockDb.entities.greeting.get(userAddress->Ethers.ethAddressToString)->Option.getExn
 
     // Asserting that the entity in the mock database is the same as the expected entity
-    Assert.deep_equal(expectedGreetingEntity, actualGreetingEntity)
+    Assert.deep_equal(expectedUserEntity, actualUserEntity)
   })
 
   it("2 Greetings from the same users results in that user having a greeter count of 2", () => {
@@ -75,11 +75,11 @@ describe("Greeter template tests", () => {
     let expectedGreetingCount = 2
 
     // Getting the entity from the mock database
-    let actualGreetingEntity =
+    let actualUserEntity =
       updatedMockDb2.entities.greeting.get(userAddress->Ethers.ethAddressToString)->Option.getExn
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    Assert.equal(actualGreetingEntity.numberOfGreetings, expectedGreetingCount)
+    Assert.equal(actualUserEntity.numberOfGreetings, expectedGreetingCount)
   })
 
   it(
@@ -118,13 +118,13 @@ describe("Greeter template tests", () => {
       })
 
       // Getting the entity from the mock database
-      let actualGreetingEntity =
+      let actualUserEntity =
         updatedMockDb2.entities.greeting.get(userAddress->Ethers.ethAddressToString)->Option.getExn
 
       let expectedGreeting = greetingAgain
 
       // Asserting that the field value of the entity in the mock database is the same as the expected field value
-      Assert.equal(actualGreetingEntity.latestGreeting, expectedGreeting)
+      Assert.equal(actualUserEntity.latestGreeting, expectedGreeting)
     },
   )
 })

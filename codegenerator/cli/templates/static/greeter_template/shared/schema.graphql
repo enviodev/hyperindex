@@ -1,4 +1,4 @@
-type Greeting {
+type User {
   id: ID!
   greetings: [String!]!
   latestGreeting: String!
