@@ -156,7 +156,7 @@ addresses: array<Ethers.ethAddress>,
         startBlock: {{chain_config.network_config.start_block}},
         chainId: {{chain_config.network_config.id}},
         contracts: [
-        {{#each chain_config.contracts as | contract |}}
+        {{#each chain_config.codegen_contracts as | contract |}}
         {
         name: "{{contract.name.capitalized}}",
         abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,

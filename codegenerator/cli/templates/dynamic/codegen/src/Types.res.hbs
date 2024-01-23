@@ -94,9 +94,9 @@ type eventLog<'a> = {
   logIndex: int,
 }
 
-{{#each contracts as | contract |}}
+{{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}}Contract = {
-{{#each contract.events as | event |}}
+{{#each contract.codegen_events as | event |}}
 module {{event.name.capitalized}}Event = {
   //Note: each parameter is using a binding of its index to help with binding in ethers
   //This handles both unamed params and also named params that clash with reserved keywords
@@ -235,7 +235,7 @@ module {{event.name.capitalized}}Event = {
     
     @genType
     type contractRegistrations = {
-    {{#each ../../contracts as |contract_inner| }}
+    {{#each ../../codegen_contracts as |contract_inner| }}
       //TODO only add contracts we've registered for the event in the config
       add{{contract_inner.name.capitalized}}: (Ethers.ethAddress) => unit,
     {{/each}}
@@ -255,23 +255,23 @@ module {{event.name.capitalized}}Event = {
 
 @deriving(accessors)
 type event =
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>)
 {{/each}}
 {{/each}}
 
 @spice
 type eventName =
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
   | @spice.as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
 {{/each}}
 {{/each}}
 
 let eventNameToString = (eventName: eventName) => switch eventName {
-  {{#each contracts as | contract |}}
-  {{#each contract.events as | event |}}
+  {{#each codegen_contracts as | contract |}}
+  {{#each contract.codegen_events as | event |}}
     | {{event.event_type.full}} => "{{event.name.capitalized}}"
   {{/each}}
   {{/each}}

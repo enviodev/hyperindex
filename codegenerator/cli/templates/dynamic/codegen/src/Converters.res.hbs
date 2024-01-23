@@ -2,8 +2,8 @@ exception UndefinedEvent(string)
 
 let eventStringToEvent = (eventName: string, contractName: string): Types.eventName => {
   switch (eventName, contractName) {
-    {{#each contracts as |contract|}}
-    {{#each contract.events as |event|}}
+    {{#each codegen_contracts as |contract|}}
+    {{#each contract.codegen_events as |event|}}
     | ("{{event.name.capitalized}}", "{{contract.name.capitalized}}") => {{event.event_type.full}}
     {{/each}}
     {{/each}}
@@ -11,9 +11,9 @@ let eventStringToEvent = (eventName: string, contractName: string): Types.eventN
   }
 }
 
-{{#each contracts as |contract|}}
+{{#each codegen_contracts as |contract|}}
 module {{contract.name.capitalized}} = {
-{{#each contract.events as |event|}}
+{{#each contract.codegen_events as |event|}}
   let convert{{event.name.capitalized}}ViemDecodedEvent: Viem.decodedEvent<'a> => Viem.decodedEvent<
     Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
   > = Obj.magic
@@ -146,8 +146,8 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chain
     | None => Error(UnregisteredContract(log.address))
     | Some(contractName) =>
       let event = switch eventStringToEvent(logDescription.name, contractName) {
-      {{#each contracts as |contract|}}
-      {{#each contract.events as |event|}}
+      {{#each codegen_contracts as |contract|}}
+      {{#each contract.codegen_events as |event|}}
         | {{event.event_type.full}} =>
             logDescription
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
@@ -180,8 +180,8 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId): B
     | None => Error(UnregisteredContract(log.address))
     | Some(contractName) =>
       let event = switch eventStringToEvent(decodedEvent.eventName, contractName) {
-      {{#each contracts as |contract|}}
-      {{#each contract.events as |event|}}
+      {{#each codegen_contracts as |contract|}}
+      {{#each contract.codegen_events as |event|}}
         | {{event.event_type.full}} =>
             decodedEvent
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}ViemDecodedEvent
@@ -247,8 +247,8 @@ let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chainId: int): Spice.resu
   ->Types.eventName_decode
   ->Belt.Result.flatMap(eventName => {
     switch eventName {
-  {{#each contracts as |contract|}}
-  {{#each contract.events as |event|}}
+  {{#each codegen_contracts as |contract|}}
+  {{#each contract.codegen_events as |event|}}
       | {{event.event_type.full}} =>
       rawEvent->decodeRawEventWith(
         ~decoder=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_decode,

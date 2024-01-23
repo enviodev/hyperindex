@@ -88,9 +88,9 @@ let getDefaultLoaderHandlerWithContextGetter = (~functionRegister, ~eventName) =
   contextGetter: ctx => ctx.getHandlerContextSync(),
 })
 
-{{#each contracts as | contract |}}
+{{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}}Contract = {
-  {{#each contract.events as | event |}}  
+  {{#each contract.codegen_events as | event |}}  
   module {{event.name.capitalized}} = {
     open Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event
 

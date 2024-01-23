@@ -69,7 +69,7 @@ module RawEventsTable = {
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'event_type') THEN
           CREATE TYPE EVENT_TYPE AS ENUM(
-          {{#each contracts as | contract |}}{{#each contract.events as | event |}}'{{event.event_type.truncated_for_pg_enum_limit}}'{{#unless @last}},
+          {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}'{{event.event_type.truncated_for_pg_enum_limit}}'{{#unless @last}},
           {{/unless}}{{/each}}{{#unless @last}},
           {{/unless}}{{/each}}
           );
@@ -124,7 +124,7 @@ module DynamicContractRegistryTable = {
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'contract_type') THEN
           CREATE TYPE CONTRACT_TYPE AS ENUM (
-          {{#each contracts as | contract |}}
+          {{#each codegen_contracts as | contract |}}
           '{{contract.name.capitalized}}'{{#unless @last}},{{/unless}}
           {{/each}}
           );

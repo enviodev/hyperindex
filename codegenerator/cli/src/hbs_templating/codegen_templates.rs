@@ -373,7 +373,7 @@ impl EventTemplate {
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct ContractTemplate {
     pub name: CapitalizedOptions,
-    pub events: Vec<EventTemplate>,
+    pub codegen_events: Vec<EventTemplate>,
     pub abi: StringifiedAbi,
     pub handler: HandlerPathsTemplate,
 }
@@ -387,7 +387,7 @@ impl ContractTemplate {
         let name = contract.name.to_capitalized_options();
         let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
             .context("Failed building handler paths template")?;
-        let events = contract
+        let codegen_events = contract
             .events
             .iter()
             .map(|event| EventTemplate::from_config_event(event, config, &contract.name))
@@ -399,7 +399,7 @@ impl ContractTemplate {
         Ok(ContractTemplate {
             name,
             handler,
-            events,
+            codegen_events,
             abi,
         })
     }
@@ -496,7 +496,7 @@ impl NetworkTemplate {
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
-    contracts: Vec<PerNetworkContractTemplate>,
+    codegen_contracts: Vec<PerNetworkContractTemplate>,
 }
 
 impl NetworkConfigTemplate {
@@ -505,7 +505,7 @@ impl NetworkConfigTemplate {
         config: &SystemConfig,
     ) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
-        let contracts = network
+        let codegen_contracts = network
             .contracts
             .iter()
             .map(|network_contract| {
@@ -516,7 +516,7 @@ impl NetworkConfigTemplate {
 
         Ok(NetworkConfigTemplate {
             network_config,
-            contracts,
+            codegen_contracts,
         })
     }
 }
@@ -524,7 +524,7 @@ impl NetworkConfigTemplate {
 #[derive(Serialize)]
 pub struct ProjectTemplate {
     project_name: String,
-    contracts: Vec<ContractTemplate>,
+    codegen_contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     codegen_out_path: String,
@@ -553,7 +553,7 @@ impl ProjectTemplate {
             .ok_or_else(|| anyhow!("invalid codegen path"))?
             .to_string();
 
-        let contracts: Vec<ContractTemplate> = cfg
+        let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
             .map(|cfg_contract| {
@@ -582,7 +582,7 @@ impl ProjectTemplate {
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
-            contracts,
+            codegen_contracts,
             entities,
             chain_configs,
             codegen_out_path: gitignore_path_str,
@@ -679,7 +679,7 @@ mod test {
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
-            contracts: vec![contract1],
+            codegen_contracts: vec![contract1],
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -732,11 +732,11 @@ mod test {
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
-            contracts: vec![contract1],
+            codegen_contracts: vec![contract1],
         };
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
-            contracts: vec![contract2],
+            codegen_contracts: vec![contract2],
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -768,7 +768,7 @@ mod test {
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
-            contracts: vec![contract1],
+            codegen_contracts: vec![contract1],
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -796,12 +796,12 @@ mod test {
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
-            contracts: vec![],
+            codegen_contracts: vec![],
         };
 
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
-            contracts: vec![],
+            codegen_contracts: vec![],
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -825,7 +825,7 @@ mod test {
     fn abi_event_to_record_1() {
         let project_template = get_project_template_helper("config1.yaml");
 
-        let new_gavatar_event_template = &project_template.contracts[0].events[0];
+        let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
 
         let expected_event_template = EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
@@ -882,7 +882,7 @@ mod test {
     fn abi_event_to_record_2() {
         let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
 
-        let new_gavatar_event_template = &project_template.contracts[0].events[0];
+        let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
         
         let expected_event_template = EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),

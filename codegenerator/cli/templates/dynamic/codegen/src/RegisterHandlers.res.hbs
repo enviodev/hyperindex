@@ -1,4 +1,4 @@
-{{#each contracts as |contract|}}
+{{#each codegen_contracts as |contract|}}
   let register{{contract.name.capitalized
   }}Handlers = () => {
 try {
@@ -15,7 +15,7 @@ try {
 {{/each}}
 
 let registerAllHandlers = () => {
-{{#each contracts as |contract|}}
+{{#each codegen_contracts as |contract|}}
   register{{contract.name.capitalized}}Handlers()
 {{/each}}
 }

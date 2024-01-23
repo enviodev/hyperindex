@@ -247,10 +247,10 @@ module EventFunctions = {
   }
 }
 
-{{#each contracts as | contract |}}
+{{#each codegen_contracts as | contract |}}
 
 module {{contract.name.capitalized}} = {
-  {{#each contract.events as | event |}}
+  {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
     @genType
     let processEvent = EventFunctions.makeSyncEventProcessor(
