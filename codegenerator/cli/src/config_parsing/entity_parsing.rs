@@ -292,7 +292,7 @@ impl RescriptType {
             RescriptType::ID => "\"my_id\"".to_string(),
             RescriptType::Bool => "false".to_string(),
             RescriptType::Array(_) => "[]".to_string(),
-            RescriptType::Option(_) => "Null".to_string(),
+            RescriptType::Option(_) => "null".to_string(),
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
