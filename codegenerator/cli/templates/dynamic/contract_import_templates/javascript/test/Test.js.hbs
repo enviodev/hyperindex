@@ -7,7 +7,7 @@ const { Addresses } = require("../generated/src/bindings/Ethers.bs");
 let { GLOBAL_EVENTS_SUMMARY_KEY } = require("../src/EventHandlers");
 {{/with}}
 
-const mockEventsSummaryEntity = {
+const MOCK_EVENTS_SUMMARY_ENTITY = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
   {{#each imported_contracts as | contract |}}
     {{#each contract.codegen_events as | event |}}
@@ -24,7 +24,7 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
 
   // Add mock EventsSummaryEntity to mock db
   const mockDbFinal = mockDbInitial.entities.EventsSummary.set(
-    mockEventsSummaryEntity
+    MOCK_EVENTS_SUMMARY_ENTITY
   );
 
   // Creating mock {{contract.name.capitalized}} contract {{event.name.capitalized}} event
@@ -83,8 +83,8 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
 
     // Creating the expected entity
     const expectedEventsSummaryEntity = {
-      ...mockEventsSummaryEntity,
-      {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: mockEventsSummaryEntity.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Count + BigInt(1),
+      ...MOCK_EVENTS_SUMMARY_ENTITY,
+      {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: MOCK_EVENTS_SUMMARY_ENTITY.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Count + BigInt(1),
     };
     // Asserting that the entity in the mock database is the same as the expected entity
     assert.deepEqual(

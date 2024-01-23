@@ -14,7 +14,7 @@ import { GLOBAL_EVENTS_SUMMARY_KEY } from "../src/EventHandlers";
 {{/with}}
 
 
-const mockEventsSummaryEntity: EventsSummaryEntity = {
+const MOCK_EVENTS_SUMMARY_ENTITY: EventsSummaryEntity = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
   {{#each imported_contracts as | contract |}}
     {{#each contract.codegen_events as | event |}}
@@ -31,7 +31,7 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
 
   // Add mock EventsSummaryEntity to mock db
   const mockDbFinal = mockDbInitial.entities.EventsSummary.set(
-    mockEventsSummaryEntity
+    MOCK_EVENTS_SUMMARY_ENTITY
   );
 
   // Creating mock {{contract.name.capitalized}} contract {{event.name.capitalized}} event
@@ -86,8 +86,8 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
 
     // Creating the expected entity
     const expectedEventsSummaryEntity: EventsSummaryEntity = {
-      ...mockEventsSummaryEntity,
-      {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: mockEventsSummaryEntity.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Count + BigInt(1),
+      ...MOCK_EVENTS_SUMMARY_ENTITY,
+      {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: MOCK_EVENTS_SUMMARY_ENTITY.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Count + BigInt(1),
     };
     // Asserting that the entity in the mock database is the same as the expected entity
     assert.deepEqual(actualEventsSummaryEntity, expectedEventsSummaryEntity, "Actual {{contract.name.capitalized}}{{event.name.capitalized}}Entity should be the same as the expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity");
