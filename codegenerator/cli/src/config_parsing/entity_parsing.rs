@@ -262,29 +262,6 @@ impl RescriptType {
 
     pub fn get_default_value_non_rescript(&self) -> String {
         match self {
-            RescriptType::Int => "0".to_string(),
-            RescriptType::Float => "0.0".to_string(),
-            RescriptType::BigInt => "0n".to_string(),
-            RescriptType::Address => "Addresses.defaultAddress".to_string(),
-            RescriptType::String => "\"foo\"".to_string(),
-            RescriptType::ID => "\"my_id\"".to_string(),
-            RescriptType::Bool => "false".to_string(),
-            RescriptType::Array(_) => "[]".to_string(),
-            RescriptType::Option(_) => "None".to_string(),
-            RescriptType::Tuple(inner_types) => {
-                let inner_types_str = inner_types
-                    .iter()
-                    .map(|inner_type| inner_type.get_default_value_non_rescript())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                format!("({})", inner_types_str)
-            }
-        }
-    }
-
-    pub fn get_default_value_non_rescript(&self) -> String {
-        match self {
             RescriptType::Int | RescriptType::Float => "0".to_string(),
             RescriptType::BigInt => "0n".to_string(),
             RescriptType::Address => "Addresses.defaultAddress".to_string(),
