@@ -16,6 +16,7 @@ services:
     image: hasura/graphql-engine:v2.23.0
     ports:
       - "${HASURA_EXTERNAL_PORT:-8080}:8080"
+    user: 1001:1001
     depends_on:
       - "envio-postgres"
     restart: always
