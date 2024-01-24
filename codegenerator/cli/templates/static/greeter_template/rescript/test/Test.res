@@ -33,7 +33,7 @@ describe("Greeter template tests", () => {
 
     // Getting the entity from the mock database
     let actualUserEntity =
-      updatedMockDb.entities.greeting.get(userAddress->Ethers.ethAddressToString)->Option.getExn
+      updatedMockDb.entities.user.get(userAddress->Ethers.ethAddressToString)->Option.getExn
 
     // Asserting that the entity in the mock database is the same as the expected entity
     Assert.deep_equal(expectedUserEntity, actualUserEntity)
@@ -76,7 +76,7 @@ describe("Greeter template tests", () => {
 
     // Getting the entity from the mock database
     let actualUserEntity =
-      updatedMockDb2.entities.greeting.get(userAddress->Ethers.ethAddressToString)->Option.getExn
+      updatedMockDb2.entities.user.get(userAddress->Ethers.ethAddressToString)->Option.getExn
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
     Assert.equal(actualUserEntity.numberOfGreetings, expectedGreetingCount)
@@ -119,7 +119,7 @@ describe("Greeter template tests", () => {
 
       // Getting the entity from the mock database
       let actualUserEntity =
-        updatedMockDb2.entities.greeting.get(userAddress->Ethers.ethAddressToString)->Option.getExn
+        updatedMockDb2.entities.user.get(userAddress->Ethers.ethAddressToString)->Option.getExn
 
       let expectedGreeting = greetingAgain
 

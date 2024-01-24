@@ -17,9 +17,9 @@ const pollGraphQL = async () => {
     }
   `;
 
-  const greetingEntityQuery = `
+  const userEntityQuery = `
     {
-      Greeting_by_pk(id: "0xf28eA36e3E68Aff0e8c9bFF8037ba2150312ac48") {
+      User_by_pk(id: "0xf28eA36e3E68Aff0e8c9bFF8037ba2150312ac48") {
         id
         greetings
         numberOfGreetings
@@ -63,42 +63,42 @@ const pollGraphQL = async () => {
       }
     } catch (err) {
       if (!shouldExitOnFailure) {
-        console.log("[will retry] Could not request data from Hasura due to error: ", err);
+        console.log(
+          "[will retry] Could not request data from Hasura due to error: ",
+          err
+        );
         console.log("Hasura not yet started, retrying in 1s");
       } else {
         console.error(err);
         process.exit(1);
       }
     }
-    setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 1000);
+    setTimeout(() => {
+      if (!shouldExitOnFailure) fetchQuery(query, callback);
+    }, 1000);
   };
 
-  console.log("[js context] Starting running test Greeter")
+  console.log("[js context] Starting running test Greeter");
 
   // TODO: make this use promises rather than callbacks.
   fetchQuery(rawEventsQuery, (data) => {
     assert(
-      data.raw_events_by_pk.event_type ===
-      "Greeter_NewGreeting",
+      data.raw_events_by_pk.event_type === "Greeter_NewGreeting",
       "event_type should be Greeter_NewGreeting"
     );
     console.log("First test passed, running the second one.");
 
     // Run the second test
-    fetchQuery(greetingEntityQuery, ({ Greeting_by_pk: greeting }) => {
-      assert(!!greeting, "greeting should not be null or undefined")
+    fetchQuery(userEntityQuery, ({ User_by_pk: user }) => {
+      assert(!!user, "greeting should not be null or undefined");
       assert(
-        greeting.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
+        user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
         "First 3 greetings should be 'gm,gn,gm paris'"
       );
-      assert(
-        greeting.numberOfGreetings >= 3,
-        "numberOfGreetings should be >= 3"
-      );
+      assert(user.numberOfGreetings >= 3, "numberOfGreetings should be >= 3");
       console.log("Second test passed.");
     });
   });
 };
 
 pollGraphQL();
-

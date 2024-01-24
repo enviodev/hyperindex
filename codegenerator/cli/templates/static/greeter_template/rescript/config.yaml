@@ -8,20 +8,20 @@ contracts:
     abi_file_path: ./abis/greeter-abi.json
     handler: ./src/EventHandlers.bs.js
     events:
-      - event: "NewGreeting"
+      - event: NewGreeting
         requiredEntities:
-          - name: "Greeting"
-      - event: "ClearGreeting"
+          - name: User
+      - event: ClearGreeting
         requiredEntities:
-          - name: "Greeting"
+          - name: User
 networks:
   - id: 137 # Polygon
     start_block: 45336336
     contracts:
       - name: Greeter #A reference to the global contract definition
-        address: "0x9D02A17dE4E68545d3a58D3a20BbBE0399E05c9c"
+        address: 0x9D02A17dE4E68545d3a58D3a20BbBE0399E05c9c
   - id: 59144 # Linea
     start_block: 367801
     contracts:
       - name: Greeter #A reference to the global contract definition
-        address: "0xdEe21B97AB77a16B4b236F952e586cf8408CF32A"
+        address: 0xdEe21B97AB77a16B4b236F952e586cf8408CF32A
