@@ -44,6 +44,8 @@ module type S = {
     ~fromLogIndex: int,
     ~logger: Pino.t,
   ) => promise<array<Types.eventBatchQueueItem>>
+
+  let getCurrentBlockHeight: t => int
 }
 
 @@warnings("+27")
@@ -126,8 +128,15 @@ module PolyMorphicChainWorkerFunctions = {
     do: (type workerType, chainWorkerModTuple: chainWorkerModTuple<workerType>) => {
       let (worker, workerMod) = chainWorkerModTuple
       let module(M) = workerMod
-      //Note: Only defining f so my syntax highlighting doesn't break -> Jono
       worker->M.addDynamicContractAndFetchMissingEvents
+    },
+  }
+
+  let getCurrentBlockHeight = {
+    do: (type workerType, chainWorkerModTuple: chainWorkerModTuple<workerType>) => {
+      let (worker, workerMod) = chainWorkerModTuple
+      let module(M) = workerMod
+      worker->M.getCurrentBlockHeight
     },
   }
 
@@ -138,8 +147,8 @@ module PolyMorphicChainWorkerFunctions = {
 
   let chainWorkerToChainMod = (worker: chainWorker) => {
     switch worker {
-    | Rpc(w) => RpcWorkerMod((w, module(RpcWorker)))
     | HyperSync(w) => HyperSyncWorkerMod((w, module(HyperSyncWorker)))
+    | Rpc(w) => RpcWorkerMod((w, module(RpcWorker)))
     | RawEvents(w) => RawEventsWorkerMod((w, module(RawEventsWorker)))
     }
   }
@@ -163,6 +172,7 @@ let {
   addNewRangeQueriedCallback,
   getLatestFetchedBlockTimestamp,
   addDynamicContractAndFetchMissingEvents,
+  getCurrentBlockHeight,
 } = module(PolyMorphicChainWorkerFunctions)
 
 let startWorker = polyComposer(startWorker)
@@ -170,6 +180,7 @@ let startFetchingEvents = polyComposer(startFetchingEvents)
 let addNewRangeQueriedCallback = polyComposer(addNewRangeQueriedCallback)
 let getLatestFetchedBlockTimestamp = polyComposer(getLatestFetchedBlockTimestamp)
 let addDynamicContractAndFetchMissingEvents = polyComposer(addDynamicContractAndFetchMissingEvents)
+let getCurrentBlockHeight = polyComposer(getCurrentBlockHeight)
 
 type caughtUpToHeadCallback<'worker> = option<'worker => promise<unit>>
 type workerSelectionWithCallback =

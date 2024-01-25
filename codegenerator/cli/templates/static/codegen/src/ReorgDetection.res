@@ -63,7 +63,24 @@ module LastBlockScannedHashes: {
     ~blockNumbersAndHashes: array<HyperSync.blockNumberAndHash>,
   ) => result<t, exn>
 
-  let getEarliestMultiChainTimestampInThreshold: (array<t>, ~currentHeight: int) => option<int>
+  /**
+  A record that holds the current height of a chain and the lastBlockScannedHashes,
+  used for passing into getEarliestMultiChainTimestampInThreshold where these values 
+  need to be zipped
+  */
+  type currentHeightAndLastBlockHashes = {
+    currentHeight: int,
+    lastBlockScannedHashes: t,
+  }
+
+  /**
+  Finds the earliest timestamp that is withtin the confirmedBlockThreshold of
+  each chain in a multi chain indexer. Returns None if its a single chain or if
+  the list is empty
+  */
+  let getEarliestMultiChainTimestampInThreshold: array<currentHeightAndLastBlockHashes> => option<
+    int,
+  >
 
   let getAllBlockNumbers: t => Belt.Array.t<int>
 } = {
@@ -277,6 +294,11 @@ module LastBlockScannedHashes: {
     })
   }
 
+  type currentHeightAndLastBlockHashes = {
+    currentHeight: int,
+    lastBlockScannedHashes: t,
+  }
+
   /**
   Find the the earliest block time across multiple instances of self where the block timestamp
   falls within its own confirmed block threshold
@@ -284,7 +306,9 @@ module LastBlockScannedHashes: {
   Return None if there is only one chain (since we don't want to take this val into account for a
   single chain indexer) or if there are no chains (should never be the case)
   */
-  let getEarliestMultiChainTimestampInThreshold = (multiSelf: array<t>, ~currentHeight) => {
+  let getEarliestMultiChainTimestampInThreshold = (
+    multiSelf: array<currentHeightAndLastBlockHashes>,
+  ) => {
     switch multiSelf {
     | [_singleVal] =>
       //In the case where there is only one chain, return none as there would be no need to aggregate
@@ -292,8 +316,8 @@ module LastBlockScannedHashes: {
       None
     | multiSelf =>
       multiSelf
-      ->Belt.Array.keepMap(self => {
-        self->getEarlistTimestampInThreshold(~currentHeight)
+      ->Belt.Array.keepMap(({currentHeight, lastBlockScannedHashes}) => {
+        lastBlockScannedHashes->getEarlistTimestampInThreshold(~currentHeight)
       })
       ->min
     }
