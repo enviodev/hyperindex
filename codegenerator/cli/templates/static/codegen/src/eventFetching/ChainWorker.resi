@@ -39,6 +39,8 @@ module type S = {
     ~fromLogIndex: int,
     ~logger: Pino.t,
   ) => promise<array<Types.eventBatchQueueItem>>
+
+  let getCurrentBlockHeight: t => int
 }
 
 type chainWorker =
@@ -88,3 +90,5 @@ let make: (
   ~contractAddressMapping: ContractAddressingMap.mapping=?,
   workerSelectionWithCallback,
 ) => chainWorker
+
+let getCurrentBlockHeight: chainWorker => int

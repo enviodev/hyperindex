@@ -424,3 +424,7 @@ let addDynamicContractAndFetchMissingEvents = async (
     newDynamicContractsQueueItems,
   ])->Promise.thenResolve(sortOrderedEventBatchArrays)
 }
+
+let getCurrentBlockHeight = (_self: t) => {
+  Js.Exn.raiseError("Current block height not implemented for raw events worker")
+}
