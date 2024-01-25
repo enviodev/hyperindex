@@ -1,5 +1,6 @@
 open ChainWorkerTypes
 type rec t = {
+  mutable currentBlockHeight: int,
   mutable latestFetchedBlockNumber: promise<int>, // promise allows locking of this field while a batch has been fetched but still being added
   mutable latestFetchedBlockTimestamp: int,
   mutable hasNewDynamicContractRegistrations: promise<bool>, //promise allows us to use this field as a lock
@@ -106,6 +107,7 @@ let make = (
   }
 
   {
+    currentBlockHeight: 0,
     latestFetchedBlockNumber: Promise.resolve(0),
     latestFetchedBlockTimestamp: 0,
     hasNewDynamicContractRegistrations: Promise.resolve(false),
@@ -120,10 +122,323 @@ let make = (
   }
 }
 
-type getNextPageRes = {
+/**
+Sets both the block height in state and asynchronously with chain metadata row (does not wait for promise response)
+If the given value is greater than the current state
+
+This is a placeholder for an action that will be dispatched to the globale state manager
+*/
+let setCurrentBlockHeight = (self: t, ~currentBlockHeight, ~startBlock) =>
+  if currentBlockHeight > self.currentBlockHeight {
+    self.currentBlockHeight = currentBlockHeight
+
+    //Don't await this set, it can happen in its own time
+    DbFunctions.ChainMetadata.setChainMetadataRow(
+      ~chainId=self.chainConfig.chainId,
+      ~startBlock,
+      ~blockHeight=currentBlockHeight,
+    )->ignore
+  }
+
+/**
+Sets the latest latestFetchedBlockTimestamp in state if it is greater than the current state
+*/
+let setLatestFetchedBlockTimestamp = (self: t, ~latestFetchedBlockTimestamp) =>
+  if latestFetchedBlockTimestamp > self.latestFetchedBlockTimestamp {
+    self.latestFetchedBlockTimestamp = latestFetchedBlockTimestamp
+  }
+
+/**
+Holds the value of the next page fetch happening concurrently to current page processing
+*/
+type nextPageFetchRes = {
   contractInterfaceManager: ContractInterfaceManager.t,
   page: HyperSync.logsQueryPage,
   pageFetchTime: int,
+}
+
+/**
+The args required for calling block range fetch
+*/
+type blockRangeFetchArgs = {
+  fromBlock: int,
+  latestFetchedBlockTimestamp: int,
+  nextPagePromise: promise<nextPageFetchRes>,
+}
+
+/**
+A set of stats for logging about the block range fetch
+*/
+type blockRangeFetchStats = {
+  @as("total time elapsed (ms)") totalTimeElapsed: int,
+  @as("parsing time (ms)") parsingTimeElapsed: int,
+  @as("page fetch time (ms)") pageFetchTime: int,
+  @as("average parse time per log (ms)") averageParseTimePerLog: float,
+}
+
+type reorgGuard = {
+  lastBlockScannedData: ReorgDetection.lastBlockScannedData,
+  parentHash: option<string>,
+}
+
+/**
+Thes response returned from a block range fetch
+*/
+type blockRangeFetchResponse = {
+  currentBlockHeight: int,
+  reorgGuard: reorgGuard,
+  nextQuery: blockRangeFetchArgs,
+  parsedQueueItems: array<Types.eventBatchQueueItem>,
+  heighestQueriedBlockNumber: int,
+  stats: blockRangeFetchStats,
+}
+
+let fetchBlockRange = async (
+  {nextPagePromise, latestFetchedBlockTimestamp, fromBlock},
+  ~chainId,
+  ~logger,
+  ~serverUrl,
+  ~getNextPage,
+): blockRangeFetchResponse => {
+  let startFetchingBatchTimeRef = Hrtime.makeTimer()
+  //fetch batch
+  let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await nextPagePromise
+
+  //set height and next from block
+  let currentBlockHeight = pageUnsafe.archiveHeight
+
+  //TOD: This is a stub, it will need to be returned in a single query from hypersync
+  let parentHash = pageUnsafe->ReorgDetection.getParentHashStub
+
+  //TODO: This is a stub, it will need to be returned in a single query from hypersync
+  let lastBlockScannedData = pageUnsafe->ReorgDetection.getLastBlockScannedDataStub
+
+  let reorgGuard = {
+    lastBlockScannedData,
+    parentHash,
+  }
+
+  let nextBlock = pageUnsafe.nextBlock
+
+  let nextPagePromise = getNextPage(~fromBlock=pageUnsafe.nextBlock, ~currentBlockHeight)
+
+  logger->Logging.childTrace({
+    "message": "Retrieved event page from server",
+    "fromBlock": fromBlock,
+    "toBlock": pageUnsafe.nextBlock - 1,
+  })
+
+  //The heighest (biggest) blocknumber that was accounted for in
+  //Our query. Not necessarily the blocknumber of the last log returned
+  //In the query
+  let heighestBlockQueried = pageUnsafe.nextBlock - 1
+
+  //Helper function to fetch the timestamp of the heighest block queried
+  //In the case that it is unknown
+  let getHeighestBlockAndTimestampWithDefault = (~default: HyperSync.blockNumberAndTimestamp) => {
+    HyperSync.queryBlockTimestampsPage(
+      ~serverUrl,
+      ~fromBlock=heighestBlockQueried,
+      ~toBlock=heighestBlockQueried,
+    )->Promise.thenResolve(res =>
+      res->Belt.Result.mapWithDefault(default, page => {
+        //Expected only 1 item but just taking last in case things change and we return
+        //a range
+        let lastBlockInRangeQueried = page.items->Belt.Array.get(page.items->Array.length - 1)
+
+        lastBlockInRangeQueried->Belt.Option.getWithDefault(default)
+      })
+    )
+  }
+
+  //The optional block and timestamp of the last item returned by the query
+  //(Optional in the case that there are no logs returned in the query)
+  let logItemsHeighestBlockOpt =
+    pageUnsafe.items
+    ->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1)
+    ->Belt.Option.map((item): HyperSync.blockNumberAndTimestamp => {
+      blockNumber: item.log.blockNumber,
+      timestamp: item.blockTimestamp,
+    })
+
+  let heighestBlockQueriedPromise: promise<
+    HyperSync.blockNumberAndTimestamp,
+  > = switch logItemsHeighestBlockOpt {
+  | Some(val) =>
+    let {blockNumber, timestamp} = val
+    if blockNumber == heighestBlockQueried {
+      //If the last log item in the current page is equal to the
+      //heighest block acounted for in the query. Simply return this
+      //value without making an extra query
+      Promise.resolve(val)
+    } else {
+      //If it does not match it means that there were no matching logs in the last
+      //block so we should fetch the block timestamp with a default of our heighest
+      //timestamp (the value in our heighest log)
+      getHeighestBlockAndTimestampWithDefault(
+        ~default={timestamp, blockNumber: heighestBlockQueried},
+      )
+    }
+
+  | None =>
+    //If there were no logs at all in the current page query then fetch the
+    //timestamp of the heighest block accounted for,
+    //defaulting to our current latest blocktimestamp
+    getHeighestBlockAndTimestampWithDefault(
+      ~default={
+        blockNumber: heighestBlockQueried,
+        timestamp: latestFetchedBlockTimestamp,
+      },
+    )
+  }
+
+  let parsingTimeRef = Hrtime.makeTimer()
+  //Parse page items into queue items
+  let parsedQueueItems =
+    await pageUnsafe.items
+    //Defer all this parsing into separate deferred callbacks
+    //on the macro task queue so that parsing doesn't block the
+    //event loop and each parse happens as a macro task. Meaning
+    //promise resolves will take priority
+    ->Deferred.mapArrayDeferred((item, resolve, reject) => {
+      switch Converters.parseEvent(
+        ~log=item.log,
+        ~blockTimestamp=item.blockTimestamp,
+        ~contractInterfaceManager,
+        ~chainId,
+      ) {
+      | Ok(parsed) =>
+        let queueItem: Types.eventBatchQueueItem = {
+          timestamp: item.blockTimestamp,
+          chainId,
+          blockNumber: item.log.blockNumber,
+          logIndex: item.log.logIndex,
+          event: parsed,
+        }
+        resolve(queueItem)
+      | Error(e) => reject(Converters.ParseEventErrorExn(e))
+      }
+    })
+    ->Deferred.asPromise
+
+  let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+  //set latestFetchedBlockNumber and latestFetchedBlockTimestamp
+  let {
+    blockNumber: heighestQueriedBlockNumber,
+    timestamp: heighestQueriedBlockTimestamp,
+  } = await heighestBlockQueriedPromise
+
+  let totalTimeElapsed =
+    startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+  let stats = {
+    totalTimeElapsed,
+    parsingTimeElapsed,
+    pageFetchTime,
+    averageParseTimePerLog: parsingTimeElapsed->Belt.Int.toFloat /.
+      parsedQueueItems->Array.length->Belt.Int.toFloat,
+  }
+
+  let nextQuery: blockRangeFetchArgs = {
+    fromBlock: nextBlock,
+    latestFetchedBlockTimestamp: heighestQueriedBlockTimestamp,
+    nextPagePromise,
+  }
+
+  {
+    parsedQueueItems,
+    nextQuery,
+    heighestQueriedBlockNumber,
+    stats,
+    currentBlockHeight,
+    reorgGuard,
+  }
+}
+
+/**
+This temporarily holds the looping of calling the fetch block range action. This will change or 
+disappear when it becomes something that simply dispatches actions based on the response of fetch block
+ranges
+*/
+let loopFetchBlockRanges = async (
+  self: t,
+  ~initalQueryArgs,
+  ~checkHasReorgOccurred,
+  ~logger,
+  ~getNextPage,
+  ~fetchedEventQueue,
+  ~setCurrentBlockHeight,
+) => {
+  let {serverUrl} = self
+  let queryArgs = ref(initalQueryArgs)
+  while self.shouldContinueFetching {
+    let {
+      parsedQueueItems,
+      heighestQueriedBlockNumber,
+      stats,
+      nextQuery,
+      currentBlockHeight,
+      reorgGuard,
+    } = await fetchBlockRange(
+      queryArgs.contents,
+      ~serverUrl,
+      ~getNextPage,
+      ~logger,
+      ~chainId=self.chainConfig.chainId,
+    )
+
+    let {parentHash, lastBlockScannedData} = reorgGuard
+
+    //TODO: this should rather return a value and dispatch a different action
+    lastBlockScannedData->checkHasReorgOccurred(~parentHash, ~currentHeight=currentBlockHeight)
+
+    if await self.hasNewDynamicContractRegistrations {
+      //If there are new dynamic contract registrations
+      //discard this batch and redo the query with new address
+      self.hasNewDynamicContractRegistrations = Promise.resolve(false)
+
+      logger->Logging.childTrace({
+        "message": "Dropping invalid batch due to new dynamic contract registration",
+        "page fetch time elapsed (ms)": stats.pageFetchTime,
+      })
+    } else {
+      //Loop through items, add them to the queue
+      for i in 0 to parsedQueueItems->Array.length - 1 {
+        let queueItem = parsedQueueItems[i]
+
+        //Add item to the queue
+        await fetchedEventQueue->ChainEventQueue.awaitQueueSpaceAndPushItem(queueItem)
+
+        //Loop through any callbacks on the queue waiting for confirmation of a new
+        //range queried and run callbacks needs to happen after each item is added
+        //else this we could be blocked from adding items to the queue and from popping
+        //items off without running callbacks
+        self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
+
+        //Loop through any callbacks on the queue waiting for confirmation of a new
+        //range queried and run callbacks since there will be an updated timestamp even
+        //If there ar no items in the page
+        self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
+
+        logger->Logging.childTrace({
+          "message": "Finished page range",
+          "fromBlock": queryArgs.contents.fromBlock,
+          "toBlock": heighestQueriedBlockNumber,
+          "number of logs": parsedQueueItems->Array.length,
+          "stats": stats,
+        })
+      }
+    }
+
+    //Note these side effects can disappear once we use immutable dispatcher
+    self->setLatestFetchedBlockTimestamp(
+      ~latestFetchedBlockTimestamp=nextQuery.latestFetchedBlockTimestamp,
+    )
+    setCurrentBlockHeight(~currentBlockHeight)
+
+    queryArgs := nextQuery
+  }
 }
 
 let startWorker = async (
@@ -135,44 +450,37 @@ let startWorker = async (
 ) => {
   logger->Logging.childInfo("Hypersync worker starting")
   let {chainConfig, contractAddressMapping, serverUrl} = self
-  let initialHeight = await HyperSync.getHeightWithRetry(~serverUrl=self.serverUrl, ~logger)
+  let initialHeight = await HyperSync.getHeightWithRetry(~serverUrl, ~logger)
+  let setCurrentBlockHeight = self->setCurrentBlockHeight(~startBlock)
 
-  let currentHeight = ref(initialHeight)
-  let fromBlock = ref(startBlock)
+  setCurrentBlockHeight(~currentBlockHeight=initialHeight)
 
-  DbFunctions.ChainMetadata.setChainMetadataRow(
-    ~chainId=chainConfig.chainId,
-    ~startBlock,
-    ~blockHeight=initialHeight,
-  )->ignore
+  let waitForNextBlockBeforeQuery = async (~fromBlock, ~currentBlockHeight) => {
+    if fromBlock >= currentBlockHeight {
+      logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
 
-  let checkReadyToContinue = async () => {
-    if fromBlock.contents >= currentHeight.contents {
-      logger->Logging.childInfo("Event Fetcher is caught up to the head of the chain, awaiting new blocks.")
       //If the block we want to query from is greater than the current height,
       //poll for until the archive height is greater than the from block and set
       //current height to the new height
-      currentHeight :=
-        (
-          await HyperSync.pollForHeightGtOrEq(
-            ~serverUrl=self.serverUrl,
-            ~blockNumber=fromBlock.contents,
-            ~logger,
-          )
-        )
+      let currentBlockHeight = await HyperSync.pollForHeightGtOrEq(
+        ~serverUrl,
+        ~blockNumber=fromBlock,
+        ~logger,
+      )
 
-      DbFunctions.ChainMetadata.setChainMetadataRow(
-        ~chainId=chainConfig.chainId,
-        ~startBlock,
-        ~blockHeight=currentHeight.contents,
-      )->ignore
+      //Note: this side effect can be removed when this becomes immutable
+      setCurrentBlockHeight(~currentBlockHeight)
+
+      currentBlockHeight
+    } else {
+      currentBlockHeight
     }
-    true
   }
 
-  let getNextPage = async () => {
+  let getNextPage = async (~fromBlock, ~currentBlockHeight) => {
     //Wait for a valid range to query
-    let _ = await checkReadyToContinue()
+    let currentBlockHeight = await waitForNextBlockBeforeQuery(~fromBlock, ~currentBlockHeight)
+
     //Instantiate each time to add new registered contract addresses
     let contractInterfaceManager = ContractInterfaceManager.make(
       ~chainConfig,
@@ -189,8 +497,8 @@ let startWorker = async (
       () =>
         HyperSync.queryLogsPage(
           ~serverUrl=self.serverUrl,
-          ~fromBlock=fromBlock.contents,
-          ~toBlock=currentHeight.contents,
+          ~fromBlock,
+          ~toBlock=currentBlockHeight,
           ~contractAddressesAndtopics,
         ),
       logger,
@@ -202,215 +510,25 @@ let startWorker = async (
     {page: pageUnsafe, contractInterfaceManager, pageFetchTime}
   }
 
-  let initialPagePromise = getNextPage()
+  let initialPagePromise = getNextPage(
+    ~fromBlock=startBlock,
+    ~currentBlockHeight=self.currentBlockHeight,
+  )
 
-  let nextPagePromise = ref(initialPagePromise)
-
-  while self.shouldContinueFetching {
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
-    //fetch batch
-    let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await nextPagePromise.contents
-
-    //TODO: This is a stub, it will need to be returned in a single query from hypersync
-    let parentHash = pageUnsafe->ReorgDetection.getParentHashStub
-
-    //TODO: This is a stub, it will need to be returned in a single query from hypersync
-    let lastBlockScannedData = pageUnsafe->ReorgDetection.getLastBlockScannedDataStub
-
-    lastBlockScannedData->checkHasReorgOccurred(
-      ~parentHash,
-      ~currentHeight=pageUnsafe.archiveHeight,
-    )
-
-    let currentBatchFromBlock = fromBlock.contents
-
-    //set height and next from block
-    if pageUnsafe.archiveHeight > currentHeight.contents {
-      DbFunctions.ChainMetadata.setChainMetadataRow(
-        ~chainId=chainConfig.chainId,
-        ~startBlock,
-        ~blockHeight=pageUnsafe.archiveHeight,
-      )->ignore
-
-      currentHeight := pageUnsafe.archiveHeight
-    }
-
-    fromBlock := pageUnsafe.nextBlock
-
-    //Start fetching next page async before parsing current page
-    nextPagePromise := getNextPage()
-
-    logger->Logging.childTrace({
-      "message": "Retrieved event page from server",
-      "fromBlock": currentBatchFromBlock,
-      "toBlock": pageUnsafe.nextBlock - 1,
-      "number of logs": pageUnsafe.items->Array.length,
-    })
-
-    //The highest (biggest) blocknumber that was accounted for in
-    //Our query. Not necessarily the blocknumber of the last log returned
-    //In the query
-    let highestBlockQueried = pageUnsafe.nextBlock - 1
-
-    //Helper function to fetch the timestamp of the highest block queried
-    //In the case that it is unknown
-    let gethighestBlockAndTimestampWithDefault = (~default: HyperSync.blockNumberAndTimestamp) => {
-      HyperSync.queryBlockTimestampsPage(
-        ~serverUrl,
-        ~fromBlock=highestBlockQueried,
-        ~toBlock=highestBlockQueried,
-      )->Promise.thenResolve(res =>
-        res->Belt.Result.mapWithDefault(default, page => {
-          //Expected only 1 item but just taking last in case things change and we return
-          //a range
-          let lastBlockInRangeQueried = page.items->Belt.Array.get(page.items->Array.length - 1)
-
-          lastBlockInRangeQueried->Belt.Option.getWithDefault(default)
-        })
-      )
-    }
-
-    //The optional block and timestamp of the last item returned by the query
-    //(Optional in the case that there are no logs returned in the query)
-    let logItemshighestBlockOpt =
-      pageUnsafe.items
-      ->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1)
-      ->Belt.Option.map((item): HyperSync.blockNumberAndTimestamp => {
-        blockNumber: item.log.blockNumber,
-        timestamp: item.blockTimestamp,
-      })
-
-    let highestBlockQueriedPromise: promise<
-      HyperSync.blockNumberAndTimestamp,
-    > = switch logItemshighestBlockOpt {
-    | Some(val) =>
-      let {blockNumber, timestamp} = val
-      if blockNumber == highestBlockQueried {
-        //If the last log item in the current page is equal to the
-        //highest block acounted for in the query. Simply return this
-        //value without making an extra query
-        Promise.resolve(val)
-      } else {
-        //If it does not match it means that there were no matching logs in the last
-        //block so we should fetch the block timestamp with a default of our highest
-        //timestamp (the value in our highest log)
-        gethighestBlockAndTimestampWithDefault(
-          ~default={timestamp, blockNumber: highestBlockQueried},
-        )
-      }
-
-    | None =>
-      //If there were no logs at all in the current page query then fetch the
-      //timestamp of the highest block accounted for,
-      //defaulting to our current latest blocktimestamp
-      gethighestBlockAndTimestampWithDefault(
-        ~default={
-          blockNumber: highestBlockQueried,
-          timestamp: self.latestFetchedBlockTimestamp,
-        },
-      )
-    }
-
-    if await self.hasNewDynamicContractRegistrations {
-      //If there are new dynamic contract registrations
-      //discard this batch and redo the query with new address
-      self.hasNewDynamicContractRegistrations = Promise.resolve(false)
-
-      logger->Logging.childTrace({
-        "message": "Dropping invalid batch due to new dynamic contract registration",
-        "page fetch time elapsed (ms)": pageFetchTime,
-      })
-    } else {
-      //Lock the latest fetched blockNumber until it gets
-      //set with the timestamp later.
-      //Lock is to prevent race condition when looking up from dynamic contract registration
-      let {
-        pendingPromise: latestBlockNumbersPromise,
-        resolve: latestBlockNumbersResolve,
-      } = Utils.createPromiseWithHandles()
-      self.latestFetchedBlockNumber = latestBlockNumbersPromise
-
-      let parsingTimeRef = Hrtime.makeTimer()
-      //Parse page items into queue items
-      let parsedQueueItems =
-        await pageUnsafe.items
-        //Defer all this parsing into separate deferred callbacks
-        //on the macro task queue so that parsing doesn't block the
-        //event loop and each parse happens as a macro task. Meaning
-        //promise resolves will take priority
-        ->Deferred.mapArrayDeferred((item, resolve, reject) => {
-          switch Converters.parseEvent(
-            ~log=item.log,
-            ~blockTimestamp=item.blockTimestamp,
-            ~contractInterfaceManager,
-            ~chainId=self.chainConfig.chainId,
-          ) {
-          | Ok(parsed) =>
-            let queueItem: Types.eventBatchQueueItem = {
-              timestamp: item.blockTimestamp,
-              chainId: chainConfig.chainId,
-              blockNumber: item.log.blockNumber,
-              logIndex: item.log.logIndex,
-              event: parsed,
-            }
-            resolve(queueItem)
-          | Error(e) => reject(Converters.ParseEventErrorExn(e))
-          }
-        })
-        ->Deferred.asPromise
-
-      let parsingTimeElapsed =
-        parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-      let queuePushingTimeRef = Hrtime.makeTimer()
-
-      //Loop through items, add them to the queue
-      for i in 0 to parsedQueueItems->Array.length - 1 {
-        let queueItem = parsedQueueItems[i]
-
-        //Add item to the queue
-        await fetchedEventQueue->ChainEventQueue.awaitQueueSpaceAndPushItem(queueItem)
-
-        //Loop through any callbacks on the queue waiting for confirmation of a new
-        //range queried and run callbacks needs to happen after each item is added
-        //else this we could be blocked from adding items to the queue and from popping
-        //items off without running callbacks
-        self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
-      }
-
-      let queuePushingTimeElapsed =
-        queuePushingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-      //set latestFetchedBlockNumber and latestFetchedBlockTimestamp
-      let {
-        blockNumber: highestQueriedBlockNumber,
-        timestamp: highestQueriedBlockTimestamp,
-      } = await highestBlockQueriedPromise
-
-      self.latestFetchedBlockTimestamp = highestQueriedBlockTimestamp
-      latestBlockNumbersResolve(highestQueriedBlockNumber)
-
-      //Loop through any callbacks on the queue waiting for confirmation of a new
-      //range queried and run callbacks since there will be an updated timestamp even
-      //If there ar no items in the page
-      self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
-
-      let totalTimeElapsed =
-        startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-      logger->Logging.childTrace({
-        "message": "Finished page range",
-        "fromBlock": currentBatchFromBlock,
-        "toBlock": await self.latestFetchedBlockNumber,
-        "total time elapsed (ms)": totalTimeElapsed,
-        "page fetch time (ms)": pageFetchTime,
-        "parsing time (ms)": parsingTimeElapsed,
-        "average parse time per log (ms)": parsingTimeElapsed->Belt.Int.toFloat /.
-          parsedQueueItems->Array.length->Belt.Int.toFloat,
-        "push to queue time (ms)": queuePushingTimeElapsed,
-      })
-    }
+  let initalQueryArgs: blockRangeFetchArgs = {
+    fromBlock: startBlock,
+    latestFetchedBlockTimestamp: self.latestFetchedBlockTimestamp,
+    nextPagePromise: initialPagePromise,
   }
+
+  await self->loopFetchBlockRanges(
+    ~fetchedEventQueue,
+    ~checkHasReorgOccurred,
+    ~initalQueryArgs,
+    ~logger,
+    ~getNextPage,
+    ~setCurrentBlockHeight,
+  )
 }
 
 let startFetchingEvents = async (
@@ -613,3 +731,5 @@ let addDynamicContractAndFetchMissingEvents = async (
 }
 
 let getBlockHashes = ({serverUrl}: t) => HyperSync.queryBlockHashes(~serverUrl)
+
+let getCurrentBlockHeight = (self: t) => self.currentBlockHeight
