@@ -1,5 +1,5 @@
 type t = {
-  chainFetchers: Js.Dict.t<ChainFetcher.t>,
+  chainFetchers: ChainMap.t<ChainFetcher.t>,
   arbitraryEventPriorityQueue: SDSL.PriorityQueue.t<Types.eventBatchQueueItem>,
 }
 type nextEventErr = NoItemsInArray

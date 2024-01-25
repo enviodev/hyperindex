@@ -1,0 +1,49 @@
+open Belt
+
+type chainId = 
+{{#each chain_configs as | chain_config |}}
+  | Chain_{{chain_config.network_config.id}}
+{{/each}}
+
+let allChainIds = [
+{{#each chain_configs as | chain_config |}}
+  Chain_{{chain_config.network_config.id}},
+{{/each}}
+]
+
+let chainIdToInt = chainId =>
+  switch chainId {
+  {{#each chain_configs as | chain_config |}}
+  | Chain_{{chain_config.network_config.id}} => {{chain_config.network_config.id}}
+  {{/each}}
+  }
+
+//TODO: remove this
+let unsafeToChainId = chainId =>
+  switch chainId {
+  {{#each chain_configs as | chain_config |}}
+  | {{chain_config.network_config.id}} => Chain_{{chain_config.network_config.id}}
+  {{/each}}
+  | c => Js.Exn.raiseError(`Undefined chain ${c->Int.toString}`)
+  }
+
+module ChainIdCmp = Belt.Id.MakeComparable({
+  type t = chainId
+  let cmp = (a, b) => Pervasives.compare(a, b)
+})
+
+type t<'a> = Belt.Map.t<ChainIdCmp.t, 'a, ChainIdCmp.identity>
+
+let make = (fn: chainId => 'a): t<'a> => {
+  allChainIds->Array.map(chainId => (chainId, chainId->fn))->Map.fromArray(~id=module(ChainIdCmp))
+}
+
+let get: (t<'a>, chainId) => 'a = (self, chainId) =>
+  //Can safely get exn since all chains must be set
+  Map.get(self, chainId)->Option.getExn
+
+let set: (t<'a>, chainId, 'a) => t<'a> = Map.set
+let values: t<'a> => array<'a> = Map.valuesToArray
+let entries: t<'a> => array<(chainId, 'a)> = Map.toArray
+let map: (t<'a>, 'a => 'b) => t<'b> = Map.map
+let size: t<'a> => int = Map.size

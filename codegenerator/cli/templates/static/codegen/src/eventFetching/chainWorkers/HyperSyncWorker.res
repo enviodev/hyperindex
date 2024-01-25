@@ -599,13 +599,7 @@ let fetchArbitraryEvents = async (
   let contractInterfaceManager =
     dynamicContracts
     ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
-      let chainConfig = switch Config.config->Js.Dict.get(chainId->Belt.Int.toString) {
-      | None =>
-        let exn = UndefinedChainConfig(chainId)
-        logger->Logging.childErrorWithExn(exn, "Could not find chain config for given ChainId")
-        exn->raise
-      | Some(c) => c
-      }
+      let chainConfig = Config.config->ChainMap.get(chainId->ChainMap.unsafeToChainId)
 
       let singleContractInterfaceManager = ContractInterfaceManager.makeFromSingleContract(
         ~contractAddress,
