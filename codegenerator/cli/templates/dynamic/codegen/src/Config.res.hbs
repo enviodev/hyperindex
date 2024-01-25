@@ -187,9 +187,9 @@ let getConfig = (chain: ChainMap.Chain.t) =>
           intervalCeiling: {{sync_config.interval_ceiling}},
           backoffMillis: {{sync_config.backoff_millis}},
           queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+        }),
       }),
       {{/with}}
-      }),
       {{/if}}
       {{#if chain_config.network_config.skar_server_url}}
       HyperSync("{{chain_config.network_config.skar_server_url}}"),
