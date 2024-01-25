@@ -186,82 +186,6 @@ const chunkBatchQuery = (
     throw e;
     });
 };
-const arrayToSqlValues = (dataArray) => {
-  return dataArray.map(item => {
-    return `(${item.chain_id}, '${item.entity_id}', ${item.block_number}, ${item.log_index}, '${item.transaction_hash}', '${item.entity_type}', (SELECT block_number FROM "public"."entity_history" 
-              WHERE entity_id = '${item.entity_id}'
-              ORDER BY block_number DESC 
-              LIMIT 1))`;
-  }).join(', ');
-}
-
-function mergeArrays(array1, array2) {
-  const array2Map = new Map(array2.map(item => [item.entity_id, item]));
-
-  return array1.map(item => {
-    const match = array2Map.get(item.entity_id);
-    if (match) {
-      return {
-        ...item,
-        previous_block_number: match.previous_block_number,
-        previous_log_index: match.previous_log_index
-      };
-    }
-    else {
-      return item;
-    }
-  });
-}
-
-const fetchPreviousBlockNumbersAndLogIndices = async (sql, entityDataArray) => {
-  const entityIds = entityDataArray.map(item => item.entity_id);
-  const uniqueEntityIds = [...new Set(entityIds)]; // Remove duplicates
-
-  const previousBlockNumbersAndLogIndices = await sql`
-    SELECT entity_id, block_number as previous_block_number, log_index as previous_log_index
-    FROM "public"."entity_history"
-    WHERE (entity_id, block_number, log_index) IN (
-      SELECT entity_id, MAX(block_number), MAX(log_index)
-      FROM "public"."entity_history"
-      WHERE entity_id = ANY(${sql.array(uniqueEntityIds)})
-      GROUP BY entity_id
-    )
-  `;
-
-  let merge = mergeArrays(entityDataArray, previousBlockNumbersAndLogIndices)
-
-  return merge
-};
-
-const batchSetEntityHistory = async (sql, entityDataArray) => {
-  // NOTE: unfortunately the transform to automatically transform undefined to null in postgres doesn't work with queries constructed with arrays like this.
-  //       https://github.com/porsager/postgres/blob/v3.4.3/README.md#transform-undefined-values
-  //       This code is a workaround for that.
-  for (let i = 0; i < entityDataArray.length; i++) {
-    if (entityDataArray[i].previous_block_number === undefined)
-      entityDataArray[i].previous_block_number = null
-
-    if (entityDataArray[i].previous_log_index === undefined)
-      entityDataArray[i].previous_log_index = null
-  }
-
-  return sql`
-    INSERT INTO "public"."entity_history"
-  ${sql(
-    entityDataArray,
-    "chain_id", "entity_id", "block_number", "log_index", "transaction_hash", "entity_type", "previous_block_number", "previous_log_index", "params"
-  )};`
-};
-
-module.exports.batchSetEntityHistoryTable =  async (sql, entityDataArrayWithPrev, entityDataArrayWithoutPrev) => {
-   const result = await fetchPreviousBlockNumbersAndLogIndices(sql, entityDataArrayWithoutPrev)
-  const previousData = [...result, ...entityDataArrayWithPrev];
-  return chunkBatchQuery(
-    sql,
-    previousData,
-    batchSetEntityHistory
-  );
-};
 
 module.exports.batchInsertEntityHistory = async (sql, entityDataArray) => {
   for (const entity of entityDataArray) {
@@ -364,6 +288,52 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
   FROM "public"."dynamic_contract_registry"
   WHERE (chain_id, contract_address) IN ${sql(entityIdArray)};`;
 // end db operations for dynamic_contract_registry
+
+
+module.exports.getRollbackDiff = (
+  sql,
+  blockTimestamp,
+  chainId,
+  blockNumber
+) => sql`
+SELECT DISTINCT
+    ON (
+        COALESCE(old.entity_id, new.entity_id)
+    ) COALESCE(old.entity_id, new.entity_id) AS entity_id,
+    COALESCE(old.params, 'null') AS val,
+    COALESCE(old.block_timestamp, 'null') AS block_timestamp,
+    COALESCE(old.chain_id, 'null') AS chain_id,
+    COALESCE(old.block_number, 'null') AS block_number,
+    COALESCE(old.log_index, 'null') AS log_index,
+    COALESCE(old.entity_type, new.entity_type) AS entity_type
+
+FROM entity_history old
+INNER JOIN
+    entity_history next
+    -- next should simply be a higher block multichain
+    ON (
+        next.block_timestamp > ${blockTimestamp}
+        OR (next.block_timestamp = ${blockTimestamp} AND next.chain_id > ${chainId})
+        OR (
+            next.block_timestamp = ${blockTimestamp} AND next.chain_id = ${chainId} AND next.block_number >= ${blockNumber}
+        )
+    )
+    -- old should be a lower block multichain
+    AND (
+        old.block_timestamp < ${blockTimestamp}
+        OR (old.block_timestamp = ${blockTimestamp} AND old.chain_id < ${chainId})
+        OR (old.block_timestamp = ${blockTimestamp} AND old.chain_id = ${chainId} AND old.block_number <= ${blockNumber})
+    )
+    -- old AND new ids AND entity types should match
+    AND old.entity_id = next.entity_id
+    AND old.entity_type = next.entity_type
+    AND old.block_number = next.previous_block_number
+FULL OUTER JOIN
+    entity_history new
+    ON old.entity_id = new.entity_id
+    AND new.previous_block_number >= old.block_number
+WHERE COALESCE(old.block_number, 0) <= ${blockNumber} AND COALESCE(new.block_number, ${blockNumber} + 1) >= ${blockNumber};
+`;
 
 {{#each entities as |entity|}}
 //////////////////////////////////////////////

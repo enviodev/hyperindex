@@ -231,10 +231,8 @@ module EntityHistory = {
     // NULL for an `entity_id` means that the entity was deleted.
     let _ = await %raw("sql`
       CREATE TABLE \"public\".\"entity_history\" (
-        block_timestamp INTEGER NOT NULL,
         chain_id INTEGER NOT NULL,
-        previous_block_number INTEGER,
-        previous_log_index INTEGER,
+        block_timestamp INTEGER NOT NULL,
         block_number INTEGER NOT NULL,
         log_index INTEGER NOT NULL,
         previous_block_timestamp INTEGER,
@@ -521,6 +519,7 @@ module EntityHistory = {
           old_val JSON,
           new_val JSON,
           block_number INTEGER NOT NULL,
+          block_timestamp INTEGER NOT NULL,
           previous_block_number INTEGER,
           log_index INTEGER NOT NULL,
           previous_log_index INTEGER,
@@ -535,25 +534,13 @@ module EntityHistory = {
 
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
+  //silence unused var warnings for raw bindings
+  @@warning("-21")
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
     await %raw("sql`
       CREATE TABLE \"public\".\"{{entity.name.original}}\" (
       {{#each entity.params as |param|}}
         {{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}\" {{param.type_pg}},{{/unless}}
-      {{/each}} 
-        db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-        PRIMARY KEY (\"id\"));`")
-  }
-
-  let create{{entity.name.capitalized}}HistoryTable:unit => promise<unit> = async () => {
-    // Rather using chain_id + log_index + block_number and not also "transaction_hash TEXT NOT NULL"
-    await %raw("sql`
-      CREATE TABLE \"public\".\"{{entity.name.original}}_history\" (
-        chain_id INTEGER NOT NULL,
-        block_number INTEGER NOT NULL,
-        log_index INTEGER NOT NULL,
-      {{#each entity.params as |param|}}
-        {{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}\" {{param.type_pg}},{{/unless}}
       {{/each}} 
         db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
         PRIMARY KEY (\"id\"));`")

@@ -59,10 +59,25 @@ let {{entity.name.uncapitalized}}EntitySchema = S.object((. s) => {
 let {{entity.name.uncapitalized}}EntitiesSchema = S.array({{entity.name.uncapitalized}}EntitySchema)
  
 {{/each}}
+@spice
 type entity = 
 {{#each entities as | entity |}}
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
 {{/each}}
+
+@spice
+type entityName =
+{{#each entities as | entity |}}
+  | @spice.as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
+{{/each}}
+
+let getEntityParamsDecoder = entityName =>
+  switch entityName {
+{{#each entities as | entity |}}
+  | {{entity.name.capitalized}} =>
+    json => json->{{entity.name.uncapitalized}}Entity_decode->Belt.Result.map(decoded => {{entity.name.capitalized}}Entity(decoded))
+{{/each}}
+  }
 
 type eventIdentifier = {
   chainId: int,

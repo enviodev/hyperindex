@@ -163,6 +163,7 @@ module DynamicContractRegistry = {
   ) => promise<array<contractTypeAndAddress>> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
 }
 
+@spice
 type entityHistoryItem = {
   block_timestamp: int,
   chain_id: int,
@@ -179,10 +180,88 @@ type entityHistoryItem = {
 
 module EntityHistory = {
   @module("./DbFunctionsImplementation.js")
-  external batchSet: (
+  external batchSetInternal: (
     Postgres.sql,
-    ~entityHistoriesToSet: array<entityHistoryItem>,
+    ~entityHistoriesToSet: array<Js.Json.t>,
   ) => promise<unit> = "batchInsertEntityHistory"
+
+  let batchSet = (sql, ~entityHistoriesToSet) => {
+    //Encode null for for the with prev types so that it's not undefined
+    batchSetInternal(sql, ~entityHistoriesToSet=entityHistoriesToSet->Belt.Array.map(entityHistoryItem_encode))
+  }
+
+  @spice
+  type rollbackDiffResponseRaw = {
+    entity_type: Types.entityName,
+    entity_id: string,
+    chain_id: option<int>,
+    block_timestamp: option<int>,
+    block_number: option<int>,
+    log_index: option<int>,
+    val: option<Js.Json.t>,
+  }
+
+  type previousEntity = {
+    eventIdentifier: Types.eventIdentifier,
+    entity: Types.entity,
+  }
+
+  type rollbackDiffResponse = {
+    entityType: Types.entityName,
+    entityId: string,
+    previousEntity: option<previousEntity>,
+  }
+
+  let rollbackDiffResponse_decode = (json: Js.Json.t) => {
+    json
+    ->rollbackDiffResponseRaw_decode
+    ->Belt.Result.flatMap(raw => {
+      switch raw {
+      | {
+          val: Some(val),
+          chain_id: Some(chainId),
+          block_number: Some(blockNumber),
+          block_timestamp: Some(blockTimestamp),
+          log_index: Some(logIndex),
+          entity_type,
+        } =>
+        entity_type
+        ->Types.getEntityParamsDecoder(val)
+        ->Belt.Result.map(entity => {
+          let eventIdentifier: Types.eventIdentifier = {
+            chainId,
+            blockTimestamp,
+            blockNumber,
+            logIndex,
+          }
+
+          Some({entity, eventIdentifier})
+        })
+      | _ => Ok(None)
+      }->Belt.Result.map(previousEntity => {
+        entityType: raw.entity_type,
+        entityId: raw.entity_id,
+        previousEntity,
+      })
+    })
+  }
+
+  let rollbackDiffResponseArr_decode = (jsonArr: array<Js.Json.t>) => {
+    jsonArr->Belt.Array.map(rollbackDiffResponse_decode)->Utils.mapArrayOfResults
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external getRollbackDiffInternal: (
+    Postgres.sql,
+    ~blockTimestamp: int,
+    ~chainId: int,
+    ~blockNumber: int,
+  ) => promise<array<Js.Json.t>> = "getRollbackDiff"
+
+  let getRollbackDiff = (sql, ~blockTimestamp: int, ~chainId: int, ~blockNumber: int) =>
+    getRollbackDiffInternal(sql, ~blockTimestamp, ~chainId, ~blockNumber)->Promise.thenResolve(
+      rollbackDiffResponseArr_decode,
+    )
 }
 
 {{#each entities as |entity|}}

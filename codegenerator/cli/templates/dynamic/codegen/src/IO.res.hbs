@@ -616,7 +616,7 @@ let executeDbFunctionsEntity = (
   ~dbFunctionSet: (Postgres.sql, array<'b>) => promise<unit>,
   ~dbFunctionDelete: (Postgres.sql, array<string>) => promise<unit>,
   ~entityEncoder,
-  ~entityType,
+  ~entityType as _,
 ): promise<unit> => {
   let (entitiesToSet, idsToDelete) = rows->Belt.Array.reduce(([], []), ((accumulatedSets, accumulatedDeletes), row) =>
     switch row {
@@ -663,7 +663,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   )
 
   {{#each entities as | entity |}}
-  let set{{entity.name.capitalized}}s = executeDbFunctionsEntity(
+  let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
     ~dbFunctionSet=DbFunctions.{{entity.name.capitalized}}.batchSet,
     ~dbFunctionDelete=placeholderDeleteFunction,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
@@ -684,4 +684,47 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   })
 
   res
+}
+
+module RollBack = {
+  let rollBack = async (~chainId, ~blockTimestamp, ~blockNumber, ~logIndex) => {
+    let reorgData =
+      (await DbFunctions.sql
+      ->DbFunctions.EntityHistory.getRollbackDiff(~chainId, ~blockTimestamp, ~blockNumber))
+      ->Belt.Result.getExn
+
+    let rollBackEventIdentifier: Types.eventIdentifier = {
+      chainId,
+      blockTimestamp,
+      blockNumber,
+      logIndex,
+    }
+
+    let inMemStore = InMemoryStore.make()
+
+    reorgData->Belt.Array.forEach(e => {
+      switch e {
+      //Where previousEntity is Some, 
+      //set the value with the eventIdentifier that set that value initially
+      {{#each entities as | entity |}}
+      | {previousEntity: Some({entity: {{entity.name.capitalized}}Entity(entity), eventIdentifier}), entityId} =>
+        inMemStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(
+          ~entity=Set(entity, eventIdentifier),
+          ~key=entityId,
+        )
+      {{/each}}
+      //Where previousEntity is None, 
+      //delete it with the eventIdentifier of the rollback event
+      {{#each entities as | entity |}}
+      | {previousEntity: None, entityType: {{entity.name.capitalized}}, entityId} =>
+        inMemStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(
+          ~entity=Delete(entityId, rollBackEventIdentifier),
+          ~key=entityId,
+        )
+      {{/each}}
+      }
+    })
+
+    inMemStore
+  }
 }

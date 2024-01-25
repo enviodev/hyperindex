@@ -23,6 +23,13 @@ type contextCreator<'eventArgs, 'loaderContext, 'handlerContext, 'handlerContext
   ~asyncGetters: entityGetters,
 ) => genericContextCreatorFunctions<'loaderContext, 'handlerContext, 'handlerContextAsync>
 
+let getEventIdentifier = (event: Types.eventLog<'a>, ~chainId): Types.eventIdentifier => {
+  chainId,
+  blockTimestamp: event.blockTimestamp,
+  blockNumber: event.blockNumber,
+  logIndex: event.logIndex,
+}
+
 exception UnableToLoadNonNullableLinkedEntity(string)
 exception LinkedEntityNotAvailableInSyncHandler(string)
 
@@ -47,6 +54,7 @@ module {{contract.name.capitalized}}Contract = {
       handlerContext,
       handlerContextAsync,
     > = (~inMemoryStore, ~chainId, ~event, ~logger, ~asyncGetters) => {
+      let eventIdentifier = event->getEventIdentifier(~chainId)
       // NOTE: we could optimise this code to onle create a logger if there was a log called.
       let logger = logger->Logging.createChildFrom(
         ~logger=_,
@@ -182,15 +190,7 @@ module {{contract.name.capitalized}}Contract = {
             {{entity.name.uncapitalized}}: {
               set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
                 ~key=entity.id,
-                ~entity=Set(
-                  entity,
-                  {
-                    chainId: chainId,
-                    blockTimestamp: event.blockTimestamp,
-                    blockNumber: event.blockNumber,
-                    logIndex: event.logIndex,
-                  },
-                ),
+                ~entity=Set(entity, eventIdentifier),
               )},
               delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
@@ -292,15 +292,7 @@ It is also possible that you have saved an ID for an entity that doesn't exist i
             {{entity.name.uncapitalized}}: {
               set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
                 ~key=entity.id,
-                ~entity=Set(
-                  entity,
-                  {
-                    chainId: chainId,
-                    blockTimestamp: event.blockTimestamp,
-                    blockNumber: event.blockNumber,
-                    logIndex: event.logIndex,
-                  },
-                ),
+                ~entity=Set(entity, eventIdentifier),
               )},
               delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
