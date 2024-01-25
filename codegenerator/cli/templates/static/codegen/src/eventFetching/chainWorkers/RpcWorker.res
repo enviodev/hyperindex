@@ -305,8 +305,7 @@ let fetchArbitraryEvents = async (
   let contractInterfaceManager =
     dynamicContracts
     ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
-      let chain = chainId->ChainMap.Chain.fromChainId->Belt.Result.getExn
-      let chainConfig = Config.config->ChainMap.get(chain)
+      let chainConfig = Config.config->ChainMap.get(chainId->ChainMap.unsafeToChainId)
 
       let singleContractInterfaceManager = ContractInterfaceManager.makeFromSingleContract(
         ~contractAddress,
