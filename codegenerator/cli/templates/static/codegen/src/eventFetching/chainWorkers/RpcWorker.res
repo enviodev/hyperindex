@@ -1,5 +1,6 @@
 open ChainWorkerTypes
 type rec t = {
+  mutable currentBlockHeight: int,
   mutable currentBlockInterval: int,
   mutable currentlyFetchingToBlock: int,
   mutable latestFetchedBlockTimestamp: int,
@@ -86,6 +87,7 @@ let make = (
   )
 
   {
+    currentBlockHeight: 0,
     currentlyFetchingToBlock: 0,
     currentBlockInterval: rpcConfig.syncConfig.initialBlockInterval,
     latestFetchedBlockTimestamp: 0,
@@ -127,15 +129,16 @@ let startWorker = async (
       logger->Logging.childWarn("Error getting current block number")
       0->Promise.resolve
     })
-  let currentBlock: ref<int> = ref(await getCurrentBlockFromRPC())
+
+  self.currentBlockHeight = await getCurrentBlockFromRPC()
 
   DbFunctions.ChainMetadata.setChainMetadataRow(
     ~chainId=chainConfig.chainId,
     ~startBlock,
-    ~blockHeight=currentBlock.contents,
+    ~blockHeight=self.currentBlockHeight,
   )->ignore
 
-  let isNewBlocksToFetch = () => fromBlockRef.contents <= currentBlock.contents
+  let isNewBlocksToFetch = () => fromBlockRef.contents <= self.currentBlockHeight
 
   let rec checkShouldContinue = async (): bool => {
     //If there are no new blocks to fetch, poll the provider for
@@ -144,7 +147,7 @@ let startWorker = async (
       self.caughtUpToHeadHook(self)->ignore
 
       let newBlock = await provider->EventUtils.waitForNextBlock
-      currentBlock := newBlock
+      self.currentBlockHeight = newBlock
 
       let _ = await checkShouldContinue()
     }
@@ -155,7 +158,7 @@ let startWorker = async (
   while (await checkShouldContinue()) && self.shouldContinueFetching {
     let blockInterval = self.currentBlockInterval
     let targetBlock = Pervasives.min(
-      currentBlock.contents,
+      self.currentBlockHeight,
       fromBlockRef.contents + blockInterval - 1,
     )
 
@@ -227,19 +230,19 @@ let startWorker = async (
 
     // Only fetch the current block if it could affect the length of our next batch
     let nextIntervalEnd = fromBlockRef.contents + self.currentBlockInterval - 1
-    if currentBlock.contents <= nextIntervalEnd {
+    if self.currentBlockHeight <= nextIntervalEnd {
       logger->Logging.childInfo(
-        `We will finish processing known blocks in the next block. Checking for a newer block than ${currentBlock.contents->Belt.Int.toString}`,
+        `We will finish processing known blocks in the next block. Checking for a newer block than ${self.currentBlockHeight->Belt.Int.toString}`,
       )
-      currentBlock := (await getCurrentBlockFromRPC())
+      self.currentBlockHeight = await getCurrentBlockFromRPC()
       DbFunctions.ChainMetadata.setChainMetadataRow(
         ~chainId=chainConfig.chainId,
         ~startBlock,
-        ~blockHeight=currentBlock.contents,
+        ~blockHeight=self.currentBlockHeight,
       )->ignore
 
       logger->Logging.childInfo(
-        `getCurrentBlockFromRPC() => ${currentBlock.contents->Belt.Int.toString}`,
+        `getCurrentBlockFromRPC() => ${self.currentBlockHeight->Belt.Int.toString}`,
       )
     }
   }
@@ -301,13 +304,7 @@ let fetchArbitraryEvents = async (
   let contractInterfaceManager =
     dynamicContracts
     ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
-      let chainConfig = switch Config.config->Js.Dict.get(chainId->Belt.Int.toString) {
-      | None =>
-        let exn = UndefinedChainConfig(chainId)
-        logger->Logging.childErrorWithExn(exn, "Could not find chain config for given ChainId")
-        exn->raise
-      | Some(c) => c
-      }
+      let chainConfig = Config.config->ChainMap.get(chainId->ChainMap.unsafeToChainId)
 
       let singleContractInterfaceManager = ContractInterfaceManager.makeFromSingleContract(
         ~contractAddress,
@@ -391,3 +388,5 @@ let getBlockHashes = (self: t, ~blockNumbers) => {
   let _ = (self, blockNumbers)
   Ok([])->Promise.resolve
 }
+
+let getCurrentBlockHeight = (self: t) => self.currentBlockHeight

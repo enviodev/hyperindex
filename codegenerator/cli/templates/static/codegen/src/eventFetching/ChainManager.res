@@ -1,5 +1,5 @@
 type t = {
-  chainFetchers: Js.Dict.t<ChainFetcher.t>,
+  chainFetchers: ChainMap.t<ChainFetcher.t>,
   //The priority queue should only house the latest event from each chain
   //And potentially extra events that are pushed on by newly registered dynamic
   //contracts which missed being fetched by they chainFetcher
@@ -90,23 +90,19 @@ let determineNextEvent = createDetermineNextEventFunction(
 )
 
 let make = (~configs: Config.chainConfigs, ~maxQueueSize, ~shouldSyncFromRawEvents: bool): t => {
-  let chainFetchers =
-    configs
-    ->Js.Dict.entries
-    ->Belt.Array.map(((key, chainConfig)) => {
-      let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
-        ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
-      )
+  let chainFetchers = configs->ChainMap.map(chainConfig => {
+    let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
+      ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
+    )
 
-      let chainFetcher = ChainFetcher.make(
-        ~chainConfig,
-        ~maxQueueSize,
-        ~shouldSyncFromRawEvents,
-        ~lastBlockScannedHashes,
-      )
-      (key, chainFetcher)
-    })
-    ->Js.Dict.fromArray
+    ChainFetcher.make(
+      ~chainConfig,
+      ~maxQueueSize,
+      ~shouldSyncFromRawEvents,
+      ~lastBlockScannedHashes,
+    )
+  })
+
   {
     chainFetchers,
     arbitraryEventPriorityQueue: SDSL.PriorityQueue.makeAdvanced([], priorityQueueComparitor),
@@ -163,8 +159,11 @@ there is no need to consider other chains with prunining in this case
 */
 let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
   chainManager.chainFetchers
-  ->Js.Dict.values
-  ->Belt.Array.map(v => v.lastBlockScannedHashes)
+  ->ChainMap.values
+  ->Belt.Array.map((cf): ReorgDetection.LastBlockScannedHashes.currentHeightAndLastBlockHashes => {
+    lastBlockScannedHashes: cf.lastBlockScannedHashes,
+    currentHeight: cf.chainWorker.contents->ChainWorker.getCurrentBlockHeight,
+  })
   ->ReorgDetection.LastBlockScannedHashes.getEarliestMultiChainTimestampInThreshold
 }
 
@@ -183,7 +182,7 @@ let hasReorgOccurred = (chainFetcher: ChainFetcher.t, ~parentHash) => {
 }
 
 /**
-adds latest "lastBlockScannedData" to LastBlockScannedHashes and prunes old unneeded data
+Adds latest "lastBlockScannedData" to LastBlockScannedHashes and prunes old unneeded data
 */
 let addLastBlockScannedData = (
   chainFetcher: ChainFetcher.t,
@@ -192,7 +191,7 @@ let addLastBlockScannedData = (
   ~currentHeight,
 ) => {
   let earliestMultiChainTimestampInThreshold =
-    chainManager->getEarliestMultiChainTimestampInThreshold(~currentHeight)
+    chainManager->getEarliestMultiChainTimestampInThreshold
 
   chainFetcher.lastBlockScannedHashes =
     chainFetcher.lastBlockScannedHashes
@@ -225,7 +224,7 @@ let checkHasReorgOccurred = (
 
 let startFetchers = (self: t) => {
   self.chainFetchers
-  ->Js.Dict.values
+  ->ChainMap.values
   ->Belt.Array.forEach(fetcher => {
     //Start the fetchers
     fetcher
@@ -237,14 +236,7 @@ let startFetchers = (self: t) => {
 exception UndefinedChain(Types.chainId)
 
 let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
-  switch self.chainFetchers->Js.Dict.get(chainId->Belt.Int.toString) {
-  | None =>
-    Logging.error(
-      `EE1000: Undefined chain ${chainId->Belt.Int.toString} in chain manager. Please verify that the chain ID defined in the config.yaml file is valid.`,
-    )
-    UndefinedChain(chainId)->raise
-  | Some(fetcher) => fetcher
-  }
+  self.chainFetchers->ChainMap.get(chainId->ChainMap.unsafeToChainId)
 }
 
 //Synchronus operation that returns an optional value and will not wait
@@ -255,7 +247,7 @@ let popBatchItem = (self: t): option<Types.eventBatchQueueItem> => {
   //Peek all next fetched event queue items on all chain fetchers
   let peekChainFetcherFrontItems =
     self.chainFetchers
-    ->Js.Dict.values
+    ->ChainMap.values
     ->Belt.Array.map(fetcher => fetcher->ChainFetcher.peekFrontItemOfQueue)
 
   //Compare the peeked items and determine the next item
@@ -433,7 +425,7 @@ let popBlockBatchItems = (self: t): option<blockGroupedBatchItems> => {
   //Peek all next fetched event queue items on all chain fetchers
   let peekChainFetcherFrontItems =
     self.chainFetchers
-    ->Js.Dict.values
+    ->ChainMap.values
     ->Belt.Array.map(fetcher => fetcher->ChainFetcher.peekFrontItemOfQueue)
   // Js.log({
   //   "topOfEachQueue": peekChainFetcherFrontItems->Belt.Array.map(a =>
@@ -459,7 +451,7 @@ let rec popBlockBatchAndAwaitItems = async (self: t): option<blockGroupedBatchIt
   //Peek all next fetched event queue items on all chain fetchers
   let peekChainFetcherFrontItems =
     self.chainFetchers
-    ->Js.Dict.values
+    ->ChainMap.values
     ->Belt.Array.map(fetcher => fetcher->ChainFetcher.peekFrontItemOfQueue)
   // Js.log({
   //   "topOfEachQueue": peekChainFetcherFrontItems->Belt.Array.map(a =>
@@ -515,7 +507,7 @@ let rec popAndAwaitBatchItem: t => promise<Types.eventBatchQueueItem> = async (
   //Peek all next fetched event queue items on all chain fetchers
   let peekChainFetcherFrontItems =
     self.chainFetchers
-    ->Js.Dict.values
+    ->ChainMap.values
     ->Belt.Array.map(fetcher => fetcher->ChainFetcher.peekFrontItemOfQueue)
 
   //Compare the peeked items and determine the next item
@@ -587,7 +579,7 @@ let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array
   }
   let fetchedEventsBuffer =
     self.chainFetchers
-    ->Js.Dict.values
+    ->ChainMap.values
     ->Belt.Array.map(fetcher => (
       fetcher.chainConfig.chainId->Belt.Int.toString,
       fetcher.fetchedEventQueue.queue->SDSL.Queue.size,
