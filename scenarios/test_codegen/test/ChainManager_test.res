@@ -7,12 +7,7 @@ let {
   before: before_promise,
 } = module(RescriptMocha.Promise)
 
-let populateChainQueuesWithRandomEvents = (
-  ~numberOfChains=3,
-  ~runTime=100000,
-  ~maxBlockTime=15,
-  (),
-) => {
+let populateChainQueuesWithRandomEvents = (~runTime=100000, ~maxBlockTime=15, ()) => {
   let allEvents = []
 
   let arbitraryEventPriorityQueue = SDSL.PriorityQueue.makeAdvanced(
@@ -20,10 +15,10 @@ let populateChainQueuesWithRandomEvents = (
     // ChainManager.priorityQueueComparitor,
     ChainManager.ExposedForTesting_Hidden.priorityQueueComparitor,
   )
-  let chainFetchers = Js.Dict.empty()
+
   let numberOfMockEventsCreated = ref(0)
 
-  for chainId in 1 to numberOfChains {
+  let chainFetchers = Config.config->ChainMap.map(({chain}) => {
     let getCurrentTimestamp = () => {
       let timestampMillis = Js.Date.now()
 
@@ -61,10 +56,10 @@ let populateChainQueuesWithRandomEvents = (
       for logIndex in 0 to numberOfEventsInBatch {
         let batchItem: Types.eventBatchQueueItem = {
           timestamp: currentTime.contents,
-          chainId,
+          chain,
           blockNumber: currentBlockNumber.contents,
           logIndex,
-          event: `mock event (chainId)${chainId->string_of_int} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Obj.magic,
+          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Obj.magic,
         }
 
         allEvents->Js.Array2.push(batchItem)->ignore
@@ -98,8 +93,9 @@ let populateChainQueuesWithRandomEvents = (
         ~confirmedBlockThreshold=200,
       ),
     }
-    chainFetchers->Js.Dict.set(chainId->Belt.Int.toString, mockChainFetcher)
-  }
+
+    mockChainFetcher
+  })
 
   (
     {
@@ -123,7 +119,7 @@ describe("ChainManager", () => {
         ) = populateChainQueuesWithRandomEvents()
         let defaultFirstEvent: Types.eventBatchQueueItem = {
           timestamp: 0,
-          chainId: 0,
+          chain: Chain_1,
           blockNumber: 0,
           logIndex: 0,
           event: `mock initial event`->Obj.magic,
@@ -176,9 +172,9 @@ describe("ChainManager", () => {
                   )
 
                   Assert.equal(
-                    previous.chainId,
-                    current.chainId,
-                    ~message=`The chainId within a block should always be the same, here ${previous.chainId->string_of_int} (previous.chainId) != ${current.chainId->string_of_int}(current.chainId)`,
+                    previous.chain,
+                    current.chain,
+                    ~message=`The chainId within a block should always be the same, here ${previous.chain->ChainMap.Chain.toString} (previous.chainId) != ${current.chain->ChainMap.Chain.toString}(current.chainId)`,
                   )
 
                   Assert.equal(
@@ -199,7 +195,7 @@ describe("ChainManager", () => {
         let amountStillOnQueues =
           mockChainManager.arbitraryEventPriorityQueue->SDSL.PriorityQueue.length +
             mockChainManager.chainFetchers
-            ->Js.Dict.values
+            ->ChainMap.values
             ->Belt.Array.reduce(
               0,
               (accum, val) => {
@@ -232,17 +228,20 @@ describe("determineNextEvent", () => {
       () => {
         let singleItem: ChainFetcher.eventQueuePeek = Item({
           timestamp: 654,
-          chainId: 69,
+          chain: Chain_137,
           blockNumber: 987654,
           logIndex: 123456,
           event: "SINGLE TEST EVENT"->Obj.magic,
         })
-        let earliestItem = ChainFetcher.NoItem(5 /* earlier timestamp than the test event */, 10)
+        let earliestItem = ChainFetcher.NoItem(
+          5 /* earlier timestamp than the test event */,
+          Chain_1,
+        )
         let example: array<ChainFetcher.eventQueuePeek> = [
           earliestItem,
-          NoItem(653 /* earlier timestamp than the test event */, 10),
+          NoItem(653 /* earlier timestamp than the test event */, Chain_1),
           singleItem,
-          NoItem(655 /* later timestamp than the test event */, 10),
+          NoItem(655 /* later timestamp than the test event */, Chain_1),
         ]
 
         let resultUnordered = determineNextEvent_unordered(example)
@@ -267,18 +266,21 @@ describe("determineNextEvent", () => {
       () => {
         let singleItem: Types.eventBatchQueueItem = {
           timestamp: 654,
-          chainId: 69,
+          chain: Chain_137,
           blockNumber: 987654,
           logIndex: 123456,
           event: "SINGLE TEST EVENT"->Obj.magic,
         }
-        let earliestItem = ChainFetcher.NoItem(5 /* earlier timestamp than the test event */, 10)
+        let earliestItem = ChainFetcher.NoItem(
+          5 /* earlier timestamp than the test event */,
+          Chain_1,
+        )
         let example: array<ChainFetcher.eventQueuePeek> = [
           earliestItem,
-          NoItem(653 /* earlier timestamp than the test event */, 10),
+          NoItem(653 /* earlier timestamp than the test event */, Chain_1),
           Item({...singleItem, timestamp: singleItem.timestamp + 1}),
           Item(singleItem),
-          NoItem(655 /* later timestamp than the test event */, 10),
+          NoItem(655 /* later timestamp than the test event */, Chain_1),
         ]
 
         let resultUnordered = determineNextEvent_unordered(example)

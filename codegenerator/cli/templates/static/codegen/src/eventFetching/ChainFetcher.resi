@@ -33,7 +33,6 @@ let addDynamicContractAndFetchMissingEvents: (
 ) => promise<array<Types.eventBatchQueueItem>>
 type latestFetchedBlockTimestamp = int
 type eventQueuePeek =
-  | NoItem(latestFetchedBlockTimestamp, Types.chainId)
-  | Item(Types.eventBatchQueueItem)
+  NoItem(latestFetchedBlockTimestamp, ChainMap.Chain.t) | Item(Types.eventBatchQueueItem)
 let peekFrontItemOfQueue: t => eventQueuePeek
 let addNewRangeQueriedCallback: t => promise<unit>

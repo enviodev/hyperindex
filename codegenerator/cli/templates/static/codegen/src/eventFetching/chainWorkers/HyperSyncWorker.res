@@ -76,7 +76,7 @@ let make = (
 
   let logger = Logging.createChild(
     ~params={
-      "chainId": chainConfig.chainId,
+      "chainId": chainConfig.chain,
       "workerType": "Hypersync",
       "loggerFor": "Used only in logging regestration of static contract addresses",
     },
@@ -134,7 +134,7 @@ let setCurrentBlockHeight = (self: t, ~currentBlockHeight, ~startBlock) =>
 
     //Don't await this set, it can happen in its own time
     DbFunctions.ChainMetadata.setChainMetadataRow(
-      ~chainId=self.chainConfig.chainId,
+      ~chainId=self.chainConfig.chain->ChainMap.Chain.toChainId,
       ~startBlock,
       ~blockHeight=currentBlockHeight,
     )->ignore
@@ -195,7 +195,7 @@ type blockRangeFetchResponse = {
 
 let fetchBlockRange = async (
   {nextPagePromise, latestFetchedBlockTimestamp, fromBlock},
-  ~chainId,
+  ~chain: ChainMap.Chain.t,
   ~logger,
   ~serverUrl,
   ~getNextPage,
@@ -305,12 +305,12 @@ let fetchBlockRange = async (
         ~log=item.log,
         ~blockTimestamp=item.blockTimestamp,
         ~contractInterfaceManager,
-        ~chainId,
+        ~chainId=chain->ChainMap.Chain.toChainId,
       ) {
       | Ok(parsed) =>
         let queueItem: Types.eventBatchQueueItem = {
           timestamp: item.blockTimestamp,
-          chainId,
+          chain,
           blockNumber: item.log.blockNumber,
           logIndex: item.log.logIndex,
           event: parsed,
@@ -385,7 +385,7 @@ let loopFetchBlockRanges = async (
       ~serverUrl,
       ~getNextPage,
       ~logger,
-      ~chainId=self.chainConfig.chainId,
+      ~chain=self.chainConfig.chain,
     )
 
     let {parentHash, lastBlockScannedData} = reorgGuard
@@ -540,8 +540,9 @@ let startFetchingEvents = async (
   logger->Logging.childTrace("Starting event fetching on HyperSync worker")
 
   let {chainConfig, contractAddressMapping} = self
+  let chainId = chainConfig.chain->ChainMap.Chain.toChainId
   let latestProcessedBlock = await DbFunctions.EventSyncState.getLatestProcessedBlockNumber(
-    ~chainId=chainConfig.chainId,
+    ~chainId,
   )
 
   let startBlock =
@@ -558,7 +559,7 @@ let startFetchingEvents = async (
   //Add all dynamic contracts from DB
   let dynamicContracts =
     await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
-      ~chainId=chainConfig.chainId,
+      ~chainId,
       ~startBlock,
     )
 
@@ -596,10 +597,13 @@ let fetchArbitraryEvents = async (
     "toBlock": toBlock,
   })
 
+  let {serverUrl, chainConfig} = self
+
   let contractInterfaceManager =
     dynamicContracts
     ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
-      let chainConfig = Config.config->ChainMap.get(chainId->ChainMap.unsafeToChainId)
+      let chain = chainId->ChainMap.Chain.fromChainId->Belt.Result.getExn
+      let chainConfig = Config.config->ChainMap.get(chain)
 
       let singleContractInterfaceManager = ContractInterfaceManager.makeFromSingleContract(
         ~contractAddress,
@@ -624,7 +628,7 @@ let fetchArbitraryEvents = async (
     let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
       () =>
         HyperSync.queryLogsPage(
-          ~serverUrl=self.serverUrl,
+          ~serverUrl,
           ~fromBlock=fromBlockRef.contents,
           ~toBlock,
           ~contractAddressesAndtopics,
@@ -643,12 +647,12 @@ let fetchArbitraryEvents = async (
           ~log=item.log,
           ~blockTimestamp=item.blockTimestamp,
           ~contractInterfaceManager,
-          ~chainId=self.chainConfig.chainId,
+          ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
         ) {
         | Ok(parsed) =>
           let queueItem: Types.eventBatchQueueItem = {
             timestamp: item.blockTimestamp,
-            chainId: self.chainConfig.chainId,
+            chain: chainConfig.chain,
             blockNumber: item.log.blockNumber,
             logIndex: item.log.logIndex,
             event: parsed,

@@ -41,16 +41,17 @@ let makeCombinedEventFilterQuery = (
     contractInterfaceManager->ContractInterfaceManager.getCombinedEthersFilter(~fromBlock, ~toBlock)
 
   let numBlocks = toBlock - fromBlock + 1
-  
-  let loggerWithContext = Logging.createChildFrom(~logger,~params={
+
+  let loggerWithContext = Logging.createChildFrom(
+    ~logger,
+    ~params={
       "fromBlock": fromBlock,
       "toBlock": toBlock,
       "numBlocks": numBlocks,
-    })
-
-  loggerWithContext->Logging.childTrace(
-    "Initiating Combined Query Filter"
+    },
   )
+
+  loggerWithContext->Logging.childTrace("Initiating Combined Query Filter")
 
   provider
   ->Ethers.JsonRpcProvider.getLogs(
@@ -63,16 +64,14 @@ let makeCombinedEventFilterQuery = (
     res
   })
   ->Promise.catch(err => {
-    loggerWithContext->Logging.childWarn(
-      "Failed Combined Query Filter from block"
-    )
+    loggerWithContext->Logging.childWarn("Failed Combined Query Filter from block")
     err->Promise.reject
   })
 }
 
 type eventBatchPromise = {
   timestampPromise: promise<int>,
-  chainId: int,
+  chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
   eventPromise: promise<Types.event>,
@@ -84,7 +83,7 @@ let convertLogs = (
   logs: array<Ethers.log>,
   ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
   ~contractInterfaceManager: ContractInterfaceManager.t,
-  ~chainId,
+  ~chain,
   ~logger,
 ): array<eventBatchPromise> => {
   logger->Logging.childTrace({
@@ -98,7 +97,7 @@ let convertLogs = (
 
     {
       timestampPromise,
-      chainId,
+      chain,
       blockNumber: log.blockNumber,
       logIndex: log.logIndex,
       eventPromise: timestampPromise->Promise.thenResolve(blockTimestamp => {
@@ -106,8 +105,8 @@ let convertLogs = (
           ~log,
           ~blockTimestamp,
           ~contractInterfaceManager,
-          ~chainId,
-        ) 
+          ~chainId=chain->ChainMap.Chain.toChainId,
+        )
         switch parsed {
         | Error(e) =>
           let ex = RpcEventParsing(e)
@@ -131,7 +130,7 @@ let queryEventsWithCombinedFilter = async (
   ~minFromBlockLogIndex=0,
   ~blockLoader,
   ~provider,
-  ~chainId,
+  ~chain,
   ~logger: Pino.t,
   (),
 ): array<eventBatchPromise> => {
@@ -150,7 +149,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  logs->convertLogs(~blockLoader, ~contractInterfaceManager, ~chainId, ~logger)
+  logs->convertLogs(~blockLoader, ~contractInterfaceManager, ~chain, ~logger)
 }
 
 type eventBatchQuery = {
@@ -164,7 +163,7 @@ let getContractEventsOnFilters = async (
   ~toBlock,
   ~initialBlockInterval,
   ~minFromBlockLogIndex=0,
-  ~chainId,
+  ~chain,
   ~rpcConfig: Config.rpcConfig,
   ~blockLoader,
   ~logger,
@@ -200,7 +199,7 @@ let getContractEventsOnFilters = async (
           ~minFromBlockLogIndex=fromBlockRef.contents == fromBlock ? minFromBlockLogIndex : 0,
           ~provider=rpcConfig.provider,
           ~blockLoader,
-          ~chainId,
+          ~chain,
           ~logger,
           (),
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))

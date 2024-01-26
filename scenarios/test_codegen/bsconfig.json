@@ -16,12 +16,25 @@
     "module": "commonjs",
     "in-source": true
   },
+  "gentypeconfig": {
+    "language": "typescript",
+    "generatedFileExtension": ".gen.ts",
+    "module": "commonjs",
+    "debug": {
+      "all": false,
+      "basic": false
+    }
+  },
   "bs-dependencies": [
     "generated",
     "@ryyppy/rescript-promise",
     "rescript-mocha",
     "@greenlabs/ppx-spice"
   ],
-  "pinned-dependencies": ["generated"],
-  "ppx-flags": ["@greenlabs/ppx-spice/ppx"]
+  "pinned-dependencies": [
+    "generated"
+  ],
+  "ppx-flags": [
+    "@greenlabs/ppx-spice/ppx"
+  ]
 }

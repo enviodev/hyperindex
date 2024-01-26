@@ -1,49 +1,71 @@
 open Belt
 
-type chainId = 
-{{#each chain_configs as | chain_config |}}
-  | Chain_{{chain_config.network_config.id}}
-{{/each}}
-
-let allChainIds = [
-{{#each chain_configs as | chain_config |}}
-  Chain_{{chain_config.network_config.id}},
-{{/each}}
-]
-
-let chainIdToInt = chainId =>
-  switch chainId {
+module Chain = {
+  type t =
   {{#each chain_configs as | chain_config |}}
-  | Chain_{{chain_config.network_config.id}} => {{chain_config.network_config.id}}
+    | Chain_{{chain_config.network_config.id}}
   {{/each}}
+
+  let all = [
+  {{#each chain_configs as | chain_config |}}
+    Chain_{{chain_config.network_config.id}},
+  {{/each}}
+  ]
+
+  let toChainId = chain =>
+    switch chain {
+    {{#each chain_configs as | chain_config |}}
+    | Chain_{{chain_config.network_config.id}} => {{chain_config.network_config.id}}
+    {{/each}}
+    }
+
+  let toString = chain => chain->toChainId->Int.toString
+
+  exception UndefinedChain(int)
+
+  let fromChainId = chainId =>
+    switch chainId {
+    {{#each chain_configs as | chain_config |}}
+    | {{chain_config.network_config.id}} => Ok(Chain_{{chain_config.network_config.id}})
+    {{/each}}
+    | c => Error(UndefinedChain(c))
+    }
+
+  let t_encode: Spice.encoder<t> = chain => {
+    chain->toChainId->Spice.intToJson
   }
 
-//TODO: remove this
-let unsafeToChainId = chainId =>
-  switch chainId {
-  {{#each chain_configs as | chain_config |}}
-  | {{chain_config.network_config.id}} => Chain_{{chain_config.network_config.id}}
-  {{/each}}
-  | c => Js.Exn.raiseError(`Undefined chain ${c->Int.toString}`)
+  let t_decode: Spice.decoder<t> = json => {
+    json
+    ->Spice.intFromJson
+    ->Result.flatMap(c =>
+      switch c->fromChainId {
+      | Ok(chain) => Ok(chain)
+      | Error(_) => Spice.error(~path="ChainMap.chain", "Undefined chain", json)
+      }
+    )
   }
 
-module ChainIdCmp = Belt.Id.MakeComparable({
-  type t = chainId
-  let cmp = (a, b) => Pervasives.compare(a, b)
-})
-
-type t<'a> = Belt.Map.t<ChainIdCmp.t, 'a, ChainIdCmp.identity>
-
-let make = (fn: chainId => 'a): t<'a> => {
-  allChainIds->Array.map(chainId => (chainId, chainId->fn))->Map.fromArray(~id=module(ChainIdCmp))
+  module ChainIdCmp = Belt.Id.MakeComparable({
+    type t = t
+    let cmp = (a, b) => Pervasives.compare(a->toChainId, b->toChainId)
+  })
 }
 
-let get: (t<'a>, chainId) => 'a = (self, chainId) =>
-  //Can safely get exn since all chains must be set
-  Map.get(self, chainId)->Option.getExn
+type t<'a> = Belt.Map.t<Chain.ChainIdCmp.t, 'a, Chain.ChainIdCmp.identity>
 
-let set: (t<'a>, chainId, 'a) => t<'a> = Map.set
+let make = (fn: Chain.t => 'a): t<'a> => {
+  Chain.all
+  ->Array.map(chainId => (chainId, chainId->fn))
+  ->Map.fromArray(~id=module(Chain.ChainIdCmp))
+}
+
+let get: (t<'a>, Chain.t) => 'a = (self, chain) =>
+  //Can safely get exn since all chains must be set
+  Map.get(self, chain)->Option.getExn
+
+let set: (t<'a>, Chain.t, 'a) => t<'a> = Map.set
 let values: t<'a> => array<'a> = Map.valuesToArray
-let entries: t<'a> => array<(chainId, 'a)> = Map.toArray
+let entries: t<'a> => array<(Chain.t, 'a)> = Map.toArray
 let map: (t<'a>, 'a => 'b) => t<'b> = Map.map
 let size: t<'a> => int = Map.size

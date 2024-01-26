@@ -21,7 +21,7 @@ let eventMock1: Types.event = GravatarContract_NewGravatar({
 
 let qItemMock1: Types.eventBatchQueueItem = {
   timestamp: 0,
-  chainId: 1,
+  chain: Chain_1337,
   blockNumber: 1,
   logIndex: 0,
   event: eventMock1,
@@ -41,7 +41,7 @@ let eventMock2: Types.event = GravatarContract_NewGravatar({
 
 let qItemMock2: Types.eventBatchQueueItem = {
   timestamp: 1,
-  chainId: 1,
+  chain: Chain_1337,
   blockNumber: 2,
   logIndex: 1,
   event: eventMock1,

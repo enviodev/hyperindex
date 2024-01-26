@@ -41,7 +41,7 @@ let make = (
 
   let logger = Logging.createChild(
     ~params={
-      "chainId": chainConfig.chainId,
+      "chainId": chainConfig.chain,
       "workerType": "rpc",
       "loggerFor": "Used only in logging regestration of static contract addresses",
     },
@@ -133,7 +133,7 @@ let startWorker = async (
   self.currentBlockHeight = await getCurrentBlockFromRPC()
 
   DbFunctions.ChainMetadata.setChainMetadataRow(
-    ~chainId=chainConfig.chainId,
+    ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
     ~startBlock,
     ~blockHeight=self.currentBlockHeight,
   )->ignore
@@ -185,18 +185,18 @@ let startWorker = async (
       ~initialBlockInterval=blockInterval,
       ~minFromBlockLogIndex=0,
       ~rpcConfig,
-      ~chainId=chainConfig.chainId,
+      ~chain=chainConfig.chain,
       ~blockLoader,
       ~logger,
       (),
     )
 
     for i in 0 to eventBatchPromises->Belt.Array.length - 1 {
-      let {timestampPromise, chainId, blockNumber, logIndex, eventPromise} = eventBatchPromises[i]
+      let {timestampPromise, chain, blockNumber, logIndex, eventPromise} = eventBatchPromises[i]
 
       let queueItem: Types.eventBatchQueueItem = {
         timestamp: await timestampPromise,
-        chainId,
+        chain,
         blockNumber,
         logIndex,
         event: await eventPromise,
@@ -236,7 +236,7 @@ let startWorker = async (
       )
       self.currentBlockHeight = await getCurrentBlockFromRPC()
       DbFunctions.ChainMetadata.setChainMetadataRow(
-        ~chainId=chainConfig.chainId,
+        ~chainId=chainConfig.chain->ChainMap.Chain.toChainId,
         ~startBlock,
         ~blockHeight=self.currentBlockHeight,
       )->ignore
@@ -257,8 +257,9 @@ let startFetchingEvents = async (
 ) => {
   let {chainConfig, contractAddressMapping} = self
 
+  let chainId = chainConfig.chain->ChainMap.Chain.toChainId
   let latestProcessedBlock = await DbFunctions.EventSyncState.getLatestProcessedBlockNumber(
-    ~chainId=chainConfig.chainId,
+    ~chainId,
   )
 
   let startBlock =
@@ -275,7 +276,7 @@ let startFetchingEvents = async (
   //Add all dynamic contracts from DB
   let dynamicContracts =
     await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
-      ~chainId=chainConfig.chainId,
+      ~chainId,
       ~startBlock,
     )
 
@@ -304,7 +305,8 @@ let fetchArbitraryEvents = async (
   let contractInterfaceManager =
     dynamicContracts
     ->Belt.Array.map(({contractAddress, contractType, chainId}) => {
-      let chainConfig = Config.config->ChainMap.get(chainId->ChainMap.unsafeToChainId)
+      let chain = chainId->ChainMap.Chain.fromChainId->Belt.Result.getExn
+      let chainConfig = Config.config->ChainMap.get(chain)
 
       let singleContractInterfaceManager = ContractInterfaceManager.makeFromSingleContract(
         ~contractAddress,
@@ -323,7 +325,7 @@ let fetchArbitraryEvents = async (
     ~initialBlockInterval=currentBlockInterval,
     ~minFromBlockLogIndex=fromLogIndex,
     ~rpcConfig,
-    ~chainId=chainConfig.chainId,
+    ~chain=chainConfig.chain,
     ~blockLoader,
     ~logger,
     (),
@@ -331,13 +333,13 @@ let fetchArbitraryEvents = async (
   await eventBatchPromises
   ->Belt.Array.map(async ({
     timestampPromise,
-    chainId,
+    chain,
     blockNumber,
     logIndex,
     eventPromise,
   }): Types.eventBatchQueueItem => {
     timestamp: await timestampPromise,
-    chainId,
+    chain,
     blockNumber,
     logIndex,
     event: await eventPromise,

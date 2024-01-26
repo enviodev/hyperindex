@@ -199,7 +199,7 @@ let decodeRawEventWith = (
   rawEvent: Types.rawEventsEntity,
   ~decoder: Spice.decoder<'a>,
   ~variantAccessor: Types.eventLog<'a> => Types.event,
-  ~chainId: int,
+  ~chain,
 ): Spice.result<Types.eventBatchQueueItem> => {
   switch rawEvent.params->Js.Json.parseExn {
   | exception exn =>
@@ -217,7 +217,7 @@ let decodeRawEventWith = (
   })
   ->Belt.Result.map(params => {
     let event = {
-      chainId,
+      chainId: rawEvent.chainId,
       blockNumber: rawEvent.blockNumber,
       blockTimestamp: rawEvent.blockTimestamp,
       blockHash: rawEvent.blockHash,
@@ -230,7 +230,7 @@ let decodeRawEventWith = (
 
     let queueItem: Types.eventBatchQueueItem = {
       timestamp: rawEvent.blockTimestamp,
-      chainId: rawEvent.chainId,
+      chain,
       blockNumber: rawEvent.blockNumber,
       logIndex: rawEvent.logIndex,
       event,
@@ -240,7 +240,7 @@ let decodeRawEventWith = (
   })
 }
 
-let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chainId: int): Spice.result<
+let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain): Spice.result<
   Types.eventBatchQueueItem,
 > => {
   rawEvent.eventType
@@ -253,7 +253,7 @@ let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chainId: int): Spice.resu
       rawEvent->decodeRawEventWith(
         ~decoder=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_decode,
         ~variantAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}},
-        ~chainId,
+        ~chain,
       )
   {{/each}}
   {{/each}}

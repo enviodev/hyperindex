@@ -13,7 +13,7 @@ let make = (
   ~maxQueueSize,
   ~shouldSyncFromRawEvents: bool,
 ): t => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.chainId})
+  let logger = Logging.createChild(~params={"chainId": chainConfig.chain})
 
   //Dangerous! Ref is not defined yet but will be defined in the next step
   let chainWorkerRef = ref(None->Obj.magic)
@@ -73,7 +73,7 @@ let startFetchingEvents = async (self: t, ~checkHasReorgOccurred) => {
   | exception err =>
     self.logger->Logging.childError({
       "err": err,
-      "msg": `error while running chainWorker on chain ${self.chainConfig.chainId->Belt.Int.toString}`,
+      "msg": `error while running chainWorker on chain ${self.chainConfig.chain->ChainMap.Chain.toString}`,
     })
     Error(err)
   | _ => Ok()
@@ -114,7 +114,7 @@ let addDynamicContractAndFetchMissingEvents = (
 
 type latestFetchedBlockTimestamp = int
 type eventQueuePeek =
-  NoItem(latestFetchedBlockTimestamp, Types.chainId) | Item(Types.eventBatchQueueItem)
+  NoItem(latestFetchedBlockTimestamp, ChainMap.Chain.t) | Item(Types.eventBatchQueueItem)
 
 let peekFrontItemOfQueue = (self: t): eventQueuePeek => {
   let optFront = self.fetchedEventQueue->ChainEventQueue.peekFront
@@ -123,7 +123,7 @@ let peekFrontItemOfQueue = (self: t): eventQueuePeek => {
   | None =>
     let latestFetchedBlockTimestamp =
       self.chainWorker.contents->ChainWorker.getLatestFetchedBlockTimestamp
-    NoItem(latestFetchedBlockTimestamp, self.chainConfig.chainId)
+    NoItem(latestFetchedBlockTimestamp, self.chainConfig.chain)
   | Some(item) => Item(item)
   }
 }

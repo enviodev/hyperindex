@@ -27,7 +27,7 @@ type chainConfig = {
   syncSource: syncSource,
   startBlock: int,
   confirmedBlockThreshold: int,
-  chainId: int,
+  chain: ChainMap.Chain.t,
   contracts: array<contract>,
 }
 
@@ -166,8 +166,8 @@ let getSyncConfig = ({
   queryTimeoutMillis,
 }
 
-let getConfig = (chainId: ChainMap.chainId) =>
-  switch chainId {
+let getConfig = (chain: ChainMap.Chain.t) =>
+  switch chain {
   {{#each chain_configs as | chain_config |}}
   | Chain_{{chain_config.network_config.id}} => {
       confirmedBlockThreshold: 200, //TODO: This is currently hardcoded, it should be determined per chain
@@ -194,7 +194,7 @@ let getConfig = (chainId: ChainMap.chainId) =>
       HyperSync("{{chain_config.network_config.skar_server_url}}"),
       {{/if}}
       startBlock: {{chain_config.network_config.start_block}},
-      chainId: {{chain_config.network_config.id}},
+      chain: Chain_{{chain_config.network_config.id}},
       contracts: [
       {{#each chain_config.contracts as | contract |}}
         {
