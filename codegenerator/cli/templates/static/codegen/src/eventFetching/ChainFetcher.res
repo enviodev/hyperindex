@@ -1,8 +1,16 @@
+type pendingNextQuery = HypersyncPendingNextQuery(HyperSyncWorker.blockRangeFetchArgs) | Rpc
+
 type t = {
   logger: Pino.t,
   fetchedEventQueue: ChainEventQueue.t,
   chainConfig: Config.chainConfig,
   chainWorker: ref<ChainWorker.chainWorker>,
+  pendingNextQuery: option<pendingNextQuery>,
+  //A set of event IDs for contracts busy catching up after being
+  //dynamically registered
+  pendingDynamicContractRegistrations: Belt.Set.String.t,
+  //The latest known block of the chain
+  currentBlockHeight: int,
   mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
 }
 
@@ -60,6 +68,10 @@ let make = (
     chainConfig,
     chainWorker: chainWorkerRef,
     lastBlockScannedHashes,
+    pendingNextQuery: None,
+    pendingDynamicContractRegistrations: Belt.Set.String.empty,
+  
+    currentBlockHeight: 0,
   }
 }
 

@@ -189,6 +189,7 @@ type blockRangeFetchResponse = {
   reorgGuard: reorgGuard,
   nextQuery: blockRangeFetchArgs,
   parsedQueueItems: array<Types.eventBatchQueueItem>,
+  fromBlockQueried: int,
   heighestQueriedBlockNumber: int,
   stats: blockRangeFetchStats,
 }
@@ -353,6 +354,7 @@ let fetchBlockRange = async (
     stats,
     currentBlockHeight,
     reorgGuard,
+    fromBlockQueried: fromBlock,
   }
 }
 
@@ -420,15 +422,14 @@ let loopFetchBlockRanges = async (
         //range queried and run callbacks since there will be an updated timestamp even
         //If there ar no items in the page
         self.newRangeQueriedCallBacks->SDSL.Queue.popForEach(callback => callback())
-
-        logger->Logging.childTrace({
-          "message": "Finished page range",
-          "fromBlock": queryArgs.contents.fromBlock,
-          "toBlock": heighestQueriedBlockNumber,
-          "number of logs": parsedQueueItems->Array.length,
-          "stats": stats,
-        })
       }
+      logger->Logging.childTrace({
+        "message": "Finished page range",
+        "fromBlock": queryArgs.contents.fromBlock,
+        "toBlock": heighestQueriedBlockNumber,
+        "number of logs": parsedQueueItems->Array.length,
+        "stats": stats,
+      })
     }
 
     //Note these side effects can disappear once we use immutable dispatcher
