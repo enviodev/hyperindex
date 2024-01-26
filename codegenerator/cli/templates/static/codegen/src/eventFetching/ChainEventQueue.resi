@@ -10,3 +10,4 @@ let awaitQueueSpaceAndPushItem: (t, Types.eventBatchQueueItem) => promise<unit>
 let popSingleAndAwaitItem: t => promise<Types.eventBatchQueueItem>
 let popSingle: t => option<Types.eventBatchQueueItem>
 let peekFront: t => option<Types.eventBatchQueueItem>
+let pushItem: (t, Types.eventBatchQueueItem) => bool

@@ -29,6 +29,19 @@ let handlePopBackLogCallbacks = (self: t, ~numberOfItems: int) => {
   }
 }
 
+/**
+Checks to see if queue is at or over max capacity
+*/
+let isQueueAtMax = self => self.queue->SDSL.Queue.size >= self.maxQueueSize
+
+/**
+Pushes Item Regardless of max size and returns true if queue is over max size
+*/
+let pushItem = (self: t, item: Types.eventBatchQueueItem) => {
+  self.queue->SDSL.Queue.push(item)->ignore
+  self->isQueueAtMax
+}
+
 let awaitQueueSpaceAndPushItem = async (self: t, item: Types.eventBatchQueueItem) => {
   //Check if the queue is already full and wait for space before
   //pushing next batch
