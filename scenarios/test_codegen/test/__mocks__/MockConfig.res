@@ -12,7 +12,7 @@ let mockChainConfig: Config.chainConfig = {
     },
   }),
   startBlock: 1,
-  chainId: 1337,
+  chain: Chain_1337,
   contracts: [
     {
       name: "Gravatar",

@@ -15,7 +15,8 @@ describe("Parsing Raw Events", () => {
 
     let blockNumber = 11954567
     let timestamp = 1614631579
-    let chainId = 1
+    let chain = ChainMap.Chain.Chain_1337
+    let chainId = chain->ChainMap.Chain.toChainId
     let logIndex = 71
     let blockHash = "0x826bdba07d8f295ef4a0a55c342b49d75699a7c2088a1afa8d71cd33b558fd71"
     let srcAddress = Ethers.getAddressFromStringUnsafe("0xc944E90C64B2c07662A292be6244BDf05Cda44a7")
@@ -36,11 +37,11 @@ describe("Parsing Raw Events", () => {
       params: paramsEncoded,
     }
 
-    let parsedEvent = mockRawEventsEntity->Converters.parseRawEvent(~chainId)->Belt.Result.getExn
+    let parsedEvent = mockRawEventsEntity->Converters.parseRawEvent(~chain)->Belt.Result.getExn
 
     let expectedParseResult: Types.eventBatchQueueItem = {
       timestamp: 1614631579,
-      chainId,
+      chain,
       blockNumber,
       logIndex,
       event: Types.GravatarContract_NewGravatar({

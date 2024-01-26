@@ -7,8 +7,25 @@ type t = {
 }
 
 let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
-  let {timestamp, chainId, blockNumber, logIndex} = queueItem
-  EventUtils.getEventComparator({timestamp, chainId, blockNumber, logIndex})
+  let {timestamp, chain, blockNumber, logIndex} = queueItem
+  EventUtils.getEventComparator({
+    timestamp,
+    chainId: chain->ChainMap.Chain.toChainId,
+    blockNumber,
+    logIndex,
+  })
+}
+
+let getEventQueuePeakComparitor = (v: ChainFetcher.eventQueuePeek) => {
+  switch v {
+  | Item(i) => i->getComparitorFromItem
+  | NoItem(latestFetchedBlockTimestamp, chainId) => (
+      latestFetchedBlockTimestamp,
+      chainId->ChainMap.Chain.toChainId,
+      0,
+      0,
+    )
+  }
 }
 
 let priorityQueueComparitor = (a: Types.eventBatchQueueItem, b: Types.eventBatchQueueItem) => {
@@ -23,18 +40,7 @@ let chainFetcherPeekComparitorEarliestEvent = (
   a: ChainFetcher.eventQueuePeek,
   b: ChainFetcher.eventQueuePeek,
 ): bool => {
-  switch (a, b) {
-  | (Item(itemA), Item(itemB)) => itemA->getComparitorFromItem < itemB->getComparitorFromItem
-  | (Item(itemA), NoItem(latestFetchedBlockTimestampB, chainId)) =>
-    (itemA.timestamp, itemA.chainId) < (latestFetchedBlockTimestampB, chainId)
-  | (NoItem(latestFetchedBlockTimestampA, chainId), Item(itemB)) =>
-    (latestFetchedBlockTimestampA, chainId) < (itemB.timestamp, itemB.chainId)
-  | (
-      NoItem(latestFetchedBlockTimestampA, chainIdA),
-      NoItem(latestFetchedBlockTimestampB, chainIdB),
-    ) =>
-    (latestFetchedBlockTimestampA, chainIdA) < (latestFetchedBlockTimestampB, chainIdB)
-  }
+  a->getEventQueuePeakComparitor < b->getEventQueuePeakComparitor
 }
 
 // This is similar to `chainFetcherPeekComparitorEarliestEvent`, but it prioritizes events over `NoItem` no matter what the timestamp of `NoItem` is.
@@ -145,7 +151,7 @@ let reorgStub = async (chainManager: t, ~chainFetcher: ChainFetcher.t, ~lastBloc
   let _ = chainManager
   Logging.warn({
     "msg": "A Reorg Has occurred",
-    "chainId": chainFetcher.chainConfig.chainId,
+    "chainId": chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
     "lastBlockScannedData": lastBlockScannedData,
   })
 }
@@ -233,10 +239,8 @@ let startFetchers = (self: t) => {
   })
 }
 
-exception UndefinedChain(Types.chainId)
-
-let getChainFetcher = (self: t, ~chainId: int): ChainFetcher.t => {
-  self.chainFetchers->ChainMap.get(chainId->ChainMap.unsafeToChainId)
+let getChainFetcher = (self: t, ~chain: ChainMap.Chain.t): ChainFetcher.t => {
+  self.chainFetchers->ChainMap.get(chain)
 }
 
 //Synchronus operation that returns an optional value and will not wait
@@ -259,7 +263,7 @@ let popBatchItem = (self: t): option<Types.eventBatchQueueItem> => {
     | ChainFetcher.NoItem(_, _) => None
     | ChainFetcher.Item(batchItem) =>
       //If there is an item pop it off of the chain fetcher queue and return
-      let fetcher = self->getChainFetcher(~chainId=batchItem.chainId)
+      let fetcher = self->getChainFetcher(~chain=batchItem.chain)
       fetcher->ChainFetcher.popQueueItem
     }
   }
@@ -297,7 +301,7 @@ let popBatchItem = (self: t): option<Types.eventBatchQueueItem> => {
 let getChainIdFromBufferPeekItem = (peekItem: ChainFetcher.eventQueuePeek) => {
   switch peekItem {
   | ChainFetcher.NoItem(_, chainId) => chainId
-  | ChainFetcher.Item(batchItem) => batchItem.chainId
+  | ChainFetcher.Item(batchItem) => batchItem.chain
   }
 }
 let getBlockNumberFromBufferPeekItem = (peekItem: ChainFetcher.eventQueuePeek) => {
@@ -327,7 +331,7 @@ let rec getAllBlockLogs = (
 
     | ChainFetcher.Item(batchItem) =>
       //If there is an item pop it off of the chain fetcher queue and return
-      let fetcher = self->getChainFetcher(~chainId=batchItem.chainId)
+      let fetcher = self->getChainFetcher(~chain=batchItem.chain)
       let _ = fetcher->ChainFetcher.popQueueItem
 
       let nextBlockGroupedBatchItems = blockGroupedBatchItems->Belt.Array.concat([batchItem])
@@ -365,7 +369,7 @@ let rec getAllBlockLogs = (
   | Some(peekedArbItem) =>
     // Js.log({"arbPeek": peekedArbItem.event})
     let arbEventIsInSameBlock =
-      (peekedArbItem.chainId, Some(peekedArbItem.blockNumber)) ==
+      (peekedArbItem.chain, Some(peekedArbItem.blockNumber)) ==
         (bufferItem->getChainIdFromBufferPeekItem, bufferItem->getBlockNumberFromBufferPeekItem)
     let arbItemIsEarlier = chainFetcherPeekComparitorEarliestEvent(
       ChainFetcher.Item(peekedArbItem),
@@ -383,7 +387,7 @@ let rec getAllBlockLogs = (
 
       let nextBlockGroupedBatchItems = blockGroupedBatchItems->Belt.Array.concat([peekedArbItem])
 
-      let fetcher = self->getChainFetcher(~chainId=bufferItem->getChainIdFromBufferPeekItem)
+      let fetcher = self->getChainFetcher(~chain=bufferItem->getChainIdFromBufferPeekItem)
       let peakedNextItem = fetcher->ChainFetcher.peekFrontItemOfQueue
 
       getAllBlockLogs(self, peakedNextItem, nextBlockGroupedBatchItems)
@@ -400,9 +404,7 @@ let rec getAllBlockLogs = (
 
         switch optPeekedArbItem {
         | Some(peekedArbItem) =>
-          if (
-            (peekedArbItem.chainId, peekedArbItem.blockNumber) == (item.chainId, item.blockNumber)
-          ) {
+          if (peekedArbItem.chain, peekedArbItem.blockNumber) == (item.chain, item.blockNumber) {
             nextBlockGroupedBatchItems->Belt.Array.concat(
               addItemAndCheckNextItemForRecursion(peekedArbItem),
             )
@@ -472,7 +474,7 @@ let rec popBlockBatchAndAwaitItems = async (self: t): option<blockGroupedBatchIt
   // })
 
   switch nextItemFromBuffer {
-  | ChainFetcher.NoItem(latestFullyFetchedBlockTimestampAcrossAllChains, chainId) =>
+  | ChainFetcher.NoItem(latestFullyFetchedBlockTimestampAcrossAllChains, chain) =>
     //Peek arbitraty events queue
     let peekedArbTopItem = self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.top
 
@@ -486,7 +488,7 @@ let rec popBlockBatchAndAwaitItems = async (self: t): option<blockGroupedBatchIt
     | None =>
       //If higest priority is a "NoItem", it means we need to wait for
       //that chain fetcher to fetch blocks of a higher timestamp
-      let fetcher = self->getChainFetcher(~chainId)
+      let fetcher = self->getChainFetcher(~chain)
       //Add a callback and wait for a new block range to finish being queried
       await fetcher->ChainFetcher.addNewRangeQueriedCallback
       //Once there is confirmation from the chain fetcher that a new range has been
@@ -516,10 +518,10 @@ let rec popAndAwaitBatchItem: t => promise<Types.eventBatchQueueItem> = async (
   //Callback for handling popping of chain fetcher events
   let popNextItemAndAwait = async () => {
     switch nextItemFromBuffer {
-    | ChainFetcher.NoItem(_, chainId) =>
+    | ChainFetcher.NoItem(_, chain) =>
       //If higest priority is a "NoItem", it means we need to wait for
       //that chain fetcher to fetch blocks of a higher timestamp
-      let fetcher = self->getChainFetcher(~chainId)
+      let fetcher = self->getChainFetcher(~chain)
       //Add a callback and wait for a new block range to finish being queried
       await fetcher->ChainFetcher.addNewRangeQueriedCallback
       //Once there is confirmation from the chain fetcher that a new range has been
@@ -527,7 +529,7 @@ let rec popAndAwaitBatchItem: t => promise<Types.eventBatchQueueItem> = async (
       await self->popAndAwaitBatchItem
     | ChainFetcher.Item(batchItem) =>
       //If there is an item pop it off of the chain fetcher queue and return
-      let fetcher = self->getChainFetcher(~chainId=batchItem.chainId)
+      let fetcher = self->getChainFetcher(~chain=batchItem.chain)
       await fetcher->ChainFetcher.popAndAwaitQueueItem
     }
   }
@@ -581,7 +583,7 @@ let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array
     self.chainFetchers
     ->ChainMap.values
     ->Belt.Array.map(fetcher => (
-      fetcher.chainConfig.chainId->Belt.Int.toString,
+      fetcher.chainConfig.chain->ChainMap.Chain.toString,
       fetcher.fetchedEventQueue.queue->SDSL.Queue.size,
     ))
     ->Belt.Array.concat([

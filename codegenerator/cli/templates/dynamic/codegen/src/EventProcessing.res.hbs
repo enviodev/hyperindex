@@ -213,9 +213,9 @@ let rec loadReadEntitiesInner = async (
     ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
     ~fromBlock,
     ~currentBatchLastEventIndex: EventUtils.multiChainEventIndex,
-    ~chainId: int,
+    ~chain: ChainMap.Chain.t,
   ): array<readEntitiesResultPromise> => {
-    let chainFetcher = chainManager->ChainManager.getChainFetcher(~chainId)
+    let chainFetcher = chainManager->ChainManager.getChainFetcher(~chain)
     let eventBatchPromises =
       await chainFetcher->ChainFetcher.addDynamicContractAndFetchMissingEvents(
         ~fromBlock,
@@ -226,11 +226,11 @@ let rec loadReadEntitiesInner = async (
     let eventsForCurrentBatch = []
     for i in 0 to eventBatchPromises->Belt.Array.length - 1 {
       let item = eventBatchPromises[i]
-      let {timestamp, chainId, blockNumber, logIndex} = item
+      let {timestamp, blockNumber, logIndex} = item
 
       let eventIndex: EventUtils.multiChainEventIndex = {
         timestamp,
-        chainId,
+        chainId: chain->ChainMap.Chain.toChainId,
         blockNumber,
         logIndex,
       }
@@ -267,13 +267,14 @@ let rec loadReadEntitiesInner = async (
   | Some(lastItemInBatch) =>
     let currentBatchLastEventIndex: EventUtils.multiChainEventIndex = {
       timestamp: lastItemInBatch.timestamp,
-      chainId: lastItemInBatch.chainId,
+      chainId: lastItemInBatch.chain->ChainMap.Chain.toChainId,
       blockNumber: lastItemInBatch.blockNumber,
       logIndex: lastItemInBatch.logIndex,
     }
 
     for i in 0 to eventBatch->Belt.Array.length - 1 {
-      let {timestamp, chainId, blockNumber, logIndex, event} = eventBatch[i]
+      let {timestamp, chain, blockNumber, logIndex, event} = eventBatch[i]
+      let chainId = chain->ChainMap.Chain.toChainId
 
       baseResults
       ->Js.Array2.push({
@@ -315,7 +316,7 @@ let rec loadReadEntitiesInner = async (
                     ~logIndex,
                     ~dynamicContracts,
                     ~fromBlock=blockNumber,
-                    ~chainId,
+                    ~chain,
                     ~currentBatchLastEventIndex,
                   ),
                 )

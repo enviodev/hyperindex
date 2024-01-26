@@ -282,7 +282,7 @@ type chainId = int
 
 type eventBatchQueueItem = {
   timestamp: int,
-  chainId: int,
+  chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
   event: event,

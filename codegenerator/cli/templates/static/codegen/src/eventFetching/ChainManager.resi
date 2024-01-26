@@ -6,7 +6,7 @@ type nextEventErr = NoItemsInArray
 
 let make: (~configs: Config.chainConfigs, ~maxQueueSize: int, ~shouldSyncFromRawEvents: bool) => t
 let startFetchers: t => unit
-let getChainFetcher: (t, ~chainId: int) => ChainFetcher.t
+let getChainFetcher: (t, ~chain: ChainMap.Chain.t) => ChainFetcher.t
 let createBatch: (
   t,
   ~minBatchSize: int,

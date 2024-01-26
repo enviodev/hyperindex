@@ -58,7 +58,7 @@ module PreviousDynamicContractAddresses: {
 type rec t = {
   mutable latestFetchedBlockTimestamp: int,
   mutable latestFetchedEventId: promise<Ethers.BigInt.t>,
-  chainId: int,
+  chain: ChainMap.Chain.t,
   newRangeQueriedCallBacks: SDSL.Queue.t<unit => unit>,
   previousDynamicContractAddresses: PreviousDynamicContractAddresses.t,
   contractAddressMapping: ContractAddressingMap.mapping,
@@ -74,7 +74,7 @@ let stopFetchingEvents = (_self: t) => {
 let make = (~caughtUpToHeadHook=?, ~contractAddressMapping=?, chainConfig: Config.chainConfig) => {
   let logger = Logging.createChild(
     ~params={
-      "chainId": chainConfig.chainId,
+      "chainId": chainConfig.chain,
       "workerType": "Raw Events",
       "loggerFor": "Used only in logging regestration of static contract addresses",
     },
@@ -105,7 +105,7 @@ let make = (~caughtUpToHeadHook=?, ~contractAddressMapping=?, chainConfig: Confi
   {
     latestFetchedBlockTimestamp: 0,
     latestFetchedEventId: Ethers.BigInt.fromInt(0)->Promise.resolve,
-    chainId: chainConfig.chainId,
+    chain: chainConfig.chain,
     newRangeQueriedCallBacks: SDSL.Queue.make(),
     contractAddressMapping,
     caughtUpToHeadHook,
@@ -144,7 +144,7 @@ let startWorker = async (
 
     let page =
       await DbFunctions.sql->DbFunctions.RawEvents.getRawEventsPageGtOrEqEventId(
-        ~chainId=self.chainId,
+        ~chainId=self.chain->ChainMap.Chain.toChainId,
         ~eventId=eventIdRef.contents,
         ~limit=pageLimitSize,
         ~contractAddresses,
@@ -152,7 +152,7 @@ let startWorker = async (
 
     let parsedEventsUnsafe =
       page
-      ->Belt.Array.map(Converters.parseRawEvent(~chainId=self.chainId))
+      ->Belt.Array.map(Converters.parseRawEvent(~chain=self.chain))
       ->Utils.mapArrayOfResults
       ->Belt.Result.getExn
 
@@ -161,7 +161,7 @@ let startWorker = async (
 
       let queueItem: Types.eventBatchQueueItem = {
         timestamp: parsedEvent.timestamp,
-        chainId: self.chainId,
+        chain: self.chain,
         blockNumber: parsedEvent.blockNumber,
         logIndex: parsedEvent.logIndex,
         event: parsedEvent.event,
@@ -210,7 +210,7 @@ let startFetchingEvents = async (
   //Add all dynamic contracts from DB
   let dynamicContracts =
     await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
-      ~chainId=self.chainId,
+      ~chainId=self.chain->ChainMap.Chain.toChainId,
       ~startBlock=0,
     )
 
@@ -239,10 +239,10 @@ let getLatestFetchedBlockTimestamp = (self: t): int => self.latestFetchedBlockTi
 
 let getContractAddressMapping = (self: t) => self.contractAddressMapping
 
-let compare = ({timestamp, chainId, blockNumber, logIndex}: Types.eventBatchQueueItem) =>
+let compare = ({timestamp, chain, blockNumber, logIndex}: Types.eventBatchQueueItem) =>
   EventUtils.getEventComparator({
     timestamp,
-    chainId,
+    chainId: chain->ChainMap.Chain.toChainId,
     blockNumber,
     logIndex,
   })
@@ -332,7 +332,7 @@ let addDynamicContractAndFetchMissingEvents = async (
     DbFunctions.sql->DbFunctions.RawEvents.getRawEventsPageWithinEventIdRangeInclusive(
       ~limit=pageLimitSize,
       ~contractAddresses=existingDynamicContracts,
-      ~chainId=self.chainId,
+      ~chainId=self.chain->ChainMap.Chain.toChainId,
       ~fromEventIdInclusive=fromEventId,
       ~toEventIdInclusive=latestFetchedEventId,
     )
@@ -354,10 +354,10 @@ let addDynamicContractAndFetchMissingEvents = async (
     | [] => currentQueueItems
     | page =>
       let newQueueItems = page->Belt.Array.map(rawEvent => {
-        let parsedEvent = rawEvent->Converters.parseRawEvent(~chainId=self.chainId)->Result.getExn
+        let parsedEvent = rawEvent->Converters.parseRawEvent(~chain=self.chain)->Result.getExn
         let queueItem: Types.eventBatchQueueItem = {
           timestamp: parsedEvent.timestamp,
-          chainId: self.chainId,
+          chain: self.chain,
           blockNumber: parsedEvent.blockNumber,
           logIndex: parsedEvent.logIndex,
           event: parsedEvent.event,
@@ -402,7 +402,7 @@ let addDynamicContractAndFetchMissingEvents = async (
   //Use the source worker to fetch all events up until the latest stored raw event
   //for new dynamic contract registrations
   let newDynamicContractsQueueItems = DbFunctions.RawEvents.getLatestProcessedBlockNumber(
-    ~chainId=self.chainId,
+    ~chainId=self.chain->ChainMap.Chain.toChainId,
   )->Promise.then(latestRawEventBlock =>
     switch latestRawEventBlock {
     | Some(toBlock) =>

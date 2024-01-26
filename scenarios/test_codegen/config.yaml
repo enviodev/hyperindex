@@ -53,3 +53,9 @@ networks:
               - name: "User"
               - name: NftCollection
               - name: Token
+  - id: 1
+    start_block: 1
+    contracts: []
+  - id: 137
+    start_block: 1
+    contracts: []

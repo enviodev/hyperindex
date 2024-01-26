@@ -16,13 +16,13 @@ type rpc_config = {
   url: string,
   unstable__sync_config: sync_config,
 }
-type network_conf = {id: string, rpc_config: rpc_config}
+type network_conf = {id: int, rpc_config: rpc_config}
 type config = {networks: array<network_conf>}
 
 let configYaml: config = ConfigUtils.loadConfigYaml(~codegenConfigPath=configPathString)
 let firstNetworkConfig = configYaml.networks[0]
 
-let generatedChainConfig = Js.Dict.unsafeGet(Config.config, firstNetworkConfig.id)
+let generatedChainConfig = Config.config->ChainMap.get(Chain_1337)
 let generatedSyncConfig = switch generatedChainConfig.syncSource {
 | Rpc({syncConfig}) => syncConfig
 | _ => Js.Exn.raiseError("Expected an rpc config")

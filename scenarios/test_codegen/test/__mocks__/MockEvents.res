@@ -122,20 +122,20 @@ let eventBatch: array<Types.event> = [
   GravatarContract_UpdatedGravatar(setGravatarEventLog3),
 ]
 
-let eventBatchChainId = 1337
+let eventBatchChain = ChainMap.Chain.Chain_1337
 
 let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem => {
   switch e {
   | GravatarContract_NewGravatar(el) => {
       timestamp: el.blockTimestamp,
-      chainId: eventBatchChainId,
+      chain: eventBatchChain,
       blockNumber: el.blockNumber,
       logIndex: el.logIndex,
       event: e,
     }
   | GravatarContract_UpdatedGravatar(el) => {
       timestamp: el.blockTimestamp,
-      chainId: eventBatchChainId,
+      chain: eventBatchChain,
       blockNumber: el.blockNumber,
       logIndex: el.logIndex,
       event: e,
@@ -171,6 +171,6 @@ let eventBatchWithContext: array<Context.eventAndContext> = [
 let eventRouterBatch: array<
   Context.eventRouterEventAndContext,
 > = eventBatchWithContext->Belt.Array.map((event): Context.eventRouterEventAndContext => {
-  chainId: eventBatchChainId,
+  chainId: eventBatchChain->ChainMap.Chain.toChainId,
   event,
 })

@@ -41,7 +41,7 @@ describe("E2E Integration Test", () => {
         },
       }),
       startBlock: 0,
-      chainId: 1337,
+      chain: Chain_1337,
       contracts: [
         {
           name: "GravatarRegistry",
@@ -57,7 +57,9 @@ describe("E2E Integration Test", () => {
     RegisterHandlers.registerAllHandlers()
 
     let chainManager = ChainManager.make(
-      ~configs=[(localChainConfig.chainId->Belt.Int.toString, localChainConfig)]->Js.Dict.fromArray,
+      ~configs=[(localChainConfig.chain, localChainConfig)]->Belt.Map.fromArray(
+        ~id=module(ChainMap.Chain.ChainIdCmp),
+      ),
       ~maxQueueSize=100,
       ~shouldSyncFromRawEvents=false,
     )
