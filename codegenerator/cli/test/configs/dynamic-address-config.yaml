@@ -1,0 +1,23 @@
+name: config1
+schema: ../schemas/schema.graphql
+contracts:
+  - name: Contract2
+    abi_file_path: ../abis/Contract1.json
+    handler: ./src/EventHandler.js
+    events:
+      - event: "NewGravatar"
+      - event: "UpdatedGravatar"
+networks:
+  - id: 1
+    start_block: 0
+    contracts:
+      - name: Contract1
+        abi_file_path: ../abis/Contract1.json
+        handler: ./src/EventHandler.js
+        events:
+          - event: "NewGravatar"
+          - event: "UpdatedGravatar"
+  - id: 137
+    start_block: 0
+    contracts:
+      - name: Contract2

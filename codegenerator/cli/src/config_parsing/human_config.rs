@@ -582,4 +582,17 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert!(cfg.networks[0].contracts[1].local_contract_config.is_some());
         assert_eq!(cfg.networks[0].contracts[1].address, None.into());
     }
+
+    #[test]
+    fn deserializes_dynamic_contract_config() {
+        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test/configs/dynamic-address-config.yaml");
+
+        let file_str = std::fs::read_to_string(config_path).unwrap();
+
+        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
+
+        assert!(cfg.networks[0].contracts[0].local_contract_config.is_some());
+        assert!(cfg.networks[1].contracts[0].local_contract_config.is_none());
+    }
 }

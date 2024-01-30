@@ -61,7 +61,7 @@ let makeFromSingleContract = (
     let exn = UndefinedContract(contractName)
     Logging.errorWithExn(
       exn,
-      "EE900: Unexpected undefined contract. Please verify the contract name defined in the config.yaml file.",
+      `EE900: Unexpected undefined contract ${contractName} on chain ${chainConfig.chain->ChainMap.Chain.toString}. Please verify the contract name defined in the config.yaml file.`,
     )
     exn->raise
   | Some(c) => c
