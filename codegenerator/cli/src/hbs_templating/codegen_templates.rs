@@ -2,7 +2,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{Entity, Field, RescriptNullableOpt, RescriptType},
+        entity_parsing::{Entity, Field, RescriptType},
         event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -115,7 +115,7 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
-    pub type_rescript_nullable: RescriptNullableOpt,
+    pub type_rescript: RescriptType,
     pub type_pg: String,
     pub maybe_entity_name: Option<CapitalizedOptions>,
     ///Used in template to tell whether it is a field looked up from another table or a value in
@@ -132,7 +132,7 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, config: &SystemConfig) -> Result<Self> {
         let entity_names_set = config.get_entity_names_set();
-        let type_rescript_nullable = field
+        let type_rescript = field
             .field_type
             .to_rescript_type(&entity_names_set)
             .context("Failed getting rescript type")?
@@ -152,7 +152,7 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            type_rescript_nullable,
+            type_rescript,
             is_derived_from,
             type_pg,
             maybe_entity_name,
