@@ -2,7 +2,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{Entity, Field, RescriptNullableOpt, RescriptType},
+        entity_parsing::{Entity, Field, RescriptType},
         event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -25,7 +25,7 @@ pub struct EventParamTypeTemplate {
     pub type_rescript: String,
     pub default_value_rescript: String,
     pub default_value_non_rescript: String,
-    pub is_eth_address: bool
+    pub is_eth_address: bool,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -112,7 +112,7 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
-    pub type_rescript_nullable: RescriptNullableOpt,
+    pub type_rescript: RescriptType,
     pub type_pg: String,
     pub maybe_entity_name: Option<CapitalizedOptions>,
     ///Used in template to tell whether it is a field looked up from another table or a value in
@@ -129,7 +129,7 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, config: &SystemConfig) -> Result<Self> {
         let entity_names_set = config.get_entity_names_set();
-        let type_rescript_nullable = field
+        let type_rescript = field
             .field_type
             .to_rescript_type(&entity_names_set)
             .context("Failed getting rescript type")?
@@ -149,7 +149,7 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            type_rescript_nullable,
+            type_rescript,
             is_derived_from,
             type_pg,
             maybe_entity_name,
@@ -838,33 +838,37 @@ mod test {
                     param_name: "id".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
                     default_value_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_non_rescript(),
-                    is_eth_address: false
+                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE
+                        .get_default_value_non_rescript(),
+                    is_eth_address: false,
                 },
                 EventParamTypeTemplate {
                     param_name: "owner".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
                     default_value_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_non_rescript(),
+                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE
+                        .get_default_value_non_rescript(),
                     is_eth_address: true,
                 },
                 EventParamTypeTemplate {
                     param_name: "displayName".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
-                    is_eth_address: false
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE
+                        .get_default_value_non_rescript(),
+                    is_eth_address: false,
                 },
                 EventParamTypeTemplate {
                     param_name: "imageUrl".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
-                    is_eth_address: false
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE
+                        .get_default_value_non_rescript(),
+                    is_eth_address: false,
                 },
-                ],
-                required_entities: vec![RequiredEntityTemplate {
-                    name: "EmptyEntity".to_string().to_capitalized_options(),
+            ],
+            required_entities: vec![RequiredEntityTemplate {
+                name: "EmptyEntity".to_string().to_capitalized_options(),
                 labels: None,
                 array_labels: None,
                 entity_fields_of_required_entity: FilteredTemplateLists {
@@ -874,7 +878,7 @@ mod test {
             }],
             is_async: false,
         };
-        
+
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }
 
@@ -883,7 +887,7 @@ mod test {
         let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
 
         let new_gavatar_event_template = &project_template.contracts[0].events[0];
-        
+
         let expected_event_template = EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
             event_type: EventType {
@@ -895,29 +899,33 @@ mod test {
                     param_name: "id".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
                     default_value_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_non_rescript(),
-                    is_eth_address: false
+                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE
+                        .get_default_value_non_rescript(),
+                    is_eth_address: false,
                 },
                 EventParamTypeTemplate {
                     param_name: "owner".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
                     default_value_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_non_rescript(),
-                    is_eth_address: true
+                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE
+                        .get_default_value_non_rescript(),
+                    is_eth_address: true,
                 },
                 EventParamTypeTemplate {
                     param_name: "displayName".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
-                    is_eth_address: false
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE
+                        .get_default_value_non_rescript(),
+                    is_eth_address: false,
                 },
                 EventParamTypeTemplate {
                     param_name: "imageUrl".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
                     default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
-                    is_eth_address: false
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE
+                        .get_default_value_non_rescript(),
+                    is_eth_address: false,
                 },
             ],
             required_entities: vec![RequiredEntityTemplate {

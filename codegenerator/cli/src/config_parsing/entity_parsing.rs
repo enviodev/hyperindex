@@ -233,10 +233,6 @@ impl RescriptType {
         self.to_string_with_option_type("option")
     }
 
-    pub fn to_string_with_nullable_as_option(&self) -> String {
-        self.to_string_with_option_type("nullable")
-    }
-
     pub fn get_default_value_rescript(&self) -> String {
         match self {
             RescriptType::Int => "0".to_string(),
@@ -292,37 +288,6 @@ impl Display for RescriptType {
 ///Implementation of Serialize allows handlebars get a stringified
 ///version of the string representation of the rescript type
 impl Serialize for RescriptType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // Serialize as display value
-        self.to_string().serialize(serializer)
-    }
-}
-
-///A wrapper around RescriptType with a Display implementation that uses
-///custom "nullable" instead of "option" for optional types.
-///See Types.res template: nullable is just an alias for option with a binding
-///to typescript that forces defining a "null" value for a field.
-#[derive(Debug, PartialEq, Clone)]
-pub struct RescriptNullableOpt(RescriptType);
-
-impl From<RescriptType> for RescriptNullableOpt {
-    fn from(value: RescriptType) -> Self {
-        Self(value)
-    }
-}
-
-impl Display for RescriptNullableOpt {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.0.to_string_with_nullable_as_option())
-    }
-}
-
-///Implementation of Serialize allows handlebars get a stringified
-///version of the string representation of the rescript type
-impl Serialize for RescriptNullableOpt {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -569,8 +534,6 @@ impl GqlScalar {
 
 #[cfg(test)]
 mod tests {
-    use crate::config_parsing::entity_parsing::RescriptNullableOpt;
-
     use super::{FieldType, GqlScalar, Schema};
     use std::collections::HashSet;
 
@@ -738,13 +701,6 @@ mod tests {
         let empty_entities_set = HashSet::new();
         let rescript_type = field_type.to_rescript_type(&empty_entities_set).unwrap();
         assert_eq!("option<int>".to_string(), rescript_type.to_string());
-
-        let rescript_type_nullable_opt = RescriptNullableOpt::from(rescript_type);
-
-        assert_eq!(
-            "nullable<int>".to_string(),
-            rescript_type_nullable_opt.to_string()
-        );
     }
 
     #[test]
@@ -756,13 +712,6 @@ mod tests {
         assert_eq!(
             "array<option<string>>".to_string(),
             rescript_type.to_string()
-        );
-
-        let rescript_type_nullable_opt = RescriptNullableOpt::from(rescript_type);
-
-        assert_eq!(
-            "array<nullable<string>>".to_string(),
-            rescript_type_nullable_opt.to_string()
         );
     }
 }

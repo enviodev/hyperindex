@@ -3,7 +3,7 @@ open Mocha
 open Belt
 
 @spice
-type testRecord = {optNumber: Types.nullable<int>}
+type testRecord = {optNumber: option<int>}
 
 describe("nullable encodes and decodes successfully", () => {
   let mock1 = {
