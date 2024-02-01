@@ -11,6 +11,13 @@ let getEventComparator = (multiChainEventIndex: multiChainEventIndex) => {
   (timestamp, chainId, blockNumber, logIndex)
 }
 
+let getEventComparatorFromQueueItem = (
+  {chain, timestamp, blockNumber, logIndex}: Types.eventBatchQueueItem,
+) => {
+  let chainId = chain->ChainMap.Chain.toChainId
+  (timestamp, chainId, blockNumber, logIndex)
+}
+
 //Function used to determine if one event is earlier than another
 let isEarlierEvent = (event1: multiChainEventIndex, event2: multiChainEventIndex) => {
   event1->getEventComparator < event2->getEventComparator
@@ -64,7 +71,8 @@ let unpackEventIndex = (packedEventIndex: Ethers.BigInt.t) => {
 }
 
 //takes an eventIndex record and returnts a packed event index
-@live //used in TS tests
+//used in TS tests
+@live
 let packEventIndexFromRecord = (eventIndex: eventIndex) => {
   packEventIndex(~blockNumber=eventIndex.blockNumber, ~logIndex=eventIndex.logIndex)
 }

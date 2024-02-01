@@ -1,3 +1,5 @@
+open Belt
+
 let addEventToRawEvents = (
   event: Types.eventLog<'a>,
   ~inMemoryStore: IO.InMemoryStore.t,
@@ -178,246 +180,182 @@ let eventRouter = (item: Context.eventRouterEventAndContext, ~inMemoryStore, ~cb
   }
 }
 
-type readEntitiesResult = {
-  timestamp: int,
-  chainId: int,
-  blockNumber: int,
-  logIndex: int,
-  entityReads: array<Types.entityRead>,
-  eventAndContext: Context.eventAndContext,
-}
-
-type rec readEntitiesResultPromise = {
-  timestamp: int,
-  chainId: int,
-  blockNumber: int,
-  logIndex: int,
-  data: (array<Types.entityRead>, Context.eventAndContext, option<array<readEntitiesResultPromise>>),
-}
-
 let asyncGetters: Context.entityGetters = {
 {{#each entities as | entity |}}
  get{{entity.name.capitalized}}: id => DbFunctions.{{entity.name.capitalized}}.readEntities(DbFunctions.sql, [id]),
 {{/each}}
 }
 
-let rec loadReadEntitiesInner = async (
+type dynamicContractRegistration = {
+  registeringEventBlockNumber: int,
+  registeringEventLogIndex: int,
+  registeringEventChain: ChainMap.Chain.t,
+  dynamicContracts: array<Types.dynamicContractRegistryEntity>,
+  unprocessedBatch: list<Types.eventBatchQueueItem>,
+}
+
+type loadResponse<'a> = {
+  val: 'a,
+  dynamicContractRegistration: option<dynamicContractRegistration>,
+}
+
+type getReadEntitiesRes = loadResponse<
+  array<(array<Types.entityRead>, Context.eventRouterEventAndContext)>,
+>
+
+/**
+Composer for getting entitiesToLoad and dynamicContractRegistrations for a given event
+*/
+let composeGetReadEntity = (
+  ~event,
+  ~contextCreator,
   ~inMemoryStore,
-  ~eventBatch: array<Types.eventBatchQueueItem>,
   ~logger,
-  ~chainManager: ChainManager.t,
-): array<readEntitiesResultPromise> => {
-  // Recursively load entities
-  let loadNestedReadEntities = async (
-    ~logIndex,
-    ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
-    ~fromBlock,
-    ~currentBatchLastEventIndex: EventUtils.multiChainEventIndex,
-    ~chain: ChainMap.Chain.t,
-  ): array<readEntitiesResultPromise> => {
-    let chainFetcher = chainManager->ChainManager.getChainFetcher(~chain)
-    let eventBatchPromises =
-      await chainFetcher->ChainFetcher.addDynamicContractAndFetchMissingEvents(
-        ~fromBlock,
-        ~dynamicContracts,
-        ~fromLogIndex=logIndex + 1,
-      )
-
-    let eventsForCurrentBatch = []
-    for i in 0 to eventBatchPromises->Belt.Array.length - 1 {
-      let item = eventBatchPromises[i]
-      let {timestamp, blockNumber, logIndex} = item
-
-      let eventIndex: EventUtils.multiChainEventIndex = {
-        timestamp,
-        chainId: chain->ChainMap.Chain.toChainId,
-        blockNumber,
-        logIndex,
-      }
-
-      // If the event is earlier than the last event of the current batch, then add it to the current batch
-      if EventUtils.isEarlierEvent(eventIndex, currentBatchLastEventIndex) {
-        eventsForCurrentBatch->Js.Array2.push(item)->ignore
-      } else {
-        // Otherwise, add it to the arbitrary events queue for later batches
-        chainManager->ChainManager.addItemToArbitraryEvents(item)
-      }
-    }
-
-    //Only load inner batch if there are any events for the current batch
-    if eventsForCurrentBatch->Belt.Array.length > 0 {
-      await loadReadEntitiesInner(
-        ~inMemoryStore,
-        ~eventBatch=eventsForCurrentBatch,
-        ~logger,
-        ~chainManager,
-      )
-    } else {
-      //Else return an empty array since nothing will load
-      []
-    }
-  }
-
-  let baseResults: array<readEntitiesResultPromise> = []
-
-  let optLastItemInBatch = eventBatch->Belt.Array.get(eventBatch->Belt.Array.length - 1)
-
-  switch optLastItemInBatch {
-  | None => [] //there is no last item because the array is empty and we should return early
-  | Some(lastItemInBatch) =>
-    let currentBatchLastEventIndex: EventUtils.multiChainEventIndex = {
-      timestamp: lastItemInBatch.timestamp,
-      chainId: lastItemInBatch.chain->ChainMap.Chain.toChainId,
-      blockNumber: lastItemInBatch.blockNumber,
-      logIndex: lastItemInBatch.logIndex,
-    }
-
-    for i in 0 to eventBatch->Belt.Array.length - 1 {
-      let {timestamp, chain, blockNumber, logIndex, event} = eventBatch[i]
-      let chainId = chain->ChainMap.Chain.toChainId
-
-      baseResults
-      ->Js.Array2.push({
-        timestamp,
-        chainId,
-        blockNumber,
-        logIndex,
-        data: switch event {
-        {{#each codegen_contracts as | contract |}}
-        {{#each contract.codegen_events as | event |}}
-          | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
-            let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~inMemoryStore, ~chainId, ~event, ~logger, ~asyncGetters)
-
-            let context = contextHelper.getLoaderContext()
-
-            let loader = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader()
-
-              try {
-                loader(~event, ~context)
-              } catch {
-              // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
-              | userCodeException =>
-                let errorObj =
-                  userCodeException->getEventErrWithExn(~event, ~chainId, ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}")
-                // NOTE: we could use the user `uerror` function instead rather than using a system error. This is debatable.
-                logger->Logging.childErrorWithExn(userCodeException, errorObj)
-              }
-
-            let {logIndex, blockNumber} = event
-
-            let dynamicContracts = contextHelper.getAddedDynamicContractRegistrations()
-
-            (
-              contextHelper.getEntitiesToLoad(),
-              Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, contextHelper),
-              if Belt.Array.length(dynamicContracts) > 0 {
-                Some(
-                  await loadNestedReadEntities(
-                    ~logIndex,
-                    ~dynamicContracts,
-                    ~fromBlock=blockNumber,
-                    ~chain,
-                    ~currentBatchLastEventIndex,
-                  ),
-                )
-              } else {
-                None
-              },
-            )
-          }
-        {{/each}}
-        {{/each}}
-        },
-      })
-      ->ignore
-    }
-
-    baseResults
-  }
-}
-
-type rec nestedResult = {
-  result: readEntitiesResult,
-  nested: option<array<nestedResult>>,
-}
-// Given a read entities promise, unwrap just the top level result
-let unwrap = (p: readEntitiesResultPromise): readEntitiesResult => {
-  let (er, ec, _) = p.data
-  {
-    timestamp: p.timestamp,
-    chainId: p.chainId,
-    blockNumber: p.blockNumber,
-    logIndex: p.logIndex,
-    entityReads: er,
-    eventAndContext: ec,
-  }
-}
-
-// Recursively await the promises to get their results
-let rec recurseEntityPromises = async (p: readEntitiesResultPromise): nestedResult => {
-  let (_, _, nested) = p.data
-
-  {
-    result: unwrap(p),
-    nested: switch nested {
-    | None => None
-    | Some(xs) => Some(await xs->Belt.Array.map(recurseEntityPromises)->Promise.all)
-    },
-  }
-}
-
-// This function is used to sort results according to their order in the chain
-let resultPosition = ({timestamp, chainId, blockNumber, logIndex}: readEntitiesResult) =>
-  EventUtils.getEventComparator({
-    timestamp,
-    chainId,
-    blockNumber,
-    logIndex,
-  })
-
-// Given the recursively awaited results, flatten them down into a single list using chain order
-let rec flattenNested = (xs: array<nestedResult>): array<readEntitiesResult> => {
-  let baseResults = xs->Belt.Array.map(({result}) => result)
-  let nestedNestedResults = xs->Belt.Array.keepMap(({nested}) => nested)
-  let nestedResults = nestedNestedResults->Belt.Array.map(flattenNested)
-  Belt.Array.reduce(nestedResults, baseResults, (acc, additionalResults) =>
-    Utils.mergeSorted(resultPosition, acc, additionalResults)
+  ~asyncGetters,
+  ~getLoader,
+  ~item: Types.eventBatchQueueItem,
+  ~otherItems,
+  ~entitiesToLoad,
+  ~eventWithContextAccessor,
+  ~eventName,
+) => {
+  let {chain} = item
+  let chainId = chain->ChainMap.Chain.toChainId
+  let contextHelper: Context.genericContextCreatorFunctions<'a, 'b, 'c> = contextCreator(
+    ~inMemoryStore,
+    ~chainId,
+    ~event,
+    ~logger,
+    ~asyncGetters,
   )
+
+  let context = contextHelper.getLoaderContext()
+
+  let loader = getLoader()
+
+  try {
+    loader(~event, ~context)
+  } catch {
+  // NOTE: we are only catching javascript errors here - please see docs on how to catch rescript errors too: https://rescript-lang.org/docs/manual/latest/exception
+  | userCodeException =>
+    let errorObj = userCodeException->getEventErrWithExn(~event, ~chainId, ~eventName)
+    // NOTE: we could use the user `uerror` function instead rather than using a system error. This is debatable.
+    logger->Logging.childErrorWithExn(userCodeException, errorObj)
+  }
+
+  let dynamicContracts = if item.hasRegisteredDynamicContracts->Option.getWithDefault(false) {
+    //If an item has already been registered, it would have been
+    //put back on the arbitrary events queue and is now being reprocessed
+    []
+  } else {
+    contextHelper.getAddedDynamicContractRegistrations()
+  }
+
+  if dynamicContracts->Array.length > 0 {
+    //If there are any dynamic contract registrations, put this item in the unprocessedBatch flagged
+    //with "hasRegisteredDynamicContracts" and return the same list of entitiesToLoad without the
+    //current item
+    {{!-- Need raw to escape the double curly at list --}}
+    {{{{raw}}}}
+    let unprocessedBatch = list{{...item, hasRegisteredDynamicContracts: true}, ...otherItems}
+    {{{{/raw}}}}
+
+    let dynamicContractRegistration = Some({
+      dynamicContracts,
+      unprocessedBatch,
+      registeringEventBlockNumber: event.blockNumber,
+      registeringEventLogIndex: event.logIndex,
+      registeringEventChain: chain,
+    })
+    {val: entitiesToLoad, dynamicContractRegistration}
+  } else {
+  //If there are no dynamic contract registrations, get the entities to load and
+  //return a context with the event for the handlers
+    let entitiesToLoad = entitiesToLoad->Array.concat([
+      (
+        contextHelper.getEntitiesToLoad(),
+        (
+          {
+            chainId,
+            event: eventWithContextAccessor(event, contextHelper),
+          }: Context.eventRouterEventAndContext
+        ),
+      ),
+    ])
+
+    {val: entitiesToLoad, dynamicContractRegistration: None}
+  }
 }
+
+let rec getReadEntitiesInternal = (
+  eventBatch: list<Types.eventBatchQueueItem>,
+  ~inMemoryStore,
+  ~logger,
+  ~entitiesToLoad,
+): getReadEntitiesRes => {
+  switch eventBatch {
+  | list{} =>
+    let unprocessedBatch = list{}
+    let dynamicContractRegistration = None
+    {val: entitiesToLoad, dynamicContractRegistration}
+
+  | list{item, ...tail} => {
+      let composer = composeGetReadEntity(
+        ~otherItems=tail,
+        ~entitiesToLoad,
+        ~asyncGetters,
+        ~inMemoryStore,
+        ~logger,
+        ~item,
+      )
+
+      let res = switch item.event {
+    {{#each contracts as | contract |}}
+    {{#each contract.events as | event |}}
+      | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) =>
+        composer(
+          ~event,
+          ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
+          ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
+          ~eventWithContextAccessor=Context.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+          ~eventName="{{contract.name.capitalized}}.{{event.name.capitalized}}",
+        )
+    {{/each}}
+    {{/each}}
+      }
+
+      if res.dynamicContractRegistration->Option.isSome {
+        //exit if dynamic contract was registered
+        res
+      } else {
+        //else keep getting read entities from batch
+        tail->getReadEntitiesInternal(~inMemoryStore, ~logger, ~entitiesToLoad=res.val)
+      }
+    }
+  }
+}
+
+let getReadEntities = getReadEntitiesInternal(~entitiesToLoad=[])
 
 let loadReadEntities = async (
   ~inMemoryStore,
-  ~eventBatch: array<Types.eventBatchQueueItem>,
-  ~chainManager: ChainManager.t,
+  ~eventBatch: list<Types.eventBatchQueueItem>,
   ~logger: Pino.t,
-): array<Context.eventRouterEventAndContext> => {
-  let batch = await loadReadEntitiesInner(
-    ~inMemoryStore,
-    ~eventBatch,
-    ~logger,
-    ~chainManager: ChainManager.t,
-  )
-
-  let nestedResults = await batch->Belt.Array.map(recurseEntityPromises)->Promise.all
-  let mergedResults = flattenNested(nestedResults)
-
-  // Project the result record into a tuple, so that we can unzip the two payloads.
-  let resultToPair = ({entityReads, eventAndContext, chainId}): (
-    array<Types.entityRead>,
-    Context.eventRouterEventAndContext,
-  ) => (entityReads, {chainId, event: eventAndContext})
+): loadResponse<array<Context.eventRouterEventAndContext>> => {
+  let {val: entitiesToLoad, dynamicContractRegistration} =
+    eventBatch->getReadEntities(~inMemoryStore, ~logger)
 
   let (readEntitiesGrouped, contexts): (
     array<array<Types.entityRead>>,
     array<Context.eventRouterEventAndContext>,
   ) =
-    mergedResults->Belt.Array.map(resultToPair)->Belt.Array.unzip
+    entitiesToLoad->Array.unzip
 
   let readEntities = readEntitiesGrouped->Belt.Array.concatMany
 
   await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=readEntities)
 
-  contexts
+  {val: contexts, dynamicContractRegistration}
 }
 
 let registerProcessEventBatchMetrics = (
@@ -445,8 +383,7 @@ let registerProcessEventBatchMetrics = (
 }
 
 let processEventBatch = async (
-  ~eventBatch: array<Types.eventBatchQueueItem>,
-  ~chainManager: ChainManager.t,
+  ~eventBatch: list<Types.eventBatchQueueItem>,
   ~inMemoryStore: IO.InMemoryStore.t,
 ) => {
   let logger = Logging.createChild(
@@ -457,10 +394,9 @@ let processEventBatch = async (
 
   let timeRef = Hrtime.makeTimer()
 
-  let eventBatchAndContext = await loadReadEntities(
+  let {val: eventBatchAndContext, dynamicContractRegistration} = await loadReadEntities(
     ~inMemoryStore,
     ~eventBatch,
-    ~chainManager,
     ~logger,
   )
 
@@ -483,22 +419,11 @@ let processEventBatch = async (
 
   registerProcessEventBatchMetrics(
     ~logger,
-    ~batchSize=eventBatch->Array.length,
+    ~batchSize=eventBatch->List.length,
     ~loadDuration=elapsedAfterLoad,
     ~handlerDuration=elapsedTimeAfterProcess - elapsedAfterLoad,
     ~dbWriteDuration=elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
   )
-}
 
-let startProcessingEventsOnQueue = async (~chainManager: ChainManager.t): unit => {
-  while true {
-    let nextBatch =
-      await chainManager->ChainManager.createBatch(
-        ~minBatchSize=1,
-        ~maxBatchSize=Env.maxProcessBatchSize,
-      )
-
-    let inMemoryStore = IO.InMemoryStore.make()
-    await processEventBatch(~eventBatch=nextBatch, ~inMemoryStore, ~chainManager)
-  }
+  {val: (), dynamicContractRegistration}
 }
