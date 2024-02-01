@@ -105,3 +105,21 @@ let getAddressesFromContractName = (mapping, ~contractName) => {
 let getAllAddresses = (mapping: mapping) => {
   mapping.nameByAddress->Js.Dict.keys->stringsToAddresses
 }
+
+let combine = (a, b) => {
+  let m = make()
+  [a, b]->Belt.Array.forEach(v =>
+    v.nameByAddress
+    ->Js.Dict.entries
+    ->Belt.Array.forEach(((addr, name)) => {
+      m->addAddress(~address=addr->Obj.magic, ~name)
+    })
+  )
+  m
+}
+
+let fromArray = (nameAddrTuples: array<(Ethers.ethAddress, string)>) => {
+  let m = make()
+  nameAddrTuples->Belt.Array.forEach(((address, name)) => m->addAddress(~name, ~address))
+  m
+}

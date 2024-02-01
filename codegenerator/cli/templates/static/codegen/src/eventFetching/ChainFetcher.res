@@ -2,15 +2,12 @@ type pendingNextQuery = HypersyncPendingNextQuery(HyperSyncWorker.blockRangeFetc
 
 type t = {
   logger: Pino.t,
-  fetchedEventQueue: ChainEventQueue.t,
+  fetcher: DynamicContractFetcher.t,
   chainConfig: Config.chainConfig,
   chainWorker: ref<ChainWorker.chainWorker>,
-  pendingNextQuery: option<pendingNextQuery>,
-  //A set of event IDs for contracts busy catching up after being
-  //dynamically registered
-  pendingDynamicContractRegistrations: Belt.Set.String.t,
   //The latest known block of the chain
   currentBlockHeight: int,
+  isFetchingBatch: bool,
   mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
 }
 
@@ -62,48 +59,47 @@ let make = (
 
   chainWorkerRef := chainWorkerWithCallback->ChainWorker.make(~chainConfig)
 
+  let contractAddressMapping = {
+    let m = ContractAddressingMap.make()
+    //Add all contracts and addresses from config
+    //Dynamic contracts are checked in DB on start
+    m->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
+    m
+  }
+
   {
-    fetchedEventQueue,
     logger,
     chainConfig,
     chainWorker: chainWorkerRef,
     lastBlockScannedHashes,
-    pendingNextQuery: None,
-    pendingDynamicContractRegistrations: Belt.Set.String.empty,
-  
     currentBlockHeight: 0,
+    isFetchingBatch: false,
+    fetcher: DynamicContractFetcher.makeRoot(~contractAddressMapping),
   }
 }
 
-//Public methods
-let startFetchingEvents = async (self: t, ~checkHasReorgOccurred) => {
-  switch self.chainWorker.contents->ChainWorker.startFetchingEvents(
-    ~logger=self.logger,
-    ~fetchedEventQueue=self.fetchedEventQueue,
-    ~checkHasReorgOccurred=self->checkHasReorgOccurred,
-  ) {
-  | exception err =>
-    self.logger->Logging.childError({
-      "err": err,
-      "msg": `error while running chainWorker on chain ${self.chainConfig.chain->ChainMap.Chain.toString}`,
-    })
-    Error(err)
-  | _ => Ok()
-  }
-}
+// //Public methods
+// let startFetchingEvents = async (self: t, ~checkHasReorgOccurred) => {
+//   switch self.chainWorker.contents->ChainWorker.startFetchingEvents(
+//     ~logger=self.logger,
+//     ~fetchedEventQueue=self.fetchedEventQueue,
+//     ~checkHasReorgOccurred=self->checkHasReorgOccurred,
+//   ) {
+//   | exception err =>
+//     self.logger->Logging.childError({
+//       "err": err,
+//       "msg": `error while running chainWorker on chain ${self.chainConfig.chain->ChainMap.Chain.toString}`,
+//     })
+//     Error(err)
+//   | _ => Ok()
+//   }
+// }
 
 /**
-Pops the front item on the fetchedEventQueue and awaits an item if there is none
+Gets the latest item on the front of the queue and returns updated fetcher
 */
-let popAndAwaitQueueItem = async (self: t): Types.eventBatchQueueItem => {
-  await self.fetchedEventQueue->ChainEventQueue.popSingleAndAwaitItem
-}
-
-/**
-Pops the front item on the fetchedEventQueue
-*/
-let popQueueItem = (self: t): option<Types.eventBatchQueueItem> => {
-  self.fetchedEventQueue->ChainEventQueue.popSingle
+let getLatestItem = (self: t) => {
+  self.fetcher->DynamicContractFetcher.getEarliestEvent
 }
 
 /**
@@ -125,20 +121,21 @@ let addDynamicContractAndFetchMissingEvents = (
 }
 
 type latestFetchedBlockTimestamp = int
-type eventQueuePeek =
-  NoItem(latestFetchedBlockTimestamp, ChainMap.Chain.t) | Item(Types.eventBatchQueueItem)
+type queueFront =
+  | NoItem(latestFetchedBlockTimestamp, ChainMap.Chain.t)
+  | Item(Types.eventBatchQueueItem)
 
-let peekFrontItemOfQueue = (self: t): eventQueuePeek => {
-  let optFront = self.fetchedEventQueue->ChainEventQueue.peekFront
+// type queueFront = Val(queueItem) | WaitForDynamicContracts
 
-  switch optFront {
-  | None =>
-    let latestFetchedBlockTimestamp =
-      self.chainWorker.contents->ChainWorker.getLatestFetchedBlockTimestamp
-    NoItem(latestFetchedBlockTimestamp, self.chainConfig.chain)
-  | Some(item) => Item(item)
-  }
-}
+// let getFrontOfQueue = (self: t): (_, queueFront) => {
+//   let (nextFetcher, latestItem) = self->getLatestItem
+//   let nextItem = switch latestItem {
+//   | NoItem(latestFetchedBlockTimestamp) =>
+//     NoItem(latestFetchedBlockTimestamp, self.chainConfig.chain)
+//   | Item(item) => Item(item)
+//   }
+//   (nextFetcher, nextItem)
+// }
 
 let addNewRangeQueriedCallback = (self: t) => {
   ChainWorker.addNewRangeQueriedCallback(self.chainWorker.contents)

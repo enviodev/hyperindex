@@ -4,7 +4,6 @@ RegisterHandlers.registerAllHandlers()
 
 open Express
 
-
 let app = expressCjs()
 
 app->use(jsonMiddleware())
@@ -34,11 +33,28 @@ type args = {@as("sync-from-raw-events") syncFromRawEvents?: bool}
 type mainArgs = Yargs.parsedArgs<args>
 
 let main = () => {
-  let mainArgs: mainArgs = Node.Process.argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
+  // let mainArgs: mainArgs = Node.Process.argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
+  //
+  // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
+  //
+  // EventSyncing.startSyncingAllEvents(~shouldSyncFromRawEvents)
+  let chainManager = ChainManager.make(
+    ~maxQueueSize=Env.maxPerChainQueueSize,
+    ~configs=Config.config,
+    ~shouldSyncFromRawEvents=false,
+  )
 
-  let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
+  let globalState: GlobalState.t = {
+    currentlyProcessingBatch: false,
+    chainManager,
+    maxBatchSize: Env.maxProcessBatchSize,
+    maxPerChainQueueSize: Env.maxPerChainQueueSize,
+  }
 
-  EventSyncing.startSyncingAllEvents(~shouldSyncFromRawEvents)
+  let gsManager = globalState->GlobalStateManager.make
+
+  gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
+  gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
 }
 
 main()

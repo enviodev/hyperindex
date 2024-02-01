@@ -68,4 +68,5 @@ let set: (t<'a>, Chain.t, 'a) => t<'a> = Map.set
 let values: t<'a> => array<'a> = Map.valuesToArray
 let entries: t<'a> => array<(Chain.t, 'a)> = Map.toArray
 let map: (t<'a>, 'a => 'b) => t<'b> = Map.map
+let mapWithKey: (t<'a>, (Chain.t, 'a) => 'b) => t<'b> = Map.mapWithKey
 let size: t<'a> => int = Map.size

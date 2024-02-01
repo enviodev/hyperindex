@@ -160,11 +160,7 @@ type nextPageFetchRes = {
 /**
 The args required for calling block range fetch
 */
-type blockRangeFetchArgs = {
-  fromBlock: int,
-  latestFetchedBlockTimestamp: int,
-  nextPagePromise: promise<nextPageFetchRes>,
-}
+type blockRangeFetchArgs = DynamicContractFetcher.nextQuery
 
 /**
 A set of stats for logging about the block range fetch
@@ -187,23 +183,107 @@ Thes response returned from a block range fetch
 type blockRangeFetchResponse = {
   currentBlockHeight: int,
   reorgGuard: reorgGuard,
-  nextQuery: blockRangeFetchArgs,
   parsedQueueItems: array<Types.eventBatchQueueItem>,
   fromBlockQueried: int,
   heighestQueriedBlockNumber: int,
+  latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
+  fetcherId: DynamicContractFetcher.id,
+  contractAddressMapping: ContractAddressingMap.mapping,
 }
 
-let fetchBlockRange = async (
-  {nextPagePromise, latestFetchedBlockTimestamp, fromBlock},
-  ~chain: ChainMap.Chain.t,
-  ~logger,
+let waitForNextBlockBeforeQuery = async (
   ~serverUrl,
-  ~getNextPage,
+  ~fromBlock,
+  ~currentBlockHeight,
+  ~logger,
+  ~setCurrentBlockHeight,
+) => {
+  if fromBlock >= currentBlockHeight {
+    logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
+
+    //If the block we want to query from is greater than the current height,
+    //poll for until the archive height is greater than the from block and set
+    //current height to the new height
+    let currentBlockHeight = await HyperSync.pollForHeightGtOrEq(
+      ~serverUrl,
+      ~blockNumber=fromBlock,
+      ~logger,
+    )
+
+    //Note: this side effect can be removed when this becomes immutable
+    setCurrentBlockHeight(~currentBlockHeight)
+
+    currentBlockHeight
+  } else {
+    currentBlockHeight
+  }
+}
+
+let getNextPage = async (
+  {serverUrl, chainConfig}: t,
+  ~fromBlock,
+  ~currentBlockHeight,
+  ~logger,
+  ~setCurrentBlockHeight,
+  ~contractAddressMapping,
+) => {
+  //Wait for a valid range to query
+  let currentBlockHeight = await waitForNextBlockBeforeQuery(
+    ~serverUrl,
+    ~fromBlock,
+    ~currentBlockHeight,
+    ~setCurrentBlockHeight,
+    ~logger,
+  )
+
+  //Instantiate each time to add new registered contract addresses
+  let contractInterfaceManager = ContractInterfaceManager.make(
+    ~chainConfig,
+    ~contractAddressMapping,
+  )
+
+  let contractAddressesAndtopics =
+    contractInterfaceManager->ContractInterfaceManager.getAllContractTopicsAndAddresses
+
+  let startFetchingBatchTimeRef = Hrtime.makeTimer()
+
+  //fetch batch
+  let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
+    () =>
+      HyperSync.queryLogsPage(
+        ~serverUrl,
+        ~fromBlock,
+        ~toBlock=currentBlockHeight,
+        ~contractAddressesAndtopics,
+      ),
+    logger,
+  )
+
+  let pageFetchTime =
+    startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+
+  {page: pageUnsafe, contractInterfaceManager, pageFetchTime}
+}
+let fetchBlockRange = async (
+  self: t,
+  ~query: blockRangeFetchArgs,
+  ~logger,
+  ~currentBlockHeight,
+  ~setCurrentBlockHeight,
 ): blockRangeFetchResponse => {
+  let {chainConfig: {chain}, serverUrl} = self
+  let {fetcherId, fromBlock, contractAddressMapping, currentLatestBlockTimestamp} = query
   let startFetchingBatchTimeRef = Hrtime.makeTimer()
   //fetch batch
-  let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} = await nextPagePromise
+  let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} =
+    await self->getNextPage(
+      ~fromBlock,
+      ~currentBlockHeight,
+      ~contractAddressMapping,
+      ~logger,
+      ~setCurrentBlockHeight,
+    )
 
   //set height and next from block
   let currentBlockHeight = pageUnsafe.archiveHeight
@@ -218,10 +298,6 @@ let fetchBlockRange = async (
     lastBlockScannedData,
     parentHash,
   }
-
-  let nextBlock = pageUnsafe.nextBlock
-
-  let nextPagePromise = getNextPage(~fromBlock=pageUnsafe.nextBlock, ~currentBlockHeight)
 
   logger->Logging.childTrace({
     "message": "Retrieved event page from server",
@@ -288,7 +364,7 @@ let fetchBlockRange = async (
     getHeighestBlockAndTimestampWithDefault(
       ~default={
         blockNumber: heighestBlockQueried,
-        timestamp: latestFetchedBlockTimestamp,
+        timestamp: currentLatestBlockTimestamp,
       },
     )
   }
@@ -341,20 +417,16 @@ let fetchBlockRange = async (
       parsedQueueItems->Array.length->Belt.Int.toFloat,
   }
 
-  let nextQuery: blockRangeFetchArgs = {
-    fromBlock: nextBlock,
-    latestFetchedBlockTimestamp: heighestQueriedBlockTimestamp,
-    nextPagePromise,
-  }
-
   {
+    latestFetchedBlockTimestamp: heighestQueriedBlockTimestamp,
     parsedQueueItems,
-    nextQuery,
     heighestQueriedBlockNumber,
     stats,
     currentBlockHeight,
     reorgGuard,
     fromBlockQueried: fromBlock,
+    fetcherId,
+    contractAddressMapping,
   }
 }
 
@@ -368,26 +440,28 @@ let loopFetchBlockRanges = async (
   ~initalQueryArgs,
   ~checkHasReorgOccurred,
   ~logger,
-  ~getNextPage,
   ~fetchedEventQueue,
+  ~currentBlockHeight,
   ~setCurrentBlockHeight,
 ) => {
-  let {serverUrl} = self
   let queryArgs = ref(initalQueryArgs)
   while self.shouldContinueFetching {
     let {
+      latestFetchedBlockTimestamp,
       parsedQueueItems,
       heighestQueriedBlockNumber,
       stats,
-      nextQuery,
       currentBlockHeight,
       reorgGuard,
+      fetcherId,
+      contractAddressMapping,
     } = await fetchBlockRange(
-      queryArgs.contents,
-      ~serverUrl,
-      ~getNextPage,
+      self,
+      ~query=queryArgs.contents,
       ~logger,
-      ~chain=self.chainConfig.chain,
+      ~currentBlockHeight,
+      ~setCurrentBlockHeight,
+      //stub for whether this is main fetcher or dynamic contract fetcher
     )
 
     let {parentHash, lastBlockScannedData} = reorgGuard
@@ -433,12 +507,15 @@ let loopFetchBlockRanges = async (
     }
 
     //Note these side effects can disappear once we use immutable dispatcher
-    self->setLatestFetchedBlockTimestamp(
-      ~latestFetchedBlockTimestamp=nextQuery.latestFetchedBlockTimestamp,
-    )
+    self->setLatestFetchedBlockTimestamp(~latestFetchedBlockTimestamp)
     setCurrentBlockHeight(~currentBlockHeight)
 
-    queryArgs := nextQuery
+    queryArgs := {
+        fromBlock: heighestQueriedBlockNumber + 1,
+        fetcherId,
+        contractAddressMapping,
+        currentLatestBlockTimestamp: latestFetchedBlockTimestamp,
+      }
   }
 }
 
@@ -450,76 +527,17 @@ let startWorker = async (
   ~checkHasReorgOccurred,
 ) => {
   logger->Logging.childInfo("Hypersync worker starting")
-  let {chainConfig, contractAddressMapping, serverUrl} = self
+  let {contractAddressMapping, serverUrl} = self
   let initialHeight = await HyperSync.getHeightWithRetry(~serverUrl, ~logger)
   let setCurrentBlockHeight = self->setCurrentBlockHeight(~startBlock)
 
   setCurrentBlockHeight(~currentBlockHeight=initialHeight)
 
-  let waitForNextBlockBeforeQuery = async (~fromBlock, ~currentBlockHeight) => {
-    if fromBlock >= currentBlockHeight {
-      logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
-
-      //If the block we want to query from is greater than the current height,
-      //poll for until the archive height is greater than the from block and set
-      //current height to the new height
-      let currentBlockHeight = await HyperSync.pollForHeightGtOrEq(
-        ~serverUrl,
-        ~blockNumber=fromBlock,
-        ~logger,
-      )
-
-      //Note: this side effect can be removed when this becomes immutable
-      setCurrentBlockHeight(~currentBlockHeight)
-
-      currentBlockHeight
-    } else {
-      currentBlockHeight
-    }
-  }
-
-  let getNextPage = async (~fromBlock, ~currentBlockHeight) => {
-    //Wait for a valid range to query
-    let currentBlockHeight = await waitForNextBlockBeforeQuery(~fromBlock, ~currentBlockHeight)
-
-    //Instantiate each time to add new registered contract addresses
-    let contractInterfaceManager = ContractInterfaceManager.make(
-      ~chainConfig,
-      ~contractAddressMapping,
-    )
-
-    let contractAddressesAndtopics =
-      contractInterfaceManager->ContractInterfaceManager.getAllContractTopicsAndAddresses
-
-    let startFetchingBatchTimeRef = Hrtime.makeTimer()
-
-    //fetch batch
-    let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-      () =>
-        HyperSync.queryLogsPage(
-          ~serverUrl=self.serverUrl,
-          ~fromBlock,
-          ~toBlock=currentBlockHeight,
-          ~contractAddressesAndtopics,
-        ),
-      logger,
-    )
-
-    let pageFetchTime =
-      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-    {page: pageUnsafe, contractInterfaceManager, pageFetchTime}
-  }
-
-  let initialPagePromise = getNextPage(
-    ~fromBlock=startBlock,
-    ~currentBlockHeight=self.currentBlockHeight,
-  )
-
   let initalQueryArgs: blockRangeFetchArgs = {
     fromBlock: startBlock,
-    latestFetchedBlockTimestamp: self.latestFetchedBlockTimestamp,
-    nextPagePromise: initialPagePromise,
+    currentLatestBlockTimestamp: self.latestFetchedBlockTimestamp,
+    fetcherId: Root,
+    contractAddressMapping,
   }
 
   await self->loopFetchBlockRanges(
@@ -527,8 +545,8 @@ let startWorker = async (
     ~checkHasReorgOccurred,
     ~initalQueryArgs,
     ~logger,
-    ~getNextPage,
     ~setCurrentBlockHeight,
+    ~currentBlockHeight=self.currentBlockHeight,
   )
 }
 
