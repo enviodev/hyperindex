@@ -104,6 +104,7 @@ let convertLogs = (
           ~blockTimestamp,
           ~contractInterfaceManager,
           ~chainId=chain->ChainMap.Chain.toChainId,
+          ~txOrigin=None,
         )
         switch parsed {
         | Error(exn) =>

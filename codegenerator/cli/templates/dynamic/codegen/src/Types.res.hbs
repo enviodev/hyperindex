@@ -74,6 +74,7 @@ type inMemoryStoreRow<'a> = {
 type eventLog<'a> = {
   params: 'a,
   chainId: int,
+  txOrigin: option<Ethers.ethAddress>,
   blockNumber: int,
   blockTimestamp: int,
   blockHash: string,

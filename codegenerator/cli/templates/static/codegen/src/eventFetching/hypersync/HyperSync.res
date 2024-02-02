@@ -8,6 +8,7 @@ type hyperSyncPage<'item> = {
 type logsQueryPageItem = {
   log: Ethers.log,
   blockTimestamp: int,
+  txOrigin: option<Ethers.ethAddress>,
 }
 
 type blockNumberAndTimestamp = {
@@ -107,6 +108,7 @@ module LogsQuery = {
         Removed,
       ],
       block: [Number, Timestamp],
+      transaction: [From],
     },
   }
 
@@ -115,6 +117,10 @@ module LogsQuery = {
     let log = event.log
 
     let blockTimestamp = event.block->Belt.Option.flatMap(b => b.timestamp)
+    let txOrigin =
+      event.transaction
+      ->Belt.Option.flatMap(b => b.from)
+      ->Belt.Option.flatMap(Ethers.getAddressFromString)
 
     switch (
       blockTimestamp,
@@ -154,7 +160,7 @@ module LogsQuery = {
         removed,
       }
 
-      let pageItem: logsQueryPageItem = {log, blockTimestamp}
+      let pageItem: logsQueryPageItem = {log, blockTimestamp, txOrigin}
       pageItem
     | _ =>
       let missingParams =

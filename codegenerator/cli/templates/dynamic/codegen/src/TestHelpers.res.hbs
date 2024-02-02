@@ -211,6 +211,7 @@ module EventFunctions = {
     srcAddress?: Ethers.ethAddress,
     transactionHash?: string,
     transactionIndex?: int,
+    txOrigin?: option<Ethers.ethAddress>,
     logIndex?: int,
   }
 
@@ -230,11 +231,13 @@ module EventFunctions = {
       ?transactionHash,
       ?transactionIndex,
       ?logIndex,
+      ?txOrigin,
     } =
       mockEventData->Belt.Option.getWithDefault({})
 
     {
       params,
+      txOrigin: txOrigin->Belt.Option.flatMap(i => i),
       chainId: chainId->Belt.Option.getWithDefault(1),
       blockNumber: blockNumber->Belt.Option.getWithDefault(0),
       blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),
