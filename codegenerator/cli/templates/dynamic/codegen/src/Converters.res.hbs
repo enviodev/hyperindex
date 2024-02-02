@@ -56,6 +56,7 @@ module {{contract.name.capitalized}} = {
     ~log: Ethers.log,
     ~blockTimestamp: int,
     ~chainId: int,
+    ~txOrigin: option<Ethers.ethAddress>,
   ) => {
     let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
     {{#if event.params}}
@@ -71,6 +72,7 @@ module {{contract.name.capitalized}} = {
     let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
       params,
       chainId,
+      txOrigin,
       blockNumber: log.blockNumber,
       blockTimestamp,
       blockHash: log.blockHash,
@@ -90,6 +92,7 @@ module {{contract.name.capitalized}} = {
     ~log: Ethers.log,
     ~blockTimestamp: int,
     ~chainId: int,
+    ~txOrigin: option<Ethers.ethAddress>,
   ) => {
     let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
     {{#if event.params}}
@@ -105,6 +108,7 @@ module {{contract.name.capitalized}} = {
     let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
       params,
       chainId,
+      txOrigin,
       blockNumber: log.blockNumber,
       blockTimestamp,
       blockHash: log.blockHash,
@@ -127,7 +131,7 @@ type parseEventError =
 
 exception ParseEventErrorExn(parseEventError)
 
-let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId): Belt.Result.t<
+let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin): Belt.Result.t<
   Types.event,
   _,
 > => {
@@ -151,7 +155,7 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chain
         | {{event.event_type.full}} =>
             logDescription
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp, ~chainId)
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp, ~chainId, ~txOrigin)
       {{/each}}
       {{/each}}
       }
@@ -161,7 +165,7 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chain
   }
 }
 
-let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId): Belt.Result.t<
+let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin): Belt.Result.t<
   Types.event,
   _,
 > => {
@@ -185,7 +189,7 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId): B
         | {{event.event_type.full}} =>
             decodedEvent
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}ViemDecodedEvent
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogViem(~log, ~blockTimestamp, ~chainId)
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogViem(~log, ~blockTimestamp, ~chainId, ~txOrigin)
       {{/each}}
      {{/each}}
       }
@@ -200,6 +204,7 @@ let decodeRawEventWith = (
   ~decoder: Spice.decoder<'a>,
   ~variantAccessor: Types.eventLog<'a> => Types.event,
   ~chainId: int,
+  ~txOrigin: option<Ethers.ethAddress>,
 ): Spice.result<Types.eventBatchQueueItem> => {
   switch rawEvent.params->Js.Json.parseExn {
   | exception exn =>
@@ -218,6 +223,7 @@ let decodeRawEventWith = (
   ->Belt.Result.map(params => {
     let event = {
       chainId,
+      txOrigin,
       blockNumber: rawEvent.blockNumber,
       blockTimestamp: rawEvent.blockTimestamp,
       blockHash: rawEvent.blockHash,
@@ -240,7 +246,7 @@ let decodeRawEventWith = (
   })
 }
 
-let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chainId: int): Spice.result<
+let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chainId: int, ~txOrigin: option<Ethers.ethAddress>): Spice.result<
   Types.eventBatchQueueItem,
 > => {
   rawEvent.eventType
@@ -254,6 +260,7 @@ let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chainId: int): Spice.resu
         ~decoder=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_decode,
         ~variantAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}},
         ~chainId,
+        ~txOrigin,
       )
   {{/each}}
   {{/each}}

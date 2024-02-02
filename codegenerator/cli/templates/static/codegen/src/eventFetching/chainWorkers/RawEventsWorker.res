@@ -151,7 +151,7 @@ let startWorker = async (
 
     let parsedEventsUnsafe =
       page
-      ->Belt.Array.map(Converters.parseRawEvent(~chainId=self.chainId))
+      ->Belt.Array.map(Converters.parseRawEvent(~chainId=self.chainId, ~txOrigin=None))
       ->Utils.mapArrayOfResults
       ->Belt.Result.getExn
 
@@ -351,7 +351,7 @@ let addDynamicContractAndFetchMissingEvents = async (
     | [] => currentQueueItems
     | page =>
       let newQueueItems = page->Belt.Array.map(rawEvent => {
-        let parsedEvent = rawEvent->Converters.parseRawEvent(~chainId=self.chainId)->Result.getExn
+        let parsedEvent = rawEvent->Converters.parseRawEvent(~chainId=self.chainId, ~txOrigin=None)->Result.getExn
         let queueItem: Types.eventBatchQueueItem = {
           timestamp: parsedEvent.timestamp,
           chainId: self.chainId,

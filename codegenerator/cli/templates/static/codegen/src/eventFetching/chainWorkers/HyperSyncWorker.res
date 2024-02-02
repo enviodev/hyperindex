@@ -327,6 +327,7 @@ let startWorker = async (self: t, ~startBlock, ~logger, ~fetchedEventQueue) => {
             ~blockTimestamp=item.blockTimestamp,
             ~contractInterfaceManager,
             ~chainId=self.chainConfig.chainId,
+            ~txOrigin=item.txOrigin
           ) {
           | Ok(parsed) =>
             let queueItem: Types.eventBatchQueueItem = {
@@ -514,6 +515,7 @@ let fetchArbitraryEvents = async (
           ~blockTimestamp=item.blockTimestamp,
           ~contractInterfaceManager,
           ~chainId=self.chainConfig.chainId,
+          ~txOrigin=item.txOrigin
         ) {
         | Ok(parsed) =>
           let queueItem: Types.eventBatchQueueItem = {

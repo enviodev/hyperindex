@@ -107,6 +107,7 @@ let convertLogs = (
           ~blockTimestamp,
           ~contractInterfaceManager,
           ~chainId,
+          ~txOrigin=None,
         ) 
         switch parsed {
         | Error(e) =>

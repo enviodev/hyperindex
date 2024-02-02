@@ -7,6 +7,7 @@ type hyperSyncPage<'item> = {
 type logsQueryPageItem = {
   log: Ethers.log,
   blockTimestamp: int,
+  txOrigin: option<Ethers.ethAddress>,
 }
 
 type blockNumberAndTimestamp = {
