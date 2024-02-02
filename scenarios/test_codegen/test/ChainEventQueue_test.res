@@ -17,6 +17,7 @@ let eventMock1: Types.event = GravatarContract_NewGravatar({
   srcAddress: "0x1234512345123451234512345123451234512345"->Ethers.getAddressFromStringUnsafe,
   transactionHash: "0xabc",
   transactionIndex: 987,
+  txOrigin: None,
 })
 
 let qItemMock1: Types.eventBatchQueueItem = {
@@ -37,6 +38,7 @@ let eventMock2: Types.event = GravatarContract_NewGravatar({
   srcAddress: "0x1234512345123451234512345123451234512346"->Ethers.getAddressFromStringUnsafe,
   transactionHash: "0xdef",
   transactionIndex: 988,
+  txOrigin: None,
 })
 
 let qItemMock2: Types.eventBatchQueueItem = {

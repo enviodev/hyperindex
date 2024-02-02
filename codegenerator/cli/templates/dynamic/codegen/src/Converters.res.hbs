@@ -215,15 +215,16 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chain
   }
 }
 
-<<<<<<< HEAD
 let makeEventLog = (
   params: 'args,
   ~log: Ethers.log,
   ~blockTimestamp: int,
   ~chainId: int,
+  ~txOrigin: option<Ethers.ethAddress>,
 ): Types.eventLog<'args> => {
   chainId,
   params,
+  txOrigin,
   blockNumber: log.blockNumber,
   blockTimestamp,
   blockHash: log.blockHash,
@@ -239,6 +240,7 @@ let convertDecodedEvent = (
   ~log: Ethers.log,
   ~blockTimestamp,
   ~chainId,
+  ~txOrigin: option<Ethers.ethAddress>,
 ): result<Types.event, _> => {
   switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
     ~contractAddress=log.address,
@@ -251,7 +253,7 @@ let convertDecodedEvent = (
         | {{event.event_type.full}} =>
             event
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}DecodedEventParams
-            ->makeEventLog(~log, ~blockTimestamp, ~chainId)
+            ->makeEventLog(~log, ~blockTimestamp, ~chainId, ~txOrigin)
             ->Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}
       {{/each}}
      {{/each}}
