@@ -95,7 +95,7 @@ pub enum Network {
     Celo = 42220,
     #[subenum(GraphNetwork)]
     Fuji = 43113,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, GraphNetwork)]
     Avalanche = 43114,
     #[subenum(GraphNetwork)]
     CeloAlfajores = 44787,
@@ -289,12 +289,6 @@ impl NetworkWithExplorer {
                 "F3VXQYQSV2IKB8UCMNASMPWP39GAN8JDFY",
                 "G65DZIAMA9756ZS875UDBFY6UH4W5VJ5DW",
             ],
-            // TODO
-            NetworkWithExplorer::Avalanche => [
-                "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK",
-                "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK",
-                "EJZP7RY157YUI981Q6DMHFZ24U2ET8EHCK",
-            ],
             NetworkWithExplorer::Mumbai => [
                 "7KQZVW13K3VU2SAIUVNHG4M3HPTMHD9T7Z",
                 "YCIATTDSTMJXNNMTUWFJS3ZMG83DJ7U3N2",
@@ -444,7 +438,7 @@ mod test {
     #[test]
     fn all_networks_with_explorer_can_get_etherscan_client() {
         for network in NetworkWithExplorer::iter() {
-            // Test with 3 rate limit retries as we have 3 api keys per network
+            // Test with 4 rate limit retries as we have 3 api keys per network and wanted to validate the correct rotation
             for rate_limit_retry_count in 0..4 {
                 get_etherscan_client(&network, rate_limit_retry_count).unwrap();
             }

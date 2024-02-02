@@ -86,7 +86,6 @@ async fn fetch_get_source_code_result_from_block_explorer(
     address: &H160,
 ) -> anyhow::Result<etherscan::contract::Metadata> {
     //todo make retryable
-    //todo combine these two variables into a single one as one can be inferred from the other
     let mut refetch_delay = Duration::from_secs(2);
     let mut rate_limit_retry_count = 0;
 
