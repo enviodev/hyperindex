@@ -94,8 +94,8 @@ let make = (~caughtUpToHeadHook=?, ~contractAddressMapping=?, chainConfig: Confi
   let sourceWorker = {
     open SourceWorker
     switch chainConfig.syncSource {
-    | Rpc(_) => SourceWorker.Rpc(RpcWorker.make(~contractAddressMapping, chainConfig))
-    | HyperSync(_) => HyperSync(HyperSyncWorker.make(~contractAddressMapping, chainConfig))
+    | Rpc(rpcConfig) => SourceWorker.Rpc(RpcWorker.make(~rpcConfig, chainConfig))
+    | HyperSync(serverUrl) => HyperSync(HyperSyncWorker.make(chainConfig, ~serverUrl))
     }
   }
 

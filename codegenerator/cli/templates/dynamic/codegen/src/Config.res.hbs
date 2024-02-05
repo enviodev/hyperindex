@@ -21,7 +21,14 @@ type rpcConfig = {
   syncConfig: syncConfig,
 }
 
-type syncSource = Rpc(rpcConfig) | HyperSync(serverUrl)
+/**
+A generic type where for different values of HyperSync and Rpc.
+Where first param 'a represents the value for hypersync and the second
+param 'b for rpc
+*/
+type source<'a, 'b> = HyperSync('a) | Rpc('b)
+
+type syncSource = source<serverUrl, rpcConfig>
 
 type chainConfig = {
   syncSource: syncSource,
