@@ -213,23 +213,20 @@ let waitForNextBlockBeforeQuery = async (
 
     //Note: this side effect can be removed when this becomes immutable
     setCurrentBlockHeight(~currentBlockHeight)
-
-    currentBlockHeight
-  } else {
-    currentBlockHeight
   }
 }
 
 let getNextPage = async (
   {serverUrl, chainConfig}: t,
   ~fromBlock,
+  ~toBlock,
   ~currentBlockHeight,
   ~logger,
   ~setCurrentBlockHeight,
   ~contractAddressMapping,
 ) => {
   //Wait for a valid range to query
-  let currentBlockHeight = await waitForNextBlockBeforeQuery(
+  await waitForNextBlockBeforeQuery(
     ~serverUrl,
     ~fromBlock,
     ~currentBlockHeight,
@@ -250,13 +247,7 @@ let getNextPage = async (
 
   //fetch batch
   let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-    () =>
-      HyperSync.queryLogsPage(
-        ~serverUrl,
-        ~fromBlock,
-        ~toBlock=currentBlockHeight,
-        ~contractAddressesAndtopics,
-      ),
+    () => HyperSync.queryLogsPage(~serverUrl, ~fromBlock, ~toBlock, ~contractAddressesAndtopics),
     logger,
   )
 
@@ -265,6 +256,7 @@ let getNextPage = async (
 
   {page: pageUnsafe, contractInterfaceManager, pageFetchTime}
 }
+
 let fetchBlockRange = async (
   self: t,
   ~query: blockRangeFetchArgs,
@@ -273,12 +265,13 @@ let fetchBlockRange = async (
   ~setCurrentBlockHeight,
 ): blockRangeFetchResponse => {
   let {chainConfig: {chain}, serverUrl} = self
-  let {fetcherId, fromBlock, contractAddressMapping, currentLatestBlockTimestamp} = query
+  let {fetcherId, fromBlock, contractAddressMapping, currentLatestBlockTimestamp, toBlock} = query
   let startFetchingBatchTimeRef = Hrtime.makeTimer()
   //fetch batch
   let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} =
     await self->getNextPage(
       ~fromBlock,
+      ~toBlock,
       ~currentBlockHeight,
       ~contractAddressMapping,
       ~logger,
@@ -515,6 +508,7 @@ let loopFetchBlockRanges = async (
         fetcherId,
         contractAddressMapping,
         currentLatestBlockTimestamp: latestFetchedBlockTimestamp,
+        toBlock: currentBlockHeight,
       }
   }
 }
@@ -538,6 +532,7 @@ let startWorker = async (
     currentLatestBlockTimestamp: self.latestFetchedBlockTimestamp,
     fetcherId: Root,
     contractAddressMapping,
+    toBlock: initialHeight,
   }
 
   await self->loopFetchBlockRanges(

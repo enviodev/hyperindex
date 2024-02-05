@@ -24,12 +24,7 @@ type multiChainEventComparitor = {
 let getQueueItemComparitor = (latestQueueItem: DynamicContractFetcher.queueItem, ~chain) => {
   switch latestQueueItem {
   | Item(i) => i->getComparitorFromItem
-  | NoItem(latestFetchedBlockTimestamp) => (
-      latestFetchedBlockTimestamp,
-      chain->ChainMap.Chain.toChainId,
-      0,
-      0,
-    )
+  | NoItem({timestamp, blockNumber}) => (timestamp, chain->ChainMap.Chain.toChainId, blockNumber, 0)
   }
 }
 
@@ -419,7 +414,6 @@ let rec createBatchInternal = (
   ~arbitraryEventQueue,
   ~batchRev,
 ) => {
-  open Belt
   if currentBatchSize >= maxBatchSize {
     makeBatch(~batchRev, ~currentBatchSize, ~fetchers, ~arbitraryEventQueue)
   } else {
