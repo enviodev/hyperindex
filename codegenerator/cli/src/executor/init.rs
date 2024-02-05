@@ -57,13 +57,31 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
                     &parsed_init_args.language, &parsed_project_paths.project_root,
                 ))?;
 
-            generate_config_from_subgraph_id(
+            let yaml_config = generate_config_from_subgraph_id(
                 &parsed_project_paths.project_root,
                 cid,
                 &parsed_init_args.language,
             )
             .await
             .context("Failed generating config from subgraph")?;
+
+            let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
+                &yaml_config,
+                Schema::empty(),
+                &parsed_project_paths,
+            )
+            .context("Failed parsing config")?;
+
+            let auto_schema_handler_template =
+                contract_import_templates::AutoSchemaHandlerTemplate::try_from(parsed_config)
+                    .context("Failed converting config to auto auto_schema_handler_template")?;
+
+            auto_schema_handler_template
+                .generate_subgraph_migration_templates(
+                    &parsed_init_args.language,
+                    &parsed_project_paths.project_root,
+                )
+                .context("Failed generating subgraph migration templates for event handlers.")?;
         }
 
         InitilizationTypeWithArgs::ContractImportWithArgs(auto_config_selection) => {
@@ -107,7 +125,7 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
                 ))?;
 
             auto_schema_handler_template
-                .generate_templates(
+                .generate_contract_import_templates(
                     &parsed_init_args.language,
                     &parsed_project_paths.project_root,
                 )

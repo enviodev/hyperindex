@@ -233,7 +233,10 @@ pub struct Contract {
 }
 
 impl Contract {
-    fn from_config_contract(contract: &system_config::Contract, config: &SystemConfig) -> Result<Self> {
+    fn from_config_contract(
+        contract: &system_config::Contract,
+        config: &SystemConfig,
+    ) -> Result<Self> {
         let imported_events = contract
             .events
             .iter()
@@ -247,7 +250,9 @@ impl Contract {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, config, &contract.name.to_string()))
+            .map(|event| {
+                EventTemplate::from_config_event(event, config, &contract.name.to_string())
+            })
             .collect::<Result<_>>()
             .context(format!(
                 "Failed getting events for contract {}",
@@ -257,7 +262,7 @@ impl Contract {
         Ok(Contract {
             name: contract.name.to_capitalized_options(),
             imported_events,
-            codegen_events
+            codegen_events,
         })
     }
 }
@@ -348,7 +353,11 @@ impl AutoSchemaHandlerTemplate {
         Ok(AutoSchemaHandlerTemplate { imported_contracts })
     }
 
-    pub fn generate_templates(&self, lang: &Language, project_root: &PathBuf) -> Result<()> {
+    pub fn generate_contract_import_templates(
+        &self,
+        lang: &Language,
+        project_root: &PathBuf,
+    ) -> Result<()> {
         let template_dirs = TemplateDirs::new();
 
         let shared_dir = template_dirs
@@ -368,6 +377,30 @@ impl AutoSchemaHandlerTemplate {
         hbs_shared
             .generate_hbs_templates()
             .context("Failed generating shared contract import templates")?;
+
+        Ok(())
+    }
+
+    pub fn generate_subgraph_migration_templates(
+        &self,
+        lang: &Language,
+        project_root: &PathBuf,
+    ) -> Result<()> {
+        let template_dirs = TemplateDirs::new();
+
+        let lang_dir = template_dirs
+            .get_subgraph_migration_lang_dir(lang)
+            .context(format!(
+                "Failed getting {} subgraph migration templates",
+                lang
+            ))?;
+
+        let hbs = HandleBarsDirGenerator::new(&lang_dir, &self, &project_root);
+
+        hbs.generate_hbs_templates().context(format!(
+            "Failed generating {} subgraph migration templates",
+            lang
+        ))?;
 
         Ok(())
     }

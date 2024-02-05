@@ -1,0 +1,25 @@
+/*
+ *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
+ */
+
+import {
+{{#each imported_contracts as |contract|}}
+  {{#each contract.imported_events as |event|}}
+  {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_loader,
+  {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler,
+  {{/each}}
+{{/each}}
+} from "../generated/src/Handlers.gen";
+
+{{#each imported_contracts as |contract|}}
+  {{#each contract.imported_events as |event|}}
+{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_loader(({ event, context }) => {
+    // Load requiredEntities here
+});
+
+{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler(({ event, context }) => {
+    // Retrieve loaded requiredEntities and perform event handling logic here
+});
+
+  {{/each}}
+{{/each}}
