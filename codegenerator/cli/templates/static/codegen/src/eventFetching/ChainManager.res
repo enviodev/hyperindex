@@ -93,18 +93,13 @@ let determineNextEvent = createDetermineNextEventFunction(
   ~isUnorderedHeadMode=Config.isUnorderedHeadMode,
 )
 
-let make = (~configs: Config.chainConfigs, ~maxQueueSize, ~shouldSyncFromRawEvents: bool): t => {
+let make = (~configs: Config.chainConfigs): t => {
   let chainFetchers = configs->ChainMap.map(chainConfig => {
     let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
       ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
     )
 
-    ChainFetcher.make(
-      ~chainConfig,
-      ~maxQueueSize,
-      ~shouldSyncFromRawEvents,
-      ~lastBlockScannedHashes,
-    )
+    ChainFetcher.make(~chainConfig, ~lastBlockScannedHashes)
   })
 
   {
@@ -114,11 +109,11 @@ let make = (~configs: Config.chainConfigs, ~maxQueueSize, ~shouldSyncFromRawEven
 }
 
 exception NotASourceWorker
-let toSourceWorker = (worker: ChainWorker.chainWorker): SourceWorker.sourceWorker =>
+let toSourceWorker = (worker: ChainWorkerTypes.chainWorker): SourceWorker.sourceWorker =>
   switch worker {
   | HyperSync(w) => HyperSync(w)
   | Rpc(w) => Rpc(w)
-  | RawEvents(_) => NotASourceWorker->raise
+  // | RawEvents(_) => NotASourceWorker->raise
   }
 
 //TODO this needs to action a roll back
@@ -127,7 +122,7 @@ let reorgStub = async (chainManager: t, ~chainFetcher: ChainFetcher.t, ~lastBloc
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
   let blockNumbersAndHashes =
-    await chainFetcher.chainWorker.contents
+    await chainFetcher.chainWorker
     ->toSourceWorker
     ->SourceWorker.getBlockHashes(~blockNumbers)
     ->Promise.thenResolve(Belt.Result.getExn)
@@ -140,7 +135,7 @@ let reorgStub = async (chainManager: t, ~chainFetcher: ChainFetcher.t, ~lastBloc
   let reorgStartPlace = rolledBack->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
 
   switch reorgStartPlace {
-  | Some({blockNumber, blockTimestamp}) => () //Rollback to here
+  | Some({blockNumber, blockTimestamp}) => (blockNumber, blockTimestamp)->ignore //Rollback to here
   | None => () //roll back to start of chain. Can't really happen
   }
   //Stop workers
@@ -166,7 +161,7 @@ let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
   ->ChainMap.values
   ->Belt.Array.map((cf): ReorgDetection.LastBlockScannedHashes.currentHeightAndLastBlockHashes => {
     lastBlockScannedHashes: cf.lastBlockScannedHashes,
-    currentHeight: cf.chainWorker.contents->ChainWorker.getCurrentBlockHeight,
+    currentHeight: cf.currentBlockHeight,
   })
   ->ReorgDetection.LastBlockScannedHashes.getEarliestMultiChainTimestampInThreshold
 }

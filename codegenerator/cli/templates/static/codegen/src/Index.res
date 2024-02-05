@@ -38,11 +38,7 @@ let main = () => {
   // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
   //
   // EventSyncing.startSyncingAllEvents(~shouldSyncFromRawEvents)
-  let chainManager = ChainManager.make(
-    ~maxQueueSize=Env.maxPerChainQueueSize,
-    ~configs=Config.config,
-    ~shouldSyncFromRawEvents=false,
-  )
+  let chainManager = ChainManager.make(~configs=Config.config)
 
   let globalState: GlobalState.t = {
     currentlyProcessingBatch: false,

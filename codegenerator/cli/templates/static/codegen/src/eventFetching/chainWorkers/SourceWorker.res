@@ -4,12 +4,8 @@ type sourceWorker =
   | Rpc(RpcWorker.t)
   | HyperSync(HyperSyncWorker.t)
 
-let fetchArbitraryEvents = (worker: sourceWorker) => {
-  //See note in description of PolyMorphicChainWorkerFunctions
-  switch worker {
-  | Rpc(w) => w->RpcWorker.fetchArbitraryEvents
-  | HyperSync(w) => w->HyperSyncWorker.fetchArbitraryEvents
-  }
+let fetchArbitraryEvents = (_worker: sourceWorker) => {
+  Js.Exn.raiseError("Unhandled fetching arb events from hypersync ")
 }
 
 let getBlockHashes = (worker: sourceWorker) => {

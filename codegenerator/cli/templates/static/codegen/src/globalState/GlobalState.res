@@ -65,7 +65,6 @@ let handleHyperSyncBlockRangeResponse = (
     fromBlockQueried,
     fetcherId,
     latestFetchedBlockTimestamp,
-    contractAddressMapping,
   } = response
 
   chainFetcher.logger->Logging.childTrace({
@@ -77,7 +76,7 @@ let handleHyperSyncBlockRangeResponse = (
   })
 
   //TODO: Check reorg has occurred  here and action reorg if need be
-  let {parentHash, lastBlockScannedData} = reorgGuard
+  let {parentHash: _, lastBlockScannedData: _} = reorgGuard
 
   // lastBlockScannedData->checkHasReorgOccurred(~parentHash, ~currentHeight=currentBlockHeight)
 
@@ -210,24 +209,22 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
     !isFetchingBatch &&
     fetcher->DynamicContractFetcher.isReadyForNextQuery(~maxQueueSize=state.maxPerChainQueueSize)
   ) {
-    switch chainWorker.contents {
-    | HyperSync(worker) =>
-      let query = fetcher->DynamicContractFetcher.getNextQuery(~currentBlockHeight)
+    let query = fetcher->DynamicContractFetcher.getNextQuery(~currentBlockHeight)
 
-      dispatchAction(SetCurrentlyFetchingBatch(chain, true))
-      let setCurrentBlockHeight = (~currentBlockHeight) =>
-        dispatchAction(SetFetcherCurrentBlockHeight(chain, currentBlockHeight))
+    dispatchAction(SetCurrentlyFetchingBatch(chain, true))
+    let setCurrentBlockHeight = currentBlockHeight =>
+      dispatchAction(SetFetcherCurrentBlockHeight(chain, currentBlockHeight))
+
+    let compose = (worker, fetchBlockRange) => {
       worker
-      ->HyperSyncWorker.fetchBlockRange(
-        ~query,
-        ~logger,
-        ~currentBlockHeight,
-        ~setCurrentBlockHeight,
-      )
+      ->fetchBlockRange(~query, ~logger, ~currentBlockHeight, ~setCurrentBlockHeight)
       ->Promise.thenResolve(res => dispatchAction(HyperSyncBlockRangeResponse(chain, res)))
       ->ignore
-    | Rpc(_) | RawEvents(_) =>
-      Js.Exn.raiseError("Currently unhandled rpc or raw events worker with hypersync query")
+    }
+
+    switch chainWorker {
+    | HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange)
+    | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange)
     }
   }
 }
