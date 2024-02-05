@@ -191,12 +191,22 @@ type dynamicContractRegistration = {
   registeringEventLogIndex: int,
   registeringEventChain: ChainMap.Chain.t,
   dynamicContracts: array<Types.dynamicContractRegistryEntity>,
-  unprocessedBatch: list<Types.eventBatchQueueItem>,
+}
+
+type dynamicContractRegistrations = {
+  //Its better to apply these in reverse so that we register them with
+  //the fetcher from latest to earliest. That way there are less recursions
+  registrationsReversed: list<dynamicContractRegistration>,
+  unprocessedBatchReversed: list<Types.eventBatchQueueItem>,
+  //Once a single registration happens, the rest of the batches
+  //loaders should be run on an isolated in memory store so that
+  //they don't affect state of the batch that will be processed
+  inMemoryStore: IO.InMemoryStore.t,
 }
 
 type loadResponse<'a> = {
   val: 'a,
-  dynamicContractRegistration: option<dynamicContractRegistration>,
+  dynamicContractRegistrations: option<dynamicContractRegistrations>,
 }
 
 type getReadEntitiesRes = loadResponse<
@@ -214,13 +224,19 @@ let composeGetReadEntity = (
   ~asyncGetters,
   ~getLoader,
   ~item: Types.eventBatchQueueItem,
-  ~otherItems,
   ~entitiesToLoad,
+  ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~eventWithContextAccessor,
   ~eventName,
+  ~fetchers: ChainMap.t<DynamicContractFetcher.t>,
 ) => {
   let {chain} = item
   let chainId = chain->ChainMap.Chain.toChainId
+  //If there are dynamic contracts, context loader should use the cloned in memory store
+  //Otherwise we can use the passed in one
+  let inMemoryStore =
+    dynamicContractRegistrations->Option.mapWithDefault(inMemoryStore, d => d.inMemoryStore)
+
   let contextHelper: Context.genericContextCreatorFunctions<'a, 'b, 'c> = contextCreator(
     ~inMemoryStore,
     ~chainId,
@@ -248,65 +264,114 @@ let composeGetReadEntity = (
     //put back on the arbitrary events queue and is now being reprocessed
     []
   } else {
-    contextHelper.getAddedDynamicContractRegistrations()
+    let fetcher = fetchers->ChainMap.get(chain)
+    contextHelper.getAddedDynamicContractRegistrations()->Array.keep(({
+      contractAddress,
+      contractType,
+    }) => {
+      let isAlreadyRegistered =
+        fetcher->DynamicContractFetcher.checkContainsRegisteredContractAddress(
+          ~contractAddress,
+          ~contractName=contractType,
+        )
+      !isAlreadyRegistered
+    })
   }
 
-  if dynamicContracts->Array.length > 0 {
+  let addToDynamicContractRegistrations = (
+    ~registrationsReversed,
+    ~unprocessedBatchReversed,
+    ~inMemoryStore,
+  ) => {
     //If there are any dynamic contract registrations, put this item in the unprocessedBatch flagged
     //with "hasRegisteredDynamicContracts" and return the same list of entitiesToLoad without the
     //current item
-    {{!-- Need raw to escape the double curly at list --}}
-    {{{{raw}}}}
-    let unprocessedBatch = list{{...item, hasRegisteredDynamicContracts: true}, ...otherItems}
-    {{{{/raw}}}}
+    let unprocessedBatchReversed = list{
+      {...item, hasRegisteredDynamicContracts: true},
+      ...unprocessedBatchReversed,
+    }
 
-    let dynamicContractRegistration = Some({
+    let dynamicContractRegistration = {
       dynamicContracts,
-      unprocessedBatch,
       registeringEventBlockNumber: event.blockNumber,
       registeringEventLogIndex: event.logIndex,
       registeringEventChain: chain,
-    })
-    {val: entitiesToLoad, dynamicContractRegistration}
-  } else {
-  //If there are no dynamic contract registrations, get the entities to load and
-  //return a context with the event for the handlers
-    let entitiesToLoad = entitiesToLoad->Array.concat([
-      (
-        contextHelper.getEntitiesToLoad(),
-        (
-          {
-            chainId,
-            event: eventWithContextAccessor(event, contextHelper),
-          }: Context.eventRouterEventAndContext
-        ),
-      ),
-    ])
+    }
+    let dynamicContractRegistrations = {
+      unprocessedBatchReversed,
+      registrationsReversed: list{dynamicContractRegistration, ...registrationsReversed},
+      inMemoryStore,
+    }->Some
+    {val: entitiesToLoad, dynamicContractRegistrations}
+  }
 
-    {val: entitiesToLoad, dynamicContractRegistration: None}
+  switch dynamicContractRegistrations {
+  | None =>
+    if dynamicContracts->Array.length > 0 {
+      //Clone the inMemoryStore
+      let inMemoryStoreDeepClone = inMemoryStore->IO.InMemoryStore.clone
+
+      addToDynamicContractRegistrations(
+        ~registrationsReversed=list{},
+        ~unprocessedBatchReversed=list{},
+        ~inMemoryStore=inMemoryStoreDeepClone,
+      )
+    } else {
+      //If there are no dynamic contract registrations, get the entities to load and
+      //return a context with the event for the handlers
+      let entitiesToLoad = entitiesToLoad->Array.concat([
+        (
+          contextHelper.getEntitiesToLoad(),
+          (
+            {
+              chainId,
+              event: eventWithContextAccessor(event, contextHelper),
+            }: Context.eventRouterEventAndContext
+          ),
+        ),
+      ])
+
+      {val: entitiesToLoad, dynamicContractRegistrations: None}
+    }
+  | Some({unprocessedBatchReversed, registrationsReversed, inMemoryStore}) =>
+    if dynamicContracts->Array.length > 0 {
+      addToDynamicContractRegistrations(
+        ~registrationsReversed,
+        ~unprocessedBatchReversed,
+        ~inMemoryStore,
+      )
+    } else {
+      let unprocessedBatchReversed = list{item, ...unprocessedBatchReversed}
+
+      let dynamicContractRegistrations = {
+        unprocessedBatchReversed,
+        registrationsReversed,
+        inMemoryStore,
+      }->Some
+      {val: entitiesToLoad, dynamicContractRegistrations}
+    }
   }
 }
 
 let rec getReadEntitiesInternal = (
-  eventBatch: list<Types.eventBatchQueueItem>,
   ~inMemoryStore,
   ~logger,
   ~entitiesToLoad,
+  ~fetchers,
+  ~dynamicContractRegistrations=None,
+  eventBatch: list<Types.eventBatchQueueItem>,
 ): getReadEntitiesRes => {
   switch eventBatch {
-  | list{} =>
-    let unprocessedBatch = list{}
-    let dynamicContractRegistration = None
-    {val: entitiesToLoad, dynamicContractRegistration}
-
+  | list{} => {val: entitiesToLoad, dynamicContractRegistrations}
   | list{item, ...tail} => {
       let composer = composeGetReadEntity(
-        ~otherItems=tail,
         ~entitiesToLoad,
         ~asyncGetters,
         ~inMemoryStore,
         ~logger,
         ~item,
+        ~fetchers,
+        ~dynamicContractRegistrations,
       )
 
       let res = switch item.event {
@@ -324,13 +389,14 @@ let rec getReadEntitiesInternal = (
     {{/each}}
       }
 
-      if res.dynamicContractRegistration->Option.isSome {
-        //exit if dynamic contract was registered
-        res
-      } else {
-        //else keep getting read entities from batch
-        tail->getReadEntitiesInternal(~inMemoryStore, ~logger, ~entitiesToLoad=res.val)
-      }
+      //else keep getting read entities from batch
+      tail->getReadEntitiesInternal(
+        ~inMemoryStore,
+        ~logger,
+        ~entitiesToLoad=res.val,
+        ~fetchers,
+        ~dynamicContractRegistrations=res.dynamicContractRegistrations,
+      )
     }
   }
 }
@@ -340,10 +406,11 @@ let getReadEntities = getReadEntitiesInternal(~entitiesToLoad=[])
 let loadReadEntities = async (
   ~inMemoryStore,
   ~eventBatch: list<Types.eventBatchQueueItem>,
+  ~fetchers,
   ~logger: Pino.t,
 ): loadResponse<array<Context.eventRouterEventAndContext>> => {
-  let {val: entitiesToLoad, dynamicContractRegistration} =
-    eventBatch->getReadEntities(~inMemoryStore, ~logger)
+  let {val: entitiesToLoad, dynamicContractRegistrations} =
+    eventBatch->getReadEntities(~inMemoryStore, ~logger, ~fetchers)
 
   let (readEntitiesGrouped, contexts): (
     array<array<Types.entityRead>>,
@@ -355,7 +422,7 @@ let loadReadEntities = async (
 
   await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=readEntities)
 
-  {val: contexts, dynamicContractRegistration}
+  {val: contexts, dynamicContractRegistrations}
 }
 
 let registerProcessEventBatchMetrics = (
@@ -385,6 +452,7 @@ let registerProcessEventBatchMetrics = (
 let processEventBatch = async (
   ~eventBatch: list<Types.eventBatchQueueItem>,
   ~inMemoryStore: IO.InMemoryStore.t,
+  ~fetchers,
 ) => {
   let logger = Logging.createChild(
     ~params={
@@ -394,10 +462,11 @@ let processEventBatch = async (
 
   let timeRef = Hrtime.makeTimer()
 
-  let {val: eventBatchAndContext, dynamicContractRegistration} = await loadReadEntities(
+  let {val: eventBatchAndContext, dynamicContractRegistrations} = await loadReadEntities(
     ~inMemoryStore,
     ~eventBatch,
     ~logger,
+    ~fetchers,
   )
 
   let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -419,11 +488,11 @@ let processEventBatch = async (
 
   registerProcessEventBatchMetrics(
     ~logger,
-    ~batchSize=eventBatch->List.length,
+    ~batchSize=eventBatchAndContext->Array.length,
     ~loadDuration=elapsedAfterLoad,
     ~handlerDuration=elapsedTimeAfterProcess - elapsedAfterLoad,
     ~dbWriteDuration=elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
   )
 
-  {val: (), dynamicContractRegistration}
+  {val: (), dynamicContractRegistrations}
 }

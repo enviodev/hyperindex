@@ -53,7 +53,7 @@ let main = () => {
 
   let gsManager = globalState->GlobalStateManager.make
 
-  gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
+  gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChainsRoot))
   gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
 }
 

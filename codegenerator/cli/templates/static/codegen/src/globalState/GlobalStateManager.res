@@ -21,8 +21,9 @@ module MakeManager = (S: State) => {
       nextTasks->Array.forEach(task => dispatchTask(self, task))
     }, 0)->ignore
   }
-  and dispatchTask = (self, task: S.task) =>
-    S.taskReducer(self.state, task, ~dispatchAction=dispatchAction(self))
+  and dispatchTask = (self, task: S.task) => Js.Global.setTimeout(() => {
+      S.taskReducer(self.state, task, ~dispatchAction=dispatchAction(self))
+    }, 0)->ignore
 
   let getState = self => self.state
 }
