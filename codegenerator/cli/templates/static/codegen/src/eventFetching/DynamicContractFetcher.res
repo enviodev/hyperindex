@@ -172,11 +172,15 @@ let getNextQueryFromNode = (
   {id, latestFetchedBlockNumber, contractAddressMapping, latestFetchedBlockTimestamp}: t,
   ~toBlock,
 ) => {
-  fetcherId: id,
-  fromBlock: latestFetchedBlockNumber + 1,
-  toBlock,
-  contractAddressMapping,
-  currentLatestBlockTimestamp: latestFetchedBlockTimestamp,
+  let fromBlock = latestFetchedBlockNumber + 1
+  let toBlock = Pervasives.max(toBlock, fromBlock) //ensure from block isn't lower than toBlock
+  {
+    fetcherId: id,
+    fromBlock: latestFetchedBlockNumber + 1,
+    toBlock,
+    contractAddressMapping,
+    currentLatestBlockTimestamp: latestFetchedBlockTimestamp,
+  }
 }
 
 /**
@@ -257,10 +261,10 @@ let rec getEarliestEvent = (self: t) => {
   }
 }
 
-let makeInternal = (~id, ~contractAddressMapping): t => {
+let makeInternal = (~id, ~contractAddressMapping, ~startBlock): t => {
   id,
   latestFetchedBlockTimestamp: 0,
-  latestFetchedBlockNumber: 0,
+  latestFetchedBlockNumber: Pervasives.max(startBlock - 1, 0),
   contractAddressMapping,
   fetchedEventQueue: list{},
   nextRegistered: None,

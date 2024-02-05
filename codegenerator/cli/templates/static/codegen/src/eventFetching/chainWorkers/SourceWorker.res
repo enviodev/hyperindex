@@ -1,8 +1,6 @@
 @@warnings("+27")
 
-type sourceWorker =
-  | Rpc(RpcWorker.t)
-  | HyperSync(HyperSyncWorker.t)
+type sourceWorker = Config.source<HyperSyncWorker.t, RpcWorker.t>
 
 let fetchArbitraryEvents = (_worker: sourceWorker) => {
   Js.Exn.raiseError("Unhandled fetching arb events from hypersync ")

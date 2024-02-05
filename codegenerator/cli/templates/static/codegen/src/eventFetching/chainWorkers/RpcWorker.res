@@ -1,7 +1,8 @@
 open Belt
+open ChainWorkerTypes
 
 type rec t = {
-  mutable currentBlockInterval: int,
+  currentBlockInterval: int,
   blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
   chainConfig: Config.chainConfig,
   rpcConfig: Config.rpcConfig,
@@ -56,11 +57,11 @@ let rec waitForNewBlockBeforeQuery = async (
 
 let fetchBlockRange = async (
   self: t,
-  ~query: HyperSyncWorker.blockRangeFetchArgs,
+  ~query: blockRangeFetchArgs,
   ~logger,
   ~currentBlockHeight,
   ~setCurrentBlockHeight,
-): HyperSyncWorker.blockRangeFetchResponse => {
+) => {
   let {currentBlockInterval, blockLoader, chainConfig, rpcConfig} = self
   let {fromBlock, toBlock, contractAddressMapping, fetcherId} = query
 
@@ -114,12 +115,15 @@ let fetchBlockRange = async (
 
   let sc = rpcConfig.syncConfig
 
-  // Increase batch size going forward, but do not increase past a configured maximum
-  // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-  self.currentBlockInterval = Pervasives.min(
-    finalExecutedBlockInterval + sc.accelerationAdditive,
-    sc.intervalCeiling,
-  )
+  let nextWorker = {
+    ...self,
+    // Increase batch size going forward, but do not increase past a configured maximum
+    // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+    currentBlockInterval: Pervasives.min(
+      finalExecutedBlockInterval + sc.accelerationAdditive,
+      sc.intervalCeiling,
+    ),
+  }
 
   let heighestQueriedBlockTimestamp = await toBlockTimestampPromise
 
@@ -128,7 +132,7 @@ let fetchBlockRange = async (
   let totalTimeElapsed =
     startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-  let reorgGuardStub: HyperSyncWorker.reorgGuard = {
+  let reorgGuardStub: reorgGuard = {
     parentHash: None,
     lastBlockScannedData: {
       blockNumber: 0,
@@ -148,6 +152,7 @@ let fetchBlockRange = async (
     reorgGuard: reorgGuardStub,
     fromBlockQueried: fromBlock,
     fetcherId,
+    worker: Rpc(nextWorker),
   }
 }
 

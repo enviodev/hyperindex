@@ -92,9 +92,8 @@ let make = (~caughtUpToHeadHook=?, ~contractAddressMapping=?, chainConfig: Confi
 
   //Worker used for fetching new dynamcic contract events
   let sourceWorker = {
-    open SourceWorker
     switch chainConfig.syncSource {
-    | Rpc(rpcConfig) => SourceWorker.Rpc(RpcWorker.make(~rpcConfig, chainConfig))
+    | Rpc(rpcConfig) => Config.Rpc(RpcWorker.make(~rpcConfig, chainConfig))
     | HyperSync(serverUrl) => HyperSync(HyperSyncWorker.make(chainConfig, ~serverUrl))
     }
   }

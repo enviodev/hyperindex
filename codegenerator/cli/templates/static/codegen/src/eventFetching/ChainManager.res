@@ -1,3 +1,4 @@
+open Belt
 type t = {
   chainFetchers: ChainMap.t<ChainFetcher.t>,
   //The priority queue should only house the latest event from each chain
@@ -59,7 +60,6 @@ let createDetermineNextEventFunction = (
   ~isUnorderedHeadMode: bool,
   fetchers: ChainMap.t<DynamicContractFetcher.t>,
 ): result<multiChainEventComparitor, exn> => {
-  open Belt
   let comparitorFunction = if isUnorderedHeadMode {
     chainFetcherPeekComparitorEarliestEventPrioritizeEvents
   } else {
@@ -93,13 +93,13 @@ let determineNextEvent = createDetermineNextEventFunction(
   ~isUnorderedHeadMode=Config.isUnorderedHeadMode,
 )
 
-let make = (~configs: Config.chainConfigs): t => {
+let makeFromConfig = (~configs: Config.chainConfigs): t => {
   let chainFetchers = configs->ChainMap.map(chainConfig => {
     let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
       ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
     )
 
-    ChainFetcher.make(~chainConfig, ~lastBlockScannedHashes)
+    chainConfig->ChainFetcher.makeFromConfig(~lastBlockScannedHashes)
   })
 
   {
@@ -108,13 +108,33 @@ let make = (~configs: Config.chainConfigs): t => {
   }
 }
 
-exception NotASourceWorker
-let toSourceWorker = (worker: ChainWorkerTypes.chainWorker): SourceWorker.sourceWorker =>
-  switch worker {
-  | HyperSync(w) => HyperSync(w)
-  | Rpc(w) => Rpc(w)
-  // | RawEvents(_) => NotASourceWorker->raise
+let makeFromDbState = async (~configs: Config.chainConfigs): t => {
+  let initial = makeFromConfig(~configs)
+  let dbStateInitialized =
+    await configs
+    ->ChainMap.values
+    ->Array.map(chainConfig => {
+      let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
+        ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
+      )
+
+      chainConfig->ChainFetcher.makeFromDbState(~lastBlockScannedHashes)
+    })
+    ->Promise.all
+
+  let chainFetchers =
+    dbStateInitialized->Array.reduce(initial.chainFetchers, (accum, chainFetcher) =>
+      accum->ChainMap.set(chainFetcher.chainConfig.chain, chainFetcher)
+    )
+
+  {
+    chainFetchers,
+    arbitraryEventPriorityQueue: list{},
   }
+}
+
+exception NotASourceWorker
+let toSourceWorker = (worker: SourceWorker.sourceWorker): SourceWorker.sourceWorker => worker
 
 //TODO this needs to action a roll back
 let reorgStub = async (chainManager: t, ~chainFetcher: ChainFetcher.t, ~lastBlockScannedData) => {
@@ -125,12 +145,12 @@ let reorgStub = async (chainManager: t, ~chainFetcher: ChainFetcher.t, ~lastBloc
     await chainFetcher.chainWorker
     ->toSourceWorker
     ->SourceWorker.getBlockHashes(~blockNumbers)
-    ->Promise.thenResolve(Belt.Result.getExn)
+    ->Promise.thenResolve(Result.getExn)
 
   let rolledBack =
     chainFetcher.lastBlockScannedHashes
     ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
-    ->Belt.Result.getExn
+    ->Result.getExn
 
   let reorgStartPlace = rolledBack->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
 
@@ -159,7 +179,7 @@ there is no need to consider other chains with prunining in this case
 let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
   chainManager.chainFetchers
   ->ChainMap.values
-  ->Belt.Array.map((cf): ReorgDetection.LastBlockScannedHashes.currentHeightAndLastBlockHashes => {
+  ->Array.map((cf): ReorgDetection.LastBlockScannedHashes.currentHeightAndLastBlockHashes => {
     lastBlockScannedHashes: cf.lastBlockScannedHashes,
     currentHeight: cf.currentBlockHeight,
   })
@@ -221,25 +241,10 @@ let checkHasReorgOccurred = (
   }
 }
 
-// let startFetchers = (self: t) => {
-//   self.chainFetchers
-//   ->ChainMap.values
-//   ->Belt.Array.forEach(fetcher => {
-//     //Start the fetchers
-//     fetcher
-//     ->ChainFetcher.startFetchingEvents(~checkHasReorgOccurred=self->checkHasReorgOccurred)
-//     ->ignore
-//   })
-// }
-
 let getChainFetcher = (self: t, ~chain: ChainMap.Chain.t): ChainFetcher.t => {
   self.chainFetchers->ChainMap.get(chain)
 }
 
-//Synchronus operation that returns an optional value and will not wait
-//for a value to be on the queue
-//TODO: investigate can this function + Async version below be combined to share
-//logic
 type earliestQueueItem =
   | ArbitraryEventQueue(Types.eventBatchQueueItem, list<Types.eventBatchQueueItem>)
   | EventFetchers(Types.eventBatchQueueItem, ChainMap.t<DynamicContractFetcher.t>)
@@ -248,8 +253,6 @@ let popBatchItem = (
   ~fetchers: ChainMap.t<DynamicContractFetcher.t>,
   ~arbitraryEventQueue: list<Types.eventBatchQueueItem>,
 ): option<earliestQueueItem> => {
-  open Belt
-
   //Compare the peeked items and determine the next item
   let {chain, latestEventResponse: {updatedFetcher, earliestQueueItem}} =
     fetchers->determineNextEvent->Result.getExn
@@ -285,109 +288,6 @@ let getBlockNumberFromBufferPeekItem = (peekItem: ChainFetcher.queueFront) => {
   }
 }
 
-// /**
-// Async pop function that will wait for an item to be available before returning
-// */
-// let rec popAndAwaitBatchItem: t => promise<Types.eventBatchQueueItem> = async (
-//   self: t,
-// ): Types.eventBatchQueueItem => {
-//   //Peek all next fetched event queue items on all chain fetchers
-//   let peekChainFetcherFrontItems =
-//     self.chainFetchers
-//     ->ChainMap.values
-//     ->Belt.Array.map(fetcher => fetcher->ChainFetcher.peekFrontItemOfQueue)
-//
-//   //Compare the peeked items and determine the next item
-//   let nextItemFromBuffer = peekChainFetcherFrontItems->determineNextEvent->Belt.Result.getExn
-//
-//   //Callback for handling popping of chain fetcher events
-//   let popNextItemAndAwait = async () => {
-//     switch nextItemFromBuffer {
-//     | ChainFetcher.NoItem(_, chain) =>
-//       //If higest priority is a "NoItem", it means we need to wait for
-//       //that chain fetcher to fetch blocks of a higher timestamp
-//       let fetcher = self->getChainFetcher(~chain)
-//       //Add a callback and wait for a new block range to finish being queried
-//       await fetcher->ChainFetcher.addNewRangeQueriedCallback
-//       //Once there is confirmation from the chain fetcher that a new range has been
-//       //queried retry the popAwait batch function
-//       await self->popAndAwaitBatchItem
-//     | ChainFetcher.Item(batchItem) =>
-//       //If there is an item pop it off of the chain fetcher queue and return
-//       let fetcher = self->getChainFetcher(~chain=batchItem.chain)
-//       await fetcher->ChainFetcher.popAndAwaitQueueItem
-//     }
-//   }
-//
-//   //Peek arbitraty events queue
-//   let peekedArbTopItem = self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.top
-//
-//   switch peekedArbTopItem {
-//   //If there is item on the arbitray events queue, pop the relevant item from
-//   //the chain fetcher queue
-//   | None => await popNextItemAndAwait()
-//   | Some(peekedArbItem) =>
-//     //If there is an item on the arbitrary events queue, compare it to the next
-//     //item from the chain fetchers
-//     let arbItemIsEarlier = chainFetcherPeekComparitorEarliestEvent(
-//       ChainFetcher.Item(peekedArbItem),
-//       nextItemFromBuffer,
-//     )
-//
-//     //If the arbitrary item is earlier, return that
-//     if arbItemIsEarlier {
-//       //safely pop the item since we have already checked there's one at the front
-//       self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.pop->Belt.Option.getUnsafe
-//     } else {
-//       //Else pop the next item from chain fetchers
-//       await popNextItemAndAwait()
-//     }
-//   }
-// }
-
-// let createBatch = async (self: t, ~minBatchSize: int, ~maxBatchSize: int): array<
-//   Types.eventBatchQueueItem,
-// > => {
-//   let refTime = Hrtime.makeTimer()
-//
-//   let batch = []
-//   while batch->Belt.Array.length < minBatchSize {
-//     let item = await self->popAndAwaitBatchItem
-//     batch->Js.Array2.push(item)->ignore
-//   }
-//
-//   let moreItemsToPop = ref(true)
-//   while moreItemsToPop.contents && batch->Belt.Array.length < maxBatchSize {
-//     let optItem = self->popBatchItem(~shouldAwaitArbQueueItem=false)
-//     switch optItem {
-//     | None => moreItemsToPop := false
-//     | Some(item) => batch->Js.Array2.push(item)->ignore
-//     }
-//   }
-//   let fetchedEventsBuffer =
-//     self.chainFetchers
-//     ->ChainMap.values
-//     ->Belt.Array.map(fetcher => (
-//       fetcher.chainConfig.chain->ChainMap.Chain.toString,
-//       fetcher.fetchedEventQueue.queue->SDSL.Queue.size,
-//     ))
-//     ->Belt.Array.concat([
-//       ("arbitrary", self.arbitraryEventPriorityQueue->SDSL.PriorityQueue.length),
-//     ])
-//     ->Js.Dict.fromArray
-//
-//   let timeElapsed = refTime->Hrtime.timeSince->Hrtime.toMillis
-//
-//   Logging.trace({
-//     "message": "New batch created for processing",
-//     "batch size": batch->Array.length,
-//     "buffers": fetchedEventsBuffer,
-//     "time taken (ms)": timeElapsed,
-//   })
-//
-//   batch
-// }
-
 type batchRes = {
   batch: list<Types.eventBatchQueueItem>,
   batchSize: int,
@@ -396,7 +296,7 @@ type batchRes = {
 }
 
 let makeBatch = (~batchRev, ~currentBatchSize, ~fetchers, ~arbitraryEventQueue) => {
-  batch: batchRev->Belt.List.reverse,
+  batch: batchRev->List.reverse,
   fetchers,
   arbitraryEventQueue,
   batchSize: currentBatchSize,
@@ -432,7 +332,6 @@ let rec createBatchInternal = (
 }
 
 let createBatch = (self: t, ~maxBatchSize: int) => {
-  open Belt
   let refTime = Hrtime.makeTimer()
 
   let {arbitraryEventPriorityQueue, chainFetchers} = self

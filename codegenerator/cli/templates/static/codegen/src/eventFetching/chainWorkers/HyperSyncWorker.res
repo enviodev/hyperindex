@@ -1,3 +1,4 @@
+open ChainWorkerTypes
 type t = {
   chainConfig: Config.chainConfig,
   serverUrl: string,
@@ -53,40 +54,6 @@ type nextPageFetchRes = {
   contractInterfaceManager: ContractInterfaceManager.t,
   page: HyperSync.logsQueryPage,
   pageFetchTime: int,
-}
-
-/**
-The args required for calling block range fetch
-*/
-type blockRangeFetchArgs = DynamicContractFetcher.nextQuery
-
-/**
-A set of stats for logging about the block range fetch
-*/
-type blockRangeFetchStats = {
-  @as("total time elapsed (ms)") totalTimeElapsed: int,
-  @as("parsing time (ms)") parsingTimeElapsed?: int,
-  @as("page fetch time (ms)") pageFetchTime?: int,
-  @as("average parse time per log (ms)") averageParseTimePerLog?: float,
-}
-
-type reorgGuard = {
-  lastBlockScannedData: ReorgDetection.lastBlockScannedData,
-  parentHash: option<string>,
-}
-
-/**
-Thes response returned from a block range fetch
-*/
-type blockRangeFetchResponse = {
-  currentBlockHeight: int,
-  reorgGuard: reorgGuard,
-  parsedQueueItems: array<Types.eventBatchQueueItem>,
-  fromBlockQueried: int,
-  heighestQueriedBlockNumber: int,
-  latestFetchedBlockTimestamp: int,
-  stats: blockRangeFetchStats,
-  fetcherId: DynamicContractFetcher.id,
 }
 
 let waitForNextBlockBeforeQuery = async (
@@ -160,7 +127,7 @@ let fetchBlockRange = async (
   ~logger,
   ~currentBlockHeight,
   ~setCurrentBlockHeight,
-): blockRangeFetchResponse => {
+) => {
   let {chainConfig: {chain}, serverUrl} = self
   let {fetcherId, fromBlock, contractAddressMapping, currentLatestBlockTimestamp, toBlock} = query
   let startFetchingBatchTimeRef = Hrtime.makeTimer()
@@ -316,6 +283,7 @@ let fetchBlockRange = async (
     reorgGuard,
     fromBlockQueried: fromBlock,
     fetcherId,
+    worker: HyperSync(self),
   }
 }
 

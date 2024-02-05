@@ -13,15 +13,19 @@ type t = {
 }
 type chain = ChainMap.Chain.t
 type arbitraryEventQueue = list<Types.eventBatchQueueItem>
+type blockRangeFetchResponse = ChainWorkerTypes.blockRangeFetchResponse<
+  HyperSyncWorker.t,
+  RpcWorker.t,
+>
 type action =
-  | HyperSyncBlockRangeResponse(chain, HyperSyncWorker.blockRangeFetchResponse)
+  | BlockRangeResponse(chain, blockRangeFetchResponse)
   | SetFetcherCurrentBlockHeight(chain, int)
   | EventBatchProcessed(EventProcessing.loadResponse<unit>)
   | SetCurrentlyProcessing(bool)
   | SetCurrentlyFetchingBatch(chain, bool)
   | UpdateQueues(ChainMap.t<DynamicContractFetcher.t>, arbitraryEventQueue)
 
-type queryChain = CheckAllChainsRoot | Chain(chain)
+type queryChain = CheckAllChains | Chain(chain)
 type task =
   | NextQuery(queryChain)
   | ProcessEventBatch
@@ -50,11 +54,7 @@ let handleSetCurrentBlockHeight = (state, ~chain, ~currentBlockHeight) => {
   (nextState, nextTasks)
 }
 
-let handleHyperSyncBlockRangeResponse = (
-  state,
-  ~chain,
-  ~response: HyperSyncWorker.blockRangeFetchResponse,
-) => {
+let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchResponse) => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
   let {
     parsedQueueItems,
@@ -65,6 +65,7 @@ let handleHyperSyncBlockRangeResponse = (
     fromBlockQueried,
     fetcherId,
     latestFetchedBlockTimestamp,
+    worker,
   } = response
 
   chainFetcher.logger->Logging.childTrace({
@@ -92,6 +93,7 @@ let handleHyperSyncBlockRangeResponse = (
 
   let updatedChainFetcher = {
     ...chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight),
+    chainWorker: worker,
     fetcher: updatedFetcher,
     isFetchingBatch: false,
   }
@@ -110,8 +112,7 @@ let actionReducer = (state: t, action: action) => {
   switch action {
   | SetFetcherCurrentBlockHeight(chain, currentBlockHeight) =>
     state->handleSetCurrentBlockHeight(~chain, ~currentBlockHeight)
-  | HyperSyncBlockRangeResponse(chain, response) =>
-    state->handleHyperSyncBlockRangeResponse(~chain, ~response)
+  | BlockRangeResponse(chain, response) => state->handleBlockRangeResponse(~chain, ~response)
   | EventBatchProcessed({
       dynamicContractRegistrations: Some({registrationsReversed, unprocessedBatchReversed}),
     }) =>
@@ -123,7 +124,7 @@ let actionReducer = (state: t, action: action) => {
           b->EventUtils.getEventComparatorFromQueueItem
       }, state.chainManager.arbitraryEventPriorityQueue)
 
-    let nextTasks = [ProcessEventBatch, NextQuery(CheckAllChainsRoot)]
+    let nextTasks = [ProcessEventBatch, NextQuery(CheckAllChains)]
 
     let nextState = registrationsReversed->List.reduce(state, (state, registration) => {
       let {
@@ -197,7 +198,7 @@ let actionReducer = (state: t, action: action) => {
           arbitraryEventPriorityQueue,
         },
       },
-      [NextQuery(CheckAllChainsRoot)],
+      [NextQuery(CheckAllChains)],
     )
   }
 }
@@ -218,7 +219,7 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
     let compose = (worker, fetchBlockRange) => {
       worker
       ->fetchBlockRange(~query, ~logger, ~currentBlockHeight, ~setCurrentBlockHeight)
-      ->Promise.thenResolve(res => dispatchAction(HyperSyncBlockRangeResponse(chain, res)))
+      ->Promise.thenResolve(res => dispatchAction(BlockRangeResponse(chain, res)))
       ->ignore
     }
 
@@ -236,7 +237,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
 
     switch chainCheck {
     | Chain(chain) => chain->fetchForChain
-    | CheckAllChainsRoot => ChainMap.Chain.all->Array.forEach(fetchForChain)
+    | CheckAllChains => ChainMap.Chain.all->Array.forEach(fetchForChain)
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch {
