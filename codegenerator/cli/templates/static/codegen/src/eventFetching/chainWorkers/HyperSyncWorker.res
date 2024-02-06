@@ -56,6 +56,10 @@ type nextPageFetchRes = {
   pageFetchTime: int,
 }
 
+let waitForBlockGreaterThanCurrentHeight = ({serverUrl}: t, ~currentBlockHeight, ~logger) => {
+  HyperSync.pollForHeightGtOrEq(~serverUrl, ~blockNumber=currentBlockHeight, ~logger)
+}
+
 let waitForNextBlockBeforeQuery = async (
   ~serverUrl,
   ~fromBlock,
@@ -90,6 +94,8 @@ let getNextPage = async (
   ~contractAddressMapping,
 ) => {
   //Wait for a valid range to query
+  //This should never have to wait since we check that the from block is below the toBlock
+  //this in the GlobalState reducer
   await waitForNextBlockBeforeQuery(
     ~serverUrl,
     ~fromBlock,

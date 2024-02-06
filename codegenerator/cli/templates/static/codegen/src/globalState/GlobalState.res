@@ -1,9 +1,3 @@
-let unwrapExn = res =>
-  switch res {
-  | Ok(v) => v
-  | Error(exn) => exn->raise
-  }
-
 open Belt
 type t = {
   chainManager: ChainManager.t,
@@ -19,7 +13,7 @@ type blockRangeFetchResponse = ChainWorkerTypes.blockRangeFetchResponse<
 >
 type action =
   | BlockRangeResponse(chain, blockRangeFetchResponse)
-  | SetFetcherCurrentBlockHeight(chain, int)
+  | SetFetchStateCurrentBlockHeight(chain, int)
   | EventBatchProcessed(EventProcessing.loadResponse<unit>)
   | SetCurrentlyProcessing(bool)
   | SetCurrentlyFetchingBatch(chain, bool)
@@ -50,7 +44,7 @@ let handleSetCurrentBlockHeight = (state, ~chain, ~currentBlockHeight) => {
   let updatedFetcher = chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
   let updatedFetchers = state.chainManager.chainFetchers->ChainMap.set(chain, updatedFetcher)
   let nextState = {...state, chainManager: {...state.chainManager, chainFetchers: updatedFetchers}}
-  let nextTasks = []
+  let nextTasks = [NextQuery(Chain(chain))]
   (nextState, nextTasks)
 }
 
@@ -89,7 +83,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       ~fetchedEvents=parsedQueueItems->List.fromArray,
       ~id=fetcherId,
     )
-    ->unwrapExn
+    ->Utils.unwrapResultExn
 
   let updatedChainFetcher = {
     ...chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight),
@@ -110,7 +104,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
 
 let actionReducer = (state: t, action: action) => {
   switch action {
-  | SetFetcherCurrentBlockHeight(chain, currentBlockHeight) =>
+  | SetFetchStateCurrentBlockHeight(chain, currentBlockHeight) =>
     state->handleSetCurrentBlockHeight(~chain, ~currentBlockHeight)
   | BlockRangeResponse(chain, response) => state->handleBlockRangeResponse(~chain, ~response)
   | EventBatchProcessed({
@@ -153,6 +147,7 @@ let actionReducer = (state: t, action: action) => {
         state.chainManager.chainFetchers->ChainMap.set(registeringEventChain, updatedChainFetcher)
 
       let updatedChainManager: ChainManager.t = {
+        ...state.chainManager,
         chainFetchers: updatedChainFetchers,
         arbitraryEventPriorityQueue: updatedArbQueue,
       }
@@ -192,6 +187,7 @@ let actionReducer = (state: t, action: action) => {
       {
         ...state,
         chainManager: {
+          ...state.chainManager,
           chainFetchers,
           arbitraryEventPriorityQueue,
         },
@@ -208,22 +204,35 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
     !isFetchingBatch &&
     fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=state.maxPerChainQueueSize)
   ) {
-    let query = fetchState->FetchState.getNextQuery(~currentBlockHeight)
-
-    dispatchAction(SetCurrentlyFetchingBatch(chain, true))
+    let nextQuery = fetchState->FetchState.getNextQuery(~currentBlockHeight)
     let setCurrentBlockHeight = currentBlockHeight =>
-      dispatchAction(SetFetcherCurrentBlockHeight(chain, currentBlockHeight))
+      dispatchAction(SetFetchStateCurrentBlockHeight(chain, currentBlockHeight))
 
-    let compose = (worker, fetchBlockRange) => {
-      worker
-      ->fetchBlockRange(~query, ~logger, ~currentBlockHeight, ~setCurrentBlockHeight)
-      ->Promise.thenResolve(res => dispatchAction(BlockRangeResponse(chain, res)))
-      ->ignore
-    }
+    switch nextQuery {
+    | WaitForNewBlock =>
+      let compose = async (worker, waitForBlockGreaterThanCurrentHeight) => {
+        let newHeight =
+          await worker->waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
+        setCurrentBlockHeight(newHeight)
+      }
+      switch chainWorker {
+      | HyperSync(w) => compose(w, HyperSyncWorker.waitForBlockGreaterThanCurrentHeight)
+      | Rpc(w) => compose(w, RpcWorker.waitForBlockGreaterThanCurrentHeight)
+      }->ignore
+    | NextQuery(query) =>
+      dispatchAction(SetCurrentlyFetchingBatch(chain, true))
 
-    switch chainWorker {
-    | HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange)
-    | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange)
+      let compose = (worker, fetchBlockRange) => {
+        worker
+        ->fetchBlockRange(~query, ~logger, ~currentBlockHeight, ~setCurrentBlockHeight)
+        ->Promise.thenResolve(res => dispatchAction(BlockRangeResponse(chain, res)))
+        ->ignore
+      }
+
+      switch chainWorker {
+      | HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange)
+      | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange)
+      }
     }
   }
 }
@@ -235,13 +244,16 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
 
     switch chainCheck {
     | Chain(chain) => chain->fetchForChain
-    | CheckAllChains => ChainMap.Chain.all->Array.forEach(fetchForChain)
+    | CheckAllChains =>
+      //Mapping from the states chainManager so we can construct tests that don't use
+      //all chains
+      state.chainManager.chainFetchers->ChainMap.keys->Array.forEach(fetchForChain)
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch {
-      dispatchAction(SetCurrentlyProcessing(true))
       switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
       | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
+        dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
         let checkContractIsRegistered = (~chain, ~contractAddress, ~contractName) => {
           let fetchState = fetchStatesMap->ChainMap.get(chain)
@@ -258,7 +270,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
         )
         ->Promise.thenResolve(res => dispatchAction(EventBatchProcessed(res)))
         ->ignore
-      | None => dispatchAction(SetCurrentlyProcessing(false))
+      | None => ()
       }
     }
   }

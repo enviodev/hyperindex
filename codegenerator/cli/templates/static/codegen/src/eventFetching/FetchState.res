@@ -195,31 +195,42 @@ let getNextQueryFromNode = (
   {register, latestFetchedBlockNumber, contractAddressMapping, latestFetchedBlockTimestamp}: t,
   ~toBlock,
 ) => {
-  let fromBlock = latestFetchedBlockNumber + 1
-  let toBlock = Pervasives.max(toBlock, fromBlock) //ensure from block isn't lower than toBlock
   let id = switch register {
   | RootRegister => Root
   | DynamicContractRegister(id, _) => DynamicContract(id)
   }
+  let fromBlock = switch latestFetchedBlockNumber {
+  | 0 => 0
+  | latestFetchedBlockNumber => latestFetchedBlockNumber + 1
+  }
   {
     fetcherId: id,
-    fromBlock: latestFetchedBlockNumber + 1,
+    fromBlock,
     toBlock,
     contractAddressMapping,
     currentLatestBlockTimestamp: latestFetchedBlockTimestamp,
   }
 }
 
+type nextQueryOrWaitForBlock = NextQuery(nextQuery) | WaitForNewBlock
+
 /**
 Gets the next query either with a to block of the current height if it is the root node.
 Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge with the next regisetered.
 */
-let getNextQuery = (self: t, ~currentBlockHeight) =>
-  switch self.register {
+let getNextQuery = (self: t, ~currentBlockHeight) => {
+  let nextQuery = switch self.register {
   | RootRegister => self->getNextQueryFromNode(~toBlock=currentBlockHeight)
   | DynamicContractRegister(_, {latestFetchedBlockNumber}) =>
     self->getNextQueryFromNode(~toBlock=latestFetchedBlockNumber)
   }
+
+  if nextQuery.fromBlock > nextQuery.toBlock || currentBlockHeight == 0 {
+    WaitForNewBlock
+  } else {
+    NextQuery(nextQuery)
+  }
+}
 
 type earliestFetchedData = {
   timestamp: int,

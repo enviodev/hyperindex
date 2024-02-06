@@ -1,3 +1,4 @@
+open Belt
 open Types
 open RescriptMocha
 open Mocha
@@ -48,21 +49,15 @@ describe("E2E Db check", () => {
       [MockEntities.gravatarSerialized1, MockEntities.gravatarSerialized2],
     )
 
-    let arbitraryMaxQueueSize = 100
-
-    //Note this is not a matching config for the mock events
-    //Unneeded for this test since the chain manager does not need
-    //to fetch nested events from dynamic contracts
-    let mockChainManager = ChainManager.make(
-      ~configs=Config.config,
-      ~maxQueueSize=arbitraryMaxQueueSize,
-      ~shouldSyncFromRawEvents=false,
-    )
+    let checkContractIsRegisteredStub = (~chain, ~contractAddress, ~contractName) => {
+      (chain, contractAddress, contractName)->ignore
+      false
+    }
 
     await EventProcessing.processEventBatch(
       ~inMemoryStore,
-      ~eventBatch=MockEvents.eventBatchItems,
-      ~chainManager=mockChainManager,
+      ~eventBatch=MockEvents.eventBatchItems->List.fromArray,
+      ~checkContractIsRegistered=checkContractIsRegisteredStub,
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)

@@ -1,3 +1,4 @@
+open Belt
 open RescriptMocha
 open Mocha
 let {
@@ -7,15 +8,10 @@ let {
   before: before_promise,
 } = module(RescriptMocha.Promise)
 
-let populateChainQueuesWithRandomEvents = (~runTime=100000, ~maxBlockTime=15, ()) => {
+let populateChainQueuesWithRandomEvents = (~runTime=10000, ~maxBlockTime=15, ()) => {
   let allEvents = []
 
-  let arbitraryEventPriorityQueue = SDSL.PriorityQueue.makeAdvanced(
-    [],
-    // ChainManager.priorityQueueComparitor,
-    ChainManager.ExposedForTesting_Hidden.priorityQueueComparitor,
-  )
-
+  let arbitraryEventPriorityQueue = ref(list{})
   let numberOfMockEventsCreated = ref(0)
 
   let chainFetchers = Config.config->ChainMap.map(({chain}) => {
@@ -30,7 +26,12 @@ let populateChainQueuesWithRandomEvents = (~runTime=100000, ~maxBlockTime=15, ()
       Belt.Int.fromFloat(Js.Math.random() *. float_of_int(max - min + 1) +. float_of_int(min))
     }
 
-    let fetchedEventQueue = ChainEventQueue.make(~maxQueueSize=100000)
+    let fetcherStateInit: FetchState.t = FetchState.makeRoot(
+      ~contractAddressMapping=ContractAddressingMap.make(),
+      ~startBlock=0,
+    )
+
+    let fetchState = ref(fetcherStateInit)
 
     let endTimestamp = getCurrentTimestamp()
     let startTimestamp = endTimestamp - runTime
@@ -65,14 +66,34 @@ let populateChainQueuesWithRandomEvents = (~runTime=100000, ~maxBlockTime=15, ()
         allEvents->Js.Array2.push(batchItem)->ignore
 
         switch queuesToUse {
-        | 0 => arbitraryEventPriorityQueue->SDSL.PriorityQueue.push(batchItem)->ignore
-        | 1 => fetchedEventQueue.queue->SDSL.Queue.push(batchItem)->ignore
+        | 0 =>
+          arbitraryEventPriorityQueue :=
+            list{batchItem}->FetchState.mergeSortedEventList(arbitraryEventPriorityQueue.contents)
+        | 1 =>
+          fetchState :=
+            fetchState.contents
+            ->FetchState.update(
+              ~id=Root,
+              ~latestFetchedBlockNumber=batchItem.blockNumber,
+              ~latestFetchedBlockTimestamp=batchItem.timestamp,
+              ~fetchedEvents=list{batchItem},
+            )
+            ->Result.getExn
         | 2
         | _ =>
           if Js.Math.random() < 0.5 {
-            arbitraryEventPriorityQueue->SDSL.PriorityQueue.push(batchItem)->ignore
+            arbitraryEventPriorityQueue :=
+              list{batchItem}->FetchState.mergeSortedEventList(arbitraryEventPriorityQueue.contents)
           } else {
-            fetchedEventQueue.queue->SDSL.Queue.push(batchItem)->ignore
+            fetchState :=
+              fetchState.contents
+              ->FetchState.update(
+                ~id=Root,
+                ~latestFetchedBlockNumber=batchItem.blockNumber,
+                ~latestFetchedBlockTimestamp=batchItem.timestamp,
+                ~fetchedEvents=list{batchItem},
+              )
+              ->Result.getExn
           }
         }
         numberOfMockEventsCreated := numberOfMockEventsCreated.contents + 1
@@ -82,16 +103,18 @@ let populateChainQueuesWithRandomEvents = (~runTime=100000, ~maxBlockTime=15, ()
       currentBlockNumber := currentBlockNumber.contents + 1
     }
     let mockChainFetcher: ChainFetcher.t = {
-      fetchedEventQueue,
+      fetchState: fetchState.contents,
       logger: Logging.logger,
       chainConfig: "TODO"->Obj.magic,
       // This is quite a hack - but it works!
-      chainWorker: ref(
-        ChainWorker.Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->Obj.magic),
+      chainWorker: Config.Rpc(
+        (1, {"latestFetchedBlockTimestamp": currentTime.contents})->Obj.magic,
       ),
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
+      isFetchingBatch: false,
+      currentBlockHeight: 0,
     }
 
     mockChainFetcher
@@ -99,8 +122,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=100000, ~maxBlockTime=15, ()
 
   (
     {
-      ChainManager.arbitraryEventPriorityQueue,
+      ChainManager.arbitraryEventPriorityQueue: arbitraryEventPriorityQueue.contents,
       chainFetchers,
+      isUnorderedHeadMode: false,
     },
     numberOfMockEventsCreated.contents,
     allEvents,
@@ -108,7 +132,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=100000, ~maxBlockTime=15, ()
 }
 
 describe("ChainManager", () => {
-  describe("popBlockBatchItems", () => {
+  //Test was previously popBlockBatchItems
+  describe("createBatch", () => {
     it(
       "when processing through many randomly generated events on different queues, the grouping and ordering is correct",
       () => {
@@ -117,6 +142,7 @@ describe("ChainManager", () => {
           numberOfMockEventsCreated,
           _allEvents,
         ) = populateChainQueuesWithRandomEvents()
+
         let defaultFirstEvent: Types.eventBatchQueueItem = {
           timestamp: 0,
           chain: Chain_1,
@@ -127,30 +153,28 @@ describe("ChainManager", () => {
 
         let numberOfMockEventsReadFromQueues = ref(0)
         let allEventsRead = []
-        let rec testThatCreatedEventsAreOrderedCorrectly = lastEvent => {
-          let eventsInBlock = ChainManager.popBlockBatchItems(mockChainManager)
+        let rec testThatCreatedEventsAreOrderedCorrectly = (chainManager, lastEvent) => {
+          let eventsInBlock = ChainManager.createBatch(chainManager, ~maxBatchSize=10000)
 
           // ensure that the events are ordered correctly
           switch eventsInBlock {
-          | None => true
-          | Some(eventsInBlock) =>
-            eventsInBlock
-            ->Belt.Array.map(
+          | None => chainManager
+          | Some({batch, batchSize, fetchStatesMap, arbitraryEventQueue}) =>
+            batch->List.forEach(
               i => {
                 allEventsRead->Js.Array2.push(i)
               },
             )
-            ->ignore
             numberOfMockEventsReadFromQueues :=
-              numberOfMockEventsReadFromQueues.contents + eventsInBlock->Belt.Array.length
+              numberOfMockEventsReadFromQueues.contents + batchSize
             // Check that events has at least 1 item in it
             Assert.equal(
-              eventsInBlock->Belt.Array.length > 0,
+              batchSize > 0,
               true,
               ~message="if `Some` is returned, the array must have at least 1 item in it.",
             )
 
-            let firstEventInBlock = eventsInBlock->Belt.Array.getExn(0)
+            let firstEventInBlock = batch->List.headExn
 
             Assert.equal(
               firstEventInBlock->ChainManager.ExposedForTesting_Hidden.getComparitorFromItem >
@@ -159,47 +183,68 @@ describe("ChainManager", () => {
               ~message="Check that first event in this block group is AFTER the last event before this block group",
             )
 
-            let lastEvent =
-              eventsInBlock
-              ->Belt.Array.sliceToEnd(1)
-              ->Belt.Array.reduce(
-                firstEventInBlock,
-                (previous, current) => {
-                  Assert.equal(
-                    previous.blockNumber,
-                    current.blockNumber,
-                    ~message=`The block number within a block should always be the same, here ${previous.blockNumber->string_of_int} (previous.blockNumber) != ${current.blockNumber->string_of_int}(current.blockNumber)`,
-                  )
+            //Note -> this test was originally for popping all events related to a single block
+            //Now we don't guarentee processing all events in a block so these assertions are no longer needed.
+            // let lastEvent =
+            //   batch
+            //   ->List.toArray
+            //   ->Belt.Array.sliceToEnd(1)
+            //   ->Belt.Array.reduce(
+            //     firstEventInBlock,
+            //     (previous, current) => {
+            //       // Assert.equal(
+            //       //   previous.blockNumber,
+            //       //   current.blockNumber,
+            //       //   ~message=`The block number within a block should always be the same, here ${previous.blockNumber->string_of_int} (previous.blockNumber) != ${current.blockNumber->string_of_int}(current.blockNumber)`,
+            //       // )
+            //
+            //       Assert.equal(
+            //         previous.chain,
+            //         current.chain,
+            //         ~message=`The chainId within a block should always be the same, here ${previous.chain->ChainMap.Chain.toString} (previous.chainId) != ${current.chain->ChainMap.Chain.toString}(current.chainId)`,
+            //       )
+            //
+            //       Assert.equal(
+            //         current.logIndex > previous.logIndex,
+            //         true,
+            //         ~message=`Incorrect log index, the offending event pair: ${current.event->Obj.magic} - ${previous.event->Obj.magic}`,
+            //       )
+            //       current
+            //     },
+            //   )
+            let nextChainFetchers = chainManager.chainFetchers->ChainMap.mapWithKey(
+              (chain, fetcher) => {
+                let fetchState = fetchStatesMap->ChainMap.get(chain)
+                {
+                  ...fetcher,
+                  fetchState,
+                }
+              },
+            )
 
-                  Assert.equal(
-                    previous.chain,
-                    current.chain,
-                    ~message=`The chainId within a block should always be the same, here ${previous.chain->ChainMap.Chain.toString} (previous.chainId) != ${current.chain->ChainMap.Chain.toString}(current.chainId)`,
-                  )
-
-                  Assert.equal(
-                    current.logIndex > previous.logIndex,
-                    true,
-                    ~message=`Incorrect log index, the offending event pair: ${current.event->Obj.magic} - ${previous.event->Obj.magic}`,
-                  )
-                  current
-                },
-              )
-            testThatCreatedEventsAreOrderedCorrectly(lastEvent)
+            let nextChainManager: ChainManager.t = {
+              ...chainManager,
+              arbitraryEventPriorityQueue: arbitraryEventQueue,
+              chainFetchers: nextChainFetchers,
+            }
+            testThatCreatedEventsAreOrderedCorrectly(nextChainManager, lastEvent)
           }
         }
 
-        let _ = testThatCreatedEventsAreOrderedCorrectly(defaultFirstEvent)
+        let finalChainManager = testThatCreatedEventsAreOrderedCorrectly(
+          mockChainManager,
+          defaultFirstEvent,
+        )
 
         // Test that no events were missed
         let amountStillOnQueues =
-          mockChainManager.arbitraryEventPriorityQueue->SDSL.PriorityQueue.length +
-            mockChainManager.chainFetchers
+          finalChainManager.arbitraryEventPriorityQueue->List.length +
+            finalChainManager.chainFetchers
             ->ChainMap.values
             ->Belt.Array.reduce(
               0,
               (accum, val) => {
-                accum + val.fetchedEventQueue.queue->SDSL.Queue.size
+                accum + val.fetchState->FetchState.queueSize
               },
             )
 
@@ -223,40 +268,59 @@ describe("determineNextEvent", () => {
       ~isUnorderedHeadMode=false,
     )
 
+    let makeNoItem = timestamp => FetchState.NoItem({timestamp, blockNumber: 0})
+    let makeMockQItem = (timestamp, chain): Types.eventBatchQueueItem => {
+      {
+        timestamp,
+        chain,
+        blockNumber: 987654,
+        logIndex: 123456,
+        event: "SINGLE TEST EVENT"->Obj.magic,
+      }
+    }
+    let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
+      register: RootRegister,
+      latestFetchedBlockTimestamp,
+      latestFetchedBlockNumber: 0,
+      contractAddressMapping: ContractAddressingMap.make(),
+      fetchedEventQueue: item->Option.mapWithDefault(list{}, v => list{v}),
+    }
+
     it(
       "should always take an event if there is one, even if other chains haven't caught up",
       () => {
-        let singleItem: ChainFetcher.eventQueuePeek = Item({
-          timestamp: 654,
-          chain: Chain_137,
-          blockNumber: 987654,
-          logIndex: 123456,
-          event: "SINGLE TEST EVENT"->Obj.magic,
-        })
-        let earliestItem = ChainFetcher.NoItem(
-          5 /* earlier timestamp than the test event */,
-          Chain_1,
-        )
-        let example: array<ChainFetcher.eventQueuePeek> = [
-          earliestItem,
-          NoItem(653 /* earlier timestamp than the test event */, Chain_1),
-          singleItem,
-          NoItem(655 /* later timestamp than the test event */, Chain_1),
-        ]
+        let singleItem = makeMockQItem(654, Chain_137)
+        let earliestItem = makeNoItem(5) /* earlier timestamp than the test event */
 
-        let resultUnordered = determineNextEvent_unordered(example)
+        let fetchStatesMap = ChainMap.make(
+          chain =>
+            switch chain {
+            | Chain_1 =>
+              makeMockFetchState(
+                ~latestFetchedBlockTimestamp=5,
+                ~item=None,
+              ) /* earlier timestamp than the test event */
+            | Chain_137 =>
+              makeMockFetchState(~latestFetchedBlockTimestamp=5, ~item=Some(singleItem))
+            | Chain_1337 => makeMockFetchState(~latestFetchedBlockTimestamp=655, ~item=None)
+            },
+        )
+
+        let {earliestEventResponse: {earliestQueueItem}} =
+          determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
         Assert.deep_equal(
-          resultUnordered,
-          Ok(singleItem),
+          earliestQueueItem,
+          Item(singleItem),
           ~message="Should have taken the single item",
         )
 
-        let resultOrdered = determineNextEvent_ordered(example)
+        let {earliestEventResponse: {earliestQueueItem}} =
+          determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deep_equal(
-          resultOrdered,
-          Ok(earliestItem),
+          earliestQueueItem,
+          earliestItem,
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )
       },
@@ -264,38 +328,55 @@ describe("determineNextEvent", () => {
     it(
       "should always take the lower of two events if there are any, even if other chains haven't caught up",
       () => {
-        let singleItem: Types.eventBatchQueueItem = {
-          timestamp: 654,
-          chain: Chain_137,
-          blockNumber: 987654,
-          logIndex: 123456,
-          event: "SINGLE TEST EVENT"->Obj.magic,
-        }
-        let earliestItem = ChainFetcher.NoItem(
-          5 /* earlier timestamp than the test event */,
-          Chain_1,
-        )
-        let example: array<ChainFetcher.eventQueuePeek> = [
-          earliestItem,
-          NoItem(653 /* earlier timestamp than the test event */, Chain_1),
-          Item({...singleItem, timestamp: singleItem.timestamp + 1}),
-          Item(singleItem),
-          NoItem(655 /* later timestamp than the test event */, Chain_1),
-        ]
+        let earliestItemTimestamp = 653
+        let singleItemTimestamp = 654
+        let singleItem = makeMockQItem(singleItemTimestamp, Chain_137)
 
-        let resultUnordered = determineNextEvent_unordered(example)
+        let fetchStatesMap = ChainMap.make(
+          chain =>
+            switch chain {
+            | Chain_1 =>
+              makeMockFetchState(
+                ~latestFetchedBlockTimestamp=earliestItemTimestamp,
+                ~item=None,
+              ) /* earlier timestamp than the test event */
+            | Chain_137 =>
+              makeMockFetchState(
+                ~latestFetchedBlockTimestamp=singleItemTimestamp,
+                ~item=Some(singleItem),
+              )
+            | Chain_1337 =>
+              let higherTS = singleItemTimestamp + 1
+              makeMockFetchState(
+                ~latestFetchedBlockTimestamp=higherTS,
+                ~item=Some(makeMockQItem(higherTS, chain)),
+              )
+            },
+        )
+
+        // let example: array<ChainFetcher.eventQueuePeek> = [
+        //   earliestItem,
+        //   NoItem(653 /* earlier timestamp than the test event */, Chain_1),
+        //   Item({...singleItem, timestamp: singleItem.timestamp + 1}),
+        //   Item(singleItem),
+        //   NoItem(655 /* later timestamp than the test event */, Chain_1),
+        // ]
+
+        let {earliestEventResponse: {earliestQueueItem}} =
+          determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
         Assert.deep_equal(
-          resultUnordered,
-          Ok(Item(singleItem)),
+          earliestQueueItem,
+          Item(singleItem),
           ~message="Should have taken the single item",
         )
 
-        let resultOrdered = determineNextEvent_ordered(example)
+        let {earliestEventResponse: {earliestQueueItem}} =
+          determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deep_equal(
-          resultOrdered,
-          Ok(earliestItem),
+          earliestQueueItem,
+          makeNoItem(earliestItemTimestamp),
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )
       },

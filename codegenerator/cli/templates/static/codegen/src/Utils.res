@@ -86,3 +86,15 @@ module Tuple = {
   @warning("-27")
   let get = (tuple: 'a, index: int): option<'b> => %raw(`tuple[index]`)
 }
+
+/**
+Useful when an unsafe unwrap is needed on Result type
+and Error holds an exn. This is better than Result.getExn
+because the excepion is not just NOT_FOUND but will rather
+bet the actual underlying exn
+*/
+let unwrapResultExn = res =>
+  switch res {
+  | Ok(v) => v
+  | Error(exn) => exn->raise
+  }
