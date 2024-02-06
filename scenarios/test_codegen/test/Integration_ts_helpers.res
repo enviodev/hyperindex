@@ -47,17 +47,29 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
 type chainManager = ChainManager.t
 
 @genType
-let makeChainManager = (cfg: chainConfig, shouldSyncFromRawEvents, maxQueueSize): chainManager =>
-  ChainManager.make(
-    ~configs=Belt.Map.fromArray([(cfg.chain, cfg)], ~id=module(ChainMap.Chain.ChainIdCmp)),
-    ~shouldSyncFromRawEvents,
-    ~maxQueueSize,
-  )
+let makeChainManager = (cfg: chainConfig): chainManager => {
+  // let getConfig = chain =>
+  //   if chain == cfg.chain {
+  //     cfg
+  //   } else {
+  //     chain->Config.getConfig
+  //   }
+  // let configs = ChainMap.make(getConfig)
+  let configs = [(cfg.chain, cfg)]->Belt.Map.fromArray(~id=module(ChainMap.Chain.ChainIdCmp))
+  let cm = ChainManager.makeFromConfig(~configs)
+  {...cm, isUnorderedHeadMode: true}
+}
 
 @genType
-let startFetchers: chainManager => unit = ChainManager.startFetchers
+let startProcessing = (cfg: chainConfig, chainManager: chainManager) => {
+  let globalState: GlobalState.t = {
+    currentlyProcessingBatch: false,
+    chainManager,
+    maxBatchSize: Env.maxProcessBatchSize,
+    maxPerChainQueueSize: Env.maxPerChainQueueSize,
+  }
 
-@genType
-let startProcessingEventsOnQueue: (
-  ~chainManager: chainManager,
-) => promise<unit> = EventProcessing.startProcessingEventsOnQueue
+  let gsManager = globalState->GlobalStateManager.make
+
+  gsManager->GlobalStateManager.dispatchTask(NextQuery(Chain(cfg.chain)))
+}

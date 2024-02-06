@@ -21,8 +21,7 @@ import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 import {
   getLocalChainConfig,
   makeChainManager,
-  startFetchers,
-  startProcessingEventsOnQueue,
+  startProcessing,
 } from "./Integration_ts_helpers.gen";
 // import { setLogLevel } from "generated/src/Logging.bs.js";
 // require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
@@ -82,21 +81,14 @@ describe("Raw Events Integration", () => {
     console.log("Successfully processed events");
 
     console.log("processing events after mint");
-    const ARB_QUEUE_SIZE = 100;
-    const SHOULD_SYNC_FROM_RAW_EVENTS = false;
-    const chainManager = makeChainManager(
-      localChainConfig,
-      SHOULD_SYNC_FROM_RAW_EVENTS,
-      ARB_QUEUE_SIZE
-    );
+    const chainManager = makeChainManager(localChainConfig);
 
-    startFetchers(chainManager);
-    startProcessingEventsOnQueue({ chainManager });
+    startProcessing(localChainConfig, chainManager);
     //Wait 0.5s for processing to occur it no longer finishes with a resolve
     await new Promise((res) =>
       setTimeout(() => {
         res(null);
-      }, 2000)
+      }, 1000)
     );
   });
   after(async () => {
@@ -131,15 +123,8 @@ describe("Raw Events Integration", () => {
 
     mintSimpleNft(Users.User1, simpleNftContractAddress, 1);
     const localChainConfig = getLocalChainConfig(nftFactoryContractAddress);
-    const ARB_QUEUE_SIZE = 100;
-    const SHOULD_SYNC_FROM_RAW_EVENTS = false;
-    const chainManager = makeChainManager(
-      localChainConfig,
-      SHOULD_SYNC_FROM_RAW_EVENTS,
-      ARB_QUEUE_SIZE
-    );
-    startFetchers(chainManager);
-    startProcessingEventsOnQueue({ chainManager });
+    const chainManager = makeChainManager(localChainConfig);
+    startProcessing(localChainConfig, chainManager);
 
     //Wait 2s for processing to occur
     await new Promise((res) =>

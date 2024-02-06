@@ -32,24 +32,41 @@ let make = (chainConfig: Config.chainConfig, ~rpcConfig: Config.rpcConfig): t =>
   }
 }
 
-let rec waitForNewBlockBeforeQuery = async (
+let waitForBlockGreaterThanCurrentHeight = async (
+  {rpcConfig: {provider}}: t,
+  ~currentBlockHeight,
+  ~logger,
+) => {
+  let nextBlockWait = provider->EventUtils.waitForNextBlock
+  let latestHeight =
+    await provider
+    ->Ethers.JsonRpcProvider.getBlockNumber
+    ->Promise.catch(_err => {
+      logger->Logging.childWarn("Error getting current block number")
+      0->Promise.resolve
+    })
+  if latestHeight > currentBlockHeight {
+    latestHeight
+  } else {
+    await nextBlockWait
+  }
+}
+
+let waitForNewBlockBeforeQuery = async (
   self: t,
   ~fromBlock,
   ~currentBlockHeight,
   ~setCurrentBlockHeight,
+  ~logger,
 ) => {
   //If there are no new blocks to fetch, poll the provider for
   //a new block until it arrives
   if fromBlock > currentBlockHeight {
-    let newBlock = await self.rpcConfig.provider->EventUtils.waitForNextBlock
+    let nextBlock = await self->waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
 
-    setCurrentBlockHeight(newBlock)
+    setCurrentBlockHeight(nextBlock)
 
-    await self->waitForNewBlockBeforeQuery(
-      ~fromBlock,
-      ~currentBlockHeight=newBlock,
-      ~setCurrentBlockHeight,
-    )
+    nextBlock
   } else {
     currentBlockHeight
   }
@@ -67,7 +84,12 @@ let fetchBlockRange = async (
 
   let startFetchingBatchTimeRef = Hrtime.makeTimer()
   let currentBlockHeight =
-    await self->waitForNewBlockBeforeQuery(~fromBlock, ~currentBlockHeight, ~setCurrentBlockHeight)
+    await self->waitForNewBlockBeforeQuery(
+      ~fromBlock,
+      ~currentBlockHeight,
+      ~setCurrentBlockHeight,
+      ~logger,
+    )
 
   let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)
 

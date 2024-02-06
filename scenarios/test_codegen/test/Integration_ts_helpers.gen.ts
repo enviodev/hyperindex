@@ -20,14 +20,9 @@ export abstract class chainManager { protected opaque!: any }; /* simulate opaqu
 
 export const getLocalChainConfig: (nftFactoryContractAddress:Ethers_ethAddress) => chainConfig = Integration_ts_helpersBS.getLocalChainConfig;
 
-export const makeChainManager: (cfg:chainConfig, shouldSyncFromRawEvents:boolean, maxQueueSize:number) => chainManager = function (Arg1: any, Arg2: any, Arg3: any) {
-  const result = Curry._3(Integration_ts_helpersBS.makeChainManager, Arg1, Arg2, Arg3);
-  return result
-};
+export const makeChainManager: (cfg:chainConfig) => chainManager = Integration_ts_helpersBS.makeChainManager;
 
-export const startFetchers: (_1:chainManager) => void = Integration_ts_helpersBS.startFetchers;
-
-export const startProcessingEventsOnQueue: (_1:{ readonly chainManager: chainManager }) => Promise<void> = function (Arg1: any) {
-  const result = Integration_ts_helpersBS.startProcessingEventsOnQueue(Arg1.chainManager);
+export const startProcessing: (cfg:chainConfig, chainManager:chainManager) => void = function (Arg1: any, Arg2: any) {
+  const result = Curry._2(Integration_ts_helpersBS.startProcessing, Arg1, Arg2);
   return result
 };

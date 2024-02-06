@@ -56,17 +56,19 @@ describe("E2E Integration Test", () => {
 
     RegisterHandlers.registerAllHandlers()
 
-    let chainManager = ChainManager.make(
-      ~configs=[(localChainConfig.chain, localChainConfig)]->Belt.Map.fromArray(
-        ~id=module(ChainMap.Chain.ChainIdCmp),
-      ),
-      ~maxQueueSize=100,
-      ~shouldSyncFromRawEvents=false,
-    )
+    let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
-    chainManager->ChainManager.startFetchers
+    let globalState: GlobalState.t = {
+      currentlyProcessingBatch: false,
+      chainManager,
+      maxBatchSize: Env.maxProcessBatchSize,
+      maxPerChainQueueSize: Env.maxPerChainQueueSize,
+    }
 
-    EventSyncing.startSyncingAllEvents(~shouldSyncFromRawEvents=false)
+    let gsManager = globalState->GlobalStateManager.make
+
+    gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
+    gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
 
     //Note this isn't working. Something to do with the polling on hardhat eth node
     //Would be better to spin up a local node with ganache

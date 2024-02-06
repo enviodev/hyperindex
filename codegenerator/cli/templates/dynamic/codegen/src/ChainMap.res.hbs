@@ -60,12 +60,17 @@ let make = (fn: Chain.t => 'a): t<'a> => {
   ->Map.fromArray(~id=module(Chain.ChainIdCmp))
 }
 
+exception UnexpectedChainDoesNoteExist(int)
 let get: (t<'a>, Chain.t) => 'a = (self, chain) =>
   //Can safely get exn since all chains must be set
-  Map.get(self, chain)->Option.getExn
+  switch Map.get(self, chain) {
+  | Some(v) => v
+  | None => UnexpectedChainDoesNoteExist(chain->Chain.toChainId)->raise
+  }
 
 let set: (t<'a>, Chain.t, 'a) => t<'a> = Map.set
 let values: t<'a> => array<'a> = Map.valuesToArray
+let keys: t<'a> => array<Chain.t> = Map.keysToArray
 let entries: t<'a> => array<(Chain.t, 'a)> = Map.toArray
 let map: (t<'a>, 'a => 'b) => t<'b> = Map.map
 let mapWithKey: (t<'a>, (Chain.t, 'a) => 'b) => t<'b> = Map.mapWithKey

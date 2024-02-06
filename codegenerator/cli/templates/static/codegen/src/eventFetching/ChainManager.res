@@ -5,6 +5,7 @@ type t = {
   //And potentially extra events that are pushed on by newly registered dynamic
   //contracts which missed being fetched by they chainFetcher
   arbitraryEventPriorityQueue: list<Types.eventBatchQueueItem>,
+  isUnorderedHeadMode: bool,
 }
 
 let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
@@ -89,9 +90,7 @@ let createDetermineNextEventFunction = (
   }
 }
 
-let determineNextEvent = createDetermineNextEventFunction(
-  ~isUnorderedHeadMode=Config.isUnorderedHeadMode,
-)
+let determineNextEvent = createDetermineNextEventFunction
 
 let makeFromConfig = (~configs: Config.chainConfigs): t => {
   let chainFetchers = configs->ChainMap.map(chainConfig => {
@@ -105,6 +104,7 @@ let makeFromConfig = (~configs: Config.chainConfigs): t => {
   {
     chainFetchers,
     arbitraryEventPriorityQueue: list{},
+    isUnorderedHeadMode: Config.isUnorderedHeadMode,
   }
 }
 
@@ -128,8 +128,8 @@ let makeFromDbState = async (~configs: Config.chainConfigs): t => {
     )
 
   {
+    ...initial,
     chainFetchers,
-    arbitraryEventPriorityQueue: list{},
   }
 }
 
@@ -252,10 +252,11 @@ type earliestQueueItem =
 let popBatchItem = (
   ~fetchStatesMap: ChainMap.t<FetchState.t>,
   ~arbitraryEventQueue: list<Types.eventBatchQueueItem>,
+  ~isUnorderedHeadMode,
 ): option<earliestQueueItem> => {
   //Compare the peeked items and determine the next item
   let {chain, earliestEventResponse: {updatedFetcher, earliestQueueItem}} =
-    fetchStatesMap->determineNextEvent->Result.getExn
+    fetchStatesMap->determineNextEvent(~isUnorderedHeadMode)->Utils.unwrapResultExn
 
   switch arbitraryEventQueue {
   //If there is item on the arbitray events queue, and it is earlier than
@@ -295,11 +296,12 @@ let rec createBatchInternal = (
   ~fetchStatesMap,
   ~arbitraryEventQueue,
   ~batchRev,
+  ~isUnorderedHeadMode,
 ) => {
   if currentBatchSize >= maxBatchSize {
     makeBatch(~batchRev, ~currentBatchSize, ~fetchStatesMap, ~arbitraryEventQueue)
   } else {
-    switch popBatchItem(~fetchStatesMap, ~arbitraryEventQueue) {
+    switch popBatchItem(~fetchStatesMap, ~arbitraryEventQueue, ~isUnorderedHeadMode) {
     | None => makeBatch(~batchRev, ~currentBatchSize, ~fetchStatesMap, ~arbitraryEventQueue)
     | Some(item) =>
       let (arbitraryEventQueue, fetchStatesMap, nextItem) = switch item {
@@ -317,6 +319,7 @@ let rec createBatchInternal = (
         ~arbitraryEventQueue,
         ~fetchStatesMap,
         ~currentBatchSize=currentBatchSize + 1,
+        ~isUnorderedHeadMode,
       )
     }
   }
@@ -334,6 +337,7 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
     ~currentBatchSize=0,
     ~fetchStatesMap,
     ~arbitraryEventQueue=arbitraryEventPriorityQueue,
+    ~isUnorderedHeadMode=self.isUnorderedHeadMode,
   )
 
   if response.batchSize > 0 {
