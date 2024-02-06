@@ -48,7 +48,7 @@ type dynamicContractRegistryEntity = {
 @spice @genType.as("{{entity.name.original}}Entity")
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}: {{param.type_rescript}}, {{/unless}}
+  {{#unless param.is_derived_from }}{{#if is_entity_field}}@as("{{param.field_name.uncapitalized}}_id") @spice.as("{{param.field_name.uncapitalized}}_id") {{/if}}{{param.field_name.uncapitalized}}: {{param.type_rescript}}, {{/unless}}
   {{/each}}
 }
  

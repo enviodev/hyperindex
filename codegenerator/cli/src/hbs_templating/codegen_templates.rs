@@ -117,7 +117,7 @@ pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
     pub type_rescript: RescriptType,
     pub type_pg: String,
-    pub maybe_entity_name: Option<CapitalizedOptions>,
+    pub is_entity_field: bool,
     ///Used in template to tell whether it is a field looked up from another table or a value in
     ///the table
     pub is_derived_from: bool,
@@ -145,17 +145,14 @@ impl EntityParamTypeTemplate {
             .to_postgres_type(&entity_names_set, is_derived_from)
             .context("Failed getting postgres type")?;
 
-        let maybe_entity_name = field
-            .field_type
-            .get_maybe_entity_name()
-            .map(|s| s.to_capitalized_options());
+        let is_entity_field = field.field_type.is_entity_field();
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
             type_rescript,
             is_derived_from,
             type_pg,
-            maybe_entity_name,
+            is_entity_field,
         })
     }
 }

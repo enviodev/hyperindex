@@ -223,23 +223,24 @@ module.exports.read{{entity.name.capitalized
 }}Entities = (sql, entityIdArray) => sql`
 SELECT 
 {{#each entity.filtered_params.filtered_not_derived_from as |param|}}
-"{{param.field_name.uncapitalized}}"{{#unless @last}},{{/unless}}
+"{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}"{{#unless @last}},{{/unless}}
 {{/each}}
 FROM "public"."{{entity.name.original}}"
 WHERE id IN ${sql(entityIdArray)};`;
 
 const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
+  console.log("{{entity.name.capitalized}} - entityDataArray", entityDataArray[0])
   return sql`
     INSERT INTO "public"."{{entity.name.original}}"
 ${sql(entityDataArray,
   {{#each entity.filtered_params.filtered_not_derived_from as |param|}}
-    "{{param.field_name.uncapitalized}}"{{#unless @last}},{{/unless}}
+    "{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}"{{#unless @last}},{{/unless}}
   {{/each}}
   )}
   ON CONFLICT(id) DO UPDATE
   SET
 {{#each entity.filtered_params.filtered_not_derived_from as |param|}}
-  "{{param.field_name.uncapitalized}}" = EXCLUDED."{{param.field_name.uncapitalized}}"{{#unless @last}},{{/unless}}
+  "{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}" = EXCLUDED."{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}"{{#unless @last}},{{/unless}}
 {{/each}}
   `;
 }

@@ -409,11 +409,11 @@ impl FieldType {
         }
     }
 
-    pub fn get_maybe_entity_name(&self) -> Option<String> {
-        if let GqlScalar::Custom(entity_name) = self.get_underlying_scalar() {
-            Some(entity_name.clone())
+    pub fn is_entity_field(&self) -> bool {
+        if let GqlScalar::Custom(_entity_name) = self.get_underlying_scalar() {
+            true
         } else {
-            None
+            false
         }
     }
 
