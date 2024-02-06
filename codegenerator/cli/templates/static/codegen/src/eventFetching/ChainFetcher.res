@@ -1,6 +1,7 @@
+open Belt
 type t = {
   logger: Pino.t,
-  fetcher: DynamicContractFetcher.t,
+  fetchState: FetchState.t,
   chainConfig: Config.chainConfig,
   chainWorker: SourceWorker.sourceWorker,
   //The latest known block of the chain
@@ -21,7 +22,7 @@ let make = (
   | HyperSync(serverUrl) => chainConfig->HyperSyncWorker.make(~serverUrl)->Config.HyperSync
   | Rpc(rpcConfig) => chainConfig->RpcWorker.make(~rpcConfig)->Rpc
   }
-  let fetcher = DynamicContractFetcher.makeRoot(~contractAddressMapping, ~startBlock)
+  let fetchState = FetchState.makeRoot(~contractAddressMapping, ~startBlock)
   {
     logger,
     chainConfig,
@@ -29,7 +30,7 @@ let make = (
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     isFetchingBatch: false,
-    fetcher,
+    fetchState,
   }
 }
 
@@ -67,7 +68,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
   )
 
   let startBlock =
-    latestProcessedBlock->Belt.Option.mapWithDefault(chainConfig.startBlock, latestProcessedBlock =>
+    latestProcessedBlock->Option.mapWithDefault(chainConfig.startBlock, latestProcessedBlock =>
       latestProcessedBlock + 1
     )
 
@@ -78,7 +79,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
       ~startBlock,
     )
 
-  dynamicContracts->Belt.Array.forEach(({contractType, contractAddress}) =>
+  dynamicContracts->Array.forEach(({contractType, contractAddress}) =>
     contractAddressMapping->ContractAddressingMap.addAddress(
       ~name=contractType,
       ~address=contractAddress,
@@ -92,10 +93,5 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
 Gets the latest item on the front of the queue and returns updated fetcher
 */
 let getLatestItem = (self: t) => {
-  self.fetcher->DynamicContractFetcher.getEarliestEvent
+  self.fetchState->FetchState.getEarliestEvent
 }
-
-type latestFetchedBlockTimestamp = int
-type queueFront =
-  | NoItem(latestFetchedBlockTimestamp, ChainMap.Chain.t)
-  | Item(Types.eventBatchQueueItem)

@@ -23,7 +23,7 @@ type action =
   | EventBatchProcessed(EventProcessing.loadResponse<unit>)
   | SetCurrentlyProcessing(bool)
   | SetCurrentlyFetchingBatch(chain, bool)
-  | UpdateQueues(ChainMap.t<DynamicContractFetcher.t>, arbitraryEventQueue)
+  | UpdateQueues(ChainMap.t<FetchState.t>, arbitraryEventQueue)
 
 type queryChain = CheckAllChains | Chain(chain)
 type task =
@@ -81,9 +81,9 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
 
   // lastBlockScannedData->checkHasReorgOccurred(~parentHash, ~currentHeight=currentBlockHeight)
 
-  let updatedFetcher =
-    chainFetcher.fetcher
-    ->DynamicContractFetcher.update(
+  let updatedFetchState =
+    chainFetcher.fetchState
+    ->FetchState.update(
       ~latestFetchedBlockTimestamp,
       ~latestFetchedBlockNumber=heighestQueriedBlockNumber,
       ~fetchedEvents=parsedQueueItems->List.fromArray,
@@ -94,7 +94,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
   let updatedChainFetcher = {
     ...chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight),
     chainWorker: worker,
-    fetcher: updatedFetcher,
+    fetchState: updatedFetchState,
     isFetchingBatch: false,
   }
 
@@ -117,9 +117,7 @@ let actionReducer = (state: t, action: action) => {
       dynamicContractRegistrations: Some({registrationsReversed, unprocessedBatchReversed}),
     }) =>
     let updatedArbQueue =
-      unprocessedBatchReversed
-      ->List.reverse
-      ->DynamicContractFetcher.mergeSortedList(~cmp=(a, b) => {
+      unprocessedBatchReversed->List.reverse->FetchState.mergeSortedList(~cmp=(a, b) => {
         a->EventUtils.getEventComparatorFromQueueItem <
           b->EventUtils.getEventComparatorFromQueueItem
       }, state.chainManager.arbitraryEventPriorityQueue)
@@ -142,14 +140,14 @@ let actionReducer = (state: t, action: action) => {
       let currentChainFetcher =
         state.chainManager.chainFetchers->ChainMap.get(registeringEventChain)
 
-      let updatedFetcher =
-        currentChainFetcher.fetcher->DynamicContractFetcher.registerDynamicContract(
+      let updatedFetchState =
+        currentChainFetcher.fetchState->FetchState.registerDynamicContract(
           ~contractAddressMapping,
           ~registeringEventBlockNumber,
           ~registeringEventLogIndex,
         )
 
-      let updatedChainFetcher = {...currentChainFetcher, fetcher: updatedFetcher}
+      let updatedChainFetcher = {...currentChainFetcher, fetchState: updatedFetchState}
 
       let updatedChainFetchers =
         state.chainManager.chainFetchers->ChainMap.set(registeringEventChain, updatedChainFetcher)
@@ -182,11 +180,11 @@ let actionReducer = (state: t, action: action) => {
       )
 
     ({...state, chainManager: {...state.chainManager, chainFetchers}}, [])
-  | UpdateQueues(fetchers, arbitraryEventPriorityQueue) =>
+  | UpdateQueues(fetchStatesMap, arbitraryEventPriorityQueue) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
-        fetcher: fetchers->ChainMap.get(chain),
+        fetchState: fetchStatesMap->ChainMap.get(chain),
       }
     })
 
@@ -204,13 +202,13 @@ let actionReducer = (state: t, action: action) => {
 }
 
 let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
-  let {fetcher, chainWorker, logger, currentBlockHeight, isFetchingBatch} =
+  let {fetchState, chainWorker, logger, currentBlockHeight, isFetchingBatch} =
     state.chainManager.chainFetchers->ChainMap.get(chain)
   if (
     !isFetchingBatch &&
-    fetcher->DynamicContractFetcher.isReadyForNextQuery(~maxQueueSize=state.maxPerChainQueueSize)
+    fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=state.maxPerChainQueueSize)
   ) {
-    let query = fetcher->DynamicContractFetcher.getNextQuery(~currentBlockHeight)
+    let query = fetchState->FetchState.getNextQuery(~currentBlockHeight)
 
     dispatchAction(SetCurrentlyFetchingBatch(chain, true))
     let setCurrentBlockHeight = currentBlockHeight =>
@@ -243,10 +241,21 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
     if !state.currentlyProcessingBatch {
       dispatchAction(SetCurrentlyProcessing(true))
       switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
-      | Some({batch, fetchers, arbitraryEventQueue}) =>
-        dispatchAction(UpdateQueues(fetchers, arbitraryEventQueue))
+      | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
+        dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
+        let checkContractIsRegistered = (~chain, ~contractAddress, ~contractName) => {
+          let fetchState = fetchStatesMap->ChainMap.get(chain)
+          fetchState->FetchState.checkContainsRegisteredContractAddress(
+            ~contractAddress,
+            ~contractName,
+          )
+        }
         let inMemoryStore = IO.InMemoryStore.make()
-        EventProcessing.processEventBatch(~eventBatch=batch, ~inMemoryStore, ~fetchers)
+        EventProcessing.processEventBatch(
+          ~eventBatch=batch,
+          ~inMemoryStore,
+          ~checkContractIsRegistered,
+        )
         ->Promise.thenResolve(res => dispatchAction(EventBatchProcessed(res)))
         ->ignore
       | None => dispatchAction(SetCurrentlyProcessing(false))
