@@ -5,7 +5,7 @@ exception IncorrectSyncSource(Config.syncSource)
 /**
 The args required for calling block range fetch
 */
-type blockRangeFetchArgs = DynamicContractFetcher.nextQuery
+type blockRangeFetchArgs = FetchState.nextQuery
 
 /**
 A set of stats for logging about the block range fetch
@@ -33,6 +33,6 @@ type blockRangeFetchResponse<'a, 'b> = {
   heighestQueriedBlockNumber: int,
   latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
-  fetcherId: DynamicContractFetcher.id,
+  fetcherId: FetchState.id,
   worker: Config.source<'a, 'b>,
 }
