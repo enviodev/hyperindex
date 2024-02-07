@@ -50,7 +50,13 @@ let main = async () => {
   let gsManager = globalState->GlobalStateManager.make
 
   gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
-  gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
+
+  /*
+    NOTE:
+      This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
+      nothing since there is no events on the queues.
+  */
+  gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch) 
 }
 
 main()->ignore
