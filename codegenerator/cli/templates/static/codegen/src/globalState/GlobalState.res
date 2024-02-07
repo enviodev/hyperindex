@@ -17,6 +17,7 @@ type action =
   | EventBatchProcessed(EventProcessing.loadResponse<unit>)
   | SetCurrentlyProcessing(bool)
   | SetCurrentlyFetchingBatch(chain, bool)
+  | SetFetchState(chain, FetchState.t)
   | UpdateQueues(ChainMap.t<FetchState.t>, arbitraryEventQueue)
 
 type queryChain = CheckAllChains | Chain(chain)
@@ -175,6 +176,24 @@ let actionReducer = (state: t, action: action) => {
       )
 
     ({...state, chainManager: {...state.chainManager, chainFetchers}}, [])
+  | SetFetchState(chain, fetchState) =>
+    let updatedChainFetcher = {
+      ...state.chainManager.chainFetchers->ChainMap.get(chain),
+      fetchState,
+    }
+
+    let chainFetchers = state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher)
+
+    (
+      {
+        ...state,
+        chainManager: {
+          ...state.chainManager,
+          chainFetchers,
+        },
+      },
+      [],
+    )
   | UpdateQueues(fetchStatesMap, arbitraryEventPriorityQueue) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
@@ -200,11 +219,18 @@ let actionReducer = (state: t, action: action) => {
 let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
   let {fetchState, chainWorker, logger, currentBlockHeight, isFetchingBatch} =
     state.chainManager.chainFetchers->ChainMap.get(chain)
+
   if (
     !isFetchingBatch &&
     fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=state.maxPerChainQueueSize)
   ) {
-    let nextQuery = fetchState->FetchState.getNextQuery(~currentBlockHeight)
+    let (nextQuery, nextStateIfChangeRequired) =
+      fetchState->FetchState.getNextQuery(~currentBlockHeight)
+
+    switch nextStateIfChangeRequired {
+    | Some(nextFetchState) => dispatchAction(SetFetchState(chain, nextFetchState))
+    | None => ()
+    }
     let setCurrentBlockHeight = currentBlockHeight =>
       dispatchAction(SetFetchStateCurrentBlockHeight(chain, currentBlockHeight))
 
@@ -255,6 +281,8 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
       | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
         dispatchAction(SetCurrentlyProcessing(true))
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
+
+        // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
         let checkContractIsRegistered = (~chain, ~contractAddress, ~contractName) => {
           let fetchState = fetchStatesMap->ChainMap.get(chain)
           fetchState->FetchState.checkContainsRegisteredContractAddress(

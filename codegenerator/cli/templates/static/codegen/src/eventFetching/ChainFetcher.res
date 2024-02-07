@@ -7,7 +7,7 @@ type t = {
   //The latest known block of the chain
   currentBlockHeight: int,
   isFetchingBatch: bool,
-  mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
+  mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t, // Dead code until we look at re-orgs again.
 }
 
 //CONSTRUCTION
@@ -53,6 +53,9 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) 
   )
 }
 
+/**
+ * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
+ */
 let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let contractAddressMapping = {

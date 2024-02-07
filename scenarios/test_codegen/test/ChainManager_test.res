@@ -279,7 +279,7 @@ describe("determineNextEvent", () => {
       }
     }
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
-      register: RootRegister,
+      registerType: RootRegister,
       latestFetchedBlockTimestamp,
       latestFetchedBlockNumber: 0,
       contractAddressMapping: ContractAddressingMap.make(),
