@@ -5,17 +5,6 @@
 @spice @genType.as("Id")
 type id = string
 
-@genType.import(("./bindings/OpaqueTypes", "Nullable"))
-type nullable<'a> = option<'a>
-
-let nullable_encode = (encoder: Spice.encoder<'a>, n: nullable<'a>): Js.Json.t =>
-  switch n {
-  | None => Js.Json.null
-  | Some(v) => v->encoder
-  }
-
-let nullable_decode = Spice.optionFromJson
-
 @@warning("-30")
 @genType
 type rec {{#each entities as | entity |}}{{#unless @first}}
@@ -59,7 +48,7 @@ type dynamicContractRegistryEntity = {
 @spice @genType.as("{{entity.name.original}}Entity")
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}: {{param.type_rescript_nullable}}, {{/unless}}
+  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}: {{param.type_rescript}}, {{/unless}}
   {{/each}}
 }
  

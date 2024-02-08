@@ -71,7 +71,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       address: event.params.from,
       updatesCountOnUserForTesting:
         loadedUserFrom?.updatesCountOnUserForTesting || 0,
-      gravatar: null,
+      gravatar: undefined,
     };
     context.User.set(userFrom);
   }
@@ -84,7 +84,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       address: event.params.to,
       updatesCountOnUserForTesting:
         loadedUserTo?.updatesCountOnUserForTesting || 0,
-      gravatar: null,
+      gravatar: undefined,
     };
     context.User.set(userTo);
   }
