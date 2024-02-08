@@ -369,8 +369,8 @@ let rec getReadEntitiesInternal = (
       )
 
       let res = switch item.event {
-    {{#each contracts as | contract |}}
-    {{#each contract.events as | event |}}
+    {{#each codegen_contracts as | contract |}}
+    {{#each contract.codegen_events as | event |}}
       | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) =>
         composer(
           ~event,
