@@ -189,6 +189,7 @@ let getConfig = (chain: ChainMap.Chain.t) =>
           queryTimeoutMillis: {{sync_config.query_timeout_millis}},
       }),
       {{/with}}
+      }),
       {{/if}}
       {{#if chain_config.network_config.skar_server_url}}
       HyperSync("{{chain_config.network_config.skar_server_url}}"),
@@ -196,7 +197,7 @@ let getConfig = (chain: ChainMap.Chain.t) =>
       startBlock: {{chain_config.network_config.start_block}},
       chain: Chain_{{chain_config.network_config.id}},
       contracts: [
-      {{#each chain_config.contracts as | contract |}}
+      {{#each chain_config.codegen_contracts as | contract |}}
         {
           name: "{{contract.name.capitalized}}",
           abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
