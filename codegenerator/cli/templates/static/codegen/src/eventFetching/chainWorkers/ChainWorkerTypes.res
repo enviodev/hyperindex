@@ -33,6 +33,6 @@ type blockRangeFetchResponse<'a, 'b> = {
   heighestQueriedBlockNumber: int,
   latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
-  fetcherId: FetchState.id,
+  fetchStateRegisterId: FetchState.id,
   worker: Config.source<'a, 'b>,
 }

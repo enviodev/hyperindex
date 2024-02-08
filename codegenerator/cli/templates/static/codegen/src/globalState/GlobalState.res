@@ -58,7 +58,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     currentBlockHeight,
     reorgGuard,
     fromBlockQueried,
-    fetcherId,
+    fetchStateRegisterId,
     latestFetchedBlockTimestamp,
     worker,
   } = response
@@ -82,7 +82,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       ~latestFetchedBlockTimestamp,
       ~latestFetchedBlockNumber=heighestQueriedBlockNumber,
       ~fetchedEvents=parsedQueueItems->List.fromArray,
-      ~id=fetcherId,
+      ~id=fetchStateRegisterId,
     )
     ->Utils.unwrapResultExn
 
@@ -225,7 +225,7 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
     fetchState->FetchState.isReadyForNextQuery(~maxQueueSize=state.maxPerChainQueueSize)
   ) {
     let (nextQuery, nextStateIfChangeRequired) =
-      fetchState->FetchState.getNextQuery(~currentBlockHeight)
+      fetchState->FetchState.getNextQuery(~currentBlockHeight)->Utils.unwrapResultExn
 
     switch nextStateIfChangeRequired {
     | Some(nextFetchState) => dispatchAction(SetFetchState(chain, nextFetchState))

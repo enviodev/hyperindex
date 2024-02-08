@@ -80,7 +80,7 @@ let fetchBlockRange = async (
   ~setCurrentBlockHeight,
 ) => {
   let {currentBlockInterval, blockLoader, chainConfig, rpcConfig} = self
-  let {fromBlock, toBlock, contractAddressMapping, fetcherId} = query
+  let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId} = query
 
   let startFetchingBatchTimeRef = Hrtime.makeTimer()
   let currentBlockHeight =
@@ -173,7 +173,7 @@ let fetchBlockRange = async (
     currentBlockHeight,
     reorgGuard: reorgGuardStub,
     fromBlockQueried: fromBlock,
-    fetcherId,
+    fetchStateRegisterId,
     worker: Rpc(nextWorker),
   }
 }

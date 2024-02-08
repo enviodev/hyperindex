@@ -135,7 +135,13 @@ let fetchBlockRange = async (
   ~setCurrentBlockHeight,
 ) => {
   let {chainConfig: {chain}, serverUrl} = self
-  let {fetcherId, fromBlock, contractAddressMapping, currentLatestBlockTimestamp, toBlock} = query
+  let {
+    fetchStateRegisterId,
+    fromBlock,
+    contractAddressMapping,
+    currentLatestBlockTimestamp,
+    toBlock,
+  } = query
   let startFetchingBatchTimeRef = Hrtime.makeTimer()
   //fetch batch
   let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} =
@@ -288,7 +294,7 @@ let fetchBlockRange = async (
     currentBlockHeight,
     reorgGuard,
     fromBlockQueried: fromBlock,
-    fetcherId,
+    fetchStateRegisterId,
     worker: HyperSync(self),
   }
 }

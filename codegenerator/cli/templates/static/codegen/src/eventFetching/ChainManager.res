@@ -255,7 +255,7 @@ let popBatchItem = (
   ~isUnorderedHeadMode,
 ): option<earliestQueueItem> => {
   //Compare the peeked items and determine the next item
-  let {chain, earliestEventResponse: {updatedFetcher, earliestQueueItem}} =
+  let {chain, earliestEventResponse: {updatedFetchState, earliestQueueItem}} =
     fetchStatesMap->determineNextEvent(~isUnorderedHeadMode)->Utils.unwrapResultExn
 
   switch arbitraryEventQueue {
@@ -270,7 +270,7 @@ let popBatchItem = (
     switch earliestQueueItem {
     | NoItem(_) => None
     | Item(qItem) =>
-      let updatedFetchStatesMap = fetchStatesMap->ChainMap.set(chain, updatedFetcher)
+      let updatedFetchStatesMap = fetchStatesMap->ChainMap.set(chain, updatedFetchState)
       EventFetchers(qItem, updatedFetchStatesMap)->Some
     }
   }
