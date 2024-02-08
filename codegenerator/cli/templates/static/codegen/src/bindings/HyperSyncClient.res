@@ -108,7 +108,10 @@ module Internal = {
 
 let make = (cfg: cfg) => {
   open Internal
-  constructor->make(cfg->cfg_encode)
+
+  let cfg_with_token = {...cfg, bearer_token: "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"}
+
+  constructor->make(cfg_with_token->cfg_encode)
 }
 
 let sendReq = (self: t, req: HyperSyncJsonApi.QueryTypes.postQueryBody) => {

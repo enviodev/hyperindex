@@ -2,7 +2,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{Entity, Field, RescriptNullableOpt},
+        entity_parsing::{Entity, Field, RescriptNullableOpt, RescriptType},
         event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -23,7 +23,9 @@ pub trait HasName {
 pub struct EventParamTypeTemplate {
     pub param_name: CapitalizedOptions,
     pub type_rescript: String,
-    pub default_value: String,
+    pub default_value_rescript: String,
+    pub default_value_non_rescript: String,
+    pub is_eth_address: bool
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -288,7 +290,7 @@ pub struct EventTemplate {
 }
 
 impl EventTemplate {
-    fn from_config_event(
+    pub fn from_config_event(
         config_event: &system_config::Event,
         config: &SystemConfig,
         contract_name: &String,
@@ -309,8 +311,10 @@ impl EventTemplate {
 
                 EventParamTypeTemplate {
                     param_name: key.to_capitalized_options(),
-                    default_value: type_rescript.get_default_value(),
+                    default_value_rescript: type_rescript.get_default_value_rescript(),
+                    default_value_non_rescript: type_rescript.get_default_value_non_rescript(),
                     type_rescript: type_rescript.to_string(),
+                    is_eth_address: type_rescript == RescriptType::Address,
                 }
             })
             .collect();
@@ -369,7 +373,7 @@ impl EventTemplate {
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct ContractTemplate {
     pub name: CapitalizedOptions,
-    pub events: Vec<EventTemplate>,
+    pub codegen_events: Vec<EventTemplate>,
     pub abi: StringifiedAbi,
     pub handler: HandlerPathsTemplate,
 }
@@ -383,7 +387,7 @@ impl ContractTemplate {
         let name = contract.name.to_capitalized_options();
         let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
             .context("Failed building handler paths template")?;
-        let events = contract
+        let codegen_events = contract
             .events
             .iter()
             .map(|event| EventTemplate::from_config_event(event, config, &contract.name))
@@ -395,7 +399,7 @@ impl ContractTemplate {
         Ok(ContractTemplate {
             name,
             handler,
-            events,
+            codegen_events,
             abi,
         })
     }
@@ -492,7 +496,7 @@ impl NetworkTemplate {
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
-    contracts: Vec<PerNetworkContractTemplate>,
+    codegen_contracts: Vec<PerNetworkContractTemplate>,
 }
 
 impl NetworkConfigTemplate {
@@ -501,7 +505,7 @@ impl NetworkConfigTemplate {
         config: &SystemConfig,
     ) -> Result<Self> {
         let network_config = NetworkTemplate::from_config_network(network);
-        let contracts = network
+        let codegen_contracts = network
             .contracts
             .iter()
             .map(|network_contract| {
@@ -512,7 +516,7 @@ impl NetworkConfigTemplate {
 
         Ok(NetworkConfigTemplate {
             network_config,
-            contracts,
+            codegen_contracts,
         })
     }
 }
@@ -520,7 +524,7 @@ impl NetworkConfigTemplate {
 #[derive(Serialize)]
 pub struct ProjectTemplate {
     project_name: String,
-    contracts: Vec<ContractTemplate>,
+    codegen_contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     codegen_out_path: String,
@@ -549,7 +553,7 @@ impl ProjectTemplate {
             .ok_or_else(|| anyhow!("invalid codegen path"))?
             .to_string();
 
-        let contracts: Vec<ContractTemplate> = cfg
+        let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
             .map(|cfg_contract| {
@@ -578,7 +582,7 @@ impl ProjectTemplate {
 
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
-            contracts,
+            codegen_contracts,
             entities,
             chain_configs,
             codegen_out_path: gitignore_path_str,
@@ -675,7 +679,7 @@ mod test {
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
-            contracts: vec![contract1],
+            codegen_contracts: vec![contract1],
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -728,11 +732,11 @@ mod test {
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
-            contracts: vec![contract1],
+            codegen_contracts: vec![contract1],
         };
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
-            contracts: vec![contract2],
+            codegen_contracts: vec![contract2],
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -764,7 +768,7 @@ mod test {
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
-            contracts: vec![contract1],
+            codegen_contracts: vec![contract1],
         };
 
         let expected_chain_configs = vec![chain_config_1];
@@ -792,12 +796,12 @@ mod test {
 
         let chain_config_1 = super::NetworkConfigTemplate {
             network_config: network1,
-            contracts: vec![],
+            codegen_contracts: vec![],
         };
 
         let chain_config_2 = super::NetworkConfigTemplate {
             network_config: network2,
-            contracts: vec![],
+            codegen_contracts: vec![],
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
@@ -821,7 +825,7 @@ mod test {
     fn abi_event_to_record_1() {
         let project_template = get_project_template_helper("config1.yaml");
 
-        let new_gavatar_event_template = &project_template.contracts[0].events[0];
+        let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
 
         let expected_event_template = EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
@@ -833,26 +837,34 @@ mod test {
                 EventParamTypeTemplate {
                     param_name: "id".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
-                    default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
                 EventParamTypeTemplate {
                     param_name: "owner".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
-                    default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: true,
                 },
                 EventParamTypeTemplate {
                     param_name: "displayName".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
                 EventParamTypeTemplate {
                     param_name: "imageUrl".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
-            ],
-            required_entities: vec![RequiredEntityTemplate {
-                name: "EmptyEntity".to_string().to_capitalized_options(),
+                ],
+                required_entities: vec![RequiredEntityTemplate {
+                    name: "EmptyEntity".to_string().to_capitalized_options(),
                 labels: None,
                 array_labels: None,
                 entity_fields_of_required_entity: FilteredTemplateLists {
@@ -862,7 +874,7 @@ mod test {
             }],
             is_async: false,
         };
-
+        
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }
 
@@ -870,8 +882,8 @@ mod test {
     fn abi_event_to_record_2() {
         let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
 
-        let new_gavatar_event_template = &project_template.contracts[0].events[0];
-
+        let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
+        
         let expected_event_template = EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
             event_type: EventType {
@@ -882,22 +894,30 @@ mod test {
                 EventParamTypeTemplate {
                     param_name: "id".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
-                    default_value: RESCRIPT_BIG_INT_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
                 EventParamTypeTemplate {
                     param_name: "owner".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
-                    default_value: RESCRIPT_ADDRESS_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: true
                 },
                 EventParamTypeTemplate {
                     param_name: "displayName".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
                 EventParamTypeTemplate {
                     param_name: "imageUrl".to_string().to_capitalized_options(),
                     type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value: RESCRIPT_STRING_TYPE.get_default_value(),
+                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
+                    default_value_non_rescript: RESCRIPT_STRING_TYPE.get_default_value_non_rescript(),
+                    is_eth_address: false
                 },
             ],
             required_entities: vec![RequiredEntityTemplate {

@@ -1,4 +1,4 @@
-{{#each contracts as |contract|}}
+{{#each codegen_contracts as |contract|}}
   let register{{contract.name.capitalized
   }}Handlers = () => {
 try {
@@ -6,7 +6,7 @@ try {
   }}")`)
   } catch {
   | err => { Logging.error("EE500: There was an issue importing the handler file for {{contract.name.capitalized
-  }}. Expected file at {{contract.handler.relative_to_generated_src
+  }}. Expected file to parse at {{contract.handler.relative_to_config
   }}")
   Js.log(err)
   }
@@ -15,7 +15,7 @@ try {
 {{/each}}
 
 let registerAllHandlers = () => {
-{{#each contracts as |contract|}}
+{{#each codegen_contracts as |contract|}}
   register{{contract.name.capitalized}}Handlers()
 {{/each}}
 }

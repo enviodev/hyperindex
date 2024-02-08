@@ -56,11 +56,8 @@ async fn get_contract_data_from_contract(
     network: &NetworkWithExplorer,
     address: &H160,
 ) -> anyhow::Result<ContractData> {
-    let client = chain_helpers::get_etherscan_client(network)
-        .context("Making client for getting source code")?;
-
     let contract_metadata =
-        fetch_get_source_code_result_from_block_explorer(&client, address).await?;
+        fetch_get_source_code_result_from_block_explorer(network, address).await?;
 
     match contract_metadata {
         // if implementation contract, return abi from fetch_get_source_code_result_from_block_explorer
@@ -85,11 +82,12 @@ async fn get_contract_data_from_contract(
 const MAXIMUM_BACKOFF: Duration = Duration::from_secs(32);
 
 async fn fetch_get_source_code_result_from_block_explorer(
-    client: &etherscan::Client,
+    network: &NetworkWithExplorer,
     address: &H160,
 ) -> anyhow::Result<etherscan::contract::Metadata> {
     //todo make retryable
     let mut refetch_delay = Duration::from_secs(2);
+    let mut rate_limit_retry_count = 0;
 
     let fail_if_maximum_is_exceeded = |current_refetch_delay: Duration, e| -> anyhow::Result<()> {
         if current_refetch_delay >= MAXIMUM_BACKOFF {
@@ -108,42 +106,51 @@ async fn fetch_get_source_code_result_from_block_explorer(
     };
 
     let contract_metadata: ContractMetadata = loop {
+        let client = chain_helpers::get_etherscan_client(network, rate_limit_retry_count)
+            .context("Making client for getting source code")?;
+
         match client.contract_source_code(address.clone()).await {
             Ok(res) => {
                 break Ok::<_, anyhow::Error>(res);
             }
             Err(e) => {
-                let retry_err = match e {
-                    //In these cases, return ok(err) if it should be retried
-                    EtherscanError::Reqwest(_)
-                    | EtherscanError::BadStatusCode(_)
-                    | EtherscanError::RateLimitExceeded
-                    | EtherscanError::IO(_)
-                    | EtherscanError::ErrorResponse { .. } => Ok(e),
+                // In this case, increment the key index to use the next API key
+                // replace 3 with the number of API keys constant
+                if let EtherscanError::RateLimitExceeded = e {
+                    rate_limit_retry_count += 1;
+                } else {
+                    let retry_err = match e {
+                        //In these cases, return ok(err) if it should be retried
+                        EtherscanError::Reqwest(_)
+                        | EtherscanError::BadStatusCode(_)
+                        | EtherscanError::IO(_)
+                        | EtherscanError::RateLimitExceeded
+                        | EtherscanError::ErrorResponse { .. } => Ok(e),
 
-                    //In these cases exit with error
-                    EtherscanError::ChainNotSupported(_)
-                    | EtherscanError::ExecutionFailed(_)
-                    | EtherscanError::BalanceFailed
-                    | EtherscanError::BlockNumberByTimestampFailed
-                    | EtherscanError::TransactionReceiptFailed
-                    | EtherscanError::GasEstimationFailed
-                    | EtherscanError::EnvVarNotFound(_)
-                    | EtherscanError::Serde(_)
-                    | EtherscanError::ContractCodeNotVerified(_)
-                    | EtherscanError::EmptyResult { .. }
-                    | EtherscanError::LocalNetworksNotSupported
-                    | EtherscanError::Unknown(_)
-                    | EtherscanError::Builder(_)
-                    | EtherscanError::MissingSolcVersion(_)
-                    | EtherscanError::InvalidApiKey
-                    | EtherscanError::BlockedByCloudflare
-                    | EtherscanError::CloudFlareSecurityChallenge
-                    | EtherscanError::PageNotFound => Err(e),
-                }?;
-                fail_if_maximum_is_exceeded(refetch_delay, retry_err)?;
-                tokio::time::sleep(refetch_delay).await;
-                refetch_delay *= 2;
+                        //In these cases exit with error
+                        EtherscanError::ChainNotSupported(_)
+                        | EtherscanError::ExecutionFailed(_)
+                        | EtherscanError::BalanceFailed
+                        | EtherscanError::BlockNumberByTimestampFailed
+                        | EtherscanError::TransactionReceiptFailed
+                        | EtherscanError::GasEstimationFailed
+                        | EtherscanError::EnvVarNotFound(_)
+                        | EtherscanError::Serde(_)
+                        | EtherscanError::ContractCodeNotVerified(_)
+                        | EtherscanError::EmptyResult { .. }
+                        | EtherscanError::LocalNetworksNotSupported
+                        | EtherscanError::Unknown(_)
+                        | EtherscanError::Builder(_)
+                        | EtherscanError::MissingSolcVersion(_)
+                        | EtherscanError::InvalidApiKey
+                        | EtherscanError::BlockedByCloudflare
+                        | EtherscanError::CloudFlareSecurityChallenge
+                        | EtherscanError::PageNotFound => Err(e),
+                    }?;
+                    fail_if_maximum_is_exceeded(refetch_delay, retry_err)?;
+                    tokio::time::sleep(refetch_delay).await;
+                    refetch_delay *= 2;
+                }
             }
         }
     }

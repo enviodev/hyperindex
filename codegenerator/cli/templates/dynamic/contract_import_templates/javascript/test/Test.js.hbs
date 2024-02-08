@@ -1,0 +1,98 @@
+
+{{#with imported_contracts.[0] as | contract |}}
+const assert = require("assert");
+const { MockDb, {{contract.name.capitalized}} } = require("../generated/src/TestHelpers.bs");
+const { Addresses } = require("../generated/src/bindings/Ethers.bs");
+
+let { GLOBAL_EVENTS_SUMMARY_KEY } = require("../src/EventHandlers");
+{{/with}}
+
+const MOCK_EVENTS_SUMMARY_ENTITY = {
+  id: GLOBAL_EVENTS_SUMMARY_KEY,
+  {{#each imported_contracts as | contract |}}
+    {{#each contract.codegen_events as | event |}}
+  {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: BigInt(0),
+    {{/each}}
+  {{/each}}
+};
+
+{{#with imported_contracts.[0] as | contract |}}
+    {{#with contract.codegen_events.[0] as | event |}}
+describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} event tests", () => {
+  // Create mock db
+  const mockDbInitial = MockDb.createMockDb();
+
+  // Add mock EventsSummaryEntity to mock db
+  const mockDbFinal = mockDbInitial.entities.EventsSummary.set(
+    MOCK_EVENTS_SUMMARY_ENTITY
+  );
+
+  // Creating mock {{contract.name.capitalized}} contract {{event.name.capitalized}} event
+  const mock{{contract.name.capitalized}}{{event.name.capitalized}}Event = {{contract.name.capitalized}}.{{event.name.capitalized}}.createMockEvent({
+    {{#each event.params as | param |}}
+    {{param.param_name.uncapitalized}}: {{param.default_value_non_rescript}},
+    {{/each}}
+    mockEventData: {
+      chainId: 1,
+      blockNumber: 0,
+      blockTimestamp: 0,
+      blockHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+      srcAddress: Addresses.defaultAddress,
+      transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
+      transactionIndex: 0,
+      logIndex: 0,
+    },
+  });
+
+  // Processing the event
+  const mockDbUpdated = {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
+    event: mock{{contract.name.capitalized}}{{event.name.capitalized}}Event,
+    mockDb: mockDbFinal,
+  });
+
+  it("{{contract.name.capitalized}}_{{event.name.capitalized}}Entity is created correctly", () => {
+    // Getting the actual entity from the mock database
+    let actual{{contract.name.capitalized}}{{event.name.capitalized}}Entity = mockDbUpdated.entities.{{contract.name.capitalized}}_{{event.name.capitalized}}.get(
+      mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.transactionHash +
+        mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.logIndex.toString()
+    );
+
+    // Creating the expected entity
+    const expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity = {
+      id:
+        mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.transactionHash +
+        mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.logIndex.toString(),
+      {{#each event.params as |param|}}
+      {{param.param_name.uncapitalized}}: mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.params.{{param.param_name.uncapitalized}},
+      {{/each}}
+      eventsSummary: "GlobalEventsSummary",
+    };
+    // Asserting that the entity in the mock database is the same as the expected entity
+    assert.deepEqual(
+      actual{{contract.name.capitalized}}{{event.name.capitalized}}Entity,
+      expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity,
+      "Actual {{contract.name.capitalized}}{{event.name.capitalized}}Entity should be the same as the expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity"
+    );
+  });
+
+  it("EventsSummaryEntity is updated correctly", () => {
+    // Getting the actual entity from the mock database
+    let actualEventsSummaryEntity = mockDbUpdated.entities.EventsSummary.get(
+      GLOBAL_EVENTS_SUMMARY_KEY
+    );
+
+    // Creating the expected entity
+    const expectedEventsSummaryEntity = {
+      ...MOCK_EVENTS_SUMMARY_ENTITY,
+      {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: MOCK_EVENTS_SUMMARY_ENTITY.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Count + BigInt(1),
+    };
+    // Asserting that the entity in the mock database is the same as the expected entity
+    assert.deepEqual(
+      actualEventsSummaryEntity,
+      expectedEventsSummaryEntity,
+      "Actual EventsSummaryEntity should be the same as the expected EventsSummaryEntity"
+    );
+  });
+});
+    {{/with}}
+{{/with}}

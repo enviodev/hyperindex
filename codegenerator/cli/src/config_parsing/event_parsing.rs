@@ -147,17 +147,17 @@ mod tests {
         assert_eq!(bytes_arr_res_type.to_string(), "array<string>".to_string());
 
         assert_eq!(
-            user_address_res_type.get_default_value(),
+            user_address_res_type.get_default_value_rescript(),
             "Ethers.Addresses.defaultAddress".to_string()
         );
         assert_eq!(
-            amount_uint256_res_type.get_default_value(),
+            amount_uint256_res_type.get_default_value_rescript(),
             "Ethers.BigInt.zero".to_string()
         );
         assert_eq!(
-            tuple_bool_string_res_type.get_default_value(),
+            tuple_bool_string_res_type.get_default_value_rescript(),
             "(false, Ethers.Addresses.defaultAddress)".to_string()
         );
-        assert_eq!(bytes_arr_res_type.get_default_value(), "[]".to_string());
+        assert_eq!(bytes_arr_res_type.get_default_value_rescript(), "[]".to_string());
     }
 }

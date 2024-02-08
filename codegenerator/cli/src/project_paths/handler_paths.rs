@@ -11,6 +11,7 @@ pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 pub struct HandlerPathsTemplate {
     absolute: String,
     relative_to_generated_src: String,
+    relative_to_config:String
 }
 
 impl HandlerPathsTemplate {
@@ -34,6 +35,12 @@ impl HandlerPathsTemplate {
             .ok_or_else(|| anyhow!("Handler path should be unicode"))?
             .to_string();
 
+        let relative_to_config = diff_paths(absolute_path.clone(), config_directory)
+            .ok_or_else(|| anyhow!("could not find handler path relative to config"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("Handler path should be unicode"))?
+            .to_string();
+
         let absolute = absolute_path
             .to_str()
             .ok_or_else(|| anyhow!("Handler path should be unicode"))?
@@ -42,6 +49,7 @@ impl HandlerPathsTemplate {
         Ok(HandlerPathsTemplate {
             absolute,
             relative_to_generated_src,
+            relative_to_config
         })
     }
 }
@@ -133,6 +141,7 @@ mod tests {
             absolute: "test/configs/src/EventHandler.js".to_string(),
 
             relative_to_generated_src: "../../configs/src/EventHandler.js".to_string(),
+            relative_to_config: "src/EventHandler.js".to_string(),
         };
 
         assert_eq!(expected_handler_paths, contract_handler_paths);

@@ -157,8 +157,8 @@ let eventRouter = (item: Context.eventRouterEventAndContext, ~inMemoryStore, ~cb
   let {event, chainId} = item
 
   switch event {
-{{#each contracts as | contract |}}
-{{#each contract.events as | event |}}
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
   | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(
       event,
       context,
@@ -282,8 +282,8 @@ let rec loadReadEntitiesInner = async (
         blockNumber,
         logIndex,
         data: switch event {
-        {{#each contracts as | contract |}}
-        {{#each contract.events as | event |}}
+        {{#each codegen_contracts as | contract |}}
+        {{#each contract.codegen_events as | event |}}
           | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => {
             let contextHelper = Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator(~inMemoryStore, ~chainId, ~event, ~logger, ~asyncGetters)
 

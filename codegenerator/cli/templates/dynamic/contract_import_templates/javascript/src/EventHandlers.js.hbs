@@ -2,24 +2,28 @@
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
 
-{{#each contracts as |contract|}}
+{{#each imported_contracts as |contract|}}
   let { {{contract.name.capitalized
   }}Contract } = require("../generated/src/Handlers.bs.js");
 {{/each}}
 
 const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 
+module.exports = {
+  GLOBAL_EVENTS_SUMMARY_KEY,
+};
+
 const INITIAL_EVENTS_SUMMARY = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
-{{#each contracts as |contract|}}
-  {{#each contract.events as |event|}}
+{{#each imported_contracts as |contract|}}
+  {{#each contract.imported_events as |event|}}
     {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: BigInt(0),
   {{/each}}
 {{/each}}
 };
 
-{{#each contracts as |contract|}}
-  {{#each contract.events as |event|}}
+{{#each imported_contracts as |contract|}}
+  {{#each contract.imported_events as |event|}}
     {{contract.name.capitalized}}Contract.{{event.name.capitalized
     }}.loader((event, context) => {
   context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);

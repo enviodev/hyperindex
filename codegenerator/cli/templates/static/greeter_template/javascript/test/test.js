@@ -3,7 +3,7 @@ const { MockDb, Greeter } = require("../generated/src/TestHelpers.bs");
 const { Addresses } = require("../generated/src/bindings/Ethers.bs");
 
 describe("Greeter template tests", () => {
-  it("A NewGreeting event creates a Greeting entity", () => {
+  it("A NewGreeting event creates a User entity", () => {
     // Initializing the mock database
     const mockDbInitial = MockDb.createMockDb();
 
@@ -24,7 +24,7 @@ describe("Greeter template tests", () => {
     });
 
     // Expected entity that should be created
-    const expectedGreetingEntity = {
+    const expectedUserEntity = {
       id: userAddress,
       latestGreeting: greeting,
       numberOfGreetings: 1,
@@ -32,11 +32,10 @@ describe("Greeter template tests", () => {
     };
 
     // Getting the entity from the mock database
-    const actualGreetingEntity =
-      updatedMockDb.entities.Greeting.get(userAddress);
+    const actualUserEntity = updatedMockDb.entities.User.get(userAddress);
 
     // Asserting that the entity in the mock database is the same as the expected entity
-    assert.deepEqual(expectedGreetingEntity, actualGreetingEntity);
+    assert.deepEqual(expectedUserEntity, actualUserEntity);
   });
 
   it("2 Greetings from the same users results in that user having a greeter count of 2", () => {
@@ -72,11 +71,10 @@ describe("Greeter template tests", () => {
     });
 
     // Getting the entity from the mock database
-    const actualGreetingEntity =
-      updatedMockDb2.entities.Greeting.get(userAddress);
+    const actualUserEntity = updatedMockDb2.entities.User.get(userAddress);
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    assert.equal(2, actualGreetingEntity?.numberOfGreetings);
+    assert.equal(2, actualUserEntity?.numberOfGreetings);
   });
 
   it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", () => {
@@ -112,12 +110,11 @@ describe("Greeter template tests", () => {
     });
 
     // Getting the entity from the mock database
-    const actualGreetingEntity =
-      updatedMockDb2.entities.Greeting.get(userAddress);
+    const actualUserEntity = updatedMockDb2.entities.User.get(userAddress);
 
     const expectedGreeting = greetingAgain;
 
     // Asserting that the field value of the entity in the mock database is the same as the expected field value
-    assert.equal(expectedGreeting, actualGreetingEntity?.latestGreeting);
+    assert.equal(expectedGreeting, actualUserEntity?.latestGreeting);
   });
 });

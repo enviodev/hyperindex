@@ -163,10 +163,10 @@ pub struct ContractImportArgs {
 
 #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
 pub enum LocalOrExplorerImport {
-    ///Initialize by migrating config from an existing subgraph
+    ///Initialize by pulling the contract ABI from a block explorer
     #[strum(serialize = "Block Explorer")]
     Explorer(ExplorerImportArgs),
-    ///Initialize from an example template
+    ///Initialize from a local json ABI file
     #[strum(serialize = "Local ABI")]
     Local(LocalImportArgs),
 }

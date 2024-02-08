@@ -1,6 +1,6 @@
 // TODO: move to `eventFetching`
 
-{{#each contracts as |contract|}}
+{{#each codegen_contracts as |contract|}}
 let
 {{contract.name.uncapitalized}}Abi = `
 {{contract.abi}}

@@ -2,8 +2,8 @@
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
 import {
-{{#each contracts as |contract|}}
-  {{#each contract.events as |event|}}
+{{#each imported_contracts as |contract|}}
+  {{#each contract.imported_events as |event|}}
     {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_loader,
     {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler,
   {{/each}}
@@ -11,27 +11,27 @@ import {
 } from "../generated/src/Handlers.gen";
 
 import {
-{{#each contracts as |contract|}}
-  {{#each contract.events as |event|}}
+{{#each imported_contracts as |contract|}}
+  {{#each contract.imported_events as |event|}}
     {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
   {{/each}}
 {{/each}}
 EventsSummaryEntity
-} from "./src/Types.gen";
+} from "../generated/src/Types.gen";
 
-const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
+export const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 
 const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
-{{#each contracts as |contract|}}
-  {{#each contract.events as |event|}}
+{{#each imported_contracts as |contract|}}
+  {{#each contract.imported_events as |event|}}
     {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: BigInt(0),
   {{/each}}
 {{/each}}
 };
 
-{{#each contracts as |contract|}}
-  {{#each contract.events as |event|}}
+{{#each imported_contracts as |contract|}}
+  {{#each contract.imported_events as |event|}}
     {{contract.name.capitalized}}Contract_{{event.name.capitalized
     }}_loader(({ event, context }) => {
   context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
