@@ -67,7 +67,7 @@ let waitForNextBlockBeforeQuery = async (
   ~logger,
   ~setCurrentBlockHeight,
 ) => {
-  if fromBlock >= currentBlockHeight {
+  if fromBlock > currentBlockHeight {
     logger->Logging.childTrace("Worker is caught up, awaiting new blocks")
 
     //If the block we want to query from is greater than the current height,
@@ -79,7 +79,6 @@ let waitForNextBlockBeforeQuery = async (
       ~logger,
     )
 
-    //Note: this side effect can be removed when this becomes immutable
     setCurrentBlockHeight(currentBlockHeight)
   }
 }
