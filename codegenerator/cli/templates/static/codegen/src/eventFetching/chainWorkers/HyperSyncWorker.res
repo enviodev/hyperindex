@@ -254,23 +254,25 @@ let fetchBlockRange = async (
   }
 
   let parsingTimeRef = Hrtime.makeTimer()
-  //Parse page items into queue items
-  let decoder = try {
-    contractInterfaceManager->ContractInterfaceManager.getAbiMapping->HyperSyncClient.Decoder.make
-  } catch {
-  | Js.Exn.Error(exn) =>
-    let error = exn->Helpers.makeJsExnParams
-    logger->Logging.childError({
-      "msg": "Failed to instantiate a decoder from hypersync client",
-      "error": error,
-    })
-    Helpers.JsExn(error)->raise
-  }
 
   //Parse page items into queue items
-  let parsedEvents = await decoder->HyperSyncClient.Decoder.decodeEvents(pageUnsafe.events)
+  let parsedQueueItems = if Env.shouldUseHypersyncClientDecoder {
+    //Currently there are still issues with decoder for some cases so
+    //this can only be activated with a flag
+    let decoder = try {
+      contractInterfaceManager->ContractInterfaceManager.getAbiMapping->HyperSyncClient.Decoder.make
+    } catch {
+    | Js.Exn.Error(exn) =>
+      let error = exn->Helpers.makeJsExnParams
+      logger->Logging.childError({
+        "msg": "Failed to instantiate a decoder from hypersync client",
+        "error": error,
+      })
+      Helpers.JsExn(error)->raise
+    }
+    //Parse page items into queue items
+    let parsedEvents = await decoder->HyperSyncClient.Decoder.decodeEvents(pageUnsafe.events)
 
-  let parsedQueueItems =
     pageUnsafe.items
     ->Belt.Array.zip(parsedEvents)
     ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
@@ -286,11 +288,41 @@ let fetchBlockRange = async (
           ~log=item.log,
           ~blockTimestamp=item.blockTimestamp,
           ~chainId=chain->ChainMap.Chain.toChainId,
-          ~txOrigin=item.txOrigin
+          ~txOrigin=item.txOrigin,
         )
         ->Utils.unwrapResultExn,
       }
     })
+  } else {
+    //Parse with viem -> slower than the HyperSyncClient
+    await pageUnsafe.items
+    //Defer all this parsing into separate deferred callbacks
+    //on the macro task queue so that parsing doesn't block the
+    //event loop and each parse happens as a macro task. Meaning
+    //promise resolves will take priority
+    ->Deferred.mapArrayDeferred((item, resolve, reject) => {
+      switch Converters.parseEvent(
+        ~log=item.log,
+        ~blockTimestamp=item.blockTimestamp,
+        ~contractInterfaceManager,
+        ~chainId=chain->ChainMap.Chain.toChainId,
+        ~txOrigin=item.txOrigin,
+      ) {
+      | Ok(parsed) =>
+        let queueItem: Types.eventBatchQueueItem = {
+          timestamp: item.blockTimestamp,
+          chain,
+          blockNumber: item.log.blockNumber,
+          logIndex: item.log.logIndex,
+          event: parsed,
+        }
+        resolve(queueItem)
+      | Error(e) => reject(e)
+      }
+    })
+    ->Deferred.asPromise
+  }
+
 
   let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
