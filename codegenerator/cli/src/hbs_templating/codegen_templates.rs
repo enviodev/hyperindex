@@ -12,7 +12,7 @@ use crate::{
     template_dirs::TemplateDirs,
 };
 use anyhow::{anyhow, Context, Result};
-use ethers::abi::{EventExt, Event};
+use ethers::abi::{Event, EventExt};
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -852,54 +852,56 @@ mod test {
     const RESCRIPT_ADDRESS_TYPE: RescriptType = RescriptType::Address;
     const RESCRIPT_STRING_TYPE: RescriptType = RescriptType::String;
 
-    #[test]
-    fn abi_event_to_record_1() {
-        let project_template = get_project_template_helper("config1.yaml");
+    impl EventParamTypeTemplate {
+        fn new(param_name: &str, res_type: RescriptType) -> Self {
+            Self {
+                param_name: param_name.to_string().to_capitalized_options(),
+                type_rescript: res_type.to_string(),
+                default_value_rescript: res_type.get_default_value_rescript(),
+                default_value_non_rescript: res_type.get_default_value_non_rescript(),
+                is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,
+                is_indexed: false,
+                type_rescript_skar_decoded_param: res_type.to_string_decoded_skar(),
+            }
+        }
+    }
 
-        let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
+    fn make_expected_event_template(
+        topic0: String,
+        required_entity: RequiredEntityTemplate,
+    ) -> EventTemplate {
+        let params = vec![
+            EventParamTypeTemplate::new("id", RESCRIPT_BIG_INT_TYPE),
+            EventParamTypeTemplate::new("owner", RESCRIPT_ADDRESS_TYPE),
+            EventParamTypeTemplate::new("displayName", RESCRIPT_STRING_TYPE),
+            EventParamTypeTemplate::new("imageUrl", RESCRIPT_STRING_TYPE),
+        ];
 
-        let expected_event_template = EventTemplate {
+        EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
             event_type: EventType {
                 full: "Contract1_NewGravatar".to_string(),
                 truncated_for_pg_enum_limit: "Contract1_NewGravatar".to_string(),
             },
-            topic0: new_gavatar_event_template.topic0,
-            params: vec![
-                EventParamTypeTemplate {
-                    param_name: "id".to_string().to_capitalized_options(),
-                    type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
-                    default_value_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE
-                        .get_default_value_non_rescript(),
-                    is_eth_address: false,
-                },
-                EventParamTypeTemplate {
-                    param_name: "owner".to_string().to_capitalized_options(),
-                    type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
-                    default_value_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE
-                        .get_default_value_non_rescript(),
-                    is_eth_address: true,
-                },
-                EventParamTypeTemplate {
-                    param_name: "displayName".to_string().to_capitalized_options(),
-                    type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_STRING_TYPE
-                        .get_default_value_non_rescript(),
-                    is_eth_address: false,
-                },
-                EventParamTypeTemplate {
-                    param_name: "imageUrl".to_string().to_capitalized_options(),
-                    type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_STRING_TYPE
-                        .get_default_value_non_rescript(),
-                    is_eth_address: false,
-                },
-            ],
-            required_entities: vec![RequiredEntityTemplate {
+            topic0,
+            body_params: params.clone(),
+            params,
+            indexed_params: vec![],
+            required_entities: vec![required_entity],
+            is_async: false,
+        }
+    }
+
+    #[test]
+    fn abi_event_to_record_1() {
+        let project_template = get_project_template_helper("config1.yaml");
+
+        let new_gavatar_event_template =
+            project_template.codegen_contracts[0].codegen_events[0].clone();
+
+        let expected_event_template = make_expected_event_template(
+            new_gavatar_event_template.topic0.clone(),
+            RequiredEntityTemplate {
                 name: "EmptyEntity".to_string().to_capitalized_options(),
                 labels: None,
                 array_labels: None,
@@ -907,11 +909,10 @@ mod test {
                     all: vec![],
                     filtered_not_derived_from: vec![],
                 },
-            }],
-            is_async: false,
-        };
+            },
+        );
 
-        assert_eq!(&expected_event_template, new_gavatar_event_template);
+        assert_eq!(expected_event_template, new_gavatar_event_template);
     }
 
     #[test]
@@ -919,55 +920,15 @@ mod test {
         let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
 
         let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
-
-        let expected_event_template = EventTemplate {
-            name: "NewGravatar".to_string().to_capitalized_options(),
-            event_type: EventType {
-                full: "Contract1_NewGravatar".to_string(),
-                truncated_for_pg_enum_limit: "Contract1_NewGravatar".to_string(),
-            },
-            params: vec![
-                EventParamTypeTemplate {
-                    param_name: "id".to_string().to_capitalized_options(),
-                    type_rescript: RESCRIPT_BIG_INT_TYPE.to_string(),
-                    default_value_rescript: RESCRIPT_BIG_INT_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_BIG_INT_TYPE
-                        .get_default_value_non_rescript(),
-                    is_eth_address: false,
-                },
-                EventParamTypeTemplate {
-                    param_name: "owner".to_string().to_capitalized_options(),
-                    type_rescript: RESCRIPT_ADDRESS_TYPE.to_string(),
-                    default_value_rescript: RESCRIPT_ADDRESS_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_ADDRESS_TYPE
-                        .get_default_value_non_rescript(),
-                    is_eth_address: true,
-                },
-                EventParamTypeTemplate {
-                    param_name: "displayName".to_string().to_capitalized_options(),
-                    type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_STRING_TYPE
-                        .get_default_value_non_rescript(),
-                    is_eth_address: false,
-                },
-                EventParamTypeTemplate {
-                    param_name: "imageUrl".to_string().to_capitalized_options(),
-                    type_rescript: RESCRIPT_STRING_TYPE.to_string(),
-                    default_value_rescript: RESCRIPT_STRING_TYPE.get_default_value_rescript(),
-                    default_value_non_rescript: RESCRIPT_STRING_TYPE
-                        .get_default_value_non_rescript(),
-                    is_eth_address: false,
-                },
-            ],
-            required_entities: vec![RequiredEntityTemplate {
+        let expected_event_template = make_expected_event_template(
+            new_gavatar_event_template.topic0.clone(),
+            RequiredEntityTemplate {
                 name: String::from("Gravatar").to_capitalized_options(),
                 labels: Some(vec![String::from("gravatarWithChanges")]),
                 array_labels: None,
                 entity_fields_of_required_entity: FilteredTemplateLists::empty(),
-            }],
-            is_async: false,
-        };
+            },
+        );
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }
