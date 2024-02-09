@@ -128,7 +128,7 @@ let updateRegister = (
   ...self,
   latestFetchedBlockNumber,
   latestFetchedBlockTimestamp,
-  fetchedEventQueue: List.concat(newFetchedEvents, self.fetchedEventQueue),
+  fetchedEventQueue: List.concat(self.fetchedEventQueue, newFetchedEvents),
 }
 
 /**
