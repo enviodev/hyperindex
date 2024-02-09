@@ -38,6 +38,22 @@ module Helpers = {
       }
     | Ok(v) => v
     }
+
+  type jsExnObj = {
+    name?: string,
+    message?: string,
+    stack?: string,
+  }
+
+  let makeJsExnParams = exn => {
+    open Js.Exn
+    let name = exn->name
+    let message = exn->message
+    let stack = exn->stack
+    {?name, ?message, ?stack}
+  }
+
+  exception JsExn(jsExnObj)
 }
 
 let make = (chainConfig: Config.chainConfig, ~serverUrl): t => {
@@ -239,8 +255,17 @@ let fetchBlockRange = async (
 
   let parsingTimeRef = Hrtime.makeTimer()
   //Parse page items into queue items
-  let decoder =
+  let decoder = try {
     contractInterfaceManager->ContractInterfaceManager.getAbiMapping->HyperSyncClient.Decoder.make
+  } catch {
+  | Js.Exn.Error(exn) =>
+    let error = exn->Helpers.makeJsExnParams
+    logger->Logging.childError({
+      "msg": "Failed to instantiate a decoder from hypersync client",
+      "error": error,
+    })
+    Helpers.JsExn(error)->raise
+  }
 
   //Parse page items into queue items
   let parsedEvents = await decoder->HyperSyncClient.Decoder.decodeEvents(pageUnsafe.events)
