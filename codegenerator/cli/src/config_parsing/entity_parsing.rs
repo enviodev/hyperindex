@@ -221,7 +221,7 @@ impl RescriptType {
         }
     }
 
-    fn to_string_with_option_type(&self, option_type_of: &str) -> String {
+    fn to_string(&self) -> String {
         match self {
             RescriptType::Int => "int".to_string(),
             RescriptType::Float => "float".to_string(),
@@ -230,30 +230,21 @@ impl RescriptType {
             RescriptType::String => "string".to_string(),
             RescriptType::ID => "id".to_string(),
             RescriptType::Bool => "bool".to_string(),
-            RescriptType::Array(inner_type) => format!(
-                "array<{}>",
-                inner_type.to_string_with_option_type(option_type_of)
-            ),
+            RescriptType::Array(inner_type) => {
+                format!("array<{}>", inner_type.to_string())
+            }
             RescriptType::Option(inner_type) => {
-                format!(
-                    "{}<{}>",
-                    option_type_of,
-                    inner_type.to_string_with_option_type(option_type_of)
-                )
+                format!("option<{}>", inner_type.to_string())
             }
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
-                    .map(|inner_type| inner_type.to_string_with_option_type(option_type_of))
+                    .map(|inner_type| inner_type.to_string())
                     .collect::<Vec<String>>()
                     .join(", ");
                 format!("({})", inner_types_str)
             }
         }
-    }
-
-    pub fn to_string(&self) -> String {
-        self.to_string_with_option_type("option")
     }
 
     pub fn get_default_value_rescript(&self) -> String {
