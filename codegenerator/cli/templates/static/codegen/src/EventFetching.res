@@ -77,8 +77,6 @@ type eventBatchPromise = {
   eventPromise: promise<Types.event>,
 }
 
-exception RpcEventParsing(Converters.parseEventError)
-
 let convertLogs = (
   logs: array<Ethers.log>,
   ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
@@ -108,10 +106,9 @@ let convertLogs = (
           ~chainId=chain->ChainMap.Chain.toChainId,
         )
         switch parsed {
-        | Error(e) =>
-          let ex = RpcEventParsing(e)
-          logger->Logging.childErrorWithExn(ex, "Failed to parse event from RPC. Double c")
-          ex->raise
+        | Error(exn) =>
+          logger->Logging.childErrorWithExn(exn, "Failed to parse event from RPC. Double c")
+          exn->raise
         | Ok(val) => val
         }
       }),

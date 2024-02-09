@@ -97,6 +97,13 @@ let ethAddress_decode: Js.Json.t => result<ethAddress, Spice.decodeError> = json
 
 @module("ethers") @scope("ethers")
 external getAddressFromStringUnsafe: string => ethAddress = "getAddress"
+/**
+Same binding as getAddress from string 
+but used when we receive and address that's not necessarily checksummed
+*/
+@module("ethers")
+@scope("ethers")
+external formatEthAddress: ethAddress => ethAddress = "getAddress" //
 let getAddressFromString = str => Misc.unsafeToOption(() => str->getAddressFromStringUnsafe)
 let ethAddressToString = (address: ethAddress): string => address->Obj.magic
 let ethAddressToStringLower = (address: ethAddress): string =>

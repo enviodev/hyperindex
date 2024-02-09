@@ -240,9 +240,7 @@ let fetchBlockRange = async (
   let parsingTimeRef = Hrtime.makeTimer()
   //Parse page items into queue items
   let decoder =
-    contractInterfaceManager
-    ->ContractInterfaceManager.getAbiMapping
-    ->HyperSyncClient.Decoder.make
+    contractInterfaceManager->ContractInterfaceManager.getAbiMapping->HyperSyncClient.Decoder.make
 
   //Parse page items into queue items
   let parsedEvents = await decoder->HyperSyncClient.Decoder.decodeEvents(pageUnsafe.events)
@@ -264,10 +262,9 @@ let fetchBlockRange = async (
           ~blockTimestamp=item.blockTimestamp,
           ~chainId=chain->ChainMap.Chain.toChainId,
         )
-        ->Belt.Result.getExn,
+        ->Utils.unwrapResultExn,
       }
     })
-
 
   let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 

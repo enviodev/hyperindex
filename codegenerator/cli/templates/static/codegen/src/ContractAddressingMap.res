@@ -12,6 +12,7 @@ type mapping = {
 }
 
 let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
+  let address = address->Ethers.formatEthAddress
   map.nameByAddress->Js.Dict.set(address->Ethers.ethAddressToString, name)
 
   let oldAddresses =
@@ -22,6 +23,7 @@ let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
 
 /// This adds the address if it doesn't exist and returns a boolean to say if it already existed.
 let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Ethers.ethAddress): bool => {
+  let address = address->Ethers.formatEthAddress
   let addressIsNew =
     map.nameByAddress
     ->Js.Dict.get(address->Ethers.ethAddressToString)
@@ -71,24 +73,6 @@ let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress):
   contractName,
 > => {
   mapping->getName(contractAddress->Ethers.ethAddressToString)
-}
-
-let getContractNameFromAddressUnsafe = (
-  mapping,
-  ~contractAddress: Ethers.ethAddress,
-  ~logger: Pino.t,
-) => {
-  switch mapping->getContractNameFromAddress(~contractAddress) {
-  | None => {
-      logger->Logging.childError(
-        `contract address ${contractAddress->Ethers.ethAddressToString}  was not found in address store`,
-      )
-
-      UndefinedContractAddress(contractAddress)->raise
-    }
-
-  | Some(contractName) => contractName
-  }
 }
 
 let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Obj.magic
