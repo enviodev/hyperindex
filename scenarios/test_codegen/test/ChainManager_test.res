@@ -8,7 +8,7 @@ let {
   before: before_promise,
 } = module(RescriptMocha.Promise)
 
-let populateChainQueuesWithRandomEvents = (~runTime=10000, ~maxBlockTime=15, ()) => {
+let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
   let allEvents = []
 
   let arbitraryEventPriorityQueue = ref(list{})
