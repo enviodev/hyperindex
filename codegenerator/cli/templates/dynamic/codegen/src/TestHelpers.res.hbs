@@ -133,14 +133,19 @@ module EventFunctions = {
         event: eventWithContextAccessor(event, context),
       }
 
-      eventAndContext->EventProcessing.eventRouter(~inMemoryStore, ~cb=() => {
-        //Now that the processing is finished. Simulate writing a batch
-        //(Although in this case a batch of 1 event only) to the cloned mockDb
-        mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
+      eventAndContext->EventProcessing.eventRouter(~inMemoryStore, ~cb=res =>
+        switch res {
+        | Ok() =>
+          //Now that the processing is finished. Simulate writing a batch
+          //(Although in this case a batch of 1 event only) to the cloned mockDb
+          mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
 
-        //Return the cloned mock db
-        cb(mockDbClone)
-      })
+          //Return the cloned mock db
+          cb(mockDbClone)
+
+        | Error(exn) => exn->raise
+        }
+      )
     }
   }
 
