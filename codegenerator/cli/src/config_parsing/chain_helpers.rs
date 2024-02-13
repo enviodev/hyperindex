@@ -90,7 +90,7 @@ pub enum Network {
     ArbitrumNova = 42170,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     ArbitrumSepolia = 421614,
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     // Blockscout: https://explorer.celo.org/mainnet/
@@ -395,6 +395,9 @@ impl NetworkWithExplorer {
             ),
             NetworkWithExplorer::Scroll => {
                 BlockExplorerApi::custom("scrollscan.com", "api.scrollscan.com", api_key)
+            }
+            NetworkWithExplorer::ArbitrumSepolia => {
+                BlockExplorerApi::custom("sepolia.arbiscan.io", "api.sepolia.arbiscan.io", api_key)
             }
             NetworkWithExplorer::Kroma => {
                 BlockExplorerApi::custom("kromascan.com", "api.kromascan.com", api_key)

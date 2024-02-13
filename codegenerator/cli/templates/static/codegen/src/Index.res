@@ -4,7 +4,6 @@
  * This function can be used to override the console.log (and related functions for users). This means these logs will also be available to the user
  */
 let overrideConsoleLog: Pino.t => unit = %raw(`function (logger) {
-    const originalConsoleLog = console.log;
     console.log = function() {
       var args = Array.from(arguments);
 
