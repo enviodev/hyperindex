@@ -7,6 +7,7 @@ type t = {
   //The latest known block of the chain
   currentBlockHeight: int,
   isFetchingBatch: bool,
+  isFetchingAtHead: bool,
   mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t, // Dead code until we look at re-orgs again.
 }
 
@@ -18,10 +19,14 @@ let make = (
   ~startBlock,
   ~logger,
 ): t => {
-  let chainWorker = switch chainConfig.syncSource {
-  | HyperSync(serverUrl) => chainConfig->HyperSyncWorker.make(~serverUrl)->Config.HyperSync
-  | Rpc(rpcConfig) => chainConfig->RpcWorker.make(~rpcConfig)->Rpc
+  let (endpointDescription, chainWorker) = switch chainConfig.syncSource {
+  | HyperSync(serverUrl) => (
+      "HyperSync",
+      chainConfig->HyperSyncWorker.make(~serverUrl)->Config.HyperSync,
+    )
+  | Rpc(rpcConfig) => ("RPC", chainConfig->RpcWorker.make(~rpcConfig)->Rpc)
   }
+  logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
   let fetchState = FetchState.makeRoot(~contractAddressMapping, ~startBlock)
   {
     logger,
@@ -30,6 +35,7 @@ let make = (
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     isFetchingBatch: false,
+    isFetchingAtHead: false,
     fetchState,
   }
 }

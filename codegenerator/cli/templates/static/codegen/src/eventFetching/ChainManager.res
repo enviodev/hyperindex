@@ -109,26 +109,23 @@ let makeFromConfig = (~configs: Config.chainConfigs): t => {
 }
 
 let makeFromDbState = async (~configs: Config.chainConfigs): t => {
-  let initial = makeFromConfig(~configs)
-  let dbStateInitialized =
+  let chainFetchersArr =
     await configs
-    ->ChainMap.values
-    ->Array.map(chainConfig => {
+    ->ChainMap.entries
+    ->Array.map(async ((chain, chainConfig)) => {
       let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
       )
 
-      chainConfig->ChainFetcher.makeFromDbState(~lastBlockScannedHashes)
+      (chain, await chainConfig->ChainFetcher.makeFromDbState(~lastBlockScannedHashes))
     })
     ->Promise.all
 
-  let chainFetchers =
-    dbStateInitialized->Array.reduce(initial.chainFetchers, (accum, chainFetcher) =>
-      accum->ChainMap.set(chainFetcher.chainConfig.chain, chainFetcher)
-    )
+  let chainFetchers = ChainMap.fromArray(chainFetchersArr)->Utils.unwrapResultExn //Can safely unwrap since it is being mapped from Config
 
   {
-    ...initial,
+    isUnorderedHeadMode: Config.isUnorderedHeadMode,
+    arbitraryEventPriorityQueue: list{},
     chainFetchers,
   }
 }

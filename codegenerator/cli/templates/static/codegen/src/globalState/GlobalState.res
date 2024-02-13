@@ -18,6 +18,7 @@ type action =
   | SetCurrentlyProcessing(bool)
   | SetCurrentlyFetchingBatch(chain, bool)
   | SetFetchState(chain, FetchState.t)
+  | SetIsFetchingAtHead(chain, bool)
   | UpdateQueues(ChainMap.t<FetchState.t>, arbitraryEventQueue)
 
 type queryChain = CheckAllChains | Chain(chain)
@@ -103,6 +104,19 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
   (nextState, [ProcessEventBatch, NextQuery(Chain(chain))])
 }
 
+let updateChainFetcher = (chainFetcherUpdate, ~state, ~chain) => {
+  (
+    {
+      ...state,
+      chainManager: {
+        ...state.chainManager,
+        chainFetchers: state.chainManager.chainFetchers->ChainMap.update(chain, chainFetcherUpdate),
+      },
+    },
+    [],
+  )
+}
+
 let actionReducer = (state: t, action: action) => {
   switch action {
   | SetFetchStateCurrentBlockHeight(chain, currentBlockHeight) =>
@@ -167,33 +181,20 @@ let actionReducer = (state: t, action: action) => {
       [ProcessEventBatch],
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
-  | SetCurrentlyFetchingBatch(chain, isFetchingBatch) =>
-    let currentChainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-    let chainFetchers =
-      state.chainManager.chainFetchers->ChainMap.set(
-        chain,
-        {...currentChainFetcher, isFetchingBatch},
-      )
-
-    ({...state, chainManager: {...state.chainManager, chainFetchers}}, [])
-  | SetFetchState(chain, fetchState) =>
-    let updatedChainFetcher = {
-      ...state.chainManager.chainFetchers->ChainMap.get(chain),
-      fetchState,
-    }
-
-    let chainFetchers = state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher)
-
-    (
-      {
-        ...state,
-        chainManager: {
-          ...state.chainManager,
-          chainFetchers,
-        },
-      },
-      [],
+  | SetIsFetchingAtHead(chain, isFetchingAtHead) =>
+    updateChainFetcher(
+      currentChainFetcher => {...currentChainFetcher, isFetchingAtHead},
+      ~chain,
+      ~state,
     )
+  | SetCurrentlyFetchingBatch(chain, isFetchingBatch) =>
+    updateChainFetcher(
+      currentChainFetcher => {...currentChainFetcher, isFetchingBatch},
+      ~chain,
+      ~state,
+    )
+  | SetFetchState(chain, fetchState) =>
+    updateChainFetcher(currentChainFetcher => {...currentChainFetcher, fetchState}, ~chain, ~state)
   | UpdateQueues(fetchStatesMap, arbitraryEventPriorityQueue) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
@@ -217,7 +218,7 @@ let actionReducer = (state: t, action: action) => {
 }
 
 let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
-  let {fetchState, chainWorker, logger, currentBlockHeight, isFetchingBatch} =
+  let {fetchState, chainWorker, logger, currentBlockHeight, isFetchingBatch, isFetchingAtHead} =
     state.chainManager.chainFetchers->ChainMap.get(chain)
 
   if (
@@ -231,11 +232,17 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
     | Some(nextFetchState) => dispatchAction(SetFetchState(chain, nextFetchState))
     | None => ()
     }
+
     let setCurrentBlockHeight = currentBlockHeight =>
       dispatchAction(SetFetchStateCurrentBlockHeight(chain, currentBlockHeight))
 
     switch nextQuery {
     | WaitForNewBlock =>
+      if !isFetchingAtHead && currentBlockHeight != 0 && fetchState->FetchState.queueSize == 0 {
+        logger->Logging.childInfo("ChainFetcher has caught up to the head")
+        dispatchAction(SetIsFetchingAtHead(chain, true))
+      }
+      logger->Logging.childTrace("Waiting for new blocks")
       let compose = async (worker, waitForBlockGreaterThanCurrentHeight) => {
         let newHeight =
           await worker->waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
