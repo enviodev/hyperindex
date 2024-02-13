@@ -90,6 +90,8 @@ pub enum Network {
     ArbitrumNova = 42170,
     #[subenum(NetworkWithExplorer, GraphNetwork)]
     ArbitrumGoerli = 421613,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
+    ArbitrumSepolia = 421614,
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     // Blockscout: https://explorer.celo.org/mainnet/
     Celo = 42220,
@@ -186,6 +188,25 @@ pub enum Network {
     // https://explorer.mantle.xyz/
     // Routescan: https://mantlescan.info/
     Mantle = 5000,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.zetachain.com/
+    // https://zetachain.explorers.guru/
+    Zeta = 7000,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://artio.beratrail.io/
+    BerachainArtio = 80085,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://neonscan.org/
+    // https://neon.blockscout.com/
+    NeonEvm = 245022934,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.rsk.co/
+    // https://rootstock.blockscout.com/
+    Rsk = 30,
 }
 
 impl Network {
@@ -280,6 +301,11 @@ impl NetworkWithExplorer {
                 "G65DZIAMA9756ZS875UDBFY6UH4W5VJ5DW",
             ],
             NetworkWithExplorer::ArbitrumGoerli => [
+                "3T4HN3KASB3IPQEZX21A9EXFFDKBNIRQ3R",
+                "F3VXQYQSV2IKB8UCMNASMPWP39GAN8JDFY",
+                "G65DZIAMA9756ZS875UDBFY6UH4W5VJ5DW",
+            ],
+            NetworkWithExplorer::ArbitrumSepolia => [
                 "3T4HN3KASB3IPQEZX21A9EXFFDKBNIRQ3R",
                 "F3VXQYQSV2IKB8UCMNASMPWP39GAN8JDFY",
                 "G65DZIAMA9756ZS875UDBFY6UH4W5VJ5DW",

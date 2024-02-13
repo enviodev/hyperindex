@@ -16,6 +16,7 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::Optimism => "https://optimism.hypersync.xyz".to_string(),
         HypersyncNetwork::OptimismSepolia => "https://optimism-sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::ArbitrumOne => "https://arbitrum.hypersync.xyz".to_string(),
+        HypersyncNetwork::ArbitrumSepolia => "https://arbitrum-sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::Linea => "https://linea.hypersync.xyz".to_string(),
         HypersyncNetwork::Sepolia => "https://sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::Base => "https://base.hypersync.xyz".to_string(),
@@ -45,6 +46,10 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::C1Milkomeda => "https://c1-milkomeda.hypersync.xyz".to_string(),
         HypersyncNetwork::Flare => "https://flare.hypersync.xyz".to_string(),
         HypersyncNetwork::Mantle => "https://mantle.hypersync.xyz".to_string(),
+        HypersyncNetwork::Zeta => "https://zeta.hypersync.xyz".to_string(),
+        HypersyncNetwork::Rsk => "https://rsk.hypersync.xyz".to_string(),
+        HypersyncNetwork::BerachainArtio => "https://berachain-artio.hypersync.xyz".to_string(),
+        HypersyncNetwork::NeonEvm => "https://neon-evm.hypersync.xyz".to_string(),
     }
 }
 
