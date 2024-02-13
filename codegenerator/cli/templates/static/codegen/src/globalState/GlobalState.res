@@ -239,7 +239,7 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
     switch nextQuery {
     | WaitForNewBlock =>
       if !isFetchingAtHead && currentBlockHeight != 0 && fetchState->FetchState.queueSize == 0 {
-        logger->Logging.childInfo("ChainFetcher has caught up to the head")
+        logger->Logging.childInfo("All events have been fetched, they should finish processing the handlers soon.")
         dispatchAction(SetIsFetchingAtHead(chain, true))
       }
       logger->Logging.childTrace("Waiting for new blocks")
