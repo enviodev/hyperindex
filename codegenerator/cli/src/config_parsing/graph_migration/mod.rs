@@ -571,4 +571,19 @@ mod test {
         assert_eq!(valid_2, true);
         assert_eq!(valid_3, false);
     }
+
+    #[test]
+    #[ignore]
+    fn subgraph_id() {
+        let valid_sub_graph_ids = vec![
+            //Aave V2 Ethereum
+            "C2zniPn45RnLDGzVeGZCx2Sw3GXrbc9gL4ZfL8B8Em2j",
+            //Substreams Uniswap v3 Ethereum
+            "HUZDsRpEVP2AvzDCyzDHtdc64dyDxx8FQjzsmqSg4H3B",
+        ];
+
+        for id in valid_sub_graph_ids {
+            assert!(super::valid_ipfs_cid(id))
+        }
+    }
 }
