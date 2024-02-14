@@ -79,6 +79,7 @@ let handleEvent = (
 
   let makeErr = ErrorHandling.make(
     ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
+    ~logger=context.logger,
   )
 
   switch handlerWithContextGetter {
@@ -87,7 +88,7 @@ let handleEvent = (
     //Since loaders and previous handlers have already run
     let handlerContext = contextGetter(context)
     switch handler(~event, ~context=handlerContext) {
-    | exception exn => Error(makeErr(exn, ~logger=context.logger))
+    | exception exn => Error(makeErr(exn))
     | () => Ok()
     }->cb
   | Async({handler, contextGetter}) =>
@@ -97,7 +98,7 @@ let handleEvent = (
     handler(~event, ~context=handlerContext)
     ->Promise.thenResolve(_ => cb(Ok()))
     ->Promise.catch(exn => {
-      cb(Error(makeErr(exn, ~logger=context.logger)))
+      cb(Error(makeErr(exn)))
       Promise.resolve()
     })
     ->ignore
@@ -295,10 +296,10 @@ let composeGetReadEntity = (
   }
 }
 
-let rec getReadEntitiesInternal = (
+let rec getReadEntities = (
   ~inMemoryStore,
   ~logger,
-  ~entitiesToLoad,
+  ~entitiesToLoad=[],
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations=None,
   eventBatch: list<Types.eventBatchQueueItem>,
@@ -331,20 +332,20 @@ let rec getReadEntitiesInternal = (
       }
 
       //else keep getting read entities from batch
-      res->Result.flatMap(res =>
-        tail->getReadEntitiesInternal(
+      switch res {
+      | Error(e) => Error(e)
+      | Ok(res) =>
+        tail->getReadEntities(
           ~inMemoryStore,
           ~logger,
           ~entitiesToLoad=res.val,
           ~checkContractIsRegistered,
           ~dynamicContractRegistrations=res.dynamicContractRegistrations,
         )
-      )
+      }
     }
   }
 }
-
-let getReadEntities = getReadEntitiesInternal(~entitiesToLoad=[])
 
 let loadReadEntities = async (
   ~inMemoryStore,
