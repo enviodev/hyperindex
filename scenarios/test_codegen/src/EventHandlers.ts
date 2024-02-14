@@ -40,8 +40,8 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
   let token = {
     id: event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
     tokenId: event.params.tokenId,
-    collection: event.srcAddress,
-    owner: event.params.to,
+    collection_id: event.srcAddress,
+    owner_id: event.params.to,
   };
   if (nftCollectionUpdated) {
     let existingToken = context.Token.get(
@@ -71,7 +71,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       address: event.params.from,
       updatesCountOnUserForTesting:
         loadedUserFrom?.updatesCountOnUserForTesting || 0,
-      gravatar: undefined,
+      gravatar_id: undefined,
     };
     context.User.set(userFrom);
   }
@@ -84,7 +84,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       address: event.params.to,
       updatesCountOnUserForTesting:
         loadedUserTo?.updatesCountOnUserForTesting || 0,
-      gravatar: undefined,
+      gravatar_id: undefined,
     };
     context.User.set(userTo);
   }

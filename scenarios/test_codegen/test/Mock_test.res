@@ -75,7 +75,7 @@ describe("E2E Db check", () => {
           dbOp: Set,
           entity: {
             id: "1001",
-            owner: "0x1230000000000000000000000000000000000000",
+            owner_id: "0x1230000000000000000000000000000000000000",
             displayName: "update1",
             imageUrl: "https://gravatar1.com",
             updatesCount: Ethers.BigInt.fromInt(2),
@@ -85,7 +85,7 @@ describe("E2E Db check", () => {
           dbOp: Set,
           entity: {
             id: "1002",
-            owner: "0x4560000000000000000000000000000000000000",
+            owner_id: "0x4560000000000000000000000000000000000000",
             displayName: "update2",
             imageUrl: "https://gravatar2.com",
             updatesCount: Ethers.BigInt.fromInt(2),
@@ -95,7 +95,7 @@ describe("E2E Db check", () => {
           dbOp: Set,
           entity: {
             id: "1003",
-            owner: "0x7890000000000000000000000000000000000000",
+            owner_id: "0x7890000000000000000000000000000000000000",
             displayName: "update3",
             imageUrl: "https://gravatar3.com",
             updatesCount: Ethers.BigInt.fromInt(2),

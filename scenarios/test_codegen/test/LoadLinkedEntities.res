@@ -29,29 +29,29 @@ describe("Linked Entity Loader Integration Test", () => {
   MochaPromise.it("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
     let sql = DbFunctions.sql
     /// Setup DB
-    let a1: Types.aEntity = {optionalStringToTestLinkedEntities: None, id: "a1", b: "b1"}
-    let a2: Types.aEntity = {optionalStringToTestLinkedEntities: None, id: "a2", b: "b2"}
+    let a1: Types.aEntity = {optionalStringToTestLinkedEntities: None, id: "a1", b_id: "b1"}
+    let a2: Types.aEntity = {optionalStringToTestLinkedEntities: None, id: "a2", b_id: "b2"}
     let aEntities: array<Types.aEntity> = [
       a1,
       a2,
-      {optionalStringToTestLinkedEntities: None, id: "a3", b: "b3"},
-      {optionalStringToTestLinkedEntities: None, id: "a4", b: "b4"},
-      {optionalStringToTestLinkedEntities: None, id: "a5", b: "bWontLoad"},
-      {optionalStringToTestLinkedEntities: None, id: "a6", b: "bWontLoad"},
-      {optionalStringToTestLinkedEntities: None, id: "aWontLoad", b: "bWontLoad"},
+      {optionalStringToTestLinkedEntities: None, id: "a3", b_id: "b3"},
+      {optionalStringToTestLinkedEntities: None, id: "a4", b_id: "b4"},
+      {optionalStringToTestLinkedEntities: None, id: "a5", b_id: "bWontLoad"},
+      {optionalStringToTestLinkedEntities: None, id: "a6", b_id: "bWontLoad"},
+      {optionalStringToTestLinkedEntities: None, id: "aWontLoad", b_id: "bWontLoad"},
     ]
     let bEntities: array<Types.bEntity> = [
-      {id: "b1", c: Some("c1")},
-      {id: "b2", c: Some("c2")},
-      {id: "b3", c: None},
-      {id: "b4", c: Some("c3")},
-      {id: "bWontLoad", c: None},
+      {id: "b1", c_id: Some("c1")},
+      {id: "b2", c_id: Some("c2")},
+      {id: "b3", c_id: None},
+      {id: "b4", c_id: Some("c3")},
+      {id: "bWontLoad", c_id: None},
     ]
     let cEntities: array<Types.cEntity> = [
-      {id: "c1", a: "aWontLoad", stringThatIsMirroredToA: ""},
-      {id: "c2", a: "a5", stringThatIsMirroredToA: ""},
-      {id: "c3", a: "a6", stringThatIsMirroredToA: ""},
-      {id: "TODO_TURN_THIS_INTO_NONE", a: "aWontLoad", stringThatIsMirroredToA: ""},
+      {id: "c1", a_id: "aWontLoad", stringThatIsMirroredToA: ""},
+      {id: "c2", a_id: "a5", stringThatIsMirroredToA: ""},
+      {id: "c3", a_id: "a6", stringThatIsMirroredToA: ""},
+      {id: "TODO_TURN_THIS_INTO_NONE", a_id: "aWontLoad", stringThatIsMirroredToA: ""},
     ]
 
     await DbFunctions.A.batchSet(sql, aEntities->Belt.Array.map(Types.aEntity_encode))
@@ -92,10 +92,10 @@ describe("Linked Entity Loader Integration Test", () => {
     // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
     let b1 = handlerContext.a.getB(a1)
 
-    Assert.deep_equal(b1.id, a1.b, ~message="b1.id should equal testingA.b")
+    Assert.deep_equal(b1.id, a1.b_id, ~message="b1.id should equal testingA.b_id")
 
     let c1 = handlerContext.b.getC(b1)
-    Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
+    Assert.equal(c1->Belt.Option.map(c => c.id), b1.c_id, ~message="c1.id should equal b1.c_id")
   })
 
   MochaPromise.it("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
@@ -113,16 +113,21 @@ describe("Linked Entity Loader Integration Test", () => {
     }
 
     /// Setup DB
-    let a1: Types.aEntity = {id: "a1", b: "b1", optionalStringToTestLinkedEntities: None}
+    let a1: Types.aEntity = {id: "a1", b_id: "b1", optionalStringToTestLinkedEntities: None}
     let aEntities: array<Types.aEntity> = [
       a1,
-      {id: "a2", b: "b1", optionalStringToTestLinkedEntities: None},
-      {id: "a3", b: "b1", optionalStringToTestLinkedEntities: None},
-      {id: "a4", b: "b1", optionalStringToTestLinkedEntities: None},
-      {id: "aWontLoad", b: "bWontLoad", optionalStringToTestLinkedEntities: None},
+      {id: "a2", b_id: "b1", optionalStringToTestLinkedEntities: None},
+      {id: "a3", b_id: "b1", optionalStringToTestLinkedEntities: None},
+      {id: "a4", b_id: "b1", optionalStringToTestLinkedEntities: None},
+      {id: "aWontLoad", b_id: "bWontLoad", optionalStringToTestLinkedEntities: None},
     ]
-    let bEntities: array<Types.bEntity> = [{id: "b1", c: Some("c1")}, {id: "bWontLoad", c: None}]
-    let cEntities: array<Types.cEntity> = [{id: "c1", a: "aWontLoad", stringThatIsMirroredToA: ""}]
+    let bEntities: array<Types.bEntity> = [
+      {id: "b1", c_id: Some("c1")},
+      {id: "bWontLoad", c_id: None},
+    ]
+    let cEntities: array<Types.cEntity> = [
+      {id: "c1", a_id: "aWontLoad", stringThatIsMirroredToA: ""},
+    ]
 
     await DbFunctions.A.batchSet(sql, aEntities->Belt.Array.map(createEventA))
     await DbFunctions.B.batchSet(sql, bEntities->Belt.Array.map(createEventB))
@@ -157,11 +162,11 @@ describe("Linked Entity Loader Integration Test", () => {
     // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
     let b1 = handlerContext.a.getB(a1)
 
-    Assert.equal(b1.id, a1.b, ~message="b1.id should equal testingA.b")
+    Assert.equal(b1.id, a1.b_id, ~message="b1.id should equal testingA.b_id")
 
     let c1 = handlerContext.b.getC(b1)
 
-    Assert.equal(c1->Belt.Option.map(c => c.id), b1.c, ~message="c1.id should equal b1.c")
+    Assert.equal(c1->Belt.Option.map(c => c.id), b1.c_id, ~message="c1.id should equal b1.c_id")
 
     let resultAWontLoad = inMemoryStore.a->IO.InMemoryStore.A.get("aWontLoad")
     Assert.equal(resultAWontLoad, None, ~message="aWontLoad should not be in the store")
@@ -178,24 +183,24 @@ describe("Async linked entity loaders", () => {
     let c: Types.cEntity = {
       id: "hasStringToCopy",
       stringThatIsMirroredToA: messageFromC,
-      a: "",
+      a_id: "",
     }
     let b: Types.bEntity = {
       id: "hasC",
-      c: Some(c.id),
+      c_id: Some(c.id),
     }
     let a: Types.aEntity = {
       id: EventHandlers.aIdWithGrandChildC,
-      b: b.id,
+      b_id: b.id,
       optionalStringToTestLinkedEntities: None,
     }
     let bNoC: Types.bEntity = {
       id: "noC",
-      c: None,
+      c_id: None,
     }
     let aNoGrandchild: Types.aEntity = {
       id: EventHandlers.aIdWithNoGrandChildC,
-      b: bNoC.id,
+      b_id: bNoC.id,
       optionalStringToTestLinkedEntities: None,
     }
     // Initializing the mock database

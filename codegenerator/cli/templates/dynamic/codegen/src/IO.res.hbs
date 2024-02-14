@@ -202,11 +202,11 @@ let rec{{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/
       {{#if relational_param.is_optional}}
         //In this case entity.{{relational_param.relational_key.uncapitalized}} is an optional single value. But we
         //still pass back an array of actions in order for cases where the related entity is an array of ids
-        entity.{{relational_param.relational_key.uncapitalized}}->Belt.Option.mapWithDefault([], entityId => [entityId->getLoader])
+        entity.{{relational_param.relational_key.uncapitalized}}_id->Belt.Option.mapWithDefault([], entityId => [entityId->getLoader])
       {{else}}
         //In this case entity.{{relational_param.relational_key.uncapitalized}} is a single value. But we
         //still pass back an array of actions in order for cases where the related entity is an array of ids
-        [entity.{{relational_param.relational_key.uncapitalized}}->getLoader]
+        [entity.{{relational_param.relational_key.uncapitalized}}_id->getLoader]
       {{/if}}
     {{/if}}
       })
