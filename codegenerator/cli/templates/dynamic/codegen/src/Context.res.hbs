@@ -6,6 +6,7 @@ type entityGetters = {
 
 @genType
 type genericContextCreatorFunctions<'loaderContext, 'handlerContextSync, 'handlerContextAsync> = {
+  logger: Pino.t,
   log: Logs.userLogger,
   getLoaderContext: unit => 'loaderContext,
   getHandlerContextSync: unit => 'handlerContextSync,
@@ -407,6 +408,7 @@ This is likely due to a database corruption. Please reach out to the team on dis
       }
 
       {
+        logger,
         log: contextLogger,
         getEntitiesToLoad: () => entitiesToLoad,
         getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,

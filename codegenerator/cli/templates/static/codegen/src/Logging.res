@@ -111,6 +111,9 @@ let error = message => {
 let errorWithExn = (error, message) => {
   logger->Pino.errorExn(error, message->createPinoMessage)
 }
+let errorWithJsExn = (error, message) => {
+  logger->Pino.errorJsExn(error, message->createPinoMessage)
+}
 
 let fatal = message => {
   logger.fatal(. message->createPinoMessage)
@@ -133,6 +136,9 @@ let childError = (logger, params: 'a) => {
 }
 let childErrorWithExn = (logger, error, params: 'a) => {
   logger->Pino.errorExn(error, params->createPinoMessage)
+}
+let childErrorWithJsExn = (logger, error, params: 'a) => {
+  logger->Pino.errorJsExn(error, params->createPinoMessage)
 }
 let childFatal = (logger, params: 'a) => {
   logger.fatal(. params->createPinoMessage)

@@ -143,7 +143,9 @@ module EventFunctions = {
           //Return the cloned mock db
           cb(mockDbClone)
 
-        | Error(exn) => exn->raise
+        | Error(errHandler) =>
+          errHandler->ErrorHandling.log
+          errHandler->ErrorHandling.raiseExn
         }
       )
     }

@@ -20,6 +20,7 @@ type action =
   | SetFetchState(chain, FetchState.t)
   | SetIsFetchingAtHead(chain, bool)
   | UpdateQueues(ChainMap.t<FetchState.t>, arbitraryEventQueue)
+  | ErrorExit(ErrorHandling.t)
 
 type queryChain = CheckAllChains | Chain(chain)
 type task =
@@ -214,6 +215,9 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
+  | ErrorExit(errHandler) =>
+    errHandler->ErrorHandling.log
+    errHandler->ErrorHandling.raiseExn
   }
 }
 
@@ -303,7 +307,12 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
           ~inMemoryStore,
           ~checkContractIsRegistered,
         )
-        ->Promise.thenResolve(res => dispatchAction(EventBatchProcessed(res)))
+        ->Promise.thenResolve(res =>
+          switch res {
+          | Ok(loadRes) => dispatchAction(EventBatchProcessed(loadRes))
+          | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
+          }
+        )
         ->ignore
       | None => ()
       }

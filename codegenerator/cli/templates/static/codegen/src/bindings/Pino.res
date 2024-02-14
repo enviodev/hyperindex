@@ -26,6 +26,11 @@ type t = {
   fatal: (. pinoMessageBlob) => unit,
 }
 @send external errorExn: (t, exn, pinoMessageBlob) => unit = "error"
+/**
+This is preferred over errorExn since it will expose the values of the error
+*/
+@send
+external errorJsExn: (t, Js.Exn.t, pinoMessageBlob) => unit = "error"
 
 // Bind to the 'level' property getter
 @get external getLevel: t => logLevel = "level"
