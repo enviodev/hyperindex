@@ -410,11 +410,7 @@ impl FieldType {
     }
 
     pub fn is_entity_field(&self) -> bool {
-        if let GqlScalar::Custom(_entity_name) = self.get_underlying_scalar() {
-            true
-        } else {
-            false
-        }
+        matches!(self.get_underlying_scalar(), GqlScalar::Custom(_))
     }
 
     fn to_string(&self) -> String {

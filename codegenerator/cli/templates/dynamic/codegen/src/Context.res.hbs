@@ -345,18 +345,6 @@ Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the 
               {{/each}}
               {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
               get{{entity_field.relational_key.capitalized}}: async {{entity.name.uncapitalized}} => {
-                {{#if entity_field.is_array}}
-                ////// NOTE: This case is now impossible since we don't do entity arrays, keeping here since we intend to implement derivedFrom entity loading.
-                ////  let {{entity_field.relational_key.uncapitalized}}Array = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id->Belt.Array.map(entityId => {
-                ////    let optEntity = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get(entityId)
-
-                ////    switch optEntity {
-                ////    | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
-                ////    | None =>  /*is something meant to be here?*/None //... What// Arrays aren't implemented
-                ////    }
-                ////})
-                ////{{entity_field.relational_key.uncapitalized}}Array
-                {{else}}
                 {{#if entity_field.is_optional}}
                  switch {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id {
                   | Some({{entity_field.relational_key.uncapitalized}}_field) =>
@@ -398,7 +386,6 @@ This is likely due to a database corruption. Please reach out to the team on dis
           ->Some
           | None => None
           }
-          {{/if}}
               {{/if}}
             },
             {{/each}}
