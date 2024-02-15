@@ -636,7 +636,7 @@ impl ProjectTemplate {
             .iter()
             .map(|gql_enum| GraphQlEnumTypeTemplate::from_config_gql_enum(gql_enum))
             .collect::<Result<_>>()
-            .context("Failed generating entity template types")?;
+            .context("Failed generating enum template types")?;
 
         let chain_configs: Vec<NetworkConfigTemplate> = cfg
             .get_networks()

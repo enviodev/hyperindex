@@ -189,7 +189,7 @@ module EnumTypes = {
       %raw("sql`
       DO $$ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{{enum.name.uncapitalized}}') THEN
-          CREATE TYPE {{enum.name.capitalized}} AS ENUM(
+          CREATE TYPE {{enum.name.uncapitalized}} AS ENUM(
           {{#each enum.params as | param |}}'{{param.original}}'{{#unless @last}},
           {{/unless}}{{/each}}
           );
