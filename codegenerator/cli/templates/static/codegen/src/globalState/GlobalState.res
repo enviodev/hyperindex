@@ -313,6 +313,14 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
         )
+        ->Promise.catch(exn => {
+        //All casese should be handled/caught before this with better user messaging.
+        //This is just a safety in case something unexpected happens
+          let errHandler =
+            exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing")
+          dispatchAction(ErrorExit(errHandler))
+          Promise.reject(exn)
+        })
         ->ignore
       | None => ()
       }
