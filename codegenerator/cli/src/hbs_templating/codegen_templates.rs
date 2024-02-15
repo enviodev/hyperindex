@@ -557,6 +557,7 @@ pub struct ProjectTemplate {
     chain_configs: Vec<NetworkConfigTemplate>,
     codegen_out_path: String,
     persisted_state: PersistedStateJsonString,
+    is_unordered_multichain_mode: bool,
 }
 
 impl ProjectTemplate {
@@ -615,6 +616,7 @@ impl ProjectTemplate {
             chain_configs,
             codegen_out_path: gitignore_path_str,
             persisted_state,
+            is_unordered_multichain_mode: cfg.unordered_multichain_mode,
         })
     }
 }

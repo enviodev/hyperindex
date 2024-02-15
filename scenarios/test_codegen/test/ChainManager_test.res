@@ -125,7 +125,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     {
       ChainManager.arbitraryEventPriorityQueue: arbitraryEventPriorityQueue.contents,
       chainFetchers,
-      isUnorderedHeadMode: false,
+      isUnorderedMultichainMode: false,
     },
     numberOfMockEventsCreated.contents,
     allEvents,
@@ -263,10 +263,10 @@ describe("ChainManager", () => {
 describe("determineNextEvent", () => {
   describe("optimistic-unordered-mode", () => {
     let determineNextEvent_unordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
-      ~isUnorderedHeadMode=true,
+      ~isUnorderedMultichainMode=true,
     )
     let determineNextEvent_ordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
-      ~isUnorderedHeadMode=false,
+      ~isUnorderedMultichainMode=false,
     )
 
     let makeNoItem = timestamp => FetchState.NoItem({timestamp, blockNumber: 0})

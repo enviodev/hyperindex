@@ -292,6 +292,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
             schema: None,
             contracts,
             networks,
+            unordered_multichain_mode: None,
         })
     }
 }

@@ -63,11 +63,23 @@ let getLogLevelConfig = (~name, ~default): Pino.logLevel =>
     (),
   )
 
-let isUnorderedHeadMode =
+let configIsUnorderedMultichainMode = {{is_unordered_multichain_mode}}
+
+/**
+Used for backwards compatability
+*/
+let unstable__temp_unordered_head_mode = envSafe->EnvSafe.get(
+  ~name="UNSTABLE__TEMP_UNORDERED_HEAD_MODE",
+  ~struct=S.bool(),
+  ~devFallback=false,
+  (),
+)
+
+let isUnorderedMultichainMode =
   envSafe->EnvSafe.get(
-    ~name="UNSTABLE__TEMP_UNORDERED_HEAD_MODE",
+    ~name="UNORDERED_MULTICHAIN_MODE",
     ~struct=S.bool(),
-    ~devFallback=false,
+    ~devFallback=configIsUnorderedMultichainMode || unstable__temp_unordered_head_mode,
     (),
   )
 

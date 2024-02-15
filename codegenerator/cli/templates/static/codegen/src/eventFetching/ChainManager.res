@@ -5,7 +5,7 @@ type t = {
   //And potentially extra events that are pushed on by newly registered dynamic
   //contracts which missed being fetched by they chainFetcher
   arbitraryEventPriorityQueue: list<Types.eventBatchQueueItem>,
-  isUnorderedHeadMode: bool,
+  isUnorderedMultichainMode: bool,
 }
 
 let getComparitorFromItem = (queueItem: Types.eventBatchQueueItem) => {
@@ -58,10 +58,10 @@ let chainFetcherPeekComparitorEarliestEventPrioritizeEvents = (
 exception NoItemsInArray
 
 let determineNextEvent = (
-  ~isUnorderedHeadMode: bool,
+  ~isUnorderedMultichainMode: bool,
   fetchStatesMap: ChainMap.t<FetchState.t>,
 ): result<multiChainEventComparitor, exn> => {
-  let comparitorFunction = if isUnorderedHeadMode {
+  let comparitorFunction = if isUnorderedMultichainMode {
     chainFetcherPeekComparitorEarliestEventPrioritizeEvents
   } else {
     isQueueItemEarlier
@@ -102,7 +102,7 @@ let makeFromConfig = (~configs: Config.chainConfigs): t => {
   {
     chainFetchers,
     arbitraryEventPriorityQueue: list{},
-    isUnorderedHeadMode: Config.isUnorderedHeadMode,
+    isUnorderedMultichainMode: Config.isUnorderedMultichainMode,
   }
 }
 
@@ -122,7 +122,7 @@ let makeFromDbState = async (~configs: Config.chainConfigs): t => {
   let chainFetchers = ChainMap.fromArray(chainFetchersArr)->Utils.unwrapResultExn //Can safely unwrap since it is being mapped from Config
 
   {
-    isUnorderedHeadMode: Config.isUnorderedHeadMode,
+    isUnorderedMultichainMode: Config.isUnorderedMultichainMode,
     arbitraryEventPriorityQueue: list{},
     chainFetchers,
   }
@@ -270,13 +270,13 @@ let getFirstArbitraryEventsItem = (queue: list<Types.eventBatchQueueItem>) =>
 let popBatchItem = (
   ~fetchStatesMap: ChainMap.t<FetchState.t>,
   ~arbitraryEventQueue: list<Types.eventBatchQueueItem>,
-  ~isUnorderedHeadMode,
+  ~isUnorderedMultichainMode,
 ): option<earliestQueueItem> => {
   //Compare the peeked items and determine the next item
   let {chain, earliestEventResponse: {updatedFetchState, earliestQueueItem}} =
-    fetchStatesMap->determineNextEvent(~isUnorderedHeadMode)->Utils.unwrapResultExn
+    fetchStatesMap->determineNextEvent(~isUnorderedMultichainMode)->Utils.unwrapResultExn
 
-  let maybeArbItem = if isUnorderedHeadMode {
+  let maybeArbItem = if isUnorderedMultichainMode {
     arbitraryEventQueue->getFirstArbitraryEventsItemForChain(~chain)
   } else {
     arbitraryEventQueue->getFirstArbitraryEventsItem
@@ -319,12 +319,12 @@ let rec createBatchInternal = (
   ~fetchStatesMap,
   ~arbitraryEventQueue,
   ~batchRev,
-  ~isUnorderedHeadMode,
+  ~isUnorderedMultichainMode,
 ) => {
   if currentBatchSize >= maxBatchSize {
     makeBatch(~batchRev, ~currentBatchSize, ~fetchStatesMap, ~arbitraryEventQueue)
   } else {
-    switch popBatchItem(~fetchStatesMap, ~arbitraryEventQueue, ~isUnorderedHeadMode) {
+    switch popBatchItem(~fetchStatesMap, ~arbitraryEventQueue, ~isUnorderedMultichainMode) {
     | None => makeBatch(~batchRev, ~currentBatchSize, ~fetchStatesMap, ~arbitraryEventQueue)
     | Some(item) =>
       let (arbitraryEventQueue, fetchStatesMap, nextItem) = switch item {
@@ -342,7 +342,7 @@ let rec createBatchInternal = (
         ~arbitraryEventQueue,
         ~fetchStatesMap,
         ~currentBatchSize=currentBatchSize + 1,
-        ~isUnorderedHeadMode,
+        ~isUnorderedMultichainMode,
       )
     }
   }
@@ -360,7 +360,7 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
     ~currentBatchSize=0,
     ~fetchStatesMap,
     ~arbitraryEventQueue=arbitraryEventPriorityQueue,
-    ~isUnorderedHeadMode=self.isUnorderedHeadMode,
+    ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
   )
 
   if response.batchSize > 0 {

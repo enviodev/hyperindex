@@ -276,6 +276,7 @@ pub async fn generate_config_from_subgraph_id(
         schema: None,
         contracts: None,
         networks: vec![],
+        unordered_multichain_mode: None,
     };
 
     //Allow schema and abis to be fetched on different threads

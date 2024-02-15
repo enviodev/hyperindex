@@ -22,6 +22,8 @@ pub struct HumanConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
     pub networks: Vec<Network>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unordered_multichain_mode: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

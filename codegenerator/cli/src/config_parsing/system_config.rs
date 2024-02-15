@@ -28,6 +28,7 @@ pub struct SystemConfig {
     pub networks: NetworkMap,
     pub contracts: ContractMap,
     pub entities: EntityMap,
+    pub unordered_multichain_mode: bool,
 }
 
 //Getter methods for system config
@@ -236,6 +237,7 @@ impl SystemConfig {
             networks,
             contracts,
             entities,
+            unordered_multichain_mode: human_cfg.unordered_multichain_mode.unwrap_or(false),
         })
     }
 
