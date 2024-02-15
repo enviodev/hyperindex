@@ -178,6 +178,16 @@ pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> 
     detected_reserved_words_in_schema
 }
 
+pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<String> {
+    let mut detected_enum_not_valid = Vec::new();
+    for name in enum_names {
+        if !is_valid_postgres_db_name(&name.as_str()) {
+            detected_enum_not_valid.push(name.clone());
+        }
+    }
+    detected_enum_not_valid
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

@@ -221,7 +221,10 @@ impl Into<Schema> for AutoSchemaHandlerTemplate {
                 schema.entities
             })
             .collect();
-        Schema { entities }
+        Schema {
+            entities,
+            enums: vec![],
+        }
     }
 }
 
@@ -270,7 +273,10 @@ impl Contract {
 impl Into<Schema> for Contract {
     fn into(self) -> Schema {
         let entities = self.imported_events.into_iter().map(|e| e.into()).collect();
-        Schema { entities }
+        Schema {
+            entities,
+            enums: vec![],
+        }
     }
 }
 

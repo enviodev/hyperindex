@@ -1,9 +1,21 @@
+enum AccountType {
+  ADMIN
+  USER
+}
+
 type User {
   id: ID!
   address: Bytes!
   gravatar: Gravatar
   updatesCountOnUserForTesting: Int!
   tokens: [Token!]! @derivedFrom(field: "owner")
+  accountType: AccountType!
+}
+
+enum GravatarSize {
+  SMALL
+  MEDIUM
+  LARGE
 }
 
 type Gravatar {
@@ -12,6 +24,7 @@ type Gravatar {
   displayName: String!
   imageUrl: String!
   updatesCount: BigInt!
+  size: GravatarSize!
 }
 
 type NftCollection {

@@ -5,7 +5,7 @@ import {
   SimpleNftContract_Transfer_handler,
 } from "../generated/src/Handlers.gen";
 
-import { NftCollectionEntity, UserEntity } from "../generated/src/Types.gen";
+import { NftCollectionEntity, UserEntity, AccountType } from "../generated/src/Types.gen";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
@@ -65,13 +65,14 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
 
   if (event.params.from !== zeroAddress) {
     let loadedUserFrom = context.User.get(event.params.from);
-
+    let accountType: AccountType = "USER";
     let userFrom = {
       id: event.params.from,
       address: event.params.from,
       updatesCountOnUserForTesting:
         loadedUserFrom?.updatesCountOnUserForTesting || 0,
       gravatar_id: undefined,
+      accountType
     };
     context.User.set(userFrom);
   }
@@ -85,6 +86,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       updatesCountOnUserForTesting:
         loadedUserTo?.updatesCountOnUserForTesting || 0,
       gravatar_id: undefined,
+      accountType: "ADMIN"
     };
     context.User.set(userTo);
   }

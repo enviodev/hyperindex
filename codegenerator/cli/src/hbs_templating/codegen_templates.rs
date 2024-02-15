@@ -2,7 +2,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{Entity, Field, RescriptType},
+        entity_parsing::{Entity, Field, GraphQLEnum, RescriptType},
         event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -37,6 +37,37 @@ pub struct EventRecordTypeTemplate {
     pub params: Vec<EventParamTypeTemplate>,
 }
 impl HasName for EventRecordTypeTemplate {
+    fn set_name(&mut self, name: CapitalizedOptions) {
+        self.name = name;
+    }
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct GraphQlEnumTypeTemplate {
+    pub name: CapitalizedOptions,
+    pub params: Vec<CapitalizedOptions>,
+}
+
+impl GraphQlEnumTypeTemplate {
+    fn from_config_gql_enum(gql_enum: &GraphQLEnum) -> Result<Self> {
+        let params: Vec<CapitalizedOptions> = gql_enum
+            .values
+            .iter()
+            .map(|value| Ok(value.name.to_capitalized_options().clone()))
+            .collect::<Result<_>>()
+            .context(format!(
+                "Failed templating gql enum fields of enum: {}",
+                gql_enum.name
+            ))?;
+
+        Ok(GraphQlEnumTypeTemplate {
+            name: gql_enum.name.to_capitalized_options(),
+            params,
+        })
+    }
+}
+
+impl HasName for GraphQlEnumTypeTemplate {
     fn set_name(&mut self, name: CapitalizedOptions) {
         self.name = name;
     }
@@ -132,9 +163,10 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, config: &SystemConfig) -> Result<Self> {
         let entity_names_set = config.get_entity_names_set();
+        let gql_enums_name_set = config.get_gql_enum_names_set();
         let type_rescript = field
             .field_type
-            .to_rescript_type(&entity_names_set)
+            .to_rescript_type(&entity_names_set, &gql_enums_name_set)
             .context("Failed getting rescript type")?
             .into();
 
@@ -142,7 +174,7 @@ impl EntityParamTypeTemplate {
 
         let type_pg = field
             .field_type
-            .to_postgres_type(&entity_names_set, is_derived_from)
+            .to_postgres_type(&entity_names_set, &gql_enums_name_set, is_derived_from)
             .context("Failed getting postgres type")?;
 
         let is_entity_field = field.field_type.is_entity_field();
@@ -184,7 +216,7 @@ impl EntityRecordTypeTemplate {
             ))?;
 
         let entity_relational_types_templates = entity
-            .get_related_entities(config.get_entity_map())
+            .get_related_entities(config.get_entity_map(), config.get_gql_enum_map())
             .context(format!(
                 "Failed getting relational fields of entity: {}",
                 entity.name
@@ -362,7 +394,7 @@ impl EventTemplate {
                         }
                     }).context("Validating 'requiredEntity' fields in config.")?;
 
-                let required_entity_entity_field_templates = entity.get_related_entities(config.get_entity_map()).context(format!("Failed retrieving related entities of required entity {}", entity.name))?
+                let required_entity_entity_field_templates = entity.get_related_entities(config.get_entity_map(), config.get_gql_enum_map()).context(format!("Failed retrieving related entities of required entity {}", entity.name))?
                     .iter().map(|(field, related_entity)| RequiredEntityEntityFieldTemplate::from_config_entity(field, related_entity)).collect();
 
                 let entity_fields_of_required_entity =
@@ -554,6 +586,7 @@ pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
+    gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     codegen_out_path: String,
     persisted_state: PersistedStateJsonString,
@@ -598,6 +631,13 @@ impl ProjectTemplate {
             .collect::<Result<_>>()
             .context("Failed generating entity template types")?;
 
+        let gql_enums: Vec<GraphQlEnumTypeTemplate> = cfg
+            .get_gql_enums()
+            .iter()
+            .map(|gql_enum| GraphQlEnumTypeTemplate::from_config_gql_enum(gql_enum))
+            .collect::<Result<_>>()
+            .context("Failed generating entity template types")?;
+
         let chain_configs: Vec<NetworkConfigTemplate> = cfg
             .get_networks()
             .iter()
@@ -613,6 +653,7 @@ impl ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
             entities,
+            gql_enums,
             chain_configs,
             codegen_out_path: gitignore_path_str,
             persisted_state,

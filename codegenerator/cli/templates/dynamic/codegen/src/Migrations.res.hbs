@@ -181,6 +181,26 @@ module DynamicContractRegistryTable = {
   @@warning("+21")
 }
 
+module EnumTypes = {
+ {{#each gql_enums as | enum |}} 
+  let create{{enum.name.capitalized}}Enum: unit => promise<unit> = async () => {
+    @warning("-21")
+    let _ = await (
+      %raw("sql`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = '{{enum.name.uncapitalized}}') THEN
+          CREATE TYPE {{enum.name.capitalized}} AS ENUM(
+          {{#each enum.params as | param |}}'{{param.original}}'{{#unless @last}},
+          {{/unless}}{{/each}}
+          );
+        END IF;
+      END $$;
+      `")
+    )
+    }
+    {{/each}}
+}
+
 module EntityHistory = {
   let createEntityTypeEnum: unit => promise<unit> = async () => {
     @warning("-21")
@@ -215,6 +235,7 @@ module EntityHistory = {
 
   // NOTE: didn't add 'delete' functions here - delete functions aren't being used currently.
 }
+
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
@@ -311,6 +332,13 @@ let runUpMigrations = async (~shouldExit) => {
     exitCode := Failure
     Logging.errorWithExn(err,`EE801: Error creating dynamic_contracts table`)->Promise.resolve
   })
+
+{{#each gql_enums as | enum |}} 
+await EnumTypes.create{{enum.name.capitalized}}Enum()->Promise.catch(err => {
+    exitCode := Failure
+    Logging.errorWithExn(err,`EE802: Error creating {{enum.name.capitalized}} enum in postgres`)->Promise.resolve
+  })
+{{/each}}
 // TODO: catch and handle query errors
 {{#each entities as |entity|}}
   await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()->Promise.catch(err => {

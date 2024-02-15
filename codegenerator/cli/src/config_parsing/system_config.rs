@@ -1,5 +1,5 @@
 use super::{
-    entity_parsing::{Entity, Schema},
+    entity_parsing::{Entity, GraphQLEnum, Schema},
     human_config::{self, HumanConfig, HypersyncConfig, RpcConfig, SyncSourceConfig},
 };
 use crate::{
@@ -17,9 +17,11 @@ use std::{
 type ContractNameKey = String;
 type NetworkIdKey = u64;
 type EntityKey = String;
+type GraphqlEnumKey = String;
 type NetworkMap = HashMap<NetworkIdKey, Network>;
 type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
+pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
 pub struct SystemConfig {
     pub name: String,
@@ -29,6 +31,7 @@ pub struct SystemConfig {
     pub contracts: ContractMap,
     pub entities: EntityMap,
     pub unordered_multichain_mode: bool,
+    pub gql_enums: GraphQlEnumMap,
 }
 
 //Getter methods for system config
@@ -68,6 +71,25 @@ impl SystemConfig {
 
     pub fn get_entity_names_set(&self) -> HashSet<EntityKey> {
         self.entities.keys().cloned().collect()
+    }
+
+    pub fn get_gql_enum(&self, enum_name: &GraphqlEnumKey) -> Option<&GraphQLEnum> {
+        self.gql_enums.get(enum_name)
+    }
+
+    pub fn get_gql_enum_map(&self) -> &GraphQlEnumMap {
+        &self.gql_enums
+    }
+
+    pub fn get_gql_enums(&self) -> Vec<&GraphQLEnum> {
+        let mut enums: Vec<&GraphQLEnum> = self.gql_enums.values().collect();
+        //For consistent templating in alphabetical order
+        enums.sort_by_key(|e| e.name.clone());
+        enums
+    }
+
+    pub fn get_gql_enum_names_set(&self) -> HashSet<EntityKey> {
+        self.gql_enums.keys().cloned().collect()
     }
 
     pub fn get_networks(&self) -> Vec<&Network> {
@@ -227,6 +249,13 @@ impl SystemConfig {
                 .context("Failed inserting entity at entities map")?;
         }
 
+        let mut gql_enums = HashMap::new();
+
+        for gql_enum in schema.enums {
+            unique_hashmap::try_insert(&mut gql_enums, gql_enum.name.clone(), gql_enum)
+                .context("Failed inserting enums at enum map")?;
+        }
+
         Ok(SystemConfig {
             name: human_cfg.name.clone(),
             parsed_project_paths: project_paths.clone(),
@@ -238,6 +267,7 @@ impl SystemConfig {
             contracts,
             entities,
             unordered_multichain_mode: human_cfg.unordered_multichain_mode.unwrap_or(false),
+            gql_enums,
         })
     }
 

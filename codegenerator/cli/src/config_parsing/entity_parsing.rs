@@ -1,9 +1,15 @@
-use super::{system_config::EntityMap, validation::check_names_from_schema_for_reserved_words};
+use super::{
+    system_config::{EntityMap, GraphQlEnumMap},
+    validation::{
+        check_names_from_schema_for_reserved_words, check_schema_enums_are_valid_postgres,
+    },
+};
+use crate::capitalization::{Capitalize, CapitalizedOptions};
 use anyhow::{anyhow, Context};
 use ethers::abi::ethabi::ParamType as EthAbiParamType;
 use graphql_parser::schema::{
-    Definition, Directive, Document, Field as ObjField, ObjectType, Type as ObjType,
-    TypeDefinition, Value,
+    Definition, Directive, Document, EnumType, EnumValue, Field as ObjField, ObjectType,
+    Type as ObjType, TypeDefinition, Value,
 };
 use serde::{Serialize, Serializer};
 use std::{
@@ -16,11 +22,15 @@ use subenum::subenum;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Schema {
     pub entities: Vec<Entity>,
+    pub enums: Vec<GraphQLEnum>,
 }
 
 impl Schema {
     pub fn empty() -> Self {
-        Schema { entities: vec![] }
+        Schema {
+            entities: vec![],
+            enums: vec![],
+        }
     }
 
     fn from_document(document: Document<String>) -> anyhow::Result<Self> {
@@ -37,9 +47,24 @@ impl Schema {
             })
             .map(|obj| Entity::from_object(obj))
             .collect::<anyhow::Result<_>>()
-            .context("Failed contstructing schema from document")?;
+            .context("Failed constructing entities in schema from document")?;
 
-        Ok(Schema { entities })
+        let enums: Vec<GraphQLEnum> = document
+            .definitions
+            .iter()
+            .filter_map(|d| match d {
+                Definition::TypeDefinition(type_def) => Some(type_def),
+                _ => None,
+            })
+            .filter_map(|type_def| match type_def {
+                TypeDefinition::Enum(obj) => Some(obj),
+                _ => None,
+            })
+            .map(|obj| GraphQLEnum::from_enum(obj))
+            .collect::<anyhow::Result<_>>()
+            .context("Failed constructing enums in schema from document")?;
+
+        Ok(Schema { entities, enums })
     }
 
     pub fn parse_from_file(path_to_schema: &PathBuf) -> anyhow::Result<Self> {
@@ -60,6 +85,10 @@ impl Schema {
             .check_schema_for_reserved_words()
             .context("Failed checking if schema contains reserved keywords")?;
 
+        parsed
+            .validate_enums_for_postgres_and_duplicates()
+            .context("Failed validating enums")?;
+
         Ok(parsed)
     }
 
@@ -72,6 +101,12 @@ impl Schema {
                 all_names.push(field.name.clone());
             }
         }
+        for gql_enum in &self.enums {
+            all_names.push(gql_enum.name.clone());
+            for value in &gql_enum.values {
+                all_names.push(value.name.clone());
+            }
+        }
         let reserved_keywords_used = check_names_from_schema_for_reserved_words(all_names);
         if !reserved_keywords_used.is_empty() {
             return Err(anyhow!(
@@ -81,6 +116,69 @@ impl Schema {
         }
 
         Ok(())
+    }
+
+    pub fn validate_enums_for_postgres_and_duplicates(&self) -> anyhow::Result<()> {
+        let mut enum_names: Vec<String> = Vec::new();
+        for gql_enum in &self.enums {
+            enum_names.push(gql_enum.name.clone());
+        }
+        let invalid_enum_names = check_schema_enums_are_valid_postgres(&enum_names);
+        if !invalid_enum_names.is_empty() {
+            return Err(anyhow!(
+                "EE212: Schema contains the following enum names that do not match the following pattern: It must start with a letter. It can only contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters. Invalid names: {}",
+                invalid_enum_names.join(", ")
+            ));
+        }
+        let mut duplicate_enum_entity_names: Vec<String> = Vec::new();
+        for entity in &self.entities {
+            if enum_names.contains(&entity.name.clone()) {
+                duplicate_enum_entity_names.push(entity.name.clone());
+            }
+        }
+        if !duplicate_enum_entity_names.is_empty() {
+            return Err(anyhow!(
+                "EE213: Schema contains the following enums and entities with the same name, all type and enum definitions must be unique in the schema: {}",
+                duplicate_enum_entity_names.join(", ")
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GraphQLEnum {
+    pub name: String,
+    pub values: Vec<GraphQLValue>,
+}
+
+impl GraphQLEnum {
+    pub fn new(name: String, values: Vec<GraphQLValue>) -> Self {
+        GraphQLEnum { name, values }
+    }
+    fn from_enum(enm: &EnumType<String>) -> anyhow::Result<Self> {
+        let name = enm.name.clone();
+        let values = enm
+            .values
+            .iter()
+            .map(|value| GraphQLValue::from_enum_value(value))
+            .collect::<anyhow::Result<_>>()
+            .context("Failed contsructing enums")?;
+        Ok(GraphQLEnum::new(name, values))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GraphQLValue {
+    pub name: String,
+}
+
+impl GraphQLValue {
+    pub fn from_enum_value(enum_value: &EnumValue<String>) -> anyhow::Result<Self> {
+        let name = enum_value.name.clone();
+
+        Ok(GraphQLValue { name })
     }
 }
 
@@ -107,6 +205,7 @@ impl Entity {
     pub fn get_related_entities<'a>(
         &'a self,
         other_entities: &'a EntityMap,
+        gql_enums: &GraphQlEnumMap,
     ) -> anyhow::Result<Vec<(&'a Field, &'a Self)>> {
         let required_entities_with_field = self
             .fields
@@ -114,11 +213,15 @@ impl Entity {
             .filter_map(|field| {
                 let gql_scalar = field.field_type.get_underlying_scalar();
                 if let GqlScalar::Custom(entity_name) = gql_scalar {
-                    let field_and_entity = other_entities
-                        .get(entity_name)
-                        .map(|entity| (field, entity))
-                        .ok_or_else(|| anyhow!("Entity {} does not exist", entity_name));
-                    Some(field_and_entity)
+                    if gql_enums.contains_key(entity_name) {
+                        None
+                    } else {
+                        let field_and_entity = other_entities
+                            .get(entity_name)
+                            .map(|entity| (field, entity))
+                            .ok_or_else(|| anyhow!("Entity {} does not exist", entity_name));
+                        Some(field_and_entity)
+                    }
                 } else {
                     None
                 }
@@ -192,6 +295,7 @@ pub enum RescriptType {
     Address,
     String,
     Bool,
+    EnumVariant(CapitalizedOptions),
     Array(Box<RescriptType>),
     Option(Box<RescriptType>),
     Tuple(Vec<RescriptType>),
@@ -244,6 +348,7 @@ impl RescriptType {
                     .join(", ");
                 format!("({})", inner_types_str)
             }
+            RescriptType::EnumVariant(enum_name) => enum_name.uncapitalized.clone(),
         }
     }
 
@@ -258,6 +363,7 @@ impl RescriptType {
             RescriptType::Bool => "false".to_string(),
             RescriptType::Array(_) => "[]".to_string(),
             RescriptType::Option(_) => "None".to_string(),
+            RescriptType::EnumVariant(_) => "defaultEnum".to_string(),
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
@@ -280,6 +386,7 @@ impl RescriptType {
             RescriptType::Bool => "false".to_string(),
             RescriptType::Array(_) => "[]".to_string(),
             RescriptType::Option(_) => "null".to_string(),
+            RescriptType::EnumVariant(_) => "defaultEnum".to_string(),
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
@@ -334,11 +441,12 @@ impl FieldType {
     pub fn to_postgres_type(
         &self,
         entities_set: &HashSet<String>,
+        gql_enums_set: &HashSet<String>,
         is_derived_from: bool,
     ) -> anyhow::Result<String> {
         let composed_type_name = match self {
         Self::Single(gql_scalar) => {
-                gql_scalar.to_postgres_type(entities_set)?
+                gql_scalar.to_postgres_type(entities_set, gql_enums_set)?
         }
         Self::ListType(field_type) => match field_type.as_ref() {
             //Postgres doesn't support nullable types inside of arrays
@@ -348,7 +456,7 @@ impl FieldType {
                         Err(anyhow!(
                             "EE211: Arrays of entities is unsupported. Please use one of the methods for referencing entities outlined in the docs. The entity being referenced in the array is '{}'.", custom_field
                         ))?,
-                    | _ => format!("{}[]",field_type.to_postgres_type(entities_set, is_derived_from)?),
+                    | _ => format!("{}[]",field_type.to_postgres_type(entities_set, gql_enums_set, is_derived_from)?),
                 }
             Self::Single(gql_scalar)   => Err(anyhow!(
                 "EE208: Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", gql_scalar
@@ -358,7 +466,7 @@ impl FieldType {
         },
         Self::NonNullType(field_type) => format!(
             "{} NOT NULL",
-            field_type.to_postgres_type(entities_set, is_derived_from)?
+            field_type.to_postgres_type(entities_set,gql_enums_set, is_derived_from)?
         ),
     };
         Ok(composed_type_name)
@@ -376,25 +484,33 @@ impl FieldType {
             )
     }
 
-    pub fn to_rescript_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<RescriptType> {
+    pub fn to_rescript_type(
+        &self,
+        entities_set: &HashSet<String>,
+        gql_enums_name_set: &HashSet<String>,
+    ) -> anyhow::Result<RescriptType> {
         let composed_type_name = match self {
             //Only types in here should be non optional
             Self::NonNullType(field_type) => match field_type.as_ref() {
-                Self::Single(gql_scalar) => gql_scalar.to_rescript_type(entities_set)?,
-                Self::ListType(field_type) => {
-                    RescriptType::Array(Box::new(field_type.to_rescript_type(entities_set)?))
+                Self::Single(gql_scalar) => {
+                    gql_scalar.to_rescript_type(entities_set, gql_enums_name_set)?
                 }
+                Self::ListType(field_type) => RescriptType::Array(Box::new(
+                    field_type.to_rescript_type(entities_set, gql_enums_name_set)?,
+                )),
                 //This case shouldn't happen, and should recurse without adding any types if so
                 //A double non null would be !! in gql
-                Self::NonNullType(field_type) => field_type.to_rescript_type(entities_set)?,
+                Self::NonNullType(field_type) => {
+                    field_type.to_rescript_type(entities_set, gql_enums_name_set)?
+                }
             },
             //If we match this case it missed the non null path entirely and should be optional
-            Self::Single(gql_scalar) => {
-                RescriptType::Option(Box::new(gql_scalar.to_rescript_type(entities_set)?))
-            }
+            Self::Single(gql_scalar) => RescriptType::Option(Box::new(
+                gql_scalar.to_rescript_type(entities_set, gql_enums_name_set)?,
+            )),
             //If we match this case it missed the non null path entirely and should be optional
             Self::ListType(field_type) => RescriptType::Option(Box::new(RescriptType::Array(
-                Box::new(field_type.to_rescript_type(entities_set)?),
+                Box::new(field_type.to_rescript_type(entities_set, gql_enums_name_set)?),
             ))),
         };
         Ok(composed_type_name)
@@ -495,30 +611,42 @@ impl From<&str> for GqlScalar {
 }
 
 impl GqlScalar {
-    fn to_postgres_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<String> {
+    fn to_postgres_type(
+        &self,
+        entities_set: &HashSet<String>,
+        gql_enums_name_set: &HashSet<String>,
+    ) -> anyhow::Result<String> {
         let converted = match self {
-            GqlScalar::ID => "text",
-            GqlScalar::String => "text",
-            GqlScalar::Int => "integer",
-            GqlScalar::Float => "numeric", // Should we allow this type? Rounding issues will abound.
-            GqlScalar::Boolean => "boolean",
-            GqlScalar::Bytes => "text",
-            GqlScalar::BigInt => "numeric", // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            GqlScalar::ID => "text".to_string(),
+            GqlScalar::String => "text".to_string(),
+            GqlScalar::Int => "integer".to_string(),
+            GqlScalar::Float => "numeric".to_string(), // Should we allow this type? Rounding issues will abound.
+            GqlScalar::Boolean => "boolean".to_string(),
+            GqlScalar::Bytes => "text".to_string(),
+            GqlScalar::BigInt => "numeric".to_string(), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
             GqlScalar::Custom(named_type) => {
                 if entities_set.contains(named_type) {
-                    "text" //This would be the ID of another defined entity
+                    "text".to_string() //This would be the ID of another defined entity
                 } else {
-                    Err(anyhow!(
-                        "EE207: Failed to parse undefined type: {}",
-                        named_type
-                    ))?
+                    if gql_enums_name_set.contains(named_type) {
+                        named_type.to_capitalized_options().uncapitalized
+                    } else {
+                        Err(anyhow!(
+                            "EE207: Failed to parse undefined type: {}",
+                            named_type
+                        ))?
+                    }
                 }
             }
         };
-        Ok(converted.to_string())
+        Ok(converted)
     }
 
-    fn to_rescript_type(&self, entities_set: &HashSet<String>) -> anyhow::Result<RescriptType> {
+    fn to_rescript_type(
+        &self,
+        entities_set: &HashSet<String>,
+        gql_enums_name_set: &HashSet<String>,
+    ) -> anyhow::Result<RescriptType> {
         let res_type = match self {
             GqlScalar::ID => RescriptType::ID,
             GqlScalar::String => RescriptType::String,
@@ -527,14 +655,18 @@ impl GqlScalar {
             GqlScalar::Float => RescriptType::Float,
             GqlScalar::Bytes => RescriptType::String,
             GqlScalar::Boolean => RescriptType::Bool,
-            GqlScalar::Custom(entity_name) => {
-                if entities_set.contains(entity_name) {
+            GqlScalar::Custom(entity_or_enum_name) => {
+                if entities_set.contains(entity_or_enum_name) {
                     RescriptType::ID
                 } else {
-                    Err(anyhow!(
-                        "EE207: Failed to parse undefined type: {}",
-                        entity_name
-                    ))?
+                    if gql_enums_name_set.contains(entity_or_enum_name) {
+                        RescriptType::EnumVariant(entity_or_enum_name.to_capitalized_options())
+                    } else {
+                        Err(anyhow!(
+                            "EE207: Failed to parse undefined type: {}",
+                            entity_or_enum_name
+                        ))?
+                    }
                 }
             }
         };
@@ -551,7 +683,7 @@ mod tests {
     fn gql_type_to_rescript_type_string() {
         let empty_set = HashSet::new();
         let rescript_type = FieldType::Single(GqlScalar::String)
-            .to_rescript_type(&empty_set)
+            .to_rescript_type(&empty_set, &empty_set)
             .expect("expected rescript option string");
 
         assert_eq!(rescript_type.to_string(), "option<string>".to_owned());
@@ -561,7 +693,7 @@ mod tests {
     fn gql_type_to_rescript_type_int() {
         let empty_set = HashSet::new();
         let rescript_type = FieldType::Single(GqlScalar::Int)
-            .to_rescript_type(&empty_set)
+            .to_rescript_type(&empty_set, &empty_set)
             .expect("expected rescript option string");
 
         assert_eq!(rescript_type.to_string(), "option<int>".to_owned());
@@ -571,7 +703,7 @@ mod tests {
     fn gql_type_to_rescript_type_non_null_int() {
         let empty_set = HashSet::new();
         let rescript_type = FieldType::NonNullType(Box::new(FieldType::Single(GqlScalar::Int)))
-            .to_rescript_type(&empty_set)
+            .to_rescript_type(&empty_set, &empty_set)
             .expect("expected rescript type string");
 
         assert_eq!(rescript_type.to_string(), "int".to_owned());
@@ -583,7 +715,7 @@ mod tests {
         let rescript_type = FieldType::NonNullType(Box::new(FieldType::ListType(Box::new(
             FieldType::NonNullType(Box::new(FieldType::Single(GqlScalar::Int))),
         ))))
-        .to_rescript_type(&empty_set)
+        .to_rescript_type(&empty_set, &empty_set)
         .expect("expected rescript type string");
 
         assert_eq!(rescript_type.to_string(), "array<int>".to_owned());
@@ -594,7 +726,7 @@ mod tests {
         let empty_set = HashSet::new();
 
         let rescript_type = FieldType::ListType(Box::new(FieldType::Single(GqlScalar::Int)))
-            .to_rescript_type(&empty_set)
+            .to_rescript_type(&empty_set, &empty_set)
             .expect("expected rescript type string");
 
         assert_eq!(
@@ -607,12 +739,26 @@ mod tests {
     fn gql_type_to_rescript_type_entity() {
         let mut entity_set = HashSet::new();
         let test_entity_string = String::from("TestEntity");
+        let empty_enums_set = HashSet::new();
         entity_set.insert(test_entity_string.clone());
         let rescript_type = FieldType::Single(GqlScalar::Custom(test_entity_string))
-            .to_rescript_type(&entity_set)
+            .to_rescript_type(&entity_set, &empty_enums_set)
             .expect("expected rescript type string");
 
         assert_eq!(rescript_type.to_string(), "option<id>".to_owned());
+    }
+
+    #[test]
+    fn gql_type_to_rescript_type_enum() {
+        let empty_entity_set = HashSet::new();
+        let test_enum_string = String::from("TestEnum");
+        let mut enums_set = HashSet::new();
+        enums_set.insert(test_enum_string.clone());
+        let rescript_type = FieldType::Single(GqlScalar::Custom(test_enum_string))
+            .to_rescript_type(&empty_entity_set, &enums_set)
+            .expect("expected rescript type string");
+
+        assert_eq!(rescript_type.to_string(), "option<testEnum>".to_owned());
     }
 
     #[test]
@@ -660,10 +806,22 @@ mod tests {
     fn gql_type_to_postgres_type_test_helper(gql_field_str: &str) -> String {
         let field_type = get_field_type_helper(gql_field_str);
         let empty_entities_set = HashSet::new();
-
+        let empty_enums_set = HashSet::new();
         field_type
-            .to_postgres_type(&empty_entities_set, false)
+            .to_postgres_type(&empty_entities_set, &empty_enums_set, false)
             .expect("unable to get postgres type")
+    }
+    #[test]
+    fn gql_enum_type_to_postgres_type() {
+        let field_type = get_field_type_helper("TestEnum!");
+        let empty_entities_set = HashSet::new();
+        let test_enum_string = String::from("TestEnum");
+        let mut enums_set = HashSet::new();
+        enums_set.insert(test_enum_string.clone());
+        let pg_type = field_type
+            .to_postgres_type(&empty_entities_set, &enums_set, false)
+            .expect("unable to get postgres type");
+        assert_eq!(pg_type, "testEnum NOT NULL");
     }
 
     #[test]
@@ -709,7 +867,10 @@ mod tests {
         let field_type = get_field_type_helper("Int");
 
         let empty_entities_set = HashSet::new();
-        let rescript_type = field_type.to_rescript_type(&empty_entities_set).unwrap();
+        let empty_enums_set = HashSet::new();
+        let rescript_type = field_type
+            .to_rescript_type(&empty_entities_set, &empty_enums_set)
+            .unwrap();
         assert_eq!("option<int>".to_string(), rescript_type.to_string());
     }
 
@@ -718,7 +879,10 @@ mod tests {
         let field_type = get_field_type_helper("[String]!");
 
         let empty_entities_set = HashSet::new();
-        let rescript_type = field_type.to_rescript_type(&empty_entities_set).unwrap();
+        let empty_enums_set = HashSet::new();
+        let rescript_type = field_type
+            .to_rescript_type(&empty_entities_set, &empty_enums_set)
+            .unwrap();
         assert_eq!(
             "array<option<string>>".to_string(),
             rescript_type.to_string()
