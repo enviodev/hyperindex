@@ -17,6 +17,7 @@ type logLevelUser = [
 type logLevel = [logLevelBuiltin | logLevelUser]
 
 type pinoMessageBlob
+@genType
 type t = {
   trace: (. pinoMessageBlob) => unit,
   debug: (. pinoMessageBlob) => unit,
