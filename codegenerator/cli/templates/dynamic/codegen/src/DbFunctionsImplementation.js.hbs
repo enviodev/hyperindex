@@ -229,7 +229,6 @@ FROM "public"."{{entity.name.original}}"
 WHERE id IN ${sql(entityIdArray)};`;
 
 const batchSet{{entity.name.capitalized}}Core = (sql, entityDataArray) => {
-  console.log("{{entity.name.capitalized}} - entityDataArray", entityDataArray[0])
   return sql`
     INSERT INTO "public"."{{entity.name.original}}"
 ${sql(entityDataArray,
