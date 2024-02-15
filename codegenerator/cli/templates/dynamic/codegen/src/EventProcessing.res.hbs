@@ -425,19 +425,23 @@ let processEventBatch = async (
     }) {
     | Ok() =>
       let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-      await DbFunctions.sql->IO.executeBatch(~inMemoryStore)
+      switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore) {
+      | exception exn =>
+        exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
+      | () =>
+        let elapsedTimeAfterDbWrite =
+          timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-      let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+        registerProcessEventBatchMetrics(
+          ~logger,
+          ~batchSize=eventBatchAndContext->Array.length,
+          ~loadDuration=elapsedAfterLoad,
+          ~handlerDuration=elapsedTimeAfterProcess - elapsedAfterLoad,
+          ~dbWriteDuration=elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
+        )
 
-      registerProcessEventBatchMetrics(
-        ~logger,
-        ~batchSize=eventBatchAndContext->Array.length,
-        ~loadDuration=elapsedAfterLoad,
-        ~handlerDuration=elapsedTimeAfterProcess - elapsedAfterLoad,
-        ~dbWriteDuration=elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
-      )
-
-      {val: (), dynamicContractRegistrations}->Ok
+        {val: (), dynamicContractRegistrations}->Ok
+      }
     | Error(e) => Error(e)
     }
   | Error(e) => Error(e)
