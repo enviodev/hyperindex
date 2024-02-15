@@ -525,8 +525,11 @@ impl FieldType {
         }
     }
 
-    pub fn is_entity_field(&self) -> bool {
-        matches!(self.get_underlying_scalar(), GqlScalar::Custom(_))
+    pub fn is_entity_field(&self, gql_enums_name_set: &HashSet<String>) -> bool {
+        match self.get_underlying_scalar() {
+            GqlScalar::Custom(type_name) => !gql_enums_name_set.contains(type_name),
+            _ => false,
+        }
     }
 
     fn to_string(&self) -> String {

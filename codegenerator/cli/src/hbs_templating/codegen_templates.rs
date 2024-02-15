@@ -177,7 +177,7 @@ impl EntityParamTypeTemplate {
             .to_postgres_type(&entity_names_set, &gql_enums_name_set, is_derived_from)
             .context("Failed getting postgres type")?;
 
-        let is_entity_field = field.field_type.is_entity_field();
+        let is_entity_field = field.field_type.is_entity_field(&gql_enums_name_set);
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
