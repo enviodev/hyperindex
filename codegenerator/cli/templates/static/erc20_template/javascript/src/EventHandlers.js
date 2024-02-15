@@ -25,8 +25,8 @@ ERC20Contract.Approval.handler((event, context) => {
   let approvalObject = {
     id: approvalId,
     amount: event.params.value,
-    owner: event.params.owner,
-    spender: event.params.spender,
+    owner_id: event.params.owner,
+    spender_id: event.params.spender,
   };
 
   // this is the same for create or update as the amount is overwritten
