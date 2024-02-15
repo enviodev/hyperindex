@@ -57,7 +57,7 @@ let chainFetcherPeekComparitorEarliestEventPrioritizeEvents = (
 
 exception NoItemsInArray
 
-let createDetermineNextEventFunction = (
+let determineNextEvent = (
   ~isUnorderedHeadMode: bool,
   fetchStatesMap: ChainMap.t<FetchState.t>,
 ): result<multiChainEventComparitor, exn> => {
@@ -85,12 +85,10 @@ let createDetermineNextEventFunction = (
     })
 
   switch nextItem {
-  | None => Error(NoItemsInArray)
+  | None => Error(NoItemsInArray) //Should not hit this case
   | Some(item) => Ok(item)
   }
 }
-
-let determineNextEvent = createDetermineNextEventFunction
 
 let makeFromConfig = (~configs: Config.chainConfigs): t => {
   let chainFetchers = configs->ChainMap.map(chainConfig => {
@@ -246,6 +244,29 @@ type earliestQueueItem =
   | ArbitraryEventQueue(Types.eventBatchQueueItem, list<Types.eventBatchQueueItem>)
   | EventFetchers(Types.eventBatchQueueItem, ChainMap.t<FetchState.t>)
 
+let rec getFirstArbitraryEventsItemForChain = (
+  ~revHead=list{},
+  ~chain,
+  queue: list<Types.eventBatchQueueItem>,
+) => {
+  switch queue {
+  | list{} => None
+  | list{first, ...tail} =>
+    if first.chain == chain {
+      let rest = revHead->List.reverseConcat(tail)
+      Some((first, rest))
+    } else {
+      tail->getFirstArbitraryEventsItemForChain(~chain, ~revHead=list{first, ...revHead})
+    }
+  }
+}
+
+let getFirstArbitraryEventsItem = (queue: list<Types.eventBatchQueueItem>) =>
+  switch queue {
+  | list{} => None
+  | list{first, ...tail} => Some((first, tail))
+  }
+
 let popBatchItem = (
   ~fetchStatesMap: ChainMap.t<FetchState.t>,
   ~arbitraryEventQueue: list<Types.eventBatchQueueItem>,
@@ -255,13 +276,18 @@ let popBatchItem = (
   let {chain, earliestEventResponse: {updatedFetchState, earliestQueueItem}} =
     fetchStatesMap->determineNextEvent(~isUnorderedHeadMode)->Utils.unwrapResultExn
 
-  switch arbitraryEventQueue {
+  let maybeArbItem = if isUnorderedHeadMode {
+    arbitraryEventQueue->getFirstArbitraryEventsItemForChain(~chain)
+  } else {
+    arbitraryEventQueue->getFirstArbitraryEventsItem
+  }
+  switch maybeArbItem {
   //If there is item on the arbitray events queue, and it is earlier than
   //than the earlist event, take the item off from there
-  | list{item, ...tail}
-    if Item(item)->getQueueItemComparitor(~chain=item.chain) <
+  | Some((qItem, updatedArbQueue))
+    if Item(qItem)->getQueueItemComparitor(~chain=qItem.chain) <
       earliestQueueItem->getQueueItemComparitor(~chain) =>
-    Some(ArbitraryEventQueue(item, tail))
+    Some(ArbitraryEventQueue(qItem, updatedArbQueue))
   | _ =>
     //Otherwise take the latest item from the fetchers
     switch earliestQueueItem {
@@ -366,5 +392,5 @@ let createBatch = (self: t, ~maxBatchSize: int) => {
 module ExposedForTesting_Hidden = {
   let priorityQueueComparitor = priorityQueueComparitor
   let getComparitorFromItem = getComparitorFromItem
-  let createDetermineNextEventFunction = createDetermineNextEventFunction
+  let createDetermineNextEventFunction = determineNextEvent
 }
