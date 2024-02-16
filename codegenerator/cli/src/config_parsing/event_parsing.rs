@@ -158,6 +158,9 @@ mod tests {
             tuple_bool_string_res_type.get_default_value_rescript(),
             "(false, Ethers.Addresses.defaultAddress)".to_string()
         );
-        assert_eq!(bytes_arr_res_type.get_default_value_rescript(), "[]".to_string());
+        assert_eq!(
+            bytes_arr_res_type.get_default_value_rescript(),
+            "[]".to_string()
+        );
     }
 }

@@ -11,7 +11,7 @@ pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
 pub struct HandlerPathsTemplate {
     absolute: String,
     relative_to_generated_src: String,
-    relative_to_config:String
+    relative_to_config: String,
 }
 
 impl HandlerPathsTemplate {
@@ -49,7 +49,7 @@ impl HandlerPathsTemplate {
         Ok(HandlerPathsTemplate {
             absolute,
             relative_to_generated_src,
-            relative_to_config
+            relative_to_config,
         })
     }
 }

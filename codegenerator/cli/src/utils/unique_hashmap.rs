@@ -15,3 +15,16 @@ where
         }
     }
 }
+
+pub fn from_vec_no_duplicates<K, V>(v: Vec<(K, V)>) -> anyhow::Result<HashMap<K, V>>
+where
+    K: std::cmp::Eq + std::hash::Hash + std::fmt::Display,
+{
+    let mut map = HashMap::new();
+
+    for (key, val) in v {
+        try_insert(&mut map, key, val)?
+    }
+
+    Ok(map)
+}

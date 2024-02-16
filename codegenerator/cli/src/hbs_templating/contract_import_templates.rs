@@ -193,7 +193,7 @@ use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     cli_args::clap_definitions::Language,
     config_parsing::{
-        entity_parsing::{ethabi_type_to_field_type, Entity, Field, FieldType, Schema},
+        entity_parsing::{Entity, Field, FieldType, Schema},
         system_config::{self, SystemConfig},
     },
     template_dirs::TemplateDirs,
@@ -211,20 +211,18 @@ pub struct AutoSchemaHandlerTemplate {
     imported_contracts: Vec<Contract>,
 }
 
-impl Into<Schema> for AutoSchemaHandlerTemplate {
-    fn into(self) -> Schema {
+impl TryInto<Schema> for AutoSchemaHandlerTemplate {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<Schema, Self::Error> {
         let entities = self
             .imported_contracts
             .into_iter()
-            .flat_map(|c| {
-                let schema: Schema = c.into();
-                schema.entities
-            })
-            .collect();
-        Schema {
-            entities,
-            enums: vec![],
-        }
+            .map(|c| c.try_into())
+            .collect::<anyhow::Result<Vec<Schema>>>()?
+            .into_iter()
+            .flat_map(|s| s.entities.clone().into_values())
+            .collect::<Vec<_>>();
+        Schema::new(entities, vec![])
     }
 }
 
@@ -270,13 +268,11 @@ impl Contract {
     }
 }
 
-impl Into<Schema> for Contract {
-    fn into(self) -> Schema {
+impl TryInto<Schema> for Contract {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<Schema, Self::Error> {
         let entities = self.imported_events.into_iter().map(|e| e.into()).collect();
-        Schema {
-            entities,
-            enums: vec![],
-        }
+        Schema::new(entities, vec![])
     }
 }
 
@@ -303,7 +299,11 @@ impl Event {
 
 impl Into<Entity> for Event {
     fn into(self) -> Entity {
-        let fields = self.params.into_iter().map(|p| p.into()).collect();
+        let fields = self
+            .params
+            .into_iter()
+            .map(|p| (p.event_key.original.clone(), p.into()))
+            .collect();
         Entity {
             name: self.name.original,
             fields,
@@ -332,7 +332,7 @@ impl Param {
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
             tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
-            graphql_type: ethabi_type_to_field_type(&flattened_event_param.event_param.kind)
+            graphql_type: FieldType::from_ethabi_type(&flattened_event_param.event_param.kind)
                 .context("converting eth event param to gql scalar")?,
             is_eth_address: flattened_event_param.event_param.kind == ParamType::Address,
         })
@@ -344,7 +344,6 @@ impl Into<Field> for Param {
         Field {
             name: self.entity_key.original,
             field_type: self.graphql_type,
-            derived_from_field: None,
         }
     }
 }

@@ -10,7 +10,7 @@ use std::{collections::HashSet, path::Path};
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
 // It must have a maximum length of 63 characters (the first character + 62 subsequent characters)
-fn is_valid_postgres_db_name(name: &str) -> bool {
+pub fn is_valid_postgres_db_name(name: &str) -> bool {
     let re = Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_]{0,62}$").unwrap();
     re.is_match(name)
 }
@@ -162,20 +162,13 @@ pub fn validate_deserialized_config_yaml(
     Ok(())
 }
 
-pub fn check_enums_for_internal_reserved_words(enum_name_words: &Vec<String>) -> Vec<String> {
-    // Checking that schema does not include any reserved words
-    let mut detected_reserved_words_in_schema_enums = Vec::new();
-    // Creating a deduplicated set of reserved words from javascript or rescript
-    let mut word_set: HashSet<&str> = HashSet::new();
-    word_set.extend(ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES.iter());
-    for word in enum_name_words {
-        if word_set.contains(word.as_str()) {
-            detected_reserved_words_in_schema_enums.push(word.clone());
-        }
-    }
-
-    detected_reserved_words_in_schema_enums
+pub fn check_enums_for_internal_reserved_words(enum_name_words: Vec<String>) -> Vec<String> {
+    enum_name_words
+        .into_iter()
+        .filter(|word| ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES.contains(&word.as_str()))
+        .collect()
 }
+
 // Checking that schema does not include any reserved words
 pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
     // Checking that schema does not include any reserved words

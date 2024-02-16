@@ -29,9 +29,8 @@ pub struct SystemConfig {
     pub parsed_project_paths: ParsedProjectPaths,
     pub networks: NetworkMap,
     pub contracts: ContractMap,
-    pub entities: EntityMap,
     pub unordered_multichain_mode: bool,
-    pub gql_enums: GraphQlEnumMap,
+    pub schema: Schema,
 }
 
 //Getter methods for system config
@@ -47,49 +46,53 @@ impl SystemConfig {
     }
 
     pub fn get_entity_names(&self) -> Vec<EntityKey> {
-        let mut entity_names: Vec<EntityKey> =
-            self.entities.values().map(|v| v.name.clone()).collect();
+        let mut entity_names: Vec<EntityKey> = self
+            .schema
+            .entities
+            .values()
+            .map(|v| v.name.clone())
+            .collect();
         //For consistent templating in alphabetical order
         entity_names.sort();
         entity_names
     }
 
     pub fn get_entity(&self, entity_name: &EntityKey) -> Option<&Entity> {
-        self.entities.get(entity_name)
+        self.schema.entities.get(entity_name)
     }
 
     pub fn get_entities(&self) -> Vec<&Entity> {
-        let mut entities: Vec<&Entity> = self.entities.values().collect();
+        let mut entities: Vec<&Entity> = self.schema.entities.values().collect();
         //For consistent templating in alphabetical order
         entities.sort_by_key(|e| e.name.clone());
         entities
     }
 
     pub fn get_entity_map(&self) -> &EntityMap {
-        &self.entities
+        &self.schema.entities
     }
 
     pub fn get_entity_names_set(&self) -> HashSet<EntityKey> {
-        self.entities.keys().cloned().collect()
+        self.schema.entities.keys().cloned().collect()
     }
 
     pub fn get_gql_enum(&self, enum_name: &GraphqlEnumKey) -> Option<&GraphQLEnum> {
-        self.gql_enums.get(enum_name)
+        self.schema.enums.get(enum_name)
     }
 
     pub fn get_gql_enum_map(&self) -> &GraphQlEnumMap {
-        &self.gql_enums
+        &self.schema.enums
     }
 
     pub fn get_gql_enums(&self) -> Vec<&GraphQLEnum> {
-        let mut enums: Vec<&GraphQLEnum> = self.gql_enums.values().collect();
+        let mut enums: Vec<&GraphQLEnum> = self.schema.enums.values().collect();
         //For consistent templating in alphabetical order
         enums.sort_by_key(|e| e.name.clone());
         enums
     }
 
     pub fn get_gql_enum_names_set(&self) -> HashSet<EntityKey> {
-        self.gql_enums.keys().cloned().collect()
+        self.schema.enums.keys().cloned().collect()
     }
 
     pub fn get_networks(&self) -> Vec<&Network> {
@@ -242,20 +245,6 @@ impl SystemConfig {
                 .context("Failed inserting network at networks map")?;
         }
 
-        let mut entities = HashMap::new();
-
-        for entity in schema.entities {
-            unique_hashmap::try_insert(&mut entities, entity.name.clone(), entity)
-                .context("Failed inserting entity at entities map")?;
-        }
-
-        let mut gql_enums = HashMap::new();
-
-        for gql_enum in schema.enums {
-            unique_hashmap::try_insert(&mut gql_enums, gql_enum.name.clone(), gql_enum)
-                .context("Failed inserting enums at enum map")?;
-        }
-
         Ok(SystemConfig {
             name: human_cfg.name.clone(),
             parsed_project_paths: project_paths.clone(),
@@ -265,9 +254,8 @@ impl SystemConfig {
                 .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
             networks,
             contracts,
-            entities,
             unordered_multichain_mode: human_cfg.unordered_multichain_mode.unwrap_or(false),
-            gql_enums,
+            schema,
         })
     }
 
@@ -425,8 +413,8 @@ impl Event {
             // If no required entities are specified, we assume all entities are required
             schema
                 .entities
-                .clone()
-                .into_iter()
+                .values()
+                .cloned()
                 .map(|entity| human_config::RequiredEntity {
                     name: entity.name,
                     labels: None,

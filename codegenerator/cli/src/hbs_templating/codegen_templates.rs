@@ -2,7 +2,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{Entity, Field, GraphQLEnum, RescriptType},
+        entity_parsing::{Entity, Field, GraphQLEnum, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
         human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -81,26 +81,33 @@ pub struct EntityRelationalTypesTemplate {
     pub relationship_type: RelationshipTypeTemplate,
     pub is_array: bool,
     pub is_optional: bool,
-    pub derived_from_field_key: Option<String>,
+    pub is_derived_from: bool,
 }
 
 impl EntityRelationalTypesTemplate {
-    fn from_config_entity(field: &Field, entity: &Entity) -> Self {
+    fn from_config_entity(field: &Field, entity: &Entity, schema: &Schema) -> anyhow::Result<Self> {
         let is_array = field.field_type.is_array();
+
         let relationship_type = if is_array {
             RelationshipTypeTemplate::Array
         } else {
             RelationshipTypeTemplate::Object
         };
 
-        EntityRelationalTypesTemplate {
-            relational_key: field.name.to_capitalized_options(),
+        Ok(EntityRelationalTypesTemplate {
+            relational_key: field
+                .get_relational_key(schema)
+                .context(format!(
+                    "Failed getting relational key of field {} on entity {}",
+                    field.name, entity.name
+                ))?
+                .to_capitalized_options(),
             mapped_entity: entity.name.to_capitalized_options(),
             relationship_type,
             is_optional: field.field_type.is_optional(),
             is_array,
-            derived_from_field_key: field.derived_from_field.clone(),
-        }
+            is_derived_from: field.field_type.is_derived_from(),
+        })
     }
 }
 
@@ -156,22 +163,22 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, config: &SystemConfig) -> Result<Self> {
-        let entity_names_set = config.get_entity_names_set();
-        let gql_enums_name_set = config.get_gql_enum_names_set();
         let type_rescript = field
             .field_type
-            .to_rescript_type(&entity_names_set, &gql_enums_name_set)
+            .to_rescript_type(&config.schema)
             .context("Failed getting rescript type")?
             .into();
 
-        let is_derived_from = field.derived_from_field.is_some();
+        let schema = &config.schema;
+
+        let is_derived_from = field.field_type.is_derived_from();
 
         let type_pg = field
             .field_type
-            .to_postgres_type(&entity_names_set, &gql_enums_name_set, is_derived_from)
+            .to_postgres_type(&config.schema)
             .context("Failed getting postgres type")?;
 
-        let is_entity_field = field.field_type.is_entity_field(&gql_enums_name_set);
+        let is_entity_field = field.field_type.is_entity_field(schema)?;
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
@@ -185,7 +192,7 @@ impl EntityParamTypeTemplate {
 
 impl HasIsDerivedFrom for EntityRelationalTypesTemplate {
     fn get_is_derived_from(&self) -> bool {
-        self.derived_from_field_key.is_some()
+        self.is_derived_from
     }
 }
 
@@ -201,7 +208,7 @@ impl EntityRecordTypeTemplate {
     fn from_config_entity(entity: &Entity, config: &SystemConfig) -> Result<Self> {
         let params: Vec<EntityParamTypeTemplate> = entity
             .fields
-            .iter()
+            .values()
             .map(|field| EntityParamTypeTemplate::from_entity_field(field, config))
             .collect::<Result<_>>()
             .context(format!(
@@ -217,9 +224,17 @@ impl EntityRecordTypeTemplate {
             ))?
             .iter()
             .map(|(field, related_entity)| {
-                EntityRelationalTypesTemplate::from_config_entity(field, related_entity)
+                EntityRelationalTypesTemplate::from_config_entity(
+                    field,
+                    related_entity,
+                    &config.schema,
+                )
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()
+            .context(format!(
+                "Failed constructing relational params of entity {}",
+                entity.name
+            ))?;
 
         let relational_params = FilteredTemplateLists::new(entity_relational_types_templates);
 
@@ -256,7 +271,7 @@ impl RequiredEntityEntityFieldTemplate {
             type_name: entity.name.to_capitalized_options(),
             is_optional: field.field_type.is_optional(),
             is_array: field.field_type.is_array(),
-            is_derived_from: field.derived_from_field.is_some(),
+            is_derived_from: field.field_type.is_derived_from(),
         }
     }
 }

@@ -2,10 +2,13 @@ use super::{
     system_config::{EntityMap, GraphQlEnumMap},
     validation::{
         check_enums_for_internal_reserved_words, check_names_from_schema_for_reserved_words,
-        check_schema_enums_are_valid_postgres,
+        is_valid_postgres_db_name,
     },
 };
-use crate::capitalization::{Capitalize, CapitalizedOptions};
+use crate::{
+    capitalization::{Capitalize, CapitalizedOptions},
+    utils::unique_hashmap,
+};
 use anyhow::{anyhow, Context};
 use ethers::abi::ethabi::ParamType as EthAbiParamType;
 use graphql_parser::schema::{
@@ -14,7 +17,7 @@ use graphql_parser::schema::{
 };
 use serde::{Serialize, Serializer};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::{self, Display},
     path::PathBuf,
 };
@@ -22,16 +25,34 @@ use subenum::subenum;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Schema {
-    pub entities: Vec<Entity>,
-    pub enums: Vec<GraphQLEnum>,
+    pub entities: HashMap<String, Entity>,
+    pub enums: HashMap<String, GraphQLEnum>,
+}
+
+enum TypeDef<'a> {
+    Entity(&'a Entity),
+    Enum(&'a GraphQLEnum),
 }
 
 impl Schema {
     pub fn empty() -> Self {
         Schema {
-            entities: vec![],
-            enums: vec![],
+            entities: HashMap::new(),
+            enums: HashMap::new(),
         }
+    }
+
+    pub fn new(entities: Vec<Entity>, enums: Vec<GraphQLEnum>) -> anyhow::Result<Self> {
+        let entities = unique_hashmap::from_vec_no_duplicates(
+            entities.into_iter().map(|e| (e.name.clone(), e)).collect(),
+        )
+        .context("Found entities with duplicate names")?;
+        let enums = unique_hashmap::from_vec_no_duplicates(
+            enums.into_iter().map(|e| (e.name.clone(), e)).collect(),
+        )
+        .context("Found enums with duplicate names")?;
+
+        Self { entities, enums }.validate()
     }
 
     fn from_document(document: Document<String>) -> anyhow::Result<Self> {
@@ -47,10 +68,10 @@ impl Schema {
                 _ => None,
             })
             .map(|obj| Entity::from_object(obj))
-            .collect::<anyhow::Result<_>>()
+            .collect::<anyhow::Result<Vec<Entity>>>()
             .context("Failed constructing entities in schema from document")?;
 
-        let enums: Vec<GraphQLEnum> = document
+        let enums = document
             .definitions
             .iter()
             .filter_map(|d| match d {
@@ -62,10 +83,10 @@ impl Schema {
                 _ => None,
             })
             .map(|obj| GraphQLEnum::from_enum(obj))
-            .collect::<anyhow::Result<_>>()
+            .collect::<anyhow::Result<Vec<GraphQLEnum>>>()
             .context("Failed constructing enums in schema from document")?;
 
-        Ok(Schema { entities, enums })
+        Self::new(entities, enums)
     }
 
     pub fn parse_from_file(path_to_schema: &PathBuf) -> anyhow::Result<Self> {
@@ -79,107 +100,135 @@ impl Schema {
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
             .context("EE201: Failed to parse schema as document")?;
 
-        let parsed = Self::from_document(schema_doc)
-            .context("Failed converting schema doc to schema struct")?;
-
-        parsed
-            .check_schema_for_reserved_words()
-            .context("Failed checking if schema contains reserved keywords")?;
-
-        parsed
-            .validate_enums_for_postgres_and_duplicates()
-            .context("Failed validating enums")?;
-
-        Ok(parsed)
+        Self::from_document(schema_doc).context("Failed converting schema doc to schema struct")
     }
 
-    pub fn check_schema_for_reserved_words(&self) -> anyhow::Result<()> {
-        let mut all_names: Vec<String> = Vec::new();
-        let mut enum_names: Vec<String> = Vec::new();
-        for gql_enum in &self.enums {
-            enum_names.push(gql_enum.name.clone());
-            for value in &gql_enum.values {
-                all_names.push(value.clone());
-            }
-        }
-        for entity in &self.entities {
-            all_names.push(entity.name.clone());
+    fn validate(self) -> anyhow::Result<Self> {
+        self.check_enum_type_defs()?
+            .check_schema_for_reserved_words()?
+            .check_duplicate_naming_between_enums_and_entities()?
+            .check_related_type_defs_exist()?
+            .validate_entity_field_types()
+    }
 
-            for field in &entity.fields {
-                all_names.push(field.name.clone());
-            }
-        }
-        let reserved_enum_types_used = check_enums_for_internal_reserved_words(&enum_names);
-        if !reserved_enum_types_used.is_empty() {
-            return Err(anyhow!(
+    fn get_all_enum_type_names(&self) -> Vec<String> {
+        self.enums.keys().cloned().collect()
+    }
+    fn get_all_enum_values(&self) -> Vec<String> {
+        self.enums.values().flat_map(|v| v.values.clone()).collect()
+    }
+    fn get_all_entity_type_names(&self) -> Vec<String> {
+        self.entities.keys().cloned().collect()
+    }
+    fn get_all_entity_field_names(&self) -> Vec<String> {
+        self.entities
+            .values()
+            .flat_map(|v| v.fields.values())
+            .map(|v| v.name.clone())
+            .collect()
+    }
+
+    fn check_enum_type_defs(self) -> anyhow::Result<Self> {
+        match check_enums_for_internal_reserved_words(self.get_all_enum_type_names()) {
+            reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
+            reserved_enum_types_used => Err(anyhow!(
                 "EE211: Schema contains the following reserved enum names: {}",
                 reserved_enum_types_used.join(", ")
-            ));
+            )),
         }
-
-        all_names.append(&mut enum_names);
-        let reserved_keywords_used = check_names_from_schema_for_reserved_words(all_names);
-        if !reserved_keywords_used.is_empty() {
-            return Err(anyhow!(
-                "EE210: Schema contains the following reserved keywords: {}",
-                reserved_keywords_used.join(", ")
-            ));
-        }
-
-        Ok(())
     }
 
-    pub fn validate_enums_for_postgres_and_duplicates(&self) -> anyhow::Result<()> {
-        let mut enum_names: Vec<String> = Vec::new();
-        let mut duplicate_enum_entity_names: Vec<String> = Vec::new();
-        for gql_enum in &self.enums {
-            if enum_names.contains(&gql_enum.name) {
-                duplicate_enum_entity_names.push(gql_enum.name.clone());
-            }
-            enum_names.push(gql_enum.name.clone());
+    fn check_schema_for_reserved_words(self) -> anyhow::Result<Self> {
+        let all_names = vec![
+            self.get_all_enum_type_names(),
+            self.get_all_enum_values(),
+            self.get_all_entity_type_names(),
+            self.get_all_entity_field_names(),
+        ]
+        .iter()
+        .flatten()
+        .cloned()
+        .collect::<Vec<_>>();
 
-            let duplicate_values: Vec<String> = gql_enum
-                .values
-                .iter()
-                .filter_map(|value| {
-                    if gql_enum.values.iter().filter(|v| v.eq(&value)).count() > 1 {
-                        Some(value.clone())
-                    } else {
-                        None
+        match check_names_from_schema_for_reserved_words(all_names) {
+            reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
+            reserved_enum_types_used => Err(anyhow!(
+                "EE210: Schema contains the following reserved keywords: {}",
+                reserved_enum_types_used.join(", ")
+            )),
+        }
+    }
+
+    fn check_duplicate_naming_between_enums_and_entities(self) -> anyhow::Result<Self> {
+        let duplicate_names = self
+            .get_all_enum_type_names()
+            .into_iter()
+            .filter(|k| self.entities.get(k).is_some())
+            .collect::<Vec<_>>();
+        if !duplicate_names.is_empty() {
+            Err(anyhow!(
+                "EE213: Schema contains the following enums and entities with the same name, all type definitions must be unique in the schema: {}",
+                duplicate_names.join(", ")
+            ))
+        } else {
+            Ok(self)
+        }
+    }
+
+    fn try_get_type_def(&self, name: &String) -> anyhow::Result<TypeDef> {
+        match (self.entities.get(name), self.enums.get(name)) {
+            (None, None) => Err(anyhow!("No type definition '{}' exists in schema", name)),
+            (Some(_), Some(_)) => Err(anyhow!(
+                "Both an enum and an entity type definition '{}' exist in schema",
+                name
+            )),
+            (Some(entity), None) => Ok(TypeDef::Entity(entity)),
+            (None, Some(entity)) => Ok(TypeDef::Enum(entity)),
+        }
+    }
+
+    fn check_related_type_defs_exist(self) -> anyhow::Result<Self> {
+        for entity in self.entities.values() {
+            for rel in entity.get_relationships() {
+                match &rel {
+                    Relationship::TypeDef { name } => {
+                        let _ = self.try_get_type_def(name)?;
                     }
-                })
-                .collect();
+                    Relationship::DerivedFrom {
+                        name,
+                        derived_from_field,
+                    } => {
+                        let type_def = self.try_get_type_def(name)?;
 
-            if !duplicate_values.is_empty() {
-                return Err(anyhow!(
-                    "EE212: Schema enum has duplicate values. Enum: {}, duplicate values: {}",
-                    gql_enum.name,
-                    duplicate_values.join(", ")
-                ));
+                        match type_def {
+                            TypeDef::Enum(_) => Err(anyhow!("Cannot derive field {derived_from_field} from enum {name}. derivedFrom is intended to be used with Entity type definitions"))?,
+                            TypeDef::Entity(entity) => {
+                                if !entity.fields.get(derived_from_field).is_some() {
+                                    Err(anyhow!("Derived field {derived_from_field} does not exist on entity {name}."))?
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
-        for entity in &self.entities {
-            if enum_names.contains(&entity.name.clone()) {
-                duplicate_enum_entity_names.push(entity.name.clone());
-            }
-        }
-        if !duplicate_enum_entity_names.is_empty() {
-            return Err(anyhow!(
-                "EE213: Schema contains the following enums and/or entities with the same name, all type and enum definitions must be unique in the schema: {}",
-                duplicate_enum_entity_names.join(", ")
-            ));
-        }
+        Ok(self)
+    }
 
-        let invalid_enum_names = check_schema_enums_are_valid_postgres(&enum_names);
-        if !invalid_enum_names.is_empty() {
-            return Err(anyhow!(
-                "EE214: Schema contains the following enum names that do not match the following pattern: It must start with a letter. It can only contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters. Invalid names: {}",
-                invalid_enum_names.join(", ")
-            ));
+    /// For all entities that contain fields with relationships to other entities validate that
+    /// they conform to the correct structure. For many to one relationships we only support
+    /// @derivedFrom direcetives with a not null list of not null entities
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if there is a defined related type where the type does
+    /// not exist on the schema.
+    fn validate_entity_field_types(self) -> anyhow::Result<Self> {
+        for e in self.entities.values() {
+            e.validate_field_types(&self)?;
         }
-
-        Ok(())
+        Ok(self)
     }
 }
 
@@ -190,8 +239,44 @@ pub struct GraphQLEnum {
 }
 
 impl GraphQLEnum {
-    pub fn new(name: String, values: Vec<String>) -> Self {
-        GraphQLEnum { name, values }
+    pub fn new(name: String, values: Vec<String>) -> anyhow::Result<Self> {
+        Self { name, values }.valididate()
+    }
+
+    fn valididate(self) -> anyhow::Result<Self> {
+        self.check_duplicate_values()?.check_valid_postgres_name()
+    }
+
+    fn check_duplicate_values(self) -> anyhow::Result<Self> {
+        let mut value_set: HashSet<String> = self.values.clone().into_iter().collect();
+
+        let duplicate_values = self
+            .values
+            .clone()
+            .into_iter()
+            .filter(|value| value_set.insert(value.clone()))
+            .collect::<Vec<_>>();
+
+        if !duplicate_values.is_empty() {
+            Err(anyhow!(
+                "EE212: Schema enum has duplicate values. Enum: {}, duplicate values: {}",
+                self.name,
+                duplicate_values.join(", ")
+            ))
+        } else {
+            Ok(self)
+        }
+    }
+
+    fn check_valid_postgres_name(self) -> anyhow::Result<Self> {
+        if is_valid_postgres_db_name(&self.name) {
+            Ok(self)
+        } else {
+            Err(anyhow!(
+                "EE214: Schema contains the enum name '{}' that does not match the following pattern: It must start with a letter. It can only contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters.",
+                self.name
+            ))
+        }
     }
     fn from_enum(enm: &EnumType<String>) -> anyhow::Result<Self> {
         let name = enm.name.clone();
@@ -200,17 +285,27 @@ impl GraphQLEnum {
             .iter()
             .map(|value| value.name.clone())
             .collect::<Vec<String>>();
-        Ok(GraphQLEnum::new(name, values))
+        Self::new(name, values)
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entity {
     pub name: String,
-    pub fields: Vec<Field>,
+    pub fields: HashMap<String, Field>,
 }
 
 impl Entity {
+    fn new(name: String, fields: Vec<Field>) -> anyhow::Result<Self> {
+        let fields = unique_hashmap::from_vec_no_duplicates(
+            fields.into_iter().map(|f| (f.name.clone(), f)).collect(),
+        )
+        .context(format!(
+            "Found fields with duplicate names on Entity {name}"
+        ))?;
+        Ok(Self { name, fields })
+    }
+
     fn from_object(obj: &ObjectType<String>) -> anyhow::Result<Self> {
         let name = obj.name.clone();
 
@@ -221,7 +316,31 @@ impl Entity {
             .collect::<anyhow::Result<_>>()
             .context("Failed contsructing fields")?;
 
-        Ok(Entity { name, fields })
+        Self::new(name, fields)
+    }
+
+    pub fn get_relationships(&self) -> Vec<Relationship> {
+        let derived_from_fields: Vec<Relationship> = self
+            .fields
+            .values()
+            .filter_map(|f| match &f.field_type {
+                FieldType::DerivedFromField {
+                    entity_name,
+                    derived_from_field,
+                } => Some(Relationship::DerivedFrom {
+                    name: entity_name.clone(),
+                    derived_from_field: derived_from_field.clone(),
+                }),
+                _ => None,
+            })
+            .collect();
+        let type_defs: Vec<Relationship> = self
+            .fields
+            .values()
+            .filter_map(|f| f.get_relationship())
+            .collect();
+
+        vec![derived_from_fields, type_defs].concat()
     }
 
     pub fn get_related_entities<'a>(
@@ -231,17 +350,17 @@ impl Entity {
     ) -> anyhow::Result<Vec<(&'a Field, &'a Self)>> {
         let required_entities_with_field = self
             .fields
-            .iter()
+            .values()
             .filter_map(|field| {
                 let gql_scalar = field.field_type.get_underlying_scalar();
-                if let GqlScalar::Custom(entity_name) = gql_scalar {
-                    if gql_enums.contains_key(entity_name) {
+                if let GqlScalar::Custom(name) = gql_scalar {
+                    if gql_enums.contains_key(&name) {
                         None
                     } else {
                         let field_and_entity = other_entities
-                            .get(entity_name)
+                            .get(&name)
                             .map(|entity| (field, entity))
-                            .ok_or_else(|| anyhow!("Entity {} does not exist", entity_name));
+                            .ok_or_else(|| anyhow!("Entity {} does not exist", name));
                         Some(field_and_entity)
                     }
                 } else {
@@ -252,13 +371,27 @@ impl Entity {
 
         Ok(required_entities_with_field)
     }
+
+    /// For each field with relationships to other entities validate that
+    /// they conform to the correct structure. For many to one relationships we only support
+    /// @derivedFrom direcetives with a not null list of not null entities
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if there is a defined related type where the type does
+    /// not exist on the schema.
+    fn validate_field_types(&self, schema: &Schema) -> anyhow::Result<()> {
+        for field in self.fields.values() {
+            field.validate_field_type(schema)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Field {
     pub name: String,
     pub field_type: FieldType,
-    pub derived_from_field: Option<String>,
 }
 
 impl Field {
@@ -298,13 +431,56 @@ impl Field {
             }
         };
 
-        let field_type = FieldType::from_obj_field_type(&field.field_type);
+        let field_type = FieldType::from_obj_field_type(&field.field_type, derived_from_field)
+            .context(format!("Failed parsing field {}", field.name))?;
 
         Ok(Field {
             name: field.name.clone(),
-            derived_from_field,
             field_type,
         })
+    }
+
+    fn get_relationship(&self) -> Option<Relationship> {
+        match self.field_type.get_underlying_scalar() {
+            GqlScalar::Custom(name) => Some(Relationship::TypeDef { name: name.clone() }),
+            _ => None,
+        }
+    }
+
+    fn validate_field_type(&self, schema: &Schema) -> anyhow::Result<()> {
+        self.field_type.validate_type(schema)
+    }
+
+    pub fn get_relational_key(&self, schema: &Schema) -> anyhow::Result<String> {
+        match &self.field_type {
+            FieldType::DerivedFromField {
+                derived_from_field,
+                entity_name,
+            } => {
+                let entity_field = schema
+                    .entities
+                    .get(entity_name)
+                    .ok_or_else(|| anyhow!("Unexpected, entity {entity_name} does not exist"))?
+                    .fields
+                    .get(derived_from_field)
+                    .ok_or_else(|| anyhow!("Unexpected, field {derived_from_field} does not exist on entity {entity_name}"))?;
+
+                match entity_field.field_type.get_underlying_scalar() {
+                    //In the case where there is a recipracol lookup, the actual
+                    //underlying field contains _id at the end
+                    GqlScalar::Custom(name) if matches!(schema.try_get_type_def(&name)?, TypeDef::Entity(_)) => {
+                        Ok(format!("{derived_from_field}_id"))
+                    }
+                    //In the case where its just an an ID or a string,
+                    //just keep the the field as is from what was
+                    //defined in @derivedFrom
+                    GqlScalar::ID | GqlScalar::String => Ok(derived_from_field.clone()),
+                    _ => Err(anyhow!("Unexpected, derived from field is neither an ID, String or bidirectional relationship"))?,
+                }
+            }
+
+            FieldType::RegularField(_) => Ok(self.name.clone()),
+        }
     }
 }
 
@@ -443,44 +619,40 @@ impl Serialize for RescriptType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FieldType {
+pub enum UserDefinedFieldType {
     Single(GqlScalar),
-    ListType(Box<FieldType>),
-    NonNullType(Box<FieldType>),
+    ListType(Box<UserDefinedFieldType>),
+    NonNullType(Box<UserDefinedFieldType>),
 }
 
-impl FieldType {
-    fn from_obj_field_type(field_type: &ObjType<'_, String>) -> Self {
-        match field_type {
-            ObjType::NamedType(name) => FieldType::Single(name.as_str().into()),
-            ObjType::NonNullType(inner) => {
-                FieldType::NonNullType(Box::new(Self::from_obj_field_type(inner.as_ref())))
-            }
-            ObjType::ListType(inner) => {
-                FieldType::ListType(Box::new(Self::from_obj_field_type(inner.as_ref())))
+impl UserDefinedFieldType {
+    fn from_obj_field_type(obj_field_type: &ObjType<'_, String>) -> Self {
+        match obj_field_type {
+            ObjType::NamedType(name) => UserDefinedFieldType::Single(GqlScalar::from_str(name)),
+            ObjType::NonNullType(obj_field_type) => UserDefinedFieldType::NonNullType(Box::new(
+                Self::from_obj_field_type(obj_field_type),
+            )),
+            ObjType::ListType(obj_field_type) => {
+                UserDefinedFieldType::ListType(Box::new(Self::from_obj_field_type(obj_field_type)))
             }
         }
     }
 
-    pub fn to_postgres_type(
-        &self,
-        entities_set: &HashSet<String>,
-        gql_enums_set: &HashSet<String>,
-        is_derived_from: bool,
-    ) -> anyhow::Result<String> {
-        let composed_type_name = match self {
-        Self::Single(gql_scalar) => {
-                gql_scalar.to_postgres_type(entities_set, gql_enums_set)?
+    pub fn validate_type(&self, schema: &Schema) -> anyhow::Result<()> {
+        match self {
+        Self::Single(_) => {
+                Ok(())
         }
         Self::ListType(field_type) => match field_type.as_ref() {
             //Postgres doesn't support nullable types inside of arrays
-            Self::NonNullType(field_type) =>
-                match (field_type.as_ref(), is_derived_from) {
-                    | (Self::Single(GqlScalar::Custom(custom_field)), false) =>
+            Self::NonNullType(inner_field_type) =>
+                match inner_field_type.as_ref() {
+                    //Don't allow non derived from enity relationships inside arrays
+                    | Self::Single(GqlScalar::Custom(name)) if matches!(schema.try_get_type_def(name)?, TypeDef::Entity(_)) =>
                         Err(anyhow!(
-                            "EE211: Arrays of entities is unsupported. Please use one of the methods for referencing entities outlined in the docs. The entity being referenced in the array is '{}'.", custom_field
+                            "EE211: Arrays of entities is unsupported. Please use one of the methods for referencing entities outlined in the docs. The entity being referenced in the array is '{}'.", name
                         ))?,
-                    | _ => format!("{}[]",field_type.to_postgres_type(entities_set, gql_enums_set, is_derived_from)?),
+                    | _ => field_type.validate_type(schema),
                 }
             Self::Single(gql_scalar)   => Err(anyhow!(
                 "EE208: Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", gql_scalar
@@ -488,12 +660,30 @@ impl FieldType {
             Self::ListType(_) => Err(anyhow!("EE209: Nullable multidimensional lists types are unsupported,\
                 please include a '!' for your inner list type eg. [[Int!]!]"))?,
         },
-        Self::NonNullType(field_type) => format!(
-            "{} NOT NULL",
-            field_type.to_postgres_type(entities_set,gql_enums_set, is_derived_from)?
-        ),
-    };
-        Ok(composed_type_name)
+        Self::NonNullType(field_type) => match field_type.as_ref()  {
+            | Self::NonNullType(_) => Err(anyhow!("Nested Not Null types are unsupported. Please remove any sequential '!' symbols after types in schema")),
+            |_=>field_type.validate_type(schema),
+        }
+    }
+    }
+
+    pub fn to_postgres_type<'a>(&'a self, schema: &'a Schema) -> anyhow::Result<String> {
+        match self {
+            Self::Single(gql_scalar) => gql_scalar.to_postgres_type(schema),
+            Self::ListType(field_type) => match field_type.as_ref() {
+                Self::NonNullType(non_null) => {
+                    Ok(format!("{}[]", non_null.to_postgres_type(schema)?))
+                }
+
+                _ => Err(anyhow!(
+                    "Unexpected invalid case. Only Not Null List values can be valid valid."
+                )), //This case should be caught during validation. It is unexpected that we would
+                    //it it here
+            },
+            Self::NonNullType(field_type) => {
+                Ok(format!("{} NOT NULL", field_type.to_postgres_type(schema)?))
+            }
+        }
     }
 
     pub fn is_optional(&self) -> bool {
@@ -501,59 +691,48 @@ impl FieldType {
     }
 
     pub fn is_array(&self) -> bool {
-        matches!(self, Self::ListType(_))
-            || matches!(
-                self,
-                Self::NonNullType(field_type) if field_type.is_array()
-            )
+        match self {
+            Self::ListType(_) => true,
+            Self::NonNullType(field_type) => field_type.is_array(),
+            Self::Single(_) => false,
+        }
     }
 
-    pub fn to_rescript_type(
-        &self,
-        entities_set: &HashSet<String>,
-        gql_enums_name_set: &HashSet<String>,
-    ) -> anyhow::Result<RescriptType> {
+    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptType> {
         let composed_type_name = match self {
             //Only types in here should be non optional
             Self::NonNullType(field_type) => match field_type.as_ref() {
-                Self::Single(gql_scalar) => {
-                    gql_scalar.to_rescript_type(entities_set, gql_enums_name_set)?
+                Self::Single(gql_scalar) => gql_scalar.to_rescript_type(schema)?,
+                Self::ListType(field_type) => {
+                    RescriptType::Array(Box::new(field_type.to_rescript_type(schema)?))
                 }
-                Self::ListType(field_type) => RescriptType::Array(Box::new(
-                    field_type.to_rescript_type(entities_set, gql_enums_name_set)?,
-                )),
                 //This case shouldn't happen, and should recurse without adding any types if so
                 //A double non null would be !! in gql
-                Self::NonNullType(field_type) => {
-                    field_type.to_rescript_type(entities_set, gql_enums_name_set)?
-                }
+                Self::NonNullType(field_type) => field_type.to_rescript_type(schema)?,
             },
             //If we match this case it missed the non null path entirely and should be optional
-            Self::Single(gql_scalar) => RescriptType::Option(Box::new(
-                gql_scalar.to_rescript_type(entities_set, gql_enums_name_set)?,
-            )),
+            Self::Single(gql_scalar) => {
+                RescriptType::Option(Box::new(gql_scalar.to_rescript_type(schema)?))
+            }
             //If we match this case it missed the non null path entirely and should be optional
             Self::ListType(field_type) => RescriptType::Option(Box::new(RescriptType::Array(
-                Box::new(field_type.to_rescript_type(entities_set, gql_enums_name_set)?),
+                Box::new(field_type.to_rescript_type(schema)?),
             ))),
         };
         Ok(composed_type_name)
     }
 
-    fn get_underlying_scalar(&self) -> &GqlScalar {
+    fn get_underlying_scalar(&self) -> GqlScalar {
         match self {
-            Self::Single(gql_scalar) => gql_scalar,
+            Self::Single(gql_scalar) => gql_scalar.clone(),
             Self::ListType(field_type) | Self::NonNullType(field_type) => {
                 field_type.get_underlying_scalar()
             }
         }
     }
 
-    pub fn is_entity_field(&self, gql_enums_name_set: &HashSet<String>) -> bool {
-        match self.get_underlying_scalar() {
-            GqlScalar::Custom(type_name) => !gql_enums_name_set.contains(type_name),
-            _ => false,
-        }
+    pub fn is_entity_field(&self, schema: &Schema) -> anyhow::Result<bool> {
+        self.get_underlying_scalar().is_entity(schema)
     }
 
     fn to_string(&self) -> String {
@@ -562,6 +741,170 @@ impl FieldType {
             Self::ListType(field_type) => format!("[{}]", field_type.to_string()),
             Self::NonNullType(field_type) => format!("{}!", field_type.to_string()),
         }
+    }
+
+    /// Returns the name of the entity when @derivedFrom derivtive is used
+    /// Returns None in the case that it does not conform to the correct
+    /// structure of a derived entity
+    fn get_name_of_derived_from_entity(&self) -> Option<String> {
+        match self {
+            Self::NonNullType(f) => match f.as_ref() {
+                Self::ListType(f) => match f.as_ref() {
+                    Self::NonNullType(f) => match f.as_ref() {
+                        Self::Single(GqlScalar::Custom(name)) => Some(name.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    pub fn from_ethabi_type(abi_type: &EthAbiParamType) -> anyhow::Result<Self> {
+        match abi_type {
+            EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
+                Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::BigInt))))
+            }
+            EthAbiParamType::Bool => Ok(Self::NonNullType(Box::new(Self::Single(
+                GqlScalar::Boolean,
+            )))),
+            EthAbiParamType::Address
+            | EthAbiParamType::Bytes
+            | EthAbiParamType::String
+            | EthAbiParamType::FixedBytes(_) => {
+                Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::String))))
+            }
+            EthAbiParamType::Array(abi_type) | EthAbiParamType::FixedArray(abi_type, _) => {
+                let inner_type = Self::from_ethabi_type(abi_type)?;
+                Ok(Self::NonNullType(Box::new(Self::ListType(Box::new(
+                    inner_type,
+                )))))
+            }
+            EthAbiParamType::Tuple(_abi_types) => Err(anyhow!(
+                "Tuples are not handled currently using contract import."
+            )),
+        }
+    }
+}
+
+// Implement the Display trait for the custom struct
+impl fmt::Display for UserDefinedFieldType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
+
+impl Serialize for UserDefinedFieldType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.to_string().as_str())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FieldType {
+    DerivedFromField {
+        entity_name: String,
+        derived_from_field: String,
+    },
+    RegularField(UserDefinedFieldType),
+}
+
+impl FieldType {
+    fn to_user_defined_field_type(&self) -> UserDefinedFieldType {
+        match self {
+            Self::RegularField(t) => t.clone(),
+            Self::DerivedFromField { entity_name, .. } => {
+                use UserDefinedFieldType::*;
+                NonNullType(Box::new(ListType(Box::new(NonNullType(Box::new(Single(
+                    GqlScalar::Custom(entity_name.clone()),
+                )))))))
+            }
+        }
+    }
+
+    fn from_obj_field_type(
+        obj_field_type: &ObjType<'_, String>,
+        derived_from_field: Option<String>,
+    ) -> anyhow::Result<Self> {
+        let field_type = UserDefinedFieldType::from_obj_field_type(obj_field_type);
+
+        match derived_from_field {
+            None => Ok(Self::RegularField(field_type)),
+            Some(derived_from_field) => match field_type.get_name_of_derived_from_entity() {
+                None => {
+                    let example_str = Self::DerivedFromField {
+                        entity_name: "<MY_ENTITY>".to_string(),
+                        derived_from_field,
+                    }
+                    .to_string();
+
+                    Err(anyhow!("Field marked with @derivedFrom directive does not meet the required structure. \
+                    Field should contain a non nullable list of non nullable entities for example: {example_str}"))
+                }
+                Some(entity_name) => Ok(Self::DerivedFromField {
+                    entity_name,
+                    derived_from_field,
+                }),
+            },
+        }
+    }
+
+    pub fn validate_type(&self, schema: &Schema) -> anyhow::Result<()> {
+        match self {
+            Self::DerivedFromField { .. } => Ok(()), //Already validated
+            Self::RegularField(t) => t.validate_type(schema),
+        }
+    }
+
+    pub fn to_postgres_type<'a>(&'a self, schema: &'a Schema) -> anyhow::Result<String> {
+        self.to_user_defined_field_type().to_postgres_type(schema)
+    }
+
+    pub fn is_optional(&self) -> bool {
+        self.to_user_defined_field_type().is_optional()
+    }
+
+    pub fn is_derived_from(&self) -> bool {
+        matches!(self, Self::DerivedFromField { .. })
+    }
+
+    pub fn is_array(&self) -> bool {
+        match self {
+            Self::DerivedFromField { .. } => true,
+            Self::RegularField(t) => t.is_array(),
+        }
+    }
+
+    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptType> {
+        self.to_user_defined_field_type().to_rescript_type(schema)
+    }
+
+    fn get_underlying_scalar(&self) -> GqlScalar {
+        self.to_user_defined_field_type().get_underlying_scalar()
+    }
+
+    pub fn is_entity_field(&self, schema: &Schema) -> anyhow::Result<bool> {
+        self.to_user_defined_field_type().is_entity_field(schema)
+    }
+
+    fn to_string(&self) -> String {
+        match self {
+            Self::DerivedFromField { entity_name, .. } => {
+                let field_str = self.to_user_defined_field_type().to_string();
+                format!("{field_str} @derivedFrom(field: \"{entity_name}\")")
+            }
+            Self::RegularField(t) => t.to_string(),
+        }
+    }
+
+    pub fn from_ethabi_type(abi_type: &EthAbiParamType) -> anyhow::Result<Self> {
+        Ok(Self::RegularField(UserDefinedFieldType::from_ethabi_type(
+            abi_type,
+        )?))
     }
 }
 
@@ -601,29 +944,28 @@ pub enum GqlScalar {
     Custom(String),
 }
 
-pub fn ethabi_type_to_field_type(abi_type: &EthAbiParamType) -> anyhow::Result<FieldType> {
-    use FieldType::{ListType, NonNullType, Single};
-    match abi_type {
-        EthAbiParamType::Uint(_size) | EthAbiParamType::Int(_size) => {
-            Ok(NonNullType(Box::new(Single(GqlScalar::BigInt))))
-        }
-        EthAbiParamType::Bool => Ok(NonNullType(Box::new(Single(GqlScalar::Boolean)))),
-        EthAbiParamType::Address
-        | EthAbiParamType::Bytes
-        | EthAbiParamType::String
-        | EthAbiParamType::FixedBytes(_) => Ok(NonNullType(Box::new(Single(GqlScalar::String)))),
-        EthAbiParamType::Array(abi_type) | EthAbiParamType::FixedArray(abi_type, _) => {
-            let inner_type = ethabi_type_to_field_type(abi_type)?;
-            Ok(NonNullType(Box::new(ListType(Box::new(inner_type)))))
-        }
-        EthAbiParamType::Tuple(_abi_types) => Err(anyhow!(
-            "Tuples are not handled currently using contract import."
-        )),
-    }
+#[derive(Debug, Clone)]
+pub enum Relationship {
+    TypeDef {
+        name: String,
+    },
+    DerivedFrom {
+        name: String,
+        derived_from_field: String,
+    },
 }
 
-impl From<&str> for GqlScalar {
-    fn from(s: &str) -> Self {
+impl GqlScalar {
+    fn is_entity(&self, schema: &Schema) -> anyhow::Result<bool> {
+        match self {
+            GqlScalar::Custom(name) => {
+                Ok(matches!(schema.try_get_type_def(name)?, TypeDef::Entity(_)))
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn from_str(s: &str) -> Self {
         match s {
             "ID" => GqlScalar::ID,
             "String" => GqlScalar::String,
@@ -632,48 +974,27 @@ impl From<&str> for GqlScalar {
             "Boolean" => GqlScalar::Boolean,
             "BigInt" => GqlScalar::BigInt, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
             "Bytes" => GqlScalar::Bytes,
-            custom_type => GqlScalar::Custom(custom_type.to_string()),
+            name => GqlScalar::Custom(name.to_string()),
         }
     }
-}
-
-impl GqlScalar {
-    fn to_postgres_type(
-        &self,
-        entities_set: &HashSet<String>,
-        gql_enums_name_set: &HashSet<String>,
-    ) -> anyhow::Result<String> {
+    fn to_postgres_type(&self, schema: &Schema) -> anyhow::Result<String> {
         let converted = match self {
-            GqlScalar::ID => "text".to_string(),
-            GqlScalar::String => "text".to_string(),
-            GqlScalar::Int => "integer".to_string(),
-            GqlScalar::Float => "numeric".to_string(), // Should we allow this type? Rounding issues will abound.
-            GqlScalar::Boolean => "boolean".to_string(),
-            GqlScalar::Bytes => "text".to_string(),
-            GqlScalar::BigInt => "numeric".to_string(), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
-            GqlScalar::Custom(entity_or_enum_name)
-                if entities_set.contains(entity_or_enum_name) =>
-            {
-                "text".to_string() // This would be the ID of another defined entity.
-            }
-            GqlScalar::Custom(entity_or_enum_name)
-                if gql_enums_name_set.contains(entity_or_enum_name) =>
-            {
-                entity_or_enum_name.as_str().to_string()
-            }
-            GqlScalar::Custom(entity_or_enum_name) => Err(anyhow!(
-                "EE207: Failed to parse undefined type: {}",
-                entity_or_enum_name
-            ))?,
+            GqlScalar::ID => "text",
+            GqlScalar::String => "text",
+            GqlScalar::Int => "integer",
+            GqlScalar::Float => "numeric", // Should we allow this type? Rounding issues will abound.
+            GqlScalar::Boolean => "boolean",
+            GqlScalar::Bytes => "text",
+            GqlScalar::BigInt => "numeric", // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
+                TypeDef::Entity(_) => "text",
+                TypeDef::Enum(_) => name.as_str(),
+            },
         };
-        Ok(converted)
+        Ok(converted.to_string())
     }
 
-    fn to_rescript_type(
-        &self,
-        entities_set: &HashSet<String>,
-        gql_enums_name_set: &HashSet<String>,
-    ) -> anyhow::Result<RescriptType> {
+    fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptType> {
         let res_type = match self {
             GqlScalar::ID => RescriptType::ID,
             GqlScalar::String => RescriptType::String,
@@ -682,20 +1003,10 @@ impl GqlScalar {
             GqlScalar::Float => RescriptType::Float,
             GqlScalar::Bytes => RescriptType::String,
             GqlScalar::Boolean => RescriptType::Bool,
-            GqlScalar::Custom(entity_or_enum_name)
-                if entities_set.contains(entity_or_enum_name) =>
-            {
-                RescriptType::ID
-            }
-            GqlScalar::Custom(entity_or_enum_name)
-                if gql_enums_name_set.contains(entity_or_enum_name) =>
-            {
-                RescriptType::EnumVariant(entity_or_enum_name.to_capitalized_options())
-            }
-            GqlScalar::Custom(entity_or_enum_name) => Err(anyhow!(
-                "EE207: Failed to parse undefined type: {}",
-                entity_or_enum_name
-            ))?,
+            GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
+                TypeDef::Entity(_) => RescriptType::ID,
+                TypeDef::Enum(_) => RescriptType::EnumVariant(name.to_capitalized_options()),
+            },
         };
         Ok(res_type)
     }
@@ -703,14 +1014,13 @@ impl GqlScalar {
 
 #[cfg(test)]
 mod tests {
-    use super::{FieldType, GqlScalar, Schema};
-    use std::collections::HashSet;
+    use super::{Entity, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType};
 
     #[test]
     fn gql_type_to_rescript_type_string() {
-        let empty_set = HashSet::new();
-        let rescript_type = FieldType::Single(GqlScalar::String)
-            .to_rescript_type(&empty_set, &empty_set)
+        let empty_schema = Schema::empty();
+        let rescript_type = UserDefinedFieldType::Single(GqlScalar::String)
+            .to_rescript_type(&empty_schema)
             .expect("expected rescript option string");
 
         assert_eq!(rescript_type.to_string(), "option<string>".to_owned());
@@ -718,9 +1028,9 @@ mod tests {
 
     #[test]
     fn gql_type_to_rescript_type_int() {
-        let empty_set = HashSet::new();
-        let rescript_type = FieldType::Single(GqlScalar::Int)
-            .to_rescript_type(&empty_set, &empty_set)
+        let empty_schema = Schema::empty();
+        let rescript_type = UserDefinedFieldType::Single(GqlScalar::Int)
+            .to_rescript_type(&empty_schema)
             .expect("expected rescript option string");
 
         assert_eq!(rescript_type.to_string(), "option<int>".to_owned());
@@ -728,21 +1038,25 @@ mod tests {
 
     #[test]
     fn gql_type_to_rescript_type_non_null_int() {
-        let empty_set = HashSet::new();
-        let rescript_type = FieldType::NonNullType(Box::new(FieldType::Single(GqlScalar::Int)))
-            .to_rescript_type(&empty_set, &empty_set)
-            .expect("expected rescript type string");
+        let empty_schema = Schema::empty();
+        let rescript_type = UserDefinedFieldType::NonNullType(Box::new(
+            UserDefinedFieldType::Single(GqlScalar::Int),
+        ))
+        .to_rescript_type(&empty_schema)
+        .expect("expected rescript type string");
 
         assert_eq!(rescript_type.to_string(), "int".to_owned());
     }
 
     #[test]
     fn gql_type_to_rescript_type_non_null_array() {
-        let empty_set = HashSet::new();
-        let rescript_type = FieldType::NonNullType(Box::new(FieldType::ListType(Box::new(
-            FieldType::NonNullType(Box::new(FieldType::Single(GqlScalar::Int))),
-        ))))
-        .to_rescript_type(&empty_set, &empty_set)
+        let empty_schema = Schema::empty();
+        let rescript_type = UserDefinedFieldType::NonNullType(Box::new(
+            UserDefinedFieldType::ListType(Box::new(UserDefinedFieldType::NonNullType(Box::new(
+                UserDefinedFieldType::Single(GqlScalar::Int),
+            )))),
+        ))
+        .to_rescript_type(&empty_schema)
         .expect("expected rescript type string");
 
         assert_eq!(rescript_type.to_string(), "array<int>".to_owned());
@@ -750,11 +1064,12 @@ mod tests {
 
     #[test]
     fn gql_type_to_rescript_type_null_array_int() {
-        let empty_set = HashSet::new();
+        let empty_schema = Schema::empty();
 
-        let rescript_type = FieldType::ListType(Box::new(FieldType::Single(GqlScalar::Int)))
-            .to_rescript_type(&empty_set, &empty_set)
-            .expect("expected rescript type string");
+        let rescript_type =
+            UserDefinedFieldType::ListType(Box::new(UserDefinedFieldType::Single(GqlScalar::Int)))
+                .to_rescript_type(&empty_schema)
+                .expect("expected rescript type string");
 
         assert_eq!(
             rescript_type.to_string(),
@@ -764,12 +1079,11 @@ mod tests {
 
     #[test]
     fn gql_type_to_rescript_type_entity() {
-        let mut entity_set = HashSet::new();
         let test_entity_string = String::from("TestEntity");
-        let empty_enums_set = HashSet::new();
-        entity_set.insert(test_entity_string.clone());
-        let rescript_type = FieldType::Single(GqlScalar::Custom(test_entity_string))
-            .to_rescript_type(&entity_set, &empty_enums_set)
+        let test_entity = Entity::new(test_entity_string.clone(), vec![]).unwrap();
+        let schema = Schema::new(vec![test_entity], vec![]).unwrap();
+        let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(test_entity_string))
+            .to_rescript_type(&schema)
             .expect("expected rescript type string");
 
         assert_eq!(rescript_type.to_string(), "option<id>".to_owned());
@@ -777,12 +1091,11 @@ mod tests {
 
     #[test]
     fn gql_type_to_rescript_type_enum() {
-        let empty_entity_set = HashSet::new();
-        let test_enum_string = String::from("TestEnum");
-        let mut enums_set = HashSet::new();
-        enums_set.insert(test_enum_string.clone());
-        let rescript_type = FieldType::Single(GqlScalar::Custom(test_enum_string))
-            .to_rescript_type(&empty_entity_set, &enums_set)
+        let name = String::from("TestEnum");
+        let test_enum = GraphQLEnum::new(name.clone(), vec![]).unwrap();
+        let schema = Schema::new(vec![], vec![test_enum]).unwrap();
+        let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(name))
+            .to_rescript_type(&schema)
             .expect("expected rescript type string");
 
         assert_eq!(
@@ -794,62 +1107,82 @@ mod tests {
     #[test]
     fn field_type_is_optional_test() {
         let test_scalar = GqlScalar::Custom(String::from("TestEntity"));
-        let test_field_type = FieldType::Single(test_scalar);
+        let test_field_type = UserDefinedFieldType::Single(test_scalar);
         assert!(
             test_field_type.is_optional(),
             "single field should have been optional"
         );
 
         // ListType:
-        let test_list_type = FieldType::ListType(Box::new(test_field_type));
+        let test_list_type = UserDefinedFieldType::ListType(Box::new(test_field_type));
         assert!(
             test_list_type.is_optional(),
             "list field should have been optional"
         );
 
         // NonNullType
-        let gql_array_non_null_type = FieldType::NonNullType(Box::new(test_list_type));
+        let gql_array_non_null_type = UserDefinedFieldType::NonNullType(Box::new(test_list_type));
         assert!(
             !gql_array_non_null_type.is_optional(),
             "non-null field should not be optioonal"
         );
     }
 
-    fn get_field_type_helper(gql_field_str: &str) -> FieldType {
+    fn get_field_type_helper_with_additional(
+        gql_field_str: &str,
+        enum_types: Vec<GraphQLEnum>,
+    ) -> FieldType {
+        let enum_type_defs: String = enum_types
+            .iter()
+            .map(|e| format!("enum {} {{\n{}\n}}", e.name, e.values.join("\n")))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        println!("{enum_type_defs}");
         let schema_string = format!(
             r#"
-        type TestEntity @entity {{
-          test_field: {}
+        type TestEntity {{
+          test_field: {gql_field_str}
         }}
+        {enum_type_defs}
         "#,
-            gql_field_str
         );
         let schema_doc = graphql_parser::schema::parse_schema::<String>(&schema_string).unwrap();
 
         let schema = Schema::from_document(schema_doc).expect("bad schema");
 
-        let test_field = schema.entities[0].fields[0].clone();
+        let test_field = schema
+            .entities
+            .get("TestEntity")
+            .expect("No test entity in schema")
+            .fields
+            .get("test_field")
+            .expect("No field test_field on entity")
+            .clone();
 
         test_field.field_type
+    }
+    fn get_field_type_helper(gql_field_str: &str) -> FieldType {
+        get_field_type_helper_with_additional(gql_field_str, vec![])
     }
 
     fn gql_type_to_postgres_type_test_helper(gql_field_str: &str) -> String {
         let field_type = get_field_type_helper(gql_field_str);
-        let empty_entities_set = HashSet::new();
-        let empty_enums_set = HashSet::new();
+        let empty_schema = Schema::empty();
         field_type
-            .to_postgres_type(&empty_entities_set, &empty_enums_set, false)
+            .to_postgres_type(&empty_schema)
             .expect("unable to get postgres type")
     }
+
     #[test]
     fn gql_enum_type_to_postgres_type() {
-        let field_type = get_field_type_helper("TestEnum!");
-        let empty_entities_set = HashSet::new();
-        let test_enum_string = String::from("TestEnum");
-        let mut enums_set = HashSet::new();
-        enums_set.insert(test_enum_string.clone());
+        let name = String::from("TestEnum");
+        let test_enum = GraphQLEnum::new(name.clone(), vec!["TEST_VALUE".to_string()]).unwrap();
+        let field_type =
+            get_field_type_helper_with_additional("TestEnum!", vec![test_enum.clone()]);
+        let schema = Schema::new(vec![], vec![test_enum]).unwrap();
         let pg_type = field_type
-            .to_postgres_type(&empty_entities_set, &enums_set, false)
+            .to_postgres_type(&schema)
             .expect("unable to get postgres type");
         assert_eq!(pg_type, "TestEnum NOT NULL");
     }
@@ -884,7 +1217,7 @@ mod tests {
 
     #[test]
     fn test_nullability_to_string() {
-        use FieldType::{ListType, NonNullType, Single};
+        use UserDefinedFieldType::{ListType, NonNullType, Single};
         let scalar = NonNullType(Box::new(ListType(Box::new(Single(GqlScalar::Int)))));
 
         let expected_output = "[Int]!".to_string();
@@ -896,23 +1229,18 @@ mod tests {
     fn gql_type_to_rescript_nullable() {
         let field_type = get_field_type_helper("Int");
 
-        let empty_entities_set = HashSet::new();
-        let empty_enums_set = HashSet::new();
-        let rescript_type = field_type
-            .to_rescript_type(&empty_entities_set, &empty_enums_set)
-            .unwrap();
+        let empty_schema = Schema::empty();
+        let rescript_type = field_type.to_rescript_type(&empty_schema).unwrap();
         assert_eq!("option<int>".to_string(), rescript_type.to_string());
     }
 
     #[test]
+    #[ignore = "We don't support list types with nullable scalars due to postgres so skipping this"]
     fn gql_type_to_rescript_array_nullable_string() {
         let field_type = get_field_type_helper("[String]!");
 
-        let empty_entities_set = HashSet::new();
-        let empty_enums_set = HashSet::new();
-        let rescript_type = field_type
-            .to_rescript_type(&empty_entities_set, &empty_enums_set)
-            .unwrap();
+        let empty_schema = Schema::empty();
+        let rescript_type = field_type.to_rescript_type(&empty_schema).unwrap();
         assert_eq!(
             "array<option<string>>".to_string(),
             rescript_type.to_string()
