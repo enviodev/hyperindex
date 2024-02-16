@@ -1,13 +1,6 @@
 //*************
 //***ENTITIES**
 //*************
-// Graphql Enum Type Variants
-{{#each gql_enums as | enum |}} 
-@spice @genType.as("{{enum.name.capitalized}}")
-type {{enum.name.uncapitalized}} = 
-{{#each enum.params as | param | }}| @spice.as("{{param.original}}") @as("{{param.original}}"){{param.capitalized}}{{/each}}
-{{/each}}
-
 @spice @genType.as("Id")
 type id = string
 

@@ -79,7 +79,7 @@ describe("E2E Db check", () => {
             displayName: "update1",
             imageUrl: "https://gravatar1.com",
             updatesCount: Ethers.BigInt.fromInt(2),
-            size: MEDIUM,
+            size: #MEDIUM,
           },
         },
         {
@@ -90,7 +90,7 @@ describe("E2E Db check", () => {
             displayName: "update2",
             imageUrl: "https://gravatar2.com",
             updatesCount: Ethers.BigInt.fromInt(2),
-            size: MEDIUM,
+            size: #MEDIUM,
           },
         },
         {
@@ -101,7 +101,7 @@ describe("E2E Db check", () => {
             displayName: "update3",
             imageUrl: "https://gravatar3.com",
             updatesCount: Ethers.BigInt.fromInt(2),
-            size: MEDIUM,
+            size: #MEDIUM,
           },
         },
       ],

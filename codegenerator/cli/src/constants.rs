@@ -166,4 +166,6 @@ pub mod reserved_keywords {
         "while",
         "with",
     ];
+
+    pub const ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES: &[&str] = &["EVENT_TYPE", "CONTRACT_TYPE"];
 }

@@ -1,15 +1,15 @@
 use super::{
     system_config::{EntityMap, GraphQlEnumMap},
     validation::{
-        check_names_from_schema_for_reserved_words, check_schema_enums_are_valid_postgres,
+        check_names_from_schema_for_reserved_words, check_enums_for_internal_reserved_words, check_schema_enums_are_valid_postgres,
     },
 };
 use crate::capitalization::{Capitalize, CapitalizedOptions};
 use anyhow::{anyhow, Context};
 use ethers::abi::ethabi::ParamType as EthAbiParamType;
 use graphql_parser::schema::{
-    Definition, Directive, Document, EnumType, EnumValue, Field as ObjField, ObjectType,
-    Type as ObjType, TypeDefinition, Value,
+    Definition, Directive, Document, EnumType, Field as ObjField, ObjectType, Type as ObjType,
+    TypeDefinition, Value,
 };
 use serde::{Serialize, Serializer};
 use std::{
@@ -94,6 +94,13 @@ impl Schema {
 
     pub fn check_schema_for_reserved_words(&self) -> anyhow::Result<()> {
         let mut all_names: Vec<String> = Vec::new();
+        let mut enum_names: Vec<String> = Vec::new();
+        for gql_enum in &self.enums {
+            enum_names.push(gql_enum.name.clone());
+            for value in &gql_enum.values {
+                all_names.push(value.clone());
+            }
+        }
         for entity in &self.entities {
             all_names.push(entity.name.clone());
 
@@ -101,12 +108,15 @@ impl Schema {
                 all_names.push(field.name.clone());
             }
         }
-        for gql_enum in &self.enums {
-            all_names.push(gql_enum.name.clone());
-            for value in &gql_enum.values {
-                all_names.push(value.name.clone());
-            }
+        let reserved_enum_types_used = check_enums_for_internal_reserved_words(&enum_names);
+        if !reserved_enum_types_used.is_empty() {
+            return Err(anyhow!(
+                "EE211: Schema contains the following reserved enum names: {}",
+                reserved_enum_types_used.join(", ")
+            ));
         }
+
+        all_names.append(&mut enum_names);
         let reserved_keywords_used = check_names_from_schema_for_reserved_words(all_names);
         if !reserved_keywords_used.is_empty() {
             return Err(anyhow!(
@@ -120,17 +130,34 @@ impl Schema {
 
     pub fn validate_enums_for_postgres_and_duplicates(&self) -> anyhow::Result<()> {
         let mut enum_names: Vec<String> = Vec::new();
-        for gql_enum in &self.enums {
-            enum_names.push(gql_enum.name.clone());
-        }
-        let invalid_enum_names = check_schema_enums_are_valid_postgres(&enum_names);
-        if !invalid_enum_names.is_empty() {
-            return Err(anyhow!(
-                "EE212: Schema contains the following enum names that do not match the following pattern: It must start with a letter. It can only contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters. Invalid names: {}",
-                invalid_enum_names.join(", ")
-            ));
-        }
         let mut duplicate_enum_entity_names: Vec<String> = Vec::new();
+        for gql_enum in &self.enums {
+            if enum_names.contains(&gql_enum.name) {
+                duplicate_enum_entity_names.push(gql_enum.name.clone());
+            }
+            enum_names.push(gql_enum.name.clone());
+
+            let duplicate_values: Vec<String> = gql_enum
+                .values
+                .iter()
+                .filter_map(|value| {
+                    if gql_enum.values.iter().filter(|v| v.eq(&value)).count() > 1 {
+                        Some(value.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if !duplicate_values.is_empty() {
+                return Err(anyhow!(
+                    "EE212: Schema enum has duplicate values. Enum: {}, duplicate values: {}",
+                    gql_enum.name,
+                    duplicate_values.join(", ")
+                ));
+            }
+        }
+
         for entity in &self.entities {
             if enum_names.contains(&entity.name.clone()) {
                 duplicate_enum_entity_names.push(entity.name.clone());
@@ -138,8 +165,16 @@ impl Schema {
         }
         if !duplicate_enum_entity_names.is_empty() {
             return Err(anyhow!(
-                "EE213: Schema contains the following enums and entities with the same name, all type and enum definitions must be unique in the schema: {}",
+                "EE213: Schema contains the following enums and/or entities with the same name, all type and enum definitions must be unique in the schema: {}",
                 duplicate_enum_entity_names.join(", ")
+            ));
+        }
+
+        let invalid_enum_names = check_schema_enums_are_valid_postgres(&enum_names);
+        if !invalid_enum_names.is_empty() {
+            return Err(anyhow!(
+                "EE214: Schema contains the following enum names that do not match the following pattern: It must start with a letter. It can only contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters. Invalid names: {}",
+                invalid_enum_names.join(", ")
             ));
         }
 
@@ -150,11 +185,11 @@ impl Schema {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GraphQLEnum {
     pub name: String,
-    pub values: Vec<GraphQLValue>,
+    pub values: Vec<String>,
 }
 
 impl GraphQLEnum {
-    pub fn new(name: String, values: Vec<GraphQLValue>) -> Self {
+    pub fn new(name: String, values: Vec<String>) -> Self {
         GraphQLEnum { name, values }
     }
     fn from_enum(enm: &EnumType<String>) -> anyhow::Result<Self> {
@@ -162,23 +197,9 @@ impl GraphQLEnum {
         let values = enm
             .values
             .iter()
-            .map(|value| GraphQLValue::from_enum_value(value))
-            .collect::<anyhow::Result<_>>()
-            .context("Failed contsructing enums")?;
+            .map(|value| value.name.clone())
+            .collect::<Vec<String>>();
         Ok(GraphQLEnum::new(name, values))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct GraphQLValue {
-    pub name: String,
-}
-
-impl GraphQLValue {
-    pub fn from_enum_value(enum_value: &EnumValue<String>) -> anyhow::Result<Self> {
-        let name = enum_value.name.clone();
-
-        Ok(GraphQLValue { name })
     }
 }
 
@@ -348,7 +369,13 @@ impl RescriptType {
                     .join(", ");
                 format!("({})", inner_types_str)
             }
-            RescriptType::EnumVariant(enum_name) => enum_name.uncapitalized.clone(),
+            RescriptType::EnumVariant(enum_name) => 
+            {
+            let mut enum_type = "Enums.".to_owned();
+            
+            enum_type.push_str(&enum_name.uncapitalized);
+            enum_type
+            }
         }
     }
 
@@ -363,7 +390,12 @@ impl RescriptType {
             RescriptType::Bool => "false".to_string(),
             RescriptType::Array(_) => "[]".to_string(),
             RescriptType::Option(_) => "None".to_string(),
-            RescriptType::EnumVariant(_) => "defaultEnum".to_string(),
+            RescriptType::EnumVariant(enum_name) => {
+                let mut enum_default = "Enums.".to_owned();
+                enum_default.push_str(&enum_name.uncapitalized);
+                enum_default.push_str("Default");
+                enum_default
+                },
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
@@ -386,7 +418,11 @@ impl RescriptType {
             RescriptType::Bool => "false".to_string(),
             RescriptType::Array(_) => "[]".to_string(),
             RescriptType::Option(_) => "null".to_string(),
-            RescriptType::EnumVariant(_) => "defaultEnum".to_string(),
+            RescriptType::EnumVariant(enum_name) => {
+                let mut enum_default = enum_name.uncapitalized.clone();
+                enum_default.push_str("Default");
+                enum_default
+                },
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
@@ -628,17 +664,20 @@ impl GqlScalar {
             GqlScalar::Bytes => "text".to_string(),
             GqlScalar::BigInt => "numeric".to_string(), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
             GqlScalar::Custom(named_type) => {
-                if entities_set.contains(named_type) {
-                    "text".to_string() //This would be the ID of another defined entity
-                } else {
-                    if gql_enums_name_set.contains(named_type) {
-                        named_type.to_capitalized_options().uncapitalized
-                    } else {
-                        Err(anyhow!(
-                            "EE207: Failed to parse undefined type: {}",
-                            named_type
-                        ))?
-                    }
+                match (
+                    entities_set.contains(named_type),
+                    gql_enums_name_set.contains(named_type),
+                ) {
+                    (true, false) => "text".to_string(), // This would be the ID of another defined entity.
+                    (false, true) => named_type.as_str().to_string(),
+                    (false, false) => Err(anyhow!(
+                        "EE207: Failed to parse undefined type: {}",
+                        named_type
+                    ))?,
+                    (true, true) => Err(anyhow!(
+                        "EE213: Schema contains the following enums and/or entities with the same name, all type and enum definitions must be unique in the schema: {}",
+                        named_type
+                    ))?,
                 }
             }
         };
@@ -659,17 +698,22 @@ impl GqlScalar {
             GqlScalar::Bytes => RescriptType::String,
             GqlScalar::Boolean => RescriptType::Bool,
             GqlScalar::Custom(entity_or_enum_name) => {
-                if entities_set.contains(entity_or_enum_name) {
-                    RescriptType::ID
-                } else {
-                    if gql_enums_name_set.contains(entity_or_enum_name) {
+                match (
+                    entities_set.contains(entity_or_enum_name),
+                    gql_enums_name_set.contains(entity_or_enum_name),
+                ) {
+                    (true, false) => RescriptType::ID, 
+                    (false, true) => {
                         RescriptType::EnumVariant(entity_or_enum_name.to_capitalized_options())
-                    } else {
-                        Err(anyhow!(
-                            "EE207: Failed to parse undefined type: {}",
-                            entity_or_enum_name
-                        ))?
-                    }
+                    } 
+                    (false, false) => Err(anyhow!(
+                        "EE207: Failed to parse undefined type: {}",
+                        entity_or_enum_name
+                    ))?, 
+                    (true, true) => Err(anyhow!(
+                        "EE213: Schema contains the following enums and/or entities with the same name, all type and enum definitions must be unique in the schema: {}",
+                        entity_or_enum_name
+                    ))?,// this condition should never happen as we check for duplicates when constructing the schema
                 }
             }
         };
@@ -761,7 +805,7 @@ mod tests {
             .to_rescript_type(&empty_entity_set, &enums_set)
             .expect("expected rescript type string");
 
-        assert_eq!(rescript_type.to_string(), "option<testEnum>".to_owned());
+        assert_eq!(rescript_type.to_string(), "option<Enums.testEnum>".to_owned());
     }
 
     #[test]
@@ -824,7 +868,7 @@ mod tests {
         let pg_type = field_type
             .to_postgres_type(&empty_entities_set, &enums_set, false)
             .expect("unable to get postgres type");
-        assert_eq!(pg_type, "testEnum NOT NULL");
+        assert_eq!(pg_type, "TestEnum NOT NULL");
     }
 
     #[test]

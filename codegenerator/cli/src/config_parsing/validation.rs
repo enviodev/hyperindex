@@ -1,6 +1,7 @@
 use super::human_config::{ConfigEvent, HumanConfig, SyncSourceConfig};
 use crate::constants::reserved_keywords::{
-    JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS, TYPESCRIPT_RESERVED_WORDS,
+    ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
+    TYPESCRIPT_RESERVED_WORDS,
 };
 use anyhow::{anyhow, Context};
 use regex::Regex;
@@ -161,6 +162,20 @@ pub fn validate_deserialized_config_yaml(
     Ok(())
 }
 
+pub fn check_enums_for_internal_reserved_words(enum_name_words: &Vec<String>) -> Vec<String> {
+    // Checking that schema does not include any reserved words
+    let mut detected_reserved_words_in_schema_enums = Vec::new();
+    // Creating a deduplicated set of reserved words from javascript or rescript
+    let mut word_set: HashSet<&str> = HashSet::new();
+    word_set.extend(ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES.iter());
+    for word in enum_name_words {
+        if word_set.contains(word.as_str()) {
+            detected_reserved_words_in_schema_enums.push(word.clone());
+        }
+    }
+
+    detected_reserved_words_in_schema_enums
+}
 // Checking that schema does not include any reserved words
 pub fn check_names_from_schema_for_reserved_words(schema_words: Vec<String>) -> Vec<String> {
     // Checking that schema does not include any reserved words

@@ -53,7 +53,7 @@ impl GraphQlEnumTypeTemplate {
         let params: Vec<CapitalizedOptions> = gql_enum
             .values
             .iter()
-            .map(|value| Ok(value.name.to_capitalized_options().clone()))
+            .map(|value| Ok(value.to_capitalized_options().clone()))
             .collect::<Result<_>>()
             .context(format!(
                 "Failed templating gql enum fields of enum: {}",
@@ -64,12 +64,6 @@ impl GraphQlEnumTypeTemplate {
             name: gql_enum.name.to_capitalized_options(),
             params,
         })
-    }
-}
-
-impl HasName for GraphQlEnumTypeTemplate {
-    fn set_name(&mut self, name: CapitalizedOptions) {
-        self.name = name;
     }
 }
 

@@ -4,7 +4,7 @@ let gravatarEntity1: Types.gravatarEntity = {
   displayName: "gravatar1",
   imageUrl: "https://gravatar1.com",
   updatesCount: Ethers.BigInt.fromInt(0),
-  size: LARGE,
+  size: #LARGE,
 }
 
 let gravatarEntity2: Types.gravatarEntity = {
@@ -13,7 +13,7 @@ let gravatarEntity2: Types.gravatarEntity = {
   displayName: "gravatar2",
   imageUrl: "https://gravatar2.com",
   updatesCount: Ethers.BigInt.fromInt(1),
-  size: MEDIUM,
+  size: #MEDIUM,
 }
 
 let gravatarSerialized1 = gravatarEntity1->Types.gravatarEntity_encode

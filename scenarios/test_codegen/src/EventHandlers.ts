@@ -5,7 +5,8 @@ import {
   SimpleNftContract_Transfer_handler,
 } from "../generated/src/Handlers.gen";
 
-import { NftCollectionEntity, UserEntity, AccountType } from "../generated/src/Types.gen";
+import { NftCollectionEntity, UserEntity } from "../generated/src/Types.gen";
+import { AccountType } from "../generated/src/Enums.gen";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 

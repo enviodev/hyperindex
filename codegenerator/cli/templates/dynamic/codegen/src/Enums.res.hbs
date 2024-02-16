@@ -1,0 +1,8 @@
+// Graphql Enum Type Variants
+{{#each gql_enums as | enum |}} 
+@spice @genType.as("{{enum.name.capitalized}}")
+type {{enum.name.uncapitalized}} = [
+{{#each enum.params as | param | }}| @spice.as("{{param.original}}") #{{param.capitalized}}{{/each}}]
+let {{enum.name.uncapitalized}}Default = #{{enum.params.[0].capitalized}}
+
+{{/each}}
