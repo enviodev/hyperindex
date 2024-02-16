@@ -1,7 +1,8 @@
 use super::{
     system_config::{EntityMap, GraphQlEnumMap},
     validation::{
-        check_names_from_schema_for_reserved_words, check_enums_for_internal_reserved_words, check_schema_enums_are_valid_postgres,
+        check_enums_for_internal_reserved_words, check_names_from_schema_for_reserved_words,
+        check_schema_enums_are_valid_postgres,
     },
 };
 use crate::capitalization::{Capitalize, CapitalizedOptions};
@@ -369,13 +370,7 @@ impl RescriptType {
                     .join(", ");
                 format!("({})", inner_types_str)
             }
-            RescriptType::EnumVariant(enum_name) => 
-            {
-            let mut enum_type = "Enums.".to_owned();
-            
-            enum_type.push_str(&enum_name.uncapitalized);
-            enum_type
-            }
+            RescriptType::EnumVariant(enum_name) => format!("Enums.{}", &enum_name.uncapitalized),
         }
     }
 
@@ -391,11 +386,8 @@ impl RescriptType {
             RescriptType::Array(_) => "[]".to_string(),
             RescriptType::Option(_) => "None".to_string(),
             RescriptType::EnumVariant(enum_name) => {
-                let mut enum_default = "Enums.".to_owned();
-                enum_default.push_str(&enum_name.uncapitalized);
-                enum_default.push_str("Default");
-                enum_default
-                },
+                format!("Enums.{}Default", &enum_name.uncapitalized)
+            }
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
@@ -418,11 +410,7 @@ impl RescriptType {
             RescriptType::Bool => "false".to_string(),
             RescriptType::Array(_) => "[]".to_string(),
             RescriptType::Option(_) => "null".to_string(),
-            RescriptType::EnumVariant(enum_name) => {
-                let mut enum_default = enum_name.uncapitalized.clone();
-                enum_default.push_str("Default");
-                enum_default
-                },
+            RescriptType::EnumVariant(enum_name) => format!("{}Default", &enum_name.uncapitalized),
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
@@ -663,23 +651,20 @@ impl GqlScalar {
             GqlScalar::Boolean => "boolean".to_string(),
             GqlScalar::Bytes => "text".to_string(),
             GqlScalar::BigInt => "numeric".to_string(), // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
-            GqlScalar::Custom(named_type) => {
-                match (
-                    entities_set.contains(named_type),
-                    gql_enums_name_set.contains(named_type),
-                ) {
-                    (true, false) => "text".to_string(), // This would be the ID of another defined entity.
-                    (false, true) => named_type.as_str().to_string(),
-                    (false, false) => Err(anyhow!(
-                        "EE207: Failed to parse undefined type: {}",
-                        named_type
-                    ))?,
-                    (true, true) => Err(anyhow!(
-                        "EE213: Schema contains the following enums and/or entities with the same name, all type and enum definitions must be unique in the schema: {}",
-                        named_type
-                    ))?,
-                }
+            GqlScalar::Custom(entity_or_enum_name)
+                if entities_set.contains(entity_or_enum_name) =>
+            {
+                "text".to_string() // This would be the ID of another defined entity.
             }
+            GqlScalar::Custom(entity_or_enum_name)
+                if gql_enums_name_set.contains(entity_or_enum_name) =>
+            {
+                entity_or_enum_name.as_str().to_string()
+            }
+            GqlScalar::Custom(entity_or_enum_name) => Err(anyhow!(
+                "EE207: Failed to parse undefined type: {}",
+                entity_or_enum_name
+            ))?,
         };
         Ok(converted)
     }
@@ -697,25 +682,20 @@ impl GqlScalar {
             GqlScalar::Float => RescriptType::Float,
             GqlScalar::Bytes => RescriptType::String,
             GqlScalar::Boolean => RescriptType::Bool,
-            GqlScalar::Custom(entity_or_enum_name) => {
-                match (
-                    entities_set.contains(entity_or_enum_name),
-                    gql_enums_name_set.contains(entity_or_enum_name),
-                ) {
-                    (true, false) => RescriptType::ID, 
-                    (false, true) => {
-                        RescriptType::EnumVariant(entity_or_enum_name.to_capitalized_options())
-                    } 
-                    (false, false) => Err(anyhow!(
-                        "EE207: Failed to parse undefined type: {}",
-                        entity_or_enum_name
-                    ))?, 
-                    (true, true) => Err(anyhow!(
-                        "EE213: Schema contains the following enums and/or entities with the same name, all type and enum definitions must be unique in the schema: {}",
-                        entity_or_enum_name
-                    ))?,// this condition should never happen as we check for duplicates when constructing the schema
-                }
+            GqlScalar::Custom(entity_or_enum_name)
+                if entities_set.contains(entity_or_enum_name) =>
+            {
+                RescriptType::ID
             }
+            GqlScalar::Custom(entity_or_enum_name)
+                if gql_enums_name_set.contains(entity_or_enum_name) =>
+            {
+                RescriptType::EnumVariant(entity_or_enum_name.to_capitalized_options())
+            }
+            GqlScalar::Custom(entity_or_enum_name) => Err(anyhow!(
+                "EE207: Failed to parse undefined type: {}",
+                entity_or_enum_name
+            ))?,
         };
         Ok(res_type)
     }
@@ -805,7 +785,10 @@ mod tests {
             .to_rescript_type(&empty_entity_set, &enums_set)
             .expect("expected rescript type string");
 
-        assert_eq!(rescript_type.to_string(), "option<Enums.testEnum>".to_owned());
+        assert_eq!(
+            rescript_type.to_string(),
+            "option<Enums.testEnum>".to_owned()
+        );
     }
 
     #[test]
