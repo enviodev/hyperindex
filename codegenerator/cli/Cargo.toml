@@ -37,7 +37,7 @@ itertools = "0.11.0"
 colored = "2.0.4"
 sqlx = { version = "0.7.2", features = [
   "runtime-tokio",
-  "tls-rustls", 
+  "tls-rustls",
   "postgres",
 ] }
 thiserror = "1.0.50"
@@ -50,4 +50,7 @@ tracing-subscriber = "0.3.17"
 #       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored
 #   It should be possible to use a linked version of openssl, but after hours of trying I (Jason) was unsuccessful.
 [target.'cfg(all(target_arch = "aarch64", target_os = "linux"))'.dependencies]
-openssl = { version = "0.10.60", features = ["vendored"] }
+openssl = { version = "0.10.63", features = ["vendored"] }
+
+[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
+openssl = { version = "0.10.63", features = ["vendored"] }

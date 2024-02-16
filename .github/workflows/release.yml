@@ -153,8 +153,8 @@ jobs:
       - if: ${{ runner.os == 'Linux' }}
         uses: awalsh128/cache-apt-pkgs-action@v1
         with:
-          packages: musl-tools # provides musl-gcc
-          # version: 1.0
+          # musl-tools provides musl-gcc
+          packages: musl-tools
 
       - if: ${{ runner.os == 'Linux' }}
         run: rustup target add x86_64-unknown-linux-musl
