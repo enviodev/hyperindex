@@ -1,21 +1,33 @@
-{{#each codegen_contracts as |contract|}}
-  let register{{contract.name.capitalized
-  }}Handlers = () => {
-try {
-  let _ = %raw(`require("{{contract.handler.relative_to_generated_src
-  }}")`)
+@val external require: string => unit = "require"
+
+let registerContractHandlers = (
+  ~contractName,
+  ~handlerPathRelativeToGeneratedSrc,
+  ~handlerPathRelativeToConfig,
+) => {
+  try {
+    require(handlerPathRelativeToGeneratedSrc)
   } catch {
-  | err => { Logging.error("EE500: There was an issue importing the handler file for {{contract.name.capitalized
-  }}. Expected file to parse at {{contract.handler.relative_to_config
-  }}")
-  Js.log(err)
-  }
+  | exn =>
+    let params = {
+      "Contract Name": contractName,
+      "Expected Handler Path": handlerPathRelativeToConfig,
+      "Code": "EE500",
+    }
+    let logger = Logging.createChild(~params)
+
+    let errHandler = exn->ErrorHandling.make(~msg="Failed to import handler file", ~logger)
+    errHandler->ErrorHandling.log
+    errHandler->ErrorHandling.raiseExn
   }
 }
-{{/each}}
 
 let registerAllHandlers = () => {
 {{#each codegen_contracts as |contract|}}
-  register{{contract.name.capitalized}}Handlers()
+  registerContractHandlers(
+    ~contractName="{{contract.name.capitalized}}",
+    ~handlerPathRelativeToGeneratedSrc="{{contract.handler.relative_to_generated_src}}",
+    ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
+  )
 {{/each}}
 }
