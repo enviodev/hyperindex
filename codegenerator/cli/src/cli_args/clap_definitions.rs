@@ -122,6 +122,7 @@ pub enum InitFlow {
     #[strum(serialize = "Contract Import")]
     ContractImport(ContractImportArgs),
     ///Initialize by migrating config from an existing subgraph
+    #[clap(hide = true)] //hiding for now until this is more stable
     #[strum(serialize = "Subgraph Migration (Experimental)")]
     SubgraphMigration(SubgraphMigrationArgs),
 }

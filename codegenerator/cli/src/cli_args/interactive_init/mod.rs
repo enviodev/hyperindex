@@ -85,7 +85,10 @@ impl InitArgs {
             Some(v) => v.clone(),
             None => {
                 //start prompt to ask the user which initialization option they want
-                let user_response_options = InitFlow::iter().collect();
+                let user_response_options = InitFlow::iter()
+                    //filter out subgraph migration for now until stabilized
+                    .filter(|v| !matches!(v, InitFlow::SubgraphMigration(_)))
+                    .collect();
 
                 Select::new("Choose an initialization option", user_response_options)
                     .prompt()
