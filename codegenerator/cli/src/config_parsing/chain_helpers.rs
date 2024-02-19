@@ -207,6 +207,10 @@ pub enum Network {
     // https://explorer.rsk.co/
     // https://rootstock.blockscout.com/
     Rsk = 30,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.evm.shimmer.network/
+    ShimmerEvm = 148,
 }
 
 impl Network {
