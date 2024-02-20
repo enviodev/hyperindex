@@ -232,11 +232,7 @@ impl Schema {
         Ok(self)
     }
 
-    /// For all entities that contain fields with relationships to other entities validate that
-    /// they conform to the correct structure. For many to one relationships we only support
-    /// @derivedFrom direcetives with a not null list of not null entities
-    ///
-    /// # Errors
+    /// For all entities validate the defined field types.
     ///
     /// This function will return an error if there is a defined related type where the type does
     /// not exist on the schema.
@@ -390,11 +386,7 @@ impl Entity {
         Ok(required_entities_with_field)
     }
 
-    /// For each field with relationships to other entities validate that
-    /// they conform to the correct structure. For many to one relationships we only support
-    /// @derivedFrom direcetives with a not null list of not null entities
-    ///
-    /// # Errors
+    /// Validate each field type in an the given entity
     ///
     /// This function will return an error if there is a defined related type where the type does
     /// not exist on the schema.
