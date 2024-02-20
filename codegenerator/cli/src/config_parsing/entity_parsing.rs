@@ -1,9 +1,6 @@
-use super::{
-    system_config::{EntityMap, GraphQlEnumMap},
-    validation::{
-        check_enums_for_internal_reserved_words, check_names_from_schema_for_reserved_words,
-        is_valid_postgres_db_name,
-    },
+use super::validation::{
+    check_enums_for_internal_reserved_words, check_names_from_schema_for_reserved_words,
+    is_valid_postgres_db_name,
 };
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
@@ -363,8 +360,7 @@ impl Entity {
 
     pub fn get_related_entities<'a>(
         &'a self,
-        other_entities: &'a EntityMap,
-        gql_enums: &GraphQlEnumMap,
+        schema: &'a Schema,
     ) -> anyhow::Result<Vec<(&'a Field, &'a Self)>> {
         let required_entities_with_field = self
             .fields
@@ -372,15 +368,13 @@ impl Entity {
             .filter_map(|field| {
                 let gql_scalar = field.field_type.get_underlying_scalar();
                 if let GqlScalar::Custom(name) = gql_scalar {
-                    if gql_enums.contains_key(&name) {
-                        None
-                    } else {
-                        let field_and_entity = other_entities
-                            .get(&name)
-                            .map(|entity| (field, entity))
-                            .ok_or_else(|| anyhow!("Entity {} does not exist", name));
-                        Some(field_and_entity)
-                    }
+                    schema.try_get_type_def(&name).map_or_else(
+                        |e| Some(Err(e)),
+                        |type_def| match type_def {
+                            TypeDef::Entity(entity) => Some(Ok((field, entity))),
+                            TypeDef::Enum(_) => None,
+                        },
+                    )
                 } else {
                     None
                 }

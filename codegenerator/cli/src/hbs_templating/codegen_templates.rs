@@ -217,7 +217,7 @@ impl EntityRecordTypeTemplate {
             ))?;
 
         let entity_relational_types_templates = entity
-            .get_related_entities(config.get_entity_map(), config.get_gql_enum_map())
+            .get_related_entities(&config.schema)
             .context(format!(
                 "Failed getting relational fields of entity: {}",
                 entity.name
@@ -403,7 +403,7 @@ impl EventTemplate {
                         }
                     }).context("Validating 'requiredEntity' fields in config.")?;
 
-                let required_entity_entity_field_templates = entity.get_related_entities(config.get_entity_map(), config.get_gql_enum_map()).context(format!("Failed retrieving related entities of required entity {}", entity.name))?
+                let required_entity_entity_field_templates = entity.get_related_entities(&config.schema).context(format!("Failed retrieving related entities of required entity {}", entity.name))?
                     .iter().map(|(field, related_entity)| RequiredEntityEntityFieldTemplate::from_config_entity(field, related_entity)).collect();
 
                 let entity_fields_of_required_entity =
