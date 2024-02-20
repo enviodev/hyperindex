@@ -36,6 +36,8 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
       ~blockHeight=currentBlockHeight,
     )->ignore
 
+    Prometheus.setSourceChainHeight(~blockNumber=currentBlockHeight, ~chain=chainFetcher.chainConfig.chain)
+
     {...chainFetcher, currentBlockHeight}
   } else {
     chainFetcher
@@ -102,7 +104,6 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     chainManager: {...state.chainManager, chainFetchers: updatedFetchers},
   }
 
-  Prometheus.setSourceChainHeight(~blockNumber=response.currentBlockHeight, ~chain)
   Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.heighestQueriedBlockNumber, ~chain)
 
   (nextState, [ProcessEventBatch, NextQuery(Chain(chain))])
@@ -176,6 +177,16 @@ let actionReducer = (state: t, action: action) => {
         chainManager: updatedChainManager,
         currentlyProcessingBatch: false,
       }
+    })
+
+    // This ONLY updates the metrics - no logic is performed.
+    nextState.chainManager.chainFetchers
+    ->ChainMap.entries
+    ->Array.forEach(((chain, chainFetcher)) => {
+      let highestFetchedBlockOnChain =
+        chainFetcher.fetchState->FetchState.getLatestFullyFetchedBlock
+
+      Prometheus.setFetchedEventsUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
     })
 
     (nextState, nextTasks)

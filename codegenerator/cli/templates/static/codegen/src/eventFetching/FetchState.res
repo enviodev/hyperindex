@@ -528,6 +528,11 @@ let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractA
 }
 
 /**
+* Returns the latest block number fetched for the lowest fetcher queue (ie the earliest un-fetched dynamic contract)
+*/
+let getLatestFullyFetchedBlock = (self: t) => self.latestFetchedBlockNumber
+
+/**
 Helper functions for debugging and printing
 */
 module DebugHelpers = {
