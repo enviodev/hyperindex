@@ -205,12 +205,22 @@ impl Schema {
                                 "Cannot derive field {derived_from_field} from enum {name}. \
                                  derivedFrom is intended to be used with Entity type definitions"
                             ))?,
-                            TypeDef::Entity(entity) => {
-                                if entity.fields.get(derived_from_field).is_none() {
-                                    Err(anyhow!(
+                            TypeDef::Entity(derived_entity) => {
+                                match derived_entity.fields.get(derived_from_field) {
+                                    None => Err(anyhow!(
                                         "Derived field {derived_from_field} does not exist on \
                                          entity {name}."
-                                    ))?;
+                                    ))?,
+                                    Some(field) => match field.field_type.get_underlying_scalar() {
+                                        GqlScalar::Custom(name) if name == entity.name => (),
+                                        GqlScalar::ID | GqlScalar::String => (),
+                                        _ => Err(anyhow!(
+                                            "Derived field '{derived_from_field}' on entity \
+                                             '{name}' must either be an ID, String, or an Object \
+                                             relationship with Entity '{}'",
+                                            entity.name
+                                        ))?,
+                                    },
                                 }
                             }
                         }
