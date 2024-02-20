@@ -79,6 +79,7 @@ pub struct EntityRelationalTypesTemplate {
     pub relational_key: CapitalizedOptions,
     pub mapped_entity: CapitalizedOptions,
     pub relationship_type: RelationshipTypeTemplate,
+    pub object_name: CapitalizedOptions,
     pub is_array: bool,
     pub is_optional: bool,
     pub is_derived_from: bool,
@@ -102,6 +103,7 @@ impl EntityRelationalTypesTemplate {
                     field.name, entity.name
                 ))?
                 .to_capitalized_options(),
+            object_name: field.name.to_capitalized_options(),
             mapped_entity: entity.name.to_capitalized_options(),
             relationship_type,
             is_optional: field.field_type.is_optional(),
