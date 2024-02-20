@@ -281,15 +281,22 @@ impl GraphQLEnum {
     }
 
     fn check_valid_postgres_name(self) -> anyhow::Result<Self> {
-        if is_valid_postgres_db_name(&self.name) {
-            Ok(self)
-        } else {
+        let values_to_check = vec![vec![self.name.clone()], self.values.clone()].concat();
+        let invalid_names = values_to_check
+            .into_iter()
+            .filter(|v| !is_valid_postgres_db_name(v))
+            .collect::<Vec<_>>();
+
+        if !invalid_names.is_empty() {
             Err(anyhow!(
-                "EE214: Schema contains the enum name '{}' that does not match the following \
-                 pattern: It must start with a letter. It can only contain letters, numbers, and \
-                 underscores (no spaces). It must have a maximum length of 63 characters.",
-                self.name
+                "EE214: Schema contains the enum names and/or values that does not match the \
+                 following pattern: It must start with a letter. It can only contain letters, \
+                 numbers, and underscores (no spaces). It must have a maximum length of 63 \
+                 characters. Invalid names: '{}'",
+                invalid_names.join(", ")
             ))
+        } else {
+            Ok(self)
         }
     }
     fn from_enum(enm: &EnumType<String>) -> anyhow::Result<Self> {
