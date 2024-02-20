@@ -102,6 +102,9 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     chainManager: {...state.chainManager, chainFetchers: updatedFetchers},
   }
 
+  Prometheus.setSourceChainHeight(~blockNumber=response.currentBlockHeight, ~chain)
+  Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.heighestQueriedBlockNumber, ~chain)
+
   (nextState, [ProcessEventBatch, NextQuery(Chain(chain))])
 }
 

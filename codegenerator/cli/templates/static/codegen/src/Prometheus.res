@@ -22,6 +22,25 @@ let eventsProcessedCounter = PromClient.Counter.makeCounter({
   "labelNames": [],
 })
 
+let sourceChainHeight = PromClient.Gauge.makeGauge({
+  "name": "chain_block_height",
+  "help": "Chain Height of Source Chain",
+  "labelNames": ["chainId"],
+})
+
+// TODO: implement this metric that updates in batches, currently unused
+let processedUntilHeight = PromClient.Gauge.makeGauge({
+  "name": "chain_block_height_processed",
+  "help": "Block height processed by indexer",
+  "labelNames": ["chainId"],
+})
+
+let fetchedEventsUntilHeight = PromClient.Gauge.makeGauge({
+  "name": "chain_fetcher_block_height_processed",
+  "help": "Block height processed by indexer",
+  "labelNames": ["chainId"],
+})
+
 let incrementLoadEntityDurationCounter = (~duration) => {
   loadEntitiesDurationCounter->PromClient.Counter.incMany(duration)
 }
@@ -36,4 +55,22 @@ let incrementExecuteBatchDurationCounter = (~duration) => {
 
 let incrementEventsProcessedCounter = (~number) => {
   eventsProcessedCounter->PromClient.Counter.incMany(number)
+}
+
+let setSourceChainHeight = (~blockNumber, ~chain) => {
+  sourceChainHeight
+  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
+  ->PromClient.Gauge.set(blockNumber)
+}
+
+let setProcessedUntilHeight = (~blockNumber, ~chain) => {
+  processedUntilHeight
+  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
+  ->PromClient.Gauge.set(blockNumber)
+}
+
+let setFetchedEventsUntilHeight = (~blockNumber, ~chain) => {
+  processedUntilHeight
+  ->PromClient.Gauge.labels({"chainId": chain->ChainMap.Chain.toString})
+  ->PromClient.Gauge.set(blockNumber)
 }
