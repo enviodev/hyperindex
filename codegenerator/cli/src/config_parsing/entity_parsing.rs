@@ -144,10 +144,7 @@ impl Schema {
             self.get_all_entity_type_names(),
             self.get_all_entity_field_names(),
         ]
-        .iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<_>>();
+        .concat();
 
         match check_names_from_schema_for_reserved_words(all_names) {
             reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
@@ -355,13 +352,13 @@ impl Entity {
                 _ => None,
             })
             .collect();
-        let type_defs: Vec<Relationship> = self
+        let object_relationship_fields: Vec<Relationship> = self
             .fields
             .values()
             .filter_map(|f| f.get_relationship())
             .collect();
 
-        vec![derived_from_fields, type_defs].concat()
+        vec![derived_from_fields, object_relationship_fields].concat()
     }
 
     pub fn get_related_entities<'a>(
