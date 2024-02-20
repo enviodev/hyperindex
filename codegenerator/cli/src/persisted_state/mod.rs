@@ -286,7 +286,11 @@ mod test {
 
         let should_sync_from_raw_events = current_state.should_sync_from_raw_events(&persisted_db);
 
-        assert!(!should_sync_from_raw_events, "should_sync_from_raw_events should be false since there were additional changes other than handler_files_hash");
+        assert!(
+            !should_sync_from_raw_events,
+            "should_sync_from_raw_events should be false since there were additional changes \
+             other than handler_files_hash"
+        );
     }
 
     #[test]

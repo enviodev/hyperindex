@@ -28,8 +28,9 @@ pub fn is_valid_folder_name(name: &str) -> bool {
 pub fn is_valid_foldername_inquire_validator(name: &str) -> Result<Validation, CustomUserError> {
     if !is_valid_folder_name(name) {
         Ok(Validation::Invalid(
-            "EE400: Invalid folder name. The folder name cannot contain any of the following special characters: / \\ : * ? \" < > |"
-            .into(),
+            "EE400: Invalid folder name. The folder name cannot contain any of the following \
+             special characters: / \\ : * ? \" < > |"
+                .into(),
         ))
     } else {
         Ok(Validation::Valid)
@@ -165,10 +166,10 @@ pub fn filter_duplicate_events(
             let first_event = event_list[0].clone();
             for event in event_list {
                 if !are_events_equivalent(&first_event, &event) {
-                    let warning_message =
-                        "Note this is unimplemented! The code might behave unexpectedly.\n"
-                            .red()
-                            .bold();
+                    let warning_message = "Note this is unimplemented! The code might behave \
+                                           unexpectedly.\n"
+                        .red()
+                        .bold();
                     println!("{}", warning_message);
                     println!(
                         "Found duplicate event: {} in contract abi. This event will be ignored. However, this second ignored event has the same name as the first event, but different inputs. This isn't possible in solidity, but technically possible through proxy contracts with multiple implementations. Handling his is currently unimplemented. Please ask the team on discord, or comment on our github issue if this is affecting you.\n\nhttps://github.com/enviodev/envio-hyperindexer-issues/issues/1\n",

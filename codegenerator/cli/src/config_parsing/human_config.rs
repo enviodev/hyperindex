@@ -257,8 +257,8 @@ pub fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Cont
     ))?;
 
     let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
-        "Failed to deserialize ABI at {:?} \
-            -  Please ensure the ABI file is formatted correctly or contact the team.",
+        "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted correctly \
+         or contact the team.",
         abi_path
     ))?;
 
@@ -322,7 +322,8 @@ impl TryFrom<String> for EventNameOrSig {
             match HumanReadableParser::parse_event(sig) {
                 Ok(event) => Ok(event),
                 Err(err) => Err(format!(
-                    "EE103: Unable to parse event signature {} due to the following error: {}. Please refer to our docs on how to correctly define a human readable ABI.",
+                    "EE103: Unable to parse event signature {} due to the following error: {}. \
+                     Please refer to our docs on how to correctly define a human readable ABI.",
                     sig, err
                 )),
             }
@@ -365,12 +366,13 @@ fn strip_to_letters(string: &str) -> String {
 }
 
 pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<HumanConfig> {
-    let config = std::fs::read_to_string(config_path).context(
-        format!(
-            "EE104: Failed to resolve config path {0}. Make sure you're in the correct directory and that a config file with the name {0} exists",
-            &config_path.to_str().unwrap_or("unknown config file name path"),
-        )
-    )?;
+    let config = std::fs::read_to_string(config_path).context(format!(
+        "EE104: Failed to resolve config path {0}. Make sure you're in the correct directory and \
+         that a config file with the name {0} exists",
+        &config_path
+            .to_str()
+            .unwrap_or("unknown config file name path"),
+    ))?;
 
     let mut deserialized_yaml: HumanConfig = serde_yaml::from_str(&config).context(format!(
         "EE105: Failed to deserialize config. Visit the docs for more information {}",

@@ -53,7 +53,8 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
-                    "Failed initializing blank template for Subgraph Migration with language {} at path {:?}",
+                    "Failed initializing blank template for Subgraph Migration with language {} \
+                     at path {:?}",
                     &parsed_init_args.language, &parsed_project_paths.project_root,
                 ))?;
 
@@ -120,7 +121,8 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
-                    "Failed initializing blank template for Contract Import with language {} at path {:?}",
+                    "Failed initializing blank template for Contract Import with language {} at \
+                     path {:?}",
                     &parsed_init_args.language, &parsed_project_paths.project_root,
                 ))?;
 

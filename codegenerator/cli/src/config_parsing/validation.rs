@@ -77,7 +77,8 @@ fn validate_names_not_reserved(
     let detected_reserved_words = check_reserved_words(&names_from_config.join(" "));
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "EE102: The config file cannot contain any reserved words. Reserved words are: {:?} in {}.",
+            "EE102: The config file cannot contain any reserved words. Reserved words are: {:?} \
+             in {}.",
             detected_reserved_words.join(" "),
             part_of_config
         ));
@@ -114,7 +115,15 @@ pub fn validate_deserialized_config_yaml(
     deserialized_yaml: &HumanConfig,
 ) -> anyhow::Result<()> {
     if !is_valid_postgres_db_name(&deserialized_yaml.name) {
-        return Err(anyhow!("EE108: The 'name' field in your config file ({}) must have the following pattern: It must start with a letter or underscore. It can contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters", &config_path.to_str().unwrap_or("unknown config file name path")).into());
+        return Err(anyhow!(
+            "EE108: The 'name' field in your config file ({}) must have the following pattern: It \
+             must start with a letter or underscore. It can contain letters, numbers, and \
+             underscores (no spaces). It must have a maximum length of 63 characters",
+            &config_path
+                .to_str()
+                .unwrap_or("unknown config file name path")
+        )
+        .into());
     }
 
     let mut contract_names = Vec::new();
@@ -153,7 +162,13 @@ pub fn validate_deserialized_config_yaml(
     }
     // Checking that contract names are non-unique
     if !are_contract_names_unique(&contract_names) {
-        return Err(anyhow!("EE101: The config file ({}) cannot have duplicate contract names. All contract names need to be unique, regardless of network. Contract names are not case-sensitive.", &config_path.to_str().unwrap_or("unknown config file name path")));
+        return Err(anyhow!(
+            "EE101: The config file ({}) cannot have duplicate contract names. All contract names \
+             need to be unique, regardless of network. Contract names are not case-sensitive.",
+            &config_path
+                .to_str()
+                .unwrap_or("unknown config file name path")
+        ));
     }
 
     // Checking that contract names do not include any reserved words
@@ -274,8 +289,8 @@ mod tests {
 
     #[test]
     fn test_check_reserved_words() {
-        let yaml_string =
-            "This is a YAML string with reserved words like break, import and symbol plus unreserved word like match.";
+        let yaml_string = "This is a YAML string with reserved words like break, import and \
+                           symbol plus unreserved word like match.";
         let flagged_words = super::check_reserved_words(yaml_string);
         assert_eq!(
             flagged_words,

@@ -203,9 +203,10 @@ impl SystemConfig {
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
                             .context(format!(
-                            "Failed inserting locally defined network contract at network id {}",
-                            network.id,
-                        ))?;
+                                "Failed inserting locally defined network contract at network id \
+                                 {}",
+                                network.id,
+                            ))?;
                     }
                     None => {
                         //Validate that there is a global contract for the given contract if

@@ -223,7 +223,8 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                     global_contract,
                 )
                 .context(format!(
-                    "Unexpected, failed to add global contract {}. Contract should have unique names",
+                    "Unexpected, failed to add global contract {}. Contract should have unique \
+                     names",
                     selected_contract.name
                 ))?;
                 None

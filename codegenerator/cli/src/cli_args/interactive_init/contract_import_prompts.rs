@@ -230,15 +230,20 @@ impl AutoConfigSelection {
         self,
         contract_import_selection: ContractImportSelection,
     ) -> Result<Self> {
-        self.add_contract(contract_import_selection).or_else(|e|
-            match e {
+        self.add_contract(contract_import_selection)
+            .or_else(|e| match e {
                 AutoConfigError::ContractNameExists(mut contract, auto_config_selection) => {
-                    let prompt_text = format!("Contract with name {} already exists in your project. Please provide an alternative name: ", contract.name);
-                    contract.name = Text::new(&prompt_text).prompt().context("Failed prompting for new Contract name")?;
+                    let prompt_text = format!(
+                        "Contract with name {} already exists in your project. Please provide an \
+                         alternative name: ",
+                        contract.name
+                    );
+                    contract.name = Text::new(&prompt_text)
+                        .prompt()
+                        .context("Failed prompting for new Contract name")?;
                     auto_config_selection.add_contract_with_prompt(contract)
                 }
-            }
-        )
+            })
     }
 }
 
@@ -512,8 +517,8 @@ fn get_converter_network_u64(
 ///Prompt the user to enter an rpc url
 fn prompt_for_rpc_url() -> Result<String> {
     Text::new(
-        "You have entered a network that is unsupported by our servers. \
-                        Please provide an rpc url (this can be edited later in config.yaml):",
+        "You have entered a network that is unsupported by our servers. Please provide an rpc url \
+         (this can be edited later in config.yaml):",
     )
     .prompt()
     .context("Failed during rpc url prompt")

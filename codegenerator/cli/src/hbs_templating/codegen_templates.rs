@@ -383,7 +383,8 @@ impl EventTemplate {
             .required_entities
             .iter()
             .map(|required_entity| {
-                let entity = config.get_entity(&required_entity.name)
+                let entity = config
+                    .get_entity(&required_entity.name)
                     .cloned()
                     .ok_or_else(|| {
                         // Look to see if there is a key that is similar in the keys of `entity_fields_of_required_entity_map`.
@@ -393,18 +394,37 @@ impl EventTemplate {
                         // NOTE: this is a very primative similarity metric. We could use something
                         // like the Levenshtein distance or something more 'fuzzy'. The https://docs.rs/strsim/latest/strsim/
                         // crate looks great for this!
-                        let key_that_is_similar = all_entity_names.iter()
+                        let key_that_is_similar = all_entity_names
+                            .iter()
                             .find(|&key| key.to_lowercase() == required_entity_name_lower);
 
                         match key_that_is_similar {
-                            Some(similar_key) =>
-                                anyhow!("Required entity with name {} not found in Schema - did you mean '{}'? Note, capitalization matters.", &required_entity.name, similar_key),
-                            None => anyhow!("Required entity with name {} not found in Schema. Note, capitalization matters.", &required_entity.name)
+                            Some(similar_key) => anyhow!(
+                                "Required entity with name {} not found in Schema - did you mean \
+                                 '{}'? Note, capitalization matters.",
+                                &required_entity.name,
+                                similar_key
+                            ),
+                            None => anyhow!(
+                                "Required entity with name {} not found in Schema. Note, \
+                                 capitalization matters.",
+                                &required_entity.name
+                            ),
                         }
-                    }).context("Validating 'requiredEntity' fields in config.")?;
+                    })
+                    .context("Validating 'requiredEntity' fields in config.")?;
 
-                let required_entity_entity_field_templates = entity.get_related_entities(&config.schema).context(format!("Failed retrieving related entities of required entity {}", entity.name))?
-                    .iter().map(|(field, related_entity)| RequiredEntityEntityFieldTemplate::from_config_entity(field, related_entity)).collect();
+                let required_entity_entity_field_templates = entity
+                    .get_related_entities(&config.schema)
+                    .context(format!(
+                        "Failed retrieving related entities of required entity {}",
+                        entity.name
+                    ))?
+                    .iter()
+                    .map(|(field, related_entity)| {
+                        RequiredEntityEntityFieldTemplate::from_config_entity(field, related_entity)
+                    })
+                    .collect();
 
                 let entity_fields_of_required_entity =
                     FilteredTemplateLists::new(required_entity_entity_field_templates);
