@@ -90,12 +90,11 @@ impl Schema {
     }
 
     pub fn parse_from_file(path_to_schema: &PathBuf) -> anyhow::Result<Self> {
-        let schema_string = std::fs::read_to_string(&path_to_schema).context(
-            format!(
-                "EE200: Failed to read schema file at {}. Please ensure that the schema file is placed correctly in the directory.",
-                &path_to_schema.to_str().unwrap_or_else(||"bad file path"),
-            )
-        )?;
+        let schema_string = std::fs::read_to_string(&path_to_schema).context(format!(
+            "EE200: Failed to read schema file at {}. Please ensure that the schema file is \
+             placed correctly in the directory.",
+            &path_to_schema.to_str().unwrap_or_else(|| "bad file path"),
+        ))?;
 
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)
             .context("EE201: Failed to parse schema as document")?;
@@ -167,7 +166,8 @@ impl Schema {
             .collect::<Vec<_>>();
         if !duplicate_names.is_empty() {
             Err(anyhow!(
-                "EE213: Schema contains the following enums and entities with the same name, all type definitions must be unique in the schema: {}",
+                "EE213: Schema contains the following enums and entities with the same name, all \
+                 type definitions must be unique in the schema: {}",
                 duplicate_names.join(", ")
             ))
         } else {
@@ -201,10 +201,16 @@ impl Schema {
                         let type_def = self.try_get_type_def(name)?;
 
                         match type_def {
-                            TypeDef::Enum(_) => Err(anyhow!("Cannot derive field {derived_from_field} from enum {name}. derivedFrom is intended to be used with Entity type definitions"))?,
+                            TypeDef::Enum(_) => Err(anyhow!(
+                                "Cannot derive field {derived_from_field} from enum {name}. \
+                                 derivedFrom is intended to be used with Entity type definitions"
+                            ))?,
                             TypeDef::Entity(entity) => {
-                                if !entity.fields.get(derived_from_field).is_some() {
-                                    Err(anyhow!("Derived field {derived_from_field} does not exist on entity {name}."))?
+                                if entity.fields.get(derived_from_field).is_none() {
+                                    Err(anyhow!(
+                                        "Derived field {derived_from_field} does not exist on \
+                                         entity {name}."
+                                    ))?;
                                 }
                             }
                         }
@@ -273,7 +279,9 @@ impl GraphQLEnum {
             Ok(self)
         } else {
             Err(anyhow!(
-                "EE214: Schema contains the enum name '{}' that does not match the following pattern: It must start with a letter. It can only contain letters, numbers, and underscores (no spaces). It must have a maximum length of 63 characters.",
+                "EE214: Schema contains the enum name '{}' that does not match the following \
+                 pattern: It must start with a letter. It can only contain letters, numbers, and \
+                 underscores (no spaces). It must have a maximum length of 63 characters.",
                 self.name
             ))
         }
@@ -425,9 +433,13 @@ impl Field {
                     )
                 })?;
                 match &field_arg.1 {
-                        Value::String(val) => Some(val.clone()),
-                        _ => Err(anyhow!("EE204: 'field' argument in @derivedFrom directive on field {} needs to contain a string", field.name))?
-                    }
+                    Value::String(val) => Some(val.clone()),
+                    _ => Err(anyhow!(
+                        "EE204: 'field' argument in @derivedFrom directive on field {} needs to \
+                         contain a string",
+                        field.name
+                    ))?,
+                }
             }
         };
 
@@ -463,19 +475,29 @@ impl Field {
                     .ok_or_else(|| anyhow!("Unexpected, entity {entity_name} does not exist"))?
                     .fields
                     .get(derived_from_field)
-                    .ok_or_else(|| anyhow!("Unexpected, field {derived_from_field} does not exist on entity {entity_name}"))?;
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "Unexpected, field {derived_from_field} does not exist on entity \
+                             {entity_name}"
+                        )
+                    })?;
 
                 match entity_field.field_type.get_underlying_scalar() {
                     //In the case where there is a recipracol lookup, the actual
                     //underlying field contains _id at the end
-                    GqlScalar::Custom(name) if matches!(schema.try_get_type_def(&name)?, TypeDef::Entity(_)) => {
+                    GqlScalar::Custom(name)
+                        if matches!(schema.try_get_type_def(&name)?, TypeDef::Entity(_)) =>
+                    {
                         Ok(format!("{derived_from_field}_id"))
                     }
                     //In the case where its just an an ID or a string,
                     //just keep the the field as is from what was
                     //defined in @derivedFrom
                     GqlScalar::ID | GqlScalar::String => Ok(derived_from_field.clone()),
-                    _ => Err(anyhow!("Unexpected, derived from field is neither an ID, String or bidirectional relationship"))?,
+                    _ => Err(anyhow!(
+                        "Unexpected, derived from field is neither an ID, String or bidirectional \
+                         relationship"
+                    ))?,
                 }
             }
 
@@ -640,31 +662,41 @@ impl UserDefinedFieldType {
 
     pub fn validate_type(&self, schema: &Schema) -> anyhow::Result<()> {
         match self {
-        Self::Single(_) => {
-                Ok(())
-        }
-        Self::ListType(field_type) => match field_type.as_ref() {
-            //Postgres doesn't support nullable types inside of arrays
-            Self::NonNullType(inner_field_type) =>
-                match inner_field_type.as_ref() {
+            Self::Single(_) => Ok(()),
+            Self::ListType(field_type) => match field_type.as_ref() {
+                //Postgres doesn't support nullable types inside of arrays
+                Self::NonNullType(inner_field_type) => match inner_field_type.as_ref() {
                     //Don't allow non derived from enity relationships inside arrays
-                    | Self::Single(GqlScalar::Custom(name)) if matches!(schema.try_get_type_def(name)?, TypeDef::Entity(_)) =>
+                    Self::Single(GqlScalar::Custom(name))
+                        if matches!(schema.try_get_type_def(name)?, TypeDef::Entity(_)) =>
+                    {
                         Err(anyhow!(
-                            "EE211: Arrays of entities is unsupported. Please use one of the methods for referencing entities outlined in the docs. The entity being referenced in the array is '{}'.", name
-                        ))?,
-                    | _ => field_type.validate_type(schema),
-                }
-            Self::Single(gql_scalar)   => Err(anyhow!(
-                "EE208: Nullable scalars inside lists are unsupported. Please include a '!' after your '{}' scalar", gql_scalar
-            ))?,
-            Self::ListType(_) => Err(anyhow!("EE209: Nullable multidimensional lists types are unsupported,\
-                please include a '!' for your inner list type eg. [[Int!]!]"))?,
-        },
-        Self::NonNullType(field_type) => match field_type.as_ref()  {
-            | Self::NonNullType(_) => Err(anyhow!("Nested Not Null types are unsupported. Please remove any sequential '!' symbols after types in schema")),
-            |_=>field_type.validate_type(schema),
+                            "EE211: Arrays of entities is unsupported. Please use one of the \
+                             methods for referencing entities outlined in the docs. The entity \
+                             being referenced in the array is '{}'.",
+                            name
+                        ))?
+                    }
+                    _ => field_type.validate_type(schema),
+                },
+                Self::Single(gql_scalar) => Err(anyhow!(
+                    "EE208: Nullable scalars inside lists are unsupported. Please include a '!' \
+                     after your '{}' scalar",
+                    gql_scalar
+                ))?,
+                Self::ListType(_) => Err(anyhow!(
+                    "EE209: Nullable multidimensional lists types are unsupported,please include \
+                     a '!' for your inner list type eg. [[Int!]!]"
+                ))?,
+            },
+            Self::NonNullType(field_type) => match field_type.as_ref() {
+                Self::NonNullType(_) => Err(anyhow!(
+                    "Nested Not Null types are unsupported. Please remove any sequential '!' \
+                     symbols after types in schema"
+                )),
+                _ => field_type.validate_type(schema),
+            },
         }
-    }
     }
 
     pub fn to_postgres_type<'a>(&'a self, schema: &'a Schema) -> anyhow::Result<String> {
@@ -842,8 +874,11 @@ impl FieldType {
                     }
                     .to_string();
 
-                    Err(anyhow!("Field marked with @derivedFrom directive does not meet the required structure. \
-                    Field should contain a non nullable list of non nullable entities for example: {example_str}"))
+                    Err(anyhow!(
+                        "Field marked with @derivedFrom directive does not meet the required \
+                         structure. Field should contain a non nullable list of non nullable \
+                         entities for example: {example_str}"
+                    ))
                 }
                 Some(entity_name) => Ok(Self::DerivedFromField {
                     entity_name,
