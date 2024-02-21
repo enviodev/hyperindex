@@ -128,7 +128,7 @@ impl Schema {
         match check_enums_for_internal_reserved_words(self.get_all_enum_type_names()) {
             reserved_enum_types_used if reserved_enum_types_used.is_empty() => Ok(self),
             reserved_enum_types_used => Err(anyhow!(
-                "EE211: Schema contains the following reserved enum names: {}",
+                "EE212: Schema contains the following reserved enum names: {}",
                 reserved_enum_types_used.join(", ")
             )),
         }
@@ -160,7 +160,7 @@ impl Schema {
             .collect::<Vec<_>>();
         if !duplicate_names.is_empty() {
             Err(anyhow!(
-                "EE213: Schema contains the following enums and entities with the same name, all \
+                "EE214: Schema contains the following enums and entities with the same name, all \
                  type definitions must be unique in the schema: {}",
                 duplicate_names.join(", ")
             ))
@@ -265,7 +265,7 @@ impl GraphQLEnum {
 
         if !duplicate_values.is_empty() {
             Err(anyhow!(
-                "EE212: Schema enum has duplicate values. Enum: {}, duplicate values: {}",
+                "EE213: Schema enum has duplicate values. Enum: {}, duplicate values: {}",
                 self.name,
                 duplicate_values.join(", ")
             ))
