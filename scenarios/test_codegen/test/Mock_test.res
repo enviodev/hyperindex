@@ -84,7 +84,7 @@ describe("E2E Db check", () => {
         MockEntities.makeDefaultSet(
           ~chainId,
           ~blockNumber=startBlock,
-          ~logIndex=4,
+          ~logIndex=14,
           {
             id: "1001",
             owner_id: "0x1230000000000000000000000000000000000000",
@@ -97,7 +97,7 @@ describe("E2E Db check", () => {
         MockEntities.makeDefaultSet(
           ~chainId,
           ~blockNumber=startBlock,
-          ~logIndex=5,
+          ~logIndex=15,
           {
             id: "1002",
             owner_id: "0x4560000000000000000000000000000000000000",
@@ -110,7 +110,7 @@ describe("E2E Db check", () => {
         MockEntities.makeDefaultSet(
           ~chainId,
           ~blockNumber=startBlock,
-          ~logIndex=6,
+          ~logIndex=16,
           {
             id: "1003",
             owner_id: "0x7890000000000000000000000000000000000000",
