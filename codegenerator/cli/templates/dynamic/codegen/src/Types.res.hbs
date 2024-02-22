@@ -73,7 +73,7 @@ type eventIdentifier = {
 type entityData<'entityType> =
   Set('entityType, eventIdentifier) | Delete(string, eventIdentifier) | Read('entityType) //make delete take a EntityStore.key type
 
-
+@genType
 type inMemoryStoreRow<'entityType> = {
   current: entityData<'entityType>,
   history: array<entityData<'entityType>>,
