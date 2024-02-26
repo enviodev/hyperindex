@@ -42,7 +42,7 @@ module InMemoryStore = {
           | Delete(_, eventIdentifier)
           | Set(_, eventIdentifier) =>
             // Use -1 as defaults for now
-            let oldEntityIdentifier = getOptEventIdentifier(entity)->Belt.Option.getWithDefault({
+            let oldEntityIdentifier = getOptEventIdentifier(existingEntityUpdate.current)->Belt.Option.getWithDefault({
               chainId: -1,
               blockNumber: -1,
               logIndex: -1,
