@@ -110,7 +110,7 @@ module {{contract.name.capitalized}}Contract = {
 
             inMemoryStore.dynamicContractRegistry->IO.InMemoryStore.DynamicContractRegistry.set(
               ~key={chainId, contractAddress},
-              ~entity=Set(dynamicContractRegistration, ""->Obj.magic),
+              ~entity=dynamicContractRegistration,
             )
           },
         {{/each}}
@@ -323,24 +323,15 @@ It is also possible that you have saved an ID for an entity that doesn't exist i
                       | None =>
                         let entities = await asyncGetters.get{{required_entity.name.capitalized}}(id)
 
-                        switch entities->Belt.Array.get(0) {
-                        | Some(entity) =>
-                          // TODO: make this work with the test framework too.
-                          IO.InMemoryStore.{{required_entity.name.capitalized}}.set(
-                            inMemoryStore.{{required_entity.name.uncapitalized}},
-                            ~key=entity.id,
-                            ~entity=Set(
-                              entity,
-                              {
-                                chainId: chainId,
-                                blockNumber: event.blockNumber,
-                                logIndex: event.logIndex,
-                              },
-                            ),
-                          )
-                          Some(entity)
-                        | None => None
-                        }
+                        let optEntity = entities->Belt.Array.get(0)
+
+                        IO.InMemoryStore.{{required_entity.name.capitalized}}.set(
+                          inMemoryStore.{{required_entity.name.uncapitalized}},
+                          ~key=id,
+                          ~entity=Read(optEntity),
+                        )
+
+                        optEntity
                       }
                     }
                  },
@@ -370,7 +361,7 @@ It is also possible that you have saved an ID for an entity that doesn't exist i
                         inMemoryStore.{{entity_field.mapped_entity.uncapitalized}},
                         ~key=entity.id,
                         ~entity=Read(
-                          entity,
+                          Some(entity),
                         ),
                       )
                       entity

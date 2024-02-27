@@ -71,13 +71,7 @@ let addEventToRawEvents = (
 
   inMemoryStore.rawEvents->IO.InMemoryStore.RawEvents.set(
     ~key={chainId, eventId: eventIdStr},
-    ~entity=Types.Set(rawEvent, {
-      // Setting this all to `-1` to show it isn't needed in hackathon
-      // TODO: make raw events have its own type.
-                    chainId: -1,
-                    blockNumber: -1,
-                    logIndex: -1,
-                  }),
+    ~entity=rawEvent
   )
 }
 
@@ -89,18 +83,13 @@ let updateEventSyncState = (
   let {blockNumber, logIndex, transactionIndex, blockTimestamp} = event
   let _ = inMemoryStore.eventSyncState->IO.InMemoryStore.EventSyncState.set(
     ~key=chainId,
-    ~entity=Set({
+    ~entity={
       chainId,
       blockTimestamp,
       blockNumber,
       logIndex,
       transactionIndex,
     },
-    // TODO: make thes not needed
-                    {chainId: -1,
-                    blockNumber: -1,
-                    logIndex: -1,
-                  }),
   )
 }
 

@@ -1,7 +1,13 @@
 module InMemoryStore = {
   type stringHasher<'val> = 'val => string
-  type storeState<'entity, 'entityKey> = {
-    dict: Js.Dict.t<Types.inMemoryStoreRow<'entity>>,
+
+  type storeStateEntity<'entity, 'entityKey> = {
+    dict: Js.Dict.t<Types.inMemoryStoreRowEntity<'entity>>,
+    hasher: stringHasher<'entityKey>,
+  }
+
+  type storeStateMeta<'entity, 'entityKey> = {
+    dict: Js.Dict.t<Types.inMemoryStoreRowMeta<'entity>>,
     hasher: stringHasher<'entityKey>,
   }
 
@@ -14,12 +20,12 @@ module InMemoryStore = {
   //Binding used for deep cloning stores in tests
   @val external structuredClone: 'a => 'a = "structuredClone"
 
-  module MakeStore = (StoreItem: StoreItem) => {
+  module MakeStoreEntity = (StoreItem: StoreItem) => {
     @genType
     type value = StoreItem.t
     @genType
     type key = StoreItem.key
-    type t = storeState<value, key>
+    type t = storeStateEntity<value, key>
 
     let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
 
@@ -34,7 +40,7 @@ module InMemoryStore = {
       }
       if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
         let mapKey = key->self.hasher
-        let entityData: Types.inMemoryStoreRow<StoreItem.t> = switch self.dict->Js.Dict.get(
+        let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch self.dict->Js.Dict.get(
           mapKey,
         ) {
         | Some(existingEntityUpdate) =>
@@ -42,7 +48,9 @@ module InMemoryStore = {
           | Delete(_, eventIdentifier)
           | Set(_, eventIdentifier) =>
             // Use -1 as defaults for now
-            let oldEntityIdentifier = getOptEventIdentifier(existingEntityUpdate.current)->Belt.Option.getWithDefault({
+            let oldEntityIdentifier = getOptEventIdentifier(
+              existingEntityUpdate.current,
+            )->Belt.Option.getWithDefault({
               chainId: -1,
               blockNumber: -1,
               logIndex: -1,
@@ -89,7 +97,7 @@ module InMemoryStore = {
         switch row.current {
         | Set(entity, _eventIdentifier) => Some(entity)
         | Delete(_key, _eventid) => None
-        | Read(entity) => Some(entity)
+        | Read(optEntity) => optEntity
         }
       })
 
@@ -101,41 +109,62 @@ module InMemoryStore = {
     }
   }
 
-  module EventSyncState = MakeStore({
+  module MakeStoreMeta = (StoreItem: StoreItem) => {
+    @genType
+    type value = StoreItem.t
+    @genType
+    type key = StoreItem.key
+    type t = storeStateMeta<value, key>
+
+    let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
+
+    let set = (self: t, ~key: StoreItem.key, ~entity: StoreItem.t) =>
+      self.dict->Js.Dict.set(key->self.hasher, entity)
+
+    let get = (self: t, key: StoreItem.key) =>
+      self.dict->Js.Dict.get(key->self.hasher)->Belt.Option.map(row => row)
+
+    let values = (self: t) => self.dict->Js.Dict.values
+
+    let clone = (self: t) => {
+      ...self,
+      dict: self.dict->structuredClone,
+    }
+  }
+
+  module EventSyncState = MakeStoreMeta({
     type t = DbFunctions.EventSyncState.eventSyncState
     type key = int
     let hasher = Belt.Int.toString
   })
 
-  @genType 
+  @genType
   type rawEventsKey = {
     chainId: int,
     eventId: string,
   }
 
-  module RawEvents = MakeStore({
+  module RawEvents = MakeStoreMeta({
     type t = Types.rawEventsEntity
     type key = rawEventsKey
     let hasher = (key: key) =>
       EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
   })
 
-  @genType 
+  @genType
   type dynamicContractRegistryKey = {
     chainId: int,
     contractAddress: Ethers.ethAddress,
   }
 
-  module DynamicContractRegistry = MakeStore({
+  module DynamicContractRegistry = MakeStoreMeta({
     type t = Types.dynamicContractRegistryEntity
     type key = dynamicContractRegistryKey
     let hasher = ({chainId, contractAddress}) =>
       EventUtils.getContractAddressKeyString(~chainId, ~contractAddress)
-  })
+  }){{#each entities as | entity |}}
 
-{{#each entities as | entity |}}
-
-  module {{entity.name.capitalized}} = MakeStore({
+  module {{entity.name.capitalized}} = MakeStoreEntity({
     type t = Types.{{entity.name.uncapitalized}}Entity
     type key = string
     let hasher = Obj.magic
@@ -392,26 +421,37 @@ let loadEntitiesToInMemStoreComposer = (
 }
 
 let makeEntityExecuterComposer = (
-  ~idsToLoad,
-  ~dbReadFn,
-  ~inMemStoreSetFn,
-  ~store,
-  ~getEntiyId,
-  ~unit,
-  ~then,
+  ~idsToLoad: LoadLayer.idsToLoad,
+  ~dbReadFn: array<Belt.Set.String.value> => 'a,
+  ~inMemStoreSetFn: ('b, ~key: 'c, ~entity: Types.entityData<'d>) => unit,
+  ~store: 'b,
+  ~getEntiyId: 'd => 'c,
+  ~unit: 'e,
+  ~then: ('a, Belt.Array.t<'d> => unit) => 'e,
 ) => {
   idsToLoad,
   executor: idsToLoad => {
     switch idsToLoad->Belt.Set.String.toArray {
     | [] => unit //Check if there are values so we don't create an unnecessary empty query
-    | idsToLoad =>
-      idsToLoad
+    | idsToLoadArray =>
+      idsToLoadArray
       ->dbReadFn
-      ->then(entities =>
+      ->then(entities => {
         entities->Belt.Array.forEach(entity => {
-          store->inMemStoreSetFn(~key=entity->getEntiyId, ~entity=Types.Read(entity))
+          store->inMemStoreSetFn(~key=entity->getEntiyId, ~entity=Types.Read(Some(entity)))
         })
-      )
+        if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
+          let setOfIdsNotSavedToDb =
+            idsToLoad->Belt.Set.String.removeMany(
+              entities->Belt.Array.map(entity => entity->Obj.magic()["id"]),
+            )
+          setOfIdsNotSavedToDb
+          ->Belt.Set.String.toArray
+          ->Belt.Array.forEach(entityId => {
+            store->inMemStoreSetFn(~key=entityId, ~entity=Types.Read(None))
+          })
+        }
+      })
     }
   },
 }
@@ -419,7 +459,13 @@ let makeEntityExecuterComposer = (
 /**
 Specifically create an sql executor with async functionality
 */
-let makeSqlEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemStoreSetFn, ~store, ~getEntiyId) => {
+let makeSqlEntityExecuter = (
+  ~idsToLoad: LoadLayer.idsToLoad,
+  ~dbReadFn: (Postgres.sql, array<Belt.Set.String.value>) => Promise.t<Belt.Array.t<'a>>,
+  ~inMemStoreSetFn: ('b, ~key: 'c, ~entity: Types.entityData<'a>) => unit,
+  ~store: 'b,
+  ~getEntiyId: 'a => 'c,
+) => {
   makeEntityExecuterComposer(
     ~dbReadFn=DbFunctions.sql->dbReadFn,
     ~idsToLoad,
@@ -470,26 +516,33 @@ let loadEntitiesToInMemStore = (~entityBatch, ~inMemoryStore) => {
 
 let executeSet = (
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRow<'a>>,
+  ~items: array<'a>,
+  ~dbFunction: (Postgres.sql, array<'a>) => promise<unit>,
+) => {
+  if items->Array.length > 0 {
+    sql->dbFunction(items)
+  } else {
+    Promise.resolve()
+  }
+}
+let executeSetEntity = (
+  sql: Postgres.sql,
+  ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
 ) => {
-  let executeSets = rows->Belt.Array.keepMap(row =>
+  let items = rows->Belt.Array.keepMap(row =>
     switch row.current {
     | Set(entity, _) => Some(entity)
     | _ => None
     }
   )
 
-  if executeSets->Array.length > 0 {
-    sql->dbFunction(executeSets)
-  } else {
-    Promise.resolve()
-  }
+  executeSet(sql, ~items, ~dbFunction)
 }
 
 let executeDelete = (
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRow<'a>>,
+  ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
 ) => {
   // TODO: implement me please (after hackathon)
@@ -501,7 +554,7 @@ let executeDelete = (
 
 let executeSetSchemaEntity = (
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRow<'a>>,
+  ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
   ~entityEncoder,
   ~entityType,
@@ -589,20 +642,20 @@ let executeSetSchemaEntity = (
   }
 }
 
-let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
+let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   let setEventSyncState = executeSet(
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
-    ~rows=inMemoryStore.eventSyncState->InMemoryStore.EventSyncState.values,
+    ~items=inMemoryStore.eventSyncState->InMemoryStore.EventSyncState.values,
   )
 
   let setRawEvents = executeSet(
     ~dbFunction=DbFunctions.RawEvents.batchSet,
-    ~rows=inMemoryStore.rawEvents->InMemoryStore.RawEvents.values,
+    ~items=inMemoryStore.rawEvents->InMemoryStore.RawEvents.values,
   )
 
   let setDynamicContracts = executeSet(
     ~dbFunction=DbFunctions.DynamicContractRegistry.batchSet,
-    ~rows=inMemoryStore.dynamicContractRegistry->InMemoryStore.DynamicContractRegistry.values,
+    ~items=inMemoryStore.dynamicContractRegistry->InMemoryStore.DynamicContractRegistry.values,
   )
 
   {{#each entities as | entity |}}
