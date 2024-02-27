@@ -15,13 +15,13 @@ let initialEventsSummary: Types.eventsSummaryEntity = {
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
     Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized
-    }}.loader((~event, ~context) => {
+    }}.loader(({event, context}) => {
   context.eventsSummary.load(globalEventsSummaryKey)
 })
 
 Handlers.{{contract.name.capitalized
     }}Contract.{{event.name.capitalized
-    }}.handler((~event, ~context) => {
+    }}.handler(({event, context}) => {
   let summary = context.eventsSummary.get(globalEventsSummaryKey)
 
   let currentSummaryEntity = summary->Belt.Option.getWithDefault(initialEventsSummary)

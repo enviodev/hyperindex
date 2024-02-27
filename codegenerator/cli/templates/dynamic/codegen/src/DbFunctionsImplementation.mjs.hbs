@@ -1,12 +1,12 @@
 // db operations for raw_events:
 const MAX_ITEMS_PER_QUERY = 500;
 
-module.exports.readLatestSyncedEventOnChainId = (sql, chainId) => sql`
+export const readLatestSyncedEventOnChainId = (sql, chainId) => sql`
   SELECT *
   FROM public.event_sync_state
   WHERE chain_id = ${chainId}`;
 
-module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
+export const batchSetEventSyncState = (sql, entityDataArray) => {
   return sql`
     INSERT INTO public.event_sync_state
   ${sql(
@@ -27,7 +27,37 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     `;
 };
 
-module.exports.setChainMetadata = (sql, entityDataArray) => {
+export const readLatestChainMetadataState = (sql, chainId) => sql`
+  SELECT *
+  FROM public.chain_metadata
+  WHERE chain_id = ${chainId}`;
+
+export const batchSetChainMetadata = (sql, entityDataArray) => {
+  return (sql`
+    INSERT INTO public.chain_metadata
+  ${sql(
+    entityDataArray,
+    "chain_id",
+    "start_block", // this is left out of the on conflict below as it only needs to be set once
+    "block_height",
+    "first_event_block_number",
+    "latest_processed_block",
+    "num_events_processed",
+  )}
+  ON CONFLICT(chain_id) DO UPDATE
+  SET
+  "chain_id" = EXCLUDED."chain_id",
+  "first_event_block_number" = EXCLUDED."first_event_block_number",
+  "latest_processed_block" = EXCLUDED."latest_processed_block",
+  "num_events_processed" = EXCLUDED."num_events_processed",
+  "block_height" = EXCLUDED."block_height";`).then(res => {
+
+  }).catch(err => {
+    console.log("errored", err)
+  });
+};
+
+export const setChainMetadataBlockHeight = (sql, entityDataArray) => {
   return (sql`
     INSERT INTO public.chain_metadata
   ${sql(
@@ -40,13 +70,13 @@ module.exports.setChainMetadata = (sql, entityDataArray) => {
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`).then(res => {
-    
+
   }).catch(err => {
     console.log("errored", err)
   });
 };
 
-module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
+export const readLatestRawEventsBlockNumberProcessedOnChainId = (
   sql,
   chainId
 ) => sql`
@@ -56,12 +86,12 @@ module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
   ORDER BY event_id DESC
   LIMIT 1;`;
 
-module.exports.readRawEventsEntities = (sql, entityIdArray) => sql`
+export const readRawEventsEntities = (sql, entityIdArray) => sql`
   SELECT *
   FROM "public"."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)}`;
 
-module.exports.getRawEventsPageGtOrEqEventId = (
+export const getRawEventsPageGtOrEqEventId = (
   sql,
   chainId,
   eventId,
@@ -77,7 +107,7 @@ module.exports.getRawEventsPageGtOrEqEventId = (
   LIMIT ${limit}
 `;
 
-module.exports.getRawEventsPageWithinEventIdRangeInclusive = (
+export const getRawEventsPageWithinEventIdRangeInclusive = (
   sql,
   chainId,
   fromEventIdInclusive,
@@ -148,7 +178,7 @@ const chunkBatchQuery = (
     });
 };
 
-module.exports.batchSetRawEvents = (sql, entityDataArray) => {
+export const batchSetRawEvents = (sql, entityDataArray) => {
   return chunkBatchQuery(
     sql,
     entityDataArray,
@@ -156,13 +186,13 @@ module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   );
 };
 
-module.exports.batchDeleteRawEvents = (sql, entityIdArray) => sql`
+export const batchDeleteRawEvents = (sql, entityIdArray) => sql`
   DELETE
   FROM "public"."raw_events"
   WHERE (chain_id, event_id) IN ${sql(entityIdArray)};`;
 // end db operations for raw_events
 
-module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (
+export const readDynamicContractsOnChainIdAtOrBeforeBlock = (
   sql,
   chainId,
   block_number
@@ -174,7 +204,7 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (
   WHERE e.block_number <= ${block_number} AND e.chain_id = ${chainId};`;
 
 //Start db operations dynamic_contract_registry
-module.exports.readDynamicContractRegistryEntities = (
+export const readDynamicContractRegistryEntities = (
   sql,
   entityIdArray
 ) => sql`
@@ -200,7 +230,7 @@ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
     "contract_type" = EXCLUDED."contract_type";`;
 };
 
-module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
+export const batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   return chunkBatchQuery(
     sql,
     entityDataArray,
@@ -208,7 +238,7 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   );
 };
 
-module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
+export const batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
   DELETE
   FROM "public"."dynamic_contract_registry"
   WHERE (chain_id, contract_address) IN ${sql(entityIdArray)};`;
@@ -219,7 +249,7 @@ module.exports.batchDeleteDynamicContractRegistry = (sql, entityIdArray) => sql`
 // DB operations for {{entity.name.original}}:
 //////////////////////////////////////////////
 
-module.exports.read{{entity.name.capitalized
+export const read{{entity.name.capitalized
 }}Entities = (sql, entityIdArray) => sql`
 SELECT 
 {{#each entity.filtered_params.filtered_not_derived_from as |param|}}
@@ -244,7 +274,7 @@ ${sql(entityDataArray,
   `;
 }
 
-module.exports.batchSet{{entity.name.capitalized
+export const batchSet{{entity.name.capitalized
 }} = (sql, entityDataArray) => {
 
   return chunkBatchQuery(
@@ -254,7 +284,7 @@ module.exports.batchSet{{entity.name.capitalized
   );
 }
 
-module.exports.batchDelete{{entity.name.capitalized
+export const batchDelete{{entity.name.capitalized
 }} = (sql, entityIdArray) => sql`
 DELETE
 FROM "public"."{{entity.name.original}}"

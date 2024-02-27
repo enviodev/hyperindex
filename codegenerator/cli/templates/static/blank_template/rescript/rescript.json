@@ -1,16 +1,7 @@
 {
   "name": "greeter",
   "version": "0.1.0",
-  "gentypeconfig": {
-    "language": "typescript",
-    "shims": {},
-    "generatedFileExtension": ".gen.ts",
-    "module": "commonjs",
-    "debug": {
-      "all": false,
-      "basic": false
-    }
-  },
+  "uncurried": false,
   "sources": [
     {
       "dir": "src",
@@ -25,11 +16,27 @@
       "subdirs": true
     }
   ],
-  "suffix": ".bs.js",
+  "gentypeconfig": {
+    "language": "typescript",
+    "shims": {
+      "Js": "Js"
+    },
+    "generatedFileExtension": ".gen.ts",
+    "moduleResolution": "node16",
+    "module": "es6",
+    "debug": {
+      "all": false,
+      "basic": false
+    }
+  },
   "package-specs": {
-    "module": "commonjs",
+    "module": "es6",
     "in-source": true
   },
+  "jsx": {
+    "version": 4
+  },
+  "suffix": ".bs.mjs",
   "bs-dependencies": [
     "@ryyppy/rescript-promise",
     "rescript-envsafe",
@@ -37,7 +44,7 @@
     "@greenlabs/ppx-spice",
     "rescript-express",
     "@glennsl/rescript-fetch",
-    "rescript-mocha"
+    "@rescript/react"
   ],
   "ppx-flags": [
     "@greenlabs/ppx-spice/ppx"

@@ -4,20 +4,17 @@
 
 import {
 {{#each imported_contracts as |contract|}}
-  {{#each contract.imported_events as |event|}}
-  {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_loader,
-  {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler,
-  {{/each}}
+  {{contract.name.capitalized}}Contract
 {{/each}}
-} from "../generated/src/Handlers.gen";
+} from "../generated/src/Handlers.gen.ts";
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_loader(({ event, context }) => {
+{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.loader(({ event, context }) => {
     // Load requiredEntities here
 });
 
-{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler(({ event, context }) => {
+{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler(({ event, context }) => {
     // Retrieve loaded requiredEntities and perform event handling logic here
 });
 

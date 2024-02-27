@@ -3,8 +3,8 @@
  */
 
 {{#each imported_contracts as |contract|}}
-  let { {{contract.name.capitalized
-  }}Contract } = require("../generated/src/Handlers.bs.js");
+  import { {{contract.name.capitalized
+  }}Contract } from "../generated/src/Handlers.bs.mjs";
 {{/each}}
 
 const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
@@ -25,12 +25,12 @@ const INITIAL_EVENTS_SUMMARY = {
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
     {{contract.name.capitalized}}Contract.{{event.name.capitalized
-    }}.loader((event, context) => {
+    }}.loader(({event, context}) => {
   context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
 });
 
     {{contract.name.capitalized}}Contract.{{event.name.capitalized
-    }}.handler((event, context) => {
+    }}.handler(({event, context}) => {
   const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
   const currentSummaryEntity = summary ?? INITIAL_EVENTS_SUMMARY;

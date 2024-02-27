@@ -3,21 +3,16 @@
  */
 import {
 {{#each imported_contracts as |contract|}}
-  {{#each contract.imported_events as |event|}}
-    {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_loader,
-    {{contract.name.capitalized}}Contract_{{event.name.capitalized}}_handler,
-  {{/each}}
+    {{contract.name.capitalized}}Contract,
 {{/each}}
-} from "../generated/src/Handlers.gen";
+} from "../generated/src/Handlers.gen.ts";
 
 import {
 {{#each imported_contracts as |contract|}}
-  {{#each contract.imported_events as |event|}}
-    {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
-  {{/each}}
+    {{contract.name.capitalized}},
 {{/each}}
 EventsSummaryEntity
-} from "../generated/src/Types.gen";
+} from "../generated/src/Types.gen.ts";
 
 export const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 
@@ -32,13 +27,13 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-    {{contract.name.capitalized}}Contract_{{event.name.capitalized
-    }}_loader(({ event, context }) => {
+    {{contract.name.capitalized}}Contract.{{event.name.capitalized
+    }}.loader(({ event, context }) => {
   context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
 });
 
-    {{contract.name.capitalized}}Contract_{{event.name.capitalized
-    }}_handler(({ event, context }) => {
+    {{contract.name.capitalized}}Contract.{{event.name.capitalized
+    }}.handler(({ event, context }) => {
   const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
   const currentSummaryEntity: EventsSummaryEntity =
@@ -54,7 +49,7 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
 
   const {{contract.name.uncapitalized
     }}_{{event.name.capitalized}}Entity: {{contract.name.capitalized
-    }}_{{event.name.capitalized
+    }}.{{event.name.capitalized
     }}Entity = {
     id: event.transactionHash + event.logIndex.toString(),
     {{#each event.params as |param|}}

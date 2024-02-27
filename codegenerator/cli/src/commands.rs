@@ -215,15 +215,9 @@ pub mod db_migrate {
         project_paths: &ParsedProjectPaths,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let cmd = "node";
-        let args = vec![
-            "-e",
-            "require(`./src/Migrations.bs.js`).runUpMigrations(true)",
-        ];
-
+        let args = vec!["db-up"];
         let current_dir = &project_paths.generated;
-
-        let exit = execute_command(cmd, args, current_dir).await?;
+        let exit = execute_command("pnpm", args, current_dir).await?;
 
         if exit.success() {
             persisted_state.upsert_to_db().await?;
@@ -232,15 +226,9 @@ pub mod db_migrate {
     }
 
     pub async fn run_drop_schema(project_paths: &ParsedProjectPaths) -> anyhow::Result<ExitStatus> {
-        let cmd = "node";
-        let args = vec![
-            "-e",
-            "require(`./src/Migrations.bs.js`).runDownMigrations(true)",
-        ];
-
+        let args = vec!["db-down"];
         let current_dir = &project_paths.generated;
-
-        execute_command(cmd, args, current_dir).await
+        execute_command("pnpm", args, current_dir).await
     }
 
     pub async fn run_db_setup(
@@ -248,18 +236,14 @@ pub mod db_migrate {
         should_drop_raw_events: bool,
         persisted_state: &PersistedState,
     ) -> anyhow::Result<()> {
-        let cmd = "node";
-
-        let last_arg = format!(
-            "require(`./src/Migrations.bs.js`).setupDb({})",
-            should_drop_raw_events
-        );
-
-        let args = vec!["-e", last_arg.as_str()];
-
+        let arg = if should_drop_raw_events {
+            "db-setup"
+        } else {
+            "db-setup-keep-raw-events"
+        };
+        let args = vec![arg];
         let current_dir = &project_paths.generated;
-
-        let exit = execute_command(cmd, args, current_dir).await?;
+        let exit = execute_command("pnpm", args, current_dir).await?;
 
         if exit.success() {
             persisted_state.upsert_to_db().await?;

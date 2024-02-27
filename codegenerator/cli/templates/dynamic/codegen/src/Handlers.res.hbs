@@ -11,10 +11,16 @@ let mapFunctionRegisterName = (functionRegister: functionRegister) => {
 let hasPrintedWarning = Set.make()
 
 @genType
-type handlerFunction<'eventArgs, 'context, 'returned> = (
-  ~event: Types.eventLog<'eventArgs>,
-  ~context: 'context,
-) => 'returned
+type handlerArgs<'event, 'context> = {
+  event: Types.eventLog<'event>,
+  context: 'context,
+}
+
+@genType
+type handlerFunction<'eventArgs, 'context, 'returned> = handlerArgs<
+  'eventArgs,
+  'context,
+> => 'returned
 
 @genType
 type handlerWithContextGetter<
@@ -59,17 +65,13 @@ type handlerWithContextGetterSyncAsync<
 >
 
 @genType
-type loader<'eventArgs, 'loaderContext> = (
-  ~event: Types.eventLog<'eventArgs>,
-  ~context: 'loaderContext,
-) => unit
+type loader<'eventArgs, 'loaderContext> = handlerArgs<'eventArgs, 'loaderContext> => unit
 
 let getDefaultLoaderHandler: (
   ~functionRegister: functionRegister,
   ~eventName: string,
-  ~event: 'a,
-  ~context: 'b,
-) => unit = (~functionRegister, ~eventName, ~event as _, ~context as _) => {
+  handlerArgs<'eventArgs, 'loaderContext>,
+) => unit = (~functionRegister, ~eventName, _loaderArgs) => {
   let functionName = mapFunctionRegisterName(functionRegister)
 
   // Here we use this key to prevent flooding the users terminal with

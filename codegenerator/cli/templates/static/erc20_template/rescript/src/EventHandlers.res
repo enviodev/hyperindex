@@ -1,10 +1,10 @@
 open Types
 
-Handlers.ERC20Contract.Approval.loader((~event, ~context) => {
+Handlers.ERC20Contract.Approval.loader(({event, context}) => {
   context.account.load(event.params.owner->Ethers.ethAddressToString)
 })
 
-Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
+Handlers.ERC20Contract.Approval.handler(({event, context}) => {
   let ownerAccount = context.account.get(event.params.owner->Ethers.ethAddressToString)
 
   if(ownerAccount->Belt.Option.isNone)
@@ -34,12 +34,12 @@ Handlers.ERC20Contract.Approval.handler((~event, ~context) => {
   
 })
 
-Handlers.ERC20Contract.Transfer.loader((~event, ~context) => {
+Handlers.ERC20Contract.Transfer.loader(({event, context}) => {
   context.account.load(event.params.from->Ethers.ethAddressToString)
   context.account.load(event.params.to->Ethers.ethAddressToString)
 })
 
-Handlers.ERC20Contract.Transfer.handler((~event, ~context) => {
+Handlers.ERC20Contract.Transfer.handler(({event, context}) => {
   let senderAccount = context.account.get(event.params.from->Ethers.ethAddressToString)
 
   switch senderAccount {

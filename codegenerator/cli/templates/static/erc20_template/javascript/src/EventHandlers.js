@@ -1,11 +1,11 @@
-let { ERC20Contract } = require("../generated/src/Handlers.bs.js");
+import { ERC20Contract } from "../generated/src/Handlers.bs.mjs";
 
-ERC20Contract.Approval.loader((event, context) => {
+ERC20Contract.Approval.loader(({ event, context }) => {
   // loading the required Account entity
   context.Account.load(event.params.owner);
 });
 
-ERC20Contract.Approval.handler((event, context) => {
+ERC20Contract.Approval.handler(({ event, context }) => {
   //  getting the owner Account entity
   let ownerAccount = context.Account.get(event.params.owner);
 
@@ -33,12 +33,12 @@ ERC20Contract.Approval.handler((event, context) => {
   context.Approval.set(approvalObject);
 });
 
-ERC20Contract.Transfer.loader((event, context) => {
+ERC20Contract.Transfer.loader(({ event, context }) => {
   context.Account.load(event.params.from);
   context.Account.load(event.params.to);
 });
 
-ERC20Contract.Transfer.handler((event, context) => {
+ERC20Contract.Transfer.handler(({ event, context }) => {
   let senderAccount = context.Account.get(event.params.from);
 
   if (senderAccount === undefined) {

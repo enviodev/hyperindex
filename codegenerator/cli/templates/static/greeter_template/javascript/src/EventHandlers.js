@@ -1,10 +1,12 @@
-let { GreeterContract } = require("../generated/src/Handlers.bs.js");
+import {
+  GreeterContract
+} from "../generated/src/Handlers.bs.mjs";
 
 /**
 Registers a loader that loads any values from your database that your
 NewGreeting event handler might need on the Greeter contract.
 */
-GreeterContract.NewGreeting.loader((event, context) => {
+GreeterContract.NewGreeting.loader(({ event, context }) => {
   //The id for the User entity derived from params of the NewGreeting event
   const userId = event.params.user;
   //Try load in in a User entity with id of the user param on the
@@ -17,7 +19,7 @@ Registers a handler that handles any values from the
 NewGreeting event on the Greeter contract and index these values into
 the DB.
 */
-GreeterContract.NewGreeting.handler((event, context) => {
+GreeterContract.NewGreeting.handler(({ event, context }) => {
   //The id for the User entity
   const userId = event.params.user;
   //The greeting string that was added.
@@ -31,23 +33,23 @@ GreeterContract.NewGreeting.handler((event, context) => {
   //Construct the userEntity that is to be set in the DB
   const userEntity = currentUserEntity
     ? //In the case there is an existing User entity, update its
-      //latestGreeting value, increment the numberOfGreetings and append latestGreeting
-      //to the array of greetings
-      {
-        id: userId,
-        latestGreeting,
-        numberOfGreetings: currentUserEntity.numberOfGreetings + 1,
-        greetings: [...currentUserEntity.greetings, latestGreeting],
-      }
+    //latestGreeting value, increment the numberOfGreetings and append latestGreeting
+    //to the array of greetings
+    {
+      id: userId,
+      latestGreeting,
+      numberOfGreetings: currentUserEntity.numberOfGreetings + 1,
+      greetings: [...currentUserEntity.greetings, latestGreeting],
+    }
     : //In the case where there is no User entity at this id. Construct a new one with
-      //the current latest greeting, an initial number of greetings as "1" and an initial list
-      //of greetings with only the latest greeting.
-      {
-        id: userId,
-        latestGreeting,
-        numberOfGreetings: 1,
-        greetings: [latestGreeting],
-      };
+    //the current latest greeting, an initial number of greetings as "1" and an initial list
+    //of greetings with only the latest greeting.
+    {
+      id: userId,
+      latestGreeting,
+      numberOfGreetings: 1,
+      greetings: [latestGreeting],
+    };
 
   //Set the User entity in the DB with the constructed values
   context.User.set(userEntity);
@@ -57,7 +59,7 @@ GreeterContract.NewGreeting.handler((event, context) => {
 Registers a loader that loads any values from your database that your
 ClearGreeting event handler might need on the Greeter contract.
 */
-GreeterContract.ClearGreeting.loader((event, context) => {
+GreeterContract.ClearGreeting.loader(({ event, context }) => {
   //The id for the "User" entity derived from params of the ClearGreeting event
   const userId = event.params.user;
   //Try load in in a "User" entity with id of the user param on the
@@ -70,7 +72,7 @@ Registers a handler that handles any values from the
 ClearGreeting event on the Greeter contract and index these values into
 the DB.
 */
-GreeterContract.ClearGreeting.handler((event, context) => {
+GreeterContract.ClearGreeting.handler(({ event, context }) => {
   //The id for the "User" entity derived from params of the ClearGreeting event
   const userId = event.params.user;
   //The optional user entity that may exist already at "userId"

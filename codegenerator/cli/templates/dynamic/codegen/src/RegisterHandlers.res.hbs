@@ -1,12 +1,12 @@
-@val external require: string => unit = "require"
+@val external import: string => promise<unit> = "import"
 
-let registerContractHandlers = (
+let registerContractHandlers = async (
   ~contractName,
   ~handlerPathRelativeToGeneratedSrc,
   ~handlerPathRelativeToConfig,
 ) => {
   try {
-    require(handlerPathRelativeToGeneratedSrc)
+    await import(handlerPathRelativeToGeneratedSrc)
   } catch {
   | exn =>
     let params = {
@@ -22,9 +22,9 @@ let registerContractHandlers = (
   }
 }
 
-let registerAllHandlers = () => {
+let registerAllHandlers = async () => {
 {{#each codegen_contracts as |contract|}}
-  registerContractHandlers(
+  await registerContractHandlers(
     ~contractName="{{contract.name.capitalized}}",
     ~handlerPathRelativeToGeneratedSrc="{{contract.handler.relative_to_generated_src}}",
     ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
