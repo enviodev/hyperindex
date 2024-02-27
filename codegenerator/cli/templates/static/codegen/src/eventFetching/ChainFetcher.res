@@ -8,6 +8,10 @@ type t = {
   currentBlockHeight: int,
   isFetchingBatch: bool,
   isFetchingAtHead: bool,
+  timestampCaughtUpToHead: option<Js.Date.t>,
+  firstEventBlockNumber: option<int>,
+  latestProcessedBlock: option<int>,
+  numEventsProcessed: int,
   mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t, // Dead code until we look at re-orgs again.
 }
 
@@ -17,7 +21,11 @@ let make = (
   ~lastBlockScannedHashes,
   ~contractAddressMapping,
   ~startBlock,
+  ~firstEventBlockNumber,
+  ~latestProcessedBlock,
   ~logger,
+  ~timestampCaughtUpToHead,
+  ~numEventsProcessed,
 ): t => {
   let (endpointDescription, chainWorker) = switch chainConfig.syncSource {
   | HyperSync(serverUrl) => (
@@ -37,6 +45,10 @@ let make = (
     isFetchingBatch: false,
     isFetchingAtHead: false,
     fetchState,
+    firstEventBlockNumber,
+    latestProcessedBlock,
+    timestampCaughtUpToHead,
+    numEventsProcessed,
   }
 }
 
@@ -55,6 +67,10 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) 
     ~chainConfig,
     ~startBlock=chainConfig.startBlock,
     ~lastBlockScannedHashes,
+    ~firstEventBlockNumber=None,
+    ~latestProcessedBlock=None,
+    ~timestampCaughtUpToHead=None,
+    ~numEventsProcessed=0,
     ~logger,
   )
 }
@@ -76,6 +92,8 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
     ~chainId,
   )
 
+  let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
+
   let startBlock =
     latestProcessedBlock->Option.mapWithDefault(chainConfig.startBlock, latestProcessedBlock =>
       latestProcessedBlock + 1
@@ -94,8 +112,30 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
       ~address=contractAddress,
     )
   )
+  let (
+    firstEventBlockNumber,
+    latestProcessedBlockChainMetadata,
+    numEventsProcessed,
+  ) = switch chainMetadata {
+  | Some({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed}) => (
+      firstEventBlockNumber,
+      latestProcessedBlock,
+      numEventsProcessed,
+    )
+  | None => (None, None, None)
+  }
 
-  make(~contractAddressMapping, ~chainConfig, ~startBlock, ~lastBlockScannedHashes, ~logger)
+  make(
+    ~contractAddressMapping,
+    ~chainConfig,
+    ~startBlock,
+    ~lastBlockScannedHashes,
+    ~firstEventBlockNumber,
+    ~latestProcessedBlock=latestProcessedBlockChainMetadata,
+    ~timestampCaughtUpToHead=None, // recalculate this on startup
+    ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
+    ~logger,
+  )
 }
 
 /**

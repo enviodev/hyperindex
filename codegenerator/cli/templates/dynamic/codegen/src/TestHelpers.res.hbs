@@ -1,5 +1,6 @@
 open Belt
-RegisterHandlers.registerAllHandlers()
+@module external registerHandlersTopLevel: unit = "./TestHelpers_registerAllHandlers.js"
+registerHandlersTopLevel
 
 /***** TAKE NOTE ******
 This is a hack to get genType to work!
@@ -66,7 +67,7 @@ module EventFunctions = {
       'handlerContextSync,
       'handlerContextAsync,
     >,
-    ~getLoader,
+    ~getLoader: unit => Handlers.loader<_>,
     ~eventWithContextAccessor: (
       Types.eventLog<'eventArgs>,
       Context.genericContextCreatorFunctions<
@@ -83,7 +84,7 @@ module EventFunctions = {
       //and it will default to "DEFAULT_CHAIN_ID"
       let chainId = chainId->Option.getWithDefault(\"DEFAULT_CHAIN_ID")
 
-      //Create an individual logging context for traceability 
+      //Create an individual logging context for traceability
       let logger = Logging.createChild(
         ~params={
           "Context": `Test Processor for ${eventName
@@ -100,9 +101,8 @@ module EventFunctions = {
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
       let asyncGetters: Context.entityGetters = {
-      {{#each entities as | entity |}}
-        get{{entity.name.capitalized}}: async id => mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-      {{/each}}
+        getUser: async id =>
+          mockDbClone.entities.user.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
       }
 
       //Construct a new instance of an in memory store to run for the given event
@@ -118,7 +118,7 @@ module EventFunctions = {
 
       //Run the loader, to get all the read values/contract registrations
       //into the context
-      loader(~event, ~context=loaderContext)
+      loader({event, context: loaderContext})
 
       //Get all the entities are requested to be loaded from the mockDB
       let entityBatch = context.getEntitiesToLoad()
@@ -133,20 +133,23 @@ module EventFunctions = {
         event: eventWithContextAccessor(event, context),
       }
 
-      eventAndContext->EventProcessing.eventRouter(~inMemoryStore, ~cb=res =>
-        switch res {
-        | Ok() =>
-          //Now that the processing is finished. Simulate writing a batch
-          //(Although in this case a batch of 1 event only) to the cloned mockDb
-          mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
+      eventAndContext->EventProcessing.eventRouter(
+        ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
+        ~inMemoryStore,
+        ~cb=res =>
+          switch res {
+          | Ok(_latestProcessedBlocks) =>
+            //Now that the processing is finished. Simulate writing a batch
+            //(Although in this case a batch of 1 event only) to the cloned mockDb
+            mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
 
-          //Return the cloned mock db
-          cb(mockDbClone)
+            //Return the cloned mock db
+            cb(mockDbClone)
 
-        | Error(errHandler) =>
-          errHandler->ErrorHandling.log
-          errHandler->ErrorHandling.raiseExn
-        }
+          | Error(errHandler) =>
+            errHandler->ErrorHandling.log
+            errHandler->ErrorHandling.raiseExn
+          },
       )
     }
   }

@@ -1,14 +1,16 @@
 {
   "name": "generated",
   "version": "0.1.0",
+  "type": "module",
   "scripts": {
     "clean": "rescript clean -with-deps",
     "build": "rescript build -with-deps",
     "watch": "rescript build -with-deps -w",
-    "db-up": "node -e 'require(`./src/Migrations.bs.js`).runUpMigrations(true)'",
-    "db-down": "node -e 'require(`./src/Migrations.bs.js`).runDownMigrations(true, true)'",
-    "db-setup": "node -e 'require(`./src/Migrations.bs.js`).setupDb(true)'",
-    "db-track-tables": "node -e 'require(`./src/TrackTables.bs.js`).trackAllTables()'"
+    "db-up": "node -e 'import(`./src/Migrations.bs.mjs`).then(m => m.runUpMigrations(true))'",
+    "db-down": "node -e 'import(`./src/Migrations.bs.mjs`).then(m => m.runDownMigrations(true, true))'",
+    "db-setup": "node -e 'import(`./src/Migrations.bs.mjs`).then(m => m.setupDb(true))'",
+    "db-track-tables": "node -e 'import(`./src/Migrations.bs.mjs`).then(m => m.trackAllTables())'",
+    "start": "node src/Index.bs.mjs"
   },
   "keywords": [
     "ReScript"
@@ -17,24 +19,28 @@
   "license": "MIT",
   "devDependencies": {
     "@greenlabs/ppx-spice": "0.1.14",
-    "gentype": "4.5.0",
-    "rescript": "10.1.4"
+    "rescript": "11"
   },
   "dependencies": {
     "@elastic/ecs-pino-format": "1.4.0",
     "@envio-dev/hypersync-client": "0.1.8",
     "@glennsl/rescript-fetch": "0.2.0",
+    "@rescript/react": "0.12.1",
     "@ryyppy/rescript-promise": "2.1.0",
     "ethers": "6.8.0",
     "express": "4.18.2",
+    "ink": "4.4.1",
+    "ink-link": "3.0.0",
     "js-sdsl": "4.4.2",
     "node-fetch": "2.7.0",
     "pino": "8.16.1",
     "pino-pretty": "10.2.3",
     "postgres": "3.4.1",
     "prom-client": "15.0.0",
+    "react": "18.2.0",
     "rescript-envsafe": "1.3.0",
     "rescript-express": "0.4.1",
+    "rescript-nodejs": "16.0.0",
     "rescript-struct": "4.1.1",
     "viem": "1.16.6",
     "yargs": "17.7.2"

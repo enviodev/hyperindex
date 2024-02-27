@@ -1,6 +1,7 @@
 {
   "name": "generated",
   "version": "0.1.0",
+  "uncurried": false,
   "sources": [
     {
       "dir": "src",
@@ -13,24 +14,29 @@
       "Js": "Js"
     },
     "generatedFileExtension": ".gen.ts",
-    "module": "commonjs",
+    "moduleResolution": "node16",
+    "module": "es6",
     "debug": {
       "all": false,
       "basic": false
     }
   },
   "package-specs": {
-    "module": "commonjs",
+    "module": "es6",
     "in-source": true
   },
-  "suffix": ".bs.js",
+  "jsx": {
+    "version": 4
+  },
+  "suffix": ".bs.mjs",
   "bs-dependencies": [
     "@ryyppy/rescript-promise",
     "rescript-envsafe",
     "rescript-struct",
     "@greenlabs/ppx-spice",
     "rescript-express",
-    "@glennsl/rescript-fetch"
+    "@glennsl/rescript-fetch",
+    "@rescript/react"
   ],
   "ppx-flags": [
     "@greenlabs/ppx-spice/ppx"

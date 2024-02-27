@@ -1,18 +1,17 @@
 import {
-  ERC20Contract_Approval_loader,
-  ERC20Contract_Approval_handler,
-  ERC20Contract_Transfer_loader,
-  ERC20Contract_Transfer_handler,
-} from "../generated/src/Handlers.gen";
+  ERC20Contract,
+} from "../generated/src/Handlers.gen.ts";
 
-import { AccountEntity, ApprovalEntity } from "../generated/src/Types.gen";
+import { AccountEntity, ApprovalEntity } from "../generated/src/Types.gen.ts";
 
-ERC20Contract_Approval_loader(({ event, context }) => {
+
+
+ERC20Contract.Approval.loader(({ event, context }) => {
   // loading the required Account entity
   context.Account.load(event.params.owner.toString());
 });
 
-ERC20Contract_Approval_handler(({ event, context }) => {
+ERC20Contract.Approval.handler(({ event, context }) => {
   //  getting the owner Account entity
   let ownerAccount = context.Account.get(event.params.owner.toString());
 
@@ -41,12 +40,12 @@ ERC20Contract_Approval_handler(({ event, context }) => {
   context.Approval.set(approvalObject);
 });
 
-ERC20Contract_Transfer_loader(({ event, context }) => {
+ERC20Contract.Transfer.loader(({ event, context }) => {
   context.Account.load(event.params.from.toString());
   context.Account.load(event.params.to.toString());
 });
 
-ERC20Contract_Transfer_handler(({ event, context }) => {
+ERC20Contract.Transfer.handler(({ event, context }) => {
   let senderAccount = context.Account.get(event.params.from.toString());
 
   if (senderAccount === undefined || senderAccount === null) {

@@ -17,7 +17,15 @@
     "codegen": "envio codegen",
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
     "test": "pnpm mocha",
-    "start": "{{#if is_rescript}}pnpm build && {{/if}}{{#if is_typescript}}ts-{{/if}}node generated/src/Index.bs.js"
+    {{#if is_rescript}}
+    "start": "pnpm build && node generated/src/Index.bs.mjs"
+    {{else}}
+      {{#if is_typescript}}
+    "start": pnpm build && ts-node-esm generated/src/Index.bs.mjs"
+      {{else}
+    "start": "node generated/src/Index.bs.mjs"
+      {{/if}}
+    {{/if}}
   },
   "devDependencies": {
   {{#if is_rescript}}

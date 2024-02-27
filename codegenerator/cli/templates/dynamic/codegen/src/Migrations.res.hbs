@@ -28,6 +28,9 @@ module ChainMetadata = {
         chain_id INTEGER NOT NULL,
         start_block INTEGER NOT NULL,
         block_height INTEGER NOT NULL,
+        first_event_block_number INTEGER NULL,
+        latest_processed_block INTEGER NULL,
+        num_events_processed INTEGER NULL,
         PRIMARY KEY (chain_id)
       );
       `")

@@ -4,7 +4,7 @@ open Types
 Registers a loader that loads any values from your database that your
 NewGreeting event handler might need on the Greeter contract.
 */
-Handlers.GreeterContract.NewGreeting.loader((~event, ~context) => {
+Handlers.GreeterContract.NewGreeting.loader(({event, context}) => {
   //The id for the "User" entity derived from params of the NewGreeting event
   let userId = event.params.user->Ethers.ethAddressToString
   //Try load in in a "User" entity with id of the user param on the
@@ -17,7 +17,7 @@ Registers a handler that handles any values from the
 NewGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
+Handlers.GreeterContract.NewGreeting.handler(({event, context}) => {
   //The id for the "User" entity
   let userId = event.params.user->Ethers.ethAddressToString
   //The greeting string that was added.
@@ -59,7 +59,7 @@ Handlers.GreeterContract.NewGreeting.handler((~event, ~context) => {
 Registers a loader that loads any values from your database that your
 ClearGreeting event handler might need on the Greeter contract.
 */
-Handlers.GreeterContract.ClearGreeting.loader((~event, ~context) => {
+Handlers.GreeterContract.ClearGreeting.loader(({event, context}) => {
   //Try load in in a "User" entity with id of the user param on the
   //ClearGreeting event
   context.user.load(event.params.user->Ethers.ethAddressToString)
@@ -70,7 +70,7 @@ Registers a handler that handles any values from the
 ClearGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Handlers.GreeterContract.ClearGreeting.handler((~event, ~context) => {
+Handlers.GreeterContract.ClearGreeting.handler(({event, context}) => {
   //The id for the "User" entity
   let userId = event.params.user->Ethers.ethAddressToString
   //The optional User entity that may exist already at "userId"

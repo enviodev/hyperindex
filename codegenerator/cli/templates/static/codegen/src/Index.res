@@ -1,4 +1,4 @@
-%%raw(`globalThis.fetch = require('node-fetch')`)
+// %%raw(`globalThis.fetch = require('node-fetch')`)
 
 /**
  * This function can be used to override the console.log (and related functions for users). This means these logs will also be available to the user
@@ -28,13 +28,10 @@ let overrideConsoleLog: Pino.t => unit = %raw(`function (logger) {
     };
   }
 `)
-overrideConsoleLog(Logging.logger)
-
-RegisterHandlers.registerAllHandlers()
-
+// overrideConsoleLog(Logging.logger)
 open Express
 
-let app = expressCjs()
+let app = express()
 
 app->use(jsonMiddleware())
 
@@ -58,35 +55,114 @@ app->get("/metrics", (_req, res) => {
     ->Promise.thenResolve(metrics => res->endWithData(metrics))
 })
 
-type args = {@as("sync-from-raw-events") syncFromRawEvents?: bool}
+type args = {
+  @as("sync-from-raw-events") syncFromRawEvents?: bool,
+  @as("terminator-off") terminatorOff?: bool,
+}
+
+type process
+@val external process: process = "process"
+@get external argv: process => 'a = "argv"
 
 type mainArgs = Yargs.parsedArgs<args>
 
-let main = async () => {
-  // let mainArgs: mainArgs = Node.Process.argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-  //
-  // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
-  //
-  // EventSyncing.startSyncingAllEvents(~shouldSyncFromRawEvents)
-  let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)
+let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
+  open Belt
+  {
+    indexerStartTime: globalState.indexerStartTime,
+    chains: globalState.chainManager.chainFetchers
+    ->ChainMap.values
+    ->Array.map(cf => {
+      let {currentBlockHeight, numEventsProcessed, fetchState} = cf
+      let latestFetchedBlockNumber = fetchState->FetchState.getLatestFullyFetchedBlock
 
-  let globalState: GlobalState.t = {
-    currentlyProcessingBatch: false,
-    chainManager,
-    maxBatchSize: Env.maxProcessBatchSize,
-    maxPerChainQueueSize: Env.maxPerChainQueueSize,
+      let progress: ChainData.progress = switch cf {
+      | {
+          firstEventBlockNumber: Some(firstEventBlockNumber),
+          latestProcessedBlock,
+          timestampCaughtUpToHead: Some(timestampCaughtUpToHead),
+        } =>
+        let latestProcessedBlock =
+          latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
+        Synced({
+          firstEventBlockNumber,
+          latestProcessedBlock,
+          currentBlockHeight,
+          latestFetchedBlockNumber,
+          timestampCaughtUpToHead,
+          numEventsProcessed,
+        })
+      | {
+          firstEventBlockNumber: Some(firstEventBlockNumber),
+          latestProcessedBlock,
+          timestampCaughtUpToHead: None,
+        } =>
+        let latestProcessedBlock =
+          latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
+        Syncing({
+          firstEventBlockNumber,
+          latestProcessedBlock,
+          currentBlockHeight,
+          latestFetchedBlockNumber,
+          numEventsProcessed,
+        })
+      | {firstEventBlockNumber: None} =>
+        SearchingForEvents({
+          currentBlockHeight,
+          latestFetchedBlockNumber,
+        })
+      }
+
+      (
+        {
+          progress,
+          chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+          isHyperSync: switch cf.chainConfig.syncSource {
+          | HyperSync(_) => true
+          | Rpc(_) => false
+          },
+        }: EnvioInkApp.chainData
+      )
+    }),
   }
+}
 
-  let gsManager = globalState->GlobalStateManager.make
+let main = async () => {
+  try {
+    await RegisterHandlers.registerAllHandlers()
+    let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
+    let shouldUseTerminator = !(mainArgs.terminatorOff->Belt.Option.getWithDefault(false))
+    // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
 
-  gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
+    let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)
+    let globalState: GlobalState.t = {
+      currentlyProcessingBatch: false,
+      chainManager,
+      maxBatchSize: Env.maxProcessBatchSize,
+      maxPerChainQueueSize: Env.maxPerChainQueueSize,
+      indexerStartTime: Js.Date.make(),
+    }
+    let stateUpdatedHook = if shouldUseTerminator {
+      // let (globalState, setGlobalState) = React.useState(_ => globalState)
 
-  /*
+      let rerender = EnvioInkApp.startApp(makeAppState(globalState))
+
+      Some(globalState => globalState->makeAppState->rerender)
+    } else {
+      None
+    }
+    let gsManager = globalState->GlobalStateManager.make(~stateUpdatedHook?)
+    gsManager->GlobalStateManager.dispatchTask(NextQuery(CheckAllChains))
+    /*
     NOTE:
       This `ProcessEventBatch` dispatch shouldn't be necessary but we are adding for safety, it should immediately return doing 
       nothing since there is no events on the queues.
-  */
-  gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch) 
+ */
+
+    gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
+  } catch {
+  | e => e->ErrorHandling.make(~msg="global catch")->ErrorHandling.log
+  }
 }
 
 main()->ignore
