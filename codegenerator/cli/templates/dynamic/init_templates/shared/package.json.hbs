@@ -1,6 +1,7 @@
 {
   "name": "{{project_name}}",
   "version": "0.1.0",
+  "type": "module", 
   "scripts": {
   {{#if is_typescript}}
     "clean": "tsc --clean",
@@ -21,8 +22,8 @@
     "start": "pnpm build && node generated/src/Index.bs.mjs"
     {{else}}
       {{#if is_typescript}}
-    "start": pnpm build && ts-node-esm generated/src/Index.bs.mjs"
-      {{else}
+    "start": "ts-node-esm generated/src/Index.bs.mjs"
+      {{else}}
     "start": "node generated/src/Index.bs.mjs"
       {{/if}}
     {{/if}}
@@ -36,7 +37,7 @@
     "rescript-express": "0.4.1",
     "rescript-struct": "4.1.1",
     "rescript-mocha": "^0.9.0",
-    "rescript": "10.1.4",
+    "rescript": "11",
   {{/if}}
   {{#if is_typescript}}
     "@types/chai": "^4.3.11",    

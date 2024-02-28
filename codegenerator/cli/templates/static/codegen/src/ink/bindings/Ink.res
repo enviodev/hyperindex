@@ -218,14 +218,51 @@ module Hooks = {
 }
 
 module Link = {
-  /**
-  Transform a string representation of React components before they are written to output. For example, you might want to apply a gradient to text, add a clickable link or create some text effects. These use cases can't accept React nodes as input, they are expecting a string. That's what <Transform> component does, it gives you an output string of its child components and lets you transform it in any way.
-
-  Note: <Transform> must be applied only to <Text> children components and shouldn't change the dimensions of the output, otherwise layout will be incorrect.
-  */
-  type outputLine = string
-  type index = int
   @module("ink-link") @react.component
   external make: (~children: React.element=?, ~url: string, ~fallback: bool=?) => React.element =
     "default"
+}
+
+module BigText = {
+  type font =
+    | @as("block") Block
+    | @as("slick") Slick
+    | @as("tiny") Tiny
+    | @as("grid") Grid
+    | @as("pallet") Pallet
+    | @as("shade") Shade
+    | @as("simple") Simple
+    | @as("simpleBlock") SimpleBlock
+    | @as("3d") D3
+    | @as("simple3d") Simple3D
+    | @as("chrome") Chrome
+    | @as("huge") Huge
+  type align =
+    | @as("left") Left
+    | @as("center") Center
+    | @as("right") Right
+  type backgroundColor =
+    | @as("transparent") Transparent
+    | @as("black") Black
+    | @as("red") Red
+    | @as("green") Green
+    | @as("yellow") Yellow
+    | @as("blue") Blue
+    | @as("magenta") Magenta
+    | @as("cyan") Cyan
+    | @as("white") White
+
+  type color = | ...chalkTheme | @as("system") System
+  @module("ink-big-text") @react.component
+  external make: (
+    ~text: string,
+    ~font: font=?, //default block
+    ~align: align=?, //default left
+    ~colors: array<color>=?, //default [system]
+    ~backgroundColor: backgroundColor=?, //default transparent
+    ~letterSpacing: int=?, //default 1
+    ~lineHeight: int=?, //default 1
+    ~space: bool=?, //default true
+    ~maxLength: int=?,
+  ) => React.element = "default"
 }

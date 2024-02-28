@@ -44,7 +44,8 @@
     "@greenlabs/ppx-spice",
     "rescript-express",
     "@glennsl/rescript-fetch",
-    "@rescript/react"
+    "@rescript/react",
+    "rescript-mocha"
   ],
   "ppx-flags": [
     "@greenlabs/ppx-spice/ppx"

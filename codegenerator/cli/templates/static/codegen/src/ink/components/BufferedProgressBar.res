@@ -17,6 +17,7 @@ let make = (~loaded, ~buffered=?, ~outOf, ~barWidth=36, ~loadingColor=Style.Seco
       maxCount,
     )
   })
+  let loadedFraction = loadedFraction > 0.0 ? loadedFraction : 0.0
   let loadedPercentageStr = (loadedFraction *. 100.)->Int.fromFloat->Int.toString ++ "% "
 
   let loadedPercentageStrCount = loadedPercentageStr->String.length
