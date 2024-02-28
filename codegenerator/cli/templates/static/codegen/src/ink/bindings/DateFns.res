@@ -33,6 +33,10 @@ external formatDistanceToNow: Js.Date.t => string = "default"
 @module("date-fns")
 external formatDistance: (Js.Date.t, Js.Date.t) => string = "formatDistance"
 
+@module("date-fns")
+external formatDistanceWithOptions: (Js.Date.t, Js.Date.t, formatDistanceToNowOptions) => string =
+  "formatDistance"
+
 @module("date-fns/formatDistanceToNow")
 external formatDistanceToNowWithOptions: (Js.Date.t, formatDistanceToNowOptions) => string =
   "default"

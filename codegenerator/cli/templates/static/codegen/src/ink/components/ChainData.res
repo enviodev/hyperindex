@@ -25,12 +25,12 @@ type chainData = {
 
 module BlocksDisplay = {
   @react.component
-  let make = (~latestFetchedBlockNumber, ~currentBlockHeight) => {
+  let make = (~latestProcessedBlock, ~currentBlockHeight) => {
     <Box flexDirection={Row}>
       <Text> {"blocks: "->React.string} </Text>
       <Box flexDirection={Column} alignItems={FlexEnd}>
         <Box>
-          <Text> {latestFetchedBlockNumber->React.int} </Text>
+          <Text> {latestProcessedBlock->React.int} </Text>
         </Box>
         <Box>
           <Text> {"/"->React.string} </Text>
@@ -65,7 +65,7 @@ let make = (~chainData: chainData) => {
     <Box flexDirection={Column}>
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Text> {"Searching..."->React.string} </Text>
-        <BlocksDisplay latestFetchedBlockNumber currentBlockHeight />
+        <BlocksDisplay latestProcessedBlock=latestFetchedBlockNumber currentBlockHeight />
       </Box>
       <SyncBar
         chainId
@@ -89,7 +89,7 @@ let make = (~chainData: chainData) => {
           <Text> {"Events Processed: "->React.string} </Text>
           <Text bold=true> {numEventsProcessed->React.int} </Text>
         </Box>
-        <BlocksDisplay latestFetchedBlockNumber currentBlockHeight />
+        <BlocksDisplay latestProcessedBlock currentBlockHeight />
       </Box>
       <SyncBar
         chainId
@@ -114,7 +114,7 @@ let make = (~chainData: chainData) => {
           <Text> {"Events Processed: "->React.string} </Text>
           <Text bold=true> {numEventsProcessed->React.int} </Text>
         </Box>
-        <BlocksDisplay latestFetchedBlockNumber currentBlockHeight />
+        <BlocksDisplay latestProcessedBlock currentBlockHeight />
       </Box>
       <SyncBar
         chainId

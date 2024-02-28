@@ -14,6 +14,7 @@ module App = {
     let hasuraPort = "8080"
     let hasuraLink = `http://localhost:${hasuraPort}`
     <Box flexDirection={Column}>
+      <BigText text="envio" colors=[Secondary, Primary] font={Block} />
       {chains
       ->Array.mapWithIndex((i, chainData) => {
         <ChainData key={i->Int.toString} chainData />

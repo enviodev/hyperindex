@@ -146,6 +146,7 @@ let eventRouter = (
   ~latestProcessedBlocks: EventsProcessed.t,
 ) => {
   let {event, chainId} = item
+  let chain = chainId->ChainMap.Chain.fromChainId->Utils.unwrapResultExn
 
   switch event {
 {{#each codegen_contracts as | contract |}}
@@ -163,6 +164,7 @@ let eventRouter = (
       ~cb,
       ~context,
       ~latestProcessedBlocks,
+      ~chain,
     )
 
 {{/each}}

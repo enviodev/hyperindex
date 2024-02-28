@@ -103,7 +103,7 @@ let updateLatestProcessedBlocks = (
           hasNoMoreEventsToProcess &&
           cf.isFetchingAtHead
             ? Js.Date.make()->Some
-            : None
+            : cf.timestampCaughtUpToHead
         {
           ...cf,
           latestProcessedBlock,
@@ -172,7 +172,8 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
   }
 
   let timestampCaughtUpToHead =
-    chainFetcher.timestampCaughtUpToHead->Option.isNone && // don't reset this once it's initially set
+    chainFetcher.timestampCaughtUpToHead->Option.isNone &&
+    // don't reset this once it's initially set
     hasNoMoreEventsToProcess &&
     chainFetcher.isFetchingAtHead
       ? Js.Date.make()->Some

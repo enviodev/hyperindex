@@ -36,7 +36,7 @@ let getLatestTimeCaughtUpToHead = (
     }
   })
 
-  DateFns.formatDistance(indexerStartTime, latestTimeStampCaughtUpToHeadFloat->Js.Date.fromFloat)
+  DateFns.formatDistanceWithOptions(indexerStartTime, latestTimeStampCaughtUpToHeadFloat->Js.Date.fromFloat, {includeSeconds:true})
 }
 
 let getTotalBlocksProcessed = (chains: array<ChainData.chainData>) => {
@@ -58,11 +58,22 @@ let getEta = (~chains, ~indexerStartTime) => {
 
   let blocksProcessed = getTotalBlocksProcessed(chains)->Int.toFloat
   if blocksProcessed > 0. {
+    let nowDate = Js.Date.now()
     let remainingBlocks = getTotalRemainingBlocks(chains)->Int.toFloat
     let etaFloat = timeSinceStart /. blocksProcessed *. remainingBlocks
-    let eta = (etaFloat +. Js.Date.now())->Js.Date.fromFloat
-
-    Some(DateFns.formatDistanceToNowWithSeconds(eta))
+    let etaFloat = Pervasives.max(etaFloat, 0.0) //template this
+    let eta = (etaFloat +. nowDate)->Js.Date.fromFloat
+    let interval: DateFns.interval = {start: nowDate->Js.Date.fromFloat, end: eta}
+    let duration = DateFns.intervalToDuration(interval)
+    let formattedDuration = DateFns.formatDuration(
+      duration,
+      {format: ["hours", "minutes", "seconds"]},
+    )
+    let outputString = switch formattedDuration {
+    | "" => "less than 1 second"
+    | formattedDuration => formattedDuration
+    }
+    Some(outputString)
   } else {
     None
   }

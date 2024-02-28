@@ -6,7 +6,7 @@ description: Greeter indexer
 contracts:
   - name: Greeter
     abi_file_path: ./abis/greeter-abi.json
-    handler: ./src/EventHandlers.bs.js
+    handler: ./src/EventHandlers.bs.mjs
     events:
       - event: NewGreeting
       - event: ClearGreeting
