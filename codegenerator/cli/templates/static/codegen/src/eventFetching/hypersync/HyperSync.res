@@ -131,7 +131,6 @@ module LogsQuery = {
       log.index,
       log.transactionHash,
       log.transactionIndex,
-      log.removed,
       log.topics,
     ) {
     | (
@@ -143,7 +142,6 @@ module LogsQuery = {
         Some(index),
         Some(transactionHash),
         Some(transactionIndex),
-        Some(removed),
         Some(topics),
       ) =>
       let topics = topics->Belt.Array.keepMap(Js.Nullable.toOption)
@@ -157,7 +155,7 @@ module LogsQuery = {
         transactionIndex,
         logIndex: index,
         topics,
-        removed,
+        removed: log.removed,
       }
 
       let pageItem: logsQueryPageItem = {log, blockTimestamp, txOrigin}
@@ -173,7 +171,6 @@ module LogsQuery = {
           log.index->Utils.optionMapNone("log.index"),
           log.transactionHash->Utils.optionMapNone("log.transactionHash"),
           log.transactionIndex->Utils.optionMapNone("log.transactionIndex"),
-          log.removed->Utils.optionMapNone("log.removed"),
         ]->Belt.Array.keepMap(v => v)
 
       UnexpectedMissingParamsExn({

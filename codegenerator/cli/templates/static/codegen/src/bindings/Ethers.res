@@ -230,7 +230,7 @@ module CombinedFilter = {
 type log = {
   blockNumber: int,
   blockHash: string,
-  removed: bool,
+  removed: option<bool>,
   //Note: this is the index of the log in the transaction and should be used whenever we use "logIndex"
   address: ethAddress,
   data: string,
