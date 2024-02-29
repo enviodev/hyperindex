@@ -15,8 +15,8 @@ dependencies:
     specifier: ^3.0.0-beta.0
     version: 3.0.0-beta.0(ethers@6.3.0)(hardhat@2.14.0)
   '@openzeppelin/contracts':
-    specifier: ^4.8.3
-    version: 4.8.3
+    specifier: ^4.9.6
+    version: 4.9.6
   ethers:
     specifier: ^6.3.0
     version: 6.3.0
@@ -684,8 +684,8 @@ packages:
       hardhat: 2.14.0
     dev: false
 
-  /@openzeppelin/contracts@4.8.3:
-    resolution: {integrity: sha512-bQHV8R9Me8IaJoJ2vPG4rXcL7seB7YVuskr4f+f5RyOStSZetwzkWtoqDMl5erkBJy0lDRUnIR2WIkPiC0GJlg==}
+  /@openzeppelin/contracts@4.9.6:
+    resolution: {integrity: sha512-xSmezSupL+y9VkHZJGDoCBpmnB2ogM13ccaYDWqJTfS3dbuHkgjuwDFUmaFauBCboQMGB/S5UqUl2y54X99BmA==}
     dev: false
 
   /@scure/base@1.1.1:
