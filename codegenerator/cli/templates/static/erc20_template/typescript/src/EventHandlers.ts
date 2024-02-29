@@ -17,7 +17,7 @@ ERC20Contract_Approval_handler(({ event, context }) => {
   let ownerAccount = context.Account.get(event.params.owner.toString());
 
   if (ownerAccount === undefined) {
-    // Usually an accoun that is being approved alreay has/has had a balance, but it is possible they havent.
+    // Usually an account that is being approved already has/has had a balance, but it is possible they haven't.
 
     // create the account
     let accountObject: AccountEntity = {

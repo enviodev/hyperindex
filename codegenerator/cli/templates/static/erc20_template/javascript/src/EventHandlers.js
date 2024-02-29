@@ -10,7 +10,7 @@ ERC20Contract.Approval.handler((event, context) => {
   let ownerAccount = context.Account.get(event.params.owner);
 
   if (ownerAccount === undefined) {
-    // Usually an accoun that is being approved alreay has/has had a balance, but it is possible they havent.
+    // It's possible to call the approve function without having a balance of the token and hence the account doesn't exist yet
 
     // create the account
     let accountObject = {
