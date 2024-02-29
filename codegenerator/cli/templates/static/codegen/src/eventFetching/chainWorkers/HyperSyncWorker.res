@@ -1,4 +1,5 @@
 open ChainWorkerTypes
+open Belt
 type t = {
   chainConfig: Config.chainConfig,
   serverUrl: string,
@@ -149,210 +150,228 @@ let fetchBlockRange = async (
   ~currentBlockHeight,
   ~setCurrentBlockHeight,
 ) => {
-  let {chainConfig: {chain}, serverUrl} = self
-  let {
-    fetchStateRegisterId,
-    fromBlock,
-    contractAddressMapping,
-    currentLatestBlockTimestamp,
-    toBlock,
-  } = query
-  let startFetchingBatchTimeRef = Hrtime.makeTimer()
-  //fetch batch
-  let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} =
-    await self->getNextPage(
-      ~fromBlock,
-      ~toBlock,
-      ~currentBlockHeight,
-      ~contractAddressMapping,
-      ~logger,
-      ~setCurrentBlockHeight,
-    )
+  let logAndRaise = ErrorHandling.logAndRaise(~logger)
+  try {
+    let {chainConfig: {chain}, serverUrl} = self
+    let {
+      fetchStateRegisterId,
+      fromBlock,
+      contractAddressMapping,
+      currentLatestBlockTimestamp,
+      toBlock,
+    } = query
+    let startFetchingBatchTimeRef = Hrtime.makeTimer()
+    //fetch batch
+    let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} =
+      await self->getNextPage(
+        ~fromBlock,
+        ~toBlock,
+        ~currentBlockHeight,
+        ~contractAddressMapping,
+        ~logger,
+        ~setCurrentBlockHeight,
+      )
 
-  //set height and next from block
-  let currentBlockHeight = pageUnsafe.archiveHeight
+    //set height and next from block
+    let currentBlockHeight = pageUnsafe.archiveHeight
 
-  //TOD: This is a stub, it will need to be returned in a single query from hypersync
-  let parentHash = pageUnsafe->ReorgDetection.getParentHashStub
+    //TOD: This is a stub, it will need to be returned in a single query from hypersync
+    let parentHash = pageUnsafe->ReorgDetection.getParentHashStub
 
-  //TODO: This is a stub, it will need to be returned in a single query from hypersync
-  let lastBlockScannedData = pageUnsafe->ReorgDetection.getLastBlockScannedDataStub
+    //TODO: This is a stub, it will need to be returned in a single query from hypersync
+    let lastBlockScannedData = pageUnsafe->ReorgDetection.getLastBlockScannedDataStub
 
-  let reorgGuard = {
-    lastBlockScannedData,
-    parentHash,
-  }
+    let reorgGuard = {
+      lastBlockScannedData,
+      parentHash,
+    }
 
-  logger->Logging.childTrace({
-    "message": "Retrieved event page from server",
-    "fromBlock": fromBlock,
-    "toBlock": pageUnsafe.nextBlock - 1,
-  })
-
-  //The heighest (biggest) blocknumber that was accounted for in
-  //Our query. Not necessarily the blocknumber of the last log returned
-  //In the query
-  let heighestBlockQueried = pageUnsafe.nextBlock - 1
-
-  //Helper function to fetch the timestamp of the heighest block queried
-  //In the case that it is unknown
-  let getHeighestBlockAndTimestampWithDefault = (~default: HyperSync.blockNumberAndTimestamp) => {
-    HyperSync.queryBlockTimestampsPage(
-      ~serverUrl,
-      ~fromBlock=heighestBlockQueried,
-      ~toBlock=heighestBlockQueried,
-    )->Promise.thenResolve(res =>
-      res->Belt.Result.mapWithDefault(default, page => {
-        //Expected only 1 item but just taking last in case things change and we return
-        //a range
-        let lastBlockInRangeQueried = page.items->Belt.Array.get(page.items->Array.length - 1)
-
-        lastBlockInRangeQueried->Belt.Option.getWithDefault(default)
-      })
-    )
-  }
-
-  //The optional block and timestamp of the last item returned by the query
-  //(Optional in the case that there are no logs returned in the query)
-  let logItemsHeighestBlockOpt =
-    pageUnsafe.items
-    ->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1)
-    ->Belt.Option.map((item): HyperSync.blockNumberAndTimestamp => {
-      blockNumber: item.log.blockNumber,
-      timestamp: item.blockTimestamp,
+    logger->Logging.childTrace({
+      "message": "Retrieved event page from server",
+      "fromBlock": fromBlock,
+      "toBlock": pageUnsafe.nextBlock - 1,
     })
 
-  let heighestBlockQueriedPromise: promise<
-    HyperSync.blockNumberAndTimestamp,
-  > = switch logItemsHeighestBlockOpt {
-  | Some(val) =>
-    let {blockNumber, timestamp} = val
-    if blockNumber == heighestBlockQueried {
-      //If the last log item in the current page is equal to the
-      //heighest block acounted for in the query. Simply return this
-      //value without making an extra query
-      Promise.resolve(val)
-    } else {
-      //If it does not match it means that there were no matching logs in the last
-      //block so we should fetch the block timestamp with a default of our heighest
-      //timestamp (the value in our heighest log)
-      getHeighestBlockAndTimestampWithDefault(
-        ~default={timestamp, blockNumber: heighestBlockQueried},
+    //The heighest (biggest) blocknumber that was accounted for in
+    //Our query. Not necessarily the blocknumber of the last log returned
+    //In the query
+    let heighestBlockQueried = pageUnsafe.nextBlock - 1
+
+    //Helper function to fetch the timestamp of the heighest block queried
+    //In the case that it is unknown
+    let getHeighestBlockAndTimestampWithDefault = (~default: HyperSync.blockNumberAndTimestamp) => {
+      HyperSync.queryBlockTimestampsPage(
+        ~serverUrl,
+        ~fromBlock=heighestBlockQueried,
+        ~toBlock=heighestBlockQueried,
+      )->Promise.thenResolve(res =>
+        res->Belt.Result.mapWithDefault(default, page => {
+          //Expected only 1 item but just taking last in case things change and we return
+          //a range
+          let lastBlockInRangeQueried = page.items->Belt.Array.get(page.items->Array.length - 1)
+
+          lastBlockInRangeQueried->Belt.Option.getWithDefault(default)
+        })
       )
     }
 
-  | None =>
-    //If there were no logs at all in the current page query then fetch the
-    //timestamp of the heighest block accounted for,
-    //defaulting to our current latest blocktimestamp
-    getHeighestBlockAndTimestampWithDefault(
-      ~default={
-        blockNumber: heighestBlockQueried,
-        timestamp: currentLatestBlockTimestamp,
-      },
-    )
-  }
-
-  let parsingTimeRef = Hrtime.makeTimer()
-
-  //Parse page items into queue items
-  let parsedQueueItems = if Env.shouldUseHypersyncClientDecoder {
-    //Currently there are still issues with decoder for some cases so
-    //this can only be activated with a flag
-    let decoder = try {
-      contractInterfaceManager->ContractInterfaceManager.getAbiMapping->HyperSyncClient.Decoder.make
-    } catch {
-    | Js.Exn.Error(exn) =>
-      let error = exn->Helpers.makeJsExnParams
-      logger->Logging.childError({
-        "msg": "Failed to instantiate a decoder from hypersync client",
-        "error": error,
-      })
-      Helpers.JsExn(error)->raise
-    }
-    //Parse page items into queue items
-    let parsedEvents = await decoder->HyperSyncClient.Decoder.decodeEvents(pageUnsafe.events)
-
-    pageUnsafe.items
-    ->Belt.Array.zip(parsedEvents)
-    ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
-      {
-        timestamp: item.blockTimestamp,
-        chain,
+    //The optional block and timestamp of the last item returned by the query
+    //(Optional in the case that there are no logs returned in the query)
+    let logItemsHeighestBlockOpt =
+      pageUnsafe.items
+      ->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1)
+      ->Belt.Option.map((item): HyperSync.blockNumberAndTimestamp => {
         blockNumber: item.log.blockNumber,
-        logIndex: item.log.logIndex,
-        event: event
-        ->Belt.Option.getExn
-        ->Converters.convertDecodedEvent(
-          ~contractInterfaceManager,
+        timestamp: item.blockTimestamp,
+      })
+
+    let heighestBlockQueriedPromise: promise<
+      HyperSync.blockNumberAndTimestamp,
+    > = switch logItemsHeighestBlockOpt {
+    | Some(val) =>
+      let {blockNumber, timestamp} = val
+      if blockNumber == heighestBlockQueried {
+        //If the last log item in the current page is equal to the
+        //heighest block acounted for in the query. Simply return this
+        //value without making an extra query
+        Promise.resolve(val)
+      } else {
+        //If it does not match it means that there were no matching logs in the last
+        //block so we should fetch the block timestamp with a default of our heighest
+        //timestamp (the value in our heighest log)
+        getHeighestBlockAndTimestampWithDefault(
+          ~default={timestamp, blockNumber: heighestBlockQueried},
+        )
+      }
+
+    | None =>
+      //If there were no logs at all in the current page query then fetch the
+      //timestamp of the heighest block accounted for,
+      //defaulting to our current latest blocktimestamp
+      getHeighestBlockAndTimestampWithDefault(
+        ~default={
+          blockNumber: heighestBlockQueried,
+          timestamp: currentLatestBlockTimestamp,
+        },
+      )
+    }
+
+    let parsingTimeRef = Hrtime.makeTimer()
+
+    //Parse page items into queue items
+    let parsedQueueItems = if Env.shouldUseHypersyncClientDecoder {
+      //Currently there are still issues with decoder for some cases so
+      //this can only be activated with a flag
+      let decoder = switch contractInterfaceManager
+      ->ContractInterfaceManager.getAbiMapping
+      ->HyperSyncClient.Decoder.make {
+      | exception exn =>
+        exn->logAndRaise(~msg="Failed to instantiate a decoder from hypersync client")
+      | decoder => decoder
+      }
+      //Parse page items into queue items
+      let parsedEvents = switch await decoder->HyperSyncClient.Decoder.decodeEvents(
+        pageUnsafe.events,
+      ) {
+      | exception exn => exn->logAndRaise(~msg="Failed to parse events using hypersync client")
+      | parsedEvents => parsedEvents
+      }
+
+      pageUnsafe.items
+      ->Belt.Array.zip(parsedEvents)
+      ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
+        let {blockTimestamp, log: {blockNumber, logIndex}} = item
+        let chainId = chain->ChainMap.Chain.toChainId
+        {
+          timestamp: blockTimestamp,
+          chain,
+          blockNumber,
+          logIndex,
+          event: switch event
+          ->Belt.Option.getExn
+          ->Converters.convertDecodedEvent(
+            ~contractInterfaceManager,
+            ~log=item.log,
+            ~blockTimestamp,
+            ~chainId,
+            ~txOrigin=item.txOrigin,
+          ) {
+          | Ok(v) => v
+          | Error(exn) =>
+            let logger = Logging.createChildFrom(
+              ~logger,
+              ~params={"chainId": chainId, "blockNumber": blockNumber, "logIndex": logIndex},
+            )
+            exn->ErrorHandling.logAndRaise(~msg="Failed to convert decoded event", ~logger)
+          },
+        }
+      })
+    } else {
+      //Parse with viem -> slower than the HyperSyncClient
+      pageUnsafe.items->Array.map(item => {
+        let {log: {blockNumber, logIndex}} = item
+        let chainId = chain->ChainMap.Chain.toChainId
+        switch Converters.parseEvent(
           ~log=item.log,
           ~blockTimestamp=item.blockTimestamp,
-          ~chainId=chain->ChainMap.Chain.toChainId,
+          ~contractInterfaceManager,
+          ~chainId,
           ~txOrigin=item.txOrigin,
-        )
-        ->Utils.unwrapResultExn,
-      }
-    })
-  } else {
-    //Parse with viem -> slower than the HyperSyncClient
-    await pageUnsafe.items
-    //Defer all this parsing into separate deferred callbacks
-    //on the macro task queue so that parsing doesn't block the
-    //event loop and each parse happens as a macro task. Meaning
-    //promise resolves will take priority
-    ->Deferred.mapArrayDeferred((item, resolve, reject) => {
-      switch Converters.parseEvent(
-        ~log=item.log,
-        ~blockTimestamp=item.blockTimestamp,
-        ~contractInterfaceManager,
-        ~chainId=chain->ChainMap.Chain.toChainId,
-        ~txOrigin=item.txOrigin,
-      ) {
-      | Ok(parsed) =>
-        let queueItem: Types.eventBatchQueueItem = {
-          timestamp: item.blockTimestamp,
-          chain,
-          blockNumber: item.log.blockNumber,
-          logIndex: item.log.logIndex,
-          event: parsed,
+        ) {
+        | Ok(parsed) =>
+          (
+            {
+              timestamp: item.blockTimestamp,
+              chain,
+              blockNumber,
+              logIndex,
+              event: parsed,
+            }: Types.eventBatchQueueItem
+          )
+
+        | Error(exn) =>
+          let params = {
+            "chainId": chainId,
+            "blockNumber": blockNumber,
+            "logIndex": logIndex,
+          }
+          let logger = Logging.createChildFrom(~logger, ~params)
+          exn->ErrorHandling.logAndRaise(~msg="Failed to parse event with viem", ~logger)
         }
-        resolve(queueItem)
-      | Error(e) => reject(e)
-      }
-    })
-    ->Deferred.asPromise
-  }
+      })
+    }
 
+    let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-  let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let {
+      blockNumber: heighestQueriedBlockNumber,
+      timestamp: heighestQueriedBlockTimestamp,
+    } = await heighestBlockQueriedPromise
 
-  //set latestFetchedBlockNumber and latestFetchedBlockTimestamp
-  let {
-    blockNumber: heighestQueriedBlockNumber,
-    timestamp: heighestQueriedBlockTimestamp,
-  } = await heighestBlockQueriedPromise
+    let totalTimeElapsed =
+      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-  let totalTimeElapsed =
-    startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let stats = {
+      totalTimeElapsed,
+      parsingTimeElapsed,
+      pageFetchTime,
+      averageParseTimePerLog: parsingTimeElapsed->Belt.Int.toFloat /.
+        parsedQueueItems->Array.length->Belt.Int.toFloat,
+    }
 
-  let stats = {
-    totalTimeElapsed,
-    parsingTimeElapsed,
-    pageFetchTime,
-    averageParseTimePerLog: parsingTimeElapsed->Belt.Int.toFloat /.
-      parsedQueueItems->Array.length->Belt.Int.toFloat,
-  }
-
-  {
-    latestFetchedBlockTimestamp: heighestQueriedBlockTimestamp,
-    parsedQueueItems,
-    heighestQueriedBlockNumber,
-    stats,
-    currentBlockHeight,
-    reorgGuard,
-    fromBlockQueried: fromBlock,
-    fetchStateRegisterId,
-    worker: HyperSync(self),
+    {
+      latestFetchedBlockTimestamp: heighestQueriedBlockTimestamp,
+      parsedQueueItems,
+      heighestQueriedBlockNumber,
+      stats,
+      currentBlockHeight,
+      reorgGuard,
+      fromBlockQueried: fromBlock,
+      fetchStateRegisterId,
+      worker: HyperSync(self),
+    }->Ok
+  } catch {
+  | exn => exn->ErrorHandling.make(~logger, ~msg="Failed to fetch block Range")->Error
   }
 }
 

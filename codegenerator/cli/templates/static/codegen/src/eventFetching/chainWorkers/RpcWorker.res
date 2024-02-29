@@ -79,102 +79,106 @@ let fetchBlockRange = async (
   ~currentBlockHeight,
   ~setCurrentBlockHeight,
 ) => {
-  let {currentBlockInterval, blockLoader, chainConfig, rpcConfig} = self
-  let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId} = query
+  try {
+    let {currentBlockInterval, blockLoader, chainConfig, rpcConfig} = self
+    let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId} = query
 
-  let startFetchingBatchTimeRef = Hrtime.makeTimer()
-  let currentBlockHeight =
-    await self->waitForNewBlockBeforeQuery(
-      ~fromBlock,
-      ~currentBlockHeight,
-      ~setCurrentBlockHeight,
-      ~logger,
+    let startFetchingBatchTimeRef = Hrtime.makeTimer()
+    let currentBlockHeight =
+      await self->waitForNewBlockBeforeQuery(
+        ~fromBlock,
+        ~currentBlockHeight,
+        ~setCurrentBlockHeight,
+        ~logger,
+      )
+
+    let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)
+
+    let toBlockTimestampPromise =
+      blockLoader->LazyLoader.get(targetBlock)->Promise.thenResolve(block => block.timestamp)
+
+    //Needs to be run on every loop in case of new registrations
+    let contractInterfaceManager = ContractInterfaceManager.make(
+      ~contractAddressMapping,
+      ~chainConfig,
     )
 
-  let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)
+    let {
+      eventBatchPromises,
+      finalExecutedBlockInterval,
+    } = await EventFetching.getContractEventsOnFilters(
+      ~contractInterfaceManager,
+      ~fromBlock,
+      ~toBlock=targetBlock,
+      ~initialBlockInterval=currentBlockInterval,
+      ~minFromBlockLogIndex=0,
+      ~rpcConfig,
+      ~chain=chainConfig.chain,
+      ~blockLoader,
+      ~logger,
+      (),
+    )
 
-  let toBlockTimestampPromise =
-    blockLoader->LazyLoader.get(targetBlock)->Promise.thenResolve(block => block.timestamp)
+    let parsedQueueItems =
+      await eventBatchPromises
+      ->Array.map(async ({
+        timestampPromise,
+        chain,
+        blockNumber,
+        logIndex,
+        eventPromise,
+      }): Types.eventBatchQueueItem => {
+        timestamp: await timestampPromise,
+        chain,
+        blockNumber,
+        logIndex,
+        event: await eventPromise,
+      })
+      ->Promise.all
 
-  //Needs to be run on every loop in case of new registrations
-  let contractInterfaceManager = ContractInterfaceManager.make(
-    ~contractAddressMapping,
-    ~chainConfig,
-  )
+    let sc = rpcConfig.syncConfig
 
-  let {
-    eventBatchPromises,
-    finalExecutedBlockInterval,
-  } = await EventFetching.getContractEventsOnFilters(
-    ~contractInterfaceManager,
-    ~fromBlock,
-    ~toBlock=targetBlock,
-    ~initialBlockInterval=currentBlockInterval,
-    ~minFromBlockLogIndex=0,
-    ~rpcConfig,
-    ~chain=chainConfig.chain,
-    ~blockLoader,
-    ~logger,
-    (),
-  )
+    let nextWorker = {
+      ...self,
+      // Increase batch size going forward, but do not increase past a configured maximum
+      // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
+      currentBlockInterval: Pervasives.min(
+        finalExecutedBlockInterval + sc.accelerationAdditive,
+        sc.intervalCeiling,
+      ),
+    }
 
-  let parsedQueueItems =
-    await eventBatchPromises
-    ->Array.map(async ({
-      timestampPromise,
-      chain,
-      blockNumber,
-      logIndex,
-      eventPromise,
-    }): Types.eventBatchQueueItem => {
-      timestamp: await timestampPromise,
-      chain,
-      blockNumber,
-      logIndex,
-      event: await eventPromise,
-    })
-    ->Promise.all
+    let heighestQueriedBlockTimestamp = await toBlockTimestampPromise
 
-  let sc = rpcConfig.syncConfig
+    let heighestQueriedBlockNumber = targetBlock
 
-  let nextWorker = {
-    ...self,
-    // Increase batch size going forward, but do not increase past a configured maximum
-    // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-    currentBlockInterval: Pervasives.min(
-      finalExecutedBlockInterval + sc.accelerationAdditive,
-      sc.intervalCeiling,
-    ),
-  }
+    let totalTimeElapsed =
+      startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-  let heighestQueriedBlockTimestamp = await toBlockTimestampPromise
+    let reorgGuardStub: reorgGuard = {
+      parentHash: None,
+      lastBlockScannedData: {
+        blockNumber: 0,
+        blockTimestamp: 0,
+        blockHash: "0x1234",
+      },
+    }
 
-  let heighestQueriedBlockNumber = targetBlock
-
-  let totalTimeElapsed =
-    startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-
-  let reorgGuardStub: reorgGuard = {
-    parentHash: None,
-    lastBlockScannedData: {
-      blockNumber: 0,
-      blockTimestamp: 0,
-      blockHash: "0x1234",
-    },
-  }
-
-  {
-    latestFetchedBlockTimestamp: heighestQueriedBlockTimestamp,
-    parsedQueueItems,
-    heighestQueriedBlockNumber,
-    stats: {
-      totalTimeElapsed: totalTimeElapsed,
-    },
-    currentBlockHeight,
-    reorgGuard: reorgGuardStub,
-    fromBlockQueried: fromBlock,
-    fetchStateRegisterId,
-    worker: Rpc(nextWorker),
+    {
+      latestFetchedBlockTimestamp: heighestQueriedBlockTimestamp,
+      parsedQueueItems,
+      heighestQueriedBlockNumber,
+      stats: {
+        totalTimeElapsed: totalTimeElapsed,
+      },
+      currentBlockHeight,
+      reorgGuard: reorgGuardStub,
+      fromBlockQueried: fromBlock,
+      fetchStateRegisterId,
+      worker: Rpc(nextWorker),
+    }->Ok
+  } catch {
+  | exn => exn->ErrorHandling.make(~logger, ~msg="Failed to fetch block Range")->Error
   }
 }
 

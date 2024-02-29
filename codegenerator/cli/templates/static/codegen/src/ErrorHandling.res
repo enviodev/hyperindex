@@ -35,3 +35,8 @@ let getExn = (self: t) => {
 let raiseExn = (self: t) => {
   self->getExn->raise
 }
+
+let logAndRaise = (~logger=?, ~msg=?, exn) => {
+  exn->make(~logger?, ~msg?)->log
+  exn->raise
+}

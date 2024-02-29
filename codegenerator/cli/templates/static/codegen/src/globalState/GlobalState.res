@@ -11,6 +11,7 @@ type blockRangeFetchResponse = ChainWorkerTypes.blockRangeFetchResponse<
   HyperSyncWorker.t,
   RpcWorker.t,
 >
+
 type action =
   | BlockRangeResponse(chain, blockRangeFetchResponse)
   | SetFetchStateCurrentBlockHeight(chain, int)
@@ -36,8 +37,10 @@ let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~curre
       ~blockHeight=currentBlockHeight,
     )->ignore
 
-    Prometheus.setSourceChainHeight(~blockNumber=currentBlockHeight, ~chain=chainFetcher.chainConfig.chain)
-
+    Prometheus.setSourceChainHeight(
+      ~blockNumber=currentBlockHeight,
+      ~chain=chainFetcher.chainConfig.chain,
+    )
     {...chainFetcher, currentBlockHeight}
   } else {
     chainFetcher
@@ -257,11 +260,20 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
     switch nextQuery {
     | WaitForNewBlock =>
       if !isFetchingAtHead && currentBlockHeight != 0 && fetchState->FetchState.queueSize == 0 {
-        logger->Logging.childInfo("All events have been fetched, they should finish processing the handlers soon.")
+        logger->Logging.childInfo(
+          "All events have been fetched, they should finish processing the handlers soon.",
+        )
         dispatchAction(SetIsFetchingAtHead(chain, true))
       }
       logger->Logging.childTrace("Waiting for new blocks")
       let compose = async (worker, waitForBlockGreaterThanCurrentHeight) => {
+        let logger = Logging.createChildFrom(
+          ~logger,
+          ~params={
+            "logType": "Poll for block greater than current height",
+            "currentBlockHeight": currentBlockHeight,
+          },
+        )
         let newHeight =
           await worker->waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
         setCurrentBlockHeight(newHeight)
@@ -273,17 +285,29 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
     | NextQuery(query) =>
       dispatchAction(SetCurrentlyFetchingBatch(chain, true))
 
-      let compose = (worker, fetchBlockRange) => {
-        worker
-        ->fetchBlockRange(~query, ~logger, ~currentBlockHeight, ~setCurrentBlockHeight)
-        ->Promise.thenResolve(res => dispatchAction(BlockRangeResponse(chain, res)))
-        ->ignore
+      let compose = async (worker, fetchBlockRange, workerType) => {
+        let logger = Logging.createChildFrom(
+          ~logger,
+          ~params={"logType": "Block Range Query", "workerType": workerType},
+        )
+        let logger = query->FetchState.getQueryLogger(~logger)
+        let res =
+          await worker->fetchBlockRange(
+            ~query,
+            ~logger,
+            ~currentBlockHeight,
+            ~setCurrentBlockHeight,
+          )
+        switch res {
+        | Ok(res) => dispatchAction(BlockRangeResponse(chain, res))
+        | Error(e) => dispatchAction(ErrorExit(e))
+        }
       }
 
       switch chainWorker {
-      | HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange)
-      | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange)
-      }
+      | HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange, "HyperSync")
+      | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange, "RPC")
+      }->ignore
     }
   }
 }
@@ -328,8 +352,8 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
           }
         )
         ->Promise.catch(exn => {
-        //All casese should be handled/caught before this with better user messaging.
-        //This is just a safety in case something unexpected happens
+          //All casese should be handled/caught before this with better user messaging.
+          //This is just a safety in case something unexpected happens
           let errHandler =
             exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing")
           dispatchAction(ErrorExit(errHandler))
