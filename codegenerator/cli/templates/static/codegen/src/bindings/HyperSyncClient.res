@@ -240,16 +240,74 @@ module Decoder = {
 
   let make = constructor->new
 
-  type decodedSolType<'a> = {val: 'a}
+  /*
+  Note! Usinging opaque definitions here since unboxed doesn't yet support bigint!
 
-  type decodedEvent<'a> = {
-    indexed: array<decodedSolType<'a>>,
-    body: array<decodedSolType<'a>>,
+  type rec decodedSolType<'a> = {val: 'a}
+
+  @unboxed
+  type rec decodedRaw =
+    | DecodedBool(bool)
+    | DecodedStr(string)
+    | DecodedNum(Js.Bigint.t)
+    | DecodedVal(decodedSolType<decodedRaw>)
+    | DecodedArr(array<decodedRaw>)
+
+  @unboxed
+  type rec decodedUnderlying =
+    | Bool(bool)
+    | Str(string)
+    | Num(Js.Bigint.t)
+    | Arr(array<decodedUnderlying>)
+
+  let rec toUnderlying = (d: decodedRaw): decodedUnderlying => {
+    switch d {
+    | DecodedVal(v) => v.val->toUnderlying
+    | DecodedBool(v) => Bool(v)
+    | DecodedStr(v) => Str(v)
+    | DecodedNum(v) => Num(v)
+    | DecodedArr(v) => v->Belt.Array.map(toUnderlying)->Arr
+    }
+  }
+*/
+
+  type decodedRaw
+  type decodedUnderlying
+  /**
+  See the commented code above. This should be possible with unboxed
+  rescript types but since there is not support yet for bigint I've just
+  copied the rescript generated code (using int instead of bigint) and swapped
+  it out int for bigint. 
+  */
+  let toUnderlying: decodedRaw => decodedUnderlying = %raw(`
+    function toUnderlying(_d) {
+      while(true) {
+        var d = _d;
+        if (Array.isArray(d)) {
+          return d.map(toUnderlying);
+        }
+        switch (typeof d) {
+          case "boolean" :
+              return d;
+          case "string" :
+              return d;
+          case "bigint" :
+              return d;
+          case "object" :
+              _d = d.val;
+              continue ;
+          
+        }
+      };
+    }
+  `)
+
+  type decodedEvent = {
+    indexed: array<decodedRaw>,
+    body: array<decodedRaw>,
   }
 
   @send
-  external decodeEvents: (
-    t,
-    array<ResponseTypes.event>,
-  ) => promise<array<option<decodedEvent<'a>>>> = "decodeEvents"
+  external decodeEvents: (t, array<ResponseTypes.event>) => promise<array<option<decodedEvent>>> =
+    "decodeEvents"
 }
