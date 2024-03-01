@@ -266,14 +266,14 @@ let fetchBlockRange = async (
       ->ContractInterfaceManager.getAbiMapping
       ->HyperSyncClient.Decoder.make {
       | exception exn =>
-        exn->logAndRaise(~msg="Failed to instantiate a decoder from hypersync client")
+        exn->logAndRaise(~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI.")
       | decoder => decoder
       }
       //Parse page items into queue items
       let parsedEvents = switch await decoder->HyperSyncClient.Decoder.decodeEvents(
         pageUnsafe.events,
       ) {
-      | exception exn => exn->logAndRaise(~msg="Failed to parse events using hypersync client")
+      | exception exn => exn->logAndRaise(~msg="Failed to parse events using hypersync client, please double check your ABI.")
       | parsedEvents => parsedEvents
       }
 
@@ -336,7 +336,7 @@ let fetchBlockRange = async (
             "logIndex": logIndex,
           }
           let logger = Logging.createChildFrom(~logger, ~params)
-          exn->ErrorHandling.logAndRaise(~msg="Failed to parse event with viem", ~logger)
+          exn->ErrorHandling.logAndRaise(~msg="Failed to parse event with viem, please double check your ABI.", ~logger)
         }
       })
     }
