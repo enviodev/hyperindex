@@ -294,6 +294,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
             contracts,
             networks,
             unordered_multichain_mode: None,
+            event_decoder: None,
         })
     }
 }

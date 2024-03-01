@@ -24,6 +24,15 @@ pub struct HumanConfig {
     pub networks: Vec<Network>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unordered_multichain_mode: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub event_decoder: Option<EventDecoder>,
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum EventDecoder {
+    Viem,
+    HypersyncClient,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -391,10 +400,13 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Hum
 mod tests {
     use std::path::PathBuf;
 
+    use crate::config_parsing::human_config::EventDecoder;
+
     use super::{
         EventNameOrSig, HumanConfig, LocalContractConfig, NetworkContractConfig, NormalizedList,
     };
     use ethers::abi::{Event, EventParam, ParamType};
+    use serde_json::json;
 
     #[test]
     fn test_flatten_deserialize_local_contract() {
@@ -598,5 +610,25 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         assert!(cfg.networks[0].contracts[0].local_contract_config.is_some());
         assert!(cfg.networks[1].contracts[0].local_contract_config.is_none());
+    }
+
+    #[test]
+    fn deserializes_event_decoder() {
+        assert_eq!(
+            serde_json::from_value::<EventDecoder>(json!("viem")).unwrap(),
+            EventDecoder::Viem
+        );
+        assert_eq!(
+            serde_json::from_value::<EventDecoder>(json!("hypersync-client")).unwrap(),
+            EventDecoder::HypersyncClient
+        );
+        assert_eq!(
+            serde_json::to_value(&EventDecoder::HypersyncClient).unwrap(),
+            json!("hypersync-client")
+        );
+        assert_eq!(
+            serde_json::to_value(&EventDecoder::Viem).unwrap(),
+            json!("viem")
+        );
     }
 }

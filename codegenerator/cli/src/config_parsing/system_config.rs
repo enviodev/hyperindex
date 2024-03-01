@@ -1,6 +1,6 @@
 use super::{
     entity_parsing::{Entity, GraphQLEnum, Schema},
-    human_config::{self, HumanConfig, HypersyncConfig, RpcConfig, SyncSourceConfig},
+    human_config::{self, EventDecoder, HumanConfig, HypersyncConfig, RpcConfig, SyncSourceConfig},
 };
 use crate::{
     project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
@@ -30,6 +30,7 @@ pub struct SystemConfig {
     pub networks: NetworkMap,
     pub contracts: ContractMap,
     pub unordered_multichain_mode: bool,
+    pub event_decoder: EventDecoder,
     pub schema: Schema,
 }
 
@@ -256,6 +257,10 @@ impl SystemConfig {
             networks,
             contracts,
             unordered_multichain_mode: human_cfg.unordered_multichain_mode.unwrap_or(false),
+            event_decoder: human_cfg
+                .event_decoder
+                .clone()
+                .unwrap_or(EventDecoder::HypersyncClient),
             schema,
         })
     }

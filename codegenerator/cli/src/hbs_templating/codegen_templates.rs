@@ -4,7 +4,7 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
-        human_config::{self, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
+        human_config::{self, EventDecoder, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -622,6 +622,7 @@ pub struct ProjectTemplate {
     codegen_out_path: String,
     persisted_state: PersistedStateJsonString,
     is_unordered_multichain_mode: bool,
+    should_use_hypersync_client_decoder: bool,
 }
 
 impl ProjectTemplate {
@@ -680,6 +681,9 @@ impl ProjectTemplate {
             .context("Failed creating default persisted state")?
             .into();
 
+        let should_use_hypersync_client_decoder =
+            cfg.event_decoder == EventDecoder::HypersyncClient;
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
@@ -689,6 +693,7 @@ impl ProjectTemplate {
             codegen_out_path: gitignore_path_str,
             persisted_state,
             is_unordered_multichain_mode: cfg.unordered_multichain_mode,
+            should_use_hypersync_client_decoder,
         })
     }
 }
