@@ -9,11 +9,7 @@ contracts:
     handler: ./src/EventHandlers.ts
     events:
       - event: NewGreeting
-        requiredEntities:
-          - name: User
       - event: ClearGreeting
-        requiredEntities:
-          - name: User
 networks:
   - id: 137 # Polygon
     start_block: 45336336
