@@ -325,10 +325,10 @@ It is also possible that you have saved an ID for an entity that doesn't exist i
 
                         let optEntity = entities->Belt.Array.get(0)
 
-                        IO.InMemoryStore.{{required_entity.name.capitalized}}.set(
+                        IO.InMemoryStore.{{required_entity.name.capitalized}}.initValue(
                           inMemoryStore.{{required_entity.name.uncapitalized}},
                           ~key=id,
-                          ~entity=Read(optEntity),
+                          ~entity=optEntity,
                         )
 
                         optEntity
@@ -357,12 +357,10 @@ It is also possible that you have saved an ID for an entity that doesn't exist i
                     switch entities->Belt.Array.get(0) {
                     | Some(entity) =>
                       // TODO: make this work with the test framework too.
-                      IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.set(
+                      IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.initValue(
                         inMemoryStore.{{entity_field.mapped_entity.uncapitalized}},
                         ~key=entity.id,
-                        ~entity=Read(
-                          Some(entity),
-                        ),
+                        ~entity=Some(entity),
                       )
                       entity
                     | None =>

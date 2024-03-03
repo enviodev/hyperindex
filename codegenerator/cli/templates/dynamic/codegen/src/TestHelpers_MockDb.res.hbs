@@ -85,10 +85,11 @@ module type StoreStateEntity = {
   let values: IO.InMemoryStore.storeStateEntity<value, key> => array<
     Types.inMemoryStoreRowEntity<value>,
   >
+  // TODO: add initValue function here too
   let set: (
     IO.InMemoryStore.storeStateEntity<value, key>,
     ~key: key,
-    ~entity: Types.entityData<value>,
+    ~entity: Types.entityUpdate<value>,
   ) => unit
 }
 
@@ -123,10 +124,11 @@ let makeStoreOperatorEntity = (
     ->getStore
     ->values
     ->Array.keepMap(row =>
-      switch row.current {
-      | Set(entity, _) => Some(entity)
-      | Read(optEntity) => optEntity
-      | Delete(_, _) => None
+      switch row {
+      | Updated({latest: Set(entity, _)}) => Some(entity)
+      | Updated({latest: Delete(_, _)}) => None
+      | ReadNoChangeFromDB(AlreadySet(entity)) => Some(entity)
+      | ReadNoChangeFromDB(NotSet) => None
       }
     )
 
@@ -265,12 +267,12 @@ let cloneMockDb = (self: t) => {
 /**
 Specifically create an executor for the mockDb
 */
-let makeMockDbEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemStoreSetFn, ~store, ~getEntiyId) => {
+let makeMockDbEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemStoreInitFn, ~store, ~getEntiyId) => {
   let dbReadFn = idsArr => idsArr->Belt.Array.keepMap(id => id->dbReadFn)
   IO.makeEntityExecuterComposer(
     ~idsToLoad,
     ~dbReadFn,
-    ~inMemStoreSetFn,
+    ~inMemStoreInitFn,
     ~store,
     ~getEntiyId,
     ~unit=(),
@@ -291,7 +293,7 @@ let executeMockDbLoadLayer = (
     makeMockDbEntityExecuter(
       ~idsToLoad=loadLayer.{{entity.name.uncapitalized}}IdsToLoad,
       ~dbReadFn=mockDb.entities.{{entity.name.uncapitalized}}.get,
-      ~inMemStoreSetFn=IO.InMemoryStore.{{entity.name.capitalized}}.set,
+      ~inMemStoreInitFn=IO.InMemoryStore.{{entity.name.capitalized}}.initValue,
       ~store=inMemoryStore.{{entity.name.uncapitalized}},
       ~getEntiyId=entity => entity.id,
     ),
@@ -338,7 +340,7 @@ let executeRowsEntity = (
   ~setFunction: (
     IO.InMemoryStore.storeStateEntity<'entity, 'key>,
     ~key: 'key,
-    ~entity: Types.entityData<'entity>,
+    ~entity: option<'entity>,
   ) => unit,
 ) => {
   inMemoryStore
@@ -346,10 +348,12 @@ let executeRowsEntity = (
   ->getRows
   ->Array.forEach(row => {
     let store = mockDb->getInternalDb->getStore
-    switch row.current {
-    | Set(entity, _) => store->setFunction(~key=getKey(entity), ~entity=Read(Some(entity)))
-    | Delete(entityId, _) => store.dict->deleteDictKey(entityId)
-    | Read(_) => ()
+    switch row {
+    | Updated({latest: Set(entity, _)})
+    | ReadNoChangeFromDB(AlreadySet(entity)) =>
+      store->setFunction(~key=getKey(entity), ~entity=Some(entity))
+    | Updated({latest: Delete(entityId, _)}) => store.dict->deleteDictKey(entityId)
+    | ReadNoChangeFromDB(NotSet) => ()
     }
   })
 }
@@ -419,7 +423,7 @@ let writeFromMemoryStore = (mockDb: t, ~inMemoryStore: IO.InMemoryStore.t) => {
     ~inMemoryStore,
     ~getStore=self => {self.{{entity.name.uncapitalized}}},
     ~getRows=IO.InMemoryStore.{{entity.name.capitalized}}.values,
-    ~setFunction=IO.InMemoryStore.{{entity.name.capitalized}}.set,
+    ~setFunction=IO.InMemoryStore.{{entity.name.capitalized}}.initValue,
     ~getKey=entity => entity.id,
   )
 {{/each}}

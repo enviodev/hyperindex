@@ -29,20 +29,38 @@ module InMemoryStore = {
 
     let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
 
-    let set = (self: t, ~key: StoreItem.key, ~entity: Types.entityData<StoreItem.t>) => {
-      let getOptEventIdentifier = (entity: Types.entityData<StoreItem.t>) => {
-        switch entity {
-        | Delete(_, eventIdentifier)
-        | Set(_, eventIdentifier) =>
-          Some(eventIdentifier)
-        | Read(_) => None
-        }
+    // NOTE: calling initValue on an existing store item will override it. This function does no checks to make sure there isn't existing data that can get lost.
+    let initValue = (self: t, ~key: StoreItem.key, ~entity: option<StoreItem.t>) => {
+      let initialStoreRow: Types.inMemoryStoreRowEntity<StoreItem.t> = switch entity {
+      | Some(entity) => ReadNoChangeFromDB(AlreadySet(entity))
+      | None => ReadNoChangeFromDB(NotSet)
       }
+      self.dict->Js.Dict.set(key->self.hasher, initialStoreRow)
+    }
+
+    let set = (self: t, ~key: StoreItem.key, ~entity: Types.entityUpdate<StoreItem.t>) => {
+      // let getOptEventIdentifier = (entity: Types.entityCurrentState<StoreItem.t>) => {
+      //   switch entity {
+      //   | Updated(Delete(_, eventIdentifier))
+      //   | Updated(Set(_, eventIdentifier)) =>
+      //     Some(eventIdentifier)
+      //   | ReadNoChangeFromDB => None
+      //   }
+      // }
       if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
         let mapKey = key->self.hasher
-        let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch self.dict->Js.Dict.get(
-          mapKey,
-        ) {
+        let currentEntity = self.dict->Js.Dict.get(mapKey)
+        let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch currentEntity {
+        | Some(ReadNoChangeFromDB(_)) => Obj.magic()
+        | Some(Updated(_)) => Obj.magic()
+        | None => Obj.magic()
+        }
+        // switch (currentEntity, entity) {
+        //   | (Some(existingEntityUpdate), Delete(eventId, eventIdentifier)) =>
+        //
+        // }
+        /*
+        let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch currentEntity {
         | Some(existingEntityUpdate) =>
           switch entity {
           | Delete(_, eventIdentifier)
@@ -65,24 +83,33 @@ module InMemoryStore = {
                 current: entity,
               }
             } else {
-              // in a different event, add it to the histor.
+              // in a different event, add it to the history.
               {
                 current: entity,
                 history: existingEntityUpdate.history->Belt.Array.concat([
                   existingEntityUpdate.current,
                 ]),
+                valueAtStartOfBatch: NotSet /* TODO */,
               }
             }
-          | Read(_) => {
+          | Read(Some(existingEntity)) => {
               current: entity,
               history: existingEntityUpdate.history,
+              valueAtStartOfBatch: AlreadySet(existingEntity),
+            }
+          | Read(None) => {
+              current: entity,
+              history: existingEntityUpdate.history,
+              valueAtStartOfBatch: NotSet,
             }
           }
-        | None => {
+        | None => // This means the entity is being set, but it was never checked if there is an existing entity in the DB.
+          {
             current: entity,
             history: [],
+            valueAtStartOfBatch: NotSet /* TODO */,
           }
-        }
+        }*/
         self.dict->Js.Dict.set(mapKey, entityData)
       } else {
         //Wont do for hackathon
@@ -94,10 +121,11 @@ module InMemoryStore = {
       self.dict
       ->Js.Dict.get(key->self.hasher)
       ->Belt.Option.flatMap(row => {
-        switch row.current {
-        | Set(entity, _eventIdentifier) => Some(entity)
-        | Delete(_key, _eventid) => None
-        | Read(optEntity) => optEntity
+        switch row {
+        | Updated({latest: Set(entity, _)}) => Some(entity)
+        | Updated({latest: Delete(_)}) => None
+        | ReadNoChangeFromDB(AlreadySet(entity)) => Some(entity)
+        | ReadNoChangeFromDB(NotSet) => None
         }
       })
 
@@ -423,7 +451,7 @@ let loadEntitiesToInMemStoreComposer = (
 let makeEntityExecuterComposer = (
   ~idsToLoad: LoadLayer.idsToLoad,
   ~dbReadFn: array<Belt.Set.String.value> => 'a,
-  ~inMemStoreSetFn: ('b, ~key: 'c, ~entity: Types.entityData<'d>) => unit,
+  ~inMemStoreInitFn: ('b, ~key: 'c, ~entity: option<'d>) => unit,
   ~store: 'b,
   ~getEntiyId: 'd => 'c,
   ~unit: 'e,
@@ -438,7 +466,7 @@ let makeEntityExecuterComposer = (
       ->dbReadFn
       ->then(entities => {
         entities->Belt.Array.forEach(entity => {
-          store->inMemStoreSetFn(~key=entity->getEntiyId, ~entity=Types.Read(Some(entity)))
+          store->inMemStoreInitFn(~key=entity->getEntiyId, ~entity=Some(entity))
         })
         if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
           let setOfIdsNotSavedToDb =
@@ -448,7 +476,7 @@ let makeEntityExecuterComposer = (
           setOfIdsNotSavedToDb
           ->Belt.Set.String.toArray
           ->Belt.Array.forEach(entityId => {
-            store->inMemStoreSetFn(~key=entityId, ~entity=Types.Read(None))
+            store->inMemStoreInitFn(~key=entityId, ~entity=None)
           })
         }
       })
@@ -462,7 +490,7 @@ Specifically create an sql executor with async functionality
 let makeSqlEntityExecuter = (
   ~idsToLoad: LoadLayer.idsToLoad,
   ~dbReadFn: (Postgres.sql, array<Belt.Set.String.value>) => Promise.t<Belt.Array.t<'a>>,
-  ~inMemStoreSetFn: ('b, ~key: 'c, ~entity: Types.entityData<'a>) => unit,
+  ~inMemStoreInitFn: ('b, ~key: 'c, ~entity: option<'a>) => unit,
   ~store: 'b,
   ~getEntiyId: 'a => 'c,
 ) => {
@@ -471,7 +499,7 @@ let makeSqlEntityExecuter = (
     ~idsToLoad,
     ~getEntiyId,
     ~store,
-    ~inMemStoreSetFn,
+    ~inMemStoreInitFn,
     ~then=Promise.thenResolve,
     ~unit=Promise.resolve(),
   )
@@ -486,7 +514,7 @@ let executeSqlLoadLayer = (~loadLayer: LoadLayer.t, ~inMemoryStore: InMemoryStor
     makeSqlEntityExecuter(
       ~idsToLoad=loadLayer.{{entity.name.uncapitalized}}IdsToLoad,
       ~dbReadFn=DbFunctions.{{entity.name.capitalized}}.readEntities,
-      ~inMemStoreSetFn=InMemoryStore.{{entity.name.capitalized}}.set,
+      ~inMemStoreInitFn=InMemoryStore.{{entity.name.capitalized}}.initValue,
       ~store=inMemoryStore.{{entity.name.uncapitalized}},
       ~getEntiyId=entity => entity.id,
     ),
@@ -525,34 +553,8 @@ let executeSet = (
     Promise.resolve()
   }
 }
+
 let executeSetEntity = (
-  sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
-  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
-) => {
-  let items = rows->Belt.Array.keepMap(row =>
-    switch row.current {
-    | Set(entity, _) => Some(entity)
-    | _ => None
-    }
-  )
-
-  executeSet(sql, ~items, ~dbFunction)
-}
-
-let executeDelete = (
-  sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
-  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
-) => {
-  // TODO: implement me please (after hackathon)
-  let _ = rows
-  let _ = sql
-  let _ = dbFunction
-  Promise.resolve()
-}
-
-let executeSetSchemaEntity = (
   sql: Postgres.sql,
   ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
   ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
@@ -563,11 +565,11 @@ let executeSetSchemaEntity = (
   let historyArrayWithoutPrev = ref([])
 
   let executeSets = rows->Belt.Array.keepMap(row =>
-    switch row.current {
-    | Set(entity, _eventIdentifier) => {
+    switch row {
+    | Updated({latest, history}) => {
         let _ =
-          row.history
-          ->Belt.Array.concat([row.current])
+          history
+          ->Belt.Array.concat([latest])
           ->Belt.Array.reduce(None, (optPrev: option<(int, int)>, entity) => {
             let processEntity = (
               eventIdentifier: Types.eventIdentifier,
@@ -616,12 +618,10 @@ let executeSetSchemaEntity = (
               )
             | Delete(entityId, eventIdentifier) =>
               processEntity((eventIdentifier: Types.eventIdentifier), entityId, None)
-            | Read(_) =>
-              Js.log("This IS an impossible state")
-              None
             }
           })
-        Some(entity->entityEncoder)
+        // Some(entity->entityEncoder)
+        None // TODO: fix this, it is wrong
       }
     | _ => None
     }
@@ -640,6 +640,19 @@ let executeSetSchemaEntity = (
   } else {
     Promise.resolve()
   }
+}
+
+
+let executeDelete = (
+  sql: Postgres.sql,
+  ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
+  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
+) => {
+  // TODO: implement me please (after hackathon)
+  let _ = rows
+  let _ = sql
+  let _ = dbFunction
+  Promise.resolve()
 }
 
 let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
@@ -664,7 +677,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
   )
 
-  let set{{entity.name.capitalized}}s = executeSet(
+  let set{{entity.name.capitalized}}s = executeSetEntity(
     ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchSet,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
     ~entityEncoder=Types.{{entity.name.uncapitalized}}Entity_encode,

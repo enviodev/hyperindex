@@ -70,18 +70,29 @@ type eventIdentifier = {
   logIndex: int,
 }
 
-type entityData<'entityType> =
+type entityUpdate<'entityType> =
   | Set('entityType, eventIdentifier)
   | Delete(string, eventIdentifier)
-  | Read(option<'entityType> /* if the 'read' operation gives back nothing */) //make delete take a EntityStore.key type
 
-@genType
-type inMemoryStoreRowEntity<'entityType> = {
-  current: entityData<'entityType>,
-  history: array<entityData<'entityType>>,
+type entityValueAtStartOfBatch<'entityType> =
+  | NotSet // The entity isn't in the DB yet
+  | AlreadySet('entityType)
+
+type existingValueInDb<'entityType> =
+  | Retrieved(entityValueAtStartOfBatch<'entityType>)
+  | FetchingFromDb(promise<option<'entityType>>)
+
+type updatedValue<'entityType> = {
+  initial: existingValueInDb<'entityType>,
+  latest: entityUpdate<'entityType>,
+  history: array<entityUpdate<'entityType>>,
 }
+@genType
+type inMemoryStoreRowEntity<'entityType> =
+  | Updated(updatedValue<'entityType>)
+  | ReadNoChangeFromDB(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.
 
-type inMemoryStoreRowMeta<'a> = 'a
+  type inMemoryStoreRowMeta<'a> = 'a
 
 //*************
 //**CONTRACTS**
