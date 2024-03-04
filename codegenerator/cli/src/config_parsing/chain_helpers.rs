@@ -211,6 +211,8 @@ pub enum Network {
     // Explorers:
     // https://explorer.evm.shimmer.network/
     ShimmerEvm = 148,
+    #[subenum(HypersyncNetwork)]
+    Blast = 81457,
 }
 
 impl Network {
