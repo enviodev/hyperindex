@@ -296,7 +296,8 @@ module Decoder = {
           case "object" :
               _d = d.val;
               continue ;
-          
+          default:
+            throw new Error("Unsupported type encountered: " + typeof d);
         }
       };
     }
