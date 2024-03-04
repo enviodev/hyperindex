@@ -260,7 +260,7 @@ impl SystemConfig {
             event_decoder: human_cfg
                 .event_decoder
                 .clone()
-                .unwrap_or(EventDecoder::HypersyncClient),
+                .unwrap_or(EventDecoder::Viem),
             schema,
         })
     }
