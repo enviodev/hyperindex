@@ -40,6 +40,12 @@ let pinoFile: Transport.transportTarget = {
   level: Config.defaultFileLogLevel,
 }
 
+let makeMultiStreamLogger = MultiStreamLogger.make(
+  ~userLogLevel=Config.userLogLevel,
+  ~defaultFileLogLevel=Config.defaultFileLogLevel,
+  ~customLevels=logLevels,
+)
+
 let logger = switch Config.logStrategy {
 | EcsFile =>
   makeWithOptionsAndTransport(
@@ -49,13 +55,7 @@ let logger = switch Config.logStrategy {
     },
     Transport.make(pinoFile),
   )
-| EcsConsole =>
-  makeSyncLogger(
-    ~userLogLevel=Config.userLogLevel,
-    ~customLevels=logLevels,
-    ~logFile=None,
-    ~options=Some(Pino.ECS.make()),
-  )
+| EcsConsole => makeMultiStreamLogger(~logFile=None, ~options=Some(Pino.ECS.make()))
 | FileOnly =>
   makeWithOptionsAndTransport(
     {
@@ -64,74 +64,10 @@ let logger = switch Config.logStrategy {
     },
     Transport.make(pinoFile),
   )
-| ConsoleRaw =>
-  makeSyncLogger(
-    ~userLogLevel=Config.userLogLevel,
-    ~customLevels=logLevels,
-    ~logFile=None,
-    ~options=None,
-  )
-| ConsolePretty =>
-  makeSyncLogger(
-    ~userLogLevel=Config.userLogLevel,
-    ~customLevels=logLevels,
-    ~logFile=None,
-    ~options=None,
-  )
-| Both =>
-  makeSyncLogger(
-    ~userLogLevel=Config.userLogLevel,
-    ~customLevels=logLevels,
-    ~logFile=Some(Config.logFilePath),
-    ~options=None,
-  )
+| ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=None)
+| ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=None)
+| Both => makeMultiStreamLogger(~logFile=Some(Config.logFilePath), ~options=None)
 }
-
-// let logger2 = switch Config.logStrategy {
-// | EcsFile =>
-//   makeWithOptionsAndTransport(
-//     {
-//       ...Pino.ECS.make(),
-//       customLevels: logLevels,
-//     },
-//     Transport.make(pinoFile),
-//   )
-// | EcsConsole =>
-//   make({
-//     ...Pino.ECS.make(),
-//     level: Config.userLogLevel,
-//     customLevels: logLevels,
-//   })
-// | FileOnly =>
-//   makeWithOptionsAndTransport(
-//     {
-//       customLevels: logLevels,
-//       level: Config.defaultFileLogLevel,
-//     },
-//     Transport.make(pinoFile),
-//   )
-// | ConsoleRaw =>
-//   make({
-//     customLevels: logLevels,
-//     level: Config.userLogLevel,
-//   })
-// | ConsolePretty =>
-//   makeWithOptionsAndTransport(
-//     {
-//       customLevels: logLevels,
-//       level: Config.userLogLevel, // Here this log level overrides the pino pretty log level config (since there is only 1 transport.)
-//     },
-//     Transport.make(pinoPretty),
-//   )
-// | Both =>
-//   makeWithOptionsAndTransport(
-//     {
-//       customLevels: logLevels,
-//       level: #trace, // This log level needs to be trace so that the pino pretty and file printing can have any log level.
-//     },
-//     Transport.make({targets: [pinoPretty, pinoFile]}),
-//   )
-// }
 
 let setLogLevel = (level: Pino.logLevel) => {
   logger->setLevel(level)

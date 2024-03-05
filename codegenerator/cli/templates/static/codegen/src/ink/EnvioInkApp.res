@@ -24,9 +24,7 @@ module App = {
       <Newline />
       <Box flexDirection={Column}>
         <Text bold=true> {"GraphQL:"->React.string} </Text>
-        <Link url=hasuraLink>
-          <Text color={Info} underline=true> {hasuraLink->React.string} </Text>
-        </Link>
+        <Text color={Info} underline=true> {hasuraLink->React.string} </Text>
       </Box>
     </Box>
   }

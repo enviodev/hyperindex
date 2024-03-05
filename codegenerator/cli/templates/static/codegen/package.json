@@ -1,16 +1,15 @@
 {
   "name": "generated",
   "version": "0.1.0",
-  "type": "module",
   "scripts": {
     "clean": "rescript clean -with-deps",
     "build": "rescript build -with-deps",
     "watch": "rescript build -with-deps -w",
-    "db-up": "node -e 'import(`./src/Migrations.bs.mjs`).then(m => m.runUpMigrations(true))'",
-    "db-down": "node -e 'import(`./src/Migrations.bs.mjs`).then(m => m.runDownMigrations(true, true))'",
-    "db-setup": "node -e 'import(`./src/Migrations.bs.mjs`).then(m => m.setupDb(true))'",
-    "db-track-tables": "node -e 'import(`./src/Migrations.bs.mjs`).then(m => m.trackAllTables())'",
-    "start": "node src/Index.bs.mjs"
+    "db-up": "node -e 'require(`./src/Migrations.bs.js`).runUpMigrations(true)'",
+    "db-down": "node -e 'require(`./src/Migrations.bs.js`).runDownMigrations(true, true)'",
+    "db-setup": "node -e 'require(`./src/Migrations.bs.js`).setupDb(true)'",
+    "db-track-tables": "node -e 'require(`./src/Migrations.bs.js`).trackAllTables()'",
+    "start": "node src/Index.bs.js"
   },
   "keywords": [
     "ReScript"
@@ -30,9 +29,8 @@
     "date-fns": "3.3.1",
     "ethers": "6.8.0",
     "express": "4.18.2",
-    "ink": "4.4.1",
-    "ink-big-text": "2.0.0",
-    "ink-link": "3.0.0",
+    "ink": "3.2.0",
+    "ink-big-text": "1.2.0",
     "js-sdsl": "4.4.2",
     "node-fetch": "2.7.0",
     "pino": "8.16.1",

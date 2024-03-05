@@ -1,34 +1,31 @@
-// @ocaml.doc(`Please add additional useful formats:
-//
-// hh:mm:ss         | 00:00:00
-// do MMM ''yy      | 1st Jan '21
-// ha do MMM ''yy   | 8PM 1st Jan '21
-// ha               | 8PM
-// iii              | Tues
-// iii MMM          | Tues Jan
-// MMM              | Jan
-// `)
-//
-// type dateFormats = [
-//   | #"HH:mm:ss"
-//   | #"do MMM ''yy"
-//   | #"ha do MMM ''yy"
-//   | #"h:mma do MMM ''yy"
-//   | #ha
-//   | #iii
-//   | #"iii MMM"
-//   | #"do MMM"
-//   | #MMM
-//   | #"h:mma"
-// ]
+/**
+Formats: 
+hh:mm:ss         | 00:00:00
+do MMM ''yy      | 1st Jan '21
+ha do MMM ''yy   | 8PM 1st Jan '21
+ha               | 8PM
+iii              | Tues
+iii MMM          | Tues Jan
+MMM              | Jan
+`)
+*/
+type dateFormats =
+  | @as("HH:mm:ss") HoursMinSec
+  | @as("ha") Hour
+  | @as("do MMM ''yy") DayMonthYear
+  | @as("ha do MMM ''yy") HourDayMonthYear
+  | @as("h:mma do MMM ''yy") HourMinDayMonthYear
+  | @as("iii") DayName
+  | @as("iii MMM") DayNameMonth
+  | @as("do MMM") DayMonth
+  | @as("MMM") Month
+  | @as("h:mma") HourMin
 
-type dateFormats = | @as("h") Seconds
-
-@module("date-fns/format") external format: (Js.Date.t, dateFormats) => string = "default"
+@module("date-fns") external format: (Js.Date.t, dateFormats) => string = "format"
 
 type formatDistanceToNowOptions = {includeSeconds: bool}
-@module("date-fns/formatDistanceToNow")
-external formatDistanceToNow: Js.Date.t => string = "default"
+@module("date-fns")
+external formatDistanceToNow: Js.Date.t => string = "formatDistanceToNow"
 
 @module("date-fns")
 external formatDistance: (Js.Date.t, Js.Date.t) => string = "formatDistance"
@@ -37,9 +34,9 @@ external formatDistance: (Js.Date.t, Js.Date.t) => string = "formatDistance"
 external formatDistanceWithOptions: (Js.Date.t, Js.Date.t, formatDistanceToNowOptions) => string =
   "formatDistance"
 
-@module("date-fns/formatDistanceToNow")
+@module("date-fns")
 external formatDistanceToNowWithOptions: (Js.Date.t, formatDistanceToNowOptions) => string =
-  "default"
+  "formatDistanceToNow"
 
 let formatDistanceToNowWithSeconds = (date: Js.Date.t) =>
   date->formatDistanceToNowWithOptions({includeSeconds: true})
@@ -54,17 +51,17 @@ type durationTimeFormat = {
   seconds: int,
 }
 
-@module("date-fns/formatRelative")
-external formatRelative: (Js.Date.t, Js.Date.t) => string = "default"
+@module("date-fns")
+external formatRelative: (Js.Date.t, Js.Date.t) => string = "formatRelative"
 
 type durationFormatOutput = {format: array<string>}
 
-@module("date-fns/formatDuration")
-external formatDuration: (durationTimeFormat, durationFormatOutput) => string = "default"
+@module("date-fns")
+external formatDuration: (durationTimeFormat, durationFormatOutput) => string = "formatDuration"
 
 type interval = {start: Js_date.t, end: Js_date.t}
 
-@module("date-fns/intervalToDuration")
-external intervalToDuration: interval => durationTimeFormat = "default"
+@module("date-fns")
+external intervalToDuration: interval => durationTimeFormat = "intervalToDuration"
 
-@module("date-fns/fromUnixTime") external fromUnixTime: float => Js.Date.t = "default"
+@module("date-fns") external fromUnixTime: float => Js.Date.t = "fromUnixTime"

@@ -31,7 +31,7 @@ let overrideConsoleLog: Pino.t => unit = %raw(`function (logger) {
 // overrideConsoleLog(Logging.logger)
 open Express
 
-let app = express()
+let app = expressCjs()
 
 app->use(jsonMiddleware())
 
@@ -129,7 +129,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
 
 let main = async () => {
   try {
-    await RegisterHandlers.registerAllHandlers()
+    RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTerminator = !(mainArgs.terminatorOff->Belt.Option.getWithDefault(false))
     // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
@@ -143,10 +143,7 @@ let main = async () => {
       indexerStartTime: Js.Date.make(),
     }
     let stateUpdatedHook = if shouldUseTerminator {
-      // let (globalState, setGlobalState) = React.useState(_ => globalState)
-
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
-
       Some(globalState => globalState->makeAppState->rerender)
     } else {
       None
@@ -161,7 +158,7 @@ let main = async () => {
 
     gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
   } catch {
-  | e => e->ErrorHandling.make(~msg="global catch")->ErrorHandling.log
+  | e => e->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
   }
 }
 

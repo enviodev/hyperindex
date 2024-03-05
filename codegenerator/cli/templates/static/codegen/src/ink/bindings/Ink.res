@@ -217,12 +217,6 @@ module Hooks = {
   external useFocusManager: unit => focusManager = "useFocusManager"
 }
 
-module Link = {
-  @module("ink-link") @react.component
-  external make: (~children: React.element=?, ~url: string, ~fallback: bool=?) => React.element =
-    "default"
-}
-
 module BigText = {
   type font =
     | @as("block") Block
@@ -253,7 +247,7 @@ module BigText = {
     | @as("white") White
 
   type color = | ...chalkTheme | @as("system") System
-  @module("ink-big-text") @react.component
+  @module @react.component
   external make: (
     ~text: string,
     ~font: font=?, //default block
@@ -264,5 +258,5 @@ module BigText = {
     ~lineHeight: int=?, //default 1
     ~space: bool=?, //default true
     ~maxLength: int=?,
-  ) => React.element = "default"
+  ) => React.element = "ink-big-text"
 }

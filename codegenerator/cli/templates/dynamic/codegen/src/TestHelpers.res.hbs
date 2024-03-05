@@ -1,6 +1,4 @@
 open Belt
-@module external registerHandlersTopLevel: unit = "./TestHelpers_registerAllHandlers.js"
-registerHandlersTopLevel
 
 /***** TAKE NOTE ******
 This is a hack to get genType to work!
@@ -80,6 +78,7 @@ module EventFunctions = {
     ~cb: TestHelpers_MockDb.t => unit,
   ) => {
     ({event, mockDb, ?chainId}) => {
+      RegisterHandlers.registerAllHandlers()
       //The user can specify a chainId of an event or leave it off
       //and it will default to "DEFAULT_CHAIN_ID"
       let chainId = chainId->Option.getWithDefault(\"DEFAULT_CHAIN_ID")

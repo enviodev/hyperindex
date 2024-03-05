@@ -36,7 +36,11 @@ let getLatestTimeCaughtUpToHead = (
     }
   })
 
-  DateFns.formatDistanceWithOptions(indexerStartTime, latestTimeStampCaughtUpToHeadFloat->Js.Date.fromFloat, {includeSeconds:true})
+  DateFns.formatDistanceWithOptions(
+    indexerStartTime,
+    latestTimeStampCaughtUpToHeadFloat->Js.Date.fromFloat,
+    {includeSeconds: true},
+  )
 }
 
 let getTotalBlocksProcessed = (chains: array<ChainData.chainData>) => {

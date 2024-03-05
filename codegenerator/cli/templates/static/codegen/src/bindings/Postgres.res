@@ -13,8 +13,8 @@ type poolConfig = {
   transform?: transformConfig,
 }
 
-@module("postgres")
-external makeSql: (~config: poolConfig) => sql = "default"
+@module
+external makeSql: (~config: poolConfig) => sql = "postgres"
 
 @send external beginSql: (sql, sql => array<promise<unit>>) => promise<unit> = "begin"
 
