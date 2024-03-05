@@ -1,10 +1,6 @@
-import {
-  ERC20Contract,
-} from "../generated/src/Handlers.gen.ts";
+import { ERC20Contract } from "../generated/src/Handlers.gen";
 
-import { AccountEntity, ApprovalEntity } from "../generated/src/Types.gen.ts";
-
-
+import { AccountEntity, ApprovalEntity } from "../generated/src/Types.gen";
 
 ERC20Contract.Approval.loader(({ event, context }) => {
   // loading the required Account entity

@@ -2,11 +2,11 @@
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
 
-import { 
+const { 
 {{#each imported_contracts as |contract|}}
   {{contract.name.capitalized}}Contract{{#unless @last}},{{/unless}}
 {{/each}}
-} from "../generated/src/Handlers.bs.js";
+} = require("../generated/src/Handlers.bs.js");
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}

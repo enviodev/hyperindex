@@ -1,11 +1,11 @@
 /*
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
-
+  const {
 {{#each imported_contracts as |contract|}}
-  import { {{contract.name.capitalized
-  }}Contract } from "../generated/src/Handlers.bs.mjs";
+ {{contract.name.capitalized}}Contract,
 {{/each}}
+} = require("../generated/src/Handlers.bs.js");
 
 const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 

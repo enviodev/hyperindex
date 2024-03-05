@@ -1,9 +1,8 @@
 {
   "compilerOptions": {
     "target": "es2020", //required for use with BigInt types
-    "module": "NodeNext", //required for esm
     "lib": [
-      "es6"
+      "es2020"
     ],
     "allowJs": true,
     "checkJs": false,
@@ -11,9 +10,6 @@
     "strict": true,
     "noImplicitAny": true,
     "esModuleInterop": true,
-    "moduleResolution": "NodeNext", //Must be the same as module
-    "allowImportingTsExtensions": true, //Required for .mjs interop
-    "noEmit": true, //Required for allowImportingTsExtensions
     "resolveJsonModule": true,
     "skipLibCheck": true
   },

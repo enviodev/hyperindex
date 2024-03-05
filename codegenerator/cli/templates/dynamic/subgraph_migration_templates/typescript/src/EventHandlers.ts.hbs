@@ -6,7 +6,7 @@ import {
 {{#each imported_contracts as |contract|}}
   {{contract.name.capitalized}}Contract
 {{/each}}
-} from "../generated/src/Handlers.gen.ts";
+} from "../generated/src/Handlers.gen";
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}

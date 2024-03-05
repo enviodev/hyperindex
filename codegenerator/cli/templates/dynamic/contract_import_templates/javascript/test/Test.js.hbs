@@ -1,10 +1,10 @@
 
 {{#with imported_contracts.[0] as | contract |}}
-import assert from "assert";
-import { MockDb, {{contract.name.capitalized}} } from "../generated/src/TestHelpers.bs.mjs";
-import { Addresses } from "../generated/src/bindings/Ethers.bs.mjs";
+const assert = require("assert");
+const { MockDb, {{contract.name.capitalized}} } = require("../generated/src/TestHelpers.bs.js");
+const { Addresses } = require("../generated/src/bindings/Ethers.bs.js");
 
-import { GLOBAL_EVENTS_SUMMARY_KEY } from "../src/EventHandlers";
+const { GLOBAL_EVENTS_SUMMARY_KEY } = require("../src/EventHandlers");
 {{/with}}
 
 const MOCK_EVENTS_SUMMARY_ENTITY = {

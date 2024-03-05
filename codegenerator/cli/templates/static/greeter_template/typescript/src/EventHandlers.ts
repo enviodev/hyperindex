@@ -1,8 +1,6 @@
-import {
-  GreeterContract
-} from "../generated/src/Handlers.gen.ts";
+import { GreeterContract } from "../generated/src/Handlers.gen";
 
-import { UserEntity } from "../generated/src/Types.gen.ts";
+import { UserEntity } from "../generated/src/Types.gen";
 
 /**
 Registers a loader that loads any values from your database that your

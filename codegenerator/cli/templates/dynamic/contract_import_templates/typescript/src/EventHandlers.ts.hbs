@@ -5,14 +5,14 @@ import {
 {{#each imported_contracts as |contract|}}
     {{contract.name.capitalized}}Contract,
 {{/each}}
-} from "../generated/src/Handlers.gen.ts";
+} from "../generated/src/Handlers.gen";
 
 import {
 {{#each imported_contracts as |contract|}}
     {{contract.name.capitalized}},
 {{/each}}
 EventsSummaryEntity
-} from "../generated/src/Types.gen.ts";
+} from "../generated/src/Types.gen";
 
 export const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 

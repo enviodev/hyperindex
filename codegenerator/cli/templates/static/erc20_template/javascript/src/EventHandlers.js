@@ -1,4 +1,4 @@
-import { ERC20Contract } from "../generated/src/Handlers.bs.mjs";
+const { ERC20Contract } = require("../generated/src/Handlers.bs.js");
 
 ERC20Contract.Approval.loader(({ event, context }) => {
   // loading the required Account entity

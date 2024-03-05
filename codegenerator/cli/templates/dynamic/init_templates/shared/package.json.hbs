@@ -1,7 +1,6 @@
 {
   "name": "{{project_name}}",
   "version": "0.1.0",
-  "type": "module", 
   "scripts": {
   {{#if is_typescript}}
     "clean": "tsc --clean",
@@ -19,12 +18,12 @@
     "dev": "{{#if is_rescript}}pnpm build && {{/if}}envio dev",
     "test": "pnpm mocha",
     {{#if is_rescript}}
-    "start": "pnpm build && node generated/src/Index.bs.mjs"
+    "start": "pnpm build && node generated/src/Index.bs.js"
     {{else}}
       {{#if is_typescript}}
-    "start": "ts-node-esm generated/src/Index.bs.mjs"
+    "start": "ts-node generated/src/Index.bs.js"
       {{else}}
-    "start": "node generated/src/Index.bs.mjs"
+    "start": "node generated/src/Index.bs.js"
       {{/if}}
     {{/if}}
   },

@@ -1,11 +1,11 @@
 {{#with imported_contracts.[0] as | contract |}}
     {{#with contract.codegen_events.[0] as | event |}}
 import assert = require("assert")
-import { MockDb, {{contract.name.capitalized}} } from "../generated/src/TestHelpers.gen.ts";
+import { MockDb, {{contract.name.capitalized}} } from "../generated/src/TestHelpers.gen";
 import {
   EventsSummaryEntity,
   {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
-} from "../generated/src/Types.gen.ts";
+} from "../generated/src/Types.gen";
 
 import { Addresses } from "../generated/src/bindings/Ethers.bs";
 
