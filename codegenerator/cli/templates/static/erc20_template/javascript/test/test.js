@@ -1,6 +1,6 @@
 const assert = require("assert");
-const { MockDb, ERC20 } = require("../generated/src/TestHelpers.bs");
-const { Addresses } = require("../generated/src/bindings/Ethers.bs");
+const { TestHelpers } = require("generated");
+const { MockDb, ERC20, Addresses } = TestHelpers;
 
 describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", () => {

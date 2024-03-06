@@ -4,17 +4,12 @@
 import {
 {{#each imported_contracts as |contract|}}
   {{contract.name.capitalized}}Contract,
-{{/each}}
-} from "../generated/src/Handlers.gen";
-
-import {
-{{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
     {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
   {{/each}}
 {{/each}}
 EventsSummaryEntity
-} from "../generated/src/Types.gen";
+} from "generated";
 
 export const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 

@@ -1,13 +1,12 @@
 {{#with imported_contracts.[0] as | contract |}}
     {{#with contract.codegen_events.[0] as | event |}}
-import assert = require("assert")
-import { MockDb, {{contract.name.capitalized}} } from "../generated/src/TestHelpers.gen";
-import {
+import assert from "assert";
+import { 
+  TestHelpers,
   EventsSummaryEntity,
-  {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
-} from "../generated/src/Types.gen";
-
-import { Addresses } from "../generated/src/bindings/Ethers.bs";
+  {{contract.name.capitalized}}_{{event.name.capitalized}}Entity
+} from "generated";
+const { MockDb, {{contract.name.capitalized}}, Addresses } = TestHelpers;
 
 import { GLOBAL_EVENTS_SUMMARY_KEY } from "../src/EventHandlers";
     {{/with}}

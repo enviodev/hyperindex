@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
@@ -13,6 +15,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{Event, EventExt};
+use pathdiff::diff_paths;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -638,6 +641,7 @@ pub struct ProjectTemplate {
     persisted_state: PersistedStateJsonString,
     is_unordered_multichain_mode: bool,
     should_use_hypersync_client_decoder: bool,
+    relative_path_to_root_from_generated: String,
 }
 
 impl ProjectTemplate {
@@ -702,6 +706,18 @@ impl ProjectTemplate {
         let should_use_hypersync_client_decoder =
             cfg.event_decoder == EventDecoder::HypersyncClient;
 
+        let diff_from_current = |path: &PathBuf, base: &PathBuf| -> Result<String> {
+            Ok(diff_paths(path, base)
+                .ok_or_else(|| anyhow!("Failed to diffing paths {:?} and {:?}", path, base))?
+                .join(".")
+                .to_str()
+                .ok_or_else(|| anyhow!("Failed converting path to str"))?
+                .to_string())
+        };
+        let relative_path_to_root_from_generated =
+            diff_from_current(&project_paths.project_root, &project_paths.generated)
+                .context("Failed to diff generated to root path")?;
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
@@ -713,6 +729,7 @@ impl ProjectTemplate {
             persisted_state,
             is_unordered_multichain_mode: cfg.unordered_multichain_mode,
             should_use_hypersync_client_decoder,
+            relative_path_to_root_from_generated,
         })
     }
 }
@@ -728,6 +745,7 @@ mod test {
         },
         project_paths::ParsedProjectPaths,
     };
+    use pretty_assertions::assert_eq;
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
@@ -811,6 +829,11 @@ mod test {
         let expected_chain_configs = vec![chain_config_1];
 
         let project_template = get_project_template_helper("config1.yaml");
+
+        assert_eq!(
+            project_template.relative_path_to_root_from_generated,
+            "../.".to_string()
+        );
 
         assert_eq!(
             expected_chain_configs[0].network_config,

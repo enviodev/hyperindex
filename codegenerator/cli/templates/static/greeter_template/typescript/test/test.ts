@@ -1,7 +1,6 @@
 import assert from "assert";
-import { MockDb, Greeter } from "../generated/src/TestHelpers.gen";
-import { UserEntity } from "../generated/src/Types.gen";
-import { Addresses } from "../generated/src/bindings/Ethers.gen";
+import { TestHelpers, UserEntity } from "generated";
+const { MockDb, Greeter, Addresses } = TestHelpers;
 
 describe("Greeter template tests", () => {
   it("A NewGreeting event creates a User entity", () => {

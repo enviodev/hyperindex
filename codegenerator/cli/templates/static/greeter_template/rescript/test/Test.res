@@ -8,7 +8,7 @@ describe("Greeter template tests", () => {
     let mockDbInitial = TestHelpers.MockDb.createMockDb()
 
     // Initializing values for mock event
-    let userAddress = Ethers.Addresses.defaultAddress
+    let userAddress = TestHelpers.Addresses.defaultAddress
     let greeting = "Hi there"
 
     // Creating a mock event
@@ -44,7 +44,7 @@ describe("Greeter template tests", () => {
     let mockDbInitial = TestHelpers.MockDb.createMockDb()
 
     // Initializing values for mock event
-    let userAddress = Ethers.Addresses.defaultAddress
+    let userAddress = TestHelpers.Addresses.defaultAddress
     let greeting = "Hi there"
     let greetingAgain = "Oh hello again"
 
@@ -89,7 +89,7 @@ describe("Greeter template tests", () => {
       let mockDbInitial = TestHelpers.MockDb.createMockDb()
 
       // Initializing values for mock event
-      let userAddress = Ethers.Addresses.defaultAddress
+      let userAddress = TestHelpers.Addresses.defaultAddress
       let greeting = "Hi there"
       let greetingAgain = "Oh hello again"
 

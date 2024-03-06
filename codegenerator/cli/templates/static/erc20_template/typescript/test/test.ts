@@ -1,7 +1,6 @@
 import assert from "assert";
-import { MockDb, ERC20 } from "../generated/src/TestHelpers.gen";
-import { AccountEntity } from "../generated/src/Types.gen";
-import { Addresses } from "../generated/src/bindings/Ethers.gen";
+import { TestHelpers, AccountEntity } from "generated";
+const { MockDb, ERC20, Addresses } = TestHelpers;
 
 describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", () => {

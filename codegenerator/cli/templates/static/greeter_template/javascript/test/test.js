@@ -1,6 +1,6 @@
 const assert = require("assert");
-const { MockDb, Greeter } = require("../generated/src/TestHelpers.bs");
-const { Addresses } = require("../generated/src/bindings/Ethers.bs");
+const { TestHelpers } = require("generated");
+const { MockDb, Greeter, Addresses } = TestHelpers;
 
 describe("Greeter template tests", () => {
   it("A NewGreeting event creates a User entity", () => {

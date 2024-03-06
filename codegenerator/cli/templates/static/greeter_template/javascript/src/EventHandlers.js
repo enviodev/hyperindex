@@ -1,4 +1,4 @@
-const { GreeterContract } = require("../generated/src/Handlers.bs.js");
+const { GreeterContract } = require("generated");
 
 /**
 Registers a loader that loads any values from your database that your

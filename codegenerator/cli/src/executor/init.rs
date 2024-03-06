@@ -137,8 +137,12 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
         }
     }
 
-    let hbs_template =
-        InitTemplates::new(parsed_init_args.name.clone(), &parsed_init_args.language);
+    let hbs_template = InitTemplates::new(
+        parsed_init_args.name.clone(),
+        &parsed_init_args.language,
+        &parsed_project_paths,
+    )
+    .context("Failed creating init templates")?;
 
     let init_shared_template_dir = template_dirs.get_init_template_dynamic_shared()?;
 

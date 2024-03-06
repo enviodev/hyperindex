@@ -1,4 +1,4 @@
-const { ERC20Contract } = require("../generated/src/Handlers.bs.js");
+const { ERC20Contract } = require("generated");
 
 ERC20Contract.Approval.loader(({ event, context }) => {
   // loading the required Account entity

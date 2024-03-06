@@ -12,6 +12,7 @@ pub struct HandlerPathsTemplate {
     absolute: String,
     relative_to_generated_src: String,
     relative_to_config: String,
+    relative_to_project_root: String,
 }
 
 impl HandlerPathsTemplate {
@@ -29,13 +30,19 @@ impl HandlerPathsTemplate {
 
         let generated_src = project_paths.generated.join("src");
 
-        let relative_to_generated_src = diff_paths(absolute_path.clone(), generated_src)
+        let relative_to_generated_src = diff_paths(&absolute_path, generated_src)
             .ok_or_else(|| anyhow!("could not find handler path relative to generated"))?
             .to_str()
             .ok_or_else(|| anyhow!("Handler path should be unicode"))?
             .to_string();
 
-        let relative_to_config = diff_paths(absolute_path.clone(), config_directory)
+        let relative_to_config = diff_paths(&absolute_path, config_directory)
+            .ok_or_else(|| anyhow!("could not find handler path relative to project root"))?
+            .to_str()
+            .ok_or_else(|| anyhow!("Handler path should be unicode"))?
+            .to_string();
+
+        let relative_to_project_root = diff_paths(&absolute_path, &project_paths.project_root)
             .ok_or_else(|| anyhow!("could not find handler path relative to config"))?
             .to_str()
             .ok_or_else(|| anyhow!("Handler path should be unicode"))?
@@ -50,6 +57,7 @@ impl HandlerPathsTemplate {
             absolute,
             relative_to_generated_src,
             relative_to_config,
+            relative_to_project_root,
         })
     }
 }
@@ -60,6 +68,7 @@ mod tests {
         config_parsing::{entity_parsing::Schema, human_config, system_config::SystemConfig},
         project_paths::ParsedProjectPaths,
     };
+    use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
     #[test]
@@ -116,6 +125,7 @@ mod tests {
         let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
+        println!("project_paths: {:#?}", project_paths);
 
         let yaml_cfg = human_config::deserialize_config_from_yaml(&project_paths.config)
             .expect("Failed deserializing config");
@@ -142,6 +152,8 @@ mod tests {
 
             relative_to_generated_src: "../../configs/src/EventHandler.js".to_string(),
             relative_to_config: "src/EventHandler.js".to_string(),
+            relative_to_project_root: "configs/src/EventHandler.js".to_string(), //Note since its
+                                                                                 //defined in config.yaml with ./ the expected outcome should be the same dir as config
         };
 
         assert_eq!(expected_handler_paths, contract_handler_paths);

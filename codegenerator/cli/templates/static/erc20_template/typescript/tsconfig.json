@@ -16,7 +16,6 @@
   },
   "include": [
     "src",
-    "test",
-    "generated"
+    "test"
   ]
 }

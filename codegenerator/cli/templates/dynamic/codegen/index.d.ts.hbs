@@ -1,0 +1,21 @@
+export { 
+{{#each codegen_contracts as | contract |}}
+{{contract.name.capitalized}}Contract,
+{{/each}}
+} from "./src/Handlers.gen";
+export type * from "./src/Types.gen";
+import { 
+{{#each codegen_contracts as | contract |}}
+{{contract.name.capitalized}},
+{{/each}}
+MockDb,
+Addresses 
+} from "./src/TestHelpers.gen";
+
+export const TestHelpers = {
+{{#each codegen_contracts as | contract |}}
+{{contract.name.capitalized}},
+{{/each}}
+MockDb,
+Addresses 
+};

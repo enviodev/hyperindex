@@ -45,6 +45,7 @@ thiserror = "1.0.50"
 tempdir = "0.3"
 paste = "1.0.12"
 tracing-subscriber = "0.3.17"
+pretty_assertions = "1.4.0"
 
 # NOTE: this is needed for aarch64 linux, since linking of openssl has caused issues via the package manager
 #       See here for this workaround: https://docs.rs/openssl/latest/openssl/#vendored
