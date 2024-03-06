@@ -80,7 +80,10 @@ type entityValueAtStartOfBatch<'entityType> =
 
 type existingValueInDb<'entityType> =
   | Retrieved(entityValueAtStartOfBatch<'entityType>)
-  | FetchingFromDb(promise<option<'entityType>>)
+  // NOTE: currently setting entity history in the db is a simple set. So we need to manually set the 'previous' values - ie there is no sql ensuring we capture the previous value.
+  //       In the case that there is an update to an entity that existed previously, but wasn't either already in the in memory store, or loaded there by a loader, we need to check if there is an existing value.
+  //       We should solve this at the sql layer to prevent lots of un-necessary checks in the future.
+  | FetchingFromDb(promise<option<'entityType>>) 
 
 type updatedValue<'entityType> = {
   initial: existingValueInDb<'entityType>,

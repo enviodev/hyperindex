@@ -217,7 +217,10 @@ module EntityHistory = {
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'entity_type') THEN
           CREATE TYPE ENTITY_TYPE AS ENUM(
           {{#each entities as |entity|}}
-            '{{entity.name.capitalized}}'{{#unless @last}},{{/unless}}
+            '{{entity.name.capitalized}}'
+            {{#unless @last}}
+              ,
+            {{/unless}}
           {{/each}}
           );
         END IF;
@@ -229,19 +232,25 @@ module EntityHistory = {
     let _ = await createEntityTypeEnum()
 
     // NULL for an `entity_id` means that the entity was deleted.
-    await %raw("sql`
+    let _ = await %raw("sql`
       CREATE TABLE \"public\".\"entity_history\" (
+        block_timestamp INTEGER NOT NULL,
         chain_id INTEGER NOT NULL,
-        previous_block_number INTEGER,
-        previous_log_index INTEGER,
         block_number INTEGER NOT NULL,
         log_index INTEGER NOT NULL,
+        previous_block_timestamp INTEGER,
+        previous_chain_id INTEGER,
+        previous_block_number INTEGER,
+        previous_log_index INTEGER,
         params JSON,
-        transaction_hash TEXT NOT NULL,
         entity_type ENTITY_TYPE NOT NULL,
         entity_id TEXT,
-        PRIMARY KEY (entity_id, chain_id, block_number, log_index, entity_type));
+        PRIMARY KEY (entity_id, block_timestamp, chain_id, block_number, log_index, entity_type));
       `")
+
+    let _ = await %raw("sql`
+      CREATE INDEX idx_entity_type_composite ON entity_history(entity_type, entity_id, block_timestamp);
+    `")
   }
 
   @@warning("-21")
@@ -257,106 +266,205 @@ module EntityHistory = {
 
   // NULL for an `entity_id` means that the entity was deleted.
   let createEntityHistoryPostgresFunction: unit => promise<unit> = async () => {
-    await %raw("sql`
-    CREATE OR REPLACE FUNCTION get_entity_history_filter(
-        sort_chain_id integer,
-        start_block integer,
-        start_log_index integer,
-        end_block integer,
-        end_log_index integer
+    let _ = await %raw("sql`
+    CREATE OR REPLACE FUNCTION lte_entity_history(
+        block_timestamp integer,
+        chain_id integer,
+        block_number integer,
+        log_index integer,
+        compare_timestamp integer,
+        compare_chain_id integer,
+        compare_block integer,
+        compare_log_index integer
     )
-    RETURNS SETOF entity_history_filter AS $$
+    RETURNS boolean AS $ltelogic$
     BEGIN
-        RETURN QUERY
-        SELECT
-            DISTINCT ON (coalesce(old.entity_id, new.entity_id))
-            coalesce(old.entity_id, new.entity_id) as entity_id,
-            new.chain_id as chain_id,
-            coalesce(old.params, 'null') as old_val,
-            coalesce(new.params, 'null') as new_val,
-            new.block_number as block_number,
-            old.block_number as previous_block_number,
-            new.log_index as log_index,
-            old.log_index as previous_log_index,
-            new.entity_type as entity_type
-        FROM
-            entity_history old
-            INNER JOIN entity_history next ON 
-            sort_chain_id = next.chain_id 
-            AND
-            (
-                next.block_number > start_block
-                OR (
-                    next.block_number = start_block
-                    AND next.log_index >= start_log_index
+        RETURN (
+            block_timestamp < compare_timestamp
+            OR (
+                block_timestamp = compare_timestamp
+                AND (
+                    chain_id < compare_chain_id
+                    OR (
+                        chain_id = compare_chain_id
+                        AND (
+                            block_number < compare_block
+                            OR (
+                                block_number = compare_block
+                                AND log_index <= compare_log_index
+                            )
+                        )
+                    )
                 )
             )
-            AND (
-                old.block_number < start_block
-                OR (
-                    old.block_number = start_block
-                    AND old.log_index <= start_log_index
-                )
-            )
-            AND (
-                next.block_number < end_block
-                OR (
-                    next.block_number = end_block
-                    AND next.log_index <= end_log_index
-                )
-            )
-            AND old.chain_id = next.chain_id
-            AND old.entity_id = next.entity_id
-            AND old.entity_type = next.entity_type
-            AND old.block_number = next.previous_block_number
-            AND old.log_index = next.previous_log_index
-            FULL OUTER JOIN entity_history new ON old.entity_id = new.entity_id
-            AND sort_chain_id = new.chain_id
-            AND (
-                new.previous_block_number > old.block_number
-                OR (
-                    new.previous_block_number = old.block_number
-                    AND new.previous_log_index >= old.log_index
-                )
-            )
-            AND (
-                new.block_number < end_block
-                OR (
-                    new.block_number = end_block
-                    AND new.log_index <= end_log_index
-                )
-            )
-        WHERE
-            sort_chain_id = new.chain_id
-            AND 
-            (
-                new.block_number <= end_block
-                OR (
-                    new.block_number = end_block
-                    AND new.log_index <= end_log_index
-                )
-            )
-            AND (
-                coalesce(old.block_number, 0) <= start_block
-                OR (
-                    old.block_number = start_block
-                    AND old.log_index <= start_log_index
-                )
-            )
-            AND (
-                coalesce(new.block_number, start_block + 1) > start_block
-                OR (
-                    new.block_number = start_block
-                    AND new.log_index > start_log_index
-                )
-            )
-        ORDER BY
-            coalesce(old.entity_id, new.entity_id),
-            new.block_number DESC,
-            new.log_index DESC;
+        );
     END;
-    $$ LANGUAGE plpgsql STABLE;
-    `")
+    $ltelogic$ LANGUAGE plpgsql STABLE;
+      `")
+
+    // Very similar to lte function but the final comparison on logIndex is a strict lt.
+    let _ = await %raw("sql`
+    CREATE OR REPLACE FUNCTION lt_entity_history(
+        block_timestamp integer,
+        chain_id integer,
+        block_number integer,
+        log_index integer,
+        compare_timestamp integer,
+        compare_chain_id integer,
+        compare_block integer,
+        compare_log_index integer
+    )
+    RETURNS boolean AS $ltlogic$
+    BEGIN
+        RETURN (
+            block_timestamp < compare_timestamp
+            OR (
+                block_timestamp = compare_timestamp
+                AND (
+                    chain_id < compare_chain_id
+                    OR (
+                        chain_id = compare_chain_id
+                        AND (
+                            block_number < compare_block
+                            OR (
+                                block_number = compare_block
+                                AND log_index < compare_log_index
+                            )
+                        )
+                    )
+                )
+            )
+        );
+    END;
+    $ltlogic$ LANGUAGE plpgsql STABLE;
+      `")
+
+    let _ = await %raw("sql`
+      CREATE OR REPLACE FUNCTION get_entity_history_filter(
+          start_timestamp integer,
+          start_chain_id integer,
+          start_block integer,
+          start_log_index integer,
+          end_timestamp integer,
+          end_chain_id integer,
+          end_block integer,
+          end_log_index integer
+      )
+      RETURNS SETOF entity_history_filter AS $$
+      BEGIN
+          RETURN QUERY
+          SELECT
+              DISTINCT ON (coalesce(old.entity_id, new.entity_id))
+              coalesce(old.entity_id, new.entity_id) as entity_id,
+              new.chain_id as chain_id,
+              coalesce(old.params, 'null') as old_val,
+              coalesce(new.params, 'null') as new_val,
+              new.block_number as block_number,
+              old.block_number as previous_block_number,
+              new.log_index as log_index,
+              old.log_index as previous_log_index,
+              new.entity_type as entity_type
+          FROM
+              entity_history old
+              INNER JOIN entity_history next ON
+              old.entity_id = next.entity_id
+              AND old.entity_type = next.entity_type
+              AND old.block_number = next.previous_block_number
+              AND old.log_index = next.previous_log_index
+            -- start <= next -- QUESTION: Should this be <?
+              AND lt_entity_history(
+                  start_timestamp,
+                  start_chain_id,
+                  start_block,
+                  start_log_index,
+                  next.block_timestamp,
+                  next.chain_id,
+                  next.block_number,
+                  next.log_index
+              )
+            -- old < start -- QUESTION: Should this be <=?
+              AND lt_entity_history(
+                  old.block_timestamp,
+                  old.chain_id,
+                  old.block_number,
+                  old.log_index,
+                  start_timestamp,
+                  start_chain_id,
+                  start_block,
+                  start_log_index
+              )
+            -- next <= end
+              AND lte_entity_history(
+                  next.block_timestamp,
+                  next.chain_id,
+                  next.block_number,
+                  next.log_index,
+                  end_timestamp,
+                  end_chain_id,
+                  end_block,
+                  end_log_index
+              )
+              FULL OUTER JOIN entity_history new ON old.entity_id = new.entity_id
+              AND new.entity_type = old.entity_type -- Assuming you want to check if entity types are the same
+              AND lte_entity_history(
+                  start_timestamp,
+                  start_chain_id,
+                  start_block,
+                  start_log_index,
+                  new.block_timestamp,
+                  new.chain_id,
+                  new.block_number,
+                  new.log_index
+              )
+            -- new <= end
+              AND lte_entity_history(
+                  new.previous_block_timestamp,
+                  new.previous_chain_id,
+                  new.previous_block_number,
+                  new.previous_log_index,
+                  end_timestamp,
+                  end_chain_id,
+                  end_block,
+                  end_log_index
+              )
+          WHERE
+              lte_entity_history(
+                  new.block_timestamp,
+                  new.chain_id,
+                  new.block_number,
+                  new.log_index,
+                  end_timestamp,
+                  end_chain_id,
+                  end_block,
+                  end_log_index
+              )
+              AND lte_entity_history(
+                  coalesce(old.block_timestamp, 0),
+                  old.chain_id,
+                  old.block_number,
+                  old.log_index,
+                  start_timestamp,
+                  start_chain_id,
+                  start_block,
+                  start_log_index
+              )
+              AND lte_entity_history(
+                  start_timestamp,
+                  start_chain_id,
+                  start_block,
+                  start_log_index,
+                  coalesce(new.block_timestamp, start_timestamp + 1),
+                  new.chain_id,
+                  new.block_number,
+                  new.log_index
+              )
+          ORDER BY
+              coalesce(old.entity_id, new.entity_id),
+              new.block_number DESC,
+              new.log_index DESC;
+      END;
+      $$ LANGUAGE plpgsql STABLE;
+`")
   }
 
   // This table is purely for the sake of viewing the diffs generated by the postgres function. It will never be written to during the application.
@@ -395,20 +503,6 @@ module {{entity.name.capitalized}} = {
     let _ = await %raw("sql`
       CREATE INDEX IF NOT EXISTS \"{{entity.name.original}}_id\" ON public.\"{{entity.name.original}}\" (id);
     `")
-  }
-
-  let create{{entity.name.capitalized}}HistoryTable:unit => promise<unit> = async () => {
-    // Rather using chain_id + log_index + block_number and not also "transaction_hash TEXT NOT NULL"
-    await %raw("sql`
-      CREATE TABLE \"public\".\"{{entity.name.original}}_history\" (
-        chain_id INTEGER NOT NULL,
-        block_number INTEGER NOT NULL,
-        log_index INTEGER NOT NULL,
-      {{#each entity.params as |param|}}
-        {{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}\" {{param.type_pg}},{{/unless}}
-      {{/each}} 
-        db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-        PRIMARY KEY (\"id\", chain_id, block_number, log_index));`")
   }
 
   let delete{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
@@ -455,8 +549,6 @@ module DbIndexes = {
 }
 
 let deleteAllTables:unit => promise<unit> = async () => {
-  // await EntityHistory.dropEntityHistoryTable()
-
   Logging.trace("Dropping all tables")
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
   @warning("-21")
@@ -546,10 +638,6 @@ await EnumTypes.create{{enum.name.capitalized}}Enum()->Promise.catch(err => {
   await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()->Promise.catch(err => {
     exitCode := Failure
     Logging.errorWithExn(err,`EE802: Error creating {{entity.name.original}} table`)->Promise.resolve
-  })
-  await {{entity.name.capitalized}}.create{{entity.name.capitalized}}HistoryTable()->Promise.catch(err => {
-    exitCode := Failure
-    Logging.errorWithExn(err,`EE802: Error creating {{entity.name.original}} entity history table`)->Promise.resolve
   })
 {{/each}}
 

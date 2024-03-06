@@ -249,18 +249,23 @@ const batchSetEntityHistory = async (sql, entityDataArray) => {
     INSERT INTO "public"."entity_history"
   ${sql(
     entityDataArray,
-    "chain_id", "entity_id", "block_number", "log_index", "transaction_hash", "entity_type", "previous_block_number", "previous_log_index", "params"
+    "chain_id", "entity_id", "block_number", "log_index", "entity_type", "previous_block_number", "previous_log_index", "params"
   )};`
 };
 
 module.exports.batchSetEntityHistoryTable =  async (sql, entityDataArrayWithPrev, entityDataArrayWithoutPrev) => {
+  console.log("Before batch set")
    const result = await fetchPreviousBlockNumbersAndLogIndices(sql, entityDataArrayWithoutPrev)
   const previousData = [...result, ...entityDataArrayWithPrev];
-  return chunkBatchQuery(
+
+  console.log("About to set the entity history")
+  let resultQuery = chunkBatchQuery(
     sql,
     previousData,
     batchSetEntityHistory
   );
+  console.log("Done setting the entity history")
+  return resultQuery;
 };
 
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
