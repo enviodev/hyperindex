@@ -8,6 +8,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::ethabi::Event as EthAbiEvent;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -71,10 +72,6 @@ impl SystemConfig {
 
     pub fn get_entity_map(&self) -> &EntityMap {
         &self.schema.entities
-    }
-
-    pub fn get_entity_names_set(&self) -> HashSet<EntityKey> {
-        self.schema.entities.keys().cloned().collect()
     }
 
     pub fn get_gql_enum(&self, enum_name: &GraphqlEnumKey) -> Option<&GraphQLEnum> {
@@ -420,6 +417,7 @@ impl Event {
             schema
                 .entities
                 .values()
+                .sorted_by_key(|v| &v.name)
                 .cloned()
                 .map(|entity| human_config::RequiredEntity {
                     name: entity.name,

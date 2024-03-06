@@ -12,6 +12,7 @@ use graphql_parser::schema::{
     Definition, Directive, Document, EnumType, Field as ObjField, ObjectType, Type as ObjType,
     TypeDefinition, Value,
 };
+use itertools::Itertools;
 use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
@@ -334,10 +335,14 @@ impl Entity {
         Self::new(name, fields)
     }
 
+    pub fn get_fields<'a>(&'a self) -> Vec<&'a Field> {
+        self.fields.values().sorted_by_key(|v| &v.name).collect()
+    }
+
     pub fn get_relationships(&self) -> Vec<Relationship> {
         let derived_from_fields: Vec<Relationship> = self
-            .fields
-            .values()
+            .get_fields()
+            .into_iter()
             .filter_map(|f| match &f.field_type {
                 FieldType::DerivedFromField {
                     entity_name,
@@ -350,8 +355,8 @@ impl Entity {
             })
             .collect();
         let object_relationship_fields: Vec<Relationship> = self
-            .fields
-            .values()
+            .get_fields()
+            .into_iter()
             .filter_map(|f| f.get_relationship())
             .collect();
 
@@ -363,8 +368,8 @@ impl Entity {
         schema: &'a Schema,
     ) -> anyhow::Result<Vec<(&'a Field, &'a Self)>> {
         let required_entities_with_field = self
-            .fields
-            .values()
+            .get_fields()
+            .into_iter()
             .filter_map(|field| {
                 let gql_scalar = field.field_type.get_underlying_scalar();
                 if let GqlScalar::Custom(name) = gql_scalar {
@@ -389,7 +394,7 @@ impl Entity {
     /// This function will return an error if there is a defined related type where the type does
     /// not exist on the schema.
     fn validate_field_types(&self, schema: &Schema) -> anyhow::Result<()> {
-        for field in self.fields.values() {
+        for field in self.get_fields() {
             field.validate_field_type(schema)?;
         }
         Ok(())

@@ -209,8 +209,8 @@ pub struct EntityRecordTypeTemplate {
 impl EntityRecordTypeTemplate {
     fn from_config_entity(entity: &Entity, config: &SystemConfig) -> Result<Self> {
         let params: Vec<EntityParamTypeTemplate> = entity
-            .fields
-            .values()
+            .get_fields()
+            .iter()
             .map(|field| EntityParamTypeTemplate::from_entity_field(field, config))
             .collect::<Result<_>>()
             .context(format!(
