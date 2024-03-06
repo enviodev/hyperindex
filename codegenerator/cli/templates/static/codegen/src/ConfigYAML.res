@@ -1,6 +1,4 @@
 @genType.opaque
-type aliasChainConfig = Config.chainConfig
-@genType.opaque
 type aliasSyncSource = Config.syncSource
 @genType.opaque
 type aliasAbi = Ethers.abi
@@ -21,7 +19,7 @@ type configYaml = {
   contracts: array<contract>,
 }
 
-let mapChainConfigToConfigYaml: aliasChainConfig => configYaml = chainConfig => {
+let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig => {
   {
     syncSource: chainConfig.syncSource,
     startBlock: chainConfig.startBlock,
