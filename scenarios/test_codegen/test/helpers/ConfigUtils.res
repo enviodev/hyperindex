@@ -4,7 +4,8 @@ exception ConfigFileNotFound(string)
 
 let loadConfigYaml = (~codegenConfigPath: string) => {
   try {
-    let configString = Node_fs.readFileAsUtf8Sync(codegenConfigPath)
+    let configString =
+      NodeJs.Fs.readFileSyncWith(codegenConfigPath, {encoding: "utf8"})->NodeJs.Buffer.toString
 
     let yamlData = loadYaml(configString)
 

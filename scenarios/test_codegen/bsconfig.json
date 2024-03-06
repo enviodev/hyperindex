@@ -1,6 +1,7 @@
 {
   "name": "gravatar",
   "version": "0.1.0",
+  "uncurried": false,
   "sources": [
     {
       "dir": "src",
@@ -25,11 +26,16 @@
       "basic": false
     }
   },
+  "jsx": {
+    "version": 4
+  },
   "bs-dependencies": [
+    "@rescript/react",
     "generated",
     "@ryyppy/rescript-promise",
     "rescript-mocha",
-    "@greenlabs/ppx-spice"
+    "@greenlabs/ppx-spice",
+    "rescript-nodejs"
   ],
   "pinned-dependencies": [
     "generated"

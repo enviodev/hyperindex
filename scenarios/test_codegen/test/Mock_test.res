@@ -14,7 +14,12 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
     MockEvents.eventRouterBatch->Belt.Array.forEach(
-      event => event->EventProcessing.eventRouter(~inMemoryStore, ~cb=_ => ()),
+      event =>
+        event->EventProcessing.eventRouter(
+          ~inMemoryStore,
+          ~cb=_ => (),
+          ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
+        ),
     )
   })
 
@@ -58,6 +63,7 @@ describe("E2E Db check", () => {
       ~inMemoryStore,
       ~eventBatch=MockEvents.eventBatchItems->List.fromArray,
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
+      ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)

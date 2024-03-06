@@ -45,16 +45,18 @@
     "hardhat": "^2.13.1",
     "mocha": "^10.2.0",
     "nyc": "^15.1.0",
-    "rescript": "10.1.4",
-    "rescript-mocha": "^0.9.0",
-    "sinon": "^15.0.4",
-    "ts-node": "^10.9.1",
+    "rescript": "11.0.1",
     "rescript-envsafe": "1.3.0",
     "rescript-express": "0.4.1",
-    "rescript-struct": "4.1.1"
+    "rescript-mocha": "^0.9.0",
+    "rescript-struct": "4.1.1",
+    "sinon": "^15.0.4",
+    "ts-node": "^10.9.1"
   },
   "dependencies": {
+    "@rescript/react": "0.12.1",
     "generated": "workspace:*",
+    "rescript-nodejs": "16.0.0",
     "typescript": "^5.0.4"
   }
 }

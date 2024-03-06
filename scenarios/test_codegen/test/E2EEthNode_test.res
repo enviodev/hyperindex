@@ -63,6 +63,7 @@ describe("E2E Integration Test", () => {
       chainManager,
       maxBatchSize: Env.maxProcessBatchSize,
       maxPerChainQueueSize: Env.maxPerChainQueueSize,
+      indexerStartTime: Js.Date.make(),
     }
 
     let gsManager = globalState->GlobalStateManager.make

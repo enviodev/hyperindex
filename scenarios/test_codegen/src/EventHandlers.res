@@ -1,10 +1,10 @@
 open Types
 
-Handlers.GravatarContract.NewGravatar.loader((~event as _, ~context as _) => {
+Handlers.GravatarContract.NewGravatar.loader(_ => {
   ()
 })
 
-Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {
+Handlers.GravatarContract.NewGravatar.handler(({event, context}) => {
   let gravatarSize: Enums.gravatarSize = #SMALL
   let gravatarObject: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
@@ -18,7 +18,7 @@ Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {
   context.gravatar.set(gravatarObject)
 })
 
-Handlers.GravatarContract.UpdatedGravatar.loader((~event, ~context) => {
+Handlers.GravatarContract.UpdatedGravatar.loader(({event, context}) => {
   Js.log("hello")
   context.gravatar.gravatarWithChangesLoad(
     event.params.id->Ethers.BigInt.toString,
@@ -26,7 +26,7 @@ Handlers.GravatarContract.UpdatedGravatar.loader((~event, ~context) => {
   )
 })
 
-Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
+Handlers.GravatarContract.UpdatedGravatar.handler(({event, context}) => {
   /// Some examples of user logging
   context.log.debug(`We are processing the event, ${event.blockHash} (debug)`)
   context.log.info(`We are processing the event, ${event.blockHash} (info)`)
@@ -85,10 +85,9 @@ Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Handlers.GravatarContract.TestEventThatCopiesBigIntViaLinkedEntities.handlerAsync(async (
-  ~event as _,
-  ~context,
-) => {
+Handlers.GravatarContract.TestEventThatCopiesBigIntViaLinkedEntities.handlerAsync(async ({
+  context,
+}) => {
   let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
     switch await context.a.get(idOfGrandparent) {
     | Some(a) =>
