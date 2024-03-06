@@ -553,7 +553,7 @@ impl RescriptType {
     fn to_string(&self) -> String {
         match self {
             RescriptType::Int => "int".to_string(),
-            RescriptType::Float => "float".to_string(),
+            RescriptType::Float => "dbNumericFloat".to_string(),
             RescriptType::BigInt => "Ethers.BigInt.t".to_string(),
             RescriptType::Address => "Ethers.ethAddress".to_string(),
             RescriptType::String => "string".to_string(),
