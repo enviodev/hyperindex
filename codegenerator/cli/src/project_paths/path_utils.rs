@@ -1,6 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::anyhow;
+use itertools::Itertools;
 
 use super::ParsedProjectPaths;
 
@@ -22,12 +23,12 @@ pub fn get_config_path_relative_to_root(
 
     let path_relative = PathBuf::from(relative_config_path);
     let path_joined = config_directory.join(path_relative);
-    let path = normalize_path(&path_joined);
+    let path = normalize_path(path_joined);
 
     Ok(path)
 }
 
-pub fn normalize_path(path: &Path) -> PathBuf {
+pub fn normalize_path(path: PathBuf) -> PathBuf {
     let mut components = path.components().peekable();
 
     let mut normalized_path_buf = match components.clone().peek() {
@@ -74,41 +75,75 @@ pub fn normalize_path(path: &Path) -> PathBuf {
     normalized_path_buf
 }
 
+/// Add ./ to a path if its not already represented as a relative path
+/// Panics if window "prefix" is used
+pub fn add_leading_relative_dot(path: PathBuf) -> PathBuf {
+    match path.components().next() {
+        Some(component) => match component {
+            Component::ParentDir | Component::CurDir => path,
+            Component::Normal(_) => PathBuf::from(".").join(path),
+            Component::RootDir => path,
+            Component::Prefix(_) => unreachable!("Windows Prefix path component unreachable"),
+        },
+        None => PathBuf::from("."),
+    }
+}
+
+/// Add /. to the end of a path if its not already ending in /.
+pub fn add_trailing_relative_dot(path: PathBuf) -> PathBuf {
+    //Note components doesn't pick up on trailing CurDir, so always add it on and return
+    let components = [path.components().collect_vec(), vec![Component::CurDir]].concat();
+    PathBuf::from_iter(components)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::normalize_path;
+    use super::*;
+    use pretty_assertions::assert_eq;
     use std::path::PathBuf;
-
     // Good case for a syntax macro to shorten each test to a single line.
-    macro_rules! test_normalization {
-        ($($name:ident: $input:expr, $expected:expr,)*) => {
+    macro_rules! test_path_function {
+        ($func:expr; $($name:ident: $input:expr, $expected:expr,)*) => {
             $(
                 paste::item! {
                 #[test]
                 fn [< test_path_ $name >]() {
-                    let unnormalized_path = PathBuf::from($input);
-                    let normalized_path = normalize_path(&unnormalized_path);
-                    let expected_normalized_path = PathBuf::from($expected);
-                    assert_eq!(normalized_path, expected_normalized_path);
+                    let input = PathBuf::from($input);
+                    let output = $func(input);
+                    let expected = PathBuf::from($expected);
+                    assert_eq!(expected.to_str(), output.to_str());
                 }
                 }
             )*
         };
     }
 
-    test_normalization! {
+    test_path_function!(normalize_path;
         backtrack:                     "my_dir/another_dir/../my_file.js",             "my_dir/my_file.js",
         backtrack_twice:               "my_dir/another_dir/../../my_file.js",          "my_file.js",
         backtrack_to_parent:           "my_dir/another_dir/../../../my_file.js",       "../my_file.js",
         backtrack_to_parents_parent:   "my_dir/../another_dir/../../../my_file.js",    "../../my_file.js",
         root:                          "/my_dir/another_dir/../../my_file.js",         "/my_file.js",
         start_with_parent:             "../my_dir/another_dir/../my_file.js",          "../my_dir/my_file.js",
-    }
+    );
 
     #[test]
     #[should_panic]
     fn normalize_path_root_parent() {
         let unnormalized_path = PathBuf::from("/../my_file.js");
-        normalize_path(&unnormalized_path);
+        normalize_path(unnormalized_path);
     }
+
+    test_path_function!(add_leading_relative_dot;
+        leading_test_dot_dot_slash_dot: "../.", "../.",
+        leading_test_dot_dot: "..", "..",
+        leading_test_generated:  "generated", "./generated",
+        leading_test_dot_slash_generated:  "./generated", "./generated",
+    );
+
+    test_path_function!(add_trailing_relative_dot;
+        trailing_generated: "generated", "generated/.",
+        trailing_test_dot_dot_slash_dot: "../.", "../.",
+        trailing_test_dot_slash_dir_slash_dot: "./dir/.", "./dir/.",
+    );
 }

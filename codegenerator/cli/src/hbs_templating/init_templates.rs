@@ -1,4 +1,7 @@
-use crate::{cli_args::clap_definitions::Language, project_paths::ParsedProjectPaths};
+use crate::{
+    cli_args::clap_definitions::Language,
+    project_paths::{path_utils::add_leading_relative_dot, ParsedProjectPaths},
+};
 use anyhow::{anyhow, Context};
 use pathdiff::diff_paths;
 use regex::Regex;
@@ -32,16 +35,15 @@ impl InitTemplates {
             "latest".to_string()
         };
 
-        let diff_from_current =
-            |path: &PathBuf, base: &PathBuf| -> anyhow::Result<String> {
-                Ok(PathBuf::from_str(".")?
-                    .join(diff_paths(path, base).ok_or_else(|| {
-                        anyhow!("Failed to diffing paths {:?} and {:?}", path, base)
-                    })?)
-                    .to_str()
-                    .ok_or_else(|| anyhow!("Failed converting path to str"))?
-                    .to_string())
-            };
+        let diff_from_current = |path: &PathBuf, base: &PathBuf| -> anyhow::Result<String> {
+            Ok(add_leading_relative_dot(
+                diff_paths(path, base)
+                    .ok_or_else(|| anyhow!("Failed to diffing paths {:?} and {:?}", path, base))?,
+            )
+            .to_str()
+            .ok_or_else(|| anyhow!("Failed converting path to str"))?
+            .to_string())
+        };
         let relative_path_from_root_to_generated =
             diff_from_current(&project_paths.generated, &project_paths.project_root)
                 .context("Failed to diff generated from root path")?;

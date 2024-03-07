@@ -26,7 +26,7 @@ impl HandlerPathsTemplate {
             .ok_or_else(|| anyhow!("Unexpected config file should have a parent directory"))?;
         let handler_path_relative = PathBuf::from(&contract.handler_path);
         let handler_path_joined = config_directory.join(handler_path_relative);
-        let absolute_path = path_utils::normalize_path(&handler_path_joined);
+        let absolute_path = path_utils::normalize_path(handler_path_joined);
 
         let generated_src = project_paths.generated.join("src");
 

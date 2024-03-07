@@ -10,7 +10,10 @@ use crate::{
         system_config::{self, SystemConfig},
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
-    project_paths::{handler_paths::HandlerPathsTemplate, ParsedProjectPaths},
+    project_paths::{
+        handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
+        ParsedProjectPaths,
+    },
     template_dirs::TemplateDirs,
 };
 use anyhow::{anyhow, Context, Result};
@@ -707,12 +710,13 @@ impl ProjectTemplate {
             cfg.event_decoder == EventDecoder::HypersyncClient;
 
         let diff_from_current = |path: &PathBuf, base: &PathBuf| -> Result<String> {
-            Ok(diff_paths(path, base)
-                .ok_or_else(|| anyhow!("Failed to diffing paths {:?} and {:?}", path, base))?
-                .join(".")
-                .to_str()
-                .ok_or_else(|| anyhow!("Failed converting path to str"))?
-                .to_string())
+            Ok(add_trailing_relative_dot(
+                diff_paths(path, base)
+                    .ok_or_else(|| anyhow!("Failed to diffing paths {:?} and {:?}", path, base))?,
+            )
+            .to_str()
+            .ok_or_else(|| anyhow!("Failed converting path to str"))?
+            .to_string())
         };
         let relative_path_to_root_from_generated =
             diff_from_current(&project_paths.project_root, &project_paths.generated)

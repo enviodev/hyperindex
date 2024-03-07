@@ -72,8 +72,7 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
                             .context(format!("Could not render file at {}", path_str))?;
 
                         //Setup output directory
-                        let output_dir_path =
-                            normalize_path(self.output_dir.join(parent).as_path());
+                        let output_dir_path = normalize_path(self.output_dir.join(parent));
                         let output_dir_path_str = output_dir_path.to_str().ok_or({
                             anyhow!("Could not cast output path to str in generate_hbs_templates")
                         })?;

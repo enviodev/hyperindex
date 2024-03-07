@@ -24,13 +24,13 @@ impl ParsedProjectPaths {
         generated: &str,
         config: &str,
     ) -> anyhow::Result<ParsedProjectPaths> {
-        let project_root = PathBuf::from(project_root);
+        let project_root = PathBuf::from(&project_root);
         let generated_relative_path = PathBuf::from(generated);
         if let Some(Component::ParentDir) = generated_relative_path.components().peekable().peek() {
             return Err(anyhow!("Generated folder must be in project directory"));
         }
         let generated_joined: PathBuf = project_root.join(generated_relative_path);
-        let generated = path_utils::normalize_path(&generated_joined);
+        let generated = path_utils::normalize_path(generated_joined);
 
         let config_relative_path = PathBuf::from(config);
         if let Some(Component::ParentDir) = config_relative_path.components().peekable().peek() {
@@ -38,7 +38,7 @@ impl ParsedProjectPaths {
         }
 
         let config_joined: PathBuf = project_root.join(config_relative_path);
-        let config = path_utils::normalize_path(&config_joined);
+        let config = path_utils::normalize_path(config_joined);
 
         Ok(ParsedProjectPaths {
             project_root,
@@ -87,17 +87,16 @@ impl TryFrom<InitInteractive> for ParsedProjectPaths {
 
 #[cfg(test)]
 mod tests {
+
     use super::ParsedProjectPaths;
+    use pretty_assertions::assert_eq;
     use std::path::PathBuf;
     #[test]
     fn test_project_path_default_case() {
-        let project_root = "./";
-        let config = "config.yaml";
-        let generated = "generated/";
-        let project_paths = ParsedProjectPaths::new(project_root, generated, config).unwrap();
+        let project_paths = ParsedProjectPaths::default();
 
         let expected_project_paths = ParsedProjectPaths {
-            project_root: PathBuf::from("./"),
+            project_root: PathBuf::from("."),
             config: PathBuf::from("config.yaml"),
             generated: PathBuf::from("generated"),
         };
