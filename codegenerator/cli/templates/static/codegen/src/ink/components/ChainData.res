@@ -17,11 +17,21 @@ type synced = {
 }
 
 type progress = SearchingForEvents(searching) | Syncing(syncing) | Synced(synced)
+
+let getNumberOfEventsProccessed = (progress: progress) => {
+  switch progress {
+  | SearchingForEvents(_) => 0
+  | Syncing(syncing) => syncing.numEventsProcessed
+  | Synced(synced) => synced.numEventsProcessed
+  }
+}
 type chainData = {
   chainId: int,
   isHyperSync: bool,
   progress: progress,
 }
+
+@send external toLocaleString: int => string = "toLocaleString"
 
 module BlocksDisplay = {
   @react.component
@@ -30,11 +40,11 @@ module BlocksDisplay = {
       <Text> {"blocks: "->React.string} </Text>
       <Box flexDirection={Column} alignItems={FlexEnd}>
         <Box>
-          <Text> {latestProcessedBlock->React.int} </Text>
+          <Text> {latestProcessedBlock->toLocaleString->React.string} </Text>
         </Box>
         <Box>
           <Text> {"/"->React.string} </Text>
-          <Text> {currentBlockHeight->React.int} </Text>
+          <Text> {currentBlockHeight->toLocaleString->React.string} </Text>
         </Box>
       </Box>
     </Box>
@@ -43,7 +53,15 @@ module BlocksDisplay = {
 
 module SyncBar = {
   @react.component
-  let make = (~chainId, ~loaded, ~buffered=?, ~outOf, ~loadingColor, ~isHyperSync=true) => {
+  let make = (
+    ~chainId,
+    ~loaded,
+    ~buffered=?,
+    ~outOf,
+    ~loadingColor,
+    ~isHyperSync=true,
+    ~isSearching=false,
+  ) => {
     <Box flexDirection=Row width=Str("80%")>
       <Box width={Num(20)}>
         {isHyperSync ? <Text color=Secondary> {"⚡"->React.string} </Text> : React.null}
@@ -51,7 +69,11 @@ module SyncBar = {
         <Text> {chainId->React.int} </Text>
         <Text> {" "->React.string} </Text>
       </Box>
-      <BufferedProgressBar loaded ?buffered outOf loadingColor />
+      {isSearching
+        ? <Text color={Primary}>
+            <Spinner type_={Aesthetic} />
+          </Text>
+        : <BufferedProgressBar loaded ?buffered outOf loadingColor />}
     </Box>
   }
 }
@@ -64,7 +86,7 @@ let make = (~chainData: chainData) => {
   | SearchingForEvents({latestFetchedBlockNumber, currentBlockHeight}) =>
     <Box flexDirection={Column}>
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
-        <Text> {"Searching..."->React.string} </Text>
+        <Text> {"Searching for events..."->React.string} </Text>
         <BlocksDisplay latestProcessedBlock=latestFetchedBlockNumber currentBlockHeight />
       </Box>
       <SyncBar
@@ -73,6 +95,7 @@ let make = (~chainData: chainData) => {
         outOf={currentBlockHeight}
         loadingColor={Primary}
         isHyperSync
+        isSearching=true
       />
       <Newline />
     </Box>
@@ -87,7 +110,7 @@ let make = (~chainData: chainData) => {
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Box>
           <Text> {"Events Processed: "->React.string} </Text>
-          <Text bold=true> {numEventsProcessed->React.int} </Text>
+          <Text bold=true> {numEventsProcessed->toLocaleString->React.string} </Text>
         </Box>
         <BlocksDisplay latestProcessedBlock currentBlockHeight />
       </Box>

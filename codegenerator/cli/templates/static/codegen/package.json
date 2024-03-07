@@ -30,6 +30,7 @@
     "ethers": "6.8.0",
     "express": "4.18.2",
     "ink": "3.2.0",
+    "ink-spinner": "4",
     "ink-big-text": "1.2.0",
     "js-sdsl": "4.4.2",
     "node-fetch": "2.7.0",

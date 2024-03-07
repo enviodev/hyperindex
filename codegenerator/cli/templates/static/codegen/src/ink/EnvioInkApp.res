@@ -7,12 +7,30 @@ type appState = {
   indexerStartTime: Js.Date.t,
 }
 
+let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
+  chains->Belt.Array.reduce(0, (acc, chain) => {
+    acc + chain.progress->ChainData.getNumberOfEventsProccessed
+  })
+}
+
+module TotalEventsProcessed = {
+  @react.component
+  let make = (~totalEventsProcessed) => {
+    <Text>
+      <Text bold=true> {"Total events processed: "->React.string} </Text>
+      <Text color={Secondary}>
+        {`${totalEventsProcessed->ChainData.toLocaleString}`->React.string}
+      </Text>
+    </Text>
+  }
+}
 module App = {
   @react.component
   let make = (~appState: appState) => {
     let {chains, indexerStartTime} = appState
     let hasuraPort = "8080"
     let hasuraLink = `http://localhost:${hasuraPort}`
+    let totalEventsProcessed = getTotalNumEventsProcessed(~chains)
     <Box flexDirection={Column}>
       <BigText text="envio" colors=[Secondary, Primary] font={Block} />
       {chains
@@ -20,6 +38,7 @@ module App = {
         <ChainData key={i->Int.toString} chainData />
       })
       ->React.array}
+      <TotalEventsProcessed totalEventsProcessed />
       <SyncETA chains indexerStartTime />
       <Newline />
       <Box flexDirection={Column}>
