@@ -57,7 +57,7 @@ app->get("/metrics", (_req, res) => {
 
 type args = {
   @as("sync-from-raw-events") syncFromRawEvents?: bool,
-  @as("terminator-off") terminatorOff?: bool,
+  @as("tui-off") tuiOff?: bool,
 }
 
 type process
@@ -131,7 +131,7 @@ let main = async () => {
   try {
     RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-    let shouldUseTerminator = !(mainArgs.terminatorOff->Belt.Option.getWithDefault(false))
+    let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(false))
     // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
 
     let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)
@@ -142,7 +142,7 @@ let main = async () => {
       maxPerChainQueueSize: Env.maxPerChainQueueSize,
       indexerStartTime: Js.Date.make(),
     }
-    let stateUpdatedHook = if shouldUseTerminator {
+    let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)
     } else {

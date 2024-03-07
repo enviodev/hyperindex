@@ -104,12 +104,14 @@ let logFilePath =
 let userLogLevel = getLogLevelConfig(~name="LOG_LEVEL", ~default=#info)
 let defaultFileLogLevel = getLogLevelConfig(~name="FILE_LOG_LEVEL", ~default=#trace)
 
-type logStrategyType = EcsFile | EcsConsole | FileOnly | ConsoleRaw | ConsolePretty | Both
+type logStrategyType =
+  EcsFile | EcsConsole | EcsConsoleMultistream | FileOnly | ConsoleRaw | ConsolePretty | Both
 let logStrategy = envSafe->EnvSafe.get(
   ~name="LOG_STRATEGY",
   ~struct=S.union([
     S.literalVariant(String("ecs-file"), EcsFile),
     S.literalVariant(String("ecs-console"), EcsConsole),
+    S.literalVariant(String("ecs-console-multistream"), EcsConsoleMultistream),
     S.literalVariant(String("file-only"), FileOnly),
     S.literalVariant(String("console-raw"), ConsoleRaw),
     S.literalVariant(String("console-pretty"), ConsolePretty),

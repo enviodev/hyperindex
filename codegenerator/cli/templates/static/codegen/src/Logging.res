@@ -55,7 +55,13 @@ let logger = switch Config.logStrategy {
     },
     Transport.make(pinoFile),
   )
-| EcsConsole => makeMultiStreamLogger(~logFile=None, ~options=Some(Pino.ECS.make()))
+| EcsConsoleMultistream => makeMultiStreamLogger(~logFile=None, ~options=Some(Pino.ECS.make()))
+| EcsConsole =>
+  make({
+    ...Pino.ECS.make(),
+    level: Config.userLogLevel,
+    customLevels: logLevels,
+  })
 | FileOnly =>
   makeWithOptionsAndTransport(
     {
