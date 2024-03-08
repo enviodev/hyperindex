@@ -46,8 +46,6 @@ describe("Raw Events Table Migrations", () => {
       mockRawEventRow
     )}`;
 
-    first_valid_row_query.catch((e) => console.error(e));
-
     await expect(first_valid_row_query).to.eventually.be.fulfilled;
 
     let second_valid_row_query = sql`INSERT INTO raw_events ${sql(
