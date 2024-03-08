@@ -45,10 +45,6 @@ external levels: t => 'a = "levels"
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
 let createPinoMessage = (message): pinoMessageBlob => Obj.magic(message)
 
-/**
-Jank solution to make logs use console log wrather than stream.write so that ink 
-can render the logs statically.
-*/
 module Transport = {
   type t
   type optionsObject
@@ -111,6 +107,10 @@ module ECS = {
   external make: 'a => options = "@elastic/ecs-pino-format"
 }
 
+/**
+Jank solution to make logs use console log wrather than stream.write so that ink 
+can render the logs statically.
+*/
 module MultiStreamLogger = {
   type stream = {write: string => unit}
   type multiStream = {stream: stream, level: logLevel}
