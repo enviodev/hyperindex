@@ -6,7 +6,7 @@ use envio::{
 };
 use std::{fs, io, path::Path, time::Duration};
 use strum::IntoEnumIterator;
-use tokio::{task::JoinSet, time::timeout};
+use tokio::time::timeout;
 
 fn delete_contents_of_folder<P: AsRef<std::path::Path>>(path: P) -> io::Result<()> {
     for entry in fs::read_dir(path)? {
@@ -83,47 +83,34 @@ fn generate_init_args_combinations() -> Vec<TemplateLangCombo> {
 async fn run_all_init_combinations() {
     let combinations = generate_init_args_combinations();
 
-    let mut join_set = JoinSet::new();
-
     for combo in combinations {
         let dir = combo.get_dir();
         let project_paths = combo.get_project_paths();
         let init_args = combo.init_args;
         //spawn a thread for fetching schema
-        join_set.spawn(async move {
-            clear_path_if_it_exists(&dir).expect("unable to clear directories");
-            println!("Running with init args: {:?}", init_args);
+        clear_path_if_it_exists(&dir).expect("unable to clear directories");
+        println!("Running with init args: {:?}", init_args);
 
-            //5 minute timeout
-            let timeout_duration: Duration = Duration::from_secs(5 * 60);
+        //5 minute timeout
+        let timeout_duration: Duration = Duration::from_secs(60);
 
-            match timeout(timeout_duration, run_init_args(&init_args, &project_paths)).await {
-                Err(e) => panic!(
-                    "Timed out after elapsed {} on running init args: {:?}",
-                    e, init_args
-                ),
-                Ok(res) => match res {
-                    Err(e) => {
-                        panic!(
-                            "Failed to run with init args: {:?}, due to error: {:?}",
-                            init_args, e
-                        )
-                    }
-                    Ok(()) => {
-                        println!("Finished for combination: {:?}", init_args);
-                    }
-                },
-            };
-        });
-    }
-
-    //Await all the envio init and write threads before finishing
-    while let Some(join) = join_set.join_next().await {
-        if join.is_err() {
-            join_set.shutdown().await;
-            join.unwrap();
-            assert!(false);
-        }
+        match timeout(timeout_duration, run_init_args(&init_args, &project_paths)).await {
+            Err(e) => panic!(
+                "Timed out after elapsed {} on running init args: {:?}",
+                e, init_args
+            ),
+            Ok(res) => match res {
+                Err(e) => {
+                    panic!(
+                        "Failed to run with init args: {:?}, due to error: {:?}",
+                        init_args, e
+                    )
+                }
+                Ok(()) => {
+                    println!("Finished for combination: {:?}", init_args);
+                }
+            },
+        };
     }
 }
 
