@@ -1,9 +1,10 @@
 // In postgres floats are stored as numeric, which get returned to us as strtings. So the decoder / encoder need to do that for us.
 module Float = {
+  @genType
   type dbNumericFloat = float
 
   let dbNumericFloat_encode = (dbNumericFloat_value: dbNumericFloat) =>
-    dbNumericFloat_value->Js.Json.number
+    dbNumericFloat_value->Js.Float.toString->Js.Json.string
 
   let dbNumericFloat_decode: Js.Json.t => result<dbNumericFloat, Spice.decodeError> = json =>
     switch json->Js.Json.decodeString {
