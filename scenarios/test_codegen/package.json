@@ -53,6 +53,7 @@
   },
   "dependencies": {
     "@rescript/react": "0.12.1",
+    "bignumber.js": "^9.1.2",
     "generated": "workspace:*",
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
