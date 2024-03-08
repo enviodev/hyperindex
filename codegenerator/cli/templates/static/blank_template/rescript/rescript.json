@@ -22,15 +22,13 @@
       "Js": "Js"
     },
     "generatedFileExtension": ".gen.ts",
-    "moduleResolution": "node16",
-    "module": "es6",
     "debug": {
       "all": false,
       "basic": false
     }
   },
   "package-specs": {
-    "module": "es6",
+    "module": "commonjs",
     "in-source": true
   },
   "jsx": {
