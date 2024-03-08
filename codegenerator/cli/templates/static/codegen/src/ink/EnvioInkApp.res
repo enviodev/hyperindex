@@ -19,7 +19,7 @@ module TotalEventsProcessed = {
     <Text>
       <Text bold=true> {"Total events processed: "->React.string} </Text>
       <Text color={Secondary}>
-        {`${totalEventsProcessed->ChainData.toLocaleString}`->React.string}
+        {`${totalEventsProcessed->ChainData.formatLocaleString}`->React.string}
       </Text>
     </Text>
   }

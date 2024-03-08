@@ -31,7 +31,10 @@ type chainData = {
   progress: progress,
 }
 
-@send external toLocaleString: int => string = "toLocaleString"
+type number
+@val external number: int => number = "Number"
+@send external toLocaleString: number => string = "toLocaleString"
+let formatLocaleString = n => n->number->toLocaleString
 
 module BlocksDisplay = {
   @react.component
@@ -40,11 +43,11 @@ module BlocksDisplay = {
       <Text> {"blocks: "->React.string} </Text>
       <Box flexDirection={Column} alignItems={FlexEnd}>
         <Box>
-          <Text> {latestProcessedBlock->toLocaleString->React.string} </Text>
+          <Text> {latestProcessedBlock->formatLocaleString->React.string} </Text>
         </Box>
         <Box>
           <Text> {"/"->React.string} </Text>
-          <Text> {currentBlockHeight->toLocaleString->React.string} </Text>
+          <Text> {currentBlockHeight->formatLocaleString->React.string} </Text>
         </Box>
       </Box>
     </Box>
@@ -110,7 +113,7 @@ let make = (~chainData: chainData) => {
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Box>
           <Text> {"Events Processed: "->React.string} </Text>
-          <Text bold=true> {numEventsProcessed->toLocaleString->React.string} </Text>
+          <Text bold=true> {numEventsProcessed->formatLocaleString->React.string} </Text>
         </Box>
         <BlocksDisplay latestProcessedBlock currentBlockHeight />
       </Box>
