@@ -3,7 +3,7 @@ module Float = {
   type dbNumericFloat = float
 
   let dbNumericFloat_encode = (dbNumericFloat_value: dbNumericFloat) =>
-    dbNumericFloat_value->Js.Json.number
+    dbNumericFloat_value->Js.Float.toString->Js.Json.string
 
   let dbNumericFloat_decode: Js.Json.t => result<dbNumericFloat, Spice.decodeError> = json =>
     switch json->Js.Json.decodeString {

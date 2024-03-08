@@ -226,7 +226,7 @@ module {{contract.name.capitalized}}Contract = {
                   switch opt{{entity_field.relational_key.capitalized}} {
                   | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
                   | None =>
-                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
+                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database with id ${ {{#if entity_field.is_optional}} {{entity_field.relational_key.uncapitalized}}_field {{else}} {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id {{/if}} }.
 Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
 `)
 
