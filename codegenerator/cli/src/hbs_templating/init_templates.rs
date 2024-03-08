@@ -15,6 +15,7 @@ pub struct InitTemplates {
     is_typescript: bool,
     is_javascript: bool,
     envio_version: String,
+    //Used for the package.json reference to generated in handlers
     relative_path_from_root_to_generated: String,
 }
 
@@ -35,6 +36,11 @@ impl InitTemplates {
             "latest".to_string()
         };
 
+        //Take the absolute paths of  project root and generated, diff them to get
+        //relative path from root to generated and add a leading dot. So in a default project, if your
+        //generated folder is at root folder "generated". Then this should output ./generated
+        //Or say its at "artifact/generated" you should get "./artifacts/generated" etc
+        //Used for the package.json reference to generated in handlers
         let diff_from_current = |path: &PathBuf, base: &PathBuf| -> anyhow::Result<String> {
             Ok(add_leading_relative_dot(
                 diff_paths(path, base)

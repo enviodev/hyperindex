@@ -644,6 +644,7 @@ pub struct ProjectTemplate {
     persisted_state: PersistedStateJsonString,
     is_unordered_multichain_mode: bool,
     should_use_hypersync_client_decoder: bool,
+    //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
 }
 
@@ -709,6 +710,12 @@ impl ProjectTemplate {
         let should_use_hypersync_client_decoder =
             cfg.event_decoder == EventDecoder::HypersyncClient;
 
+        //Take the absolute paths of  project root and generated, diff them to get
+        //relative path from generated to root and add a trailing dot. So in a default project, if your
+        //generated folder is at ./generated. Then this should output ../.
+        //OR say for instance its at artifacts/generated. This should output ../../.
+        //Generated path on construction has to be inside the root directory
+        //Used for the package.json reference to handlers in generated
         let diff_from_current = |path: &PathBuf, base: &PathBuf| -> Result<String> {
             Ok(add_trailing_relative_dot(
                 diff_paths(path, base)
@@ -733,6 +740,7 @@ impl ProjectTemplate {
             persisted_state,
             is_unordered_multichain_mode: cfg.unordered_multichain_mode,
             should_use_hypersync_client_decoder,
+            //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
         })
     }
