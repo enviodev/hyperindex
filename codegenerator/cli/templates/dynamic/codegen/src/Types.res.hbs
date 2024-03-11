@@ -4,8 +4,6 @@
 @spice @genType.as("Id")
 type id = string
 
-open GqlDbCustomTypes.Float
-
 @@warning("-30")
 @genType
 type rec {{#each entities as | entity |}}{{#unless @first}}
