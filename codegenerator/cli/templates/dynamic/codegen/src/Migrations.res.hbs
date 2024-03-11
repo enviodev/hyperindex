@@ -242,10 +242,14 @@ module EntityHistory = {
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
-    await %raw("sql`
+    let _ = await %raw("sql`
       CREATE TABLE \"public\".\"{{entity.name.original}}\" ({{#each entity.params as |param|}}{{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}\" {{param.type_pg}},{{/unless}}{{/each}} 
         db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
         PRIMARY KEY (\"id\"));`")
+
+    let _ = await %raw("sql`
+      CREATE INDEX IF NOT EXISTS \"{{entity.name.original}}_id\" ON public.\"{{entity.name.original}}\" (id);
+    `")
   }
 
   let create{{entity.name.capitalized}}HistoryTable:unit => promise<unit> = async () => {
