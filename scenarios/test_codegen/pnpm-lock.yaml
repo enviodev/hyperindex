@@ -147,6 +147,9 @@ importers:
       ink-big-text:
         specifier: 1.2.0
         version: 1.2.0(ink@3.2.0)(react@18.2.0)
+      ink-spinner:
+        specifier: 4.0.3
+        version: 4.0.3(ink@3.2.0)(react@18.2.0)
       js-sdsl:
         specifier: 4.4.2
         version: 4.4.2
@@ -191,7 +194,7 @@ importers:
         specifier: 0.1.14
         version: 0.1.14
       rescript:
-        specifier: '11'
+        specifier: 11.0.1
         version: 11.0.1
 
 packages:
@@ -2422,6 +2425,11 @@ packages:
       restore-cursor: 3.1.0
     dev: false
 
+  /cli-spinners@2.9.2:
+    resolution: {integrity: sha512-ywqV+5MmyL4E7ybXgKys4DugZbX0FC6LnwrhjuykIjnK9k8OQacQ7axGKnjDXWNhns0xot3bZI5h55H8yo9cJg==}
+    engines: {node: '>=6'}
+    dev: false
+
   /cli-truncate@2.1.0:
     resolution: {integrity: sha512-n8fOixwDD6b/ObinzTrp1ZKFzbgvKZvuz/TvejnLn1aQfC6r52XEx85FmuC+3HI+JM7coBRXUvNqEU2PHVrHpg==}
     engines: {node: '>=8'}
@@ -3658,6 +3666,18 @@ packages:
       cfonts: 2.10.1
       ink: 3.2.0(react@18.2.0)
       prop-types: 15.8.1
+      react: 18.2.0
+    dev: false
+
+  /ink-spinner@4.0.3(ink@3.2.0)(react@18.2.0):
+    resolution: {integrity: sha512-uJ4nbH00MM9fjTJ5xdw0zzvtXMkeGb0WV6dzSWvFv2/+ks6FIhpkt+Ge/eLdh0Ah6Vjw5pLMyNfoHQpRDRVFbQ==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      ink: '>=3.0.5'
+      react: '>=16.8.2'
+    dependencies:
+      cli-spinners: 2.9.2
+      ink: 3.2.0(react@18.2.0)
       react: 18.2.0
     dev: false
 
