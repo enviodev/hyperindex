@@ -56,14 +56,18 @@ let getTotalBlocksProcessed = (chains: array<ChainData.chainData>) => {
 
 let useEta = (~chains, ~indexerStartTime) => {
   let (secondsToSub, setSecondsToSub) = React.useState(_ => 0.)
-  React.useEffect0(() => {
+  let (timeSinceStart, setTimeSinceStart) = React.useState(_ => 0.)
+
+  React.useEffect2(() => {
+    setTimeSinceStart(_ => Js.Date.now() -. indexerStartTime->Js.Date.valueOf)
+    setSecondsToSub(_ => 0.)
+
     let intervalId = Js.Global.setInterval(() => {
       setSecondsToSub(prev => prev +. 1.)
     }, 1000)
 
     Some(() => Js.Global.clearInterval(intervalId))
-  })
-  let timeSinceStart = Js.Date.now() -. indexerStartTime->Js.Date.valueOf
+  }, (chains, indexerStartTime))
 
   //blocksProcessed/remainingBlocks = timeSoFar/eta
   //eta = (timeSoFar/blocksProcessed) * remainingBlocks
