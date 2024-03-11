@@ -73,7 +73,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
     chains: globalState.chainManager.chainFetchers
     ->ChainMap.values
     ->Array.map(cf => {
-      let {currentBlockHeight, numEventsProcessed, fetchState} = cf
+      let {currentBlockHeight, numEventsProcessed, fetchState, numBatchesFetched} = cf
       let latestFetchedBlockNumber = fetchState->FetchState.getLatestFullyFetchedBlock
 
       let progress: ChainData.progress = switch cf {
@@ -87,8 +87,6 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
         Synced({
           firstEventBlockNumber,
           latestProcessedBlock,
-          currentBlockHeight,
-          latestFetchedBlockNumber,
           timestampCaughtUpToHead,
           numEventsProcessed,
         })
@@ -102,20 +100,17 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
         Syncing({
           firstEventBlockNumber,
           latestProcessedBlock,
-          currentBlockHeight,
-          latestFetchedBlockNumber,
           numEventsProcessed,
         })
-      | {firstEventBlockNumber: None} =>
-        SearchingForEvents({
-          currentBlockHeight,
-          latestFetchedBlockNumber,
-        })
+      | {firstEventBlockNumber: None} => SearchingForEvents
       }
 
       (
         {
           progress,
+          currentBlockHeight,
+          latestFetchedBlockNumber,
+          numBatchesFetched,
           chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
           isHyperSync: switch cf.chainConfig.syncSource {
           | HyperSync(_) => true

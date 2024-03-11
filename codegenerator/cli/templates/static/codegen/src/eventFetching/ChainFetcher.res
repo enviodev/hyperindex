@@ -12,6 +12,7 @@ type t = {
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
   numEventsProcessed: int,
+  numBatchesFetched: int,
   mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t, // Dead code until we look at re-orgs again.
 }
 
@@ -26,6 +27,7 @@ let make = (
   ~logger,
   ~timestampCaughtUpToHead,
   ~numEventsProcessed,
+  ~numBatchesFetched,
 ): t => {
   let (endpointDescription, chainWorker) = switch chainConfig.syncSource {
   | HyperSync(serverUrl) => (
@@ -49,6 +51,7 @@ let make = (
     latestProcessedBlock,
     timestampCaughtUpToHead,
     numEventsProcessed,
+    numBatchesFetched,
   }
 }
 
@@ -71,6 +74,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) 
     ~latestProcessedBlock=None,
     ~timestampCaughtUpToHead=None,
     ~numEventsProcessed=0,
+    ~numBatchesFetched=0,
     ~logger,
   )
 }
@@ -134,6 +138,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
     ~latestProcessedBlock=latestProcessedBlockChainMetadata,
     ~timestampCaughtUpToHead=None, // recalculate this on startup
     ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
+    ~numBatchesFetched=0,
     ~logger,
   )
 }

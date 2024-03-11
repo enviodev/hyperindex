@@ -10,13 +10,12 @@ let isIndexerFullySynced = (chains: array<ChainData.chainData>) => {
   })
 }
 let getTotalRemainingBlocks = (chains: array<ChainData.chainData>) => {
-  chains->Array.reduce(0, (accum, current) => {
-    switch current.progress {
-    | Syncing({latestProcessedBlock, currentBlockHeight})
-    | Synced({latestProcessedBlock, currentBlockHeight}) =>
+  chains->Array.reduce(0, (accum, {progress, currentBlockHeight, latestFetchedBlockNumber}) => {
+    switch progress {
+    | Syncing({latestProcessedBlock})
+    | Synced({latestProcessedBlock}) =>
       currentBlockHeight - latestProcessedBlock + accum
-    | SearchingForEvents({latestFetchedBlockNumber, currentBlockHeight}) =>
-      currentBlockHeight - latestFetchedBlockNumber + accum
+    | SearchingForEvents => currentBlockHeight - latestFetchedBlockNumber + accum
     }
   })
 }
@@ -32,7 +31,7 @@ let getLatestTimeCaughtUpToHead = (
         ? timestampCaughtUpToHead->Js.Date.valueOf
         : accum
     | Syncing(_)
-    | SearchingForEvents(_) => accum
+    | SearchingForEvents => accum
     }
   })
 
@@ -44,17 +43,57 @@ let getLatestTimeCaughtUpToHead = (
 }
 
 let getTotalBlocksProcessed = (chains: array<ChainData.chainData>) => {
-  chains->Array.reduce(0, (accum, current) => {
-    switch current.progress {
+  chains->Array.reduce(0, (accum, {progress, latestFetchedBlockNumber}) => {
+    switch progress {
     | Syncing({latestProcessedBlock, firstEventBlockNumber})
     | Synced({latestProcessedBlock, firstEventBlockNumber}) =>
       latestProcessedBlock - firstEventBlockNumber + accum
-    | SearchingForEvents({latestFetchedBlockNumber}) => latestFetchedBlockNumber + accum
+    | SearchingForEvents => latestFetchedBlockNumber + accum
     }
   })
 }
 
+let useShouldDisplayEta = (~chains: array<ChainData.chainData>) => {
+  let (shouldDisplayEta, setShouldDisplayEta) = React.useState(_ => false)
+  React.useEffect(() => {
+    //Only compute this while it is not displaying eta
+    if !shouldDisplayEta {
+      //Each chain should have fetched at least one batch
+      let (allChainsHaveFetchedABatch, totalNumBatchesFetched) = chains->Array.reduce((true, 0), (
+        (allChainsHaveFetchedABatch, totalNumBatchesFetched),
+        chain,
+      ) => {
+        (
+          allChainsHaveFetchedABatch && chain.numBatchesFetched >= 1,
+          totalNumBatchesFetched + chain.numBatchesFetched,
+        )
+      })
+
+      //Min num fetched batches is num of chains + 2. All
+      // Chains should have fetched at least 1 batch. (They
+      // could then be blocked from fetching if they are past
+      //the max queue size on first batch)
+      // Only display once an additinal 2 batches have been fetched to allow
+      // eta to realistically stabalize
+      let numChains = chains->Array.length
+      let minTotalBatches = numChains + 2
+      let hasMinNumBatches = totalNumBatchesFetched >= minTotalBatches
+
+      let shouldDisplayEta = allChainsHaveFetchedABatch && hasMinNumBatches
+
+      if shouldDisplayEta {
+        setShouldDisplayEta(_ => true)
+      }
+    }
+
+    None
+  }, [chains])
+
+  shouldDisplayEta
+}
+
 let useEta = (~chains, ~indexerStartTime) => {
+  let shouldDisplayEta = useShouldDisplayEta(~chains)
   let (secondsToSub, setSecondsToSub) = React.useState(_ => 0.)
   let (timeSinceStart, setTimeSinceStart) = React.useState(_ => 0.)
 
@@ -73,7 +112,7 @@ let useEta = (~chains, ~indexerStartTime) => {
   //eta = (timeSoFar/blocksProcessed) * remainingBlocks
 
   let blocksProcessed = getTotalBlocksProcessed(chains)->Int.toFloat
-  if blocksProcessed > 0. {
+  if shouldDisplayEta && blocksProcessed > 0. {
     let nowDate = Js.Date.now()
     let remainingBlocks = getTotalRemainingBlocks(chains)->Int.toFloat
     let etaFloat = timeSinceStart /. blocksProcessed *. remainingBlocks

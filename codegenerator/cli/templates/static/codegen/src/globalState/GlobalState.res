@@ -187,6 +187,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     firstEventBlockNumber,
     latestProcessedBlock,
     timestampCaughtUpToHead,
+    numBatchesFetched: chainFetcher.numBatchesFetched + 1
   }
 
   let updatedFetchers = state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher)

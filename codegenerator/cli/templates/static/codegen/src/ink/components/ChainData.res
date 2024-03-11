@@ -1,12 +1,6 @@
 open Ink
 
-type searching = {
-  latestFetchedBlockNumber: int,
-  currentBlockHeight: int,
-}
-
 type syncing = {
-  ...searching,
   firstEventBlockNumber: int,
   latestProcessedBlock: int,
   numEventsProcessed: int,
@@ -16,11 +10,11 @@ type synced = {
   timestampCaughtUpToHead: Js.Date.t,
 }
 
-type progress = SearchingForEvents(searching) | Syncing(syncing) | Synced(synced)
+type progress = SearchingForEvents | Syncing(syncing) | Synced(synced)
 
 let getNumberOfEventsProccessed = (progress: progress) => {
   switch progress {
-  | SearchingForEvents(_) => 0
+  | SearchingForEvents => 0
   | Syncing(syncing) => syncing.numEventsProcessed
   | Synced(synced) => synced.numEventsProcessed
   }
@@ -29,6 +23,9 @@ type chainData = {
   chainId: int,
   isHyperSync: bool,
   progress: progress,
+  latestFetchedBlockNumber: int,
+  currentBlockHeight: int,
+  numBatchesFetched: int,
 }
 
 type number
@@ -83,10 +80,10 @@ module SyncBar = {
 
 @react.component
 let make = (~chainData: chainData) => {
-  let {chainId, progress, isHyperSync} = chainData
+  let {chainId, progress, isHyperSync, latestFetchedBlockNumber, currentBlockHeight} = chainData
 
   switch progress {
-  | SearchingForEvents({latestFetchedBlockNumber, currentBlockHeight}) =>
+  | SearchingForEvents =>
     <Box flexDirection={Column}>
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Text> {"Searching for events..."->React.string} </Text>
@@ -102,13 +99,7 @@ let make = (~chainData: chainData) => {
       />
       <Newline />
     </Box>
-  | Syncing({
-      latestFetchedBlockNumber,
-      currentBlockHeight,
-      firstEventBlockNumber,
-      latestProcessedBlock,
-      numEventsProcessed,
-    }) =>
+  | Syncing({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed}) =>
     <Box flexDirection={Column}>
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Box>
@@ -127,13 +118,7 @@ let make = (~chainData: chainData) => {
       />
       <Newline />
     </Box>
-  | Synced({
-      latestFetchedBlockNumber,
-      currentBlockHeight,
-      firstEventBlockNumber,
-      latestProcessedBlock,
-      numEventsProcessed,
-    }) =>
+  | Synced({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed}) =>
     <Box flexDirection={Column}>
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Box>
