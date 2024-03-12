@@ -53,7 +53,12 @@ module EventFunctions = {
   The default chain ID to use (ethereum mainnet) if a user does not specify int the 
   eventProcessor helper
   */
-  let \"DEFAULT_CHAIN_ID" = 1
+  let \"DEFAULT_CHAIN_ID" = try {
+    ChainMap.Chain.all->Array.getExn(0)->ChainMap.Chain.toChainId
+  } catch {
+  | _ =>
+    Js.Exn.raiseError("No default chain Id found, please add at least 1 chain to your config.yaml.")
+  }
 
   /**
   A function composer to help create individual processEvent functions
