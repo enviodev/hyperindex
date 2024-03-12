@@ -53,9 +53,12 @@ echo "Starting indexer"
 $envio_cmd dev &
 
 function cleanup_indexer_process() {
-	if [[ -n $(lsof -t -i :9898) ]]; then
+    local pids=$(lsof -t -i :9898)
+    if [[ -n "$pids" ]]; then
 		echo "Killing the indexer process if it is still running"
-		kill $(lsof -t -i :9898)
+        kill $pids || echo "Warning: Failed to kill process(es) with PID(s) $pids"
+    else
+        echo "No indexer process found running on port 9898."
 	fi
 }
 trap cleanup_indexer_process EXIT ERR # Cleanup on exit (success) or ERR (failure)
