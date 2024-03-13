@@ -126,7 +126,7 @@ let main = async () => {
   try {
     RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
-    let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(false))
+    let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Config.tuiOffEnvVar))
     // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
 
     let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)

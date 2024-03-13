@@ -50,7 +50,7 @@ $envio_cmd stop || true
 # $envio_cmd start & PID=$!
 
 echo "Starting indexer"
-$envio_cmd dev &
+TUI_OFF="true" $envio_cmd dev &
 
 function cleanup_indexer_process() {
     local pids=$(lsof -t -i :9898)
