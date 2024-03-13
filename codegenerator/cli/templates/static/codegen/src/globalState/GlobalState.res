@@ -80,35 +80,27 @@ let updateLatestProcessedBlocks = (
     chainManager: {
       ...state.chainManager,
       chainFetchers: state.chainManager.chainFetchers->ChainMap.map(cf => {
-        let chain = cf.chainConfig.chain
-        let {latestProcessedBlock, numEventsProcessed} = latestProcessedBlocks->ChainMap.get(chain)
+        let {chainConfig: {chain}, fetchState} = cf
+        let {numEventsProcessed, latestProcessedBlock} = latestProcessedBlocks->ChainMap.get(chain)
 
         let hasArbQueueEvents =
           state.chainManager.arbitraryEventPriorityQueue
           ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
           ->Option.isSome //TODO this is more expensive than it needs to be
-        let fetchState = cf.fetchState
         let queueSize = fetchState->FetchState.queueSize
 
         let hasNoMoreEventsToProcess = !hasArbQueueEvents && queueSize == 0
+
         let latestProcessedBlock = if hasNoMoreEventsToProcess {
           fetchState->FetchState.getLatestFullyFetchedBlock->Some
         } else {
           latestProcessedBlock
         }
 
-        let timestampCaughtUpToHead =
-          cf.timestampCaughtUpToHead->Option.isNone &&
-          // don't reset this once it's initially set
-          hasNoMoreEventsToProcess &&
-          cf.isFetchingAtHead
-            ? Js.Date.make()->Some
-            : cf.timestampCaughtUpToHead
         {
           ...cf,
           latestProcessedBlock,
           numEventsProcessed,
-          timestampCaughtUpToHead,
         }
       }),
     },
@@ -151,7 +143,9 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       ~id=fetchStateRegisterId,
     )
     ->Utils.unwrapResultExn
+
   let chainFetcher = chainFetcher->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
+
   let firstEventBlockNumber = switch parsedQueueItems[0] {
   | Some(item) if chainFetcher.firstEventBlockNumber->Option.isNone => item.blockNumber->Some
   | _ => chainFetcher.firstEventBlockNumber
@@ -161,23 +155,14 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     state.chainManager.arbitraryEventPriorityQueue
     ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
     ->Option.isSome //TODO this is more expensive than it needs to be
-
   let queueSize = updatedFetchState->FetchState.queueSize
-
   let hasNoMoreEventsToProcess = !hasArbQueueEvents && queueSize == 0
+
   let latestProcessedBlock = if hasNoMoreEventsToProcess {
     updatedFetchState->FetchState.getLatestFullyFetchedBlock->Some
   } else {
     chainFetcher.latestProcessedBlock
   }
-
-  let timestampCaughtUpToHead =
-    chainFetcher.timestampCaughtUpToHead->Option.isNone &&
-    // don't reset this once it's initially set
-    hasNoMoreEventsToProcess &&
-    chainFetcher.isFetchingAtHead
-      ? Js.Date.make()->Some
-      : chainFetcher.timestampCaughtUpToHead
 
   let updatedChainFetcher = {
     ...chainFetcher,
@@ -186,15 +171,17 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     isFetchingBatch: false,
     firstEventBlockNumber,
     latestProcessedBlock,
-    timestampCaughtUpToHead,
-    numBatchesFetched: chainFetcher.numBatchesFetched + 1
+    numBatchesFetched: chainFetcher.numBatchesFetched + 1,
   }
 
-  let updatedFetchers = state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher)
+  let chainManager = {
+    ...state.chainManager,
+    chainFetchers: state.chainManager.chainFetchers->ChainMap.set(chain, updatedChainFetcher),
+  }
 
   let nextState = {
     ...state,
-    chainManager: {...state.chainManager, chainFetchers: updatedFetchers},
+    chainManager,
   }
 
   Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.heighestQueriedBlockNumber, ~chain)
@@ -311,14 +298,44 @@ let actionReducer = (state: t, action: action) => {
       }
     })
 
+    let updatedChainManager = {
+      ...state.chainManager,
+      chainFetchers,
+      arbitraryEventPriorityQueue,
+    }
+
+    let nextItemOnQueue = updatedChainManager->ChainManager.peakNextBatchItem
+
+    //Update the timestampCaughtUpToHead values
+    let chainFetchers = updatedChainManager.chainFetchers->ChainMap.map(cf => {
+      //Set the timestamp caught up to head in the case that
+      // 1. its not already set
+      //2. its currently fetching at head
+      //3. the next queue item is None, meaning at that point in time we are synchronizing chains at the head
+      //(there can be items still on the queue of the chain, they are just waiting for other chains)
+      let timestampCaughtUpToHead =
+        cf.timestampCaughtUpToHead->Option.isNone &&
+        //Don't just check if there are no more queue items on the given chain
+        //Need to account for syncronization at the head between chains.
+        cf.isFetchingAtHead &&
+        nextItemOnQueue->Option.isNone
+          ? Js.Date.make()->Some
+          : cf.timestampCaughtUpToHead
+      {
+        ...cf,
+        timestampCaughtUpToHead,
+      }
+    })
+
+    let chainManager = {
+      ...updatedChainManager,
+      chainFetchers,
+    }
+
     (
       {
         ...state,
-        chainManager: {
-          ...state.chainManager,
-          chainFetchers,
-          arbitraryEventPriorityQueue,
-        },
+        chainManager,
       },
       [NextQuery(CheckAllChains)],
     )
@@ -349,7 +366,9 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
 
     switch nextQuery {
     | WaitForNewBlock =>
-      if !isFetchingAtHead && currentBlockHeight != 0 && fetchState->FetchState.queueSize == 0 {
+      //Waiting for a new block implies we are at the head or at the initial range
+      //query
+      if !isFetchingAtHead && currentBlockHeight != 0 {
         logger->Logging.childInfo(
           "All events have been fetched, they should finish processing the handlers soon.",
         )

@@ -299,6 +299,18 @@ let popBatchItem = (
   }
 }
 
+/**
+Simply calls popBatchItem in isolation using the chain manager without
+the context of a batch
+*/
+let peakNextBatchItem = (self: t): option<earliestQueueItem> => {
+  popBatchItem(
+    ~fetchStatesMap=self.chainFetchers->ChainMap.map(cf => cf.fetchState),
+    ~arbitraryEventQueue=self.arbitraryEventPriorityQueue,
+    ~isUnorderedMultichainMode=self.isUnorderedMultichainMode,
+  )
+}
+
 type batchRes = {
   batch: list<Types.eventBatchQueueItem>,
   batchSize: int,
