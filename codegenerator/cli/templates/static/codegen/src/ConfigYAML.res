@@ -6,7 +6,6 @@ type aliasAbi = Ethers.abi
 type eventName = string
 
 type contract = {
-  name: string,
   abi: aliasAbi,
   addresses: array<Ethers.ethAddress>,
   events: array<eventName>,
@@ -16,7 +15,7 @@ type configYaml = {
   syncSource: aliasSyncSource,
   startBlock: int,
   confirmedBlockThreshold: int,
-  contracts: array<contract>,
+  contracts: Js.Dict.t<contract>,
 }
 
 let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig => {
@@ -24,14 +23,18 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
     syncSource: chainConfig.syncSource,
     startBlock: chainConfig.startBlock,
     confirmedBlockThreshold: chainConfig.confirmedBlockThreshold,
-    contracts: Belt.Array.map(chainConfig.contracts, contract => {
-      {
-        name: contract.name,
-        abi: contract.abi,
-        addresses: contract.addresses,
-        events: Belt.Array.map(contract.events, event => event->Types.eventNameToString),
-      }
-    }),
+    contracts: Js.Dict.fromArray(
+      Belt.Array.map(chainConfig.contracts, contract => {
+        (
+          contract.name,
+          {
+            abi: contract.abi,
+            addresses: contract.addresses,
+            events: Belt.Array.map(contract.events, event => event->Types.eventNameToString),
+          },
+        )
+      }),
+    ),
   }
 }
 
