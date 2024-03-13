@@ -30,7 +30,7 @@ jobs:
       commit_hash: ${{ steps.vars.outputs.hash_short }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -115,7 +115,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set new version in Cargo.toml
         working-directory: codegenerator/cli
@@ -220,7 +220,7 @@ jobs:
             codegenerator/${{ steps.man.outputs.envio_man }}
 
       - name: Install node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: "18.16.0"
           registry-url: "https://registry.npmjs.org"
@@ -266,13 +266,13 @@ jobs:
         working-directory: codegenerator/cli/npm/envio
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install node
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: "18.16.0"
           registry-url: "https://registry.npmjs.org"
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v3
         with:
           version: 8
       - name: Publish the package
@@ -291,7 +291,7 @@ jobs:
           echo "Publishing with tag ${RELEASE_TYPE}"
           npm publish --access public --tag ${RELEASE_TYPE}
 
-   # TODO: add back the integration tests and work out how to automate this. This has been causing issues previously.
+    # TODO: add back the integration tests and work out how to automate this. This has been causing issues previously.
   # update-npm-tag:
   #   if: ${{ needs.prepare.outputs.is_tagged }}
   #   needs:
@@ -305,7 +305,7 @@ jobs:
   #         VERSION: ${{ needs.prepare.outputs.tag_name }}
   #       run: |
   #         npm dist-tag add envio@${VERSION} next
-  
+
   ## NOTE: we no longer need to build/push an image every commit.
   # build-and-push:
   #   name: "build, publish and add docker container for deployment"
@@ -316,7 +316,7 @@ jobs:
   #
   #   steps:
   #     - name: Checkout
-  #       uses: actions/checkout@v3
+  #       uses: actions/checkout@v4
   #
   #     - name: Set up Docker Buildx
   #       id: buildx

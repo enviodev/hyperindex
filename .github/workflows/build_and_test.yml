@@ -34,8 +34,8 @@ jobs:
           - 5433:5432
 
     steps:
-      - uses: actions/checkout@v3
-      - uses: dorny/paths-filter@v2
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
         id: changes
         with:
           filters: |
@@ -72,7 +72,7 @@ jobs:
             ${{ runner.os }}-solidity-hardhat-${{ hashFiles('**/hardhat.config.*s') }}
             ${{ runner.os }}-solidity-hardhat-
 
-      - uses: pnpm/action-setup@v2
+      - uses: pnpm/action-setup@v3
         if: steps.changes.outputs.testChanges == 'true'
         with:
           version: 8.9
@@ -104,7 +104,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.changes.outputs.testChanges == 'true'
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 18.15.0
 
