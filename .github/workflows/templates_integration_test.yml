@@ -7,7 +7,6 @@ on:
       # The following two branch names can be used to force build a version for development and sharing a patch.
       - "integration-testing-*"
 
-
 defaults:
   run:
     working-directory: codegenerator/integration_tests
@@ -41,10 +40,9 @@ jobs:
 
       - uses: pnpm/action-setup@v2
         with:
-          version: 8.9
+          version: "8.9"
 
       - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
-        if: steps.changes.outputs.testChanges == 'true'
         id: pnpm-cache
         shell: bash
         run: |
@@ -59,15 +57,10 @@ jobs:
             ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
             ${{ runner.os }}-pnpm-store-
 
-      # - name: Cargo Build
-      #   if: steps.changes.outputs.testChanges == 'true'
-      #   run: cargo build --verbose
-
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 18.15.0
- 
+          node-version: "20.x"
       - name: Pre-pull docker-compose images
         run: |
           cd ../cli/templates/static/codegen # we use the docker-compose.yml in the static folder
@@ -100,4 +93,3 @@ jobs:
           severity: warn
           details: Integration Test Cancelled - make sure the cancelation was intentional
           webhookUrl: ${{ secrets.DISCORD_WEBHOOK }}
-
