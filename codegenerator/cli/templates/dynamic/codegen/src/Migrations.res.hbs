@@ -303,7 +303,7 @@ let deleteAllTablesExceptRawEventsAndDynamicContractRegistry: unit => promise<un
 type t
 @module external process: t = "process"
 
-type exitCode = Success | Failure
+type exitCode = | @as("0") Success | @as("1") Failure
 @send external exit: (t, exitCode) => unit = "exit"
 
 // TODO: all the migration steps should run as a single transaction
