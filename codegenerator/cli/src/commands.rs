@@ -36,18 +36,16 @@ pub mod rescript {
 
     pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus> {
         let args = vec!["rescript", "clean", "-with-deps"];
-        //npx should work with any node package manager
-        execute_command("npx", args, path).await
+        execute_command("pnpm", args, path).await
     }
 
     pub async fn format(path: &PathBuf) -> Result<std::process::ExitStatus> {
         let args = vec!["rescript", "format", "-all"];
-        //npx should work with any node package manager
-        execute_command("npx", args, path).await
+        execute_command("pnpm", args, path).await
     }
     pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus> {
         let args = vec!["rescript", "build", "-with-deps"];
-        execute_command("npx", args, path).await
+        execute_command("pnpm", args, path).await
     }
 }
 
