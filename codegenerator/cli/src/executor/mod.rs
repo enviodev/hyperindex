@@ -39,7 +39,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
             match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
                 PersistedStateExists::Exists(ps) if &ps.envio_version != CURRENT_CRATE_VERSION => 
                     println!(
-                    "WARNING: Envio version '{}' does not match the previous version '{}' used in the generated directory. Please consider rerunning envio codegen",
+                    "WARNING: Envio version '{}' is currently being used. It does not match the version '{}' that was used to create generated directory previously. Please consider rerunning envio codegen, or running the same version of envio. ",
                     CURRENT_CRATE_VERSION, &ps.envio_version
                 ),
                 PersistedStateExists::NotExists => println!("WARNING: Generated directory not detected. Consider running envio codegen first"),
