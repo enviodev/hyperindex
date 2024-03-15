@@ -2,7 +2,7 @@ use crate::{
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
-    persisted_state::PersistedState,
+    persisted_state::{PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
     project_paths::ParsedProjectPaths,
 };
 
@@ -35,6 +35,18 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         }
 
         CommandType::Start(start_args) => {
+            //Add warnings to start command
+            match PersistedStateExists::get_persisted_state_file(&parsed_project_paths) {
+                PersistedStateExists::Exists(ps) if &ps.envio_version != CURRENT_CRATE_VERSION => 
+                    println!(
+                    "WARNING: Envio version '{}' does not match the previous version '{}' used in the generated directory. Please consider rerunning envio codegen",
+                    CURRENT_CRATE_VERSION, &ps.envio_version
+                ),
+                PersistedStateExists::NotExists => println!("WARNING: Generated directory not detected. Consider running envio codegen first"),
+                PersistedStateExists::Corrupted => println!("WARNING: Generated directory is corrupted. Consider running envio codegen first"),
+                PersistedStateExists::Exists(_)=>()
+            };
+
             if start_args.restart {
                 let yaml_config =
                     human_config::deserialize_config_from_yaml(&parsed_project_paths.config)

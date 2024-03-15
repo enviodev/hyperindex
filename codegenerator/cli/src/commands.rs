@@ -57,10 +57,30 @@ pub mod codegen {
         config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
     };
     use anyhow::{self, Context, Result};
-    use std::fs;
     use std::path::PathBuf;
 
     use crate::project_paths::ParsedProjectPaths;
+    use tokio::fs;
+
+    pub async fn remove_files_except_git(directory: &PathBuf) -> Result<()> {
+        let mut entries = fs::read_dir(directory).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let file_type = entry.file_type().await?;
+            let path = entry.path();
+
+            if path.ends_with(".git") {
+                continue;
+            }
+
+            if file_type.is_dir() {
+                fs::remove_dir_all(&path).await?;
+            } else {
+                fs::remove_file(&path).await?;
+            }
+        }
+
+        Ok(())
+    }
 
     pub async fn check_and_install_pnpm(current_dir: &PathBuf) -> Result<()> {
         // Check if pnpm is already installed
@@ -129,7 +149,7 @@ pub mod codegen {
         project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<()> {
         let template_dirs = TemplateDirs::new();
-        fs::create_dir_all(&project_paths.generated)?;
+        fs::create_dir_all(&project_paths.generated).await?;
 
         let template =
             hbs_templating::codegen_templates::ProjectTemplate::from_config(config, project_paths)

@@ -1,7 +1,7 @@
 use crate::{
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
-    persisted_state::{self, PersistedState, PersistedStateExists},
+    persisted_state::{self, PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
 };
@@ -44,6 +44,21 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
             PersistedStateExists::Corrupted => println!("Persisted state is invalid"),
             PersistedStateExists::Exists(_) => print_changes_detected(changes_detected),
         }
+
+        match persisted_state_file {
+            PersistedStateExists::Exists(ps) if &ps.envio_version != CURRENT_CRATE_VERSION => {
+                println!(
+                "Envio version '{}' does not match the previous version '{}' used in the generated directory",
+                CURRENT_CRATE_VERSION, &ps.envio_version
+            );
+                println!("Purging generated directory",);
+                commands::codegen::remove_files_except_git(&project_paths.generated)
+                    .await
+                    .context("Failed purging generated")?;
+            }
+            _ => (),
+        };
+
         println!("Running codegen");
 
         commands::codegen::run_codegen(&config, &project_paths)

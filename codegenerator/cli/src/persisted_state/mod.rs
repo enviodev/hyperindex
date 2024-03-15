@@ -22,7 +22,7 @@ pub struct PersistedState {
     pub abi_files_hash: HashString,
 }
 const PERSISTED_STATE_FILE_NAME: &str = "persisted_state.envio.json";
-static CURRENT_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub static CURRENT_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, strum::Display, EnumIter, PartialEq, Clone)]
 ///An enum representation of the fields stored in persisted state
