@@ -126,18 +126,22 @@ pub mod codegen {
             return Ok(exit2);
         }
 
-        println!("formatting code");
-        let exit3 = rescript::format(&project_paths.generated)
+        //NOTE: Runing format before build was causing freezing on some
+        //cases
+        println!("building code");
+        let exit3 = rescript::build(&project_paths.generated)
             .await
-            .context("Failed running rescript format")?;
+            .context("Failed running rescript build")?;
         if !exit3.success() {
             return Ok(exit3);
         }
 
-        println!("building code");
-        let last_exit = rescript::build(&project_paths.generated)
+        //NOTE: Runing format before build was causing freezing on some
+        //cases
+        println!("formatting code");
+        let last_exit = rescript::format(&project_paths.generated)
             .await
-            .context("Failed running rescript build")?;
+            .context("Failed running rescript format")?;
 
         Ok(last_exit)
     }
