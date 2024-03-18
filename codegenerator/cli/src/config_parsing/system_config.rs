@@ -7,7 +7,7 @@ use crate::{
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
-use ethers::abi::ethabi::Event as EthAbiEvent;
+use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -344,9 +344,9 @@ impl Contract {
         for event_container in &self.events {
             events_abi
                 .events
-                .entry(event_container.event.name.clone())
+                .entry(event_container.get_event().name.clone())
                 .or_default()
-                .push(event_container.event.clone());
+                .push(event_container.get_event().clone());
         }
 
         events_abi
@@ -362,7 +362,10 @@ impl Contract {
     }
 
     pub fn get_event_names(&self) -> Vec<String> {
-        self.events.iter().map(|e| e.event.name.clone()).collect()
+        self.events
+            .iter()
+            .map(|e| e.get_event().name.clone())
+            .collect()
     }
 
     pub fn get_path_to_handler(&self, project_paths: &ParsedProjectPaths) -> Result<PathBuf> {
@@ -399,7 +402,7 @@ impl Contract {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct Event {
-    pub event: EthAbiEvent,
+    event: NormalizedEthAbiEvent,
     pub required_entities: Vec<human_config::RequiredEntity>,
     pub is_async: bool,
 }
@@ -410,7 +413,7 @@ impl Event {
         opt_abi: &Option<ethers::abi::Contract>,
         schema: &Schema,
     ) -> Result<Self> {
-        let event = human_cfg_event.event.get_abi_event(opt_abi)?;
+        let event = human_cfg_event.event.get_abi_event(opt_abi)?.into();
 
         let required_entities = human_cfg_event.required_entities.unwrap_or_else(|| {
             // If no required entities are specified, we assume all entities are required
@@ -433,6 +436,37 @@ impl Event {
             required_entities,
             is_async,
         })
+    }
+
+    pub fn get_event(&self) -> &EthAbiEvent {
+        &self.event.0
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+struct NormalizedEthAbiEvent(EthAbiEvent);
+
+impl From<EthAbiEvent> for NormalizedEthAbiEvent {
+    fn from(value: EthAbiEvent) -> Self {
+        let normalized_unnamed_params: Vec<EventParam> = value
+            .inputs
+            .into_iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let name = if e.name == "" {
+                    format!("_{}", i)
+                } else {
+                    e.name
+                };
+                EventParam { name, ..e }
+            })
+            .collect();
+        let event = EthAbiEvent {
+            inputs: normalized_unnamed_params,
+            ..value
+        };
+
+        NormalizedEthAbiEvent(event)
     }
 }
 

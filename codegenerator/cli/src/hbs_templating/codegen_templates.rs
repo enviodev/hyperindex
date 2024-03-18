@@ -341,22 +341,20 @@ impl EventTemplate {
         config: &SystemConfig,
         contract_name: &String,
     ) -> Result<Self> {
-        let name = config_event.event.name.to_owned().to_capitalized_options();
+        let name = config_event
+            .get_event()
+            .name
+            .to_owned()
+            .to_capitalized_options();
         let params = config_event
-            .event
+            .get_event()
             .inputs
             .iter()
-            .enumerate()
-            .map(|(index, input)| {
-                let key: String = if input.name.is_empty() {
-                    format!("_{}", index)
-                } else {
-                    input.name.to_string()
-                };
+            .map(|input| {
                 let type_rescript = abi_to_rescript_type(&input.into());
 
                 EventParamTypeTemplate {
-                    param_name: key.to_capitalized_options(),
+                    param_name: input.name.to_capitalized_options(),
                     default_value_rescript: type_rescript.get_default_value_rescript(),
                     default_value_non_rescript: type_rescript.get_default_value_non_rescript(),
                     type_rescript: type_rescript.to_string(),
@@ -440,11 +438,14 @@ impl EventTemplate {
             })
             .collect::<Result<_>>()?;
 
-        let topic0 = event_selector(&config_event.event);
+        let topic0 = event_selector(&config_event.get_event());
 
         Ok(EventTemplate {
             name,
-            event_type: EventType::new(contract_name.clone(), config_event.event.name.clone()),
+            event_type: EventType::new(
+                contract_name.clone(),
+                config_event.get_event().name.clone(),
+            ),
             params,
             required_entities,
             is_async: config_event.is_async,

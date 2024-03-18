@@ -284,14 +284,17 @@ pub struct Event {
 
 impl Event {
     fn from_config_event(e: &system_config::Event) -> Result<Self> {
-        let params = flatten_event_inputs(e.event.inputs.clone())
+        let params = flatten_event_inputs(e.get_event().inputs.clone())
             .into_iter()
             .map(|input| Param::from_event_param(input))
             .collect::<Result<_>>()
-            .context(format!("Failed getting params for event {}", e.event.name))?;
+            .context(format!(
+                "Failed getting params for event {}",
+                e.get_event().name
+            ))?;
 
         Ok(Event {
-            name: e.event.name.to_capitalized_options(),
+            name: e.get_event().name.to_capitalized_options(),
             params,
         })
     }
