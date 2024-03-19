@@ -3,6 +3,7 @@ mod hash_string;
 
 use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths};
 use anyhow::Context;
+use clap::command;
 use hash_string::HashString;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -12,7 +13,7 @@ use std::{
 };
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
-
+use crate::commands;
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct PersistedState {
     pub envio_version: String,
@@ -68,7 +69,7 @@ impl PersistedState {
     ///Constructs the state and all file hashes representing the current state
     ///of an envio project. This will be used to diff against db and local file
     ///persisted state.
-    pub fn get_current_state(config: &SystemConfig) -> anyhow::Result<Self> {
+    pub async fn get_current_state(config: &SystemConfig) -> anyhow::Result<Self> {
         let schema_path = config
             .get_path_to_schema()
             .context("Failed getting path to schema")?;
@@ -84,17 +85,19 @@ impl PersistedState {
         const HANDLER_FILES_MUST_EXIST: bool = false;
         const ABI_FILES_MUST_EXIST: bool = true;
 
+        //generate esbuild out to generated/out dir
+        let out_dir = "generated/out";
+        let _ = commands::codegen::generate_esbuild_out(&config.parsed_project_paths, all_handler_paths, out_dir).await;
+        let handlers_esbuild_hash: HashString = HashString::from_flattened_directory(out_dir.into())
+            .context("Failed hashing handler files").expect("Failed hashing handler files");
+
         Ok(PersistedState {
             envio_version: CURRENT_CRATE_VERSION.to_string(),
             config_hash: HashString::from_file_path(config.parsed_project_paths.config.clone())
                 .context("Failed hashing config file")?,
             schema_hash: HashString::from_file_path(schema_path.clone())
                 .context("Failed hashing schema file")?,
-            handler_files_hash: HashString::from_file_paths(
-                all_handler_paths,
-                HANDLER_FILES_MUST_EXIST,
-            )
-            .context("Failed hashing handler files")?,
+            handler_files_hash: handlers_esbuild_hash,
             abi_files_hash: HashString::from_file_paths(all_abi_file_paths, ABI_FILES_MUST_EXIST)
                 .context("Failed hashing abi files")?,
         })

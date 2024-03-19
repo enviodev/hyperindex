@@ -19,6 +19,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         .context("Failed parsing project paths")?;
 
     match command_line_args.command {
+        
         CommandType::Init(init_args) => {
             init::run_init_args(&init_args, &global_project_paths).await?;
         }
@@ -26,6 +27,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         CommandType::Codegen => {
             codegen::run_codegen(&parsed_project_paths).await?;
         }
+
         CommandType::Dev => {
             dev::run_dev(parsed_project_paths).await?;
         }
@@ -66,7 +68,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                     SystemConfig::parse_from_human_config(&yaml_config, &parsed_project_paths)
                         .context("Failed parsing config")?;
 
-                let persisted_state = PersistedState::get_current_state(&config)
+                let persisted_state = PersistedState::get_current_state(&config).await
                     .context("Failed constructing persisted state")?;
 
                 const SHOULD_DROP_RAW_EVENTS: bool = true;

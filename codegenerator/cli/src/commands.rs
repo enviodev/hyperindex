@@ -108,6 +108,28 @@ pub mod codegen {
         let args = vec!["install", "--no-frozen-lockfile"];
         execute_command("pnpm", args, current_dir).await
     }
+    
+     // eg: pnpm esbuild --platform=node --bundle --minify --outdir=./generated/out --external:@generated --external:*.gen ./src/EventHandlers.ts ./src/another-file.ts
+    pub async fn generate_esbuild_out(
+        project_paths: &ParsedProjectPaths,
+        all_handler_paths: Vec<PathBuf>,
+        out_dir: &str,
+    ) -> Result<std::process::ExitStatus> {
+        println!("Creating an esbuild out...");
+        let current_dir = &project_paths.project_root;
+
+        let all_handler_paths_string: Vec<&str> = all_handler_paths
+        .iter()
+        .map(|path| path.to_str().expect("Invalid path")).collect();
+
+        let out_dir_arg = format!("--outdir={}", out_dir);
+
+        let esbuild_cmd: Vec<&str> = vec!["esbuild", "--platform=node","--bundle" ,"--minify", &out_dir_arg, "--external:@generated" ,"--external:*.gen"];
+
+        let esbuild_cmd_with_paths = esbuild_cmd.iter().chain(all_handler_paths_string.iter()).cloned().collect::<Vec<&str>>();        
+
+        execute_command("pnpm", esbuild_cmd_with_paths, current_dir).await
+    } 
 
     pub async fn run_post_codegen_command_sequence(
         project_paths: &ParsedProjectPaths,
@@ -155,7 +177,7 @@ pub mod codegen {
 
         let template =
             hbs_templating::codegen_templates::ProjectTemplate::from_config(config, project_paths)
-                .context("Failed creating project template")?;
+                .await.context("Failed creating project template")?;
 
         template_dirs
             .get_codegen_static_dir()?

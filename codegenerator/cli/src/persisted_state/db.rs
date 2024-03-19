@@ -134,7 +134,7 @@ mod test {
         )
         .context("system_cfg")?;
         let persisted_state =
-            PersistedState::get_current_state(&system_cfg).context("persisted_state")?;
+            PersistedState::get_current_state(&system_cfg).await.context("persisted_state")?;
 
         persisted_state
             .upsert_to_db()

@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use sqlx;
 use std::{
     fmt::{self, Display},
-    fs::File,
+    fs::{File,read_dir},
     io::Read,
     path::PathBuf,
 };
@@ -15,6 +15,26 @@ use std::{
 pub struct HashString(String);
 
 impl HashString {
+    pub fn from_string(hash:String) -> HashString{
+        HashString(hash)
+    }
+
+    pub fn from_flattened_directory(directory_path: PathBuf) -> anyhow::Result<Self> {
+        // Get a list of paths within the directory
+        let paths = read_dir(directory_path)
+            .expect("Failed to read directory")
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<PathBuf>>();
+
+        // Filter out only files from the paths - esbuild should only generate single nested child files but to be safe
+        let files: Vec<PathBuf> = paths
+            .into_iter()
+            .filter(|path| path.is_file())
+            .collect();
+
+        Self::from_file_paths(files, true)
+    }
+
     pub fn from_file_paths(
         file_paths: Vec<PathBuf>,
         file_must_exist: bool,
@@ -48,7 +68,7 @@ impl HashString {
 
     pub fn from_file_path(file_path: PathBuf) -> anyhow::Result<Self> {
         Self::from_file_paths(vec![file_path], true)
-    }
+    } 
 
     #[cfg(test)]
     fn inner(&self) -> String {
@@ -65,11 +85,18 @@ impl Display for HashString {
 #[cfg(test)]
 mod test {
     use std::path::PathBuf;
-
     use super::HashString;
+
+
     const CONFIG_1: &str = "test/configs/config1.yaml";
     const CONFIG_2: &str = "test/configs/config2.yaml";
     const EMPTY_HANDLER: &str = "test/configs/empty_handlers.res";
+    const HANDLER_WITH_IMPORTS: &str = "test/configs/handler-with-imports.js"; // todo: test this with ts - docs seem to say it will work - https://swc.rs/ - test with different versions of js
+    const HASH_OF_HANDLER_WITHOUT_IMPORTS: &str = "64d3f59d8dec3b31560262e5fd68690a0586771226d2f2635db2667818d8df0d";
+    const IMPORTED_HANDLER_FILE: &str = "test/configs/imported-file.js";
+    const HASH_OF_IMPORTED_HANDLER_FILE: &str = "e91348df5c1159dc72706a2007b0cdb8145187d31fe796ea7d7a98498b4467fe";
+    const HASH_OF_HANDLER_AST : &str = "efb4545c5404ce70718b09dea80dc5ddde066b2bc498da39a8f9a9bfe3095378";
+
     #[test]
     fn file_hash_single() {
         let config1_path = PathBuf::from(CONFIG_1);
@@ -97,6 +124,16 @@ mod test {
         assert_eq!(
             hash.inner(),
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string()
+        );
+    }
+
+    #[test]
+    fn handler_file_hash_with_imports_not_hash_of_handler_file() {
+        let handler_path = PathBuf::from(HANDLER_WITH_IMPORTS);
+        let hash = HashString::from_file_paths(vec![handler_path], true).unwrap();
+        assert_ne!(
+            hash.inner(),
+            HASH_OF_HANDLER_WITHOUT_IMPORTS.to_string()
         );
     }
 

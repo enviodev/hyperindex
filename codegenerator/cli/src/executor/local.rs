@@ -21,15 +21,14 @@ pub async fn run_local(
             }
         },
         LocalCommandTypes::DbMigrate(subcommand) => {
-            //Use a closure just so running local dow doesn't need to construct persisted state
-            let get_persisted_state = || -> Result<PersistedState> {
+            async fn get_persisted_state(project_paths: ParsedProjectPaths) -> Result<PersistedState>{
                 let yaml_config = human_config::deserialize_config_from_yaml(&project_paths.config)
                     .context("Failed deserializing config")?;
 
                 let config = SystemConfig::parse_from_human_config(&yaml_config, &project_paths)
                     .context("Failed parsing config")?;
 
-                let persisted_state = PersistedState::get_current_state(&config)
+                let persisted_state = PersistedState::get_current_state(&config).await
                     .context("Failed constructing persisted state")?;
 
                 Ok(persisted_state)
@@ -37,7 +36,7 @@ pub async fn run_local(
 
             match subcommand {
                 DbMigrateSubcommands::Up => {
-                    let persisted_state = get_persisted_state()?;
+                    let persisted_state = get_persisted_state(project_paths.clone()).await?;
                     commands::db_migrate::run_up_migrations(&project_paths, &persisted_state)
                         .await?;
                 }
@@ -47,7 +46,7 @@ pub async fn run_local(
                 }
 
                 DbMigrateSubcommands::Setup => {
-                    let persisted_state = get_persisted_state()?;
+                    let persisted_state = get_persisted_state(project_paths.clone()).await?;
                     const SHOULD_DROP_RAW_EVENTS: bool = true;
                     commands::db_migrate::run_db_setup(
                         &project_paths,

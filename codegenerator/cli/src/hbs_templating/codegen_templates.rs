@@ -707,7 +707,7 @@ impl ProjectTemplate {
         Ok(())
     }
 
-    pub fn from_config(cfg: &SystemConfig, project_paths: &ParsedProjectPaths) -> Result<Self> {
+    pub async fn from_config(cfg: &SystemConfig, project_paths: &ParsedProjectPaths) -> Result<Self> {
         //TODO: make this a method in path handlers
         let gitignore_generated_path = project_paths.generated.join("*");
         let gitignore_path_str = gitignore_generated_path
@@ -745,7 +745,7 @@ impl ProjectTemplate {
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
 
-        let persisted_state = PersistedState::get_current_state(cfg)
+        let persisted_state = PersistedState::get_current_state(cfg).await
             .context("Failed creating default persisted state")?
             .into();
 
@@ -814,7 +814,7 @@ mod test {
         format!("{}/test", env!("CARGO_MANIFEST_DIR"))
     }
 
-    fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
+    async fn get_project_template_helper(configs_file_name: &str) -> super::ProjectTemplate {
         let project_root = get_test_path_string_helper();
         let config = format!("configs/{}", configs_file_name);
         let generated = "generated/";
@@ -827,14 +827,14 @@ mod test {
         let config = SystemConfig::parse_from_human_config(&yaml_config, &project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        let project_template = super::ProjectTemplate::from_config(&config, &project_paths)
+        let project_template = super::ProjectTemplate::from_config(&config, &project_paths).await
             .expect("should be able to get project template");
         project_template
     }
 
-    #[test]
-    fn check_config_with_multiple_sync_sources() {
-        let project_template = get_project_template_helper("invalid-multiple-sync-config6.yaml");
+    #[tokio::test]
+    async fn check_config_with_multiple_sync_sources() {
+        let project_template = get_project_template_helper("invalid-multiple-sync-config6.yaml").await;
 
         assert!(
             project_template.chain_configs[0]
@@ -853,8 +853,8 @@ mod test {
         );
     }
 
-    #[test]
-    fn chain_configs_parsed_case_1() {
+    #[tokio::test]
+    async fn chain_configs_parsed_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
         let rpc_config1 = RpcConfig::new("https://eth.com").into();
@@ -882,7 +882,7 @@ mod test {
 
         let expected_chain_configs = vec![chain_config_1];
 
-        let project_template = get_project_template_helper("config1.yaml");
+        let project_template = get_project_template_helper("config1.yaml").await;
 
         assert_eq!(
             project_template.relative_path_to_root_from_generated,
@@ -946,13 +946,13 @@ mod test {
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
 
-        let project_template = get_project_template_helper("config2.yaml");
+        let project_template = get_project_template_helper("config2.yaml").await;
 
         assert_eq!(expected_chain_configs, project_template.chain_configs);
     }
 
-    #[test]
-    fn convert_to_chain_configs_case_3() {
+    #[tokio::test]
+    async fn convert_to_chain_configs_case_3() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
         let network1 = super::NetworkTemplate {
@@ -979,13 +979,13 @@ mod test {
 
         let expected_chain_configs = vec![chain_config_1];
 
-        let project_template = get_project_template_helper("config3.yaml");
+        let project_template = get_project_template_helper("config3.yaml").await ;
 
         assert_eq!(expected_chain_configs, project_template.chain_configs);
     }
 
-    #[test]
-    fn convert_to_chain_configs_case_4() {
+    #[tokio::test]
+    async fn convert_to_chain_configs_case_4() {
         let network1 = super::NetworkTemplate {
             id: 1,
             rpc_config: None,
@@ -1013,7 +1013,7 @@ mod test {
         };
 
         let expected_chain_configs = vec![chain_config_1, chain_config_2];
-        let project_template = get_project_template_helper("config4.yaml");
+        let project_template = get_project_template_helper("config4.yaml").await;
 
         assert_eq!(expected_chain_configs, project_template.chain_configs);
     }
@@ -1069,9 +1069,9 @@ mod test {
         }
     }
 
-    #[test]
-    fn abi_event_to_record_1() {
-        let project_template = get_project_template_helper("config1.yaml");
+    #[tokio::test]
+    async fn abi_event_to_record_1() {
+        let project_template = get_project_template_helper("config1.yaml").await;
 
         let new_gavatar_event_template =
             project_template.codegen_contracts[0].codegen_events[0].clone();
@@ -1089,9 +1089,9 @@ mod test {
         assert_eq!(expected_event_template, new_gavatar_event_template);
     }
 
-    #[test]
-    fn abi_event_to_record_2() {
-        let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
+    #[tokio::test]
+    async fn abi_event_to_record_2() {
+        let project_template = get_project_template_helper("gravatar-with-required-entities.yaml").await;
 
         let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
         let expected_event_template = make_expected_event_template(

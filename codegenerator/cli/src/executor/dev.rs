@@ -14,7 +14,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     let config = SystemConfig::parse_from_human_config(&human_config, &project_paths)
         .context("Failed parsing config")?;
 
-    let current_state = PersistedState::get_current_state(&config)
+    let current_state = PersistedState::get_current_state(&config).await
         .context("Failed getting current indexer state")?;
 
     let persisted_state_file = PersistedStateExists::get_persisted_state_file(&project_paths);
