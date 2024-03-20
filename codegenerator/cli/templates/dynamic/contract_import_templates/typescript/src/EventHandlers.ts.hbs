@@ -3,13 +3,15 @@
  */
 import {
 {{#each imported_contracts as |contract|}}
-    {{contract.name.capitalized}}Contract,
+  {{contract.name.capitalized}}Contract,
 {{/each}}
 } from "../generated/src/Handlers.gen";
 
 import {
 {{#each imported_contracts as |contract|}}
-    {{contract.name.capitalized}},
+  {{#each contract.imported_events as |event|}}
+    {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
+  {{/each}}
 {{/each}}
 EventsSummaryEntity
 } from "../generated/src/Types.gen";
@@ -49,7 +51,7 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
 
   const {{contract.name.uncapitalized
     }}_{{event.name.capitalized}}Entity: {{contract.name.capitalized
-    }}.{{event.name.capitalized
+    }}_{{event.name.capitalized
     }}Entity = {
     id: event.transactionHash + event.logIndex.toString(),
     {{#each event.params as |param|}}
