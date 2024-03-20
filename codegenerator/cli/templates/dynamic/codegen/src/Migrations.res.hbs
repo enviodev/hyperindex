@@ -251,6 +251,51 @@ module EntityHistory = {
     let _ = await %raw("sql`
       CREATE INDEX idx_entity_type_composite ON entity_history(entity_type, entity_id, block_timestamp);
     `")
+
+    // Create a function for inserting entities into the db.
+    let _ = await %raw("sql`
+      CREATE OR REPLACE FUNCTION insert_entity_history(
+          p_block_timestamp INTEGER,
+          p_chain_id INTEGER,
+          p_block_number INTEGER,
+          p_log_index INTEGER,
+          p_params JSON,
+          p_entity_type ENTITY_TYPE,
+          p_entity_id TEXT,
+          p_previous_block_timestamp INTEGER DEFAULT NULL,
+          p_previous_chain_id INTEGER DEFAULT NULL,
+          p_previous_block_number INTEGER DEFAULT NULL,
+          p_previous_log_index INTEGER DEFAULT NULL
+      )
+      RETURNS void AS $$
+      DECLARE
+          v_previous_record RECORD;
+      BEGIN
+          -- Check if previous values are not provided
+          IF p_previous_block_timestamp IS NULL OR p_previous_chain_id IS NULL OR p_previous_block_number IS NULL OR p_previous_log_index IS NULL THEN
+              -- Find the most recent record for the same entity_type and entity_id
+              SELECT block_timestamp, chain_id, block_number, log_index INTO v_previous_record
+              FROM entity_history
+              WHERE entity_type = p_entity_type AND entity_id = p_entity_id
+              ORDER BY block_timestamp DESC
+              LIMIT 1;
+              
+              -- If a previous record exists, use its values
+              IF FOUND THEN
+                  p_previous_block_timestamp := v_previous_record.block_timestamp;
+                  p_previous_chain_id := v_previous_record.chain_id;
+                  p_previous_block_number := v_previous_record.block_number;
+                  p_previous_log_index := v_previous_record.log_index;
+              END IF;
+          END IF;
+          
+          -- Insert the new record with either provided or looked-up previous values
+          INSERT INTO entity_history (block_timestamp, chain_id, block_number, log_index, previous_block_timestamp, previous_chain_id, previous_block_number, previous_log_index, params, entity_type, entity_id)
+          VALUES (p_block_timestamp, p_chain_id, p_block_number, p_log_index, p_previous_block_timestamp, p_previous_chain_id, p_previous_block_number, p_previous_log_index, p_params, p_entity_type, p_entity_id);
+      END;
+      $$ LANGUAGE plpgsql;
+    `")
+      
   }
 
   @@warning("-21")

@@ -186,6 +186,7 @@ module {{contract.name.capitalized}}Contract = {
                   entity,
                   {
                     chainId: chainId,
+                    blockTimestamp: event.blockTimestamp,
                     blockNumber: event.blockNumber,
                     logIndex: event.logIndex,
                   },
@@ -295,6 +296,7 @@ It is also possible that you have saved an ID for an entity that doesn't exist i
                   entity,
                   {
                     chainId: chainId,
+                    blockTimestamp: event.blockTimestamp,
                     blockNumber: event.blockNumber,
                     logIndex: event.logIndex,
                   },

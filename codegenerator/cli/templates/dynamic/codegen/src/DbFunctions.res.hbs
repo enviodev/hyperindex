@@ -164,23 +164,25 @@ module DynamicContractRegistry = {
 }
 
 type entityHistoryItem = {
+  block_timestamp: int,
   chain_id: int,
-  previous_block_number: option<int>,
-  previous_log_index: option<int>,
   block_number: int,
   log_index: int,
+  previous_block_timestamp: option<int>,
+  previous_chain_id: option<int>,
+  previous_block_number: option<int>,
+  previous_log_index: option<int>,
+  params: option<string>,
   entity_type: string,
   entity_id: string,
-  params: option<string>,
 }
 
 module EntityHistory = {
   @module("./DbFunctionsImplementation.js")
   external batchSet: (
     Postgres.sql,
-    ~withPrev: array<entityHistoryItem>,
-    ~withoutPrev: array<entityHistoryItem>,
-  ) => promise<unit> = "batchSetEntityHistoryTable"
+    ~entityHistoriesToSet: array<entityHistoryItem>,
+  ) => promise<unit> = "batchInsertEntityHistory"
 }
 
 {{#each entities as |entity|}}

@@ -136,7 +136,7 @@ let makeStoreOperatorEntity = (
     let cloned = inMemoryStore->IO.InMemoryStore.clone
     cloned
     ->getStore
-    ->set(~key=entity->getKey, ~entity=Set(entity, {chainId: -1, blockNumber: -1, logIndex: -1}))
+    ->set(~key=entity->getKey, ~entity=Set(entity, {chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1}))
     cloned->makeMockDb
   }
 

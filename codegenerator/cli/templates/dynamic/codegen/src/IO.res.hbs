@@ -51,9 +51,26 @@ module InMemoryStore = {
         let mapKey = key->self.hasher
         let currentEntity = self.dict->Js.Dict.get(mapKey)
         let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch currentEntity {
-        | Some(ReadNoChangeFromDB(_)) => Obj.magic()
-        | Some(Updated(_)) => Obj.magic()
-        | None => Obj.magic()
+        | Some(ReadNoChangeFromDB(entity_read)) =>
+          Updated({
+            initial: Retrieved(entity_read),
+            latest: entity,
+            history: [],
+          })
+        | Some(Updated(previous_values)) => {
+            let history = previous_values.history->Belt.Array.concat([previous_values.latest])
+            Updated({
+              ...previous_values,
+              latest: entity,
+              history,
+            })
+          }
+        | None =>
+          Updated({
+            initial: Unknown,
+            latest: entity,
+            history: [],
+          })
         }
         // switch (currentEntity, entity) {
         //   | (Some(existingEntityUpdate), Delete(eventId, eventIdentifier)) =>
@@ -561,76 +578,81 @@ let executeSetEntity = (
   ~entityEncoder,
   ~entityType,
 ) => {
-  let historyArrayWithPrev = ref([])
-  let historyArrayWithoutPrev = ref([])
-
-  let executeSets = rows->Belt.Array.keepMap(row =>
+  let (entitiesToSet, entityHistoriesToSet) = rows->Belt.Array.reduce(([], []),((entitiesToSet, entityHistoriesToSet), row) =>
     switch row {
-    | Updated({latest, history}) => {
-        let _ =
-          history
-          ->Belt.Array.concat([latest])
-          ->Belt.Array.reduce(None, (optPrev: option<(int, int)>, entity) => {
-            let processEntity = (
-              eventIdentifier: Types.eventIdentifier,
-              entity_id,
-              params: option<string>,
-            ) => {
-              switch optPrev {
-              | Some((previous_block_number, previous_log_index)) =>
-                let historyItem: DbFunctions.entityHistoryItem = {
-                  chain_id: eventIdentifier.chainId,
-                  block_number: eventIdentifier.blockNumber,
-                  previous_block_number: Some(previous_block_number),
-                  previous_log_index: Some(previous_log_index),
-                  log_index: eventIdentifier.logIndex,
-                  entity_type: entityType,
-                  entity_id,
-                  params,
-                }
-                historyArrayWithPrev :=
-                  historyArrayWithPrev.contents->Belt.Array.concat([historyItem])
-              | None =>
-                let historyItem: DbFunctions.entityHistoryItem = {
-                  chain_id: eventIdentifier.chainId,
-                  block_number: eventIdentifier.blockNumber,
-                  previous_block_number: None,
-                  previous_log_index: None,
-                  log_index: eventIdentifier.logIndex,
-                  entity_type: entityType,
-                  entity_id,
-                  params,
-                }
-                historyArrayWithoutPrev :=
-                  historyArrayWithoutPrev.contents->Belt.Array.concat([historyItem])
+    | Updated({latest, history}) => 
+      let (_, entityHistory) =
+        history
+        ->Belt.Array.concat([latest])
+        ->Belt.Array.reduce(None, (optPrev: option<(Types.eventIdentifier, array<DbFunctions.entityHistoryItem>)>, entity) => {
+          let processEntity = (
+            eventIdentifier: Types.eventIdentifier,
+            entity_id,
+            params: option<string>,
+          ) => {
+            let entityHistory = switch optPrev {
+            | Some((previousEventIdentifier, entityHistory)) =>
+              let historyItem: DbFunctions.entityHistoryItem = {
+                chain_id: eventIdentifier.chainId,
+                block_number: eventIdentifier.blockNumber,
+                block_timestamp: eventIdentifier.blockTimestamp,
+                log_index: eventIdentifier.logIndex,
+                previous_chain_id: Some(previousEventIdentifier.chainId),
+                previous_block_timestamp: Some(previousEventIdentifier.blockTimestamp),
+                previous_block_number: Some(previousEventIdentifier.blockNumber),
+                previous_log_index: Some(previousEventIdentifier.logIndex),
+                entity_type: entityType,
+                entity_id,
+                params,
               }
 
-              Some((eventIdentifier.blockNumber, eventIdentifier.logIndex))
+              entityHistory->Belt.Array.concat([historyItem])
+            | None =>
+              let historyItem: DbFunctions.entityHistoryItem = {
+                chain_id: eventIdentifier.chainId,
+                block_number: eventIdentifier.blockNumber,
+                block_timestamp: eventIdentifier.blockTimestamp,
+                previous_chain_id: None,
+                previous_block_timestamp: None,
+                previous_block_number: None,
+                previous_log_index: None,
+                log_index: eventIdentifier.logIndex,
+                entity_type: entityType,
+                entity_id,
+                params,
+              }
+
+              [historyItem]
             }
-            switch entity {
-            | Set(entity, eventIdentifier) =>
-              processEntity(
-                (eventIdentifier: Types.eventIdentifier),
-                (entity->Obj.magic)["id"],
-                Some(entity->entityEncoder->Js.Json.stringify),
-              )
-            | Delete(entityId, eventIdentifier) =>
-              processEntity((eventIdentifier: Types.eventIdentifier), entityId, None)
-            }
-          })
-        // Some(entity->entityEncoder)
-        None // TODO: fix this, it is wrong
+
+            Some((eventIdentifier, entityHistory))
+          }
+          switch entity {
+          | Set(entity, eventIdentifier) =>
+            processEntity(
+              (eventIdentifier: Types.eventIdentifier),
+              (entity->Obj.magic)["id"],
+              Some(entity->entityEncoder->Js.Json.stringify),
+            )
+          | Delete(entityId, eventIdentifier) =>
+            processEntity((eventIdentifier: Types.eventIdentifier), entityId, None)
+          }
+        })->Belt.Option.getExn // We know that there is at least 1 item in the history. Should be possible to refactor this code to make it 'safe' - to do this don't concat 'latest' at the beginning.
+      switch latest {
+      | Set(entity, _eventIdentifier) =>
+        (entitiesToSet->Belt.Array.concat([entityEncoder(entity)]), entityHistoriesToSet->Belt.Array.concat([entityHistory]))
+      | Delete(_entityId, _eventIdentifier) =>
+        (entitiesToSet, entityHistoriesToSet)
       }
-    | _ => None
+    | _ => (entitiesToSet, entityHistoriesToSet)
     }
   )
 
-  if executeSets->Array.length > 0 {
+  if entitiesToSet->Array.length > 0 {
     [
-      sql->dbFunction(executeSets),
+      sql->dbFunction(entitiesToSet),
       sql->DbFunctions.EntityHistory.batchSet(
-        ~withPrev=historyArrayWithPrev.contents,
-        ~withoutPrev=historyArrayWithoutPrev.contents,
+        ~entityHistoriesToSet=Belt.Array.concatMany(entityHistoriesToSet),
       ),
     ]
     ->Promise.all
@@ -639,8 +661,6 @@ let executeSetEntity = (
     Promise.resolve()
   }
 }
-
-
 let executeDelete = (
   sql: Postgres.sql,
   ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
