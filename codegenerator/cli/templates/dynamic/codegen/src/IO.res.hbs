@@ -488,7 +488,10 @@ let makeEntityExecuterComposer = (
         if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
           let setOfIdsNotSavedToDb =
             idsToLoad->Belt.Set.String.removeMany(
-              entities->Belt.Array.map(entity => entity->Obj.magic()["id"]),
+              entities->Belt.Array.map(entity => 
+                // TODO: improve type system so that we don't need Obj.magic here.
+                Obj.magic(entity)["id"]
+              ),
             )
           setOfIdsNotSavedToDb
           ->Belt.Set.String.toArray

@@ -26,6 +26,6 @@ let mockInMemRow1: Types.inMemoryStoreRow<Js.Json.t> = {
 let gravatarSerialized1 = gravatarEntity1->Types.gravatarEntity_encode
 let gravatarSerialized2 = gravatarEntity2->Types.gravatarEntity_encode
 
-let mockInMemRow1: Types.inMemoryStoreRow<Js.Json.t> = makeDefaultSet(gravatarSerialized1)
+let mockInMemRow1: Types.inMemoryStoreRowEntity<Js.Json.t> = makeDefaultSet(gravatarSerialized1)
 
-let mockInMemRow2: Types.inMemoryStoreRow<Js.Json.t> = makeDefaultSet(gravatarSerialized1)
+let mockInMemRow2: Types.inMemoryStoreRowEntity<Js.Json.t> = makeDefaultSet(gravatarSerialized1)
