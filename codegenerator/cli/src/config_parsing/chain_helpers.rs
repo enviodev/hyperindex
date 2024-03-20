@@ -213,6 +213,12 @@ pub enum Network {
     ShimmerEvm = 148,
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Blast = 81457,
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
+    BlastSepolia = 168587773,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://explorer.testnet.fhenix.zone/ (blockscout)
+    FhenixTestnet = 42069,
 }
 
 impl Network {
@@ -386,6 +392,11 @@ impl NetworkWithExplorer {
                 "513XRZID5JBCANQG6KEQAKR97PN1D4BW7K",
                 "87UU1RQE6D1YNIG2AWD3BV9UKICHVE4S4B",
             ],
+            NetworkWithExplorer::BlastSepolia => [
+                "FU5IBP7AV7JY22DTTUJZS1IZEYY55BNWQR",
+                "513XRZID5JBCANQG6KEQAKR97PN1D4BW7K",
+                "87UU1RQE6D1YNIG2AWD3BV9UKICHVE4S4B",
+            ],
         };
 
         // Retrieving the index of the api_key to be used based on the rate_limit_retry_count
@@ -425,6 +436,9 @@ impl NetworkWithExplorer {
             ),
             NetworkWithExplorer::Blast => {
                 BlockExplorerApi::custom("blastscan.io", "api.blastscan.io", api_key)
+            }
+            NetworkWithExplorer::BlastSepolia => {
+                BlockExplorerApi::custom("blastscan.io", "api.testnet.blastscan.io", api_key)
             }
             _ => BlockExplorerApi::default_ethers(api_key),
         }
