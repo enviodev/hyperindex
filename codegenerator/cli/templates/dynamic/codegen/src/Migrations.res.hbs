@@ -274,6 +274,20 @@ module {{entity.name.capitalized}} = {
 
 {{/each}}
 
+module DbIndexes = {
+  let createDerivedFromDbIndexes = async () => {
+    let _ = await %raw("sql`
+      {{#each entities as |entity|}}
+        {{#each entity.relational_params.all as | param |}}
+          {{#if param.is_derived_from}}
+            CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" ({{param.relational_key.uncapitalized}});
+          {{/if}}
+        {{/each}}
+      {{/each}}
+    `")
+  }
+}
+
 let deleteAllTables:unit => promise<unit> = async () => {
   Logging.trace("Dropping all tables")
   // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
@@ -357,6 +371,10 @@ await EnumTypes.create{{enum.name.capitalized}}Enum()->Promise.catch(err => {
     Logging.errorWithExn(err,`EE802: Error creating {{entity.name.original}} entity history table`)->Promise.resolve
   })
 {{/each}}
+
+  // TODO: catch errors here
+  await DbIndexes.createDerivedFromDbIndexes()
+
   await TrackTables.trackAllTables()->Promise.catch(err => {
     Logging.errorWithExn(err,`EE803: Error tracking tables`)->Promise.resolve
   })
