@@ -409,22 +409,41 @@ pub struct Field {
 
 impl Field {
     fn from_obj_field(field: &ObjField<String>) -> anyhow::Result<Self> {
-        //Get all gql derictives labeled @derivedFrom
+        //Get all gql derictives labeled @derivedFrom and @indexed
         let derived_from_directives = field
             .directives
             .iter()
-            .filter(|directive| directive.name == "derivedFrom")
+            .filter(|&directive| directive.name == "derivedFrom")
             .collect::<Vec<&Directive<'_, String>>>();
+
+        let indexed_directives = field
+            .directives
+            .iter()
+            .filter(|&directive| directive.name == "indexed")
+            .collect::<Vec<&Directive<'_, String>>>();
+
+        // Validate directive usage
 
         //Do not allow for multiple @derivedFrom directives
         //If this step is not important and we are fine with just taking the first one
         //in the case of multiple we can just use a find rather than a filter method above
-        if derived_from_directives.len() > 1 {
-            let msg = anyhow!(
-                "EE202: Cannot use more than one @derivedFrom directive at field {}",
+
+        let derived_from_count = derived_from_directives.len();
+        let indexed_count = indexed_directives.len();
+
+        if derived_from_count > 1 || indexed_count > 1 {
+            return Err(anyhow!(
+                "EE202: Cannot use more than one @derivedFrom or @indexed directive at field {}",
                 field.name
-            );
-            return Err(msg);
+            ));
+        }
+
+        if derived_from_count > 0 && indexed_count > 0 {
+            return Err(anyhow!(
+                // TODO: update the docs here:https://github.com/Float-Capital/envio-docs/blob/a20823ffa266d26d6e7beb461caa335de14fa263/docs/error-codes.md?plain=1#L108
+                "EE202: A field cannot be both @derivedFrom and @indexed: {}",
+                field.name
+            ));
         }
 
         let maybe_derived_from_directive = derived_from_directives.get(0);
@@ -448,8 +467,12 @@ impl Field {
             }
         };
 
-        let field_type = FieldType::from_obj_field_type(&field.field_type, derived_from_field)
-            .context(format!("Failed parsing field {}", field.name))?;
+        // TODO: should we dis-allow indexed fields that are either `id` or derived From fields?
+        let is_indexed = indexed_count > 0;
+
+        let field_type =
+            FieldType::from_obj_field_type(&field.field_type, derived_from_field, is_indexed)
+                .context(format!("Failed parsing field {}", field.name))?;
 
         Ok(Field {
             name: field.name.clone(),
@@ -506,7 +529,7 @@ impl Field {
                 }
             }
 
-            FieldType::RegularField(_) => Ok(self.name.clone()),
+            FieldType::RegularField(_, _) => Ok(self.name.clone()),
         }
     }
 }
@@ -847,13 +870,13 @@ pub enum FieldType {
         entity_name: String,
         derived_from_field: String,
     },
-    RegularField(UserDefinedFieldType),
+    RegularField(UserDefinedFieldType, bool /* is indexed*/),
 }
 
 impl FieldType {
     fn to_user_defined_field_type(&self) -> UserDefinedFieldType {
         match self {
-            Self::RegularField(t) => t.clone(),
+            Self::RegularField(t, _) => t.clone(),
             Self::DerivedFromField { entity_name, .. } => {
                 use UserDefinedFieldType::*;
                 NonNullType(Box::new(ListType(Box::new(NonNullType(Box::new(Single(
@@ -866,11 +889,12 @@ impl FieldType {
     fn from_obj_field_type(
         obj_field_type: &ObjType<'_, String>,
         derived_from_field: Option<String>,
+        is_indexed: bool,
     ) -> anyhow::Result<Self> {
         let field_type = UserDefinedFieldType::from_obj_field_type(obj_field_type);
 
         match derived_from_field {
-            None => Ok(Self::RegularField(field_type)),
+            None => Ok(Self::RegularField(field_type, false)),
             Some(derived_from_field) => match field_type.get_name_of_derived_from_entity() {
                 None => {
                     let example_str = Self::DerivedFromField {
