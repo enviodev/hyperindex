@@ -77,7 +77,7 @@ type entityUpdate<'entityType> =
 
 type entityValueAtStartOfBatch<'entityType> =
   | NotSet // The entity isn't in the DB yet
-  | AlreadySet('entityType) // TODO: add the eventIdentifier as second arg here.
+  | AlreadySet('entityType)
 
 type existingValueInDb<'entityType> =
   | Retrieved(entityValueAtStartOfBatch<'entityType>)
@@ -85,6 +85,7 @@ type existingValueInDb<'entityType> =
   | Unknown
 
 type updatedValue<'entityType> = {
+  // Initial value within a batch
   initial: existingValueInDb<'entityType>,
   latest: entityUpdate<'entityType>,
   history: array<entityUpdate<'entityType>>,
@@ -92,7 +93,7 @@ type updatedValue<'entityType> = {
 @genType
 type inMemoryStoreRowEntity<'entityType> =
   | Updated(updatedValue<'entityType>)
-  | ReadNoChangeFromDB(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.
+  | InitialReadFromDb(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.
 
 type inMemoryStoreRowMeta<'a> = 'a
 

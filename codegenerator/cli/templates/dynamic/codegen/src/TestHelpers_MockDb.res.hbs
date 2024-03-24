@@ -127,8 +127,8 @@ let makeStoreOperatorEntity = (
       switch row {
       | Updated({latest: Set(entity, _)}) => Some(entity)
       | Updated({latest: Delete(_, _)}) => None
-      | ReadNoChangeFromDB(AlreadySet(entity)) => Some(entity)
-      | ReadNoChangeFromDB(NotSet) => None
+      | InitialReadFromDb(AlreadySet(entity)) => Some(entity)
+      | InitialReadFromDb(NotSet) => None
       }
     )
 
@@ -350,10 +350,10 @@ let executeRowsEntity = (
     let store = mockDb->getInternalDb->getStore
     switch row {
     | Updated({latest: Set(entity, _)})
-    | ReadNoChangeFromDB(AlreadySet(entity)) =>
+    | InitialReadFromDb(AlreadySet(entity)) =>
       store->setFunction(~key=getKey(entity), ~entity=Some(entity))
     | Updated({latest: Delete(entityId, _)}) => store.dict->deleteDictKey(entityId)
-    | ReadNoChangeFromDB(NotSet) => ()
+    | InitialReadFromDb(NotSet) => ()
     }
   })
 }

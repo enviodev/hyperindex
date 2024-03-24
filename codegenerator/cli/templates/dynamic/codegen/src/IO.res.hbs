@@ -32,106 +32,38 @@ module InMemoryStore = {
     // NOTE: calling initValue on an existing store item will override it. This function does no checks to make sure there isn't existing data that can get lost.
     let initValue = (self: t, ~key: StoreItem.key, ~entity: option<StoreItem.t>) => {
       let initialStoreRow: Types.inMemoryStoreRowEntity<StoreItem.t> = switch entity {
-      | Some(entity) => ReadNoChangeFromDB(AlreadySet(entity))
-      | None => ReadNoChangeFromDB(NotSet)
+      | Some(entity) => InitialReadFromDb(AlreadySet(entity))
+      | None => InitialReadFromDb(NotSet)
       }
       self.dict->Js.Dict.set(key->self.hasher, initialStoreRow)
     }
 
     let set = (self: t, ~key: StoreItem.key, ~entity: Types.entityUpdate<StoreItem.t>) => {
-      // let getOptEventIdentifier = (entity: Types.entityCurrentState<StoreItem.t>) => {
-      //   switch entity {
-      //   | Updated(Delete(_, eventIdentifier))
-      //   | Updated(Set(_, eventIdentifier)) =>
-      //     Some(eventIdentifier)
-      //   | ReadNoChangeFromDB => None
-      //   }
-      // }
-      if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
-        let mapKey = key->self.hasher
-        let currentEntity = self.dict->Js.Dict.get(mapKey)
-        let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch currentEntity {
-        | Some(ReadNoChangeFromDB(entity_read)) =>
-          Updated({
-            initial: Retrieved(entity_read),
-            latest: entity,
-            history: [],
-          })
-        | Some(Updated(previous_values)) => {
-            let history = previous_values.history->Belt.Array.concat([previous_values.latest])
-            Updated({
-              ...previous_values,
-              latest: entity,
-              history,
-            })
-          }
-        | None =>
-          Updated({
-            initial: Unknown,
-            latest: entity,
-            history: [],
-          })
-        }
-        // switch (currentEntity, entity) {
-        //   | (Some(existingEntityUpdate), Delete(eventId, eventIdentifier)) =>
-        //
-        // }
-        /*
-        let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch currentEntity {
-        | Some(existingEntityUpdate) =>
-          switch entity {
-          | Delete(_, eventIdentifier)
-          | Set(_, eventIdentifier) =>
-            // Use -1 as defaults for now
-            let oldEntityIdentifier = getOptEventIdentifier(
-              existingEntityUpdate.current,
-            )->Belt.Option.getWithDefault({
-              chainId: -1,
-              blockNumber: -1,
-              logIndex: -1,
-            })
-            if (
-              eventIdentifier.blockNumber == oldEntityIdentifier.blockNumber &&
-                eventIdentifier.logIndex == oldEntityIdentifier.logIndex
-            ) {
-              // If it is in the same event, override the current event with the new one
-              {
-                ...existingEntityUpdate,
-                current: entity,
-              }
-            } else {
-              // in a different event, add it to the history.
-              {
-                current: entity,
-                history: existingEntityUpdate.history->Belt.Array.concat([
-                  existingEntityUpdate.current,
-                ]),
-                valueAtStartOfBatch: NotSet /* TODO */,
-              }
-            }
-          | Read(Some(existingEntity)) => {
-              current: entity,
-              history: existingEntityUpdate.history,
-              valueAtStartOfBatch: AlreadySet(existingEntity),
-            }
-          | Read(None) => {
-              current: entity,
-              history: existingEntityUpdate.history,
-              valueAtStartOfBatch: NotSet,
-            }
-          }
-        | None => // This means the entity is being set, but it was never checked if there is an existing entity in the DB.
-          {
-            current: entity,
-            history: [],
-            valueAtStartOfBatch: NotSet /* TODO */,
-          }
-        }*/
-        self.dict->Js.Dict.set(mapKey, entityData)
-      } else {
-        //Wont do for hackathon
-        ()
+      let mapKey = key->self.hasher
+      let currentEntity = self.dict->Js.Dict.get(mapKey)
+      let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch currentEntity {
+      | Some(InitialReadFromDb(entity_read)) =>
+        Updated({
+          initial: Retrieved(entity_read),
+          latest: entity,
+          history: [],
+        })
+      | Some(Updated(previous_values)) =>
+        Updated({
+          initial: previous_values.initial,
+          latest: entity,
+          history: Config.placeholder_is_near_head_of_chain_or_in_dev_mode
+            ? previous_values.history->Belt.Array.concat([previous_values.latest])
+            : [],
+        })
+      | None =>
+        Updated({
+          initial: Unknown,
+          latest: entity,
+          history: [],
+        })
       }
+      self.dict->Js.Dict.set(mapKey, entityData)
     }
 
     let get = (self: t, key: StoreItem.key) =>
@@ -141,8 +73,8 @@ module InMemoryStore = {
         switch row {
         | Updated({latest: Set(entity, _)}) => Some(entity)
         | Updated({latest: Delete(_)}) => None
-        | ReadNoChangeFromDB(AlreadySet(entity)) => Some(entity)
-        | ReadNoChangeFromDB(NotSet) => None
+        | InitialReadFromDb(AlreadySet(entity)) => Some(entity)
+        | InitialReadFromDb(NotSet) => None
         }
       })
 
@@ -207,7 +139,9 @@ module InMemoryStore = {
     type key = dynamicContractRegistryKey
     let hasher = ({chainId, contractAddress}) =>
       EventUtils.getContractAddressKeyString(~chainId, ~contractAddress)
-  }){{#each entities as | entity |}}
+  })
+  
+  {{#each entities as | entity |}}
 
   module {{entity.name.capitalized}} = MakeStoreEntity({
     type t = Types.{{entity.name.uncapitalized}}Entity
@@ -487,12 +421,7 @@ let makeEntityExecuterComposer = (
         })
         if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
           let setOfIdsNotSavedToDb =
-            idsToLoad->Belt.Set.String.removeMany(
-              entities->Belt.Array.map(entity => 
-                // TODO: improve type system so that we don't need Obj.magic here.
-                Obj.magic(entity)["id"]
-              ),
-            )
+            idsToLoad->Belt.Set.String.removeMany(entities->Belt.Array.map(getEntiyId))
           setOfIdsNotSavedToDb
           ->Belt.Set.String.toArray
           ->Belt.Array.forEach(entityId => {
@@ -574,109 +503,150 @@ let executeSet = (
   }
 }
 
-let executeSetEntity = (
+let executeSetEntityWithHistory = (
   sql: Postgres.sql,
   ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
-  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
+  ~dbFunctionSet: (Postgres.sql, array<'b>) => promise<unit>,
+  ~dbFunctionDelete: (Postgres.sql, array<string>) => promise<unit>,
   ~entityEncoder,
   ~entityType,
-) => {
-  let (entitiesToSet, entityHistoriesToSet) = rows->Belt.Array.reduce(([], []),((entitiesToSet, entityHistoriesToSet), row) =>
+): promise<unit> => {
+  let (entitiesToSet, idsToDelete, entityHistoriesToSet) = rows->Belt.Array.reduce(([], [], []), (
+    (entitiesToSet, idsToDelete, entityHistoriesToSet),
+    row,
+  ) => {
     switch row {
-    | Updated({latest, history}) => 
-      let (_, entityHistory) =
-        history
-        ->Belt.Array.concat([latest])
-        ->Belt.Array.reduce(None, (optPrev: option<(Types.eventIdentifier, array<DbFunctions.entityHistoryItem>)>, entity) => {
-          let processEntity = (
-            eventIdentifier: Types.eventIdentifier,
-            entity_id,
-            params: option<string>,
-          ) => {
-            let entityHistory = switch optPrev {
-            | Some((previousEventIdentifier, entityHistory)) =>
-              let historyItem: DbFunctions.entityHistoryItem = {
-                chain_id: eventIdentifier.chainId,
-                block_number: eventIdentifier.blockNumber,
-                block_timestamp: eventIdentifier.blockTimestamp,
-                log_index: eventIdentifier.logIndex,
-                previous_chain_id: Some(previousEventIdentifier.chainId),
-                previous_block_timestamp: Some(previousEventIdentifier.blockTimestamp),
-                previous_block_number: Some(previousEventIdentifier.blockNumber),
-                previous_log_index: Some(previousEventIdentifier.logIndex),
-                entity_type: entityType,
-                entity_id,
-                params,
-              }
-
-              entityHistory->Belt.Array.concat([historyItem])
-            | None =>
-              let historyItem: DbFunctions.entityHistoryItem = {
-                chain_id: eventIdentifier.chainId,
-                block_number: eventIdentifier.blockNumber,
-                block_timestamp: eventIdentifier.blockTimestamp,
-                previous_chain_id: None,
-                previous_block_timestamp: None,
-                previous_block_number: None,
-                previous_log_index: None,
-                log_index: eventIdentifier.logIndex,
-                entity_type: entityType,
-                entity_id,
-                params,
-              }
-
-              [historyItem]
+    | Updated({latest, history}) =>
+      let processEntity = (
+        prev: (option<Types.eventIdentifier>, array<DbFunctions.entityHistoryItem>),
+        entity: Types.entityUpdate<'a>,
+      ) => {
+        let processEntity = (
+          eventIdentifier: Types.eventIdentifier,
+          entity_id,
+          params: option<string>,
+        ) => {
+          let (optPreviousEventIdentifier, entityHistory) = prev
+          let entityHistory = switch optPreviousEventIdentifier {
+          | Some(previousEventIdentifier) =>
+            let historyItem: DbFunctions.entityHistoryItem = {
+              chain_id: eventIdentifier.chainId,
+              block_number: eventIdentifier.blockNumber,
+              block_timestamp: eventIdentifier.blockTimestamp,
+              log_index: eventIdentifier.logIndex,
+              previous_chain_id: Some(previousEventIdentifier.chainId),
+              previous_block_timestamp: Some(previousEventIdentifier.blockTimestamp),
+              previous_block_number: Some(previousEventIdentifier.blockNumber),
+              previous_log_index: Some(previousEventIdentifier.logIndex),
+              entity_type: entityType,
+              entity_id,
+              params,
             }
 
-            Some((eventIdentifier, entityHistory))
-          }
-          switch entity {
-          | Set(entity, eventIdentifier) =>
-            processEntity(
-              (eventIdentifier: Types.eventIdentifier),
-              (entity->Obj.magic)["id"],
-              Some(entity->entityEncoder->Js.Json.stringify),
-            )
-          | Delete(entityId, eventIdentifier) =>
-            processEntity((eventIdentifier: Types.eventIdentifier), entityId, None)
-          }
-        })->Belt.Option.getExn // We know that there is at least 1 item in the history. Should be possible to refactor this code to make it 'safe' - to do this don't concat 'latest' at the beginning.
-      switch latest {
-      | Set(entity, _eventIdentifier) =>
-        (entitiesToSet->Belt.Array.concat([entityEncoder(entity)]), entityHistoriesToSet->Belt.Array.concat([entityHistory]))
-      | Delete(_entityId, _eventIdentifier) =>
-        (entitiesToSet, entityHistoriesToSet)
-      }
-    | _ => (entitiesToSet, entityHistoriesToSet)
-    }
-  )
+            entityHistory->Belt.Array.concat([historyItem])
+          | None =>
+            let historyItem: DbFunctions.entityHistoryItem = {
+              chain_id: eventIdentifier.chainId,
+              block_number: eventIdentifier.blockNumber,
+              block_timestamp: eventIdentifier.blockTimestamp,
+              previous_chain_id: None,
+              previous_block_timestamp: None,
+              previous_block_number: None,
+              previous_log_index: None,
+              log_index: eventIdentifier.logIndex,
+              entity_type: entityType,
+              entity_id,
+              params,
+            }
 
-  if entitiesToSet->Array.length > 0 {
+            [historyItem]
+          }
+
+          (Some(eventIdentifier), entityHistory)
+        }
+        switch entity {
+        | Set(entity, eventIdentifier) =>
+          processEntity(
+            (eventIdentifier: Types.eventIdentifier),
+            (entity->Obj.magic)["id"],
+            Some(entity->entityEncoder->Js.Json.stringify),
+          )
+        | Delete(entityId, eventIdentifier) =>
+          processEntity((eventIdentifier: Types.eventIdentifier), entityId, None)
+        }
+      }
+
+      let (_, entityHistory) =
+        history->Belt.Array.concat([latest])->Belt.Array.reduce((None, []), processEntity)
+
+      switch latest {
+      | Set(entity, _eventIdentifier) => (
+          entitiesToSet->Belt.Array.concat([entityEncoder(entity)]),
+          idsToDelete,
+          entityHistoriesToSet->Belt.Array.concat([entityHistory]),
+        )
+      | Delete(entityId, _eventIdentifier) => (entitiesToSet, idsToDelete->Belt.Array.concat([entityId]), entityHistoriesToSet->Belt.Array.concat([entityHistory]),)
+      }
+    | _ => (entitiesToSet, idsToDelete, entityHistoriesToSet)
+    }
+  })
+
     [
-      sql->dbFunction(entitiesToSet),
       sql->DbFunctions.EntityHistory.batchSet(
-        ~entityHistoriesToSet=Belt.Array.concatMany(entityHistoriesToSet),
+          ~entityHistoriesToSet=Belt.Array.concatMany(entityHistoriesToSet),
       ),
+       if entitiesToSet->Array.length > 0 {
+        sql->dbFunctionSet(entitiesToSet)
+      } else {
+        Promise.resolve()
+      },
+      if idsToDelete->Array.length > 0 {
+        sql->dbFunctionDelete(idsToDelete)
+      } else {
+        Promise.resolve()
+      }
     ]
     ->Promise.all
     ->Promise.thenResolve(_ => ())
-  } else {
-    Promise.resolve()
-  }
 }
-let executeDelete = (
+
+let executeDbFunctionsEntity = (
   sql: Postgres.sql,
   ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
-  ~dbFunction: (Postgres.sql, array<'b>) => promise<unit>,
-) => {
-  // TODO: implement me please (after hackathon)
-  let _ = rows
-  let _ = sql
-  let _ = dbFunction
-  Promise.resolve()
+  ~dbFunctionSet: (Postgres.sql, array<'b>) => promise<unit>,
+  ~dbFunctionDelete: (Postgres.sql, array<string>) => promise<unit>,
+  ~entityEncoder,
+  ~entityType,
+): promise<unit> => {
+  let (entitiesToSet, idsToDelete) = rows->Belt.Array.reduce(([], []), ((accumulatedSets, accumulatedDeletes), row) =>
+    switch row {
+    | Updated({latest: Set(entity, _eventIdentifier)}) => (
+        Belt.Array.concat(accumulatedSets, [entityEncoder(entity)]),
+        accumulatedDeletes,
+      )
+    | Updated({latest: Delete(entityId, _eventIdentifier)}) => (accumulatedSets, Belt.Array.concat(accumulatedDeletes, [entityId]))
+    | _ => (accumulatedSets, accumulatedDeletes)
+    }
+  )
+
+  let promises = 
+     ((entitiesToSet->Array.length > 0) ? [
+      sql->dbFunctionSet(entitiesToSet)
+    ] : [])->Belt.Array.concat(
+    (idsToDelete->Array.length > 0) ? [
+      sql->dbFunctionDelete(idsToDelete)
+    ] : [])
+  
+
+  promises->Promise.all->Promise.thenResolve(_ => ())
 }
 
 let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
+  let entityDbExecutionComposer = Config.placeholder_is_near_head_of_chain_or_in_dev_mode ? executeDbFunctionsEntity : executeSetEntityWithHistory
+
+  let placeholderDeleteFunction = (_sql: Postgres.sql, _ids: array<string>): promise<unit> =>
+    Js.Promise.resolve()
+
   let setEventSyncState = executeSet(
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
     ~items=inMemoryStore.eventSyncState->InMemoryStore.EventSyncState.values,
@@ -693,27 +663,21 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   )
 
   {{#each entities as | entity |}}
-  let delete{{entity.name.capitalized}}s = executeDelete(
-    ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchDelete,
-    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
-  )
-
-  let set{{entity.name.capitalized}}s = executeSetEntity(
-    ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchSet,
+  let set{{entity.name.capitalized}}s = executeDbFunctionsEntity(
+    ~dbFunctionSet=DbFunctions.{{entity.name.capitalized}}.batchSet,
+    ~dbFunctionDelete=placeholderDeleteFunction,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
     ~entityEncoder=Types.{{entity.name.uncapitalized}}Entity_encode,
     ~entityType="{{entity.name.capitalized}}"
   )
 
   {{/each}}
-
   let res = await sql->Postgres.beginSql((sql)=>{
     [
       setEventSyncState,
       setRawEvents,
       setDynamicContracts,
       {{#each entities as | entity |}}
-      delete{{entity.name.capitalized}}s,
       set{{entity.name.capitalized}}s,
       {{/each}}
     ]->Belt.Array.map(dbFunc => sql->dbFunc)

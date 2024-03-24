@@ -217,10 +217,7 @@ module EntityHistory = {
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'entity_type') THEN
           CREATE TYPE ENTITY_TYPE AS ENUM(
           {{#each entities as |entity|}}
-            '{{entity.name.capitalized}}'
-            {{#unless @last}}
-              ,
-            {{/unless}}
+            '{{entity.name.capitalized}}'{{#unless @last}},{{/unless}}
           {{/each}}
           );
         END IF;
