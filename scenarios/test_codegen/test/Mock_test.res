@@ -85,7 +85,14 @@ describe("E2E Db check", () => {
     let startBlock = MockConfig.mockChainConfig.startBlock
 
     Assert.deep_equal(
-      inMemoryStoreRows,
+      inMemoryStoreRows->Belt.Array.map(
+        row =>
+          switch row {
+          | Updated({latest: Set(latestEntity, _)}) => Some(latestEntity)
+          | Updated({latest: Delete(_)}) => None
+          | ReadNoChangeFromDB(_) => None
+          },
+      ),
       [
         MockEntities.makeDefaultSet(
           ~chainId,
