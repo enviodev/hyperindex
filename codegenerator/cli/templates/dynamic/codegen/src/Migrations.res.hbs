@@ -276,15 +276,15 @@ module {{entity.name.capitalized}} = {
 
 module DbIndexes = {
   let createDerivedFromDbIndexes = async () => {
+    {{#each entities as |entity|}}
+      {{#each entity.relational_params.all as | param |}}
+        {{#if param.is_derived_from}}
     let _ = await %raw("sql`
-      {{#each entities as |entity|}}
-        {{#each entity.relational_params.all as | param |}}
-          {{#if param.is_derived_from}}
-            CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" ({{param.relational_key.uncapitalized}});
-          {{/if}}
-        {{/each}}
-      {{/each}}
+      CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" ({{param.relational_key.uncapitalized}});
     `")
+        {{/if}}
+      {{/each}}
+    {{/each}}
   }
 }
 
