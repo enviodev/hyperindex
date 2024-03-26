@@ -218,7 +218,6 @@ type nextQuery = {
   fromBlock: int,
   toBlock: int,
   contractAddressMapping: ContractAddressingMap.mapping,
-  currentLatestBlockTimestamp: int,
 }
 
 let getQueryLogger = (
@@ -267,7 +266,7 @@ let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {
 Constructs `nextQuery` from a given node
 */
 let getNextQueryFromNode = (
-  {registerType, latestFetchedBlockNumber, contractAddressMapping, latestFetchedBlockTimestamp}: t,
+  {registerType, latestFetchedBlockNumber, contractAddressMapping}: t,
   ~toBlock,
 ) => {
   let (id, endBlock) = switch registerType {
@@ -284,7 +283,6 @@ let getNextQueryFromNode = (
     fromBlock,
     toBlock,
     contractAddressMapping,
-    currentLatestBlockTimestamp: latestFetchedBlockTimestamp,
   }
 }
 

@@ -206,7 +206,7 @@ Adds latest "lastBlockScannedData" to LastBlockScannedHashes and prunes old unne
 let addLastBlockScannedData = (
   chainFetcher: ChainFetcher.t,
   ~chainManager: t,
-  ~lastBlockScannedData: ReorgDetection.lastBlockScannedData,
+  ~lastBlockScannedData: ReorgDetection.blockData,
   ~currentHeight,
 ) => {
   let earliestMultiChainTimestampInThreshold =
