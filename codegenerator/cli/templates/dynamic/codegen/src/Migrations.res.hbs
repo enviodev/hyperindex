@@ -276,16 +276,20 @@ module {{entity.name.capitalized}} = {
 
 module DbIndexes = {
   let createDerivedFromDbIndexes = async () => {
+{{!-- Only loop through entities and fields if they containt derived fields otherwise return unit --}}
+{{#if entities_has_derived_fields}}
     {{#each entities as |entity|}}
-      {{#each entity.relational_params.all as | param |}}
-        {{#if param.is_derived_from}}
+      {{#each entity.relational_params.filtered_is_derived_from as | param |}}
     let _ = await %raw("sql`
       CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" ({{param.relational_key.uncapitalized}});
     `")
-        {{/if}}
       {{/each}}
     {{/each}}
   }
+{{else}}
+{{!-- Return unit if there are no derived fields --}}
+  ()
+{{/if}}
 }
 
 let deleteAllTables:unit => promise<unit> = async () => {

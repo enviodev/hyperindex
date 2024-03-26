@@ -121,6 +121,7 @@ pub trait HasIsDerivedFrom {
 pub struct FilteredTemplateLists<T: HasIsDerivedFrom> {
     pub all: Vec<T>,
     pub filtered_not_derived_from: Vec<T>,
+    pub filtered_is_derived_from: Vec<T>,
 }
 
 impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
@@ -131,9 +132,16 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
             .cloned()
             .collect::<Vec<T>>();
 
+        let filtered_is_derived_from = unfiltered
+            .iter()
+            .filter(|item| item.get_is_derived_from())
+            .cloned()
+            .collect::<Vec<T>>();
+
         FilteredTemplateLists {
             all: unfiltered,
             filtered_not_derived_from,
+            filtered_is_derived_from,
         }
     }
 
@@ -142,6 +150,7 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
         FilteredTemplateLists {
             all: Vec::new(),
             filtered_not_derived_from: Vec::new(),
+            filtered_is_derived_from: Vec::new(),
         }
     }
 }
@@ -248,6 +257,10 @@ impl EntityRecordTypeTemplate {
             relational_params,
             filtered_params,
         })
+    }
+
+    fn has_relational_derived_from_fields(&self) -> bool {
+        !self.relational_params.filtered_is_derived_from.is_empty()
     }
 }
 
@@ -618,6 +631,7 @@ pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
+    entities_has_derived_fields: bool,
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     codegen_out_path: String,
@@ -663,6 +677,9 @@ impl ProjectTemplate {
             .map(|entity| EntityRecordTypeTemplate::from_config_entity(entity, cfg))
             .collect::<Result<_>>()
             .context("Failed generating entity template types")?;
+        let entities_has_derived_fields = entities.iter().fold(false, |accum, entity| {
+            accum || entity.has_relational_derived_from_fields()
+        });
 
         let gql_enums: Vec<GraphQlEnumTypeTemplate> = cfg
             .get_gql_enums()
@@ -689,6 +706,7 @@ impl ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
             entities,
+            entities_has_derived_fields,
             gql_enums,
             chain_configs,
             codegen_out_path: gitignore_path_str,
@@ -982,10 +1000,7 @@ mod test {
                 name: "EmptyEntity".to_string().to_capitalized_options(),
                 labels: None,
                 array_labels: None,
-                entity_fields_of_required_entity: FilteredTemplateLists {
-                    all: vec![],
-                    filtered_not_derived_from: vec![],
-                },
+                entity_fields_of_required_entity: FilteredTemplateLists::empty(),
             },
         );
 
