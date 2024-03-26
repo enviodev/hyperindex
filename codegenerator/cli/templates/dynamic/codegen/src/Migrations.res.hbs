@@ -285,11 +285,11 @@ module DbIndexes = {
     `")
       {{/each}}
     {{/each}}
-  }
 {{else}}
 {{!-- Return unit if there are no derived fields --}}
   ()
 {{/if}}
+  }
 }
 
 let deleteAllTables:unit => promise<unit> = async () => {
