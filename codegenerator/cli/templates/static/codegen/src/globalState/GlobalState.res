@@ -47,6 +47,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t) => {
     cm.chainFetchers
     ->ChainMap.values
     ->Belt.Array.map(cf => {
+      let latestFetchedBlockNumber = cf.fetchState->FetchState.getLatestFullyFetchedBlock
       let chainMetadata: DbFunctions.ChainMetadata.chainMetadata = {
         chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
         startBlock: cf.chainConfig.startBlock,
@@ -55,6 +56,13 @@ let updateChainMetadataTable = async (cm: ChainManager.t) => {
         firstEventBlockNumber: cf.firstEventBlockNumber, //this is already optional
         latestProcessedBlock: cf.latestProcessedBlock, // this is already optional
         numEventsProcessed: Some(cf.numEventsProcessed),
+        isHyperSync: switch cf.chainConfig.syncSource {
+        | HyperSync(_) => true
+        | Rpc(_) => false
+        },
+        numBatchesFetched: cf.numBatchesFetched,
+        latestFetchedBlockNumber,
+        timeStampCaughtUpToHead: cf.timestampCaughtUpToHead
       }
       chainMetadata
     })
@@ -467,7 +475,8 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
 
 let taskReducer = (state: t, task: task, ~dispatchAction) => {
   switch task {
-  | UpdateChainMetaData => updateChainMetadataTable(state.chainManager)->ignore
+  | UpdateChainMetaData =>
+    updateChainMetadataTable(state.chainManager)->ignore
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(~state, ~dispatchAction)
 

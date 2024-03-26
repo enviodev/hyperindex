@@ -43,6 +43,10 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     "first_event_block_number",
     "latest_processed_block",
     "num_events_processed",
+    "is_hyper_sync", // this is left out of the on conflict below as it only needs to be set once
+    "num_batches_fetched",
+    "latest_fetched_block_number",
+    "timestamp_caught_up_to_head"
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
@@ -50,6 +54,9 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "first_event_block_number" = EXCLUDED."first_event_block_number",
   "latest_processed_block" = EXCLUDED."latest_processed_block",
   "num_events_processed" = EXCLUDED."num_events_processed",
+  "num_batches_fetched" = EXCLUDED."num_batches_fetched",
+  "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
+  "timestamp_caught_up_to_head" = EXCLUDED."timestamp_caught_up_to_head",
   "block_height" = EXCLUDED."block_height";`).then(res => {
 
   }).catch(err => {
