@@ -31,6 +31,10 @@ module ChainMetadata = {
         first_event_block_number INTEGER NULL,
         latest_processed_block INTEGER NULL,
         num_events_processed INTEGER NULL,
+        is_hyper_sync BOOL NOT NULL,
+        num_batches_fetched INTEGER NOT NULL,
+        latest_fetched_block_number INTEGER NOT NULL,
+        timestamp_caught_up_to_head TIMESTAMP WITH TIME ZONE NULL,
         PRIMARY KEY (chain_id)
       );
       `")
