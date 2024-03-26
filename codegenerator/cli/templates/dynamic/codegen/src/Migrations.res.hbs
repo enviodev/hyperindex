@@ -281,7 +281,7 @@ module DbIndexes = {
     {{#each entities as |entity|}}
       {{#each entity.relational_params.filtered_is_derived_from as | param |}}
     let _ = await %raw("sql`
-      CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" ({{param.relational_key.uncapitalized}});
+      CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" (\"{{param.relational_key.uncapitalized}}\");
     `")
       {{/each}}
     {{/each}}
