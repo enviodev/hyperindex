@@ -2,6 +2,7 @@ type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
   archiveHeight: int,
+  rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
   events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
@@ -184,13 +185,14 @@ module LogsQuery = {
     logsQueryPage,
   > => {
     try {
-      let {nextBlock, archiveHeight} = res
+      let {nextBlock, archiveHeight, rollbackGuard} = res
       let items = res.events->Belt.Array.map(event => event->checkFields)
       let page: logsQueryPage = {
         items,
         nextBlock,
-        archiveHeight,
+        archiveHeight: archiveHeight->Belt.Option.getWithDefault(0), //Archive Height is only None if height is 0
         events: res.events,
+        rollbackGuard,
       }
 
       Ok(page)
@@ -287,6 +289,7 @@ module BlockTimestampQuery = {
         archiveHeight,
         items,
         events: [], //tempory return empty events since this query contains no events
+        rollbackGuard: None, //No rollback guard from the json api
       })
     }
   }

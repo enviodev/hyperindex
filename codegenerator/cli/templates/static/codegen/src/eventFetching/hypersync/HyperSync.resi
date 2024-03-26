@@ -2,6 +2,7 @@ type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
   archiveHeight: int,
+  rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
   events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
