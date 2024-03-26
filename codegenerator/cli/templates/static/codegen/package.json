@@ -29,7 +29,7 @@
     "date-fns": "3.3.1",
     "esbuild": "0.20.2",
     "ethers": "6.8.0",
-    "express": "4.18.2",
+    "express": "4.19.2",
     "ink": "3.2.0",
     "ink-spinner": "4.0.3",
     "ink-big-text": "1.2.0",
