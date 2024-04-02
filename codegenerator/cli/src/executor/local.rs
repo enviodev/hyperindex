@@ -32,7 +32,7 @@ pub async fn run_local(
                     .context("Failed constructing persisted state")?;
 
                 Ok(persisted_state)
-            };
+            }
 
             match subcommand {
                 DbMigrateSubcommands::Up => {

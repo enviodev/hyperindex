@@ -15,9 +15,6 @@ use std::{
 pub struct HashString(String);
 
 impl HashString {
-    pub fn from_string(hash:String) -> HashString{
-        HashString(hash)
-    }
 
     pub fn from_flattened_directory(directory_path: PathBuf) -> anyhow::Result<Self> {
         // Get a list of paths within the directory
@@ -91,11 +88,8 @@ mod test {
     const CONFIG_1: &str = "test/configs/config1.yaml";
     const CONFIG_2: &str = "test/configs/config2.yaml";
     const EMPTY_HANDLER: &str = "test/configs/empty_handlers.res";
-    const HANDLER_WITH_IMPORTS: &str = "test/configs/handler-with-imports.js"; // todo: test this with ts - docs seem to say it will work - https://swc.rs/ - test with different versions of js
-    const HASH_OF_HANDLER_WITHOUT_IMPORTS: &str = "64d3f59d8dec3b31560262e5fd68690a0586771226d2f2635db2667818d8df0d";
-    const IMPORTED_HANDLER_FILE: &str = "test/configs/imported-file.js";
-    const HASH_OF_IMPORTED_HANDLER_FILE: &str = "e91348df5c1159dc72706a2007b0cdb8145187d31fe796ea7d7a98498b4467fe";
-    const HASH_OF_HANDLER_AST : &str = "efb4545c5404ce70718b09dea80dc5ddde066b2bc498da39a8f9a9bfe3095378";
+    const HANDLER_DIR: &str = "test/event_handlers/js";
+    const HANDLER_DIR_TS: &str = "test/event_handlers/ts";
 
     #[test]
     fn file_hash_single() {
@@ -128,12 +122,22 @@ mod test {
     }
 
     #[test]
-    fn handler_file_hash_with_imports_not_hash_of_handler_file() {
-        let handler_path = PathBuf::from(HANDLER_WITH_IMPORTS);
-        let hash = HashString::from_file_paths(vec![handler_path], true).unwrap();
-        assert_ne!(
+    fn handler_file_hash_dir() {
+        let handler_path_dir = PathBuf::from(HANDLER_DIR);
+        let hash = HashString::from_flattened_directory(handler_path_dir).unwrap();
+        assert_eq!(
             hash.inner(),
-            HASH_OF_HANDLER_WITHOUT_IMPORTS.to_string()
+            "e89778612a2e27631727307a5f02512965847c1fd310326704851c13d8ceef7a".to_string()
+        );
+    }
+    
+    #[test]
+    fn handler_file_hash_dir_ts() {
+        let handler_path_dir_ts = PathBuf::from(HANDLER_DIR_TS);
+        let hash = HashString::from_flattened_directory(handler_path_dir_ts).unwrap();
+        assert_eq!(
+            hash.inner(),
+            "9d4c28fb5b1a9b468adac73ddeef795223b714fae14d4a795bdf9c01975f1241".to_string()
         );
     }
 
