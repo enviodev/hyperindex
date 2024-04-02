@@ -306,3 +306,74 @@ pub mod db_migrate {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod test {
+
+    use crate::{
+        config_parsing::{entity_parsing::Schema, human_config, system_config::SystemConfig},
+        project_paths::ParsedProjectPaths,
+    };
+    use anyhow::Context;
+    use std::path::PathBuf;
+
+    #[tokio::test]
+
+    async fn commands_execute() {
+        let cmd = "echo";
+        let args = vec!["hello"];
+        let current_dir = std::env::current_dir().unwrap();
+        let exit = super::execute_command(cmd, args, &current_dir).await.unwrap();
+        assert!(exit.success());
+    }
+
+    #[tokio::test]
+    #[ignore = "Needs esbuild to be installed globally"]
+    async fn generate_esbuild_out_commands_execute() {
+        println!("Needs esbuild to be installed globally");
+        let root = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let path = format!("{}/configs/config.js.yaml", &root);
+        let config_path = PathBuf::from(path);
+
+        let human_cfg =
+            human_config::deserialize_config_from_yaml(&config_path).context("human cfg").expect("result from human config");
+        let system_cfg = SystemConfig::parse_from_human_cfg_with_schema(
+            &human_cfg,
+            Schema::empty(),
+            &ParsedProjectPaths::new(&root, "generated", "config.js.yaml").expect("parsed project paths"),
+        )
+        .context("system_cfg").expect("result from system config");
+
+        let all_handler_paths = system_cfg
+            .get_all_paths_to_handlers()
+            .context("Failed getting handler paths").expect("handlers from the config");
+
+        let exit = super::codegen::generate_esbuild_out(&system_cfg.parsed_project_paths, all_handler_paths, "generated/out").await.unwrap();
+        assert!(exit.success());
+    }
+    
+    #[tokio::test]
+    #[ignore = "Needs esbuild to be installed globally"]
+    async fn generate_esbuild_out_commands_execute_ts() {
+        println!("Needs esbuild to be installed globally");
+        let root = format!("{}/test", env!("CARGO_MANIFEST_DIR"));
+        let path = format!("{}/configs/config.ts.yaml", &root);
+        let config_path = PathBuf::from(path);
+
+        let human_cfg =
+            human_config::deserialize_config_from_yaml(&config_path).context("human cfg").expect("result from human config");
+        let system_cfg = SystemConfig::parse_from_human_cfg_with_schema(
+            &human_cfg,
+            Schema::empty(),
+            &ParsedProjectPaths::new(&root, "generated", "config.ts.yaml").expect("parsed project paths"),
+        )
+        .context("system_cfg").expect("result from system config");
+
+        let all_handler_paths = system_cfg
+            .get_all_paths_to_handlers()
+            .context("Failed getting handler paths").expect("handlers from the config");
+
+        let exit = super::codegen::generate_esbuild_out(&system_cfg.parsed_project_paths, all_handler_paths, "generated/out").await.unwrap();
+        assert!(exit.success());
+    }
+}

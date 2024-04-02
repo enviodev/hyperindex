@@ -1018,11 +1018,11 @@ mod test {
         assert_eq!(expected_chain_configs, project_template.chain_configs);
     }
 
-    #[test]
+    #[tokio::test]
     #[should_panic]
-    fn convert_to_chain_configs_case_5() {
+    async fn convert_to_chain_configs_case_5() {
         //Bad chain ID without sync config should panic
-        get_project_template_helper("config5.yaml");
+        get_project_template_helper("config5.yaml").await;
     }
 
     const RESCRIPT_BIG_INT_TYPE: RescriptType = RescriptType::BigInt;

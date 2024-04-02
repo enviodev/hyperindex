@@ -3,7 +3,6 @@ mod hash_string;
 
 use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths};
 use anyhow::Context;
-use clap::command;
 use hash_string::HashString;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -82,7 +81,6 @@ impl PersistedState {
             .get_all_paths_to_abi_files()
             .context("Failed getting abi file paths")?;
 
-        const HANDLER_FILES_MUST_EXIST: bool = false;
         const ABI_FILES_MUST_EXIST: bool = true;
 
         //generate esbuild out to generated/out dir
