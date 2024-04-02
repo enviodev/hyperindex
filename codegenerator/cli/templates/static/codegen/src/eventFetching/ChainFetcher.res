@@ -14,7 +14,7 @@ type t = {
   latestProcessedBlock: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
-  mutable lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t, // Dead code until we look at re-orgs again.
+  lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
 }
 
 //CONSTRUCTION
@@ -153,4 +153,46 @@ Gets the latest item on the front of the queue and returns updated fetcher
 */
 let getLatestItem = (self: t) => {
   self.fetchState->FetchState.getEarliestEvent
+}
+
+/**
+Finds the last known block where hashes are valid and returns
+the updated lastBlockScannedHashes rolled back where this occurs
+*/
+let rollbackLastBlockHashesToReorgLocation = async (chainFetcher: t) => {
+  //get a list of block hashes via the chainworker
+  let blockNumbers =
+    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
+  let blockNumbersAndHashes =
+    await chainFetcher.chainWorker
+    ->SourceWorker.getBlockHashes(~blockNumbers)
+    ->Promise.thenResolve(Result.getExn)
+
+  // let rolledBack =
+  chainFetcher.lastBlockScannedHashes
+  ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
+  ->Utils.unwrapResultExn
+}
+
+type lastScannedBlockData = {
+  blockNumber: int,
+  blockTimestamp: int,
+}
+
+let getLastScannedBlockData = lastBlockData => {
+  lastBlockData
+  ->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
+  ->Option.mapWithDefault({blockNumber: 0, blockTimestamp: 0}, ({blockNumber, blockTimestamp}) => {
+    blockNumber,
+    blockTimestamp,
+  })
+}
+
+let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
+  let {blockNumber, blockTimestamp} = rolledBackLastBlockData->getLastScannedBlockData
+  {
+    ...chainFetcher,
+    lastBlockScannedHashes: rolledBackLastBlockData,
+    fetchState: chainFetcher.fetchState->FetchState.rollback(~blockNumber, ~blockTimestamp),
+  }
 }

@@ -57,6 +57,8 @@ describe("E2E Integration Test", () => {
         Env.maxEventFetchedQueueSize / numChains
       },
       indexerStartTime: Js.Date.make(),
+      rollbackState: NoRollback,
+      id: 0,
     }
 
     let gsManager = globalState->GlobalStateManager.make

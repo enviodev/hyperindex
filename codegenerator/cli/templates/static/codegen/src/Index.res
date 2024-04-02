@@ -140,6 +140,8 @@ let main = async () => {
         Env.maxEventFetchedQueueSize / numChains
       },
       indexerStartTime: Js.Date.make(),
+      rollbackState: NoRollback,
+      id: 0,
     }
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))

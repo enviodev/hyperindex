@@ -598,6 +598,59 @@ let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractA
 */
 let getLatestFullyFetchedBlock = (self: t) => self.latestFetchedBlockNumber
 
+let rec pruneQueuePastValidBlock = (
+  ~accumRev=list{},
+  ~blockNumber,
+  queue: list<Types.eventBatchQueueItem>,
+) => {
+  switch queue {
+  | list{head, ...tail} if head.blockNumber <= blockNumber =>
+    tail->pruneQueuePastValidBlock(~blockNumber, ~accumRev=accumRev->List.add(head))
+  | _ => accumRev->List.reverse
+  }
+}
+
+/**
+Rolls back registers to the given valid block
+*/
+let rec rollback = (~blockNumber, ~blockTimestamp, self: t) => {
+  switch self.registerType {
+  //Case 1 Root register that has only fetched up to a confirmed valid block number
+  //Should just return itself unchanged
+  | RootRegister if self.latestFetchedBlockNumber <= blockNumber => self
+  //Case 2 Dynamic register that has only fetched up to a confirmed valid block number
+  //Should just return itself, with the next register rolled back recursively
+  | DynamicContractRegister(id, nextRegister) if self.latestFetchedBlockNumber <= blockNumber => {
+      ...self,
+      registerType: DynamicContractRegister(
+        id,
+        nextRegister->rollback(~blockNumber, ~blockTimestamp),
+      ),
+    }
+  //Case 3 Root register that has fetched further than the confirmed valid block number
+  //Should prune its queue and set its latest fetched block data to the latest known confirmed block
+  | RootRegister => {
+      ...self,
+      fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~blockNumber),
+      latestFetchedBlockNumber: blockNumber,
+      latestFetchedBlockTimestamp: blockTimestamp,
+    }
+  //Case 4 DynamicContract register that has fetched further than the confirmed valid block number
+  //Should prune its queue, set its latest fetched blockdata + pruned queue
+  //And recursivle prune the nextRegister
+  | DynamicContractRegister(id, nextRegister) => {
+      ...self,
+      fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~blockNumber),
+      latestFetchedBlockNumber: blockNumber,
+      latestFetchedBlockTimestamp: blockTimestamp,
+      registerType: DynamicContractRegister(
+        id,
+        nextRegister->rollback(~blockNumber, ~blockTimestamp),
+      ),
+    }
+  }
+}
+
 /**
 * Returns a boolean indicating whether the fetch state is actively indexing
 * used for comparing event queues in the chain manager

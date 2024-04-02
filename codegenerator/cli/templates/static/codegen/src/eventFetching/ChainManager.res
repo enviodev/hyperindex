@@ -133,42 +133,6 @@ let makeFromDbState = async (~configs: Config.chainConfigs): t => {
   }
 }
 
-exception NotASourceWorker
-let toSourceWorker = (worker: SourceWorker.sourceWorker): SourceWorker.sourceWorker => worker
-
-//TODO this needs to action a roll back
-let reorgStub = async (chainManager: t, ~chainFetcher: ChainFetcher.t, ~lastBlockScannedData) => {
-  //get a list of block hashes via the chainworker
-  let blockNumbers =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
-  let blockNumbersAndHashes =
-    await chainFetcher.chainWorker
-    ->toSourceWorker
-    ->SourceWorker.getBlockHashes(~blockNumbers)
-    ->Promise.thenResolve(Result.getExn)
-
-  let rolledBack =
-    chainFetcher.lastBlockScannedHashes
-    ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
-    ->Result.getExn
-
-  let reorgStartPlace = rolledBack->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
-
-  switch reorgStartPlace {
-  | Some({blockNumber, blockTimestamp}) => (blockNumber, blockTimestamp)->ignore //Rollback to here
-  | None => () //roll back to start of chain. Can't really happen
-  }
-  //Stop workers
-  //Roll back
-  //Start workers again
-  let _ = chainManager
-  Logging.warn({
-    "msg": "A Reorg Has occurred",
-    "chainId": chainFetcher.chainConfig.chain->ChainMap.Chain.toChainId,
-    "lastBlockScannedData": lastBlockScannedData,
-  })
-}
-
 /**
 For each chain with a confirmed block threshold, find the earliest block ranged scanned that exists
 in that threshold
@@ -187,57 +151,34 @@ let getEarliestMultiChainTimestampInThreshold = (chainManager: t) => {
 }
 
 /**
-Checks whether reorg has accured by comparing the parent hash with the last saved block hash.
-*/
-let hasReorgOccurred = (chainFetcher: ChainFetcher.t, ~parentHash) => {
-  let recentLastBlockData =
-    chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
-
-  switch (parentHash, recentLastBlockData) {
-  | (None, None) => false
-  | (None, Some(_)) | (Some(_), None) => true
-  | (Some(parentHash), Some({blockHash})) => parentHash == blockHash
-  }
-}
-
-/**
 Adds latest "lastBlockScannedData" to LastBlockScannedHashes and prunes old unneeded data
 */
 let addLastBlockScannedData = (
-  chainFetcher: ChainFetcher.t,
-  ~chainManager: t,
+  chainManager: t,
+  ~chain: ChainMap.Chain.t,
   ~lastBlockScannedData: ReorgDetection.blockData,
   ~currentHeight,
 ) => {
   let earliestMultiChainTimestampInThreshold =
     chainManager->getEarliestMultiChainTimestampInThreshold
 
-  chainFetcher.lastBlockScannedHashes =
-    chainFetcher.lastBlockScannedHashes
-    ->ReorgDetection.LastBlockScannedHashes.pruneStaleBlockData(
-      ~currentHeight,
-      ~earliestMultiChainTimestampInThreshold?,
-    )
-    ->ReorgDetection.LastBlockScannedHashes.addLatestLastBlockData(~lastBlockScannedData)
-}
+  let chainFetchers = chainManager.chainFetchers->ChainMap.update(chain, cf => {
+    let lastBlockScannedHashes =
+      cf.lastBlockScannedHashes
+      ->ReorgDetection.LastBlockScannedHashes.pruneStaleBlockData(
+        ~currentHeight,
+        ~earliestMultiChainTimestampInThreshold?,
+      )
+      ->ReorgDetection.LastBlockScannedHashes.addLatestLastBlockData(~lastBlockScannedData)
+    {
+      ...cf,
+      lastBlockScannedHashes,
+    }
+  })
 
-/**
-A function that gets partially applied as it is handed down from
-chain manager to chain fetcher to chain worker
-*/
-let checkHasReorgOccurred = (
-  chainManager: t,
-  chainFetcher: ChainFetcher.t,
-  lastBlockScannedData,
-  ~parentHash,
-  ~currentHeight,
-) => {
-  let hasReorgOccurred = chainFetcher->hasReorgOccurred(~parentHash)
-
-  if hasReorgOccurred {
-    chainManager->reorgStub(~chainFetcher, ~lastBlockScannedData)->ignore
-  } else {
-    chainFetcher->addLastBlockScannedData(~chainManager, ~currentHeight, ~lastBlockScannedData)
+  {
+    ...chainManager,
+    chainFetchers,
   }
 }
 

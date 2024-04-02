@@ -64,6 +64,14 @@ module LastBlockScannedHashes: {
   >
 
   let getAllBlockNumbers: t => Belt.Array.t<int>
+
+  let hasReorgOccurred: (t, ~parentHash: option<string>) => bool
+
+  /**
+  Return a BlockNumbersAndHashes.t rolled back to where blockData is less
+  than or equal to the provided blockTimestamp
+  */
+  let rollBackToBlockTimestampLte: (~blockTimestamp: int, t) => t
 } = {
   type t = {
     // Number of blocks behind head, we want to keep track
@@ -120,7 +128,7 @@ module LastBlockScannedHashes: {
     ->Belt.List.reverse
     ->getEarlistTimestampInThresholdInternal(~currentHeight, ~confirmedBlockThreshold)
 
-  // Adds the latest blockData to the end of the array
+  // Adds the latest blockData to the head of the list
   let addLatestLastBlockData = (
     {confirmedBlockThreshold, lastBlockScannedDataList}: t,
     ~lastBlockScannedData,
@@ -263,6 +271,31 @@ module LastBlockScannedHashes: {
     ->Belt.Result.map(makeWithDataInternal(~confirmedBlockThreshold))
   }
 
+  let rec rollBackToBlockTimestampLteInternal = (
+    ~blockTimestamp: int,
+    latestBlockScannedData: list<blockData>,
+  ) => {
+    switch latestBlockScannedData {
+    | list{} => list{}
+    | list{head, ...tail} =>
+      if head.blockTimestamp <= blockTimestamp {
+        latestBlockScannedData
+      } else {
+        tail->rollBackToBlockTimestampLteInternal(~blockTimestamp)
+      }
+    }
+  }
+
+  /**
+  Return a BlockNumbersAndHashes.t rolled back to where blockData is less
+  than or equal to the provided blockTimestamp
+  */
+  let rollBackToBlockTimestampLte = (~blockTimestamp: int, self: t) => {
+    let {confirmedBlockThreshold, lastBlockScannedDataList} = self
+    lastBlockScannedDataList
+    ->rollBackToBlockTimestampLteInternal(~blockTimestamp)
+    ->makeWithDataInternal(~confirmedBlockThreshold)
+  }
   let min = (arrInt: array<int>) => {
     arrInt->Belt.Array.reduce(None, (current, val) => {
       switch current {
@@ -305,4 +338,19 @@ module LastBlockScannedHashes: {
     self.lastBlockScannedDataList->Belt.List.reduceReverse([], (acc, v) => {
       Belt.Array.concat(acc, [v.blockNumber])
     })
+
+  /**
+Checks whether reorg has accured by comparing the parent hash with the last saved block hash.
+*/
+  let hasReorgOccurred = (lastBlockScannedHashes: t, ~parentHash) => {
+    let recentLastBlockData = lastBlockScannedHashes->getLatestLastBlockData
+
+    switch (parentHash, recentLastBlockData) {
+    | (Some(parentHash), Some({blockHash})) => parentHash == blockHash
+    | _ => //If parentHash is None, either it's the genesis block (no reorg)
+      //Or its already confirmed so no Reorg
+      //If recentLastBlockData is None, this is the first block range queried
+      false
+    }
+  }
 }

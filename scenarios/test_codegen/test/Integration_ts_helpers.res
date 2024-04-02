@@ -72,6 +72,8 @@ let startProcessing = (cfg: chainConfig, chainManager: chainManager) => {
       Env.maxEventFetchedQueueSize / numChains
     },
     indexerStartTime: Js.Date.make(),
+    rollbackState: NoRollback,
+    id: 0,
   }
 
   let gsManager = globalState->GlobalStateManager.make
