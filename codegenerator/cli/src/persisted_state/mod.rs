@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::{
     fmt::{self, Display},
+    fs,
     path::PathBuf,
 };
 use strum::IntoEnumIterator;
