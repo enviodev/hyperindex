@@ -68,6 +68,7 @@ let startProcessing = (cfg: chainConfig, chainManager: chainManager) => {
     maxBatchSize: Env.maxProcessBatchSize,
     maxPerChainQueueSize: Env.maxPerChainQueueSize,
     indexerStartTime: Js.Date.make(),
+    saveRawEvents: true
   }
 
   let gsManager = globalState->GlobalStateManager.make
