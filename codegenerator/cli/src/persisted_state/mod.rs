@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::{
     fmt::{self, Display},
+    fs,
     path::PathBuf,
 };
 use strum::IntoEnumIterator;
@@ -84,10 +85,25 @@ impl PersistedState {
         const ABI_FILES_MUST_EXIST: bool = true;
 
         //generate esbuild out to generated/out dir
-        let out_dir = "generated/out";
-        let _ = commands::codegen::generate_esbuild_out(&config.parsed_project_paths, all_handler_paths, out_dir).await;
-        let handlers_esbuild_hash: HashString = HashString::from_flattened_directory(out_dir.into())
-            .context("Failed hashing handler files").expect("Failed hashing handler files");
+        let generated_dir = "generated";
+        let out_dir = "esbuild-handlers";
+        let root_relative_out_dir = format!("{}/{}", generated_dir, out_dir);   
+        
+        // Check if the directory exists
+        let dir_exists = fs::metadata(generated_dir)
+            .map(|metadata| metadata.is_dir())
+            .unwrap_or(false);
+
+        if dir_exists {
+            let _ = commands::codegen::generate_esbuild_out(&config.parsed_project_paths, all_handler_paths, out_dir).await;
+        }
+
+        let handlers_esbuild_hash: HashString = if dir_exists { 
+            HashString::from_directory(PathBuf::from(root_relative_out_dir.clone()))
+                .context("Failed hashing handler files").expect("Failed hashing handler files")
+        } else { 
+            HashString::from_string("dummy_hash".to_string())
+        };
 
         Ok(PersistedState {
             envio_version: CURRENT_CRATE_VERSION.to_string(),

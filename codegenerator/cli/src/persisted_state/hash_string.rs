@@ -6,7 +6,7 @@ use std::{
     fmt::{self, Display},
     fs::{File,read_dir},
     io::Read,
-    path::PathBuf,
+    path::{Path,PathBuf},
 };
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, sqlx::FromRow, sqlx::Type)]
@@ -16,18 +16,39 @@ pub struct HashString(String);
 
 impl HashString {
 
-    pub fn from_flattened_directory(directory_path: PathBuf) -> anyhow::Result<Self> {
-        // Get a list of paths within the directory
-        let paths = read_dir(directory_path)
-            .expect("Failed to read directory")
-            .map(|entry| entry.unwrap().path())
-            .collect::<Vec<PathBuf>>();
+    pub fn from_string(string: String) -> Self {
+        // Create a hash of the string
+        let hash = Sha256::digest(&string);
 
-        // Filter out only files from the paths - esbuild should only generate single nested child files but to be safe
-        let files: Vec<PathBuf> = paths
-            .into_iter()
-            .filter(|path| path.is_file())
-            .collect();
+        // Convert the hash to a hexadecimal string
+        let hash_string = format!("{:x}", hash);
+
+        HashString(hash_string)
+    }
+
+    //generates a hash of the contents of a directory
+    pub fn from_directory(directory_path: PathBuf) -> anyhow::Result<Self> {
+
+        fn get_files_recursive(directory_path: &Path) -> Vec<PathBuf> {
+            let mut files = Vec::new();
+        
+            if let Ok(entries) = read_dir(directory_path) {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let path = entry.path();
+                        if path.is_file() {
+                            files.push(path);
+                        } else if path.is_dir() {
+                            files.extend(get_files_recursive(&path));
+                        }
+                    }
+                }
+            }
+        
+            files
+        }
+            
+        let files: Vec<PathBuf> = get_files_recursive(&directory_path);        
 
         Self::from_file_paths(files, true)
     }
@@ -124,7 +145,7 @@ mod test {
     #[test]
     fn handler_file_hash_dir() {
         let handler_path_dir = PathBuf::from(HANDLER_DIR);
-        let hash = HashString::from_flattened_directory(handler_path_dir).unwrap();
+        let hash = HashString::from_directory(handler_path_dir).unwrap();
         assert_eq!(
             hash.inner(),
             "e89778612a2e27631727307a5f02512965847c1fd310326704851c13d8ceef7a".to_string()
@@ -134,7 +155,7 @@ mod test {
     #[test]
     fn handler_file_hash_dir_ts() {
         let handler_path_dir_ts = PathBuf::from(HANDLER_DIR_TS);
-        let hash = HashString::from_flattened_directory(handler_path_dir_ts).unwrap();
+        let hash = HashString::from_directory(handler_path_dir_ts).unwrap();
         assert_eq!(
             hash.inner(),
             "9d4c28fb5b1a9b468adac73ddeef795223b714fae14d4a795bdf9c01975f1241".to_string()
