@@ -220,6 +220,6 @@ let executeQuery = (self: t, query: FetchState.nextQuery): ChainWorkerTypes.bloc
     latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
     stats: "NO_STATS"->Obj.magic,
     fetchStateRegisterId: query.fetchStateRegisterId,
-    worker: HyperSync(self),
+    worker: HyperSync(self->Obj.magic),
   }
 }

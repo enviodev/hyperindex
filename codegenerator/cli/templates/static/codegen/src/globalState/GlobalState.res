@@ -14,6 +14,16 @@ type t = {
   id: int,
 }
 
+let make = (~chainManager) => {
+  currentlyProcessingBatch: false,
+  chainManager,
+  maxBatchSize: Env.maxProcessBatchSize,
+  maxPerChainQueueSize: Env.maxPerChainQueueSize,
+  indexerStartTime: Js.Date.make(),
+  rollbackState: NoRollback,
+  id: 0,
+}
+
 let getId = self => self.id
 let incrementId = self => {...self, id: self.id + 1}
 let setRollingBack = (self, chain) => {...self, rollbackState: RollingBack(chain)}
@@ -469,7 +479,63 @@ let invalidatedActionReducer = (state: t, action: action) =>
   | _ => (state, [])
   }
 
-let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
+let waitForNewBlock = (~logger, ~currentBlockHeight, ~setCurrentBlockHeight, ~chainWorker) => {
+  logger->Logging.childTrace("Waiting for new blocks")
+  let compose = async (worker, waitForBlockGreaterThanCurrentHeight) => {
+    let logger = Logging.createChildFrom(
+      ~logger,
+      ~params={
+        "logType": "Poll for block greater than current height",
+        "currentBlockHeight": currentBlockHeight,
+      },
+    )
+    let newHeight = await worker->waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
+    setCurrentBlockHeight(newHeight)
+  }
+  switch chainWorker {
+  | Config.HyperSync(w) => compose(w, HyperSyncWorker.waitForBlockGreaterThanCurrentHeight)
+  | Rpc(w) => compose(w, RpcWorker.waitForBlockGreaterThanCurrentHeight)
+  }->ignore
+}
+
+let executeNextQuery = (
+  ~logger,
+  ~query,
+  ~currentBlockHeight,
+  ~setCurrentBlockHeight,
+  ~dispatchAction,
+  ~chain,
+  ~chainWorker,
+) => {
+  let compose = async (worker, fetchBlockRange, workerType) => {
+    let logger = Logging.createChildFrom(
+      ~logger,
+      ~params={"logType": "Block Range Query", "workerType": workerType},
+    )
+    let logger = query->FetchState.getQueryLogger(~logger)
+    let res =
+      await worker->fetchBlockRange(~query, ~logger, ~currentBlockHeight, ~setCurrentBlockHeight)
+    switch res {
+    | Ok(res) => dispatchAction(BlockRangeResponse(chain, res))
+    | Error(e) => dispatchAction(ErrorExit(e))
+    }
+  }
+
+  switch chainWorker {
+  | Config.HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange, "HyperSync")
+  | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange, "RPC")
+  }->ignore
+}
+
+let checkAndFetchForChain = (
+  //Used for dependency injection for tests
+  ~waitForNewBlock=waitForNewBlock,
+  ~executeNextQuery=executeNextQuery,
+  //required args
+  ~state,
+  ~dispatchAction,
+  chain,
+) => {
   let {fetchState, chainWorker, logger, currentBlockHeight, isFetchingBatch} =
     state.chainManager.chainFetchers->ChainMap.get(chain)
 
@@ -491,49 +557,18 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
 
     switch nextQuery {
     | WaitForNewBlock =>
-      logger->Logging.childTrace("Waiting for new blocks")
-      let compose = async (worker, waitForBlockGreaterThanCurrentHeight) => {
-        let logger = Logging.createChildFrom(
-          ~logger,
-          ~params={
-            "logType": "Poll for block greater than current height",
-            "currentBlockHeight": currentBlockHeight,
-          },
-        )
-        let newHeight =
-          await worker->waitForBlockGreaterThanCurrentHeight(~currentBlockHeight, ~logger)
-        setCurrentBlockHeight(newHeight)
-      }
-      switch chainWorker {
-      | HyperSync(w) => compose(w, HyperSyncWorker.waitForBlockGreaterThanCurrentHeight)
-      | Rpc(w) => compose(w, RpcWorker.waitForBlockGreaterThanCurrentHeight)
-      }->ignore
+      waitForNewBlock(~setCurrentBlockHeight, ~currentBlockHeight, ~logger, ~chainWorker)
     | NextQuery(query) =>
       dispatchAction(SetCurrentlyFetchingBatch(chain, true))
-
-      let compose = async (worker, fetchBlockRange, workerType) => {
-        let logger = Logging.createChildFrom(
-          ~logger,
-          ~params={"logType": "Block Range Query", "workerType": workerType},
-        )
-        let logger = query->FetchState.getQueryLogger(~logger)
-        let res =
-          await worker->fetchBlockRange(
-            ~query,
-            ~logger,
-            ~currentBlockHeight,
-            ~setCurrentBlockHeight,
-          )
-        switch res {
-        | Ok(res) => dispatchAction(BlockRangeResponse(chain, res))
-        | Error(e) => dispatchAction(ErrorExit(e))
-        }
-      }
-
-      switch chainWorker {
-      | HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange, "HyperSync")
-      | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange, "RPC")
-      }->ignore
+      executeNextQuery(
+        ~query,
+        ~logger,
+        ~currentBlockHeight,
+        ~setCurrentBlockHeight,
+        ~dispatchAction,
+        ~chainWorker,
+        ~chain,
+      )
     | Done => ()
     }
   }
@@ -550,7 +585,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
     | CheckAllChains =>
       //Mapping from the states chainManager so we can construct tests that don't use
       //all chains
-      state.chainManager.chainFetchers->ChainMap.keys->Array.forEach(fetchForChain)
+      state.chainManager.chainFetchers->ChainMap.keys->Array.forEach(fetchForChain(_))
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {

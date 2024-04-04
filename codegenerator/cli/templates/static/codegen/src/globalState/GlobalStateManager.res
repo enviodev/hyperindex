@@ -44,6 +44,7 @@ module MakeManager = (S: State) => {
     }, 0)->ignore
 
   let getState = self => self.state
+  let setState = (self: t, state: S.t) => self.state = state
 }
 
 module Manager = MakeManager(GlobalState)
