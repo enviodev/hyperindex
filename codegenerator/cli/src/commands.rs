@@ -108,23 +108,37 @@ pub mod codegen {
         let args = vec!["install", "--no-frozen-lockfile"];
         execute_command("pnpm", args, current_dir).await
     }
-    
-     // eg: pnpm esbuild --platform=node --bundle --minify --outdir=./generated/out --external:@generated --external:*.gen ./src/EventHandlers.ts ./src/another-file.ts
+
+     // eg: pnpm esbuild --platform=node --bundle --minify --outdir=./esbuild-handlers --external:../generated/* ../src/EventHandlers.ts ../src/another-file.ts
     pub async fn generate_esbuild_out(
         project_paths: &ParsedProjectPaths,
         all_handler_paths: Vec<PathBuf>,
         out_dir: &str,
-    ) -> Result<std::process::ExitStatus> {
-        println!("Creating an esbuild out...");
-        let current_dir = &project_paths.project_root;
+    ) -> Result<std::process::ExitStatus> {        
+        let current_dir = &project_paths.generated;            
+        
+        // as we execute this command from the generated foleder we need to prepend ../ to the paths
+        fn prepend_parent_directory(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+            paths
+                .into_iter()
+                .map(|path| {
+                    let mut new_path = PathBuf::new();
+                    new_path.push("..");
+                    new_path.push(path);
+                    new_path
+                })
+                .collect()
+        }
 
-        let all_handler_paths_string: Vec<&str> = all_handler_paths
+        let all_handler_paths_parent = prepend_parent_directory(all_handler_paths.clone());
+
+        let all_handler_paths_string: Vec<&str> = all_handler_paths_parent
         .iter()
         .map(|path| path.to_str().expect("Invalid path")).collect();
 
         let out_dir_arg = format!("--outdir={}", out_dir);
 
-        let esbuild_cmd: Vec<&str> = vec!["esbuild", "--platform=node","--bundle" ,"--minify", &out_dir_arg, "--external:@generated" ,"--external:*.gen"];
+        let esbuild_cmd: Vec<&str> = vec!["esbuild", "--platform=node","--bundle" ,"--minify", &out_dir_arg, "--external:../generated/*", "--log-level=warning"]; 
 
         let esbuild_cmd_with_paths = esbuild_cmd.iter().chain(all_handler_paths_string.iter()).cloned().collect::<Vec<&str>>();        
 
@@ -174,7 +188,6 @@ pub mod codegen {
     ) -> anyhow::Result<()> {
         let template_dirs = TemplateDirs::new();
         fs::create_dir_all(&project_paths.generated).await?;
-
         let template =
             hbs_templating::codegen_templates::ProjectTemplate::from_config(config, project_paths)
                 .await.context("Failed creating project template")?;
@@ -183,7 +196,6 @@ pub mod codegen {
             .get_codegen_static_dir()?
             .extract(&project_paths.generated)
             .context("Failed extracting static codegen files")?;
-
         template
             .generate_templates(project_paths)
             .context("Failed generating dynamic codegen files")?;
