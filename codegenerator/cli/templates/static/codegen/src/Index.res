@@ -1,5 +1,3 @@
-// %%raw(`globalThis.fetch = require('node-fetch')`)
-
 /**
  * This function can be used to override the console.log (and related functions for users). This means these logs will also be available to the user
  */
@@ -56,6 +54,7 @@ app->get("/metrics", (_req, res) => {
 })
 
 type args = {
+  @as("save-raw-events") saveRawEvents?: bool,
   @as("sync-from-raw-events") syncFromRawEvents?: bool,
   @as("tui-off") tuiOff?: bool,
 }
@@ -128,6 +127,7 @@ let main = async () => {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Config.tuiOffEnvVar))
     // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
+     let shouldSaveRawEvents = mainArgs.saveRawEvents->Belt.Option.getWithDefault(false)
 
     let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)
     let globalState: GlobalState.t = {
@@ -136,6 +136,7 @@ let main = async () => {
       maxBatchSize: Env.maxProcessBatchSize,
       maxPerChainQueueSize: Env.maxPerChainQueueSize,
       indexerStartTime: Js.Date.make(),
+      saveRawEvents: shouldSaveRawEvents,
     }
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))

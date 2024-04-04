@@ -152,10 +152,13 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
 
             println!("Starting indexer");
 
+            const SAVE_RAW_EVENTS: bool = true;
+
             commands::start::start_indexer(
                 &project_paths,
                 should_sync_from_raw_events,
                 should_open_hasura_console,
+                SAVE_RAW_EVENTS
             )
             .await
             .context("Failed running start on the indexer")?;

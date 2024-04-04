@@ -442,7 +442,7 @@ let executeSetSchemaEntity = (~entityEncoder) =>
     row.entity->entityEncoder
   })
 
-let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
+let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t, ~saveRawEvents: bool) => {
   let setEventSyncState = executeSet(
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
     ~getInputValFromRow=row => row.entity,
@@ -477,15 +477,20 @@ let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
   {{/each}}
 
   let res = await sql->Postgres.beginSql((sql)=>{
-    [
-      setEventSyncState,
-      setRawEvents,
+    let pgActions = [
+      setEventSyncState,      
       setDynamicContracts,
       {{#each entities as | entity |}}
       delete{{entity.name.capitalized}}s,
       set{{entity.name.capitalized}}s,
       {{/each}}
-    ]->Belt.Array.map(dbFunc => sql->dbFunc)
+    ]
+
+    if saveRawEvents {
+      pgActions->Belt.Array.push(setRawEvents)
+    }
+    
+    pgActions->Belt.Array.map(dbFunc => sql->dbFunc)
   })
 
   res

@@ -5,6 +5,7 @@ type t = {
   maxBatchSize: int,
   maxPerChainQueueSize: int,
   indexerStartTime: Js.Date.t,
+  saveRawEvents: bool,
 }
 type chain = ChainMap.Chain.t
 type arbitraryEventQueue = list<Types.eventBatchQueueItem>
@@ -502,6 +503,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
           ~inMemoryStore,
           ~checkContractIsRegistered,
           ~latestProcessedBlocks,
+          ~saveRawEvents=state.saveRawEvents,
         )
         ->Promise.thenResolve(res =>
           switch res {

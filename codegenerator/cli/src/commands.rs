@@ -178,6 +178,7 @@ pub mod start {
         project_paths: &ParsedProjectPaths,
         should_use_raw_events_worker: bool,
         should_open_hasura: bool,
+        save_raw_events: bool,
     ) -> anyhow::Result<std::process::ExitStatus> {
         if should_open_hasura {
             println!("Opening Hasura console at http://localhost:8080 ...");
@@ -188,7 +189,7 @@ pub mod start {
                 );
             }
         }
-        let cmd = "npm";
+        let cmd = "pnpm";
         let mut args = vec!["run", "start"];
         let current_dir = &project_paths.project_root;
 
@@ -197,6 +198,10 @@ pub mod start {
         if should_use_raw_events_worker {
             args.push("--");
             args.push("--sync-from-raw-events");
+        }
+        
+        if save_raw_events {            
+            args.push("--save-raw-events");            
         }
 
         execute_command(cmd, args, current_dir).await

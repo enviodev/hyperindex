@@ -441,6 +441,7 @@ let processEventBatch = async (
   ~inMemoryStore: IO.InMemoryStore.t,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
+  ~saveRawEvents,
 ) => {
   let logger = Logging.createChild(
     ~params={
@@ -468,7 +469,7 @@ let processEventBatch = async (
     ) {
     | Ok(latestProcessedBlocks) =>
       let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-      switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore) {
+      switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore, ~saveRawEvents) {
       | exception exn =>
         exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
       | () =>

@@ -68,12 +68,18 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
                 )
                 .await?;
             }
+
+            if start_args.save_raw_events {
+                println!("Saving raw events mode enabled. Raw events will be saved to the database.")
+            }
+
             const SHOULD_SYNC_FROM_RAW_EVENTS: bool = false;
             const SHOULD_OPEN_HASURA: bool = false;
             commands::start::start_indexer(
                 &parsed_project_paths,
                 SHOULD_SYNC_FROM_RAW_EVENTS,
                 SHOULD_OPEN_HASURA,
+                start_args.save_raw_events
             )
             .await?;
         }

@@ -66,6 +66,10 @@ pub struct StartArgs {
     ///Clear your database and restart indexing from scratch
     #[arg(short = 'r', long, action)]
     pub restart: bool,
+
+    #[arg(global = true, short = 's', long = "save-raw-events")]
+    #[clap(value_enum)]
+    pub save_raw_events: bool,
 }
 
 #[derive(Debug, Subcommand)]
