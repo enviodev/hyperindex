@@ -148,7 +148,7 @@ mod test {
         let hash = HashString::from_directory(handler_path_dir).unwrap();
         assert_eq!(
             hash.inner(),
-            "e89778612a2e27631727307a5f02512965847c1fd310326704851c13d8ceef7a".to_string()
+            "3a74a6b2bdd07e0e9928558bfaab423d55ef21fda394707c8901d3389790f0c3".to_string()
         );
     }
     
@@ -158,7 +158,7 @@ mod test {
         let hash = HashString::from_directory(handler_path_dir_ts).unwrap();
         assert_eq!(
             hash.inner(),
-            "9d4c28fb5b1a9b468adac73ddeef795223b714fae14d4a795bdf9c01975f1241".to_string()
+            "a4e20ec6213dcf20890bc1d528fe0817332e75919ed47750ac6b0ce559036bcc".to_string()
         );
     }
 
