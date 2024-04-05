@@ -223,3 +223,15 @@ let executeQuery = (self: t, query: FetchState.nextQuery): ChainWorkerTypes.bloc
     worker: HyperSync(self->Obj.magic),
   }
 }
+
+let getBlockHashes = (self: t, ~blockNumbers) => {
+  blockNumbers->Array.keepMap(blockNumber =>
+    self
+    ->getBlock(~blockNumber)
+    ->Option.map(({blockTimestamp, blockHash, blockNumber}) => {
+      ReorgDetection.blockTimestamp,
+      blockHash,
+      blockNumber,
+    })
+  )
+}

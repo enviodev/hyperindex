@@ -4,7 +4,7 @@ module type State = {
   type action
   type task
 
-  let taskReducer: (t, task, ~dispatchAction: action => unit) => unit
+  let taskReducer: (t, task, ~dispatchAction: action => unit) => promise<unit>
   let actionReducer: (t, action) => (t, array<task>)
   let invalidatedActionReducer: (t, action) => (t, array<task>)
   let getId: t => int
@@ -40,7 +40,7 @@ module MakeManager = (S: State) => {
         self.state,
         task,
         ~dispatchAction=dispatchAction(~stateId=self.state->S.getId, self),
-      )
+      )->ignore
     }, 0)->ignore
 
   let getState = self => self.state

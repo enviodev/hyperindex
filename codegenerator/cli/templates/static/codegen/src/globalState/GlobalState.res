@@ -18,7 +18,10 @@ let make = (~chainManager) => {
   currentlyProcessingBatch: false,
   chainManager,
   maxBatchSize: Env.maxProcessBatchSize,
-  maxPerChainQueueSize: Env.maxPerChainQueueSize,
+  maxPerChainQueueSize: {
+    let numChains = Config.config->ChainMap.size
+    Env.maxEventFetchedQueueSize / numChains
+  },
   indexerStartTime: Js.Date.make(),
   rollbackState: NoRollback,
   id: 0,
@@ -479,7 +482,12 @@ let invalidatedActionReducer = (state: t, action: action) =>
   | _ => (state, [])
   }
 
-let waitForNewBlock = (~logger, ~currentBlockHeight, ~setCurrentBlockHeight, ~chainWorker) => {
+let waitForNewBlock = (
+  ~logger,
+  ~chainWorker: SourceWorker.sourceWorker,
+  ~currentBlockHeight,
+  ~setCurrentBlockHeight,
+) => {
   logger->Logging.childTrace("Waiting for new blocks")
   let compose = async (worker, waitForBlockGreaterThanCurrentHeight) => {
     let logger = Logging.createChildFrom(
@@ -495,17 +503,17 @@ let waitForNewBlock = (~logger, ~currentBlockHeight, ~setCurrentBlockHeight, ~ch
   switch chainWorker {
   | Config.HyperSync(w) => compose(w, HyperSyncWorker.waitForBlockGreaterThanCurrentHeight)
   | Rpc(w) => compose(w, RpcWorker.waitForBlockGreaterThanCurrentHeight)
-  }->ignore
+  }
 }
 
 let executeNextQuery = (
   ~logger,
-  ~query,
+  ~chainWorker,
   ~currentBlockHeight,
   ~setCurrentBlockHeight,
-  ~dispatchAction,
   ~chain,
-  ~chainWorker,
+  ~query,
+  ~dispatchAction,
 ) => {
   let compose = async (worker, fetchBlockRange, workerType) => {
     let logger = Logging.createChildFrom(
@@ -524,13 +532,13 @@ let executeNextQuery = (
   switch chainWorker {
   | Config.HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange, "HyperSync")
   | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange, "RPC")
-  }->ignore
+  }
 }
 
-let checkAndFetchForChain = (
+let checkAndFetchForChain = async (
   //Used for dependency injection for tests
-  ~waitForNewBlock=waitForNewBlock,
-  ~executeNextQuery=executeNextQuery,
+  ~waitForNewBlock,
+  ~executeNextQuery,
   //required args
   ~state,
   ~dispatchAction,
@@ -557,35 +565,53 @@ let checkAndFetchForChain = (
 
     switch nextQuery {
     | WaitForNewBlock =>
-      waitForNewBlock(~setCurrentBlockHeight, ~currentBlockHeight, ~logger, ~chainWorker)
+      await waitForNewBlock(~logger, ~chainWorker, ~currentBlockHeight, ~setCurrentBlockHeight)
     | NextQuery(query) =>
       dispatchAction(SetCurrentlyFetchingBatch(chain, true))
-      executeNextQuery(
-        ~query,
+      await executeNextQuery(
         ~logger,
+        ~chainWorker,
         ~currentBlockHeight,
         ~setCurrentBlockHeight,
-        ~dispatchAction,
-        ~chainWorker,
         ~chain,
+        ~query,
+        ~dispatchAction,
       )
     | Done => ()
     }
   }
 }
 
-let taskReducer = (state: t, task: task, ~dispatchAction) => {
+let injectedTaskReducer = async (
+  //Used for dependency injection for tests
+  ~waitForNewBlock,
+  ~executeNextQuery,
+  ~rollbackLastBlockHashesToReorgLocation,
+  //required args
+  state: t,
+  task: task,
+  ~dispatchAction,
+) => {
   switch task {
-  | UpdateChainMetaData => updateChainMetadataTable(state.chainManager)->ignore
+  | UpdateChainMetaData => await updateChainMetadataTable(state.chainManager)
   | NextQuery(chainCheck) =>
-    let fetchForChain = checkAndFetchForChain(~state, ~dispatchAction)
+    let fetchForChain = checkAndFetchForChain(
+      ~waitForNewBlock,
+      ~executeNextQuery,
+      ~state,
+      ~dispatchAction,
+    )
 
     switch chainCheck {
-    | Chain(chain) => chain->fetchForChain
+    | Chain(chain) => await chain->fetchForChain
     | CheckAllChains =>
       //Mapping from the states chainManager so we can construct tests that don't use
       //all chains
-      state.chainManager.chainFetchers->ChainMap.keys->Array.forEach(fetchForChain(_))
+      let _ =
+        await state.chainManager.chainFetchers
+        ->ChainMap.keys
+        ->Array.map(fetchForChain(_))
+        ->Promise.all
     }
   | ProcessEventBatch =>
     if !state.currentlyProcessingBatch && !isRollingBack(state) {
@@ -615,13 +641,19 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
         }
 
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(IO.InMemoryStore.make())
-        EventProcessing.processEventBatch(
+        switch await EventProcessing.processEventBatch(
           ~eventBatch=batch,
           ~inMemoryStore,
           ~checkContractIsRegistered,
           ~latestProcessedBlocks,
-        )
-        ->Promise.thenResolve(res => {
+        ) {
+        | exception exn =>
+          //All casese should be handled/caught before this with better user messaging.
+          //This is just a safety in case something unexpected happens
+          let errHandler =
+            exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing")
+          dispatchAction(ErrorExit(errHandler))
+        | res =>
           if rollbackInMemStore->Option.isSome {
             //if the batch was executed with a rollback inMemoryStore
             //reset the rollback state once the batch has been processed
@@ -631,16 +663,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
           | Ok(loadRes) => dispatchAction(EventBatchProcessed(loadRes))
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
-        })
-        ->Promise.catch(exn => {
-          //All casese should be handled/caught before this with better user messaging.
-          //This is just a safety in case something unexpected happens
-          let errHandler =
-            exn->ErrorHandling.make(~msg="A top level unexpected error occurred during processing")
-          dispatchAction(ErrorExit(errHandler))
-          Promise.reject(exn)
-        })
-        ->ignore
+        }
       | None => {
           dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
           if (
@@ -657,52 +680,53 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
     //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(rollbackChain)} =>
-      let fn = async () => {
-        Logging.warn("Executing rollback")
-        let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(rollbackChain)
-        //Get rollback block and timestamp
-        let reorgChainRolledBackLastBlockData =
-          await chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation
+      Logging.warn("Executing rollback")
+      let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(rollbackChain)
+      //Get rollback block and timestamp
+      let reorgChainRolledBackLastBlockData =
+        await chainFetcher->rollbackLastBlockHashesToReorgLocation
 
-        let {blockNumber, blockTimestamp} =
-          reorgChainRolledBackLastBlockData->ChainFetcher.getLastScannedBlockData
+      let {blockNumber, blockTimestamp} =
+        reorgChainRolledBackLastBlockData->ChainFetcher.getLastScannedBlockData
 
-        let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
-          let rolledBackLastBlockData = if chain == rollbackChain {
-            //For the chain fetcher of the chain where a  reorg occured, use the the
-            //rolledBackLastBlockData already computed
-            reorgChainRolledBackLastBlockData
-          } else {
-            //For all other chains, rollback to where a blockTimestamp is less than or equal to the block timestamp
-            //where the reorg chain is rolling back to
-            cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollBackToBlockTimestampLte(
-              ~blockTimestamp,
-            )
-          }
-
-          //Roll back chain fetcher with the given rolledBackLastBlockData
-          cf->ChainFetcher.rollbackToLastBlockHashes(~rolledBackLastBlockData)
-        })
-
-        let chainManager = {
-          ...state.chainManager,
-          chainFetchers,
+      let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
+        let rolledBackLastBlockData = if chain == rollbackChain {
+          //For the chain fetcher of the chain where a  reorg occured, use the the
+          //rolledBackLastBlockData already computed
+          reorgChainRolledBackLastBlockData
+        } else {
+          //For all other chains, rollback to where a blockTimestamp is less than or equal to the block timestamp
+          //where the reorg chain is rolling back to
+          cf.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.rollBackToBlockTimestampLte(
+            ~blockTimestamp,
+          )
         }
 
-        //Construct a rolledback in Memory store
-        let inMemoryStore = await IO.RollBack.rollBack(
-          ~chainId=rollbackChain->ChainMap.Chain.toChainId,
-          ~blockTimestamp,
-          ~blockNumber,
-          ~logIndex=0,
-        )
+        //Roll back chain fetcher with the given rolledBackLastBlockData
+        cf->ChainFetcher.rollbackToLastBlockHashes(~rolledBackLastBlockData)
+      })
 
-        dispatchAction(SetRollbackState(inMemoryStore, chainManager))
+      let chainManager = {
+        ...state.chainManager,
+        chainFetchers,
       }
 
-      fn()->ignore
+      //Construct a rolledback in Memory store
+      let inMemoryStore = await IO.RollBack.rollBack(
+        ~chainId=rollbackChain->ChainMap.Chain.toChainId,
+        ~blockTimestamp,
+        ~blockNumber,
+        ~logIndex=0,
+      )
+
+      dispatchAction(SetRollbackState(inMemoryStore, chainManager))
 
     | _ => Logging.warn("Waiting for batch to finish processing before executing rollback") //wait for batch to finish processing
     }
   }
 }
+let taskReducer = injectedTaskReducer(
+  ~waitForNewBlock,
+  ~executeNextQuery,
+  ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
+)

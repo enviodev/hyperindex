@@ -159,13 +159,18 @@ let getLatestItem = (self: t) => {
 Finds the last known block where hashes are valid and returns
 the updated lastBlockScannedHashes rolled back where this occurs
 */
-let rollbackLastBlockHashesToReorgLocation = async (chainFetcher: t) => {
+let rollbackLastBlockHashesToReorgLocation = async (
+  //Parameter used for dependency injecting in tests
+  ~getBlockHashes=SourceWorker.getBlockHashes,
+  chainFetcher: t,
+) => {
   //get a list of block hashes via the chainworker
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
+
   let blockNumbersAndHashes =
     await chainFetcher.chainWorker
-    ->SourceWorker.getBlockHashes(~blockNumbers)
+    ->getBlockHashes(~blockNumbers)
     ->Promise.thenResolve(Result.getExn)
 
   chainFetcher.lastBlockScannedHashes

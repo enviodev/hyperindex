@@ -131,18 +131,7 @@ let main = async () => {
     // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
 
     let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)
-    let globalState: GlobalState.t = {
-      currentlyProcessingBatch: false,
-      chainManager,
-      maxBatchSize: Env.maxProcessBatchSize,
-      maxPerChainQueueSize: {
-        let numChains = Config.config->ChainMap.size
-        Env.maxEventFetchedQueueSize / numChains
-      },
-      indexerStartTime: Js.Date.make(),
-      rollbackState: NoRollback,
-      id: 0,
-    }
+    let globalState: GlobalState.t = GlobalState.make(~chainManager)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)
