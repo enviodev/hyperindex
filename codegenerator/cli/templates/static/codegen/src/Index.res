@@ -127,7 +127,7 @@ let main = async () => {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Config.tuiOffEnvVar))
     // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
-     let shouldSaveRawEvents = mainArgs.saveRawEvents->Belt.Option.getWithDefault(false)
+    let shouldSaveRawEvents = mainArgs.saveRawEvents->Belt.Option.getWithDefault(Config.saveRawEventsEnvVar)
 
     let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)
     let globalState: GlobalState.t = {

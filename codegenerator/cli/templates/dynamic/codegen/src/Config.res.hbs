@@ -263,5 +263,8 @@ let metricsPort =
 let tuiOffEnvVar =
   envSafe->EnvSafe.get(~name="TUI_OFF", ~struct=S.bool(), ~devFallback=false, ())
 
+let saveRawEventsEnvVar =
+  envSafe->EnvSafe.get(~name="SAVE_RAW_EVENTS", ~struct=S.bool(), ~devFallback=false, ())
+
 // You need to close the envSafe after you're done with it so that it immediately tells you about your  misconfigured environment on startup.
 envSafe->EnvSafe.close()
