@@ -64,6 +64,7 @@ describe("E2E Db check", () => {
       ~eventBatch=MockEvents.eventBatchItems->List.fromArray,
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
+      ~saveRawEvents=true,
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
