@@ -267,10 +267,6 @@ impl EntityRecordTypeTemplate {
             filtered_params,
         })
     }
-
-    fn has_relational_derived_from_fields(&self) -> bool {
-        !self.relational_params.filtered_is_derived_from.is_empty()
-    }
 }
 
 impl HasName for EntityRecordTypeTemplate {
@@ -640,7 +636,6 @@ pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
     entities: Vec<EntityRecordTypeTemplate>,
-    entities_has_derived_fields: bool,
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     codegen_out_path: String,
@@ -688,9 +683,6 @@ impl ProjectTemplate {
             .map(|entity| EntityRecordTypeTemplate::from_config_entity(entity, cfg))
             .collect::<Result<_>>()
             .context("Failed generating entity template types")?;
-        let entities_has_derived_fields = entities.iter().fold(false, |accum, entity| {
-            accum || entity.has_relational_derived_from_fields()
-        });
 
         let gql_enums: Vec<GraphQlEnumTypeTemplate> = cfg
             .get_gql_enums()
@@ -736,7 +728,6 @@ impl ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
             entities,
-            entities_has_derived_fields,
             gql_enums,
             chain_configs,
             codegen_out_path: gitignore_path_str,
