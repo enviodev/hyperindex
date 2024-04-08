@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@elastic/ecs-pino-format": "1.4.0",
-    "@envio-dev/hypersync-client": "0.1.8",
+    "@envio-dev/hypersync-client": "0.1.9",
     "@glennsl/rescript-fetch": "0.2.0",
     "@rescript/react": "0.12.1",
     "@ryyppy/rescript-promise": "2.1.0",
