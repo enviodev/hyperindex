@@ -1,4 +1,3 @@
-@spice
 type unchecksummedEthAddress = string
 
 type t
@@ -10,106 +9,96 @@ type cfg = {
 }
 
 module QueryTypes = {
-  @spice
   type blockFieldOptions =
-    | @spice.as("number") Number
-    | @spice.as("hash") Hash
-    | @spice.as("parent_hash") ParentHash
-    | @spice.as("nonce") Nonce
-    | @spice.as("sha3_uncles") Sha3Uncles
-    | @spice.as("logs_bloom") LogsBloom
-    | @spice.as("transactions_root") TransactionsRoot
-    | @spice.as("state_root") StateRoot
-    | @spice.as("receipts_root") ReceiptsRoot
-    | @spice.as("miner") Miner
-    | @spice.as("difficulty") Difficulty
-    | @spice.as("total_difficulty") TotalDifficulty
-    | @spice.as("extra_data") ExtraData
-    | @spice.as("size") Size
-    | @spice.as("gas_limit") GasLimit
-    | @spice.as("gas_used") GasUsed
-    | @spice.as("timestamp") Timestamp
-    | @spice.as("uncles") Uncles
-    | @spice.as("base_fee_per_gas") BaseFeePerGas
+    | @as("number") Number
+    | @as("hash") Hash
+    | @as("parent_hash") ParentHash
+    | @as("nonce") Nonce
+    | @as("sha3_uncles") Sha3Uncles
+    | @as("logs_bloom") LogsBloom
+    | @as("transactions_root") TransactionsRoot
+    | @as("state_root") StateRoot
+    | @as("receipts_root") ReceiptsRoot
+    | @as("miner") Miner
+    | @as("difficulty") Difficulty
+    | @as("total_difficulty") TotalDifficulty
+    | @as("extra_data") ExtraData
+    | @as("size") Size
+    | @as("gas_limit") GasLimit
+    | @as("gas_used") GasUsed
+    | @as("timestamp") Timestamp
+    | @as("uncles") Uncles
+    | @as("base_fee_per_gas") BaseFeePerGas
 
-  @spice
   type blockFieldSelection = array<blockFieldOptions>
 
-  @spice
   type transactionFieldOptions =
-    | @spice.as("block_hash") BlockHash
-    | @spice.as("block_number") BlockNumber
-    | @spice.as("from") From
-    | @spice.as("gas") Gas
-    | @spice.as("gas_price") GasPrice
-    | @spice.as("hash") Hash
-    | @spice.as("input") Input
-    | @spice.as("nonce") Nonce
-    | @spice.as("to") To
-    | @spice.as("transaction_index") TransactionIndex
-    | @spice.as("value") Value
-    | @spice.as("v") V
-    | @spice.as("r") R
-    | @spice.as("s") S
-    | @spice.as("max_priority_fee_per_gas") MaxPriorityFeePerGas
-    | @spice.as("max_fee_per_gas") MaxFeePerGas
-    | @spice.as("chainId") ChainId
-    | @spice.as("cumulative_gas_used") CumulativeGasUsed
-    | @spice.as("effective_gas_price") EffectiveGasPrice
-    | @spice.as("gas_used") GasUsed
-    | @spice.as("contract_address") ContractAddress
-    | @spice.as("logs_bloom") LogsBloom
-    | @spice.as("type") Type
-    | @spice.as("root") Root
-    | @spice.as("status") Status
-    | @spice.as("sighash") Sighash
+    | @as("block_hash") BlockHash
+    | @as("block_number") BlockNumber
+    | @as("from") From
+    | @as("gas") Gas
+    | @as("gas_price") GasPrice
+    | @as("hash") Hash
+    | @as("input") Input
+    | @as("nonce") Nonce
+    | @as("to") To
+    | @as("transaction_index") TransactionIndex
+    | @as("value") Value
+    | @as("v") V
+    | @as("r") R
+    | @as("s") S
+    | @as("max_priority_fee_per_gas") MaxPriorityFeePerGas
+    | @as("max_fee_per_gas") MaxFeePerGas
+    | @as("chainId") ChainId
+    | @as("cumulative_gas_used") CumulativeGasUsed
+    | @as("effective_gas_price") EffectiveGasPrice
+    | @as("gas_used") GasUsed
+    | @as("contract_address") ContractAddress
+    | @as("logs_bloom") LogsBloom
+    | @as("type") Type
+    | @as("root") Root
+    | @as("status") Status
+    | @as("sighash") Sighash
 
-  @spice
   type transactionFieldSelection = array<transactionFieldOptions>
 
-  @spice
   type logFieldOptions =
-    | @spice.as("removed") Removed
-    | @spice.as("log_index") LogIndex
-    | @spice.as("transaction_index") TransactionIndex
-    | @spice.as("transaction_hash") TransactionHash
-    | @spice.as("block_hash") BlockHash
-    | @spice.as("block_number") BlockNumber
-    | @spice.as("address") Address
-    | @spice.as("data") Data
-    | @spice.as("topic0") Topic0
-    | @spice.as("topic1") Topic1
-    | @spice.as("topic2") Topic2
-    | @spice.as("topic3") Topic3
+    | @as("removed") Removed
+    | @as("log_index") LogIndex
+    | @as("transaction_index") TransactionIndex
+    | @as("transaction_hash") TransactionHash
+    | @as("block_hash") BlockHash
+    | @as("block_number") BlockNumber
+    | @as("address") Address
+    | @as("data") Data
+    | @as("topic0") Topic0
+    | @as("topic1") Topic1
+    | @as("topic2") Topic2
+    | @as("topic3") Topic3
 
-  @spice
   type logFieldSelection = array<logFieldOptions>
 
-  @spice
   type fieldSelection = {
     block?: blockFieldSelection,
     transaction?: transactionFieldSelection,
     log?: logFieldSelection,
   }
 
-  @spice
   type logParams = {
     address?: array<Ethers.ethAddress>,
     topics: array<array<Ethers.EventFilter.topic>>,
   }
 
-  @spice
   type transactionParams = {
     from?: array<Ethers.ethAddress>,
-    @spice.key("to")
+    @as("to")
     to_?: array<Ethers.ethAddress>,
     sighash?: array<string>,
   }
 
-  @spice
   type postQueryBody = {
     fromBlock: int,
-    @spice.key("toBlock") toBlockExclusive?: int,
+    @as("toBlock") toBlockExclusive?: int,
     logs?: array<logParams>,
     transactions?: array<transactionParams>,
     fieldSelection: fieldSelection,
@@ -210,7 +199,9 @@ module Internal = {
 
   @send external make: (constructor, cfg) => t = "new"
 
-  @send external sendEventsReq: (t, Js.Json.t) => promise<ResponseTypes.response> = "sendEventsReq"
+  @send
+  external sendEventsReq: (t, QueryTypes.postQueryBody) => promise<ResponseTypes.response> =
+    "sendEventsReq"
 }
 
 let make = (cfg: cfg) => {
@@ -221,12 +212,7 @@ let make = (cfg: cfg) => {
   constructor->make(cfg_with_token)
 }
 
-let sendEventsReq = async (self: t, req: QueryTypes.postQueryBody) => {
-  let body = req->QueryTypes.postQueryBody_encode
-  let res = await self->Internal.sendEventsReq(body)
-
-  res
-}
+let sendEventsReq = Internal.sendEventsReq
 
 module Decoder = {
   type abiMapping = Js.Dict.t<Ethers.abi>
@@ -237,9 +223,13 @@ module Decoder = {
   type t
 
   @send external new: (constructor, abiMapping) => t = "new"
+  @send external enableChecksummedAddresses: t => unit = "enableChecksummedAddresses"
 
-  let make = constructor->new
-
+  let make = abiMapping => {
+    let t = constructor->new(abiMapping)
+    t->enableChecksummedAddresses
+    t
+  }
   /*
   Note! Usinging opaque definitions here since unboxed doesn't yet support bigint!
 
