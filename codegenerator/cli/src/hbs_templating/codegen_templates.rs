@@ -170,6 +170,7 @@ pub struct EntityParamTypeTemplate {
     ///Used in template to tell whether it is a field looked up from another table or a value in
     ///the table
     pub is_derived_from: bool,
+    pub is_indexed_field: bool,
 }
 
 impl HasIsDerivedFrom for EntityParamTypeTemplate {
@@ -196,6 +197,7 @@ impl EntityParamTypeTemplate {
             .context("Failed getting postgres type")?;
 
         let is_entity_field = field.field_type.is_entity_field(schema)?;
+        let is_indexed_field = field.field_type.is_indexed_field();
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
@@ -203,6 +205,7 @@ impl EntityParamTypeTemplate {
             is_derived_from,
             type_pg,
             is_entity_field,
+            is_indexed_field,
         })
     }
 }

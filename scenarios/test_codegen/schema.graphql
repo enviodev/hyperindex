@@ -39,7 +39,7 @@ type NftCollection {
 
 type Token {
   id: ID!
-  tokenId: BigInt!
+  tokenId: BigInt! @indexed
   collection: NftCollection!
   owner: User!
 }

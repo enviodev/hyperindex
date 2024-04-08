@@ -280,19 +280,29 @@ module {{entity.name.capitalized}} = {
 
 module DbIndexes = {
   let createDerivedFromDbIndexes = async () => {
-{{!-- Only loop through entities and fields if they containt derived fields otherwise return unit --}}
-{{#if entities_has_derived_fields}}
-    {{#each entities as |entity|}}
-      {{#each entity.relational_params.filtered_is_derived_from as | param |}}
-    let _ = await %raw("sql`
-      CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" (\"{{param.relational_key.uncapitalized}}\");
-    `")
-      {{/each}}
+  {{#each entities as |entity|}}
+    {{#each entity.relational_params.filtered_is_derived_from as | param |}}
+  let _ = await %raw("sql`
+    CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" (\"{{param.relational_key.uncapitalized}}\");
+  `")
     {{/each}}
-{{else}}
-{{!-- Return unit if there are no derived fields --}}
+  {{/each}}
+
   ()
-{{/if}}
+  }
+
+  let createCustomUserDefinedIndexes = async () => {
+  {{#each entities as |entity|}}
+    {{#each entity.params as |param|}}
+      {{#if param.is_indexed_field}}
+        let _ = await %raw("sql`
+      CREATE INDEX IF NOT EXISTS \"user_index_{{entity.name.original}}_{{param.field_name.original}}\" ON public.\"{{entity.name.original}}\" (\"{{param.field_name.uncapitalized}}\");
+    `")
+      {{/if}}
+    {{/each}}
+  {{/each}}
+
+  ()
   }
 }
 
@@ -382,6 +392,7 @@ await EnumTypes.create{{enum.name.capitalized}}Enum()->Promise.catch(err => {
 
   // TODO: catch errors here
   await DbIndexes.createDerivedFromDbIndexes()
+  await DbIndexes.createCustomUserDefinedIndexes()
 
   await TrackTables.trackAllTables()->Promise.catch(err => {
     Logging.errorWithExn(err,`EE803: Error tracking tables`)->Promise.resolve

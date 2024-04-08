@@ -416,6 +416,7 @@ impl Field {
             .filter(|&directive| directive.name == "derivedFrom")
             .collect::<Vec<&Directive<'_, String>>>();
 
+        // TODO: this currently only supports single indexed fields, and doesn't support multi-field indexes.
         let indexed_directives = field
             .directives
             .iter()
@@ -442,6 +443,15 @@ impl Field {
             return Err(anyhow!(
                 // TODO: update the docs here:https://github.com/Float-Capital/envio-docs/blob/a20823ffa266d26d6e7beb461caa335de14fa263/docs/error-codes.md?plain=1#L108
                 "EE202: A field cannot be both @derivedFrom and @indexed: {}",
+                field.name
+            ));
+        }
+
+        if (field.name == "id" || field.name == "ID")
+            && (indexed_count > 0 || derived_from_count > 0)
+        {
+            return Err(anyhow!(
+                "EE202: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @indexed or @derivedFrom directive from field {}",
                 field.name
             ));
         }
@@ -894,7 +904,7 @@ impl FieldType {
         let field_type = UserDefinedFieldType::from_obj_field_type(obj_field_type);
 
         match derived_from_field {
-            None => Ok(Self::RegularField(field_type, false)),
+            None => Ok(Self::RegularField(field_type, is_indexed)),
             Some(derived_from_field) => match field_type.get_name_of_derived_from_entity() {
                 None => {
                     let example_str = Self::DerivedFromField {
@@ -920,7 +930,7 @@ impl FieldType {
     pub fn validate_type(&self, schema: &Schema) -> anyhow::Result<()> {
         match self {
             Self::DerivedFromField { .. } => Ok(()), //Already validated
-            Self::RegularField(t) => t.validate_type(schema),
+            Self::RegularField(t, _) => t.validate_type(schema),
         }
     }
 
@@ -936,10 +946,17 @@ impl FieldType {
         matches!(self, Self::DerivedFromField { .. })
     }
 
+    pub fn is_indexed_field(&self) -> bool {
+        match self {
+            Self::DerivedFromField { .. } => false,
+            Self::RegularField(_, is_indexed) => *is_indexed,
+        }
+    }
+
     pub fn is_array(&self) -> bool {
         match self {
             Self::DerivedFromField { .. } => true,
-            Self::RegularField(t) => t.is_array(),
+            Self::RegularField(t, _) => t.is_array(),
         }
     }
 
@@ -961,14 +978,15 @@ impl FieldType {
                 let field_str = self.to_user_defined_field_type().to_string();
                 format!("{field_str} @derivedFrom(field: \"{entity_name}\")")
             }
-            Self::RegularField(t) => t.to_string(),
+            Self::RegularField(t, _) => t.to_string(),
         }
     }
 
     pub fn from_ethabi_type(abi_type: &EthAbiParamType) -> anyhow::Result<Self> {
-        Ok(Self::RegularField(UserDefinedFieldType::from_ethabi_type(
-            abi_type,
-        )?))
+        Ok(Self::RegularField(
+            UserDefinedFieldType::from_ethabi_type(abi_type)?,
+            false,
+        ))
     }
 }
 
@@ -1078,7 +1096,96 @@ impl GqlScalar {
 
 #[cfg(test)]
 mod tests {
-    use super::{Entity, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType};
+    use super::{Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType};
+    use graphql_parser::schema::{Directive, Field as ObjField, Value};
+    use graphql_parser::Pos;
+
+    fn create_field_with_directives<'a>(
+        name: &'a str,
+        directives: Vec<(&'a str, Vec<&'a str>)>,
+    ) -> ObjField<'a, String> {
+        let default_position = Pos { line: 0, column: 0 };
+        ObjField {
+            name: name.to_string(),
+            description: None,
+            directives: directives
+                .into_iter()
+                .map(|(dir_name, dir_args)| Directive {
+                    name: dir_name.to_string(),
+                    arguments: dir_args
+                        .into_iter()
+                        .map(|arg| (arg.to_string(), Value::String("Some value".to_string()))) // You might want to adjust this part
+                        .collect(),
+                    position: default_position,
+                })
+                .collect(),
+            field_type: graphql_parser::schema::Type::NamedType("String".to_string()),
+            position: Default::default(),
+            arguments: vec![],
+        }
+    }
+
+    #[test]
+    fn more_than_one_derived_from_directive() {
+        let field = create_field_with_directives(
+            "testField",
+            vec![
+                ("derivedFrom", vec!["someField"]),
+                ("derivedFrom", vec!["anotherField"]),
+            ],
+        );
+
+        let result = Field::from_obj_field(&field);
+        assert!(
+            result.is_err(),
+            "Should error with more than one @derivedFrom directive"
+        );
+    }
+
+    #[test]
+    fn more_than_one_indexed_directive() {
+        let field = create_field_with_directives(
+            "testField",
+            vec![("indexed", vec![]), ("indexed", vec![])],
+        );
+
+        let result = Field::from_obj_field(&field);
+        assert!(
+            result.is_err(),
+            "Should error with more than one @indexed directive"
+        );
+    }
+
+    #[test]
+    fn fail_derived_from_and_indexed_directive() {
+        let field = create_field_with_directives(
+            "testField",
+            vec![("derivedFrom", vec!["someField"]), ("indexed", vec![])],
+        );
+
+        let result = Field::from_obj_field(&field);
+        assert!(
+            result.is_err(),
+            "Should error with both @derivedFrom and @indexed directives"
+        );
+    }
+
+    #[test]
+    fn fail_id_field_with_derived_from_or_indexed_directive() {
+        let tests = [
+            ("id", vec![("derivedFrom", vec!["someField"])]),
+            ("ID", vec![("indexed", vec![])]),
+        ];
+
+        for (field_name, directives) in tests.iter() {
+            let field = create_field_with_directives(field_name, directives.to_vec());
+            let result = Field::from_obj_field(&field);
+            assert!(
+                result.is_err(),
+                "Should error when 'id' or 'ID' field is indexed or derived from"
+            );
+        }
+    }
 
     #[test]
     fn gql_type_to_rescript_type_string() {
