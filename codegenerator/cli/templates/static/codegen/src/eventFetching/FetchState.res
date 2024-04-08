@@ -559,7 +559,12 @@ the given name and address
 */
 let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractAddress) => {
   let allAddr = self->getAllAddressesForContract(~contractName)
-  allAddr->Set.String.has(contractAddress->Ethers.ethAddressToString)
+  allAddr->Set.String.has(
+    contractAddress
+    ->//run formatEthAddress to be sure that the address is checksummed
+    Ethers.formatEthAddress
+    ->Ethers.ethAddressToString,
+  )
 }
 
 /**
