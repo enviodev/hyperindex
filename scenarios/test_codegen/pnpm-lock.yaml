@@ -80,7 +80,7 @@ importers:
         version: 1.3.0(rescript-struct@4.1.1)(rescript@11.0.1)
       rescript-express:
         specifier: 0.4.1
-        version: 0.4.1(express@4.18.2)
+        version: 0.4.1(express@4.19.2)
       rescript-mocha:
         specifier: ^0.9.0
         version: 0.9.0
@@ -121,8 +121,8 @@ importers:
         specifier: 1.4.0
         version: 1.4.0
       '@envio-dev/hypersync-client':
-        specifier: 0.1.8
-        version: 0.1.8
+        specifier: 0.1.9
+        version: 0.1.9
       '@glennsl/rescript-fetch':
         specifier: 0.2.0
         version: 0.2.0
@@ -139,8 +139,8 @@ importers:
         specifier: 6.8.0
         version: 6.8.0
       express:
-        specifier: 4.18.2
-        version: 4.18.2
+        specifier: 4.19.2
+        version: 4.19.2
       ink:
         specifier: 3.2.0
         version: 3.2.0(react@18.2.0)
@@ -176,7 +176,7 @@ importers:
         version: 1.3.0(rescript-struct@4.1.1)(rescript@11.0.1)
       rescript-express:
         specifier: 0.4.1
-        version: 0.4.1(express@4.18.2)
+        version: 0.4.1(express@4.19.2)
       rescript-nodejs:
         specifier: 16.0.0
         version: 16.0.0
@@ -579,8 +579,8 @@ packages:
       '@elastic/ecs-helpers': 1.1.0
     dev: false
 
-  /@envio-dev/hypersync-client-darwin-arm64@0.1.8:
-    resolution: {integrity: sha512-J8qlqYTKja6hhOpaacm8rpDqdUgu8p4kwNEx96mbIimKu3QyLgbzKNz+lAAI2Pyps92KkcW/D8eZLaI/b2S9lA==}
+  /@envio-dev/hypersync-client-darwin-arm64@0.1.9:
+    resolution: {integrity: sha512-6to10hmNXymN2gFZ42cnnAeQpYv0E6S+v69hawVGutLSIdXGlgCgZkDwteWupjTRAvHKHH71kSX83O00iD5NIw==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
@@ -588,8 +588,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-darwin-x64@0.1.8:
-    resolution: {integrity: sha512-3d5/y4xqMGx20nd7C9xBmMAYM1c2Ao0BKXhkVCksSr4TLc8zktPCrTafjNacYLsmkD10lyCDzqOyPd2xeX/3JA==}
+  /@envio-dev/hypersync-client-darwin-x64@0.1.9:
+    resolution: {integrity: sha512-4WHgDN674IxM4q5Qn/Zjdlcri26lc7TvughWcSGqFhazabqOqi1WvjMPIJNFt+fVmckgB0W+znQP/GwH1e/qig==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
@@ -597,8 +597,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-linux-arm64-gnu@0.1.8:
-    resolution: {integrity: sha512-mHre9TIqakf+LP7P2pMaj5/VqmhUYjIQ2l4VMogZkWPPHl9KHJMpGjjLrWnIJoXOSC+QFdJg/FGpvCp7eAGILw==}
+  /@envio-dev/hypersync-client-linux-arm64-gnu@0.1.9:
+    resolution: {integrity: sha512-lfpCE0wfQE9kDqrG3RSNKT7OHGFRNqi5Qr/15V0UScmIeJ4U+Rs8DofjMoASxamGH+pr72f1+unhzjTxrrMmlQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
@@ -606,8 +606,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-linux-x64-gnu@0.1.8:
-    resolution: {integrity: sha512-v8TXX3ZlqHGIsLV+lPJ9rgW7hvA+Xn0LudjWY1fFbdScqYMwm3fvyHNvCEuHOnTHZ7UcQPdiEI02Vtcx63Y3qQ==}
+  /@envio-dev/hypersync-client-linux-x64-gnu@0.1.9:
+    resolution: {integrity: sha512-14uThbHuf4rd4YcU9lVKjicm5p/x1r3ASJzSDMkAbUjlw58WG8etMZfh4gpLlkkJLM7zJkH+00WhrWiQOev+uA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -615,8 +615,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-linux-x64-musl@0.1.8:
-    resolution: {integrity: sha512-XiwVA2HnEAvIVcO1iyoJ/+bsk2Wbm3JlkLlxF1mRFoDdre4McRB30pzks85juUC7iK7NUbQ5/pdKcoasQWL85w==}
+  /@envio-dev/hypersync-client-linux-x64-musl@0.1.9:
+    resolution: {integrity: sha512-dOeZDuo0CVtTqHfegYOFd1V8mv0uZOqLCVT+RAmByLXqmQyE2uUTgOvIcyfzp0+KwKcZG/81IL42wV/XbipBsA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -624,8 +624,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-win32-x64-msvc@0.1.8:
-    resolution: {integrity: sha512-EK3kuEhLKIy5SKhRjRkotpsbFXRy5sLpRe/3R1Ad++fWyu7N5q5z2IeO73MpJcU/WOOiXoNEjeEkIhrbK1Bguw==}
+  /@envio-dev/hypersync-client-win32-x64-msvc@0.1.9:
+    resolution: {integrity: sha512-t7UhosjGbcZdRNnzUjzYRYrwwDY1z1W6Gcd07YPqzuxBPCatZ4O2hDgH2cY/EEOFwIx6unzOcULYhct/h23ewA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
@@ -633,16 +633,16 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client@0.1.8:
-    resolution: {integrity: sha512-QWwrYcoyERLjv9LmNpsMxxaESBdAQR+M0XCDJt6gxAElyVjFD1TJ+FPuM1nHHQUR80XlsH5VRsHRCXpt52oRBg==}
+  /@envio-dev/hypersync-client@0.1.9:
+    resolution: {integrity: sha512-ZN2tFyKne15wEQBZNl0YeWzqRUyDksDnewKoCYOxLqa6JOmAYnZacXaMuYL0QSFGCRbq9dK07ksuweY2Y+uORQ==}
     engines: {node: '>= 10'}
     optionalDependencies:
-      '@envio-dev/hypersync-client-darwin-arm64': 0.1.8
-      '@envio-dev/hypersync-client-darwin-x64': 0.1.8
-      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.1.8
-      '@envio-dev/hypersync-client-linux-x64-gnu': 0.1.8
-      '@envio-dev/hypersync-client-linux-x64-musl': 0.1.8
-      '@envio-dev/hypersync-client-win32-x64-msvc': 0.1.8
+      '@envio-dev/hypersync-client-darwin-arm64': 0.1.9
+      '@envio-dev/hypersync-client-darwin-x64': 0.1.9
+      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.1.9
+      '@envio-dev/hypersync-client-linux-x64-gnu': 0.1.9
+      '@envio-dev/hypersync-client-linux-x64-musl': 0.1.9
+      '@envio-dev/hypersync-client-win32-x64-msvc': 0.1.9
     dev: false
 
   /@ethersproject/abi@5.7.0:
@@ -2157,8 +2157,8 @@ packages:
   /bn.js@5.2.1:
     resolution: {integrity: sha512-eXRvHzWyYPBuB4NBy0cmYQjGitUrtqwbvlzP3G6VFnNRbsZQIxQ10PbKKHt8gZ/HW/D/747aDl+QkDqg3KQLMQ==}
 
-  /body-parser@1.20.1:
-    resolution: {integrity: sha512-jWi7abTbYwajOytWCQc37VulmWiRae5RyTpaCyDcS5/lMdtwSz5lOpDE67srw/HYe35f1z3fDQw+3txg7gNtWw==}
+  /body-parser@1.20.2:
+    resolution: {integrity: sha512-ml9pReCu3M61kGlqoTm2umSXTlRTuGTx0bfYj+uIUKKYycG5NtSbeetV3faSU6R7ajOPw0g/J1PvK4qNy7s5bA==}
     engines: {node: '>= 0.8', npm: 1.2.8000 || >= 1.4.16}
     dependencies:
       bytes: 3.1.2
@@ -2170,7 +2170,7 @@ packages:
       iconv-lite: 0.4.24
       on-finished: 2.4.1
       qs: 6.11.0
-      raw-body: 2.5.1
+      raw-body: 2.5.2
       type-is: 1.6.18
       unpipe: 1.0.0
     transitivePeerDependencies:
@@ -2568,8 +2568,8 @@ packages:
     resolution: {integrity: sha512-aSWTXFzaKWkvHO1Ny/s+ePFpvKsPnjc551iI41v3ny/ow6tBG5Vd+FuqGNhh1LxOmVzOlGUriIlOaokOvhaStA==}
     engines: {node: '>= 0.6'}
 
-  /cookie@0.5.0:
-    resolution: {integrity: sha512-YZ3GUyn/o8gfKJlnlX7g7xq4gyO6OSuhGPKaaGssGB2qgDUS0gPgtTvoyZLTt9Ab6dC4hfc9dV5arkvc/OCmrw==}
+  /cookie@0.6.0:
+    resolution: {integrity: sha512-U71cyTamuh1CRNCfpGY6to28lxvNwPG4Guz/EVjgf3Jmzv0vlDp1atT9eS5dDjMYHucpHbWns6Lwf3BKz6svdw==}
     engines: {node: '>= 0.6'}
 
   /crc-32@1.2.2:
@@ -3043,16 +3043,16 @@ packages:
       jest-message-util: 27.5.1
     dev: true
 
-  /express@4.18.2:
-    resolution: {integrity: sha512-5/PsL6iGPdfQ/lKM1UuielYgv3BUoJfz1aUwU9vHZ+J7gyvwdQXFEBIEIaxeGf0GIcreATNyBExtalisDbuMqQ==}
+  /express@4.19.2:
+    resolution: {integrity: sha512-5T6nhjsT+EOMzuck8JjBHARTHfMht0POzlA60WV2pMD3gyXw2LZnZ+ueGdNxG+0calOJcWKbpFcuzLZ91YWq9Q==}
     engines: {node: '>= 0.10.0'}
     dependencies:
       accepts: 1.3.8
       array-flatten: 1.1.1
-      body-parser: 1.20.1
+      body-parser: 1.20.2
       content-disposition: 0.5.4
       content-type: 1.0.5
-      cookie: 0.5.0
+      cookie: 0.6.0
       cookie-signature: 1.0.6
       debug: 2.6.9
       depd: 2.0.0
@@ -5330,15 +5330,6 @@ packages:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
     engines: {node: '>= 0.6'}
 
-  /raw-body@2.5.1:
-    resolution: {integrity: sha512-qqJBtEyVgS0ZmPGdCFPWJ3FreoqvG4MVQln/kCgF7Olq95IbOp0/BWyMwbdtn4VTvkM8Y7khCQ2Xgk/tcrCXig==}
-    engines: {node: '>= 0.8'}
-    dependencies:
-      bytes: 3.1.2
-      http-errors: 2.0.0
-      iconv-lite: 0.4.24
-      unpipe: 1.0.0
-
   /raw-body@2.5.2:
     resolution: {integrity: sha512-8zGqypfENjCIqGhgXToC8aB2r7YrBX+AQAfIPs/Mlk+BtPTztOvTS01NRW/3Eh60J+a48lt8qsCzirQ6loCVfA==}
     engines: {node: '>= 0.8'}
@@ -5462,12 +5453,12 @@ packages:
       rescript: 11.0.1
       rescript-struct: 4.1.1(rescript@11.0.1)
 
-  /rescript-express@0.4.1(express@4.18.2):
+  /rescript-express@0.4.1(express@4.19.2):
     resolution: {integrity: sha512-R+xAQKANfIFAIcxhQrkLn58IZQwhMZuQpVCH6UtTRNLWqlVtaogG9z4Rt0MQZgqYOjvrOtt51P0hOmYGg/90Fw==}
     peerDependencies:
       express: ^4.17.1
     dependencies:
-      express: 4.18.2
+      express: 4.19.2
 
   /rescript-mocha@0.9.0:
     resolution: {integrity: sha512-pNIlvUjbgiTdp+oZAA0przAxfXeD0EZ2+Jif7+zbPn/bjpLo21u6qGFT7kTEh4O312vQ+sRKVrZQNUtQqPT1SQ==}
