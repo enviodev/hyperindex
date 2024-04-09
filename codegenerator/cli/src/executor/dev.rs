@@ -14,7 +14,8 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
     let config = SystemConfig::parse_from_human_config(&human_config, &project_paths)
         .context("Failed parsing config")?;
 
-    let current_state = PersistedState::get_current_state(&config).await
+    let current_state = PersistedState::get_current_state(&config)
+        .await
         .context("Failed getting current indexer state")?;
 
     let persisted_state_file = PersistedStateExists::get_persisted_state_file(&project_paths);
@@ -64,7 +65,7 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         commands::codegen::run_codegen(&config, &project_paths)
             .await
             .context("Failed running codegen")?;
-        commands::codegen::run_post_codegen_command_sequence(&project_paths)
+        commands::codegen::run_post_codegen_command_sequence(&project_paths, &config)
             .await
             .context("Failed running post codegen command sequence")?;
     }

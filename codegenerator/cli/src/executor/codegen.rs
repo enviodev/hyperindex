@@ -29,7 +29,7 @@ pub async fn run_codegen(project_paths: &ParsedProjectPaths) -> Result<()> {
         .context("Failed parsing config")?;
 
     commands::codegen::run_codegen(&config, project_paths).await?;
-    commands::codegen::run_post_codegen_command_sequence(&project_paths).await?;
+    commands::codegen::run_post_codegen_command_sequence(&project_paths, &config).await?;
 
     Ok(())
 }

@@ -4,9 +4,9 @@ use sha2::{Digest, Sha256};
 use sqlx;
 use std::{
     fmt::{self, Display},
-    fs::{File,read_dir},
+    fs::{read_dir, File},
     io::Read,
-    path::{Path,PathBuf},
+    path::{Path, PathBuf},
 };
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, sqlx::FromRow, sqlx::Type)]
@@ -15,23 +15,11 @@ use std::{
 pub struct HashString(String);
 
 impl HashString {
-
-    pub fn from_string(string: String) -> Self {
-        // Create a hash of the string
-        let hash = Sha256::digest(&string);
-
-        // Convert the hash to a hexadecimal string
-        let hash_string = format!("{:x}", hash);
-
-        HashString(hash_string)
-    }
-
     //generates a hash of the contents of a directory
     pub fn from_directory(directory_path: PathBuf) -> anyhow::Result<Self> {
-
         fn get_files_recursive(directory_path: &Path) -> Vec<PathBuf> {
             let mut files = Vec::new();
-        
+
             if let Ok(entries) = read_dir(directory_path) {
                 for entry in entries {
                     if let Ok(entry) = entry {
@@ -44,11 +32,11 @@ impl HashString {
                     }
                 }
             }
-        
+
             files
         }
-            
-        let files: Vec<PathBuf> = get_files_recursive(&directory_path);        
+
+        let files: Vec<PathBuf> = get_files_recursive(&directory_path);
 
         Self::from_file_paths(files, true)
     }
@@ -86,7 +74,7 @@ impl HashString {
 
     pub fn from_file_path(file_path: PathBuf) -> anyhow::Result<Self> {
         Self::from_file_paths(vec![file_path], true)
-    } 
+    }
 
     #[cfg(test)]
     fn inner(&self) -> String {
@@ -102,9 +90,8 @@ impl Display for HashString {
 
 #[cfg(test)]
 mod test {
-    use std::path::PathBuf;
     use super::HashString;
-
+    use std::path::PathBuf;
 
     const CONFIG_1: &str = "test/configs/config1.yaml";
     const CONFIG_2: &str = "test/configs/config2.yaml";
@@ -151,7 +138,7 @@ mod test {
             "3a74a6b2bdd07e0e9928558bfaab423d55ef21fda394707c8901d3389790f0c3".to_string()
         );
     }
-    
+
     #[test]
     fn handler_file_hash_dir_ts() {
         let handler_path_dir_ts = PathBuf::from(HANDLER_DIR_TS);

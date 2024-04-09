@@ -1,6 +1,8 @@
 mod db;
 mod hash_string;
 
+use crate::commands;
+use crate::constants::project_paths::ESBUILD_PATH;
 use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths};
 use anyhow::Context;
 use hash_string::HashString;
@@ -8,12 +10,10 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::{
     fmt::{self, Display},
-    fs,
     path::PathBuf,
 };
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
-use crate::commands;
 #[derive(Serialize, Deserialize, Debug, FromRow)]
 pub struct PersistedState {
     pub envio_version: String,
@@ -85,25 +85,25 @@ impl PersistedState {
         const ABI_FILES_MUST_EXIST: bool = true;
 
         //generate esbuild out to generated/out dir
-        let generated_dir = "generated";
-        let out_dir = "esbuild-handlers";
-        let root_relative_out_dir = format!("{}/{}", generated_dir, out_dir);   
-        
-        // Check if the directory exists
-        let dir_exists = fs::metadata(generated_dir)
-            .map(|metadata| metadata.is_dir())
-            .unwrap_or(false);
 
-        if dir_exists {
-            let _ = commands::codegen::generate_esbuild_out(&config.parsed_project_paths, all_handler_paths, out_dir).await;
+        let root_relative_out_dir = &config.parsed_project_paths.generated.join(ESBUILD_PATH);
+
+        // make more robust, rather check if esbuild exists
+        let status = commands::codegen::generate_esbuild_out(
+            &config.parsed_project_paths,
+            all_handler_paths,
+        )
+        .await
+        .context("Failed to execute esbuild")?;
+
+        if !status.success() {
+            return Err(anyhow::anyhow!("Failed to generate esbuild out"));
         }
 
-        let handlers_esbuild_hash: HashString = if dir_exists { 
+        let handlers_esbuild_hash: HashString =
             HashString::from_directory(PathBuf::from(root_relative_out_dir.clone()))
-                .context("Failed hashing handler files").expect("Failed hashing handler files")
-        } else { 
-            HashString::from_string("dummy_hash".to_string())
-        };
+                .context("Failed hashing handler files")
+                .expect("Failed hashing handler files");
 
         Ok(PersistedState {
             envio_version: CURRENT_CRATE_VERSION.to_string(),

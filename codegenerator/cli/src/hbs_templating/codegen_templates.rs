@@ -7,7 +7,6 @@ use crate::{
         human_config::{self, EventDecoder, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
     },
-    persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{handler_paths::HandlerPathsTemplate, ParsedProjectPaths},
     template_dirs::TemplateDirs,
 };
@@ -635,7 +634,6 @@ pub struct ProjectTemplate {
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
     codegen_out_path: String,
-    persisted_state: PersistedStateJsonString,
     is_unordered_multichain_mode: bool,
     should_use_hypersync_client_decoder: bool,
 }
@@ -654,7 +652,10 @@ impl ProjectTemplate {
         Ok(())
     }
 
-    pub async fn from_config(cfg: &SystemConfig, project_paths: &ParsedProjectPaths) -> Result<Self> {
+    pub async fn from_config(
+        cfg: &SystemConfig,
+        project_paths: &ParsedProjectPaths,
+    ) -> Result<Self> {
         //TODO: make this a method in path handlers
         let gitignore_generated_path = project_paths.generated.join("*");
         let gitignore_path_str = gitignore_generated_path
@@ -695,10 +696,6 @@ impl ProjectTemplate {
             .collect::<Result<_>>()
             .context("Failed generating chain configs template")?;
 
-        let persisted_state = PersistedState::get_current_state(cfg).await
-            .context("Failed creating default persisted state")?
-            .into();
-
         let should_use_hypersync_client_decoder =
             cfg.event_decoder == EventDecoder::HypersyncClient;
 
@@ -710,7 +707,6 @@ impl ProjectTemplate {
             gql_enums,
             chain_configs,
             codegen_out_path: gitignore_path_str,
-            persisted_state,
             is_unordered_multichain_mode: cfg.unordered_multichain_mode,
             should_use_hypersync_client_decoder,
         })
@@ -756,14 +752,16 @@ mod test {
         let config = SystemConfig::parse_from_human_config(&yaml_config, &project_paths)
             .expect("Deserialized yml config should be parseable");
 
-        let project_template = super::ProjectTemplate::from_config(&config, &project_paths).await
+        let project_template = super::ProjectTemplate::from_config(&config, &project_paths)
+            .await
             .expect("should be able to get project template");
         project_template
     }
 
     #[tokio::test]
     async fn check_config_with_multiple_sync_sources() {
-        let project_template = get_project_template_helper("invalid-multiple-sync-config6.yaml").await;
+        let project_template =
+            get_project_template_helper("invalid-multiple-sync-config6.yaml").await;
 
         assert!(
             project_template.chain_configs[0]
@@ -899,7 +897,7 @@ mod test {
 
         let expected_chain_configs = vec![chain_config_1];
 
-        let project_template = get_project_template_helper("config3.yaml").await ;
+        let project_template = get_project_template_helper("config3.yaml").await;
 
         assert_eq!(expected_chain_configs, project_template.chain_configs);
     }
@@ -1009,7 +1007,8 @@ mod test {
 
     #[tokio::test]
     async fn abi_event_to_record_2() {
-        let project_template = get_project_template_helper("gravatar-with-required-entities.yaml").await;
+        let project_template =
+            get_project_template_helper("gravatar-with-required-entities.yaml").await;
 
         let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
         let expected_event_template = make_expected_event_template(

@@ -52,9 +52,12 @@ pub mod rescript {
 pub mod codegen {
     use super::{execute_command, rescript};
     use crate::{
-        config_parsing::system_config::SystemConfig, hbs_templating, template_dirs::TemplateDirs,
+        config_parsing::system_config::SystemConfig, constants::project_paths::ESBUILD_PATH,
+        hbs_templating, persisted_state::PersistedState, project_paths::path_utils,
+        template_dirs::TemplateDirs,
     };
-    use anyhow::{self, Context, Result};
+    use anyhow::{anyhow, Context, Result};
+    use pathdiff::diff_paths;
     use std::path::PathBuf;
 
     use crate::project_paths::ParsedProjectPaths;
@@ -109,50 +112,87 @@ pub mod codegen {
         execute_command("pnpm", args, current_dir).await
     }
 
-     // eg: pnpm esbuild --platform=node --bundle --minify --outdir=./esbuild-handlers --external:../generated/* ../src/EventHandlers.ts ../src/another-file.ts
+    // eg: pnpm esbuild --platform=node --bundle --minify --outdir=./esbuild-handlers --external:./* ../src/EventHandlers.ts ../src/another-file.ts
     pub async fn generate_esbuild_out(
         project_paths: &ParsedProjectPaths,
         all_handler_paths: Vec<PathBuf>,
-        out_dir: &str,
-    ) -> Result<std::process::ExitStatus> {        
-        let current_dir = &project_paths.generated;            
-        
-        // as we execute this command from the generated foleder we need to prepend ../ to the paths
-        fn prepend_parent_directory(paths: Vec<PathBuf>) -> Vec<PathBuf> {
-            paths
-                .into_iter()
-                .map(|path| {
-                    let mut new_path = PathBuf::new();
-                    new_path.push("..");
-                    new_path.push(path);
-                    new_path
-                })
-                .collect()
-        }
+    ) -> Result<std::process::ExitStatus> {
+        let current_dir = &project_paths.generated;
 
-        let all_handler_paths_parent = prepend_parent_directory(all_handler_paths.clone());
+        let config_directory = project_paths
+            .config
+            .parent()
+            .ok_or_else(|| anyhow!("Unexpected config file should have a parent directory"))?;
 
-        let all_handler_paths_string: Vec<&str> = all_handler_paths_parent
+        // let all_handler_paths_parent = all_handler_paths.clone();
+        let all_handler_paths_string = all_handler_paths
+            .clone()
+            .into_iter()
+            .map(|path| {
+                let handler_path_joined = &config_directory.join(path);
+                let absolute_path = path_utils::normalize_path(&handler_path_joined);
+
+                let binding = diff_paths(absolute_path.clone(), &project_paths.generated)
+                    .ok_or_else(|| anyhow!("could not find handler path relative to generated"))?;
+
+                let relative_to_generated = binding
+                    .to_str()
+                    .ok_or_else(|| anyhow!("Handler path should be unicode"))?;
+
+                Ok(relative_to_generated.to_string())
+            })
+            .collect::<Result<Vec<_>>>()
+            .context("failed to get relative paths for handlers")?;
+
+        let out_dir_arg = format!("--outdir={}", ESBUILD_PATH);
+
+        let esbuild_cmd: Vec<String> = vec![
+            "esbuild",
+            "--platform=node",
+            "--bundle",
+            "--minify",
+            &out_dir_arg,
+            "--external:./*",
+            "--log-level=warning",
+        ]
         .iter()
-        .map(|path| path.to_str().expect("Invalid path")).collect();
+        .map(|s| s.to_string())
+        .collect();
 
-        let out_dir_arg = format!("--outdir={}", out_dir);
+        let esbuild_cmd_with_paths = esbuild_cmd
+            .iter()
+            .chain(all_handler_paths_string.iter())
+            .into_iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<&str>>();
 
-        let esbuild_cmd: Vec<&str> = vec!["esbuild", "--platform=node","--bundle" ,"--minify", &out_dir_arg, "--external:../generated/*", "--log-level=warning"]; 
-
-        let esbuild_cmd_with_paths = esbuild_cmd.iter().chain(all_handler_paths_string.iter()).cloned().collect::<Vec<&str>>();        
-
-        execute_command("pnpm", esbuild_cmd_with_paths, current_dir).await
-    } 
+        execute_command("pnpm", esbuild_cmd_with_paths, &current_dir).await
+    }
 
     pub async fn run_post_codegen_command_sequence(
         project_paths: &ParsedProjectPaths,
+        config: &SystemConfig,
     ) -> anyhow::Result<std::process::ExitStatus> {
         println!("installing packages... ");
         let exit1 = pnpm_install(project_paths).await?;
         if !exit1.success() {
             return Ok(exit1);
         }
+
+        // create persisted state
+        let persisted_state = PersistedState::get_current_state(config)
+            .await
+            .context("Failed creating default persisted state")?;
+
+        let persisted_state_path = project_paths.generated.join("persisted_state.envio.json");
+        // write persisted state to a file called persisted_state.json
+        fs::write(
+            persisted_state_path,
+            serde_json::to_string(&persisted_state)
+                .context("failed to serialize persisted state")?,
+        )
+        .await
+        .context("Failed writing persisted state to file")?; // todo : check what write behaviour
 
         println!("clean build directory");
         let exit2 = rescript::clean(&project_paths.generated)
@@ -190,8 +230,8 @@ pub mod codegen {
         fs::create_dir_all(&project_paths.generated).await?;
         let template =
             hbs_templating::codegen_templates::ProjectTemplate::from_config(config, project_paths)
-                .await.context("Failed creating project template")?;
-
+                .await
+                .context("Failed creating project template")?;
         template_dirs
             .get_codegen_static_dir()?
             .extract(&project_paths.generated)
@@ -324,7 +364,9 @@ mod test {
         let cmd = "echo";
         let args = vec!["hello"];
         let current_dir = std::env::current_dir().unwrap();
-        let exit = super::execute_command(cmd, args, &current_dir).await.unwrap();
+        let exit = super::execute_command(cmd, args, &current_dir)
+            .await
+            .unwrap();
         assert!(exit.success());
     }
 
@@ -336,23 +378,32 @@ mod test {
         let path = format!("{}/configs/config.js.yaml", &root);
         let config_path = PathBuf::from(path);
 
-        let human_cfg =
-            human_config::deserialize_config_from_yaml(&config_path).context("human cfg").expect("result from human config");
+        let human_cfg = human_config::deserialize_config_from_yaml(&config_path)
+            .context("human cfg")
+            .expect("result from human config");
         let system_cfg = SystemConfig::parse_from_human_cfg_with_schema(
             &human_cfg,
             Schema::empty(),
-            &ParsedProjectPaths::new(&root, "generated", "config.js.yaml").expect("parsed project paths"),
+            &ParsedProjectPaths::new(&root, "generated", "config.js.yaml")
+                .expect("parsed project paths"),
         )
-        .context("system_cfg").expect("result from system config");
+        .context("system_cfg")
+        .expect("result from system config");
 
         let all_handler_paths = system_cfg
             .get_all_paths_to_handlers()
-            .context("Failed getting handler paths").expect("handlers from the config");
+            .context("Failed getting handler paths")
+            .expect("handlers from the config");
 
-        let exit = super::codegen::generate_esbuild_out(&system_cfg.parsed_project_paths, all_handler_paths, "generated/out").await.unwrap();
+        let exit = super::codegen::generate_esbuild_out(
+            &system_cfg.parsed_project_paths,
+            all_handler_paths,
+        )
+        .await
+        .unwrap();
         assert!(exit.success());
     }
-    
+
     #[tokio::test]
     #[ignore = "Needs esbuild to be installed globally"]
     async fn generate_esbuild_out_commands_execute_ts() {
@@ -361,20 +412,29 @@ mod test {
         let path = format!("{}/configs/config.ts.yaml", &root);
         let config_path = PathBuf::from(path);
 
-        let human_cfg =
-            human_config::deserialize_config_from_yaml(&config_path).context("human cfg").expect("result from human config");
+        let human_cfg = human_config::deserialize_config_from_yaml(&config_path)
+            .context("human cfg")
+            .expect("result from human config");
         let system_cfg = SystemConfig::parse_from_human_cfg_with_schema(
             &human_cfg,
             Schema::empty(),
-            &ParsedProjectPaths::new(&root, "generated", "config.ts.yaml").expect("parsed project paths"),
+            &ParsedProjectPaths::new(&root, "generated", "config.ts.yaml")
+                .expect("parsed project paths"),
         )
-        .context("system_cfg").expect("result from system config");
+        .context("system_cfg")
+        .expect("result from system config");
 
         let all_handler_paths = system_cfg
             .get_all_paths_to_handlers()
-            .context("Failed getting handler paths").expect("handlers from the config");
+            .context("Failed getting handler paths")
+            .expect("handlers from the config");
 
-        let exit = super::codegen::generate_esbuild_out(&system_cfg.parsed_project_paths, all_handler_paths, "generated/out").await.unwrap();
+        let exit = super::codegen::generate_esbuild_out(
+            &system_cfg.parsed_project_paths,
+            all_handler_paths,
+        )
+        .await
+        .unwrap();
         assert!(exit.success());
     }
 }

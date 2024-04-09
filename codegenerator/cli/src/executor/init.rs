@@ -27,7 +27,6 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
         .get_init_args_interactive(project_paths)
         .await
         .context("Failed during interactive input")?;
-
     let parsed_project_paths = ParsedProjectPaths::try_from(parsed_init_args.clone())
         .context("Failed parsing paths from interactive input")?;
     // The cli errors if the folder exists, the user must provide a new folder to proceed which we create below
@@ -162,7 +161,8 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     commands::codegen::run_codegen(&config, &parsed_project_paths).await?;
 
     let post_codegen_exit =
-        commands::codegen::run_post_codegen_command_sequence(&parsed_project_paths).await?;
+        commands::codegen::run_post_codegen_command_sequence(&parsed_project_paths, &config)
+            .await?;
 
     if !post_codegen_exit.success() {
         return Err(anyhow!("Failed to complete post codegen command sequence"))?;
