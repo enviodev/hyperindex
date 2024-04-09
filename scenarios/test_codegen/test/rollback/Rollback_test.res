@@ -26,9 +26,8 @@ module Mock = {
   let blocksInitial =
     blocksBase->Array.concat([
       [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar1)],
-      [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar1)],
+      [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar2)],
       [
-        UpdatedGravatar.mkEventConstr(MockEvents.setGravatar2),
         NewGravatar.mkEventConstr(MockEvents.newGravatar3),
         UpdatedGravatar.mkEventConstr(MockEvents.setGravatar3),
       ],
@@ -36,11 +35,8 @@ module Mock = {
 
   let blocksReorg =
     blocksBase->Array.concat([
+      [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar2)],
       [UpdatedGravatar.mkEventConstr(MockEvents.setGravatar1)],
-      [
-        UpdatedGravatar.mkEventConstr(MockEvents.setGravatar1),
-        UpdatedGravatar.mkEventConstr(MockEvents.setGravatar2),
-      ],
       [
         NewGravatar.mkEventConstr(MockEvents.newGravatar3),
         UpdatedGravatar.mkEventConstr(MockEvents.setGravatar3),
@@ -92,6 +88,16 @@ module Stubs = {
   //Hold next tasks temporarily here so they do not get actioned off automatically
   let tasks = ref([])
 
+  let replaceNexQueryCheckAllChainsWithGivenChain = chain => {
+    tasks :=
+      tasks.contents->Array.map(t =>
+        switch t {
+        | GlobalState.NextQuery(CheckAllChains) => GlobalState.NextQuery(Chain(chain))
+        | task => task
+        }
+      )
+  }
+
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref
   let dispatchAction = (gsManager, action) => {
@@ -124,6 +130,20 @@ module Stubs = {
       ->Array.map(task => dispatchTask(gsManager, mockChainData, task))
       ->Js.Promise.all
   }
+}
+
+module Sql = {
+  /**
+NOTE: Do not use this for queries in the indexer
+
+Exposing
+*/
+  @send
+  external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
+
+  let query = unsafe(DbFunctions.sql)
+
+  let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 }
 
 let setupDb = async (~shouldDropRawEvents) => {
@@ -185,9 +205,14 @@ describe_only("Rollback tests", () => {
 
   it_promise_only("runs end to end", async () => {
     Logging.setLogLevel(#trace)
+    Js.log(Mock.mockChainData)
+    Js.log(Mock.mockChainDataReorg)
     await setupDb(~shouldDropRawEvents=true)
 
-    let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
+    let chainManager = {
+      ...ChainManager.makeFromConfig(~configs=Config.config),
+      isUnorderedMultichainMode: true,
+    }
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let chain = ChainMap.Chain.Chain_1
@@ -223,12 +248,65 @@ describe_only("Rollback tests", () => {
     )
 
     await dispatchAllTasksReorgChain()
+
+    let getAllGravatars = async () =>
+      (await Sql.getAllRowsInTable("Gravatar"))
+      ->Array.map(Types.gravatarEntity_decode)
+      ->Utils.mapArrayOfResults
+      ->Result.getExn
+
+    let gravatars = await getAllGravatars()
+
+    let toBigInt = Ethers.BigInt.fromInt
+    let toString = Ethers.BigInt.toString
+
+    let expectedGravatars = [
+      {
+        Types.displayName: MockEvents.setGravatar1.displayName,
+        id: MockEvents.setGravatar1.id->toString,
+        imageUrl: MockEvents.setGravatar1.imageUrl,
+        owner_id: MockEvents.setGravatar1.owner->Obj.magic,
+        size: #MEDIUM,
+        updatesCount: 2->toBigInt,
+      },
+      {
+        Types.displayName: MockEvents.newGravatar2.displayName,
+        id: MockEvents.newGravatar2.id->toString,
+        imageUrl: MockEvents.newGravatar2.imageUrl,
+        owner_id: MockEvents.newGravatar2.owner->Obj.magic,
+        size: #SMALL,
+        updatesCount: 1->toBigInt,
+      },
+    ]
+
+    Assert.deep_equal(
+      gravatars,
+      expectedGravatars,
+      ~message="2 Gravatars should have been set and the first one updated in the first 3 events",
+    )
+
     Assert.deep_equal(
       tasks.contents,
-      [Rollback],
+      [GlobalState.NextQuery(CheckAllChains), Rollback, UpdateChainMetaData, ProcessEventBatch],
+      // [NextQuery(CheckAllChains), Rollback, UpdateChainMetaData, ProcessEventBatch],
       ~message="should detect rollback with reorg chain",
     )
 
+    //Substitute check all chains for given chain
+    replaceNexQueryCheckAllChainsWithGivenChain(chain)
+
     await dispatchAllTasksReorgChain()
+    Js.log("First")
+    Js.log(tasks.contents)
+    let gravatars = await getAllGravatars()
+    Js.log(gravatars)
+
+    //Substitute check all chains for given chain
+    replaceNexQueryCheckAllChainsWithGivenChain(chain)
+    await dispatchAllTasksReorgChain()
+    Js.log("Second")
+    Js.log(tasks.contents)
+    let gravatars = await getAllGravatars()
+    Js.log(gravatars)
   })
 })

@@ -344,9 +344,8 @@ Checks whether reorg has accured by comparing the parent hash with the last save
 */
   let hasReorgOccurred = (lastBlockScannedHashes: t, ~parentHash) => {
     let recentLastBlockData = lastBlockScannedHashes->getLatestLastBlockData
-
     switch (parentHash, recentLastBlockData) {
-    | (Some(parentHash), Some({blockHash})) => parentHash == blockHash
+    | (Some(parentHash), Some({blockHash})) => parentHash != blockHash
     | _ => //If parentHash is None, either it's the genesis block (no reorg)
       //Or its already confirmed so no Reorg
       //If recentLastBlockData is None, this is the first block range queried
