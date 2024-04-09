@@ -298,13 +298,13 @@ module.exports.getRollbackDiff = (
 ) => sql`
 SELECT DISTINCT
     ON (
-        COALESCE(old.entity_id, new.entity_id)
+      COALESCE(old.entity_id, new.entity_id)
     ) COALESCE(old.entity_id, new.entity_id) AS entity_id,
-    COALESCE(old.params, 'null') AS val,
-    COALESCE(old.block_timestamp, 'null') AS block_timestamp,
-    COALESCE(old.chain_id, 'null') AS chain_id,
-    COALESCE(old.block_number, 'null') AS block_number,
-    COALESCE(old.log_index, 'null') AS log_index,
+    COALESCE(old.params, NULL) AS val,
+    COALESCE(old.block_timestamp, NULL) AS block_timestamp,
+    COALESCE(old.chain_id, NULL) AS chain_id,
+    COALESCE(old.block_number, NULL) AS block_number,
+    COALESCE(old.log_index, NULL) AS log_index,
     COALESCE(old.entity_type, new.entity_type) AS entity_type
 
 FROM entity_history old
