@@ -49,7 +49,8 @@
     "rescript-mocha": "^0.9.0",
     "rescript-schema": "6.4.0",
     "sinon": "^15.0.4",
-    "ts-node": "^10.9.1"
+    "ts-node": "^10.9.1",
+    "helpers": "../helpers"
   },
   "dependencies": {
     "@rescript/react": "0.12.1",

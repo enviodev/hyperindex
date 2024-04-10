@@ -43,12 +43,9 @@
     "rescript-express",
     "@glennsl/rescript-fetch",
     "@rescript/react",
-    "rescript-mocha"
+    "rescript-mocha",
+    "helpers"
   ],
-  "ppx-flags": [
-    "@greenlabs/ppx-spice/ppx"
-  ],
-  "bsc-flags": [
-    "-open RescriptStruct"
-  ]
+  "ppx-flags": ["@greenlabs/ppx-spice/ppx"],
+  "bsc-flags": ["-open RescriptStruct"]
 }

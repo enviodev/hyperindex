@@ -1,0 +1,15 @@
+{
+  "name": "helpers",
+  "uncurried": false,
+  "namespace": "Helpers",
+  "sources": {
+    "dir": "src",
+    "subdirs": true
+  },
+  "package-specs": {
+    "module": "commonjs",
+    "in-source": true
+  },
+  "suffix": ".res.js",
+  "bsc-flags": ["-open Belt"]
+}

@@ -63,6 +63,9 @@ importers:
       hardhat:
         specifier: ^2.13.1
         version: 2.14.0(ts-node@10.9.1)(typescript@5.0.4)
+      helpers:
+        specifier: ../helpers
+        version: link:../helpers
       mocha:
         specifier: ^10.2.0
         version: 10.2.0
@@ -5463,12 +5466,28 @@ packages:
       rescript: 11.x
     dependencies:
       rescript: 11.0.1
+    dev: false
+
+  /rescript-struct@4.1.1(rescript@11.1.0-rc.7):
+    resolution: {integrity: sha512-LmlFhnAMeQEGZhQJoEC8Mk/P0GgEWVawmQB2fbV9+ILzyTSESogKS2NtP6jd3/82joG5Nxon6Ml0SjpQqVHYhA==}
+    peerDependencies:
+      rescript: 10.1.x || ~11.0.0-alpha
+    dependencies:
+      rescript: 11.1.0-rc.7
+    dev: true
 
   /rescript@11.0.1:
     resolution: {integrity: sha512-7T4PRp/d0+CBNnY6PYKffFqo9tGZlvnZpboF/n+8SKS+JZ6VvXJO7W538VPZXf3EYx1COGAWWvkF9e/HgSAqHg==}
     engines: {node: '>=10'}
     hasBin: true
     requiresBuild: true
+
+  /rescript@11.1.0-rc.7:
+    resolution: {integrity: sha512-4MsOugrSaS9Sh4grCVwNhOJLv1KZ7gTtN5KsV0ctPvzGyCaco7Ftwqo4uVap7xXuzLjgALPQdYBdElBgTZRvaQ==}
+    engines: {node: '>=10'}
+    hasBin: true
+    requiresBuild: true
+    dev: true
 
   /resolve-cwd@3.0.0:
     resolution: {integrity: sha512-OrZaX2Mb+rJCpH/6CpSqt9xFVpN++x01XnN2ie9g6P5/3xelLAkXWVADpdz1IHD/KFfEXyE6V0U01OQ3UO2rEg==}

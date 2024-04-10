@@ -1,5 +1,4 @@
 open Belt
-
 module Gravatar = {
   let contractName = "Gravatar"
   let chain = ChainMap.Chain.Chain_1337
@@ -22,6 +21,7 @@ module Gravatar = {
       ~params=_,
     )
   }
+
   module UpdatedGravatar = {
     let accessor = Types.gravatarContract_UpdatedGravatar
     let serializer = Types.GravatarContract.UpdatedGravatarEvent.eventArgs_encode
