@@ -9,7 +9,7 @@ use super::ParsedProjectPaths;
 //eg. current path is root_path/, config_path is root_path/config.yaml
 //handler in config.yaml is defined as ./EventHandler.js
 //return value should be root_path/EventHandler.js
-pub fn get_config_path_relative_to_root(
+pub fn get_config_path_relative_to_current_dir(
     project_paths: &ParsedProjectPaths,
     relative_config_path: PathBuf,
 ) -> anyhow::Result<PathBuf> {

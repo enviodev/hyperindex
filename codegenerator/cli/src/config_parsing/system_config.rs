@@ -101,7 +101,7 @@ impl SystemConfig {
     }
 
     pub fn get_path_to_schema(&self) -> Result<PathBuf> {
-        let schema_path = path_utils::get_config_path_relative_to_root(
+        let schema_path = path_utils::get_config_path_relative_to_current_dir(
             &self.parsed_project_paths,
             PathBuf::from(&self.schema_path),
         )
@@ -273,7 +273,7 @@ impl SystemConfig {
             .clone()
             .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string());
 
-        let schema_path = path_utils::get_config_path_relative_to_root(
+        let schema_path = path_utils::get_config_path_relative_to_current_dir(
             project_paths,
             PathBuf::from(relative_schema_path_from_config.clone()),
         )
@@ -374,7 +374,7 @@ impl Contract {
     }
 
     pub fn get_path_to_handler(&self, project_paths: &ParsedProjectPaths) -> Result<PathBuf> {
-        let handler_path = path_utils::get_config_path_relative_to_root(
+        let handler_path = path_utils::get_config_path_relative_to_current_dir(
             project_paths,
             PathBuf::from(&self.handler_path),
         )
@@ -391,7 +391,7 @@ impl Contract {
         project_paths: &ParsedProjectPaths,
     ) -> Option<Result<PathBuf>> {
         self.abi_file_path.as_ref().map(|abi_path| {
-            let abi_rel_path = path_utils::get_config_path_relative_to_root(
+            let abi_rel_path = path_utils::get_config_path_relative_to_current_dir(
                 project_paths,
                 PathBuf::from(abi_path),
             )

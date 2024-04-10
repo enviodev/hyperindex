@@ -53,9 +53,11 @@ impl GlobalContractConfig {
             None => Ok(None),
             Some(abi_path_relative_string) => {
                 let relative_path_buf = PathBuf::from(abi_path_relative_string);
-                let abi_path =
-                    path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)
-                        .context("Failed getting abi path")?;
+                let abi_path = path_utils::get_config_path_relative_to_current_dir(
+                    project_paths,
+                    relative_path_buf,
+                )
+                .context("Failed getting abi path")?;
                 let parsed = parse_contract_abi(abi_path).context(format!(
                     "Failed parsing global contract {} abi {}",
                     self.name, abi_path_relative_string
@@ -206,8 +208,10 @@ impl LocalContractConfig {
             None => Ok(None),
             Some(abi_path_relative_string) => {
                 let relative_path_buf = PathBuf::from(abi_path_relative_string);
-                let abi_path =
-                    path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)?;
+                let abi_path = path_utils::get_config_path_relative_to_current_dir(
+                    project_paths,
+                    relative_path_buf,
+                )?;
                 let parsed = parse_contract_abi(abi_path).context(format!(
                     "Failed parsing local network contract abi {}",
                     abi_path_relative_string
