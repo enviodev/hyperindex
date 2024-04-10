@@ -32,7 +32,12 @@ module Crypto = {
     input->hashKeccak256(~toString=v => anyToString(v) ++ previousHash)
 }
 
-type log = Types.eventBatchQueueItem
+type log = {
+  eventBatchQueueItem: Types.eventBatchQueueItem,
+  srcAddress: Ethers.ethAddress,
+  transactionHash: string,
+  eventName: Types.eventName,
+}
 
 let eventConstructor = (
   ~params,
@@ -66,6 +71,8 @@ type logConstructor = {
   transactionHash: string,
   makeEvent: makeEvent,
   logIndex: int,
+  srcAddress: Ethers.ethAddress,
+  eventName: Types.eventName,
 }
 type composedEventConstructor = (
   ~chainId: int,
@@ -80,6 +87,7 @@ let makeEventConstructor = (
   ~accessor,
   ~params,
   ~serializer,
+  ~eventName,
   ~srcAddress,
   ~chainId,
   ~blockTimestamp,
@@ -106,7 +114,7 @@ let makeEventConstructor = (
     ~blockTimestamp,
   )
 
-  {transactionHash, makeEvent, logIndex}
+  {transactionHash, makeEvent, logIndex, srcAddress, eventName}
 }
 
 type block = {
@@ -117,14 +125,14 @@ type block = {
 }
 
 type t = {
-  chain: ChainMap.Chain.t,
+  chainConfig: Config.chainConfig,
   blocks: array<block>,
   maxBlocksReturned: int,
   blockTimestampInterval: int,
 }
 
-let make = (~chain, ~maxBlocksReturned, ~blockTimestampInterval) => {
-  chain,
+let make = (~chainConfig, ~maxBlocksReturned, ~blockTimestampInterval) => {
+  chainConfig,
   blocks: [],
   maxBlocksReturned,
   blockTimestampInterval,
@@ -153,24 +161,31 @@ let addBlock = (self: t, ~makeLogConstructors: array<composedEventConstructor>) 
       x(
         ~transactionIndex=i,
         ~logIndex=i,
-        ~chainId=self.chain->ChainMap.Chain.toChainId,
+        ~chainId=self.chainConfig.chain->ChainMap.Chain.toChainId,
         ~txOrigin=None,
         ~blockNumber,
         ~blockTimestamp,
       )
     )
+
   let blockHash = getBlockHash(~previousHash, ~logConstructors)
 
-  let logs = logConstructors->Array.map(lc => {
-    let event: Types.event = lc.makeEvent(~blockHash)
+  let logs = logConstructors->Array.map(({
+    makeEvent,
+    logIndex,
+    srcAddress,
+    transactionHash,
+    eventName,
+  }) => {
+    let event: Types.event = makeEvent(~blockHash)
     let log: Types.eventBatchQueueItem = {
       event,
-      chain: self.chain,
+      chain: self.chainConfig.chain,
       timestamp: blockTimestamp,
       blockNumber,
-      logIndex: lc.logIndex,
+      logIndex,
     }
-    log
+    {eventBatchQueueItem: log, srcAddress, transactionHash, eventName}
   })
 
   let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -192,17 +207,30 @@ let getBlocks = (self: t, ~fromBlock, ~toBlock) => {
 let getBlock = (self: t, ~blockNumber) =>
   self.blocks->Js.Array2.find(b => b.blockNumber == blockNumber)
 
-let getLogsFromBlocks = (blocks: array<block>) => {
-  blocks->Array.map(b => b.logs)->Array.concatMany
+let arrayHas = (arr, v) => arr->Js.Array2.find(item => item == v)->Option.isSome
+let getLogsFromBlocks = (~srcAddresses, ~eventNames, blocks: array<block>) => {
+  blocks->Array.flatMap(b =>
+    b.logs->Array.keepMap(l => {
+      if srcAddresses->arrayHas(l.srcAddress) && eventNames->arrayHas(l.eventName) {
+        Some(l.eventBatchQueueItem)
+      } else {
+        None
+      }
+    })
+  )
 }
 
 let executeQuery = (self: t, query: FetchState.nextQuery): ChainWorkerTypes.blockRangeFetchResponse<
   _,
 > => {
-  let blocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
-  let heighstBlock = blocks->getLast->Option.getExn
+  let unfilteredBlocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
+  let heighstBlock = unfilteredBlocks->getLast->Option.getExn
   let parentHash = self->getBlock(~blockNumber=query.fromBlock - 1)->Option.map(b => b.blockHash)
   let currentBlockHeight = self->getHeight
+
+  let srcAddresses = query.contractAddressMapping->ContractAddressingMap.getAllAddresses
+  let eventNames = self.chainConfig.contracts->Array.flatMap(c => c.events)
+  let parsedQueueItems = unfilteredBlocks->getLogsFromBlocks(~srcAddresses, ~eventNames)
 
   {
     currentBlockHeight,
@@ -214,7 +242,7 @@ let executeQuery = (self: t, query: FetchState.nextQuery): ChainWorkerTypes.bloc
       },
       parentHash,
     },
-    parsedQueueItems: blocks->getLogsFromBlocks,
+    parsedQueueItems,
     fromBlockQueried: query.fromBlock,
     heighestQueriedBlockNumber: heighstBlock.blockNumber,
     latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,

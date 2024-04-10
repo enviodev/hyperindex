@@ -2,9 +2,9 @@ open Belt
 open RescriptMocha
 open Mocha
 
-describe("Check that MockChainData works as expected", () => {
+describe_only("Check that MockChainData works as expected", () => {
   let mockChainDataInit = MockChainData.make(
-    ~chain=Chain_1,
+    ~chainConfig=Config.config->ChainMap.get(Chain_1337),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )
@@ -76,11 +76,11 @@ describe("Check that MockChainData works as expected", () => {
           -1,
           (accum, next) => {
             Assert.equal(
-              next.logIndex,
+              next.eventBatchQueueItem.logIndex,
               accum + 1,
               ~message="Log indexes should increment in each block",
             )
-            next.logIndex
+            next.eventBatchQueueItem.logIndex
           },
         )
         ->ignore

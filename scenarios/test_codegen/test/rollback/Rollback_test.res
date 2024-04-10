@@ -10,7 +10,7 @@ let {
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
-    ~chain=Chain_1,
+    ~chainConfig=Config.config->ChainMap.get(Chain_1337),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )
@@ -158,7 +158,7 @@ describe_only("Single Chain Simple Rollback", () => {
     let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
-    let chain = ChainMap.Chain.Chain_1
+    let chain = ChainMap.Chain.Chain_1337
     let getState = () => gsManager->GlobalStateManager.getState
     let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
@@ -207,7 +207,7 @@ describe_only("Single Chain Simple Rollback", () => {
     }
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
-    let chain = ChainMap.Chain.Chain_1
+    let chain = ChainMap.Chain.Chain_1337
     let getState = () => gsManager->GlobalStateManager.getState
     let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
