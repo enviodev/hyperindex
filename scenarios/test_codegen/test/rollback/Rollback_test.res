@@ -149,16 +149,11 @@ Exposing
 let setupDb = async (~shouldDropRawEvents) => {
   open Migrations
   Logging.info("Provisioning Database")
-  // TODO: we should make a hash of the schema file (that gets stored in the DB) and either drop the tables and create new ones or keep this migration.
-  //       for now we always run the down migration.
-  // if (process.env.MIGRATE === "force" || hash_of_schema_file !== hash_of_current_schema)
   let _exitCodeDown = await runDownMigrations(~shouldExit=false, ~shouldDropRawEvents)
-  // else
-  //   await clearDb()
-
   let _exitCodeUp = await runUpMigrations(~shouldExit=false)
 }
-describe_only("Rollback tests", () => {
+
+describe_only("Single Chain Simple Rollback", () => {
   it_promise("Detects reorgs and actions a rollback", async () => {
     let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
     let initState = GlobalState.make(~chainManager)
@@ -203,10 +198,7 @@ describe_only("Rollback tests", () => {
     )
   })
 
-  it_promise_only("runs end to end", async () => {
-    Logging.setLogLevel(#trace)
-    Js.log(Mock.mockChainData)
-    Js.log(Mock.mockChainDataReorg)
+  it_promise_only("Successfully", async () => {
     await setupDb(~shouldDropRawEvents=true)
 
     let chainManager = {
@@ -221,7 +213,6 @@ describe_only("Rollback tests", () => {
 
     open Stubs
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
-    let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg)
     let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
     let dispatchAllTasksReorgChain = () => dispatchAllTasks(gsManager, Mock.mockChainDataReorg)
 
@@ -296,17 +287,54 @@ describe_only("Rollback tests", () => {
     replaceNexQueryCheckAllChainsWithGivenChain(chain)
 
     await dispatchAllTasksReorgChain()
-    Js.log("First")
-    Js.log(tasks.contents)
-    let gravatars = await getAllGravatars()
-    Js.log(gravatars)
+
+    Assert.deep_equal(
+      tasks.contents,
+      [GlobalState.NextQuery(CheckAllChains), ProcessEventBatch],
+      ~message="Rollback should have actioned, and now next queries and process event batch should action",
+    )
 
     //Substitute check all chains for given chain
     replaceNexQueryCheckAllChainsWithGivenChain(chain)
     await dispatchAllTasksReorgChain()
-    Js.log("Second")
-    Js.log(tasks.contents)
+
+    Assert.deep_equal(
+      tasks.contents,
+      [
+        GlobalState.UpdateChainMetaData,
+        ProcessEventBatch,
+        NextQuery(Chain(chain)),
+        NextQuery(CheckAllChains),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+      ],
+      ~message="Query should have returned with batch to process",
+    )
+
+    let expectedGravatars = [
+      {
+        Types.displayName: MockEvents.newGravatar1.displayName,
+        id: MockEvents.newGravatar1.id->toString,
+        imageUrl: MockEvents.newGravatar1.imageUrl,
+        owner_id: MockEvents.newGravatar1.owner->Obj.magic,
+        size: #SMALL,
+        updatesCount: 1->toBigInt,
+      },
+      {
+        Types.displayName: MockEvents.setGravatar2.displayName,
+        id: MockEvents.setGravatar2.id->toString,
+        imageUrl: MockEvents.setGravatar2.imageUrl,
+        owner_id: MockEvents.setGravatar2.owner->Obj.magic,
+        size: #MEDIUM,
+        updatesCount: 2->toBigInt,
+      },
+    ]
+
     let gravatars = await getAllGravatars()
-    Js.log(gravatars)
+    Assert.deep_equal(
+      expectedGravatars,
+      gravatars,
+      ~message="First gravatar should roll back and change and second should have received an update",
+    )
   })
 })

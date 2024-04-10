@@ -30,6 +30,10 @@ let make = (~chainManager) => {
 let getId = self => self.id
 let incrementId = self => {...self, id: self.id + 1}
 let setRollingBack = (self, chain) => {...self, rollbackState: RollingBack(chain)}
+let setChainManager = (self, chainManager) => {
+  ...self,
+  chainManager,
+}
 
 let isRollingBack = state =>
   switch state.rollbackState {
@@ -327,7 +331,12 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     (nextState, [UpdateChainMetaData, ProcessEventBatch, NextQuery(Chain(chain))])
   } else {
     chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
-    (state->incrementId->setRollingBack(chain), [Rollback])
+    let chainFetcher = {
+      ...chainFetcher,
+      isFetchingBatch: false,
+    }
+    let chainManager = state.chainManager->ChainManager.setChainFetcher(chainFetcher)
+    (state->setChainManager(chainManager)->incrementId->setRollingBack(chain), [Rollback])
   }
 }
 

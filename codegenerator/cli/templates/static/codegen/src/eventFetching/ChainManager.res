@@ -186,6 +186,13 @@ let getChainFetcher = (self: t, ~chain: ChainMap.Chain.t): ChainFetcher.t => {
   self.chainFetchers->ChainMap.get(chain)
 }
 
+let setChainFetcher = (self: t, chainFetcher: ChainFetcher.t) => {
+  {
+    ...self,
+    chainFetchers: self.chainFetchers->ChainMap.set(chainFetcher.chainConfig.chain, chainFetcher),
+  }
+}
+
 type earliestQueueItem =
   | ArbitraryEventQueue(Types.eventBatchQueueItem, list<Types.eventBatchQueueItem>)
   | EventFetchers(Types.eventBatchQueueItem, ChainMap.t<FetchState.t>)
