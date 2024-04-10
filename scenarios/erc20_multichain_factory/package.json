@@ -1,0 +1,30 @@
+{
+  "name": "erc20MultiChainFactory",
+  "version": "0.1.0",
+  "scripts": {
+    "clean": "rescript clean -with-deps",
+    "build": "rescript build -with-deps",
+    "watch": "rescript build -w -with-deps",
+    "mocha": "pnpm build && mocha",
+    "codegen": "envio codegen",
+    "dev": "pnpm build && envio dev",
+    "test": "pnpm mocha",
+    "start": "pnpm build && node generated/src/Index.bs.js"
+  },
+  "devDependencies": {
+    "@rescript/react": "0.12.1", 
+    "@glennsl/rescript-fetch": "0.2.0",
+    "@greenlabs/ppx-spice": "0.1.14",
+    "@ryyppy/rescript-promise": "2.1.0",
+    "rescript-envsafe": "1.3.0",
+    "rescript-express": "0.4.1",
+    "rescript-struct": "4.1.1",
+    "rescript-mocha": "^0.9.0",
+    "rescript": "11.0.1",
+    "mocha": "10.2.0"
+  },
+  "dependencies": {
+    "envio": "latest",
+    "ethers": "6.8.0"
+  }
+}

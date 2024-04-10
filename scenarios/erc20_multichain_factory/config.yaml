@@ -1,0 +1,27 @@
+name: erc20indexer
+description: ERC-20 indexer
+contracts:
+  - name: ERC20
+    handler: src/EventHandlers.bs.js
+    events:
+      - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
+      - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+  - name: ERC20Factory
+    handler: src/EventHandlers.bs.js
+    events:
+      - event: "TokenCreated(address indexed token)"
+networks:
+  - id: 1 # Ethereum Mainnet
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984" #UNI
+      - name: ERC20Factory
+        address: "0x8626f6940E2eb28930eFb4CeF49B2d1F2C9C1199" #Dummy address that does not actually produce this event
+  - id: 137 # Polygon
+    start_block: 0
+    contracts:
+      - name: ERC20
+        address: "0xb33EaAd8d922B1083446DC23f610c2567fB5180f" #UNI
+      - name: ERC20Factory
+        address: "0xdD2FD4581271e230360230F9337D5c0430Bf44C0" #Dummy address that does not actually produce this event
