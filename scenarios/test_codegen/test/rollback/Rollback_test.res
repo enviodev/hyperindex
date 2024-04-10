@@ -153,8 +153,9 @@ let setupDb = async (~shouldDropRawEvents) => {
   let _exitCodeUp = await runUpMigrations(~shouldExit=false)
 }
 
-describe_only("Single Chain Simple Rollback", () => {
+describe("Single Chain Simple Rollback", () => {
   it_promise("Detects reorgs and actions a rollback", async () => {
+
     let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
@@ -166,6 +167,7 @@ describe_only("Single Chain Simple Rollback", () => {
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
     let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg)
     let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
+    tasks := []
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
 
@@ -198,7 +200,7 @@ describe_only("Single Chain Simple Rollback", () => {
     )
   })
 
-  it_promise_only("Successfully", async () => {
+  it_promise("Successfully", async () => {
     await setupDb(~shouldDropRawEvents=true)
 
     let chainManager = {
@@ -215,6 +217,7 @@ describe_only("Single Chain Simple Rollback", () => {
     let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
     let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
     let dispatchAllTasksReorgChain = () => dispatchAllTasks(gsManager, Mock.mockChainDataReorg)
+    tasks := []
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
 

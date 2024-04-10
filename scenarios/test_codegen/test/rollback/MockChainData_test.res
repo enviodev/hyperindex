@@ -2,7 +2,7 @@ open Belt
 open RescriptMocha
 open Mocha
 
-describe_only("Check that MockChainData works as expected", () => {
+describe("Check that MockChainData works as expected", () => {
   let mockChainDataInit = MockChainData.make(
     ~chainConfig=Config.config->ChainMap.get(Chain_1337),
     ~maxBlocksReturned=3,
