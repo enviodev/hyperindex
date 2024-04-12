@@ -1,14 +1,22 @@
 type Account {
   # id is the address of the account
   id: ID!
+  # account balance of tokens
+  tokens: [AccountToken!]! @derivedFrom(field: "account")
   # approvals are a list of approvals that this account has given
   approvals: [Approval!]! @derivedFrom(field: "owner")
-  # account balance of tokens
+}
+
+type AccountToken {
+  #token address-account address
+  id: ID!
+  account: Account!
+  tokenAddress: String!
   balance: BigInt!
 }
 
 type Approval {
-  # id is the owner address and spender address [owner-spender]
+  # id is the token address, owner address and spender address [token-owner-spender]
   id: ID!
   # amount is the amount of tokens approved
   amount: BigInt!
@@ -16,4 +24,6 @@ type Approval {
   owner: Account!
   # spender is the account that is approved to spend the tokens
   spender: Account!
+  #token related to the given approval
+  tokenAddress: String!
 }

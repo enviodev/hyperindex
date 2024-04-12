@@ -5,23 +5,28 @@ open TestHelpers
 
 describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", () => {
-    //Instantiate a mock DB
-    let mockDbEmpty = MockDb.createMockDb()
-
     //Get mock addresses from helpers
     let userAddress1 = Ethers.Addresses.mockAddresses[0]->Option.getUnsafe
     let userAddress2 = Ethers.Addresses.mockAddresses[1]->Option.getUnsafe
 
+    let account_id = userAddress1->Ethers.ethAddressToString
     //Make a mock entity to set the initial state of the mock db
     let mockAccountEntity: Types.accountEntity = {
-      id: userAddress1->Ethers.ethAddressToString,
-      balance: Ethers.BigInt.fromInt(5),
+      id: account_id,
     }
+    let tokenAddress = Ethers.Addresses.defaultAddress->Ethers.ethAddressToString
+    let mockAccountTokenEntity = EventHandlers.makeAccountToken(
+      ~account_id,
+      ~tokenAddress,
+      ~balance=Ethers.BigInt.fromInt(5),
+    )
 
     //Set an initial state for the user
     //Note: set and delete functions do not mutate the mockDb, they return a new
     //mockDb with with modified state
-    let mockDb = mockDbEmpty.entities.account.set(mockAccountEntity)
+    let mockDb = MockDb.createMockDb().entities.account.set(
+      mockAccountEntity,
+    ).entities.accountToken.set(mockAccountTokenEntity)
 
     //Create a mock Transfer event from userAddress1 to userAddress2
     let mockTransfer = ERC20.Transfer.createMockEvent({
@@ -40,9 +45,9 @@ describe("Transfers", () => {
 
     //Get the balance of userAddress1 after the transfer
     let account1Balance =
-      mockDbAfterTransfer.entities.account.get(userAddress1->Ethers.ethAddressToString)->Option.map(
-        a => a.balance,
-      )
+      mockDbAfterTransfer.entities.accountToken.get(
+        EventHandlers.makeAccountTokenId(~account_id, ~tokenAddress),
+      )->Option.map(a => a.balance)
 
     //Assert the expected balance
     Assert.equal(
@@ -53,9 +58,12 @@ describe("Transfers", () => {
 
     //Get the balance of userAddress2 after the transfer
     let account2Balance =
-      mockDbAfterTransfer.entities.account.get(userAddress2->Ethers.ethAddressToString)->Option.map(
-        a => a.balance,
-      )
+      mockDbAfterTransfer.entities.accountToken.get(
+        EventHandlers.makeAccountTokenId(
+          ~account_id=userAddress2->Ethers.ethAddressToString,
+          ~tokenAddress,
+        ),
+      )->Option.map(a => a.balance)
     //Assert the expected balance
     Assert.equal(
       Some(Ethers.BigInt.fromInt(3)),
