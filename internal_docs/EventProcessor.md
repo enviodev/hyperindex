@@ -18,9 +18,9 @@ flowchart TB
         start>START]:::start
         start-->1
         1-->2["Run loaders on all events"]
-        2--"a dynamic contract was found"-->2a["Finish running the loader batch 
-        and search for any more dynamic contracts that may occur.
-        Don't run/execute handlers on batch until events from dynamic contracts are loaded."]
+        2--"a dynamic contract was found"-->2a["Finish running the loader batch and search for any more dynamic contracts that may occur.
+        Don't run/execute handlers on the remainder of the batch until events from dynamic contracts are loaded,
+        the events will be deferred to the arbitrary events queue and included in a later batch."]
         2a-->1
         3["Execute db queries from loaders in a batch"]
         2a-->3
