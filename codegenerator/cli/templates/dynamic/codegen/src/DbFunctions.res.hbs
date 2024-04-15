@@ -187,8 +187,17 @@ module EntityHistory = {
 
   let batchSet = (sql, ~entityHistoriesToSet) => {
     //Encode null for for the with prev types so that it's not undefined
-    batchSetInternal(sql, ~entityHistoriesToSet=entityHistoriesToSet->Belt.Array.map(entityHistoryItem_encode))
+    batchSetInternal(
+      sql,
+      ~entityHistoriesToSet=entityHistoriesToSet->Belt.Array.map(entityHistoryItem_encode),
+    )
   }
+
+  @module("./DbFunctionsImplementation.js")
+  external deleteAllEntityHistoryAfterEventIdentifier: (
+    Postgres.sql,
+    ~eventIdentifier: Types.eventIdentifier,
+  ) => promise<unit> = "deleteAllEntityHistoryAfterEventIdentifier"
 
   @spice
   type rollbackDiffResponseRaw = {
@@ -198,7 +207,7 @@ module EntityHistory = {
     block_timestamp: option<int>,
     block_number: option<int>,
     log_index: option<int>,
-    val: option<Js.Json.t>,
+    val: option<string>,
   }
 
   type previousEntity = {
@@ -226,7 +235,7 @@ module EntityHistory = {
           entity_type,
         } =>
         entity_type
-        ->Types.getEntityParamsDecoder(val)
+        ->Types.getEntityParamsDecoder(val->Js.Json.parseExn)
         ->Belt.Result.map(entity => {
           let eventIdentifier: Types.eventIdentifier = {
             chainId,

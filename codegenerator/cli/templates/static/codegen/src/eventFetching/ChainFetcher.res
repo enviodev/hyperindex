@@ -171,7 +171,15 @@ let rollbackLastBlockHashesToReorgLocation = async (
   let blockNumbersAndHashes =
     await chainFetcher.chainWorker
     ->getBlockHashes(~blockNumbers)
-    ->Promise.thenResolve(Result.getExn)
+    ->Promise.thenResolve(res =>
+      switch res {
+      | Ok(v) => v
+      | Error(exn) =>
+        exn->ErrorHandling.logAndRaise(
+          ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
+        )
+      }
+    )
 
   chainFetcher.lastBlockScannedHashes
   ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)

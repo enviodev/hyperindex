@@ -44,3 +44,6 @@ let queryBlockDataMulti: (
   ~serverUrl: string,
   ~blockNumbers: array<int>,
 ) => promise<queryResponse<array<ReorgDetection.blockData>>>
+
+let mapExn: queryResponse<'a> => result<'a, exn>
+let getExn: queryResponse<'a> => 'a

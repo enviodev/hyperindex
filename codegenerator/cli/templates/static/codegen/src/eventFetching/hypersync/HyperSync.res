@@ -20,6 +20,12 @@ type missingParams = {
 }
 type queryError = UnexpectedMissingParams(missingParams) | QueryError(QueryHelpers.queryError)
 
+exception HyperSyncQueryError(queryError)
+
+let queryErrorToExn = queryError => {
+  HyperSyncQueryError(queryError)
+}
+
 exception UnexpectedMissingParamsExn(missingParams)
 
 let queryErrorToMsq = (e: queryError): string => {
@@ -53,6 +59,17 @@ let queryErrorToMsq = (e: queryError): string => {
 }
 
 type queryResponse<'a> = result<'a, queryError>
+let mapExn = (queryResponse: queryResponse<'a>) =>
+  switch queryResponse {
+  | Ok(v) => Ok(v)
+  | Error(err) => err->queryErrorToExn->Error
+  }
+
+let getExn = (queryResponse: queryResponse<'a>) =>
+  switch queryResponse {
+  | Ok(v) => v
+  | Error(err) => err->queryErrorToExn->raise
+  }
 
 //Manage clients in cache so we don't need to reinstantiate each time
 //Ideally client should be passed in as a param to the functions but

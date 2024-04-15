@@ -72,7 +72,7 @@ module Mock = {
     let chain = ChainMap.Chain.Chain_1
     let mockChainDataEmpty = MockChainData.make(
       ~chainConfig=Config.config->ChainMap.get(chain),
-      ~maxBlocksReturned=3,
+      ~maxBlocksReturned=2,
       ~blockTimestampInterval=25,
     )
 
@@ -111,6 +111,10 @@ module Mock = {
   }
   module Chain2 = {
     let chain = ChainMap.Chain.Chain_137
+    let defaultTokenAddress = ChainDataHelpers.getDefaultAddress(
+      chain,
+      ChainDataHelpers.ERC20.contractName,
+    )
     let mockChainDataEmpty = MockChainData.make(
       ~chainConfig=Config.config->ChainMap.get(chain),
       ~maxBlocksReturned=3,
@@ -162,6 +166,30 @@ module Mock = {
   )
 }
 
+module Sql = {
+  @send
+  external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
+
+  let query = unsafe(DbFunctions.sql)
+
+  let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
+
+  let getAccountTokenBalance = async (~tokenAddress, ~accountAddress) => {
+    let tokenAddress = tokenAddress->Ethers.ethAddressToString
+    let account_id = accountAddress->Ethers.ethAddressToString
+    let accountTokenId = EventHandlers.makeAccountTokenId(~tokenAddress, ~account_id)
+    let res = await query(
+      `
+    SELECT * FROM public."AccountToken"
+    WHERE id = '${accountTokenId}';
+    `,
+    )
+
+    res[0]
+    ->Option.map(v => v->Types.accountTokenEntity_decode->Result.getExn)
+    ->Option.map(a => a.balance)
+  }
+}
 let setupDb = async (~shouldDropRawEvents) => {
   open Migrations
   Logging.info("Provisioning Database")
@@ -187,6 +215,37 @@ describe("Multichain rollback test", () => {
     let tasks = ref([])
     let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks)
 
+    //helpers
+    let getState = () => {
+      gsManager->GlobalStateManager.getState
+    }
+    let getChainFetcher = chain => {
+      let state = gsManager->GlobalStateManager.getState
+      state.chainManager.chainFetchers->ChainMap.get(chain)
+    }
+
+    let getFetchState = chain => {
+      let cf = chain->getChainFetcher
+      cf.fetchState
+    }
+
+    let getQueueSize = chain => {
+      chain->getFetchState->FetchState.queueSize
+    }
+
+    let getLatestFetchedBlock = chain => {
+      chain->getFetchState->FetchState.getLatestFullyFetchedBlock
+    }
+
+    let getTokenBalance = chain => {
+      Sql.getAccountTokenBalance(~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain))
+    }
+
+    let getUser1Balance = getTokenBalance(~accountAddress=Mock.userAddress1)
+    let getUser2Balance = getTokenBalance(~accountAddress=Mock.userAddress2)
+
+    let getTotalQueueSize = () =>
+      ChainMap.Chain.all->Array.reduce(0, (accum, next) => accum + next->getQueueSize)
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions
     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMapInitial)
@@ -203,57 +262,284 @@ describe("Multichain rollback test", () => {
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
 
-    //TODO ASSERTIONS
-    //Should have fetched up to block zero on both chains
-    //Should have no events in queues
+    let toBigInt = Ethers.BigInt.fromInt
+    let makeAssertions = async (
+      ~queryName,
+      ~chain1LatestFetchBlock,
+      ~chain2LatestFetchBlock,
+      ~totalQueueSize,
+      ~batchName,
+      ~chain1User1Balance,
+      ~chain1User2Balance,
+      ~chain2User1Balance,
+      ~chain2User2Balance,
+    ) => {
+      Assert.equal(
+        chain1LatestFetchBlock,
+        getLatestFetchedBlock(Chain_1),
+        ~message=`Chain 1 should have fetched up to block ${chain1LatestFetchBlock->Int.toString} on query ${queryName}`,
+      )
+      Assert.equal(
+        chain2LatestFetchBlock,
+        getLatestFetchedBlock(Chain_137),
+        ~message=`Chain 2 should have fetched up to block ${chain2LatestFetchBlock->Int.toString} on query ${queryName}`,
+      )
+      Assert.equal(
+        totalQueueSize,
+        getTotalQueueSize(),
+        ~message=`Query ${queryName} should have returned ${totalQueueSize->Int.toString} events`,
+      )
+
+      let toBigInt = Ethers.BigInt.fromInt
+      let optIntToString = optInt =>
+        switch optInt {
+        | Some(n) => `Some(${n->Int.toString})`
+        | None => "None"
+        }
+
+      let getBalanceFn = user =>
+        switch user {
+        | 1 => getUser1Balance
+        | 2 => getUser2Balance
+        | user => Js.Exn.raiseError(`Invalid user num ${user->Int.toString}`)
+        }
+
+      let assertBalance = async (~chain, ~expectedBalance, ~user) => {
+        let balance = await getBalanceFn(user, chain)
+        Assert.deep_equal(
+          expectedBalance->Option.map(toBigInt),
+          balance,
+          ~message=`Chain ${chain->ChainMap.Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
+            ->Option.flatMap(Ethers.BigInt.toInt)
+            ->optIntToString}`,
+        )
+      }
+      //Chain 1 balances
+      await assertBalance(~chain=Chain_1, ~user=1, ~expectedBalance=chain1User1Balance)
+      await assertBalance(~chain=Chain_1, ~user=2, ~expectedBalance=chain1User2Balance)
+      await assertBalance(~chain=Chain_137, ~user=1, ~expectedBalance=chain2User1Balance)
+      await assertBalance(~chain=Chain_137, ~user=2, ~expectedBalance=chain2User2Balance)
+    }
+
+    await makeAssertions(
+      ~queryName="No Query",
+      ~chain1LatestFetchBlock=0,
+      ~chain2LatestFetchBlock=0,
+      ~totalQueueSize=0,
+      ~batchName="No Batch",
+      ~chain1User1Balance=None,
+      ~chain1User2Balance=None,
+      ~chain2User1Balance=None,
+      ~chain2User2Balance=None,
+    )
 
     //Make the first queries (A)
     await dispatchAllTasks()
-    //TODO ASSERTIONS
-    //Should have fetched 2 blocks on chain 1 and 3 on chain 2
-    //check for events in queue
+    Assert.deep_equal(
+      [
+        GlobalState.UpdateChainMetaData,
+        ProcessEventBatch,
+        NextQuery(Chain(Chain_1)),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+        NextQuery(Chain(Chain_137)),
+      ],
+      stubDataInitial->Stubs.getTasks,
+      ~message="Should have received a response and next tasks will be to process batch and next query",
+    )
+
+    await makeAssertions(
+      ~queryName="A",
+      ~chain1LatestFetchBlock=1,
+      ~chain2LatestFetchBlock=2,
+      ~totalQueueSize=3,
+      ~batchName="No Batch",
+      ~chain1User1Balance=None,
+      ~chain1User2Balance=None,
+      ~chain2User1Balance=None,
+      ~chain2User2Balance=None,
+    )
 
     //Process the events in the queues
     //And make queries (B)
     await dispatchAllTasks()
-    //TODO Assertions
-    //Assert user balances after processing
-    //Should have fetched more events
+    await makeAssertions(
+      ~queryName="B",
+      ~chain1LatestFetchBlock=3,
+      ~chain2LatestFetchBlock=5,
+      ~totalQueueSize=3,
+      ~batchName="A",
+      ~chain1User1Balance=Some(50),
+      ~chain1User2Balance=None,
+      ~chain2User1Balance=Some(50),
+      ~chain2User2Balance=Some(100),
+    )
+    Assert.deep_equal(
+      [
+        GlobalState.NextQuery(CheckAllChains),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+        NextQuery(Chain(Chain_1)),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+        NextQuery(Chain(Chain_137)),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+      ],
+      stubDataInitial->Stubs.getTasks,
+      ~message="Should have processed a batch and run next queries on all chains",
+    )
 
+    Js.log("Dispatching tasks")
+    //Artificially cut the tasks to only do one round of queries and batch processing
+    tasks := [UpdateChainMetaData, ProcessEventBatch, NextQuery(CheckAllChains)]
     //Process batch 2 of events
     //And make queries (C)
     await dispatchAllTasks()
-    //TODO Assertions
-    //Assert user balances after processing
-    //Should have fetched more events
+
+    stubDataInitial->Stubs.getTasks->Js.log
+    Assert.deep_equal(
+      [
+        GlobalState.NextQuery(CheckAllChains),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+        NextQuery(Chain(Chain_1)),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+        NextQuery(Chain(Chain_137)),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+      ],
+      stubDataInitial->Stubs.getTasks,
+      ~message="Should have detected rollback on chain 1",
+    )
+    await makeAssertions(
+      ~queryName="C",
+      ~chain1LatestFetchBlock=5,
+      ~chain2LatestFetchBlock=8,
+      ~totalQueueSize=5,
+      ~batchName="B",
+      ~chain1User1Balance=Some(50),
+      ~chain1User2Balance=Some(100),
+      ~chain2User1Balance=Some(100),
+      ~chain2User2Balance=Some(50),
+    )
+    Js.log("before")
+    getFetchState(Chain_1).fetchedEventQueue->List.toArray->Js.log
+    getFetchState(Chain_137).fetchedEventQueue->List.toArray->Js.log
 
     //Chain1 reorgs at block 4
     let stubDataReorg = makeStub(~mockChainDataMap=Mock.mockChainDataMapReorg)
     let dispatchAllTasks = () => stubDataReorg->Stubs.dispatchAllTasks
+
+    //Artificially cut the tasks to only do one round of queries and batch processing
+    tasks := [UpdateChainMetaData, ProcessEventBatch, NextQuery(CheckAllChains)]
     //Process batch 3 of events and make queries
-    //Execute queries(c)
+    //Execute queries(D)
     await dispatchAllTasks()
-    //TODO Assertions
-    //Reorg should have been detected
+    Assert.deep_equal(
+      [
+        GlobalState.NextQuery(CheckAllChains),
+        Rollback,
+        UpdateChainMetaData,
+        ProcessEventBatch,
+        NextQuery(Chain(Chain_137)),
+        UpdateChainMetaData,
+        ProcessEventBatch,
+      ],
+      stubDataReorg->Stubs.getTasks,
+      ~message="Should have detected rollback on chain 1",
+    )
+    await makeAssertions(
+      ~queryName="D",
+      ~chain1LatestFetchBlock=5,
+      ~chain2LatestFetchBlock=9,
+      ~totalQueueSize=1,
+      ~batchName="C",
+      ~chain1User1Balance=Some(100),
+      ~chain1User2Balance=Some(50),
+      ~chain2User1Balance=Some(98),
+      ~chain2User2Balance=Some(52),
+    )
 
     //Action reorg
     await dispatchAllTasks()
-    //Todo assertions
-    //Reorg should have been actioned
-    //reorg state should have inmemory store
-    //Next tasks should be process event
-    //Balances should not have changed yet
-
+    Assert.deep_equal(
+      [GlobalState.NextQuery(CheckAllChains), ProcessEventBatch],
+      stubDataReorg->Stubs.getTasks,
+      ~message="Rollback should have actioned and next tasks are query and process batch",
+    )
+    await makeAssertions(
+      ~queryName="After Rollback Action",
+      ~chain1LatestFetchBlock=3,
+      ~chain2LatestFetchBlock=2,
+      ~totalQueueSize=0,
+      ~batchName="After Rollback Action",
+      //balances have not yet been changed
+      ~chain1User1Balance=Some(100),
+      ~chain1User2Balance=Some(50),
+      ~chain2User1Balance=Some(98),
+      ~chain2User2Balance=Some(52),
+    )
+    Assert.equal(
+      true,
+      switch getState().rollbackState {
+      | RollbackState(_) => true
+      | _ => false
+      },
+      ~message="Rollback in memory store should be set in state",
+    )
     //Make new queries (C for Chain 1, B for Chain 2)
+    //Artificially cut the tasks to only do one round of queries and batch processing
+    tasks := [NextQuery(CheckAllChains)]
     await dispatchAllTasks()
+    getFetchState(Chain_1).fetchedEventQueue
+    ->List.toArray
+    ->Array.map(
+      l => (
+        l.blockNumber,
+        switch l.event {
+        | ERC20Contract_Transfer(event) => event.params
+        | _ => Obj.magic()
+        },
+      ),
+    )
+    ->Js.log
+    await makeAssertions(
+      ~queryName="After Rollback Action",
+      ~chain1LatestFetchBlock=5,
+      ~chain2LatestFetchBlock=5,
+      ~totalQueueSize=4,
+      ~batchName="After Rollback Action",
+      //balances have not yet been changed
+      ~chain1User1Balance=Some(100),
+      ~chain1User2Balance=Some(50),
+      ~chain2User1Balance=Some(98),
+      ~chain2User2Balance=Some(52),
+    )
+    Js.log(3)
     //Todo assertions
     //events should have come back, assert the number in each queue
 
-    //Process event batch with reorg in mem store and action next queries
+    //Artificially cut the tasks to only do one round of queries and batch processing
+    tasks := [ProcessEventBatch]
+    // Process event batch with reorg in mem store and action next queries
     await dispatchAllTasks()
+    await makeAssertions(
+      ~queryName="After Rollback Action",
+      ~chain1LatestFetchBlock=5,
+      ~chain2LatestFetchBlock=5,
+      ~totalQueueSize=0,
+      ~batchName="After Rollback Action",
+      //balances have not yet been changed
+      ~chain1User1Balance=Some(89),
+      ~chain1User2Balance=Some(61),
+      ~chain2User1Balance=Some(100),
+      ~chain2User2Balance=Some(50),
+    )
+    // Js.log(4)
     //Todo assertions
     //Assert new balances
-
 
     //Potentially keep going for assertions to end of chain
   })

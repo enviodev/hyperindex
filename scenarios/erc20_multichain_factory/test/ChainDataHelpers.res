@@ -9,7 +9,7 @@ let getDefaultAddress = (chain, contractName) => {
 
 module ERC20 = {
   let contractName = "ERC20"
-
+  let getDefaultAddress = getDefaultAddress(_, contractName)
   module Transfer = {
     let accessor = Types.eRC20Contract_Transfer
     let serializer = Types.ERC20Contract.TransferEvent.eventArgs_encode
@@ -21,12 +21,13 @@ module ERC20 = {
     )
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain, contractName), ~params)
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
   }
 }
 
 module ERC20Factory = {
   let contractName = "ERC20Factory"
+  let getDefaultAddress = getDefaultAddress(_, contractName)
 
   module TokenCreated = {
     let accessor = Types.eRC20FactoryContract_TokenCreated
@@ -39,7 +40,7 @@ module ERC20Factory = {
     )
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain, contractName), ~params)
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
   }
 }
 

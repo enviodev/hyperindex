@@ -361,4 +361,5 @@ let fetchBlockRange = async (
   }
 }
 
-let getBlockHashes = ({serverUrl}: t) => HyperSync.queryBlockDataMulti(~serverUrl)
+let getBlockHashes = ({serverUrl}: t, ~blockNumbers) =>
+  HyperSync.queryBlockDataMulti(~serverUrl, ~blockNumbers)->Promise.thenResolve(HyperSync.mapExn)

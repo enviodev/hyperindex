@@ -159,16 +159,20 @@ module InMemoryStore = {
   {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {{entity.name.capitalized}}.t,
   {{/each}}
+    rollBackEventIdentifier: option<Types.eventIdentifier>,
   }
 
-  let make = (): t => {
+  let makeWithRollBackEventIdentifier = (rollBackEventIdentifier): t => {
     eventSyncState: EventSyncState.make(),
     rawEvents: RawEvents.make(),
     dynamicContractRegistry: DynamicContractRegistry.make(),
   {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {{entity.name.capitalized}}.make(),
   {{/each}}
+    rollBackEventIdentifier,
   }
+
+  let make = () => makeWithRollBackEventIdentifier(None)
 
   let clone = (self: t) => {
     eventSyncState: self.eventSyncState->EventSyncState.clone,
@@ -177,6 +181,7 @@ module InMemoryStore = {
   {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: self.{{entity.name.uncapitalized}}->{{entity.name.capitalized}}.clone,
   {{/each}}
+    rollBackEventIdentifier: self.rollBackEventIdentifier->structuredClone,
   }
 }
 
@@ -672,26 +677,49 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   )
 
   {{/each}}
-  let res = await sql->Postgres.beginSql((sql)=>{
-    [
-      setEventSyncState,
-      setRawEvents,
-      setDynamicContracts,
-      {{#each entities as | entity |}}
-      set{{entity.name.capitalized}}s,
-      {{/each}}
-    ]->Belt.Array.map(dbFunc => sql->dbFunc)
+  //In the event of a rollback, rollback all meta tables based on the given
+  //valid event identifier, where all rows created after this eventIdentifier should
+  //be deleted
+  let rollbackTables = switch inMemoryStore.rollBackEventIdentifier {
+  | Some(eventIdentifier) => [
+      DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(~eventIdentifier),
+      //TODO, add rollback for other tables
+    ]
+  | None => []
+  }
+
+  let res = await sql->Postgres.beginSql(sql => {
+    Belt.Array.concat(
+      //Rollback tables need to happen first in the traction
+      rollbackTables,
+      [
+        setEventSyncState,
+        setRawEvents,
+        setDynamicContracts,
+        {{#each entities as | entity |}}
+        set{{entity.name.capitalized}}s,
+        {{/each}}
+      ],
+    )->Belt.Array.map(dbFunc => sql->dbFunc)
   })
 
   res
 }
 
 module RollBack = {
+  exception DecodeError(Spice.decodeError)
   let rollBack = async (~chainId, ~blockTimestamp, ~blockNumber, ~logIndex) => {
-    let reorgData =
-      (await DbFunctions.sql
-      ->DbFunctions.EntityHistory.getRollbackDiff(~chainId, ~blockTimestamp, ~blockNumber))
-      ->Belt.Result.getExn
+    let reorgData = switch await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
+      ~chainId,
+      ~blockTimestamp,
+      ~blockNumber,
+    ) {
+    | Ok(v) => v
+    | Error(exn) =>
+      exn
+      ->DecodeError
+      ->ErrorHandling.logAndRaise(~msg="Failed to get rollback diff from entity history")
+    }
 
     let rollBackEventIdentifier: Types.eventIdentifier = {
       chainId,
@@ -700,7 +728,7 @@ module RollBack = {
       logIndex,
     }
 
-    let inMemStore = InMemoryStore.make()
+    let inMemStore = InMemoryStore.makeWithRollBackEventIdentifier(Some(rollBackEventIdentifier))
 
     reorgData->Belt.Array.forEach(e => {
       switch e {

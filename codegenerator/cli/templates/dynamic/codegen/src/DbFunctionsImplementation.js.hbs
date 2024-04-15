@@ -223,6 +223,20 @@ module.exports.batchInsertEntityHistory = async (sql, entityDataArray) => {
   }
 };
 
+module.exports.deleteAllEntityHistoryAfterEventIdentifier = async (
+  sql,
+  { blockTimestamp, chainId, blockNumber, logIndex },
+) => {
+  await sql`
+  DELETE FROM "public"."entity_history"
+  WHERE 
+    block_timestamp > ${blockTimestamp} OR
+    (block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
+    (block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND block_number > ${blockNumber}) OR
+    (block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND block_number = ${blockNumber} AND log_index > ${logIndex});
+`;
+};
+
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   return chunkBatchQuery(
     sql,
