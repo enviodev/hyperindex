@@ -29,14 +29,31 @@ module InMemoryStore = {
 
     let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
 
-    // NOTE: calling initValue on an existing store item will override it. This function does no checks to make sure there isn't existing data that can get lost.
-    let initValue = (self: t, ~key: StoreItem.key, ~entity: option<StoreItem.t>) => {
-      let initialStoreRow: Types.inMemoryStoreRowEntity<StoreItem.t> = switch entity {
-      | Some(entity) => InitialReadFromDb(AlreadySet(entity))
-      | None => InitialReadFromDb(NotSet)
+    let initValue = (
+      ~allowOverWriteEntity=false,
+      ~key: StoreItem.key,
+      ~entity: option<StoreItem.t>,
+      self: t,
+    ) => {
+      let shouldWriteEntity =
+        allowOverWriteEntity || self.dict->Js.Dict.get(key->self.hasher)->Belt.Option.isNone
+
+      //Only initialize a row in the case where it is none
+      //or if allowOverWriteEntity is true (used for mockDb in test helpers)
+      if shouldWriteEntity {
+        let initialStoreRow: Types.inMemoryStoreRowEntity<StoreItem.t> = switch entity {
+        | Some(entity) => InitialReadFromDb(AlreadySet(entity))
+        | None => InitialReadFromDb(NotSet)
+        }
+        self.dict->Js.Dict.set(key->self.hasher, initialStoreRow)
       }
-      self.dict->Js.Dict.set(key->self.hasher, initialStoreRow)
     }
+
+    let getEventIdentifier = entityUpdate =>
+      switch entityUpdate {
+      | Types.Set(_, eventIdentifier)
+      | Delete(_, eventIdentifier) => eventIdentifier
+      }
 
     let set = (self: t, ~key: StoreItem.key, ~entity: Types.entityUpdate<StoreItem.t>) => {
       let mapKey = key->self.hasher
@@ -49,13 +66,20 @@ module InMemoryStore = {
           history: [],
         })
       | Some(Updated(previous_values)) =>
-        Updated({
-          initial: previous_values.initial,
-          latest: entity,
-          history: Config.placeholder_is_near_head_of_chain_or_in_dev_mode
-            ? previous_values.history->Belt.Array.concat([previous_values.latest])
-            : [],
-        })
+        if getEventIdentifier(previous_values.latest) == getEventIdentifier(entity) {
+          Updated({
+            ...previous_values,
+            latest: entity,
+          })
+        } else {
+          Updated({
+            initial: previous_values.initial,
+            latest: entity,
+            history: Config.placeholder_is_near_head_of_chain_or_in_dev_mode
+              ? previous_values.history->Belt.Array.concat([previous_values.latest])
+              : [],
+          })
+        }
       | None =>
         Updated({
           initial: Unknown,
@@ -407,7 +431,7 @@ let loadEntitiesToInMemStoreComposer = (
 let makeEntityExecuterComposer = (
   ~idsToLoad: LoadLayer.idsToLoad,
   ~dbReadFn: array<Belt.Set.String.value> => 'a,
-  ~inMemStoreInitFn: ('b, ~key: 'c, ~entity: option<'d>) => unit,
+  ~inMemStoreInitFn: (~allowOverWriteEntity: bool=?, ~key: 'c, ~entity: option<'d>, 'b) => unit,
   ~store: 'b,
   ~getEntiyId: 'd => 'c,
   ~unit: 'e,
@@ -444,7 +468,7 @@ Specifically create an sql executor with async functionality
 let makeSqlEntityExecuter = (
   ~idsToLoad: LoadLayer.idsToLoad,
   ~dbReadFn: (Postgres.sql, array<Belt.Set.String.value>) => Promise.t<Belt.Array.t<'a>>,
-  ~inMemStoreInitFn: ('b, ~key: 'c, ~entity: option<'a>) => unit,
+  ~inMemStoreInitFn: (~allowOverWriteEntity: bool=?, ~key: 'c, ~entity: option<'a>, 'b) => unit,
   ~store: 'b,
   ~getEntiyId: 'a => 'c,
 ) => {
@@ -647,7 +671,9 @@ let executeDbFunctionsEntity = (
 }
 
 let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
-  let entityDbExecutionComposer = Config.placeholder_is_near_head_of_chain_or_in_dev_mode ? executeDbFunctionsEntity : executeSetEntityWithHistory
+  let entityDbExecutionComposer = Config.placeholder_is_near_head_of_chain_or_in_dev_mode
+    ? executeSetEntityWithHistory
+    : executeDbFunctionsEntity
 
   let placeholderDeleteFunction = (_sql: Postgres.sql, _ids: array<string>): promise<unit> =>
     Js.Promise.resolve()

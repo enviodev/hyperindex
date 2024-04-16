@@ -125,10 +125,12 @@ let makeStoreOperatorEntity = (
     ->values
     ->Array.keepMap(row =>
       switch row {
-      | Updated({latest: Set(entity, _)}) => Some(entity)
-      | Updated({latest: Delete(_, _)}) => None
-      | InitialReadFromDb(AlreadySet(entity)) => Some(entity)
-      | InitialReadFromDb(NotSet) => None
+      | Updated({latest: Set(entity, _)})
+      | InitialReadFromDb(AlreadySet(entity)) =>
+        Some(entity)
+      | Updated({latest: Delete(_, _)})
+      | InitialReadFromDb(NotSet) =>
+        None
       }
     )
 
@@ -338,9 +340,10 @@ let executeRowsEntity = (
   >,
   ~getKey: 'entity => 'key,
   ~setFunction: (
-    IO.InMemoryStore.storeStateEntity<'entity, 'key>,
+    ~allowOverWriteEntity: bool=?,
     ~key: 'key,
     ~entity: option<'entity>,
+    IO.InMemoryStore.storeStateEntity<'entity, 'key>,
   ) => unit,
 ) => {
   inMemoryStore
@@ -351,7 +354,7 @@ let executeRowsEntity = (
     switch row {
     | Updated({latest: Set(entity, _)})
     | InitialReadFromDb(AlreadySet(entity)) =>
-      store->setFunction(~key=getKey(entity), ~entity=Some(entity))
+      store->setFunction(~allowOverWriteEntity=true, ~key=getKey(entity), ~entity=Some(entity))
     | Updated({latest: Delete(entityId, _)}) => store.dict->deleteDictKey(entityId)
     | InitialReadFromDb(NotSet) => ()
     }

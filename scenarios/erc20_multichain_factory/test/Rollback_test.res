@@ -118,7 +118,7 @@ module Mock = {
     let mockChainDataEmpty = MockChainData.make(
       ~chainConfig=Config.config->ChainMap.get(chain),
       ~maxBlocksReturned=3,
-      ~blockTimestampInterval=25,
+      ~blockTimestampInterval=16,
     )
     open ChainDataHelpers.ERC20
     let mkTransferEventConstr = Transfer.mkEventConstr(~chain)
@@ -262,7 +262,6 @@ describe("Multichain rollback test", () => {
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
 
-    let toBigInt = Ethers.BigInt.fromInt
     let makeAssertions = async (
       ~queryName,
       ~chain1LatestFetchBlock,
@@ -390,14 +389,12 @@ describe("Multichain rollback test", () => {
       ~message="Should have processed a batch and run next queries on all chains",
     )
 
-    Js.log("Dispatching tasks")
     //Artificially cut the tasks to only do one round of queries and batch processing
     tasks := [UpdateChainMetaData, ProcessEventBatch, NextQuery(CheckAllChains)]
     //Process batch 2 of events
     //And make queries (C)
     await dispatchAllTasks()
 
-    stubDataInitial->Stubs.getTasks->Js.log
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
@@ -424,9 +421,6 @@ describe("Multichain rollback test", () => {
       ~chain2User1Balance=Some(100),
       ~chain2User2Balance=Some(50),
     )
-    Js.log("before")
-    getFetchState(Chain_1).fetchedEventQueue->List.toArray->Js.log
-    getFetchState(Chain_137).fetchedEventQueue->List.toArray->Js.log
 
     //Chain1 reorgs at block 4
     let stubDataReorg = makeStub(~mockChainDataMap=Mock.mockChainDataMapReorg)
@@ -493,18 +487,6 @@ describe("Multichain rollback test", () => {
     //Artificially cut the tasks to only do one round of queries and batch processing
     tasks := [NextQuery(CheckAllChains)]
     await dispatchAllTasks()
-    getFetchState(Chain_1).fetchedEventQueue
-    ->List.toArray
-    ->Array.map(
-      l => (
-        l.blockNumber,
-        switch l.event {
-        | ERC20Contract_Transfer(event) => event.params
-        | _ => Obj.magic()
-        },
-      ),
-    )
-    ->Js.log
     await makeAssertions(
       ~queryName="After Rollback Action",
       ~chain1LatestFetchBlock=5,
@@ -517,11 +499,10 @@ describe("Multichain rollback test", () => {
       ~chain2User1Balance=Some(98),
       ~chain2User2Balance=Some(52),
     )
-    Js.log(3)
     //Todo assertions
     //events should have come back, assert the number in each queue
 
-    //Artificially cut the tasks to only do one round of queries and batch processing
+    // Artificially cut the tasks to only do one round of queries and batch processing
     tasks := [ProcessEventBatch]
     // Process event batch with reorg in mem store and action next queries
     await dispatchAllTasks()
@@ -537,7 +518,6 @@ describe("Multichain rollback test", () => {
       ~chain2User1Balance=Some(100),
       ~chain2User2Balance=Some(50),
     )
-    // Js.log(4)
     //Todo assertions
     //Assert new balances
 
