@@ -231,7 +231,12 @@ module Make = (Indexer: Indexer.S) => {
 
     let srcAddresses = query.contractAddressMapping->ContractAddressingMap.getAllAddresses
     let eventNames = self.chainConfig.contracts->Array.flatMap(c => c.events)
-    let parsedQueueItems = unfilteredBlocks->getLogsFromBlocks(~srcAddresses, ~eventNames)
+    let parsedQueueItemsPreFilter = unfilteredBlocks->getLogsFromBlocks(~srcAddresses, ~eventNames)
+    let parsedQueueItems = switch query.eventFilters {
+    | None => parsedQueueItemsPreFilter
+    | Some(eventFilters) =>
+      parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters))
+    }
 
     {
       currentBlockHeight,

@@ -81,7 +81,7 @@ let fetchBlockRange = async (
 ) => {
   try {
     let {currentBlockInterval, blockLoader, chainConfig, rpcConfig} = self
-    let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId} = query
+    let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId, ?eventFilters} = query
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
     let currentBlockHeight =
@@ -119,7 +119,7 @@ let fetchBlockRange = async (
       (),
     )
 
-    let parsedQueueItems =
+    let parsedQueueItemsPreFilter =
       await eventBatchPromises
       ->Array.map(async ({
         timestampPromise,
@@ -135,6 +135,15 @@ let fetchBlockRange = async (
         event: await eventPromise,
       })
       ->Promise.all
+
+    let parsedQueueItems = switch eventFilters {
+    //Most cases there are no filters so this will be passed throug
+    | None => parsedQueueItemsPreFilter
+    | Some(eventFilters) =>
+      //In the case where there are filters, apply them and keep the events that
+      //are needed
+      parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters))
+    }
 
     let sc = rpcConfig.syncConfig
 

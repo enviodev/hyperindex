@@ -26,7 +26,12 @@ type multiChainEventComparitor = {
 let getQueueItemComparitor = (earliestQueueItem: FetchState.queueItem, ~chain) => {
   switch earliestQueueItem {
   | Item(i) => i->getComparitorFromItem
-  | NoItem({timestamp, blockNumber}) => (timestamp, chain->ChainMap.Chain.toChainId, blockNumber, 0)
+  | NoItem({blockTimestamp, blockNumber}) => (
+      blockTimestamp,
+      chain->ChainMap.Chain.toChainId,
+      blockNumber,
+      0,
+    )
   }
 }
 

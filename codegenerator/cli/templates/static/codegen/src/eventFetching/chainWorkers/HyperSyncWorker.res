@@ -154,7 +154,7 @@ let fetchBlockRange = async (
   let logAndRaise = ErrorHandling.logAndRaise(~logger)
   try {
     let {chainConfig: {chain}, serverUrl} = self
-    let {fetchStateRegisterId, fromBlock, contractAddressMapping, toBlock} = query
+    let {fetchStateRegisterId, fromBlock, contractAddressMapping, toBlock, ?eventFilters} = query
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
     //fetch batch
     let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} =
@@ -235,7 +235,7 @@ let fetchBlockRange = async (
     let parsingTimeRef = Hrtime.makeTimer()
 
     //Parse page items into queue items
-    let parsedQueueItems = if Config.shouldUseHypersyncClientDecoder {
+    let parsedQueueItemsPreFilter = if Config.shouldUseHypersyncClientDecoder {
       //Currently there are still issues with decoder for some cases so
       //this can only be activated with a flag
       let decoder = switch contractInterfaceManager
@@ -323,6 +323,15 @@ let fetchBlockRange = async (
           )
         }
       })
+    }
+
+    let parsedQueueItems = switch eventFilters {
+      //Most cases there are no filters so this will be passed throug
+    | None => parsedQueueItemsPreFilter
+    | Some(eventFilters) =>
+      //In the case where there are filters, apply them and keep the events that
+      //are needed
+      parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters))
     }
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

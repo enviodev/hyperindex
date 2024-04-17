@@ -275,12 +275,12 @@ describe("Multichain rollback test", () => {
     ) => {
       Assert.equal(
         chain1LatestFetchBlock,
-        getLatestFetchedBlock(Chain_1),
+        getLatestFetchedBlock(Chain_1).blockNumber,
         ~message=`Chain 1 should have fetched up to block ${chain1LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
         chain2LatestFetchBlock,
-        getLatestFetchedBlock(Chain_137),
+        getLatestFetchedBlock(Chain_137).blockNumber,
         ~message=`Chain 2 should have fetched up to block ${chain2LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
@@ -475,10 +475,11 @@ describe("Multichain rollback test", () => {
       ~chain2User1Balance=Some(98),
       ~chain2User2Balance=Some(52),
     )
+
     Assert.equal(
       true,
       switch getState().rollbackState {
-      | RollbackState(_) => true
+      | RollbackInMemStore(_) => true
       | _ => false
       },
       ~message="Rollback in memory store should be set in state",
@@ -491,7 +492,7 @@ describe("Multichain rollback test", () => {
       ~queryName="After Rollback Action",
       ~chain1LatestFetchBlock=5,
       ~chain2LatestFetchBlock=5,
-      ~totalQueueSize=4,
+      ~totalQueueSize=3,
       ~batchName="After Rollback Action",
       //balances have not yet been changed
       ~chain1User1Balance=Some(100),
@@ -507,11 +508,11 @@ describe("Multichain rollback test", () => {
     // Process event batch with reorg in mem store and action next queries
     await dispatchAllTasks()
     await makeAssertions(
-      ~queryName="After Rollback Action",
+      ~queryName="After Rollback EventProcess",
       ~chain1LatestFetchBlock=5,
       ~chain2LatestFetchBlock=5,
       ~totalQueueSize=0,
-      ~batchName="After Rollback Action",
+      ~batchName="After Rollback EventProcess",
       //balances have not yet been changed
       ~chain1User1Balance=Some(89),
       ~chain1User2Balance=Some(61),

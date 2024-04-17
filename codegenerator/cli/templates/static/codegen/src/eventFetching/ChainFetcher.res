@@ -15,6 +15,9 @@ type t = {
   numEventsProcessed: int,
   numBatchesFetched: int,
   lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.t,
+  //An optional list of filters to apply on event queries
+  //Used for reorgs and restarts
+  eventFilters: option<FetchState.eventFilters>,
 }
 
 //CONSTRUCTION
@@ -30,6 +33,7 @@ let make = (
   ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
   ~numBatchesFetched,
+  ~eventFilters,
 ): t => {
   let (endpointDescription, chainWorker) = switch chainConfig.syncSource {
   | HyperSync(serverUrl) => (
@@ -55,6 +59,7 @@ let make = (
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
+    eventFilters,
   }
 }
 
@@ -80,6 +85,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) 
     ~numEventsProcessed=0,
     ~numBatchesFetched=0,
     ~logger,
+    ~eventFilters=None,
   )
 }
 
@@ -133,6 +139,10 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
   | None => (None, None, None)
   }
 
+  //TODO create filter to only accept events with blockNumber AND logIndex
+  //higher than stored in chain metadata
+  let eventFilters = None
+
   make(
     ~contractAddressMapping,
     ~chainConfig,
@@ -145,6 +155,83 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
     ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
     ~numBatchesFetched=0,
     ~logger,
+    ~eventFilters,
+  )
+}
+
+/**
+Adds an event filter that will be passed to worker on query
+cleanUpCondition is a function that determines when the filter
+is no longer valid and can be cleaned
+*/
+let addEventFilter = (self: t, ~filter, ~cleanUpCondition) => {
+  let eventFilters =
+    self.eventFilters
+    ->Option.getWithDefault(list{})
+    ->List.add({filter, isNoLongerValid: cleanUpCondition})
+    ->Some
+  {...self, eventFilters}
+}
+
+let cleanUpEventFilters = (self: t) => {
+  switch self.eventFilters {
+  //Only spread if there are eventFilters
+  | None => self
+
+  //Run the clean up condition "isNoLongerValid" against fetchState on each eventFilter and remove
+  //any that meet the cleanup condition
+  | Some(eventFilters) => {
+      ...self,
+      eventFilters: eventFilters
+      ->List.keep(eventFilter => !eventFilter.isNoLongerValid(self.fetchState))
+      ->Some,
+    }
+  }
+}
+
+/**
+Updates of fetchState and cleans up event filters. Should be used whenever updating fetchState
+to ensure eventFilters are always valid.
+Returns Error if the node with given id cannot be found (unexpected)
+*/
+let updateFetchState = (
+  self: t,
+  ~id,
+  ~latestFetchedBlockTimestamp,
+  ~latestFetchedBlockNumber,
+  ~fetchedEvents,
+) => {
+  self.fetchState
+  ->FetchState.update(
+    ~id,
+    ~latestFetchedBlock={
+      blockNumber: latestFetchedBlockNumber,
+      blockTimestamp: latestFetchedBlockTimestamp,
+    },
+    ~fetchedEvents,
+  )
+  ->Result.map(fetchState => {
+    {...self, fetchState}->cleanUpEventFilters
+  })
+}
+
+/**
+Gets the next query either with a to block of the current height if it is the root node.
+Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge with the next regisetered.
+
+Applies any event filters found in the chain fetcher
+
+Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than the current as this would be
+an invalid state.
+*/
+let getNextQuery = (self: t) => {
+  //Chain Fetcher should have already cleaned up stale event filters by the time this
+  //is called but just ensure its cleaned before getting the next query
+  let cleanedChainFetcher = self->cleanUpEventFilters
+
+  cleanedChainFetcher.fetchState->FetchState.getNextQuery(
+    ~eventFilters=?cleanedChainFetcher.eventFilters,
+    ~currentBlockHeight=cleanedChainFetcher.currentBlockHeight,
   )
 }
 
@@ -186,25 +273,23 @@ let rollbackLastBlockHashesToReorgLocation = async (
   ->Utils.unwrapResultExn
 }
 
-type lastScannedBlockData = {
-  blockNumber: int,
-  blockTimestamp: int,
-}
-
 let getLastScannedBlockData = lastBlockData => {
   lastBlockData
   ->ReorgDetection.LastBlockScannedHashes.getLatestLastBlockData
-  ->Option.mapWithDefault({blockNumber: 0, blockTimestamp: 0}, ({blockNumber, blockTimestamp}) => {
+  ->Option.mapWithDefault({FetchState.blockNumber: 0, blockTimestamp: 0}, ({
+    blockNumber,
+    blockTimestamp,
+  }) => {
     blockNumber,
     blockTimestamp,
   })
 }
 
 let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
-  let {blockNumber, blockTimestamp} = rolledBackLastBlockData->getLastScannedBlockData
+  let lastKnownValidBlock = rolledBackLastBlockData->getLastScannedBlockData
   {
     ...chainFetcher,
     lastBlockScannedHashes: rolledBackLastBlockData,
-    fetchState: chainFetcher.fetchState->FetchState.rollback(~blockNumber, ~blockTimestamp),
+    fetchState: chainFetcher.fetchState->FetchState.rollback(~lastKnownValidBlock),
   }
 }
