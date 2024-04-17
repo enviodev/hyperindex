@@ -227,7 +227,7 @@ module {{contract.name.capitalized}}Contract = {
                   | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
                   | None =>
                     Logging.error(`Linked entity field '{{entity_field.relational_key.uncapitalized}}' not found  for '{{entity.name.capitalized}}' entity.
-Please ensure this field '{{entity_field.mapped_entity.uncapitalized}}' is loaded in the '{{entity.name.capitalized}}' entity loader for this handler.
+Please ensure this field '{{entity_field.relational_key.uncapitalized}}' is loaded in the '{{entity.name.capitalized}}' entity loader for this handler.
 `)
 
                 raise(
