@@ -62,7 +62,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t) => {
         },
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber,
-        timeStampCaughtUpToHead: cf.timestampCaughtUpToHead
+        timeStampCaughtUpToHead: cf.timestampCaughtUpToHead,
       }
       chainMetadata
     })
@@ -401,7 +401,9 @@ let actionReducer = (state: t, action: action) => {
     )
   | ErrorExit(errHandler) =>
     errHandler->ErrorHandling.log
-    errHandler->ErrorHandling.raiseExn
+    let process = NodeJs.Process.process
+    process->NodeJs.Process.exitWithCode(1)
+    (state, [])
   }
 }
 
@@ -475,8 +477,7 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
 
 let taskReducer = (state: t, task: task, ~dispatchAction) => {
   switch task {
-  | UpdateChainMetaData =>
-    updateChainMetadataTable(state.chainManager)->ignore
+  | UpdateChainMetaData => updateChainMetadataTable(state.chainManager)->ignore
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(~state, ~dispatchAction)
 

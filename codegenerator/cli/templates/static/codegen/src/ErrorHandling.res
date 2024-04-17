@@ -17,7 +17,7 @@ let make = (~logger=Logging.logger, ~msg=?, exn) => {
 
 let log = (self: t) => {
   switch self {
-  | {exn: Js(e), msg: Some(msg), logger} => logger->Logging.childErrorWithJsExn(e, msg)
+  | {exn: Js(e), msg: Some(msg), logger} => logger->Logging.childErrorWithExn(e, msg)
   | {exn: Js(e), msg: None, logger} => logger->Logging.childError(e)
   | {exn: Other(e), msg: Some(msg), logger} => logger->Logging.childErrorWithExn(e, msg)
   | {exn: Other(e), msg: None, logger} => logger->Logging.childError(e)

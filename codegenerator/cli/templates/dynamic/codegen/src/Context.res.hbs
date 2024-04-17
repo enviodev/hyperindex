@@ -147,7 +147,7 @@ module {{contract.name.capitalized}}Contract = {
       {{/each}}
       }
 
-      //handler context must be defined as a getter functoin so that it can construct the context
+      //handler context must be defined as a getter function so that it can construct the context
       //without stale values whenever it is used
       let getHandlerContextSync: unit => handlerContext = () => {
           {{#each ../../entities as | entity |}}
@@ -226,13 +226,13 @@ module {{contract.name.capitalized}}Contract = {
                   switch opt{{entity_field.relational_key.capitalized}} {
                   | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
                   | None =>
-                    Logging.warn(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database with id ${ {{#if entity_field.is_optional}} {{entity_field.relational_key.uncapitalized}}_field {{else}} {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id {{/if}} }.
-Please consider loading the {{entity_field.mapped_entity.uncapitalized}} in the Update{{entity.name.capitalized}} entity loader to greatly improve sync speed of your application.
+                    Logging.error(`Linked entity field '{{entity_field.relational_key.uncapitalized}}' not found  for '{{entity.name.capitalized}}' entity.
+Please ensure this field '{{entity_field.mapped_entity.uncapitalized}}' is loaded in the '{{entity.name.capitalized}}' entity loader for this handler.
 `)
 
                 raise(
                   LinkedEntityNotAvailableInSyncHandler(
-                    "The required linked entity of {{entity.name.capitalized}} is undefined.",
+                    "The required linked entity {{entity_field.relational_key.uncapitalized}} was not defined in the loader for entity {{entity.name.capitalized}}",
                   ),
                 )
                  }
