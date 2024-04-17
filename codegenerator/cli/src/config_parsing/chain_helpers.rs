@@ -219,6 +219,8 @@ pub enum Network {
     // Explorers:
     // https://explorer.testnet.fhenix.zone/ (blockscout)
     FhenixTestnet = 42069,
+    #[subenum(HypersyncNetwork)]
+    Amoy = 80002,
 }
 
 impl Network {

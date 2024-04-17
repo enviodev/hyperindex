@@ -54,6 +54,7 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::Blast => "https://blast.hypersync.xyz".to_string(),
         HypersyncNetwork::BlastSepolia => "https://blast-sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::FhenixTestnet => "https://fhenix-testnet.hypersync.xyz".to_string(),
+        HypersyncNetwork::Amoy => "https://amoy.hypersync.xyz".to_string(),
     }
 }
 
