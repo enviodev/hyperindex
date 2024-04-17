@@ -76,6 +76,11 @@ module Mock = {
       ~blockTimestampInterval=25,
     )
 
+    let defaultTokenAddress = ChainDataHelpers.getDefaultAddress(
+      chain,
+      ChainDataHelpers.ERC20.contractName,
+    )
+
     open ChainDataHelpers.ERC20
     let mkTransferEventConstr = Transfer.mkEventConstr(~chain)
 
@@ -502,6 +507,43 @@ describe("Multichain rollback test", () => {
     )
     //Todo assertions
     //events should have come back, assert the number in each queue
+    switch getState().rollbackState {
+    | RollbackInMemStore(inMem) =>
+      Js.log("Token balance")
+      inMem.accountToken
+      ->IO.InMemoryStore.AccountToken.get(
+        EventHandlers.makeAccountTokenId(
+          ~account_id=Mock.userAddress1->Ethers.ethAddressToString,
+          ~tokenAddress=Mock.Chain2.defaultTokenAddress->Ethers.ethAddressToString,
+        ),
+      )
+      ->Js.log2("u1 c2", _)
+      inMem.accountToken
+      ->IO.InMemoryStore.AccountToken.get(
+        EventHandlers.makeAccountTokenId(
+          ~account_id=Mock.userAddress2->Ethers.ethAddressToString,
+          ~tokenAddress=Mock.Chain2.defaultTokenAddress->Ethers.ethAddressToString,
+        ),
+      )
+      ->Js.log2("u2 c2", _)
+      inMem.accountToken
+      ->IO.InMemoryStore.AccountToken.get(
+        EventHandlers.makeAccountTokenId(
+          ~account_id=Mock.userAddress1->Ethers.ethAddressToString,
+          ~tokenAddress=Mock.Chain1.defaultTokenAddress->Ethers.ethAddressToString,
+        ),
+      )
+      ->Js.log2("u1 c1", _)
+      inMem.accountToken
+      ->IO.InMemoryStore.AccountToken.get(
+        EventHandlers.makeAccountTokenId(
+          ~account_id=Mock.userAddress2->Ethers.ethAddressToString,
+          ~tokenAddress=Mock.Chain1.defaultTokenAddress->Ethers.ethAddressToString,
+        ),
+      )
+      ->Js.log2("u2 c1", _)
+    | _ => ()
+    }
 
     // Artificially cut the tasks to only do one round of queries and batch processing
     tasks := [ProcessEventBatch]

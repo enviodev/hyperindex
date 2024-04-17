@@ -190,7 +190,7 @@ module {{contract.name.capitalized}}Contract = {
             {{entity.name.uncapitalized}}: {
               set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
                 ~key=entity.id,
-                ~entity=Set(entity, eventIdentifier),
+                ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
               )},
               delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}
@@ -292,7 +292,7 @@ It is also possible that you have saved an ID for an entity that doesn't exist i
             {{entity.name.uncapitalized}}: {
               set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
                 ~key=entity.id,
-                ~entity=Set(entity, eventIdentifier),
+                ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
               )},
               delete: id => Logging.warn(`[unimplemented delete] can't delete entity({{entity.name.uncapitalized}}) with ID ${id}.`),
               {{#each event.required_entities as | required_entity |}}

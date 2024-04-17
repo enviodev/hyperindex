@@ -86,9 +86,21 @@ type eventIdentifier = {
   logIndex: int,
 }
 
-type entityUpdate<'entityType> =
-  | Set('entityType, eventIdentifier)
-  | Delete(string, eventIdentifier)
+type entityUpdateAction<'entityType> =
+  | Set('entityType)
+  | Delete(string)
+
+type entityUpdate<'entityType> = {
+  eventIdentifier: eventIdentifier,
+  shouldSaveHistory: bool,
+  entityUpdateAction: entityUpdateAction<'entityType>,
+}
+
+let mkEntityUpdate = (~shouldSaveHistory=true, ~eventIdentifier, entityUpdateAction) => {
+  shouldSaveHistory,
+  eventIdentifier,
+  entityUpdateAction,
+}
 
 type entityValueAtStartOfBatch<'entityType> =
   | NotSet // The entity isn't in the DB yet

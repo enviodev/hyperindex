@@ -346,7 +346,7 @@ FULL OUTER JOIN
     entity_history new
     ON old.entity_id = new.entity_id
     AND new.previous_block_number >= old.block_number
-WHERE COALESCE(old.block_number, 0) <= ${blockNumber} AND COALESCE(new.block_number, ${blockNumber} + 1) >= ${blockNumber};
+WHERE COALESCE(old.block_timestamp, 0) <= ${blockTimestamp} AND COALESCE(new.block_timestamp, ${blockTimestamp} + 1) >= ${blockTimestamp};
 `;
 
 {{#each entities as |entity|}}

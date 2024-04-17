@@ -125,10 +125,10 @@ let makeStoreOperatorEntity = (
     ->values
     ->Array.keepMap(row =>
       switch row {
-      | Updated({latest: Set(entity, _)})
+      | Updated({latest: {entityUpdateAction: Set(entity)}})
       | InitialReadFromDb(AlreadySet(entity)) =>
         Some(entity)
-      | Updated({latest: Delete(_, _)})
+      | Updated({latest: {entityUpdateAction: Delete(_)}})
       | InitialReadFromDb(NotSet) =>
         None
       }
@@ -138,7 +138,12 @@ let makeStoreOperatorEntity = (
     let cloned = inMemoryStore->IO.InMemoryStore.clone
     cloned
     ->getStore
-    ->set(~key=entity->getKey, ~entity=Set(entity, {chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1}))
+    ->set(
+      ~key=entity->getKey,
+      ~entity=Set(entity)->Types.mkEntityUpdate(
+        ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
+      ),
+    )
     cloned->makeMockDb
   }
 
@@ -352,10 +357,11 @@ let executeRowsEntity = (
   ->Array.forEach(row => {
     let store = mockDb->getInternalDb->getStore
     switch row {
-    | Updated({latest: Set(entity, _)})
+    | Updated({latest: {entityUpdateAction: Set(entity)}})
     | InitialReadFromDb(AlreadySet(entity)) =>
       store->setFunction(~allowOverWriteEntity=true, ~key=getKey(entity), ~entity=Some(entity))
-    | Updated({latest: Delete(entityId, _)}) => store.dict->deleteDictKey(entityId)
+    | Updated({latest: {entityUpdateAction: Delete(entityId)}}) =>
+      store.dict->deleteDictKey(entityId)
     | InitialReadFromDb(NotSet) => ()
     }
   })

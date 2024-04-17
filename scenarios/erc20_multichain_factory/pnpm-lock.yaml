@@ -49,6 +49,12 @@ importers:
         specifier: 4.1.1
         version: 4.1.1(rescript@11.1.0-rc.7)
 
+  ../helpers:
+    dependencies:
+      rescript:
+        specifier: ^11.1.0-rc.7
+        version: 11.1.0-rc.7
+
   generated:
     dependencies:
       '@elastic/ecs-pino-format':
@@ -947,7 +953,7 @@ packages:
       fs.realpath: 1.0.0
       inflight: 1.0.6
       inherits: 2.0.4
-      minimatch: 5.1.6
+      minimatch: 5.0.1
       once: 1.4.0
     dev: false
 
@@ -1292,14 +1298,6 @@ packages:
     engines: {node: '>=10'}
     dependencies:
       brace-expansion: 2.0.1
-    dev: true
-
-  /minimatch@5.1.6:
-    resolution: {integrity: sha512-lKwV/1brpG6mBUFHtb7NUmtABCb2WZZmm2wNiOA5hAb8VdCS4B3dtMWyvcoViccwAW/COERjXLt0zP1zXUN26g==}
-    engines: {node: '>=10'}
-    dependencies:
-      brace-expansion: 2.0.1
-    dev: false
 
   /minimist@1.2.8:
     resolution: {integrity: sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==}
@@ -1746,7 +1744,6 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
     requiresBuild: true
-    dev: true
 
   /restore-cursor@3.1.0:
     resolution: {integrity: sha512-l+sSefzHpj5qimhFSE5a8nufZYAM3sBSVMAPtYkmC+4EH2anSGaEMXSD0izRQbu9nfyQ9y5JrVmp7E8oZrUjvA==}
