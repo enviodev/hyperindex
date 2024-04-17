@@ -24,6 +24,7 @@ type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
+#[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
@@ -236,6 +237,7 @@ impl SystemConfig {
             let network = Network {
                 id: network.id as u64,
                 start_block: network.start_block,
+                end_block: network.end_block,
                 sync_source,
                 contracts,
             };
@@ -291,6 +293,7 @@ pub struct Network {
     pub id: u64,
     pub sync_source: SyncSourceConfig,
     pub start_block: i32,
+    pub end_block: Option<i32>,
     pub contracts: Vec<NetworkContract>,
 }
 
@@ -310,6 +313,8 @@ impl Network {
             _ => None,
         }
     }
+    
+
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

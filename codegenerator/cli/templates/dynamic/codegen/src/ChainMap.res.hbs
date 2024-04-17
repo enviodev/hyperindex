@@ -87,6 +87,7 @@ let keys: t<'a> => array<Chain.t> = Map.keysToArray
 let entries: t<'a> => array<(Chain.t, 'a)> = Map.toArray
 let map: (t<'a>, 'a => 'b) => t<'b> = Map.map
 let mapWithKey: (t<'a>, (Chain.t, 'a) => 'b) => t<'b> = Map.mapWithKey
+let reduce: (t<'a>, 'b, (Chain.t, 'a, 'b) => 'b) => 'b = Map.reduce
 let size: t<'a> => int = Map.size
 let update: (t<'a>, Chain.t, 'a => 'a) => t<'a> = (map, chain, updateFn) =>
   Map.update(map, chain, opt => opt->Option.map(updateFn))

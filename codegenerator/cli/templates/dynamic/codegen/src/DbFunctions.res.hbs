@@ -15,13 +15,14 @@ module ChainMetadata = {
     @as("chain_id") chainId: int,
     @as("block_height") blockHeight: int,
     @as("start_block") startBlock: int,
+    @as("end_block") endBlock: option<int>,
     @as("first_event_block_number") firstEventBlockNumber: option<int>,
     @as("latest_processed_block") latestProcessedBlock: option<int>,
     @as("num_events_processed") numEventsProcessed: option<int>,
     @as("is_hyper_sync") isHyperSync: bool,
     @as("num_batches_fetched") numBatchesFetched: int,
     @as("latest_fetched_block_number") latestFetchedBlockNumber: int,
-    @as("timestamp_caught_up_to_head") timeStampCaughtUpToHead: option<Js.Date.t>
+    @as("timestamp_caught_up_to_head_or_endblock") timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>
   }
 
   @module("./DbFunctionsImplementation.js")

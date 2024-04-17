@@ -22,6 +22,7 @@ type action =
   | SetFetchState(chain, FetchState.t)
   | UpdateQueues(ChainMap.t<FetchState.t>, arbitraryEventQueue)
   | SetSyncedChains
+  | SuccessExit
   | ErrorExit(ErrorHandling.t)
 
 type queryChain = CheckAllChains | Chain(chain)
@@ -53,6 +54,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t) => {
         startBlock: cf.chainConfig.startBlock,
         blockHeight: cf.currentBlockHeight,
         //optional fields
+        endBlock: cf.chainConfig.endBlock, //this is already optional
         firstEventBlockNumber: cf.firstEventBlockNumber, //this is already optional
         latestProcessedBlock: cf.latestProcessedBlock, // this is already optional
         numEventsProcessed: Some(cf.numEventsProcessed),
@@ -62,7 +64,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t) => {
         },
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber,
-        timeStampCaughtUpToHead: cf.timestampCaughtUpToHead,
+        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock
       }
       chainMetadata
     })
@@ -92,18 +94,23 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
     ->ChainMap.values
     ->Array.reduce(true, (accum, cf) => cf.isFetchingAtHead && accum)
 
-  //Update the timestampCaughtUpToHead values
+  //Update the timestampCaughtUpToHeadOrEndblock values
   let chainFetchers = chainManager.chainFetchers->ChainMap.map(cf => {
-    //Only calculate and set timestampCaughtUpToHead if chain fetcher is at the head and
-    //its not already set
-    if cf.timestampCaughtUpToHead->Option.isNone && cf.isFetchingAtHead {
+    if cf.latestProcessedBlock >= cf.chainConfig.endBlock {
+      {
+        ...cf,
+        timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,
+      }
+    } else if cf.timestampCaughtUpToHeadOrEndblock->Option.isNone && cf.isFetchingAtHead {
+      //Only calculate and set timestampCaughtUpToHeadOrEndblock if chain fetcher is at the head and
+      //its not already set
       //CASE1
       //All chains are caught up to head chainManager queue returns None
       //Meaning we are busy synchronizing chains at the head
       if nextQueueItemIsNone && allChainsAtHead {
         {
           ...cf,
-          timestampCaughtUpToHead: Js.Date.make()->Some,
+          timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,
         }
       } else {
         //CASE2 -> Only calculate if case1 fails
@@ -119,7 +126,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
         if hasNoMoreEventsToProcess {
           {
             ...cf,
-            timestampCaughtUpToHead: Js.Date.make()->Some,
+            timestampCaughtUpToHeadOrEndblock: Js.Date.make()->Some,
           }
         } else {
           //Default to just returning cf
@@ -135,6 +142,13 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
   {
     ...chainManager,
     chainFetchers,
+  }
+}
+
+let greaterThanOrEqualOpt: (option<int>, option<int>) => bool = (opt1, opt2) => {
+  switch (opt1, opt2) {
+  | (Some(num1), Some(num2)) => num1 >= num2
+  | _ => false
   }
 }
 
@@ -166,6 +180,9 @@ let updateLatestProcessedBlocks = (
         ...cf,
         latestProcessedBlock,
         numEventsProcessed,
+        hasProcessedToEndblock: latestProcessedBlock->greaterThanOrEqualOpt(
+          cf.chainConfig.endBlock,
+        ),
       }
     }),
   }
@@ -328,7 +345,7 @@ let actionReducer = (state: t, action: action) => {
         //New contracts to fetch so no longer fetching at head
         //and reset ts caught up to head
         isFetchingAtHead: false,
-        timestampCaughtUpToHead: None,
+        timestampCaughtUpToHeadOrEndblock: None,
       }
 
       let updatedChainFetchers =
@@ -399,6 +416,9 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
+  | SuccessExit =>   
+    NodeJs.Process.process->NodeJs.Process.exit()
+    (state, [])
   | ErrorExit(errHandler) =>
     errHandler->ErrorHandling.log
     NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
@@ -470,14 +490,25 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
       | HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange, "HyperSync")
       | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange, "RPC")
       }->ignore
+    | Done => ()
     }
   }
 }
 
 let taskReducer = (state: t, task: task, ~dispatchAction) => {
+
+  if EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
+    state.chainManager.chainFetchers,
+  ) {
+    dispatchAction(SuccessExit)
+  }
+
+
   switch task {
   | UpdateChainMetaData => updateChainMetadataTable(state.chainManager)->ignore
   | NextQuery(chainCheck) =>
+
+
     let fetchForChain = checkAndFetchForChain(~state, ~dispatchAction)
 
     switch chainCheck {
@@ -488,6 +519,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
       state.chainManager.chainFetchers->ChainMap.keys->Array.forEach(fetchForChain)
     }
   | ProcessEventBatch =>
+      
     if !state.currentlyProcessingBatch {
       switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
       | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>

@@ -8,7 +8,8 @@ type t = {
   currentBlockHeight: int,
   isFetchingBatch: bool,
   isFetchingAtHead: bool,
-  timestampCaughtUpToHead: option<Js.Date.t>,
+  hasProcessedToEndblock: bool,
+  timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
   numEventsProcessed: int,
@@ -22,10 +23,11 @@ let make = (
   ~lastBlockScannedHashes,
   ~contractAddressMapping,
   ~startBlock,
+  ~endBlock,
   ~firstEventBlockNumber,
   ~latestProcessedBlock,
   ~logger,
-  ~timestampCaughtUpToHead,
+  ~timestampCaughtUpToHeadOrEndblock,
   ~numEventsProcessed,
   ~numBatchesFetched,
 ): t => {
@@ -37,7 +39,7 @@ let make = (
   | Rpc(rpcConfig) => ("RPC", chainConfig->RpcWorker.make(~rpcConfig)->Rpc)
   }
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
-  let fetchState = FetchState.makeRoot(~contractAddressMapping, ~startBlock)
+  let fetchState = FetchState.makeRoot(~contractAddressMapping, ~startBlock, ~endBlock)
   {
     logger,
     chainConfig,
@@ -46,10 +48,11 @@ let make = (
     currentBlockHeight: 0,
     isFetchingBatch: false,
     isFetchingAtHead: false,
+    hasProcessedToEndblock: false,
     fetchState,
     firstEventBlockNumber,
     latestProcessedBlock,
-    timestampCaughtUpToHead,
+    timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
     numBatchesFetched,
   }
@@ -69,10 +72,11 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) 
     ~contractAddressMapping,
     ~chainConfig,
     ~startBlock=chainConfig.startBlock,
+    ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
     ~firstEventBlockNumber=None,
     ~latestProcessedBlock=None,
-    ~timestampCaughtUpToHead=None,
+    ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
     ~numBatchesFetched=0,
     ~logger,
@@ -133,10 +137,11 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
     ~contractAddressMapping,
     ~chainConfig,
     ~startBlock,
+    ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
     ~firstEventBlockNumber,
     ~latestProcessedBlock=latestProcessedBlockChainMetadata,
-    ~timestampCaughtUpToHead=None, // recalculate this on startup
+    ~timestampCaughtUpToHeadOrEndblock=None, // recalculate this on startup
     ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
     ~numBatchesFetched=0,
     ~logger,

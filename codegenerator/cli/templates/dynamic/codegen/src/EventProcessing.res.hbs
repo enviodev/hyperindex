@@ -11,6 +11,12 @@ module EventsProcessed = {
     ChainMap.make(_ => {numEventsProcessed: 0, latestProcessedBlock: None})
   }
 
+  let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
+    chainFetchers
+    ->ChainMap.values
+    ->Array.reduce(true, (accum, cf) => cf.hasProcessedToEndblock && accum)
+  }
+
   let makeFromChainManager = (cm: ChainManager.t): t => {
     cm.chainFetchers->ChainMap.map(({numEventsProcessed, latestProcessedBlock}) => {
       numEventsProcessed,

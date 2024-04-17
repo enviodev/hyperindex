@@ -303,6 +303,7 @@ pub async fn generate_config_from_subgraph_id(
             // TODO: update to the final rpc url
             sync_source: None,
             start_block: 0,
+            end_block: None, 
             contracts: vec![],
         };
         // Iterate through contracts to get contract name, abi file path, address and event names

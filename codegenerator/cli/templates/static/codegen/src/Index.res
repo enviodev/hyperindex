@@ -80,20 +80,20 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
       | {
           firstEventBlockNumber: Some(firstEventBlockNumber),
           latestProcessedBlock,
-          timestampCaughtUpToHead: Some(timestampCaughtUpToHead),
+          timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
         } =>
         let latestProcessedBlock =
           latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
         Synced({
           firstEventBlockNumber,
           latestProcessedBlock,
-          timestampCaughtUpToHead,
+          timestampCaughtUpToHeadOrEndblock,
           numEventsProcessed,
         })
       | {
           firstEventBlockNumber: Some(firstEventBlockNumber),
           latestProcessedBlock,
-          timestampCaughtUpToHead: None,
+          timestampCaughtUpToHeadOrEndblock: None,
         } =>
         let latestProcessedBlock =
           latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
@@ -112,6 +112,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           latestFetchedBlockNumber,
           numBatchesFetched,
           chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
+          endBlock: cf.chainConfig.endBlock,
           isHyperSync: switch cf.chainConfig.syncSource {
           | HyperSync(_) => true
           | Rpc(_) => false

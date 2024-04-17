@@ -39,6 +39,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     entityDataArray,
     "chain_id",
     "start_block", // this is left out of the on conflict below as it only needs to be set once
+    "end_block", // this is left out of the on conflict below as it only needs to be set once
     "block_height",
     "first_event_block_number",
     "latest_processed_block",
@@ -46,7 +47,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     "is_hyper_sync", // this is left out of the on conflict below as it only needs to be set once
     "num_batches_fetched",
     "latest_fetched_block_number",
-    "timestamp_caught_up_to_head"
+    "timestamp_caught_up_to_head_or_endblock"
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
@@ -56,7 +57,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "num_events_processed" = EXCLUDED."num_events_processed",
   "num_batches_fetched" = EXCLUDED."num_batches_fetched",
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
-  "timestamp_caught_up_to_head" = EXCLUDED."timestamp_caught_up_to_head",
+  "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`).then(res => {
 
   }).catch(err => {
@@ -71,6 +72,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
     entityDataArray,
     "chain_id",
     "start_block", // this is left out of the on conflict below as it only needs to be set once
+    "end_block", // this is left out of the on conflict below as it only needs to be set once
     "block_height"
   )}
   ON CONFLICT(chain_id) DO UPDATE

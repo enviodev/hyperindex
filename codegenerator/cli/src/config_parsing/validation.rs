@@ -140,6 +140,18 @@ pub fn validate_deserialized_config_yaml(
                 return Err(anyhow!("EE109: The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")));
             }
         }
+
+        // validate endblock is a greater than the startblock
+        if let Some(&network_endblock) = network.end_block.as_ref() {
+            if network_endblock < network.start_block {
+                return Err(anyhow!(
+                        "EE110: The config file ({}) has an endBlock that is less than the startBlock for network id: {}. The endBlock must be greater than the startBlock.",
+                        &config_path.to_str().unwrap_or("unknown config file name path"),
+                        &network.id.to_string()
+                    ));
+            }
+        }
+
         for contract in &network.contracts {
             if let Some(local_contract) = contract.local_contract_config.as_ref() {
                 contract_names.push(contract.name.clone());

@@ -7,7 +7,7 @@ type syncing = {
 }
 type synced = {
   ...syncing,
-  timestampCaughtUpToHead: Js.Date.t,
+  timestampCaughtUpToHeadOrEndblock: Js.Date.t,
 }
 
 type progress = SearchingForEvents | Syncing(syncing) | Synced(synced)
@@ -26,6 +26,14 @@ type chainData = {
   latestFetchedBlockNumber: int,
   currentBlockHeight: int,
   numBatchesFetched: int,
+  endBlock: option<int>,
+}
+
+let minOfOption: (int, option<int>) => int = (a: int, b: option<int>) => {
+  switch (a, b) {
+  | (a, Some(b)) => min(a, b)
+  | (a, None) => a
+  }
 }
 
 type number
@@ -80,19 +88,28 @@ module SyncBar = {
 
 @react.component
 let make = (~chainData: chainData) => {
-  let {chainId, progress, isHyperSync, latestFetchedBlockNumber, currentBlockHeight} = chainData
+  let {
+    chainId,
+    progress,
+    isHyperSync,
+    latestFetchedBlockNumber,
+    currentBlockHeight,
+    endBlock,
+  } = chainData
+
+  let toBlock = minOfOption(currentBlockHeight, endBlock)
 
   switch progress {
   | SearchingForEvents =>
     <Box flexDirection={Column}>
       <Box flexDirection={Row} justifyContent={SpaceBetween} width=Num(57)>
         <Text> {"Searching for events..."->React.string} </Text>
-        <BlocksDisplay latestProcessedBlock=latestFetchedBlockNumber currentBlockHeight />
+        <BlocksDisplay latestProcessedBlock=latestFetchedBlockNumber currentBlockHeight=toBlock />
       </Box>
       <SyncBar
         chainId
         loaded={latestFetchedBlockNumber}
-        outOf={currentBlockHeight}
+        outOf={toBlock}
         loadingColor={Primary}
         isHyperSync
         isSearching=true
@@ -106,13 +123,13 @@ let make = (~chainData: chainData) => {
           <Text> {"Events Processed: "->React.string} </Text>
           <Text bold=true> {numEventsProcessed->formatLocaleString->React.string} </Text>
         </Box>
-        <BlocksDisplay latestProcessedBlock currentBlockHeight />
+        <BlocksDisplay latestProcessedBlock currentBlockHeight=toBlock />
       </Box>
       <SyncBar
         chainId
         loaded={latestProcessedBlock - firstEventBlockNumber}
         buffered={latestFetchedBlockNumber - firstEventBlockNumber}
-        outOf={currentBlockHeight - firstEventBlockNumber}
+        outOf={toBlock - firstEventBlockNumber}
         loadingColor=Secondary
         isHyperSync
       />
@@ -125,13 +142,13 @@ let make = (~chainData: chainData) => {
           <Text> {"Events Processed: "->React.string} </Text>
           <Text bold=true> {numEventsProcessed->React.int} </Text>
         </Box>
-        <BlocksDisplay latestProcessedBlock currentBlockHeight />
+        <BlocksDisplay latestProcessedBlock currentBlockHeight=toBlock />
       </Box>
       <SyncBar
         chainId
         loaded={latestProcessedBlock - firstEventBlockNumber}
         buffered={latestFetchedBlockNumber - firstEventBlockNumber}
-        outOf={currentBlockHeight - firstEventBlockNumber}
+        outOf={toBlock - firstEventBlockNumber}
         loadingColor=Success
         isHyperSync
       />

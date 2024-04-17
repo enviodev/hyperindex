@@ -635,6 +635,7 @@ struct NetworkTemplate {
     rpc_config: Option<RpcConfig>,
     skar_server_url: Option<ServerUrl>,
     start_block: i32,
+    end_block: Option<i32>,
 }
 
 impl NetworkTemplate {
@@ -644,6 +645,7 @@ impl NetworkTemplate {
             rpc_config: network.get_rpc_config().map(|c| c.into()),
             skar_server_url: network.get_skar_url(),
             start_block: network.start_block,
+            end_block: network.end_block,
         }
     }
 }
@@ -862,6 +864,7 @@ mod test {
             rpc_config: Some(rpc_config1),
             skar_server_url: None,
             start_block: 0,
+            end_block: None,
         };
 
         let events =
@@ -905,6 +908,7 @@ mod test {
             rpc_config: Some(rpc_config1.clone()),
             skar_server_url: None,
             start_block: 0,
+            end_block: None,
         };
 
         let network2 = super::NetworkTemplate {
@@ -912,6 +916,7 @@ mod test {
             rpc_config: Some(rpc_config1),
             skar_server_url: None,
             start_block: 0,
+            end_block: None,
         };
 
         let events =
@@ -955,6 +960,7 @@ mod test {
             rpc_config: None,
             skar_server_url: Some("https://eth.hypersync.xyz".to_string()),
             start_block: 0,
+            end_block: None,
         };
 
         let events =
@@ -985,6 +991,7 @@ mod test {
             rpc_config: None,
             skar_server_url: Some("https://myskar.com".to_string()),
             start_block: 0,
+            end_block: None,
         };
 
         let network2 = super::NetworkTemplate {
@@ -992,6 +999,7 @@ mod test {
             rpc_config: None,
             skar_server_url: Some("https://goerli.hypersync.xyz".to_string()),
             start_block: 0,
+            end_block: None,
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {

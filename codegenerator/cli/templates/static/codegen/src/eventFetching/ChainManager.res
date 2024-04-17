@@ -55,12 +55,12 @@ let chainFetcherPeekComparitorEarliestEventPrioritizeEvents = (
   }
 }
 
-exception NoItemsInArray
+type noItemsInArray = NoItemsInArray
 
 let determineNextEvent = (
   ~isUnorderedMultichainMode: bool,
   fetchStatesMap: ChainMap.t<FetchState.t>,
-): result<multiChainEventComparitor, exn> => {
+): result<multiChainEventComparitor, noItemsInArray> => {
   let comparitorFunction = if isUnorderedMultichainMode {
     chainFetcherPeekComparitorEarliestEventPrioritizeEvents
   } else {
@@ -71,21 +71,26 @@ let determineNextEvent = (
     fetchStatesMap
     ->ChainMap.entries
     ->Array.reduce(None, (accum, (chain, fetchState)) => {
-      let earliestEventResponse = fetchState->FetchState.getEarliestEvent
-      let cmpA = {chain, earliestEventResponse}
-      switch accum {
-      | None => cmpA
-      | Some(cmpB) =>
-        if comparitorFunction(cmpB, cmpA) {
-          cmpB
-        } else {
-          cmpA
-        }
-      }->Some
+      // If the fetch state has reached the end block we don't need to consider it
+      if fetchState->FetchState.isActivelyIndexing {
+        let earliestEventResponse = fetchState->FetchState.getEarliestEvent
+        let cmpA: multiChainEventComparitor = {chain, earliestEventResponse}
+        switch accum {
+        | None => cmpA
+        | Some(cmpB) =>
+          if comparitorFunction(cmpB, cmpA) {
+            cmpB
+          } else {
+            cmpA
+          }
+        }->Some
+      } else {
+        accum
+      }
     })
 
   switch nextItem {
-  | None => Error(NoItemsInArray) //Should not hit this case
+  | None => Error(NoItemsInArray)
   | Some(item) => Ok(item)
   }
 }
@@ -273,29 +278,35 @@ let popBatchItem = (
   ~isUnorderedMultichainMode,
 ): option<earliestQueueItem> => {
   //Compare the peeked items and determine the next item
-  let {chain, earliestEventResponse: {updatedFetchState, earliestQueueItem}} =
-    fetchStatesMap->determineNextEvent(~isUnorderedMultichainMode)->Utils.unwrapResultExn
-
-  let maybeArbItem = if isUnorderedMultichainMode {
-    arbitraryEventQueue->getFirstArbitraryEventsItemForChain(~chain)
-  } else {
-    arbitraryEventQueue->getFirstArbitraryEventsItem
-  }
-  switch maybeArbItem {
-  //If there is item on the arbitray events queue, and it is earlier than
-  //than the earlist event, take the item off from there
-  | Some((qItem, updatedArbQueue))
-    if Item(qItem)->getQueueItemComparitor(~chain=qItem.chain) <
-      earliestQueueItem->getQueueItemComparitor(~chain) =>
-    Some(ArbitraryEventQueue(qItem, updatedArbQueue))
-  | _ =>
-    //Otherwise take the latest item from the fetchers
-    switch earliestQueueItem {
-    | NoItem(_) => None
-    | Item(qItem) =>
-      let updatedFetchStatesMap = fetchStatesMap->ChainMap.set(chain, updatedFetchState)
-      EventFetchers(qItem, updatedFetchStatesMap)->Some
+  switch fetchStatesMap->determineNextEvent(~isUnorderedMultichainMode) {
+  | Ok({chain, earliestEventResponse: {updatedFetchState, earliestQueueItem}}) =>
+    let maybeArbItem = if isUnorderedMultichainMode {
+      arbitraryEventQueue->getFirstArbitraryEventsItemForChain(~chain)
+    } else {
+      arbitraryEventQueue->getFirstArbitraryEventsItem
     }
+    switch maybeArbItem {
+    //If there is item on the arbitray events queue, and it is earlier than
+    //than the earlist event, take the item off from there
+    | Some((qItem, updatedArbQueue))
+      if Item(qItem)->getQueueItemComparitor(~chain=qItem.chain) <
+        earliestQueueItem->getQueueItemComparitor(~chain) =>
+      Some(ArbitraryEventQueue(qItem, updatedArbQueue))
+    | _ =>
+      //Otherwise take the latest item from the fetchers
+      switch earliestQueueItem {
+      | NoItem(_) => None
+      | Item(qItem) =>
+        let updatedFetchStatesMap = fetchStatesMap->ChainMap.set(chain, updatedFetchState)
+        EventFetchers(qItem, updatedFetchStatesMap)->Some
+      }
+    }
+  | Error(NoItemsInArray) =>
+    arbitraryEventQueue
+    ->getFirstArbitraryEventsItem
+    ->Option.map(((qItem, updatedArbQueue)) => {
+      ArbitraryEventQueue(qItem, updatedArbQueue)
+    })
   }
 }
 

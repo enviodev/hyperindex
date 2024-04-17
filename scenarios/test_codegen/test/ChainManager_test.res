@@ -29,6 +29,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let fetcherStateInit: FetchState.t = FetchState.makeRoot(
       ~contractAddressMapping=ContractAddressingMap.make(),
       ~startBlock=0,
+      ~endBlock=None,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -103,12 +104,13 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       currentBlockNumber := currentBlockNumber.contents + 1
     }
     let mockChainFetcher: ChainFetcher.t = {
-      timestampCaughtUpToHead: None,
+      timestampCaughtUpToHeadOrEndblock: None,
       firstEventBlockNumber: None,
       latestProcessedBlock: None,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
       isFetchingAtHead: false,
+      hasProcessedToEndblock: false,
       fetchState: fetchState.contents,
       logger: Logging.logger,
       chainConfig: "TODO"->Obj.magic,
@@ -285,7 +287,7 @@ describe("determineNextEvent", () => {
       }
     }
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
-      registerType: RootRegister,
+      registerType: RootRegister({endBlock: None}),
       latestFetchedBlockTimestamp,
       latestFetchedBlockNumber: 0,
       contractAddressMapping: ContractAddressingMap.make(),

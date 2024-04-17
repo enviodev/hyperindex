@@ -262,6 +262,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                             id: selected_network.network.get_network_id(),
                             sync_source,
                             start_block: 0,
+                            end_block: None,
                             contracts: Vec::new(),
                         }
                     });

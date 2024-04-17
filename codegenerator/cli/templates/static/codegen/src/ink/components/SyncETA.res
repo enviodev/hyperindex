@@ -9,6 +9,7 @@ let isIndexerFullySynced = (chains: array<ChainData.chainData>) => {
     }
   })
 }
+
 let getTotalRemainingBlocks = (chains: array<ChainData.chainData>) => {
   chains->Array.reduce(0, (accum, {progress, currentBlockHeight, latestFetchedBlockNumber}) => {
     switch progress {
@@ -24,11 +25,11 @@ let getLatestTimeCaughtUpToHead = (
   chains: array<ChainData.chainData>,
   indexerStartTime: Js.Date.t,
 ) => {
-  let latestTimeStampCaughtUpToHeadFloat = chains->Array.reduce(0.0, (accum, current) => {
+  let latesttimestampCaughtUpToHeadOrEndblockFloat = chains->Array.reduce(0.0, (accum, current) => {
     switch current.progress {
-    | Synced({timestampCaughtUpToHead}) =>
-      timestampCaughtUpToHead->Js.Date.valueOf > accum
-        ? timestampCaughtUpToHead->Js.Date.valueOf
+    | Synced({timestampCaughtUpToHeadOrEndblock}) =>
+      timestampCaughtUpToHeadOrEndblock->Js.Date.valueOf > accum
+        ? timestampCaughtUpToHeadOrEndblock->Js.Date.valueOf
         : accum
     | Syncing(_)
     | SearchingForEvents => accum
@@ -37,7 +38,7 @@ let getLatestTimeCaughtUpToHead = (
 
   DateFns.formatDistanceWithOptions(
     indexerStartTime,
-    latestTimeStampCaughtUpToHeadFloat->Js.Date.fromFloat,
+    latesttimestampCaughtUpToHeadOrEndblockFloat->Js.Date.fromFloat,
     {includeSeconds: true},
   )
 }

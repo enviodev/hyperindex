@@ -85,6 +85,7 @@ pub struct Network {
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub sync_source: Option<SyncSourceConfig>,
     pub start_block: i32,
+    pub end_block: Option<i32>,
     pub contracts: Vec<NetworkContractConfig>,
 }
 

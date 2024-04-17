@@ -25,6 +25,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
       },
     }),
     startBlock: 1,
+    endBlock:None,
     chain: Chain_1337,
     contracts: [
       {

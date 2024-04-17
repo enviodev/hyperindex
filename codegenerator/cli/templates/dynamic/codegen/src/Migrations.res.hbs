@@ -27,6 +27,7 @@ module ChainMetadata = {
       CREATE TABLE IF NOT EXISTS public.chain_metadata (
         chain_id INTEGER NOT NULL,
         start_block INTEGER NOT NULL,
+        end_block INTEGER NULL,
         block_height INTEGER NOT NULL,
         first_event_block_number INTEGER NULL,
         latest_processed_block INTEGER NULL,
@@ -34,7 +35,7 @@ module ChainMetadata = {
         is_hyper_sync BOOL NOT NULL,
         num_batches_fetched INTEGER NOT NULL,
         latest_fetched_block_number INTEGER NOT NULL,
-        timestamp_caught_up_to_head TIMESTAMP WITH TIME ZONE NULL,
+        timestamp_caught_up_to_head_or_endblock TIMESTAMP WITH TIME ZONE NULL,
         PRIMARY KEY (chain_id)
       );
       `")

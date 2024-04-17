@@ -41,6 +41,7 @@ describe("E2E Integration Test", () => {
         },
       }),
       startBlock: 0,
+      endBlock: None,
       chain: Chain_1337,
       contracts: [
         {
