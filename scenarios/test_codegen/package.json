@@ -49,12 +49,12 @@
     "rescript-mocha": "^0.9.0",
     "rescript-schema": "6.4.0",
     "sinon": "^15.0.4",
-    "ts-node": "^10.9.1",
-    "helpers": "../helpers"
+    "ts-node": "^10.9.1"
   },
   "dependencies": {
     "@rescript/react": "0.12.1",
     "generated": "workspace:*",
+    "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
     "typescript": "^5.0.4"
   }

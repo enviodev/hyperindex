@@ -85,8 +85,8 @@ describe_skip("E2E Db check", () => {
       inMemoryStoreRows->Belt.Array.map(
         row =>
           switch row {
-          | Updated({latest: Set(latestEntity, _)}) => Some(latestEntity)
-          | Updated({latest: Delete(_)}) => None
+          | Updated({latest: {entityUpdateAction: Set(latestEntity)}}) => Some(latestEntity)
+          | Updated({latest: {entityUpdateAction: Delete(_)}}) => None
           | InitialReadFromDb(_) => None
           },
       ),
