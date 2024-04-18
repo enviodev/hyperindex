@@ -227,8 +227,9 @@ module {{contract.name.capitalized}}Contract = {
                   | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
                   | None =>
                     Logging.error(`Linked entity field '{{entity_field.relational_key.uncapitalized}}' not found  for '{{entity.name.capitalized}}' entity.
-Please ensure this field '{{entity_field.relational_key.uncapitalized}}' is loaded in the '{{entity.name.capitalized}}' entity loader for this handler.
-`)
+Please ensure this field '{{entity_field.relational_key.uncapitalized}}' is loaded in the '{{entity.name.capitalized}}' entity loader for this entity with id ${ {{entity.name.uncapitalized}}.id }.
+
+It is also possible that you have saved an ID for an entity that doesn't exist in the code. Please validate in the Database that an entity of type '{{entity_field.mapped_entity.original}}' with ID ${ {{#if entity_field.is_optional}} {{entity_field.relational_key.uncapitalized}}_field  {{else}} {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id  {{/if}} } exists. If it doesn't you need to examine the code that is meant to create and save that entity initially.`)
 
                 raise(
                   LinkedEntityNotAvailableInSyncHandler(
