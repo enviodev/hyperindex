@@ -1,7 +1,11 @@
-type blockData = {
+type blockNumberAndHash = {
   //Block hash is used for actual comparison to test for reorg
   blockHash: string,
   blockNumber: int,
+}
+
+type blockData = {
+  ...blockNumberAndHash,
   //Timestamp is needed for multichain to action reorgs across chains from given blocks to
   //ensure ordering is kept constant
   blockTimestamp: int,
@@ -65,7 +69,7 @@ module LastBlockScannedHashes: {
 
   let getAllBlockNumbers: t => Belt.Array.t<int>
 
-  let hasReorgOccurred: (t, ~parentHash: option<string>) => bool
+  let hasReorgOccurred: (t, ~firstBlockParentNumberAndHash: option<blockNumberAndHash>) => bool
 
   /**
   Return a BlockNumbersAndHashes.t rolled back to where blockData is less
@@ -128,13 +132,39 @@ module LastBlockScannedHashes: {
     ->Belt.List.reverse
     ->getEarlistTimestampInThresholdInternal(~currentHeight, ~confirmedBlockThreshold)
 
+  /**
+  Inserts last scanned blockData in its positional order of blockNumber. Adds would usually
+  be always appending to the head with a new last scanned blockData but could be earlier in the
+  case of a dynamic contract.
+  */
+  let rec addLatestLastBlockDataInternal = (
+    ~lastBlockScannedData,
+    //Default empty, accumRev would be each item part of lastBlockScannedDataList that has
+    //a higher blockNumber than lastBlockScannedData
+    ~accumRev=list{},
+    lastBlockScannedDataList,
+  ) => {
+    switch lastBlockScannedDataList {
+    | list{head, ...tail} =>
+      if head.blockNumber <= lastBlockScannedData.blockNumber {
+        Belt.List.reverseConcat(accumRev, list{lastBlockScannedData, ...lastBlockScannedDataList})
+      } else {
+        tail->addLatestLastBlockDataInternal(
+          ~lastBlockScannedData,
+          ~accumRev=list{head, ...accumRev},
+        )
+      }
+    | list{} => Belt.List.reverseConcat(accumRev, list{lastBlockScannedData})
+    }
+  }
+
   // Adds the latest blockData to the head of the list
   let addLatestLastBlockData = (
     {confirmedBlockThreshold, lastBlockScannedDataList}: t,
     ~lastBlockScannedData,
   ) =>
     lastBlockScannedDataList
-    ->Belt.List.add(lastBlockScannedData)
+    ->addLatestLastBlockDataInternal(~lastBlockScannedData)
     ->makeWithDataInternal(~confirmedBlockThreshold)
 
   let getLatestLastBlockData = (self: t) => self.lastBlockScannedDataList->Belt.List.head
@@ -340,16 +370,33 @@ module LastBlockScannedHashes: {
     })
 
   /**
-Checks whether reorg has accured by comparing the parent hash with the last saved block hash.
-*/
-  let hasReorgOccurred = (lastBlockScannedHashes: t, ~parentHash) => {
-    let recentLastBlockData = lastBlockScannedHashes->getLatestLastBlockData
-    switch (parentHash, recentLastBlockData) {
-    | (Some(parentHash), Some({blockHash})) => parentHash != blockHash
+  Checks whether reorg has occured by comparing the parent hash with the last saved block hash.
+  */
+  let rec hasReorgOccurredInternal = (
+    lastBlockScannedDataList,
+    ~firstBlockParentNumberAndHash: option<blockNumberAndHash>,
+  ) => {
+    switch (firstBlockParentNumberAndHash, lastBlockScannedDataList) {
+    | (Some({blockHash: parentHash, blockNumber: parentBlockNumber}), list{head, ...tail}) =>
+      if parentBlockNumber == head.blockNumber {
+        parentHash != head.blockHash
+      } else {
+        //if block numbers do not match, this is a dynamic contract case and should recurse
+        //through the list to look for a matching block or nothing to validate
+        tail->hasReorgOccurredInternal(~firstBlockParentNumberAndHash)
+      }
     | _ => //If parentHash is None, either it's the genesis block (no reorg)
       //Or its already confirmed so no Reorg
-      //If recentLastBlockData is None, this is the first block range queried
+      //If recentLastBlockData is None, we have not yet saved blockData to compare against
       false
     }
   }
+
+  let hasReorgOccurred = (
+    lastBlockScannedHashes: t,
+    ~firstBlockParentNumberAndHash: option<blockNumberAndHash>,
+  ) =>
+    lastBlockScannedHashes.lastBlockScannedDataList->hasReorgOccurredInternal(
+      ~firstBlockParentNumberAndHash,
+    )
 }

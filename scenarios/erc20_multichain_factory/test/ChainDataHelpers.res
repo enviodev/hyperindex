@@ -33,6 +33,7 @@ module ERC20Factory = {
     let accessor = Types.eRC20FactoryContract_TokenCreated
     let serializer = Types.ERC20FactoryContract.TokenCreatedEvent.eventArgs_encode
     let eventName = Types.ERC20Factory_TokenCreated
+
     let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
       ~accessor,
       ~serializer,

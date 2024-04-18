@@ -241,7 +241,10 @@ module Make = (Indexer: Indexer.S) => {
   ): ChainWorkerTypes.blockRangeFetchResponse<_> => {
     let unfilteredBlocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
-    let parentHash = self->getBlock(~blockNumber=query.fromBlock - 1)->Option.map(b => b.blockHash)
+    let firstBlockParentNumberAndHash =
+      self
+      ->getBlock(~blockNumber=query.fromBlock - 1)
+      ->Option.map(b => {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
     let currentBlockHeight = self->getHeight
 
     let addressesAndEventNames =
@@ -261,7 +264,7 @@ module Make = (Indexer: Indexer.S) => {
           blockNumber: heighstBlock.blockNumber,
           blockTimestamp: heighstBlock.blockTimestamp,
         },
-        parentHash,
+        firstBlockParentNumberAndHash,
       },
       parsedQueueItems,
       fromBlockQueried: query.fromBlock,

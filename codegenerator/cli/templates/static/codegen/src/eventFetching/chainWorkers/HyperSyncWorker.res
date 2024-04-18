@@ -326,7 +326,7 @@ let fetchBlockRange = async (
     }
 
     let parsedQueueItems = switch eventFilters {
-      //Most cases there are no filters so this will be passed throug
+    //Most cases there are no filters so this will be passed throug
     | None => parsedQueueItemsPreFilter
     | Some(eventFilters) =>
       //In the case where there are filters, apply them and keep the events that
@@ -340,7 +340,10 @@ let fetchBlockRange = async (
 
     let reorgGuard = {
       lastBlockScannedData,
-      parentHash: pageUnsafe.rollbackGuard->Option.map(v => v.firstParentHash),
+      firstBlockParentNumberAndHash: pageUnsafe.rollbackGuard->Option.map(v => {
+        ReorgDetection.blockHash: v.firstParentHash,
+        blockNumber: v.firstBlockNumber,
+      }),
     }
 
     let totalTimeElapsed =

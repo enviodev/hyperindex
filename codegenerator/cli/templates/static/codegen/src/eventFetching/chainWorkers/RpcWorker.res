@@ -165,7 +165,7 @@ let fetchBlockRange = async (
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let reorgGuardStub: reorgGuard = {
-      parentHash: None,
+      firstBlockParentNumberAndHash: None,
       lastBlockScannedData: {
         blockNumber: 0,
         blockTimestamp: 0,

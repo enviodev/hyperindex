@@ -107,10 +107,14 @@ param 'b for rpc
   }
 
   module ReorgDetection: {
-    type blockData = {
+    type blockNumberAndHash = {
       //Block hash is used for actual comparison to test for reorg
       blockHash: string,
       blockNumber: int,
+    }
+
+    type blockData = {
+      ...blockNumberAndHash,
       //Timestamp is needed for multichain to action reorgs across chains from given blocks to
       //ensure ordering is kept constant
       blockTimestamp: int,
@@ -120,7 +124,7 @@ param 'b for rpc
   module ChainWorkerTypes: {
     type reorgGuard = {
       lastBlockScannedData: ReorgDetection.blockData,
-      parentHash: option<string>,
+      firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
     }
     type blockRangeFetchStats
     type blockRangeFetchResponse<'a, 'b> = {

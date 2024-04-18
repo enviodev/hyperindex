@@ -253,11 +253,11 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     "stats": stats,
   })
 
-  let {parentHash, lastBlockScannedData} = reorgGuard
+  let {firstBlockParentNumberAndHash, lastBlockScannedData} = reorgGuard
 
   let hasReorgOccurred =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.hasReorgOccurred(
-      ~parentHash,
+      ~firstBlockParentNumberAndHash,
     )
 
   if !hasReorgOccurred {
