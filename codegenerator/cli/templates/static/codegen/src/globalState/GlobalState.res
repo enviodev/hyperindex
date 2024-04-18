@@ -401,8 +401,7 @@ let actionReducer = (state: t, action: action) => {
     )
   | ErrorExit(errHandler) =>
     errHandler->ErrorHandling.log
-    let process = NodeJs.Process.process
-    process->NodeJs.Process.exitWithCode(1)
+    NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
     (state, [])
   }
 }
