@@ -296,7 +296,7 @@ module DbIndexes = {
     {{#each entity.params as |param|}}
       {{#if param.is_indexed_field}}
         let _ = await %raw("sql`
-      CREATE INDEX IF NOT EXISTS \"user_index_{{entity.name.original}}_{{param.field_name.original}}\" ON public.\"{{entity.name.original}}\" (\"{{param.field_name.uncapitalized}}\");
+      CREATE INDEX IF NOT EXISTS \"user_index_{{entity.name.original}}_{{param.field_name.original}}\" ON public.\"{{entity.name.original}}\" (\"{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}\");
     `")
       {{/if}}
     {{/each}}

@@ -46,7 +46,7 @@ type Token {
 
 type A {
   id: ID!
-  b: B!
+  b: B! @indexed
   optionalStringToTestLinkedEntities: String
 }
 type B {
