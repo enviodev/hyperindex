@@ -201,11 +201,13 @@ let setupDb = async (~shouldDropRawEvents) => {
   let _exitCodeDown = await runDownMigrations(~shouldExit=false, ~shouldDropRawEvents)
   let _exitCodeUp = await runUpMigrations(~shouldExit=false)
 }
-describe("Multichain rollback test", () => {
-  it_promise("Multichain indexer should rollback and not reprocess any events", async () => {
-    //Provision the db
-    await setupDb(~shouldDropRawEvents=true)
 
+describe("Multichain rollback test", () => {
+  before_promise(() => {
+    //Provision the db
+    DbHelpers.runUpDownMigration()
+  })
+  it_promise("Multichain indexer should rollback and not reprocess any events", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
@@ -525,6 +527,6 @@ describe("Multichain rollback test", () => {
     //Todo assertions
     //Assert new balances
 
-    //Potentially keep going for assertions to end of chain
+    await setupDb(~shouldDropRawEvents=true)
   })
 })

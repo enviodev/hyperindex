@@ -99,18 +99,12 @@ ensure that this doesn't trigger a reorg
 
 module Sql = RollbackMultichain_test.Sql
 
-let setupDb = async (~shouldDropRawEvents) => {
-  open Migrations
-  Logging.info("Provisioning Database")
-  let _exitCodeDown = await runDownMigrations(~shouldExit=false, ~shouldDropRawEvents)
-  let _exitCodeUp = await runUpMigrations(~shouldExit=false)
-}
-
-describe_only("Dynamic contract rollback test", () => {
-  it_promise("Dynamic contract should not trigger reorg", async () => {
+describe("Dynamic contract rollback test", () => {
+  before_promise(() => {
     //Provision the db
-    await setupDb(~shouldDropRawEvents=true)
-
+    DbHelpers.runUpDownMigration()
+  })
+  it_promise("Dynamic contract should not trigger reorg", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
