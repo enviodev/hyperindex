@@ -609,9 +609,8 @@ let isActivelyIndexing = fetchState => {
   switch fetchState.registerType {
   | RootRegister({endBlock: Some(endBlock)}) =>
     let isPastEndblock = fetchState.latestFetchedBlockNumber >= endBlock
-    if isPastEndblock {
-      let isQueueEmpty = fetchState->queueSize == 0
-      !isQueueEmpty
+    if isPastEndblock {       
+      fetchState->queueSize > 0
     } else {
       true
     }
