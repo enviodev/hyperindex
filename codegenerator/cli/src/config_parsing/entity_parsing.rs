@@ -503,7 +503,7 @@ pub struct Field {
 }
 
 impl Field {
-    fn from_obj_field(field: &ObjField<String>, is_indexd: bool) -> anyhow::Result<Self> {
+    fn from_obj_field(field: &ObjField<String>, is_indexed: bool) -> anyhow::Result<Self> {
         //Get all gql derictives labeled @derivedFrom and @index
         let derived_from_directives = field
             .directives
@@ -550,7 +550,7 @@ impl Field {
             ));
         }
 
-        if is_indexd && indexed_count > 0 {
+        if is_indexed && indexed_count > 0 {
             return Err(anyhow!(
                 "EE202: The field '{}' is marked as an index. Please either remove the @index directive on the field, or the @index(fields: [\"{}\"]) directive on the entity",
                 field.name,
@@ -1198,14 +1198,8 @@ impl GqlScalar {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
-    };
-    use graphql_parser::schema::{
-        parse_schema, Definition, Directive, Document, Field as ObjField, ObjectType,
-        TypeDefinition, Value,
-    };
-    use graphql_parser::Pos;
+    use super::{anyhow, Entity, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType};
+    use graphql_parser::schema::{parse_schema, Definition, Document, ObjectType, TypeDefinition};
 
     fn setup_document(schema: &str) -> anyhow::Result<Document<String>> {
         parse_schema::<String>(schema)

@@ -282,8 +282,9 @@ module DbIndexes = {
   let createDerivedFromDbIndexes = async () => {
   {{#each entities as |entity|}}
     {{#each entity.relational_params.filtered_is_derived_from as | param |}}
+    {{!-- TODO: this currently will re-create indexes on mapped entities that contain the `@index` directive which is wasteful. --}}
   let _ = await %raw("sql`
-    CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" (\"{{param.relational_key.uncapitalized}}\");
+    CREATE INDEX IF NOT EXISTS \"DerivedFrom{{entity.name.original}}_{{param.object_name.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" (\"{{param.t.field_name}}{{#param.relational_key.is_entity}}_id{{/if}}\");
   `")
     {{/each}}
   {{/each}}
@@ -296,9 +297,18 @@ module DbIndexes = {
     {{#each entity.params as |param|}}
       {{#if param.is_indexed_field}}
         let _ = await %raw("sql`
-      CREATE INDEX IF NOT EXISTS \"user_index_{{entity.name.original}}_{{param.field_name.original}}\" ON public.\"{{entity.name.original}}\" (\"{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}\");
+      CREATE INDEX IF NOT EXISTS \"user_index_{{entity.name.original}}_{{param.field_name.original}}\" ON public.\"{{entity.name.original}}\" (\"{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}\");
     `")
       {{/if}}
+    {{/each}}
+  {{/each}}
+
+  {{#each entities as |entity|}}
+    {{#each entity.index_groups as |index_group|}}
+            let _ = await %raw("sql`
+      CREATE INDEX IF NOT EXISTS \"multi_field_index{{#each index_group.params as |indexed_field|}}_{{indexed_field.field_name.original}}{{/each}}\" ON public.\"{{entity.name.original}}\" ({{#each index_group.params as |indexed_field|}}{{indexed_field.field_name.original}}{{#if indexed_field.is_entity_field}}_id{{/if}}{{#unless @last}},{{/unless}}\"{{/each}});
+    `")
+    /// multi field indexes {{#each index_group.params as |indexed_field|}} {{indexed_field.field_name.original}} {{/each}}
     {{/each}}
   {{/each}}
 

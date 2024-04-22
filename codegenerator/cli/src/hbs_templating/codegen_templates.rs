@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
@@ -226,13 +227,13 @@ pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EntityParamTypeTemplate>,
     pub index_groups: Vec<EntityIndexParamGroup>,
-    /// @chatgpt I have added this field but need to populate it correctly.
     pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
     pub filtered_params: FilteredTemplateLists<EntityParamTypeTemplate>,
 }
 
 impl EntityRecordTypeTemplate {
     fn from_config_entity(entity: &Entity, config: &SystemConfig) -> Result<Self> {
+        // Collect all field templates
         let params: Vec<EntityParamTypeTemplate> = entity
             .get_fields()
             .iter()
@@ -243,6 +244,22 @@ impl EntityRecordTypeTemplate {
                 entity.name
             ))?;
 
+        let mut params_lookup: HashMap<String, EntityParamTypeTemplate> = HashMap::new();
+
+        entity.get_fields().iter().for_each(|field| {
+            let entity_param_template = EntityParamTypeTemplate::from_entity_field(field, config)
+                .with_context(|| {
+                    format!(
+                        "Failed templating field '{}' of entity '{}'",
+                        field.name, entity.name
+                    )
+                })
+                .unwrap();
+
+            params_lookup.insert(field.name.clone(), entity_param_template);
+        });
+
+        // Collect relational type templates
         let entity_relational_types_templates = entity
             .get_related_entities(&config.schema)
             .context(format!(
@@ -264,13 +281,28 @@ impl EntityRecordTypeTemplate {
             ))?;
 
         let relational_params = FilteredTemplateLists::new(entity_relational_types_templates);
-
         let filtered_params = FilteredTemplateLists::new(params.clone());
+
+        let index_groups: Vec<EntityIndexParamGroup> = entity
+            .multi_field_indexes
+            .iter()
+            .map(|indexed_params| EntityIndexParamGroup {
+                params: indexed_params
+                    .iter()
+                    .map(|param_name| {
+                        params_lookup
+                            .get(param_name)
+                            .cloned()
+                            .expect("param name should be in lookup")
+                    })
+                    .collect(),
+            })
+            .collect();
 
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             params,
-            index_groups: Vec::new(), // @chatpgt - this isn't set yet - and I need to set it.
+            index_groups,
             relational_params,
             filtered_params,
         })
@@ -290,6 +322,7 @@ pub struct RequiredEntityEntityFieldTemplate {
     pub is_optional: bool,
     pub is_array: bool,
     pub is_derived_from: bool,
+    pub is_indexed: bool,
 }
 
 impl RequiredEntityEntityFieldTemplate {
@@ -300,6 +333,7 @@ impl RequiredEntityEntityFieldTemplate {
             is_optional: field.field_type.is_optional(),
             is_array: field.field_type.is_array(),
             is_derived_from: field.field_type.is_derived_from(),
+            is_indexed: field.field_type.is_indexed_field(),
         }
     }
 }
