@@ -1,4 +1,4 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, PathBuf};
 
 use anyhow::anyhow;
 use itertools::Itertools;

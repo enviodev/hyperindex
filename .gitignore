@@ -11,4 +11,4 @@ scenarios/**/*.res.js
 scenarios/**/*.gen.ts
 scenarios/**/lib/*
 scenarios/**/node_modules/*
-scenarios/**/generated/*
+scenarios/**/generated

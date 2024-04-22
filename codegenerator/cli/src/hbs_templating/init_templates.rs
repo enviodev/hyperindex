@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context};
 use pathdiff::diff_paths;
 use regex::Regex;
 use serde::Serialize;
-use std::{path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 
 #[derive(Serialize, Debug, PartialEq)]
 pub struct InitTemplates {
