@@ -4,3 +4,11 @@
 *~
 *.swo
 *.swp
+
+#All generated code for scenarios
+scenarios/**/*.bs.js
+scenarios/**/*.res.js
+scenarios/**/*.gen.ts
+scenarios/**/lib/*
+scenarios/**/node_modules/*
+scenarios/**/generated/*
