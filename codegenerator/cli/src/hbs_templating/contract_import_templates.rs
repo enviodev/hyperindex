@@ -310,6 +310,7 @@ impl Into<Entity> for Event {
         Entity {
             name: self.name.original,
             fields,
+            multi_field_indexes: vec![], // when doing contract import - entities won't have indexes by default.
         }
     }
 }

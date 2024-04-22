@@ -309,30 +309,125 @@ impl GraphQLEnum {
 pub struct Entity {
     pub name: String,
     pub fields: HashMap<String, Field>,
+    pub multi_field_indexes: Vec<Vec<String>>,
 }
 
 impl Entity {
-    fn new(name: String, fields: Vec<Field>) -> anyhow::Result<Self> {
+    fn new(
+        name: String,
+        fields: Vec<Field>,
+        multi_field_indexes: Vec<Vec<String>>,
+    ) -> anyhow::Result<Self> {
         let fields = unique_hashmap::from_vec_no_duplicates(
             fields.into_iter().map(|f| (f.name.clone(), f)).collect(),
         )
         .context(format!(
             "Found fields with duplicate names on Entity {name}"
         ))?;
-        Ok(Self { name, fields })
+        Ok(Self {
+            name,
+            fields,
+            multi_field_indexes,
+        })
     }
 
     fn from_object(obj: &ObjectType<String>) -> anyhow::Result<Self> {
         let name = obj.name.clone();
 
+        let mut single_indexes: HashSet<String> = HashSet::new();
+        let mut composite_indexes: Vec<Vec<String>> = Vec::new();
+
+        // Collect all field names for existence check and to check derivedFrom fields.
+        let mut fields_map = HashMap::new();
+
+        for field in obj.fields.iter() {
+            let is_derived_from = field.directives.iter().any(|d| d.name == "derivedFrom");
+            fields_map.insert(field.name.clone(), is_derived_from);
+        }
+
+        for directive in obj.directives.iter() {
+            if directive.name == "index" {
+                if let Some((_, value)) =
+                    directive.arguments.iter().find(|(key, _)| key == "fields")
+                {
+                    match value {
+                        Value::List(fields) => {
+                            let mut index_fields = fields
+                                .iter()
+                                .filter_map(|v| {
+                                    if let Value::String(field_name) = v {
+                                        Some(field_name.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<String>>();
+
+                            index_fields.sort(); // Sort the fields to make sure that they don't
+
+                            // Check if fields in the index exist in the entity
+                            for field in &index_fields {
+                                if !fields_map.contains_key(field) {
+                                    return Err(anyhow!(
+                                        "Index error: Field '{}' does not exist in entity '{}', please remove it from the `@index` directive.",
+                                        field,
+                                        name
+                                    ));
+                                }
+
+                                // Check if the field is marked as @derivedFrom
+                                if let Some(&is_derived_from) = fields_map.get(field) {
+                                    if is_derived_from {
+                                        return Err(anyhow!(
+                                            "Index error: Field '{}' is a @derivedFrom field and cannot be indexed in entity '{}', please remove it from the `@index` directive.",
+                                            field, name
+                                        ));
+                                    }
+                                }
+                            }
+
+                            if index_fields.len() == 1 {
+                                let single_field_index = index_fields.first().unwrap().clone();
+                                if single_field_index == "id" {
+                                    return Err(anyhow!(
+                                        "Index error: Field 'id' is indexed by default in entity '{}', please remove the `@index` directive on it.",
+                                        name
+                                    ));
+                                }
+                                single_indexes.insert(index_fields.first().unwrap().clone());
+                            } else {
+                                // Check for duplicate index definitions
+                                if !composite_indexes.contains(&index_fields) {
+                                    composite_indexes.push(index_fields);
+                                } else {
+                                    return Err(anyhow!(
+                                          "Index error: Duplicate index found on fields {:?} in entity '{}'",
+                                          index_fields, name
+                                      ));
+                                }
+                            }
+                        }
+                        _ => return Err(anyhow!("Invalid index argument format")),
+                    }
+                }
+            }
+        }
+
+        // Map each field in the ObjectType to a Field, passing the indexed status
         let fields = obj
             .fields
             .iter()
-            .map(|f| Field::from_obj_field(f))
-            .collect::<anyhow::Result<_>>()
-            .context("Failed contsructing fields")?;
+            .map(|f| {
+                // Determine if the field is indexed
+                let is_indexed = single_indexes.contains(&f.name);
+                Field::from_obj_field(f, is_indexed) // Pass the indexed status to the field constructor
+            })
+            .collect::<anyhow::Result<Vec<Field>>>()?;
 
-        Self::new(name, fields)
+        let entity = Self::new(name, fields, composite_indexes)?;
+
+        // Here, store indexed information somewhere within your entity structure or handle them accordingly
+        Ok(entity)
     }
 
     pub fn get_fields<'a>(&'a self) -> Vec<&'a Field> {
@@ -408,19 +503,18 @@ pub struct Field {
 }
 
 impl Field {
-    fn from_obj_field(field: &ObjField<String>) -> anyhow::Result<Self> {
-        //Get all gql derictives labeled @derivedFrom and @indexed
+    fn from_obj_field(field: &ObjField<String>, is_indexd: bool) -> anyhow::Result<Self> {
+        //Get all gql derictives labeled @derivedFrom and @index
         let derived_from_directives = field
             .directives
             .iter()
             .filter(|&directive| directive.name == "derivedFrom")
             .collect::<Vec<&Directive<'_, String>>>();
 
-        // TODO: this currently only supports single indexed fields, and doesn't support multi-field indexes.
         let indexed_directives = field
             .directives
             .iter()
-            .filter(|&directive| directive.name == "indexed")
+            .filter(|&directive| directive.name == "index")
             .collect::<Vec<&Directive<'_, String>>>();
 
         // Validate directive usage
@@ -434,7 +528,7 @@ impl Field {
 
         if derived_from_count > 1 || indexed_count > 1 {
             return Err(anyhow!(
-                "EE202: Cannot use more than one @derivedFrom or @indexed directive at field {}",
+                "EE202: Cannot use more than one @derivedFrom or @index directive at field {}",
                 field.name
             ));
         }
@@ -442,7 +536,7 @@ impl Field {
         if derived_from_count > 0 && indexed_count > 0 {
             return Err(anyhow!(
                 // TODO: update the docs here:https://github.com/Float-Capital/envio-docs/blob/a20823ffa266d26d6e7beb461caa335de14fa263/docs/error-codes.md?plain=1#L108
-                "EE202: A field cannot be both @derivedFrom and @indexed: {}",
+                "EE202: A field cannot be both @derivedFrom and @index: {}",
                 field.name
             ));
         }
@@ -451,7 +545,15 @@ impl Field {
             && (indexed_count > 0 || derived_from_count > 0)
         {
             return Err(anyhow!(
-                "EE202: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @indexed or @derivedFrom directive from field {}",
+                "EE202: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @index or @derivedFrom directive from field {}",
+                field.name
+            ));
+        }
+
+        if is_indexd && indexed_count > 0 {
+            return Err(anyhow!(
+                "EE202: The field '{}' is marked as an index. Please either remove the @index directive on the field, or the @index(fields: [\"{}\"]) directive on the entity",
+                field.name,
                 field.name
             ));
         }
@@ -1096,46 +1198,124 @@ impl GqlScalar {
 
 #[cfg(test)]
 mod tests {
-    use super::{Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType};
-    use graphql_parser::schema::{Directive, Field as ObjField, Value};
+    use super::{
+        anyhow, Entity, Field, FieldType, GqlScalar, GraphQLEnum, Schema, UserDefinedFieldType,
+    };
+    use graphql_parser::schema::{
+        parse_schema, Definition, Directive, Document, Field as ObjField, ObjectType,
+        TypeDefinition, Value,
+    };
     use graphql_parser::Pos;
 
-    fn create_field_with_directives<'a>(
-        name: &'a str,
-        directives: Vec<(&'a str, Vec<&'a str>)>,
-    ) -> ObjField<'a, String> {
-        let default_position = Pos { line: 0, column: 0 };
-        ObjField {
-            name: name.to_string(),
-            description: None,
-            directives: directives
-                .into_iter()
-                .map(|(dir_name, dir_args)| Directive {
-                    name: dir_name.to_string(),
-                    arguments: dir_args
-                        .into_iter()
-                        .map(|arg| (arg.to_string(), Value::String("Some value".to_string()))) // You might want to adjust this part
-                        .collect(),
-                    position: default_position,
-                })
-                .collect(),
-            field_type: graphql_parser::schema::Type::NamedType("String".to_string()),
-            position: Default::default(),
-            arguments: vec![],
-        }
+    fn setup_document(schema: &str) -> anyhow::Result<Document<String>> {
+        parse_schema::<String>(schema)
+            .map_err(|e| anyhow!("EE201: Failed to parse schema: {:?}", e))
+    }
+
+    fn get_entities_from_document(gql_doc: Document<String>) -> Vec<ObjectType<String>> {
+        gql_doc
+            .definitions
+            .into_iter()
+            .filter_map(|d| {
+                if let Definition::TypeDefinition(TypeDefinition::Object(obj)) = d {
+                    Some(obj)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn get_first_entity_from_string(schema_str: &str) -> ObjectType<String> {
+        let gql_doc = setup_document(schema_str).unwrap();
+        let entities = get_entities_from_document(gql_doc);
+        entities.first().unwrap().clone()
     }
 
     #[test]
-    fn more_than_one_derived_from_directive() {
-        let field = create_field_with_directives(
-            "testField",
-            vec![
-                ("derivedFrom", vec!["someField"]),
-                ("derivedFrom", vec!["anotherField"]),
-            ],
-        );
+    fn test_field_does_not_exist_in_entity() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: ["field_that_doesnt_exist", "id", "tokenId"]) {
+  id: ID!
+  tokenId: BigInt! @index
+  collection: String!
+  owner: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema);
 
-        let result = Field::from_obj_field(&field);
+        assert!(parsed_entity.is_err());
+        assert_eq!(parsed_entity.unwrap_err().to_string(), "Index error: Field 'field_that_doesnt_exist' does not exist in entity 'TestEntity', please remove it from the `@index` directive.");
+    }
+
+    #[test]
+    fn test_field_is_derived_from_and_indexed() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: ["collection"]) {
+  id: ID!
+  tokenId: BigInt!
+  collection: String! @derivedFrom(field: "owner")
+  owner: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema);
+
+        assert!(parsed_entity.is_err());
+        assert_eq!(parsed_entity.unwrap_err().to_string(), "Index error: Field 'collection' is a @derivedFrom field and cannot be indexed in entity 'TestEntity', please remove it from the `@index` directive.");
+    }
+
+    #[test]
+    fn test_duplicate_index_definition() {
+        let schema_str = r#"
+type TestEntity
+  @index(fields: ["id", "tokenId"])
+  @index(fields: ["id", "tokenId"]) {
+  id: ID!
+  tokenId: BigInt! @index
+  collection: String!
+  owner: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema);
+
+        assert!(parsed_entity.is_err());
+        assert_eq!(
+            parsed_entity.unwrap_err().to_string(),
+            "Index error: Duplicate index found on fields [\"id\", \"tokenId\"] in entity 'TestEntity'"
+        );
+    }
+
+    #[test]
+    fn test_field_marked_as_indexed_and_index_directive() {
+        let schema_str = r#"
+type TestEntity @index(fields: ["tokenId"]) {
+  id: ID!
+  tokenId: BigInt! @index
+  collection: String!
+  owner: String!
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema);
+
+        assert!(parsed_entity.is_err());
+        assert_eq!(parsed_entity.unwrap_err().to_string(), "EE202: The field 'tokenId' is marked as an index. Please either remove the @index directive on the field, or the @index(fields: [\"tokenId\"]) directive on the entity");
+    }
+    #[test]
+    fn more_than_one_derived_from_directive() {
+        let schema_str = r#"
+type TestEntity {
+  testField: String @derivedFrom(field: "someField") @derivedFrom(field: "anotherField")
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let result = Entity::from_object(&first_entity_schema);
+
         assert!(
             result.is_err(),
             "Should error with more than one @derivedFrom directive"
@@ -1144,47 +1324,51 @@ mod tests {
 
     #[test]
     fn more_than_one_indexed_directive() {
-        let field = create_field_with_directives(
-            "testField",
-            vec![("indexed", vec![]), ("indexed", vec![])],
-        );
+        let schema_str = r#"
+type TestEntity {
+  testField: String @index @index
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let result = Entity::from_object(&first_entity_schema);
 
-        let result = Field::from_obj_field(&field);
         assert!(
             result.is_err(),
-            "Should error with more than one @indexed directive"
+            "Should error with more than one @index directive"
         );
     }
 
     #[test]
     fn fail_derived_from_and_indexed_directive() {
-        let field = create_field_with_directives(
-            "testField",
-            vec![("derivedFrom", vec!["someField"]), ("indexed", vec![])],
-        );
+        let schema_str = r#"
+type TestEntity {
+  testField: String @derivedFrom(field: "someField") @index
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let result = Entity::from_object(&first_entity_schema);
 
-        let result = Field::from_obj_field(&field);
         assert!(
             result.is_err(),
-            "Should error with both @derivedFrom and @indexed directives"
+            "Should error with both @derivedFrom and @index directives"
         );
     }
 
     #[test]
     fn fail_id_field_with_derived_from_or_indexed_directive() {
-        let tests = [
-            ("id", vec![("derivedFrom", vec!["someField"])]),
-            ("ID", vec![("indexed", vec![])]),
-        ];
+        let schema_str = r#"
+type TestEntity {
+  id: ID! @derivedFrom(field: "someField")
+  ID: ID! @index
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let result = Entity::from_object(&first_entity_schema);
 
-        for (field_name, directives) in tests.iter() {
-            let field = create_field_with_directives(field_name, directives.to_vec());
-            let result = Field::from_obj_field(&field);
-            assert!(
-                result.is_err(),
-                "Should error when 'id' or 'ID' field is indexed or derived from"
-            );
-        }
+        assert!(
+            result.is_err(),
+            "Should error when 'id' or 'ID' field is indexed or derived from"
+        );
     }
 
     #[test]
@@ -1251,7 +1435,7 @@ mod tests {
     #[test]
     fn gql_type_to_rescript_type_entity() {
         let test_entity_string = String::from("TestEntity");
-        let test_entity = Entity::new(test_entity_string.clone(), vec![]).unwrap();
+        let test_entity = Entity::new(test_entity_string.clone(), vec![], vec![]).unwrap();
         let schema = Schema::new(vec![test_entity], vec![]).unwrap();
         let rescript_type = UserDefinedFieldType::Single(GqlScalar::Custom(test_entity_string))
             .to_rescript_type(&schema)
@@ -1417,4 +1601,116 @@ mod tests {
             rescript_type.to_string()
         );
     }
+
+    //     use super::*;
+    //     use graphql_parser::schema::{parse_schema, Document};
+
+    //     fn setup_document(schema: &str) -> anyhow::Result<Document<String>> {
+    //         parse_schema::<String>(schema)
+    //             .map_err(|e| anyhow!("EE201: Failed to parse schema: {:?}", e))
+    //     }
+
+    //     fn get_entities_from_document(gql_doc: Document<String>) -> Vec<ObjectType<String>> {
+    //         gql_doc
+    //             .definitions
+    //             .into_iter()
+    //             .filter_map(|d| {
+    //                 if let Definition::TypeDefinition(TypeDefinition::Object(obj)) = d {
+    //                     Some(obj)
+    //                 } else {
+    //                     None
+    //                 }
+    //             })
+    //             .collect()
+    //     }
+
+    //     fn get_first_entity_from_string(schema_str: &str) -> ObjectType<String> {
+    //         let gql_doc = setup_document(schema_str).unwrap();
+
+    //         let entities = get_entities_from_document(gql_doc);
+
+    //         entities.first().unwrap().clone()
+    //     }
+
+    //     #[test]
+    //     fn test_field_does_not_exist_in_entity() {
+    //         let schema_str = r#"
+    // type TestEntity
+    //   @index(fields: ["field_that_doesnt_exist", "id", "tokenId"]) {
+    //   id: ID!
+    //   tokenId: BigInt! @index
+    //   collection: String!
+    //   owner: String!
+    // }
+    //         "#;
+    //         let first_entity_schema = get_first_entity_from_string(schema_str);
+
+    //         let parsed_entity = Entity::from_object(&first_entity_schema);
+
+    //         assert!(parsed_entity.is_err());
+    //         assert_eq!(parsed_entity.unwrap_err().to_string(), "Index error: Field 'field_that_doesnt_exist' does not exist in entity 'TestEntity', please remove it from the `@index` directive.");
+    //     }
+
+    //     //     #[test]
+    //     //     fn test_field_is_derived_from_cannot_be_indexed() {
+    //     //         let schema_str = r#"
+    //     // type Token
+    //     //   @index(fields: ["id", "tokenId"])
+    //     //   @index(fields: ["tokenId"])
+    //     //   # @index(fields: ["collection", "tokenId"])
+    //     //   @index(fields: ["tokenId", "collection"]) {
+    //     //   id: ID!
+    //     //   tokenId: BigInt! @index
+    //     //   collection: NftCollection!
+    //     //   owner: User!
+    //     // }
+    //     //         "#;
+    //     //         let doc = setup_document(schema_str).unwrap();
+    //     //         let schema = Schema::from_document(doc);
+
+    //     //         assert!(schema.is_err());
+    //     //         assert_eq!(schema.unwrap_err().to_string(), "Index error: Field 'derivedField' is a @derivedFrom field and cannot be indexed in entity 'TestEntity', please remove it from the `@index` directive.");
+    //     //     }
+
+    //     //     #[test]
+    //     //     fn test_duplicate_index_definitions() {
+    //     //         let schema_str = r#"
+    //     // type Token
+    //     //   @index(fields: ["id", "tokenId"])
+    //     //   @index(fields: ["tokenId"])
+    //     //   # @index(fields: ["collection", "tokenId"])
+    //     //   @index(fields: ["tokenId", "collection"]) {
+    //     //   id: ID!
+    //     //   tokenId: BigInt! @index
+    //     //   collection: NftCollection!
+    //     //   owner: User!
+    //     // }
+    //     //         "#;
+    //     //         let doc = setup_document(schema_str).unwrap();
+    //     //         let schema = Schema::from_document(doc);
+
+    //     //         assert!(schema.is_err());
+    //     //         assert_eq!(schema.unwrap_err().to_string(), "Index error: Duplicate index found on fields [\"field1\", \"field2\"] in entity 'TestEntity'");
+    //     //     }
+
+    //     //     #[test]
+    //     //     fn test_field_incorrectly_indexed_when_already_indexed() {
+    //     //         let schema_str = r#"
+    //     // type Token
+    //     //   @index(fields: ["id", "tokenId"])
+    //     //   @index(fields: ["tokenId"])
+    //     //   # @index(fields: ["collection", "tokenId"])
+    //     //   @index(fields: ["tokenId", "collection"]) {
+    //     //   id: ID!
+    //     //   tokenId: BigInt! @index
+    //     //   collection: NftCollection!
+    //     //   owner: User!
+    //     // }
+    //     //         "#;
+    //     //         let doc = setup_document(schema_str).unwrap();
+    //     //         let schema = Schema::from_document(doc);
+
+    //     //         assert!(schema.is_err());
+    //     //         assert_eq!(schema.unwrap_err().to_string(), "EE202: The field 'field1' is marked as indexed. Please either remove the @index directive on the field, or the @index(fields: [\"field1\"]) directive on the entity");
+    //     //     }
 }

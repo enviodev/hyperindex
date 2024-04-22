@@ -217,9 +217,16 @@ impl HasIsDerivedFrom for EntityRelationalTypesTemplate {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct EntityIndexParamGroup {
+    params: Vec<EntityParamTypeTemplate>,
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EntityParamTypeTemplate>,
+    pub index_groups: Vec<EntityIndexParamGroup>,
+    /// @chatgpt I have added this field but need to populate it correctly.
     pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
     pub filtered_params: FilteredTemplateLists<EntityParamTypeTemplate>,
 }
@@ -263,6 +270,7 @@ impl EntityRecordTypeTemplate {
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             params,
+            index_groups: Vec::new(), // @chatpgt - this isn't set yet - and I need to set it.
             relational_params,
             filtered_params,
         })

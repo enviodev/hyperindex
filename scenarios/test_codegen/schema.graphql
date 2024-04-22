@@ -37,16 +37,18 @@ type NftCollection {
   tokens: [Token!]! @derivedFrom(field: "collection")
 }
 
-type Token {
+type Token
+  @index(fields: ["id", "tokenId"])
+  @index(fields: ["tokenId", "collection"]) {
   id: ID!
-  tokenId: BigInt! @indexed
+  tokenId: BigInt! @index
   collection: NftCollection!
   owner: User!
 }
 
 type A {
   id: ID!
-  b: B! @indexed
+  b: B! @index
   optionalStringToTestLinkedEntities: String
 }
 type B {
