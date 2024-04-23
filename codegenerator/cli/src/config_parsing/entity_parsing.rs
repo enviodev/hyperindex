@@ -650,6 +650,14 @@ impl MultiFieldIndex {
         }
     }
 
+    pub fn get_multi_field_index(&self) -> Option<&Self> {
+        if self.0.len() > 1 {
+            Some(&self)
+        } else {
+            None
+        }
+    }
+
     fn validate_field_name_exists(self, fields: &HashMap<String, Field>) -> anyhow::Result<Self> {
         for field_name in &self.0 {
             if let None = fields.get(field_name) {

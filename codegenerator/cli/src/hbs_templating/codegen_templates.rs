@@ -5,7 +5,7 @@ use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{Entity, Field, GraphQLEnum, RescriptType, Schema},
+        entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
         human_config::{self, EventDecoder, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
@@ -287,6 +287,7 @@ impl EntityRecordTypeTemplate {
         let index_groups: Vec<EntityIndexParamGroup> = entity
             .multi_field_indexes
             .iter()
+            .filter_map(MultiFieldIndex::get_multi_field_index)
             .map(|multi_field_index| EntityIndexParamGroup {
                 params: multi_field_index
                     .get_field_names()
