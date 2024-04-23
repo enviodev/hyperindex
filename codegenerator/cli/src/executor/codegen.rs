@@ -14,7 +14,8 @@ pub async fn run_codegen(project_paths: &ParsedProjectPaths) -> Result<()> {
     match PersistedStateExists::get_persisted_state_file(&project_paths) {
         PersistedStateExists::Exists(ps) if &ps.envio_version != CURRENT_CRATE_VERSION => {
             println!(
-                "Envio version '{}' does not match the previous version '{}' used in the generated directory",
+                "Envio version '{}' does not match the previous version '{}' used in the \
+                 generated directory",
                 CURRENT_CRATE_VERSION, &ps.envio_version
             );
             println!("Purging generated directory",);

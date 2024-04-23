@@ -376,13 +376,22 @@ impl Entity {
                                     Err(anyhow!("Listed index field should be a string"))
                                 }
                             })
-                            .collect::<anyhow::Result<Vec<String>>>().context("Failed to get fields in index")?;
+                            .collect::<anyhow::Result<Vec<String>>>()
+                            .context("Failed to get fields in index")?;
 
                         Ok(MultiFieldIndex::new(index_fields))
                     }
-                    _ => Err(anyhow!("Invalid @index directive. Please ensure index has a key of fields with a list of strings matching field names in your entity. Eg. @index(fields: [\"fieldA\", \"fieldB\"])"))
+                    _ => Err(anyhow!(
+                        "Invalid @index directive. Please ensure index has a key of fields with a \
+                         list of strings matching field names in your entity. Eg. @index(fields: \
+                         [\"fieldA\", \"fieldB\"])"
+                    )),
                 },
-            ).collect::<anyhow::Result<Vec<_>>>().context(format!("Failed parsing multi field indexes on entity {name}"))?;
+            )
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context(format!(
+                "Failed parsing multi field indexes on entity {name}"
+            ))?;
 
         // Map each field in the ObjectType to a Field, passing the indexed status
         let fields = obj
@@ -516,7 +525,8 @@ impl Field {
             && (indexed_count > 0 || derived_from_count > 0)
         {
             return Err(anyhow!(
-                "EE202: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove the @index or @derivedFrom directive from field {}",
+                "EE202: The field 'id' or 'ID' cannot be indexed or derivedFrom. Please remove \
+                 the @index or @derivedFrom directive from field {}",
                 field.name
             ));
         }
@@ -644,9 +654,10 @@ impl MultiFieldIndex {
         for field_name in &self.0 {
             if let None = fields.get(field_name) {
                 return Err(anyhow!(
-            "Index error: Field '{}' does not exist in entity, please remove it from the `@index` directive.",
-            field_name,
-        ));
+                    "Index error: Field '{}' does not exist in entity, please remove it from the \
+                     `@index` directive.",
+                    field_name,
+                ));
             }
         }
         Ok(self)
@@ -669,10 +680,12 @@ impl MultiFieldIndex {
             if let Some(field) = fields.get(&single_field_index) {
                 if field.field_type.has_indexed_directive() {
                     return Err(anyhow!(
-                "EE202: The field '{}' is marked as an index. Please either remove the @index directive on the field, or the @index(fields: [\"{}\"]) directive on the entity",
-                field.name,
-                field.name
-            ));
+                        "EE202: The field '{}' is marked as an index. Please either remove the \
+                         @index directive on the field, or the @index(fields: [\"{}\"]) directive \
+                         on the entity",
+                        field.name,
+                        field.name
+                    ));
                 }
             }
         }
@@ -687,9 +700,10 @@ impl MultiFieldIndex {
             if let Some(field) = fields.get(field_name) {
                 if field.field_type.is_derived_from() {
                     return Err(anyhow!(
-                    "Index error: Field '{}' is a @derivedFrom field and cannot be indexed, please remove it from the `@index` directive.",
-                    field_name
-                ));
+                        "Index error: Field '{}' is a @derivedFrom field and cannot be indexed, \
+                         please remove it from the `@index` directive.",
+                        field_name
+                    ));
                 }
             }
         }
@@ -700,8 +714,9 @@ impl MultiFieldIndex {
         if let Some(single_field_index) = self.get_single_field_index() {
             if single_field_index == "id" {
                 return Err(anyhow!(
-                "Index error: Field 'id' is indexed by default in all entities, please remove the `@index` directive on it.",
-            ));
+                    "Index error: Field 'id' is indexed by default in all entities, please remove \
+                     the `@index` directive on it.",
+                ));
             }
         }
         Ok(self)
@@ -1353,7 +1368,10 @@ type TestEntity
 
         assert!(parsed_entity.is_err());
         let err_message = format!("{:?}", parsed_entity.unwrap_err());
-        assert!(err_message.contains("Index error: Duplicate index found on fields [\"id\", \"tokenId\"] in entity 'TestEntity'"));
+        assert!(err_message.contains(
+            "Index error: Duplicate index found on fields [\"id\", \"tokenId\"] in entity \
+             'TestEntity'"
+        ));
     }
 
     #[test]
@@ -1372,7 +1390,10 @@ type TestEntity @index(fields: ["tokenId"]) {
         assert!(parsed_entity.is_err());
         let err_message = format!("{:?}", parsed_entity.unwrap_err());
         println!("{err_message}");
-        assert!(err_message.contains("EE202: The field 'tokenId' is marked as an index. Please either remove the @index directive on the field, or the @index(fields: [\"tokenId\"]) directive on the entity"));
+        assert!(err_message.contains(
+            "EE202: The field 'tokenId' is marked as an index. Please either remove the @index \
+             directive on the field, or the @index(fields: [\"tokenId\"]) directive on the entity"
+        ));
     }
     #[test]
     fn more_than_one_derived_from_directive() {

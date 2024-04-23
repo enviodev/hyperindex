@@ -48,9 +48,10 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         match persisted_state_file {
             PersistedStateExists::Exists(ps) if &ps.envio_version != CURRENT_CRATE_VERSION => {
                 println!(
-                "Envio version '{}' does not match the previous version '{}' used in the generated directory",
-                CURRENT_CRATE_VERSION, &ps.envio_version
-            );
+                    "Envio version '{}' does not match the previous version '{}' used in the \
+                     generated directory",
+                    CURRENT_CRATE_VERSION, &ps.envio_version
+                );
                 println!("Purging generated directory",);
                 commands::codegen::remove_files_except_git(&project_paths.generated)
                     .await
