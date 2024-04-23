@@ -635,7 +635,7 @@ pub struct MultiFieldIndex(Vec<String>);
 
 impl MultiFieldIndex {
     fn new(field_names: Vec<String>) -> Self {
-        Self(field_names)
+        Self(field_names.into_iter().sorted().collect())
     }
 
     pub fn get_field_names(&self) -> &Vec<String> {
