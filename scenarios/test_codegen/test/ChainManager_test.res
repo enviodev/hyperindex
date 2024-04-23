@@ -28,6 +28,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
     let fetcherStateInit: FetchState.t = FetchState.makeRoot(
       ~contractAddressMapping=ContractAddressingMap.make(),
+      ~dynamicContracts=FetchState.DynamicContractsMap.empty,
       ~startBlock=0,
       ~endBlock=None,
     )
@@ -299,6 +300,7 @@ describe("determineNextEvent", () => {
       },
       contractAddressMapping: ContractAddressingMap.make(),
       fetchedEventQueue: item->Option.mapWithDefault(list{}, v => list{v}),
+      dynamicContracts: FetchState.DynamicContractsMap.empty
     }
 
     it(

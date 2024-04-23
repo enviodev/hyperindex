@@ -25,6 +25,7 @@ let make = (
   ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
   ~contractAddressMapping,
+  ~dynamicContracts,
   ~startBlock,
   ~endBlock,
   ~firstEventBlockNumber,
@@ -43,7 +44,9 @@ let make = (
   | Rpc(rpcConfig) => ("RPC", chainConfig->RpcWorker.make(~rpcConfig)->Rpc)
   }
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
-  let fetchState = FetchState.makeRoot(~contractAddressMapping, ~startBlock, ~endBlock)
+
+  let fetchState = FetchState.makeRoot(~contractAddressMapping, ~dynamicContracts, ~startBlock, ~endBlock)
+
   {
     logger,
     chainConfig,
@@ -86,6 +89,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) 
     ~numBatchesFetched=0,
     ~logger,
     ~eventFilters=None,
+    ~dynamicContracts=FetchState.DynamicContractsMap.empty,
   )
 }
 
@@ -114,18 +118,28 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
     )
 
   //Add all dynamic contracts from DB
-  let dynamicContracts =
+  let dynamicContractRegistrations =
     await DbFunctions.sql->DbFunctions.DynamicContractRegistry.readDynamicContractsOnChainIdAtOrBeforeBlock(
       ~chainId,
       ~startBlock,
     )
 
-  dynamicContracts->Array.forEach(({contractType, contractAddress}) =>
-    contractAddressMapping->ContractAddressingMap.addAddress(
-      ~name=contractType,
-      ~address=contractAddress,
-    )
-  )
+  let dynamicContracts =
+    dynamicContractRegistrations->Array.reduce(FetchState.DynamicContractsMap.empty, (
+      accum,
+      {contractType, contractAddress, eventId},
+    ) => {
+      //add address to contract address mapping
+      contractAddressMapping->ContractAddressingMap.addAddress(
+        ~name=contractType,
+        ~address=contractAddress,
+      )
+
+      let dynamicContractId = EventUtils.unpackEventIndex(eventId)
+
+      accum->FetchState.DynamicContractsMap.addAddress(dynamicContractId, contractAddress)
+    })
+
   let (
     firstEventBlockNumber,
     latestProcessedBlockChainMetadata,
@@ -145,6 +159,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
 
   make(
     ~contractAddressMapping,
+    ~dynamicContracts,
     ~chainConfig,
     ~startBlock,
     ~endBlock=chainConfig.endBlock,
