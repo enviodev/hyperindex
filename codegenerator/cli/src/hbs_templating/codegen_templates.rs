@@ -181,7 +181,7 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 }
 
 impl EntityParamTypeTemplate {
-    fn from_entity_field(field: &Field, config: &SystemConfig) -> Result<Self> {
+    fn from_entity_field(field: &Field, entity: &Entity, config: &SystemConfig) -> Result<Self> {
         let type_rescript = field
             .field_type
             .to_rescript_type(&config.schema)
@@ -198,7 +198,7 @@ impl EntityParamTypeTemplate {
             .context("Failed getting postgres type")?;
 
         let is_entity_field = field.field_type.is_entity_field(schema)?;
-        let is_indexed_field = field.field_type.is_indexed_field();
+        let is_indexed_field = field.is_indexed_field(entity);
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
@@ -237,7 +237,7 @@ impl EntityRecordTypeTemplate {
         let params: Vec<EntityParamTypeTemplate> = entity
             .get_fields()
             .iter()
-            .map(|field| EntityParamTypeTemplate::from_entity_field(field, config))
+            .map(|field| EntityParamTypeTemplate::from_entity_field(field, entity, config))
             .collect::<Result<_>>()
             .context(format!(
                 "Failed templating entity fields of entity: {}",
@@ -247,14 +247,15 @@ impl EntityRecordTypeTemplate {
         let mut params_lookup: HashMap<String, EntityParamTypeTemplate> = HashMap::new();
 
         entity.get_fields().iter().for_each(|field| {
-            let entity_param_template = EntityParamTypeTemplate::from_entity_field(field, config)
-                .with_context(|| {
-                    format!(
-                        "Failed templating field '{}' of entity '{}'",
-                        field.name, entity.name
-                    )
-                })
-                .unwrap();
+            let entity_param_template =
+                EntityParamTypeTemplate::from_entity_field(field, entity, config)
+                    .with_context(|| {
+                        format!(
+                            "Failed templating field '{}' of entity '{}'",
+                            field.name, entity.name
+                        )
+                    })
+                    .unwrap();
 
             params_lookup.insert(field.name.clone(), entity_param_template);
         });
@@ -286,8 +287,9 @@ impl EntityRecordTypeTemplate {
         let index_groups: Vec<EntityIndexParamGroup> = entity
             .multi_field_indexes
             .iter()
-            .map(|indexed_params| EntityIndexParamGroup {
-                params: indexed_params
+            .map(|multi_field_index| EntityIndexParamGroup {
+                params: multi_field_index
+                    .get_field_names()
                     .iter()
                     .map(|param_name| {
                         params_lookup
@@ -333,7 +335,7 @@ impl RequiredEntityEntityFieldTemplate {
             is_optional: field.field_type.is_optional(),
             is_array: field.field_type.is_array(),
             is_derived_from: field.field_type.is_derived_from(),
-            is_indexed: field.field_type.is_indexed_field(),
+            is_indexed: field.is_indexed_field(entity),
         }
     }
 }
