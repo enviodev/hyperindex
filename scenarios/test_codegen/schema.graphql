@@ -42,7 +42,7 @@ type Token
   @index(fields: ["tokenId", "collection"]) {
   id: ID!
   tokenId: BigInt! @index
-  collection: NftCollection!
+  collection: NftCollection! @index
   owner: User!
 }
 
@@ -60,4 +60,9 @@ type C {
   id: ID!
   a: A!
   stringThatIsMirroredToA: String!
+  d: [D!]! @derivedFrom(field: "c")
+}
+type D {
+  id: ID!
+  c: ID! @index
 }
