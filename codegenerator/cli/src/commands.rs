@@ -227,6 +227,7 @@ pub mod docker {
 }
 
 pub mod db_migrate {
+    use anyhow::anyhow;
 
     use std::process::ExitStatus;
 
@@ -241,10 +242,19 @@ pub mod db_migrate {
         let current_dir = &project_paths.generated;
         let exit = execute_command("pnpm", args, current_dir).await?;
 
-        if exit.success() {
-            persisted_state.upsert_to_db().await?;
+        if !exit.success() {
+            return Err(anyhow!("Failed to run db migrations"))?;
         }
-        Ok(())
+
+        match persisted_state.upsert_to_db().await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                return Err(anyhow!(format!(
+                    "Failed to upsert persisted state table: {}",
+                    e
+                )))?;
+            }
+        }
     }
 
     pub async fn run_drop_schema(project_paths: &ParsedProjectPaths) -> anyhow::Result<ExitStatus> {
@@ -267,9 +277,17 @@ pub mod db_migrate {
         let current_dir = &project_paths.generated;
         let exit = execute_command("pnpm", args, current_dir).await?;
 
-        if exit.success() {
-            persisted_state.upsert_to_db().await?;
+        if !exit.success() {
+            return Err(anyhow!("Failed to run db migrations"))?;
         }
-        Ok(())
+        match persisted_state.upsert_to_db().await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                return Err(anyhow!(format!(
+                    "Failed to upsert persisted state table: {}",
+                    e
+                )))?;
+            }
+        }
     }
 }
