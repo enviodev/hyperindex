@@ -497,13 +497,6 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
 
 let taskReducer = (state: t, task: task, ~dispatchAction) => {
 
-  if EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
-    state.chainManager.chainFetchers,
-  ) {
-    dispatchAction(SuccessExit)
-  }
-
-
   switch task {
   | UpdateChainMetaData => updateChainMetadataTable(state.chainManager)->ignore
   | NextQuery(chainCheck) =>
@@ -559,7 +552,14 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
           Promise.reject(exn)
         })
         ->ignore
-      | None => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+      | None => {
+        dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+          if EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
+            state.chainManager.chainFetchers,
+          ) {
+            dispatchAction(SuccessExit)
+          }
+        }
       }
     }
   }
