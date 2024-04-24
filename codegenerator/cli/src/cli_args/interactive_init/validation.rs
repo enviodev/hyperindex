@@ -149,6 +149,7 @@ mod tests {
 
 fn are_events_equivalent(event1: &ethers::abi::Event, event2: &ethers::abi::Event) -> bool {
     event1.name == event2.name
+        && event1.inputs.len() == event2.inputs.len()
         && event1
             .inputs
             .iter()
@@ -164,15 +165,15 @@ pub fn filter_duplicate_events(
     for (event_name, event_list) in events {
         if event_list.len() > 1 {
             let first_event = event_list[0].clone();
-            for event in event_list {
+            for event in event_list.iter().skip(1) {
                 if !are_events_equivalent(&first_event, &event) {
-                    let warning_message = "Note this is unimplemented! The code might behave \
+                    let warning_message = "Note: this is unimplemented! The code might behave \
                                            unexpectedly.\n"
                         .red()
                         .bold();
                     println!("{}", warning_message);
                     println!(
-                        "Found duplicate event: {} in contract abi. This event will be ignored. However, this second ignored event has the same name as the first event, but different inputs. This isn't possible in solidity, but technically possible through proxy contracts with multiple implementations. Handling his is currently unimplemented. Please ask the team on discord, or comment on our github issue if this is affecting you.\n\nhttps://github.com/enviodev/envio-hyperindexer-issues/issues/1\n",
+                        "Found duplicate event: {} in contract abi. This event will be ignored. However, this second ignored event has the same name as the first event, but different inputs. Handling this is currently unimplemented. Please ask the team on discord, or comment on our github issue if this is affecting you.\n\nhttps://github.com/enviodev/envio-hyperindexer-issues/issues/1\n",
                         event_name
                     );
                 }
