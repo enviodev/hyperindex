@@ -110,6 +110,7 @@ module {{contract.name.capitalized}}Contract = {
             let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
               chainId,
               eventId,
+              blockTimestamp: event.blockTimestamp,
               contractAddress,
               contractType: "{{contract_inner.name.capitalized}}",
             }

@@ -237,6 +237,41 @@ module.exports.deleteAllEntityHistoryAfterEventIdentifier = async (
 `;
 };
 
+const EventUtils = require("./EventUtils.bs.js");
+module.exports.deleteAllDynamicContractRegistrationsAfterEventIdentifier =
+  async (sql, { blockTimestamp, chainId, blockNumber, logIndex }) => {
+    const eventId = EventUtils.packEventIndexFromRecord({
+      blockNumber,
+      logIndex,
+    });
+
+    return await sql`
+      DELETE FROM "public"."dynamic_contract_registry"
+      WHERE 
+        block_timestamp > ${blockTimestamp} OR
+        (block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
+        (block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND event_id > ${eventId});
+      `;
+  };
+
+module.exports.deleteAllRawEventsAfterEventIdentifier = async (
+  sql,
+  { blockTimestamp, chainId, blockNumber, logIndex },
+) => {
+  const eventId = EventUtils.packEventIndexFromRecord({
+    blockNumber,
+    logIndex,
+  });
+
+  return await sql`
+      DELETE FROM "public"."raw_events"
+      WHERE 
+        block_timestamp > ${blockTimestamp} OR
+        (block_timestamp = ${blockTimestamp} AND chain_id > ${chainId}) OR
+        (block_timestamp = ${blockTimestamp} AND chain_id = ${chainId} AND event_id > ${eventId});
+      `;
+};
+
 module.exports.batchSetRawEvents = (sql, entityDataArray) => {
   return chunkBatchQuery(
     sql,
@@ -278,6 +313,7 @@ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
     entityDataArray,
     "chain_id",
     "event_id",
+    "block_timestamp",
     "contract_address",
     "contract_type"
   )}

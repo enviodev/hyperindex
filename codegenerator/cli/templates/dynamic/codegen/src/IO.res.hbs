@@ -691,10 +691,12 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   //valid event identifier, where all rows created after this eventIdentifier should
   //be deleted
   let rollbackTables = switch inMemoryStore.rollBackEventIdentifier {
-  | Some(eventIdentifier) => [
-      DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier(~eventIdentifier),
-      //TODO, add rollback for other tables
-    ]
+  | Some(eventIdentifier) =>
+    [
+      DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier,
+      DbFunctions.RawEvents.deleteAllRawEventsAfterEventIdentifier,
+      DbFunctions.DynamicContractRegistry.deleteAllDynamicContractRegistrationsAfterEventIdentifier,
+    ]->Belt.Array.map(fn => fn(~eventIdentifier))
   | None => []
   }
 

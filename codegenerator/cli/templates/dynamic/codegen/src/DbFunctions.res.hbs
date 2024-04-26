@@ -129,6 +129,12 @@ module RawEvents = {
 
     row->Belt.Array.get(0)->Belt.Option.map(row => row.blockNumber)
   }
+
+  @module("./DbFunctionsImplementation.js")
+  external deleteAllRawEventsAfterEventIdentifier: (
+    Postgres.sql,
+    ~eventIdentifier: Types.eventIdentifier,
+  ) => promise<unit> = "deleteAllRawEventsAfterEventIdentifier"
 }
 
 module DynamicContractRegistry = {
@@ -161,6 +167,12 @@ module DynamicContractRegistry = {
     ~chainId: chainId,
     ~startBlock: int,
   ) => promise<array<contractTypeAndAddress>> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
+
+  @module("./DbFunctionsImplementation.js")
+  external deleteAllDynamicContractRegistrationsAfterEventIdentifier: (
+    Postgres.sql,
+    ~eventIdentifier: Types.eventIdentifier,
+  ) => promise<unit> = "deleteAllDynamicContractRegistrationsAfterEventIdentifier"
 }
 
 type entityHistoryItem = {

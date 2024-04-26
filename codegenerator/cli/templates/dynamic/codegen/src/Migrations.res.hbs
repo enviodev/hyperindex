@@ -169,6 +169,7 @@ module DynamicContractRegistryTable = {
       CREATE TABLE IF NOT EXISTS public.dynamic_contract_registry (
         chain_id INTEGER NOT NULL,
         event_id NUMERIC NOT NULL,
+        block_timestamp INTEGER NOT NULL,
         contract_address TEXT NOT NULL,
         contract_type CONTRACT_TYPE NOT NULL,
         PRIMARY KEY (chain_id, contract_address)
