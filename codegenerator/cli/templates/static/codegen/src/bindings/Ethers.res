@@ -286,7 +286,7 @@ module JsonRpcProvider = {
     extraData: ethAddress,
     gasLimit: BigInt.t,
     gasUsed: BigInt.t,
-    hash: ethAddress,
+    hash: string,
     miner: ethAddress,
     nonce: int,
     number: int,

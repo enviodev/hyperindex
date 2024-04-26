@@ -94,8 +94,12 @@ let fetchBlockRange = async (
 
     let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)
 
-    let toBlockTimestampPromise =
-      blockLoader->LazyLoader.get(targetBlock)->Promise.thenResolve(block => block.timestamp)
+    let toBlockPromise = blockLoader->LazyLoader.get(targetBlock)
+
+    let firstBlockParentPromise =
+      fromBlock > 0
+        ? blockLoader->LazyLoader.get(fromBlock - 1)->Promise.thenResolve(res => res->Some)
+        : Promise.resolve(None)
 
     //Needs to be run on every loop in case of new registrations
     let contractInterfaceManager = ContractInterfaceManager.make(
@@ -157,7 +161,7 @@ let fetchBlockRange = async (
       ),
     }
 
-    let heighestQueriedBlockTimestamp = await toBlockTimestampPromise
+    let (optFirstBlockParent, toBlock) = (await firstBlockParentPromise, await toBlockPromise)
 
     let heighestQueriedBlockNumber = targetBlock
 
@@ -165,16 +169,19 @@ let fetchBlockRange = async (
       startFetchingBatchTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let reorgGuardStub: reorgGuard = {
-      firstBlockParentNumberAndHash: None,
+      firstBlockParentNumberAndHash: optFirstBlockParent->Option.map(b => {
+        ReorgDetection.blockNumber: b.number,
+        blockHash: b.hash,
+      }),
       lastBlockScannedData: {
-        blockNumber: 0,
-        blockTimestamp: 0,
-        blockHash: "0x1234",
+        blockNumber: toBlock.number,
+        blockTimestamp: toBlock.timestamp,
+        blockHash: toBlock.hash,
       },
     }
 
     {
-      latestFetchedBlockTimestamp: heighestQueriedBlockTimestamp,
+      latestFetchedBlockTimestamp: toBlock.timestamp,
       parsedQueueItems,
       heighestQueriedBlockNumber,
       stats: {
@@ -191,10 +198,18 @@ let fetchBlockRange = async (
   }
 }
 
-/**
-Currently just a stub to conform to signature
-*/
 let getBlockHashes = (self: t, ~blockNumbers) => {
-  let _ = (self, blockNumbers)
-  Ok([])->Promise.resolve
+  blockNumbers
+  ->Array.map(blockNum => self.blockLoader->LazyLoader.get(blockNum))
+  ->Promise.all
+  ->Promise.thenResolve(blocks => {
+    blocks
+    ->Array.map(b => {
+      ReorgDetection.blockNumber: b.number,
+      blockHash: b.hash,
+      blockTimestamp: b.timestamp,
+    })
+    ->Ok
+  })
+  ->Promise.catch(exn => exn->Error->Promise.resolve)
 }
