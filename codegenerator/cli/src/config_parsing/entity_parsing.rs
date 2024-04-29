@@ -29,7 +29,7 @@ pub struct Schema {
 
 enum TypeDef<'a> {
     Entity(&'a Entity),
-    Enum(&'a GraphQLEnum),
+    Enum,
 }
 
 impl Schema {
@@ -178,7 +178,7 @@ impl Schema {
                 name
             )),
             (Some(entity), None) => Ok(TypeDef::Entity(entity)),
-            (None, Some(entity)) => Ok(TypeDef::Enum(entity)),
+            (None, Some(_)) => Ok(TypeDef::Enum),
         }
     }
 
@@ -196,7 +196,7 @@ impl Schema {
                         let type_def = self.try_get_type_def(name)?;
 
                         match type_def {
-                            TypeDef::Enum(_) => Err(anyhow!(
+                            TypeDef::Enum => Err(anyhow!(
                                 "Cannot derive field {derived_from_field} from enum {name}. \
                                  derivedFrom is intended to be used with Entity type definitions"
                             ))?,
@@ -452,7 +452,7 @@ impl Entity {
                         |e| Some(Err(e)),
                         |type_def| match type_def {
                             TypeDef::Entity(entity) => Some(Ok((field, entity))),
-                            TypeDef::Enum(_) => None,
+                            TypeDef::Enum => None,
                         },
                     )
                 } else {
@@ -1266,7 +1266,7 @@ impl GqlScalar {
             GqlScalar::BigInt => "numeric", // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => "text",
-                TypeDef::Enum(_) => name.as_str(),
+                TypeDef::Enum => name.as_str(),
             },
         };
         Ok(converted.to_string())
@@ -1283,7 +1283,7 @@ impl GqlScalar {
             GqlScalar::Boolean => RescriptType::Bool,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => RescriptType::ID,
-                TypeDef::Enum(_) => RescriptType::EnumVariant(name.to_capitalized_options()),
+                TypeDef::Enum => RescriptType::EnumVariant(name.to_capitalized_options()),
             },
         };
         Ok(res_type)
