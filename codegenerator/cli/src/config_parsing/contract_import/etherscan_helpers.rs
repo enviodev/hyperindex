@@ -81,6 +81,24 @@ async fn get_contract_data_from_contract(
 // maximum backoff period for fetching result from explorer
 const MAXIMUM_BACKOFF: Duration = Duration::from_secs(32);
 
+// hide etherscan api key from error message
+fn hide_etherscan_api_key(input: &str) -> String {
+    let key_start = input.find("apikey=").unwrap_or(input.len());
+    let key_end = input[key_start..]
+        .find('&')
+        .map_or(input.len(), |pos| key_start + pos);
+
+    if key_start < input.len() {
+        let mut result = String::with_capacity(input.len());
+        result.push_str(&input[..key_start]);
+        result.push_str("apikey=<apikey>");
+        result.push_str(&input[key_end..]);
+        result
+    } else {
+        input.to_string()
+    }
+}
+
 async fn fetch_get_source_code_result_from_block_explorer(
     network: &NetworkWithExplorer,
     address: &H160,
@@ -89,21 +107,22 @@ async fn fetch_get_source_code_result_from_block_explorer(
     let mut refetch_delay = Duration::from_secs(2);
     let mut rate_limit_retry_count = 0;
 
-    let fail_if_maximum_is_exceeded = |current_refetch_delay: Duration, e| -> anyhow::Result<()> {
-        if current_refetch_delay >= MAXIMUM_BACKOFF {
-            Err(e).context(format!(
-                "Maximum backoff timeout {}s exceeded",
-                MAXIMUM_BACKOFF.as_secs()
-            ))
-        } else {
-            println!(
-                "Retrying in {}s due to failure: {}",
-                current_refetch_delay.as_secs(),
-                e
-            );
-            Ok(())
-        }
-    };
+    let fail_if_maximum_is_exceeded =
+        |current_refetch_delay: Duration, e: EtherscanError| -> anyhow::Result<()> {
+            if current_refetch_delay >= MAXIMUM_BACKOFF {
+                Err(e).context(format!(
+                    "Maximum backoff timeout {}s exceeded",
+                    MAXIMUM_BACKOFF.as_secs()
+                ))
+            } else {
+                println!(
+                    "Retrying in {}s due to failure: {}",
+                    current_refetch_delay.as_secs(),
+                    hide_etherscan_api_key(e.to_string().as_str())
+                );
+                Ok(())
+            }
+        };
 
     let contract_metadata: ContractMetadata = loop {
         let client = chain_helpers::get_etherscan_client(network, rate_limit_retry_count)
@@ -168,7 +187,8 @@ async fn fetch_get_source_code_result_from_block_explorer(
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
+    use super::*;
     use crate::config_parsing::chain_helpers::NetworkWithExplorer;
 
     // Integration test to see that a config file can be generated from a contract address
@@ -185,5 +205,18 @@ mod test {
         super::fetch_contract_auto_selection_from_etherscan(contract_address, &network)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn test_hide_api_key_with_key() {
+        let input = "error sending request for url (https://api.sepolia.basescan.org/api/?apikey=X5NZKY2RDIX8KVDDATSUY56HAKYS2QR44E&module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
+        let expected_output = "error sending request for url (https://api.sepolia.basescan.org/api/?apikey=<apikey>&module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
+        assert_eq!(hide_etherscan_api_key(input), expected_output);
+    }
+
+    #[test]
+    fn test_hide_api_key_without_key() {
+        let input = "error sending request for url (https://api.sepolia.basescan.org/api/?module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
+        assert_eq!(hide_etherscan_api_key(input), input);
     }
 }
