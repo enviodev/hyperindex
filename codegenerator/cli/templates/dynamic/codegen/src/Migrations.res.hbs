@@ -69,27 +69,19 @@ module PersistedState = {
   }
 }
 
-module SyncBatchMetadata = {
-  let createSyncBatchTable: unit => promise<unit> = async () => {
+module EndOfBlockRangeScannedData = {
+  let createEndOfBlockRangeScannedDataTable: unit => promise<unit> = async () => {
     @warning("-21")
     let _ = await %raw("sql`
-      CREATE TABLE IF NOT EXISTS public.sync_batch (
+      CREATE TABLE IF NOT EXISTS public.end_of_block_range_scanned_data (
         chain_id INTEGER NOT NULL,
-        block_timestamp_range_end INTEGER NOT NULL,
-        block_number_range_end INTEGER NOT NULL,
-        block_hash_range_end TEXT NOT NULL,
-        PRIMARY KEY (chain_id, block_number_range_end)
+        block_timestamp INTEGER NOT NULL,
+        block_number INTEGER NOT NULL,
+        block_hash TEXT NOT NULL,
+        PRIMARY KEY (chain_id, block_number)
       );
       `")
   }
-
-  @@warning("-21")
-  let dropSyncStateTable = async () => {
-    let _ = await %raw("sql`
-      DROP TABLE IF EXISTS public.sync_batch;
-    `")
-  }
-  @@warning("+21")
 }
 
 module RawEventsTable = {
@@ -662,9 +654,12 @@ let runUpMigrations = async (~shouldExit) => {
     exitCode := Failure
     Logging.errorWithExn(err, `EE800: Error creating entity history db function table`)->Promise.resolve
   })
-  await SyncBatchMetadata.createSyncBatchTable()->Promise.catch(err => {
+  await EndOfBlockRangeScannedData.createEndOfBlockRangeScannedDataTable()->Promise.catch(err => {
     exitCode := Failure
-    Logging.errorWithExn(err, `EE800: Error creating sync_batch table`)->Promise.resolve
+    Logging.errorWithExn(
+      err,
+      `EE800: Error creating end_of_block_range_scanned_data table`,
+    )->Promise.resolve
   })
   await RawEventsTable.createRawEventsTable()->Promise.catch(err => {
     exitCode := Failure

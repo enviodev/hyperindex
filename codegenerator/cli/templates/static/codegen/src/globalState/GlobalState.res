@@ -65,6 +65,12 @@ type action =
 type queryChain = CheckAllChains | Chain(chain)
 type task =
   | NextQuery(queryChain)
+  | UpdateEndOfBlockRangeScannedData({
+      chain: chain,
+      blockNumberThreshold: int,
+      blockTimestampThreshold: int,
+      nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
+    })
   | ProcessEventBatch
   | UpdateChainMetaData
   | Rollback
@@ -320,6 +326,21 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       ~currentHeight=currentBlockHeight,
     )
 
+    let updateEndOfBlockRangeScannedData = UpdateEndOfBlockRangeScannedData({
+      chain,
+      blockNumberThreshold: lastBlockScannedData.blockNumber -
+      chainFetcher.chainConfig.confirmedBlockThreshold,
+      blockTimestampThreshold: chainManager
+      ->ChainManager.getEarliestMultiChainTimestampInThreshold
+      ->Option.getWithDefault(0),
+      nextEndOfBlockRangeScannedData: {
+        chainId: chain->ChainMap.Chain.toChainId,
+        blockNumber: lastBlockScannedData.blockNumber,
+        blockTimestamp: lastBlockScannedData.blockTimestamp,
+        blockHash: lastBlockScannedData.blockHash,
+      },
+    })
+
     let nextState = {
       ...state,
       chainManager,
@@ -327,7 +348,15 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
 
     Prometheus.setFetchedEventsUntilHeight(~blockNumber=response.heighestQueriedBlockNumber, ~chain)
 
-    (nextState, [UpdateChainMetaData, ProcessEventBatch, NextQuery(Chain(chain))])
+    (
+      nextState,
+      [
+        UpdateChainMetaData,
+        updateEndOfBlockRangeScannedData,
+        ProcessEventBatch,
+        NextQuery(Chain(chain)),
+      ],
+    )
   } else {
     chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
     let chainFetcher = {
@@ -604,6 +633,33 @@ let injectedTaskReducer = async (
   ~dispatchAction,
 ) => {
   switch task {
+  | UpdateEndOfBlockRangeScannedData({
+      chain,
+      blockNumberThreshold,
+      blockTimestampThreshold,
+      nextEndOfBlockRangeScannedData,
+    }) =>
+    await DbFunctions.sql->Postgres.beginSql(sql => {
+      [
+        DbFunctions.EndOfBlockRangeScannedData.setEndOfBlockRangeScannedData(
+          sql,
+          nextEndOfBlockRangeScannedData,
+        ),
+        DbFunctions.EndOfBlockRangeScannedData.deleteStaleEndOfBlockRangeScannedDataForChain(
+          sql,
+          ~chainId=chain->ChainMap.Chain.toChainId,
+          ~blockTimestampThreshold,
+          ~blockNumberThreshold,
+        ),
+        DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
+          sql,
+          ~chainId=chain->ChainMap.Chain.toChainId,
+          ~blockNumberThreshold,
+          ~blockTimestampThreshold,
+        ),
+      ]
+    })
+
   | UpdateChainMetaData => await updateChainMetadataTable(state.chainManager)
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(

@@ -52,6 +52,39 @@ module ChainMetadata = {
   }
 }
 
+module EndOfBlockRangeScannedData = {
+  type endOfBlockRangeScannedData = {
+    @as("chain_id") chainId: int,
+    @as("block_timestamp") blockTimestamp: int,
+    @as("block_number") blockNumber: int,
+    @as("block_hash") blockHash: string,
+  }
+
+  @module("./DbFunctionsImplementation.js")
+  external batchSet: (Postgres.sql, array<endOfBlockRangeScannedData>) => promise<unit> =
+    "batchSetEndOfBlockRangeScannedData"
+
+  let setEndOfBlockRangeScannedData = (sql, endOfBlockRangeScannedData) =>
+    batchSet(sql, [endOfBlockRangeScannedData])
+
+  @module("./DbFunctionsImplementation.js")
+  external readEndOfBlockRangeScannedDataForChain: (
+    Postgres.sql,
+    ~chainId: int,
+  ) => promise<array<endOfBlockRangeScannedData>> = "readEndOfBlockRangeScannedDataForChain"
+
+  @module("./DbFunctionsImplementation.js")
+  external deleteStaleEndOfBlockRangeScannedDataForChain: (
+    Postgres.sql,
+    ~chainId: int,
+    //minimum blockNumber that should be kept in db
+    ~blockNumberThreshold: int,
+    //minimum blockTimestamp that should be kept in db
+    //(timestamp could be lower/higher than blockTimestampThreshold depending on multichain configuration)
+    ~blockTimestampThreshold: int,
+  ) => promise<unit> = "deleteStaleEndOfBlockRangeScannedDataForChain"
+}
+
 module EventSyncState = {
   @genType 
   type eventSyncState = {
@@ -204,6 +237,17 @@ let entityHistoryItemSchema = S.object((. s) => {
 })
 
 module EntityHistory = {
+  //Given chainId, blockTimestamp, blockNumber
+  //Delete all rows where chain_id = chainId and block_timestamp < blockTimestamp and block_number < blockNumber
+  //But keep 1 row that is satisfies this condition and has the most recent block_number
+  @module("./DbFunctionsImplementation.js")
+  external deleteAllEntityHistoryOnChainBeforeThreshold: (
+    Postgres.sql,
+    ~chainId: int,
+    ~blockNumberThreshold: int,
+    ~blockTimestampThreshold: int,
+  ) => promise<unit> = "deleteAllEntityHistoryOnChainBeforeThreshold"
+
   @module("./DbFunctionsImplementation.js")
   external batchSetInternal: (
     Postgres.sql,
