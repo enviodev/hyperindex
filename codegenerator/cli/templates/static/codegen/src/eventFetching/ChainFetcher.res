@@ -182,9 +182,12 @@ let cleanUpEventFilters = (self: t) => {
   //any that meet the cleanup condition
   | Some(eventFilters) => {
       ...self,
-      eventFilters: eventFilters
-      ->List.keep(eventFilter => !eventFilter.isNoLongerValid(self.fetchState))
-      ->Some,
+      eventFilters: switch eventFilters->List.keep(eventFilter =>
+        !eventFilter.isNoLongerValid(self.fetchState)
+      ) {
+      | list{} => None
+      | eventFilters => eventFilters->Some
+      },
     }
   }
 }
