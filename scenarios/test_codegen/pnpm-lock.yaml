@@ -175,14 +175,14 @@ importers:
         specifier: 18.2.0
         version: 18.2.0
       rescript-envsafe:
-        specifier: 2.0.0
-        version: 2.0.0(rescript-struct@5.1.1)(rescript@11.0.1)
+        specifier: 3.1.0
+        version: 3.1.0(rescript-schema@6.4.0)(rescript@11.0.1)
       rescript-express:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
-      rescript-struct:
-        specifier: 5.1.1
-        version: 5.1.1(rescript@11.0.1)
+      rescript-schema:
+        specifier: 6.4.0
+        version: 6.4.0(rescript@11.0.1)
       viem:
         specifier: 1.16.6
         version: 1.16.6(typescript@5.0.4)
@@ -5455,14 +5455,14 @@ packages:
       rescript-struct: 4.1.1(rescript@11.0.1)
     dev: true
 
-  /rescript-envsafe@2.0.0(rescript-struct@5.1.1)(rescript@11.0.1):
-    resolution: {integrity: sha512-M6zcbpG87GZTqUBSDlFygYxWv1nRhSaYzFr+N+spA+Pd86YSmOJ46SI+bAOP7G/TeScO6Zl0+ROp9cdDAdH9GQ==}
+  /rescript-envsafe@3.1.0(rescript-schema@6.4.0)(rescript@11.0.1):
+    resolution: {integrity: sha512-XphCDfDloSvUwX/dhghRIK81AMKez0rmXUXvLyVW7s3cjzWjHKMc0GTYwIJDB6J7RRmXuA8ZPTsphwEj9yVJeQ==}
     peerDependencies:
-      rescript: 11.0.x || ~11.0.0-rc
-      rescript-struct: 5.0.x
+      rescript: 11.x
+      rescript-schema: 6.x
     dependencies:
       rescript: 11.0.1
-      rescript-struct: 5.1.1(rescript@11.0.1)
+      rescript-schema: 6.4.0(rescript@11.0.1)
     dev: false
 
   /rescript-express@0.4.1(express@4.19.2):
@@ -5482,6 +5482,14 @@ packages:
     resolution: {integrity: sha512-1/SJmjH06xdeq1IFIIcKV6QKnidrav/gIc0Rw4GCUD0ceYPPZ5wDB51UFyk98in5N4gv8X/bTg6dVBMyRsC9tw==}
     dev: false
 
+  /rescript-schema@6.4.0(rescript@11.0.1):
+    resolution: {integrity: sha512-rBHtZOEVskKKAf7jfJicuTA1xsQRu2qBdB73FVtPsUSmtgIYpGGKk4YSURQss7WYQEHRds+zPjFLJWzeAnwsLg==}
+    peerDependencies:
+      rescript: 11.x
+    dependencies:
+      rescript: 11.0.1
+    dev: false
+
   /rescript-struct@4.1.1(rescript@11.0.1):
     resolution: {integrity: sha512-LmlFhnAMeQEGZhQJoEC8Mk/P0GgEWVawmQB2fbV9+ILzyTSESogKS2NtP6jd3/82joG5Nxon6Ml0SjpQqVHYhA==}
     peerDependencies:
@@ -5489,15 +5497,6 @@ packages:
     dependencies:
       rescript: 11.0.1
     dev: true
-
-  /rescript-struct@5.1.1(rescript@11.0.1):
-    resolution: {integrity: sha512-e2WOrwMvAgZaJBFAhMBdGZcSoieK6DKkzgQVqTvfTga+3vFGkvpH3sDVNF2qLEcyEC9wIcx1qcNYWaAVvlCKhQ==}
-    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
-    peerDependencies:
-      rescript: 11.0.x || ~11.0.0-rc
-    dependencies:
-      rescript: 11.0.1
-    dev: false
 
   /rescript@11.0.1:
     resolution: {integrity: sha512-7T4PRp/d0+CBNnY6PYKffFqo9tGZlvnZpboF/n+8SKS+JZ6VvXJO7W538VPZXf3EYx1COGAWWvkF9e/HgSAqHg==}

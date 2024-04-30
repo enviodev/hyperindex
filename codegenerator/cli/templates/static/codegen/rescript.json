@@ -29,12 +29,12 @@
   "bs-dependencies": [
     "@ryyppy/rescript-promise",
     "rescript-envsafe",
-    "rescript-struct",
+    "rescript-schema",
     "@greenlabs/ppx-spice",
     "rescript-express",
     "@glennsl/rescript-fetch",
     "@rescript/react"
   ],
   "ppx-flags": ["@greenlabs/ppx-spice/ppx"],
-  "bsc-flags": ["-open RescriptStruct"]
+  "bsc-flags": ["-open RescriptSchema"]
 }
