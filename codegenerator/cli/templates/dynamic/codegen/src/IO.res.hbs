@@ -30,6 +30,7 @@ module InMemoryStore = {
     let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
 
     let initValue = (
+      // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
       ~allowOverWriteEntity=false,
       ~key: StoreItem.key,
       ~entity: option<StoreItem.t>,
@@ -63,6 +64,7 @@ module InMemoryStore = {
         if !Config.placeholder_is_near_head_of_chain_or_in_dev_mode ||
         //Rollback initial state cases should not save history
         !previous_values.latest.shouldSaveHistory ||
+        // This prevents two db actions in the same event on the same entity from being recorded to the history table.
         previous_values.latest.eventIdentifier == entity.eventIdentifier =>
         Updated({
           ...previous_values,
