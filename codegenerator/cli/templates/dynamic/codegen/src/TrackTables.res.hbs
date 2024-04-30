@@ -1,26 +1,10 @@
 %%raw(`globalThis.fetch = require('node-fetch')`)
 open Fetch
 
-%%private(let envSafe = EnvSafe.make())
-
-let hasuraGraphqlEndpoint = EnvUtils.getStringEnvVar(
-  ~envSafe,
-  ~fallback="http://localhost:8080/v1/metadata",
-  "HASURA_GRAPHQL_ENDPOINT",
-)
-
-let hasuraRole = EnvUtils.getStringEnvVar(~envSafe, ~fallback="admin", "HASURA_GRAPHQL_ROLE")
-
-let hasuraSecret = EnvUtils.getStringEnvVar(
-  ~envSafe,
-  ~fallback="testing",
-  "HASURA_GRAPHQL_ADMIN_SECRET",
-)
-
 let headers = {
   "Content-Type": "application/json",
-  "X-Hasura-Role": hasuraRole,
-  "X-Hasura-Admin-Secret": hasuraSecret,
+  "X-Hasura-Role": Env.Hasura.role,
+  "X-Hasura-Admin-Secret": Env.Hasura.secret,
 }
 
 @spice
@@ -56,7 +40,7 @@ let clearHasuraMetadata = async () => {
   }
 
   let response = await fetch(
-    hasuraGraphqlEndpoint,
+    Env.Hasura.graphqlEndpoint,
     {
       method: #POST,
       body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
@@ -98,7 +82,7 @@ let trackTable = async (~tableName: string) => {
   }
 
   let response = await fetch(
-    hasuraGraphqlEndpoint,
+    Env.Hasura.graphqlEndpoint,
     {
       method: #POST,
       body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
@@ -141,13 +125,13 @@ let createSelectPermissions = async (~tableName: string) => {
       "permission": {
         "columns": "*",
         "filter": Js.Obj.empty(),
-        "limit": Env.hasuraResponseLimit
+        "limit": Env.Hasura.responseLimit,
       },
     },
   }
 
   let response = await fetch(
-    hasuraGraphqlEndpoint,
+    Env.Hasura.graphqlEndpoint,
     {
       method: #POST,
       body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
@@ -193,7 +177,7 @@ let createEntityRelationship = async (
   let bodyString = `{"type": "pg_create_${relationshipType}_relationship","args": {"table": "${tableName}","name": "${objectName}","source": "default","using": {"manual_configuration": {"remote_table": "${mappedEntity}","column_mapping": {${derivedFromTo}}}}}}`
 
   let response = await fetch(
-    hasuraGraphqlEndpoint,
+    Env.Hasura.graphqlEndpoint,
     {
       method: #POST,
       body: bodyString->Body.string,

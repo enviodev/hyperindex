@@ -41,29 +41,6 @@ type chainConfig = {
 
 type chainConfigs = ChainMap.t<chainConfig>
 
-// Logging:
-%%private(let envSafe = EnvSafe.make())
-
-let getLogLevelConfig = (~name, ~default): Pino.logLevel =>
-  envSafe->EnvSafe.get(
-    ~name,
-    ~struct=S.union([
-      S.literalVariant(String("trace"), #trace),
-      S.literalVariant(String("debug"), #debug),
-      S.literalVariant(String("info"), #info),
-      S.literalVariant(String("warn"), #warn),
-      S.literalVariant(String("error"), #error),
-      S.literalVariant(String("fatal"), #fatal),
-      S.literalVariant(String("udebug"), #udebug),
-      S.literalVariant(String("uinfo"), #uinfo),
-      S.literalVariant(String("uwarn"), #uwarn),
-      S.literalVariant(String("uerror"), #uerror),
-      S.literalVariant(String(""), default),
-      S.literalVariant(EmptyOption, default),
-    ]),
-    (),
-  )
-
 let configShouldUseHypersyncClientDecoder = {{should_use_hypersync_client_decoder}}
 
 /**
@@ -74,97 +51,28 @@ event_decoder: "viem" || "hypersync-client"
 ```
 */
 let shouldUseHypersyncClientDecoder =
-  envSafe->EnvSafe.get(
-    ~name="USE_HYPERSYNC_CLIENT_DECODER",
-    ~struct=S.bool(),
-    ~devFallback=configShouldUseHypersyncClientDecoder,
-    (),
+  Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
+    configShouldUseHypersyncClientDecoder,
   )
 
 let configIsUnorderedMultichainMode = {{is_unordered_multichain_mode}}
-/**
-Used for backwards compatability
-*/
-let unstable__temp_unordered_head_mode = envSafe->EnvSafe.get(
-  ~name="UNSTABLE__TEMP_UNORDERED_HEAD_MODE",
-  ~struct=S.bool(),
-  ~devFallback=false,
-  (),
-)
 
 let isUnorderedMultichainMode =
-  envSafe->EnvSafe.get(
-    ~name="UNORDERED_MULTICHAIN_MODE",
-    ~struct=S.bool(),
-    ~devFallback=configIsUnorderedMultichainMode || unstable__temp_unordered_head_mode,
-    (),
+  Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
+    Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
+      configIsUnorderedMultichainMode,
+    ),
   )
 
-let logFilePath =
-  envSafe->EnvSafe.get(~name="LOG_FILE", ~struct=S.string(), ~devFallback="logs/envio.log", ())
-let userLogLevel = getLogLevelConfig(~name="LOG_LEVEL", ~default=#info)
-let defaultFileLogLevel = getLogLevelConfig(~name="FILE_LOG_LEVEL", ~default=#trace)
-
-type logStrategyType =
-  EcsFile | EcsConsole | EcsConsoleMultistream | FileOnly | ConsoleRaw | ConsolePretty | Both
-let logStrategy = envSafe->EnvSafe.get(
-  ~name="LOG_STRATEGY",
-  ~struct=S.union([
-    S.literalVariant(String("ecs-file"), EcsFile),
-    S.literalVariant(String("ecs-console"), EcsConsole),
-    S.literalVariant(String("ecs-console-multistream"), EcsConsoleMultistream),
-    S.literalVariant(String("file-only"), FileOnly),
-    S.literalVariant(String("console-raw"), ConsoleRaw),
-    S.literalVariant(String("console-pretty"), ConsolePretty),
-    S.literalVariant(String("both-prettyconsole"), Both),
-    // Two default values are pretty print to the console only.
-    S.literalVariant(String(""), ConsolePretty),
-    S.literalVariant(EmptyOption, ConsolePretty),
-  ]),
-  (),
-)
-
 let db: Postgres.poolConfig = {
-  host: envSafe->EnvSafe.get(
-    ~name="ENVIO_PG_HOST",
-    ~struct=S.string(),
-    ~devFallback="localhost",
-    (),
-  ),
-  port: envSafe->EnvSafe.get(
-    ~name="ENVIO_PG_PORT",
-    ~struct=S.int()->S.Int.port(),
-    ~devFallback=5433,
-    (),
-  ),
-  user: envSafe->EnvSafe.get(
-    ~name="ENVIO_PG_USER",
-    ~struct=S.string(),
-    ~devFallback="postgres",
-    (),
-  ),
-  password: envSafe->EnvSafe.get(
-    ~name="ENVIO_POSTGRES_PASSWORD",
-    ~struct=S.string(),
-    ~devFallback="testing",
-    (),
-  ),
-  database: envSafe->EnvSafe.get(
-    ~name="ENVIO_PG_DATABASE",
-    ~struct=S.string(),
-    ~devFallback="envio-dev",
-    (),
-  ),
-  ssl: envSafe->EnvSafe.get(
-    ~name="ENVIO_PG_SSL_MODE",
-    ~struct=S.string(),
-    //this is a dev fallback option for local deployments, shouldn't run in the prod env
-    //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
-    ~devFallback=false->Obj.magic,
-    (),
-  ),
+  host: Env.Db.host,
+  port: Env.Db.port,
+  user: Env.Db.user,
+  password: Env.Db.password,
+  database: Env.Db.database,
+  ssl: Env.Db.ssl,
   // TODO: think how we want to pipe these logs to pino.
-  onnotice: userLogLevel == #warn || userLogLevel == #error ? None : Some(() => ()),
+  onnotice: Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(() => ()),
 }
 
 let getSyncConfig = ({
@@ -175,28 +83,20 @@ let getSyncConfig = ({
   backoffMillis,
   queryTimeoutMillis,
 }) => {
-  initialBlockInterval: EnvUtils.getIntEnvVar(
-    ~envSafe,
-    "UNSTABLE__SYNC_CONFIG_INITIAL_BLOCK_INTERVAL",
-    ~fallback=initialBlockInterval,
+  initialBlockInterval: Env.Configurable.SyncConfig.initialBlockInterval->Belt.Option.getWithDefault(
+    initialBlockInterval,
   ),
   // After an RPC error, how much to scale back the number of blocks requested at once
-  backoffMultiplicative: EnvUtils.getFloatEnvVar(
-    ~envSafe,
-    "UNSTABLE__SYNC_CONFIG_BACKOFF_MULTIPLICATIVE",
-    ~fallback=backoffMultiplicative,
+  backoffMultiplicative: Env.Configurable.SyncConfig.backoffMultiplicative->Belt.Option.getWithDefault(
+    backoffMultiplicative,
   ),
   // Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch
-  accelerationAdditive: EnvUtils.getIntEnvVar(
-    ~envSafe,
-    "UNSTABLE__SYNC_CONFIG_ACCELERATION_ADDITIVE",
-    ~fallback=accelerationAdditive,
+  accelerationAdditive: Env.Configurable.SyncConfig.accelerationAdditive->Belt.Option.getWithDefault(
+    accelerationAdditive,
   ),
   // Do not further increase the block interval past this limit
-  intervalCeiling: EnvUtils.getIntEnvVar(
-    ~envSafe,
-    "UNSTABLE__SYNC_CONFIG_INTERVAL_CEILING",
-    ~fallback=intervalCeiling,
+  intervalCeiling: Env.Configurable.SyncConfig.intervalCeiling->Belt.Option.getWithDefault(
+    intervalCeiling,
   ),
   // After an error, how long to wait before retrying
   backoffMillis,
@@ -258,12 +158,3 @@ let getConfig = (chain: ChainMap.Chain.t) =>
   }
 
 let config: chainConfigs = ChainMap.make(getConfig)
-
-let metricsPort =
-  envSafe->EnvSafe.get(~name="METRICS_PORT", ~struct=S.int()->S.Int.port(), ~devFallback=9898, ())
-
-let tuiOffEnvVar =
-  envSafe->EnvSafe.get(~name="TUI_OFF", ~struct=S.bool(), ~devFallback=false, ())
-
-// You need to close the envSafe after you're done with it so that it immediately tells you about your  misconfigured environment on startup.
-envSafe->EnvSafe.close()

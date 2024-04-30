@@ -19,7 +19,7 @@ let logLevels = [
 
 let pinoPretty: Transport.transportTarget = {
   target: "pino-pretty",
-  level: Config.userLogLevel, // NOTE: - this log level only is used if this transport is running in its own worker (ie there are multiple transports), otherwise it is overridden by the top level config.
+  level: Env.userLogLevel, // NOTE: - this log level only is used if this transport is running in its own worker (ie there are multiple transports), otherwise it is overridden by the top level config.
   options: {
     "customLevels": logLevels,
     "sync": true,
@@ -33,20 +33,20 @@ let pinoPretty: Transport.transportTarget = {
 let pinoFile: Transport.transportTarget = {
   target: "pino/file",
   options: {
-    "destination": Config.logFilePath,
+    "destination": Env.logFilePath,
     "append": true,
     "mkdir": true,
   }->Transport.makeTransportOptions,
-  level: Config.defaultFileLogLevel,
+  level: Env.defaultFileLogLevel,
 }
 
 let makeMultiStreamLogger = MultiStreamLogger.make(
-  ~userLogLevel=Config.userLogLevel,
-  ~defaultFileLogLevel=Config.defaultFileLogLevel,
+  ~userLogLevel=Env.userLogLevel,
+  ~defaultFileLogLevel=Env.defaultFileLogLevel,
   ~customLevels=logLevels,
 )
 
-let logger = switch Config.logStrategy {
+let logger = switch Env.logStrategy {
 | EcsFile =>
   makeWithOptionsAndTransport(
     {
@@ -59,20 +59,20 @@ let logger = switch Config.logStrategy {
 | EcsConsole =>
   make({
     ...Pino.ECS.make(),
-    level: Config.userLogLevel,
+    level: Env.userLogLevel,
     customLevels: logLevels,
   })
 | FileOnly =>
   makeWithOptionsAndTransport(
     {
       customLevels: logLevels,
-      level: Config.defaultFileLogLevel,
+      level: Env.defaultFileLogLevel,
     },
     Transport.make(pinoFile),
   )
 | ConsoleRaw => makeMultiStreamLogger(~logFile=None, ~options=None)
 | ConsolePretty => makeMultiStreamLogger(~logFile=None, ~options=None)
-| Both => makeMultiStreamLogger(~logFile=Some(Config.logFilePath), ~options=None)
+| Both => makeMultiStreamLogger(~logFile=Some(Env.logFilePath), ~options=None)
 }
 
 let setLogLevel = (level: Pino.logLevel) => {

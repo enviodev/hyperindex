@@ -63,7 +63,10 @@ describe("E2E Integration Test", () => {
       currentlyProcessingBatch: false,
       chainManager,
       maxBatchSize: Env.maxProcessBatchSize,
-      maxPerChainQueueSize: Env.maxPerChainQueueSize,
+      maxPerChainQueueSize: {
+        let numChains = Config.config->ChainMap.size
+        Env.maxEventFetchedQueueSize / numChains
+      },
       indexerStartTime: Js.Date.make(),
     }
 
