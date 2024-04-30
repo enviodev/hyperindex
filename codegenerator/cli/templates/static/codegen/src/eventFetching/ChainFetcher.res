@@ -66,7 +66,7 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) => {
+let makeFromConfig = (chainConfig: Config.chainConfig) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let contractAddressMapping = {
     let m = ContractAddressingMap.make()
@@ -75,6 +75,10 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) 
     m->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
     m
   }
+
+  let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
+    ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
+  )
 
   make(
     ~contractAddressMapping,
@@ -96,7 +100,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) 
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedHashes) => {
+let makeFromDbState = async (chainConfig: Config.chainConfig) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let contractAddressMapping = {
     let m = ContractAddressingMap.make()
@@ -153,8 +157,24 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
   | None => (None, None, None)
   }
 
+  let endOfBlockRangeScannedData =
+    await DbFunctions.sql->DbFunctions.EndOfBlockRangeScannedData.readEndOfBlockRangeScannedDataForChain(
+      ~chainId,
+    )
+
+  let lastBlockScannedHashes =
+    endOfBlockRangeScannedData
+    ->Array.map(({blockNumber, blockHash, blockTimestamp}) => {
+      ReorgDetection.blockNumber,
+      blockHash,
+      blockTimestamp,
+    })
+    ->ReorgDetection.LastBlockScannedHashes.makeWithData(
+      ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
+    )
+
   //TODO create filter to only accept events with blockNumber AND logIndex
-  //higher than stored in chain metadata
+  //higher than stored in chain metadblockNumber, blockHash, blockTimestampata
   let eventFilters = None
 
   make(

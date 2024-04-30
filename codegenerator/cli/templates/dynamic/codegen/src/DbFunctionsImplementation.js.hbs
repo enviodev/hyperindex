@@ -337,7 +337,8 @@ module.exports.readEndOfBlockRangeScannedDataForChain = (sql, chainId) => {
   return sql`
     SELECT * FROM "public"."end_of_block_range_scanned_data"
     WHERE
-      chain_id = ${chainId};`;
+      chain_id = ${chainId}
+      ORDER BY block_number ASC;`;
 };
 
 module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (

@@ -101,14 +101,7 @@ let determineNextEvent = (
 }
 
 let makeFromConfig = (~configs: Config.chainConfigs): t => {
-  let chainFetchers = configs->ChainMap.map(chainConfig => {
-    let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
-      ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
-    )
-
-    chainConfig->ChainFetcher.makeFromConfig(~lastBlockScannedHashes)
-  })
-
+  let chainFetchers = configs->ChainMap.map(ChainFetcher.makeFromConfig)
   {
     chainFetchers,
     arbitraryEventPriorityQueue: list{},
@@ -121,11 +114,7 @@ let makeFromDbState = async (~configs: Config.chainConfigs): t => {
     await configs
     ->ChainMap.entries
     ->Array.map(async ((chain, chainConfig)) => {
-      let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
-        ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
-      )
-
-      (chain, await chainConfig->ChainFetcher.makeFromDbState(~lastBlockScannedHashes))
+      (chain, await chainConfig->ChainFetcher.makeFromDbState)
     })
     ->Promise.all
 
