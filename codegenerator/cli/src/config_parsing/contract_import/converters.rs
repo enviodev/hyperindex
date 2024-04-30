@@ -303,8 +303,8 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
 // Logic to get the event handler directory based on the language
 fn get_event_handler_directory(language: &Language) -> String {
     match language {
-        Language::Rescript => "./src/EventHandlers.bs.js".to_string(),
-        Language::Typescript => "src/EventHandlers.ts".to_string(),
-        Language::Javascript => "./src/EventHandlers.js".to_string(),
+        Language::ReScript => "./src/EventHandlers.bs.js".to_string(),
+        Language::TypeScript => "src/EventHandlers.ts".to_string(),
+        Language::JavaScript => "./src/EventHandlers.js".to_string(),
     }
 }

@@ -55,9 +55,9 @@ impl InitTemplates {
                 .context("Failed to diff generated from root path")?;
         let template = InitTemplates {
             project_name,
-            is_rescript: lang == &Language::Rescript,
-            is_typescript: lang == &Language::Typescript,
-            is_javascript: lang == &Language::Javascript,
+            is_rescript: lang == &Language::ReScript,
+            is_typescript: lang == &Language::TypeScript,
+            is_javascript: lang == &Language::JavaScript,
             envio_version,
             relative_path_from_root_to_generated,
         };
@@ -112,7 +112,7 @@ mod test {
     fn test_new_init_template() {
         let init_temp = InitTemplates::new(
             "my-project".to_string(),
-            &Language::Rescript,
+            &Language::ReScript,
             &ParsedProjectPaths::default(),
         )
         .unwrap();

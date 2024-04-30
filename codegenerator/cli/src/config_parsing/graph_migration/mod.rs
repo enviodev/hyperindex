@@ -114,9 +114,9 @@ pub struct BlockHandler {
 // Logic to get the event handler directory based on the language
 fn get_event_handler_directory(language: &Language) -> String {
     match language {
-        Language::Rescript => "./src/EventHandlers.bs.js".to_string(),
-        Language::Typescript => "src/EventHandlers.ts".to_string(),
-        Language::Javascript => "./src/EventHandlers.js".to_string(),
+        Language::ReScript => "./src/EventHandlers.bs.js".to_string(),
+        Language::TypeScript => "src/EventHandlers.ts".to_string(),
+        Language::JavaScript => "./src/EventHandlers.js".to_string(),
     }
 }
 
@@ -303,7 +303,7 @@ pub async fn generate_config_from_subgraph_id(
             // TODO: update to the final rpc url
             sync_source: None,
             start_block: 0,
-            end_block: None, 
+            end_block: None,
             contracts: vec![],
         };
         // Iterate through contracts to get contract name, abi file path, address and event names
@@ -446,7 +446,7 @@ mod test {
         let temp_dir = TempDir::new("temp_graph_migration_folder").unwrap();
         // subgraph ID of USDC on Ethereum mainnet
         let cid: &str = "QmU5V3jy56KnFbxX2uZagvMwocYZASzy1inX828W2XWtTd";
-        let language: Language = Language::Rescript;
+        let language: Language = Language::ReScript;
         let project_root = PathBuf::from(temp_dir.path());
         super::generate_config_from_subgraph_id(&project_root, cid, &language)
             .await
@@ -536,9 +536,9 @@ mod test {
     // Unit test to check that the correct event handler directory is returned based on the language
     #[test]
     fn test_get_event_handler_directory() {
-        let language_1: Language = Language::Rescript;
-        let language_2: Language = Language::Javascript;
-        let language_3: Language = Language::Typescript;
+        let language_1: Language = Language::ReScript;
+        let language_2: Language = Language::JavaScript;
+        let language_3: Language = Language::TypeScript;
         let event_handler_directory_1 = super::get_event_handler_directory(&language_1);
         let event_handler_directory_2 = super::get_event_handler_directory(&language_2);
         let event_handler_directory_3 = super::get_event_handler_directory(&language_3);

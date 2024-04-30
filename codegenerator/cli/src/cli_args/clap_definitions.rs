@@ -240,7 +240,7 @@ pub enum Template {
 )]
 ///Which language do you want to write in?
 pub enum Language {
-    Javascript,
-    Typescript,
-    Rescript,
+    JavaScript,
+    TypeScript,
+    ReScript,
 }

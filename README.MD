@@ -70,13 +70,13 @@ Then choose a template out of the possible options
 [↑↓ to move, enter to select, type to filter]
 ```
 
-Then choose a language from Javascript, Typescript or Rescript to write the event handlers file.
+Then choose a language from JavaScript, TypeScript or ReScript to write the event handlers file.
 
 ```
 ? Which language would you like to use?
-> "Javascript"
-  "Typescript"
-  "Rescript"
+> "JavaScript"
+  "TypeScript"
+  "ReScript"
 [↑↓ to move, enter to select, type to filter
 ```
 

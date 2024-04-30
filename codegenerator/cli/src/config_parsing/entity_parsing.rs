@@ -801,7 +801,7 @@ impl RescriptType {
         match self {
             RescriptType::Int => "0".to_string(),
             RescriptType::Float => "0.0".to_string(),
-            RescriptType::BigInt => "Ethers.BigInt.zero".to_string(), //TODO: Migrate to RescriptCore on Rescript migration
+            RescriptType::BigInt => "Ethers.BigInt.zero".to_string(), //TODO: Migrate to RescriptCore on ReScript migration
             RescriptType::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
             RescriptType::String => "\"foo\"".to_string(),
             RescriptType::ID => "\"my_id\"".to_string(),

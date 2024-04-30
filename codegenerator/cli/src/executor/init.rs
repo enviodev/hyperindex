@@ -172,7 +172,7 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
         return Err(anyhow!("Failed to complete post codegen command sequence"))?;
     }
 
-    if parsed_init_args.language == Language::Rescript {
+    if parsed_init_args.language == Language::ReScript {
         let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
         if !res_build_exit.success() {
             return Err(anyhow!("Failed to build rescript"))?;
