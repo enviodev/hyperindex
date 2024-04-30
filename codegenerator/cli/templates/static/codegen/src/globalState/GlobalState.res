@@ -64,7 +64,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t) => {
         },
         numBatchesFetched: cf.numBatchesFetched,
         latestFetchedBlockNumber,
-        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock
+        timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock,
       }
       chainMetadata
     })
@@ -416,8 +416,8 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
-  | SuccessExit =>   
-    NodeJs.Process.process->NodeJs.Process.exit()
+  | SuccessExit =>
+    NodeJsLocal.process->NodeJsLocal.exitWithCode(Success)
     (state, [])
   | ErrorExit(errHandler) =>
     errHandler->ErrorHandling.log
@@ -496,12 +496,9 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
 }
 
 let taskReducer = (state: t, task: task, ~dispatchAction) => {
-
   switch task {
   | UpdateChainMetaData => updateChainMetadataTable(state.chainManager)->ignore
   | NextQuery(chainCheck) =>
-
-
     let fetchForChain = checkAndFetchForChain(~state, ~dispatchAction)
 
     switch chainCheck {
@@ -512,7 +509,6 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
       state.chainManager.chainFetchers->ChainMap.keys->Array.forEach(fetchForChain)
     }
   | ProcessEventBatch =>
-      
     if !state.currentlyProcessingBatch {
       switch state.chainManager->ChainManager.createBatch(~maxBatchSize=state.maxBatchSize) {
       | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
@@ -553,9 +549,11 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
         })
         ->ignore
       | None => {
-        dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
-          if EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
-            state.chainManager.chainFetchers,
+          dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
+          if (
+            EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
+              state.chainManager.chainFetchers,
+            )
           ) {
             dispatchAction(SuccessExit)
           }

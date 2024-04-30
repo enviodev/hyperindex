@@ -33,8 +33,7 @@
     "@greenlabs/ppx-spice",
     "rescript-express",
     "@glennsl/rescript-fetch",
-    "@rescript/react",
-    "rescript-nodejs"
+    "@rescript/react"
   ],
   "ppx-flags": ["@greenlabs/ppx-spice/ppx"],
   "bsc-flags": ["-open RescriptStruct"]
