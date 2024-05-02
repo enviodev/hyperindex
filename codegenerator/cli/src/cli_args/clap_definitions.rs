@@ -240,7 +240,10 @@ pub enum Template {
 )]
 ///Which language do you want to write in?
 pub enum Language {
+    #[clap(name = "javascript")]
     JavaScript,
+    #[clap(name = "typescript")]
     TypeScript,
+    #[clap(name = "rescript")]
     ReScript,
 }
