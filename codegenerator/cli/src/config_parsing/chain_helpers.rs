@@ -414,33 +414,33 @@ impl NetworkWithExplorer {
             }
             NetworkWithExplorer::Holesky => BlockExplorerApi::custom(
                 "holesky.etherscan.io",
-                "api.holesky.etherscan.io",
+                "api-holesky.etherscan.io",
                 api_key,
             ),
             NetworkWithExplorer::Scroll => {
                 BlockExplorerApi::custom("scrollscan.com", "api.scrollscan.com", api_key)
             }
             NetworkWithExplorer::ArbitrumSepolia => {
-                BlockExplorerApi::custom("sepolia.arbiscan.io", "api.sepolia.arbiscan.io", api_key)
+                BlockExplorerApi::custom("sepolia.arbiscan.io", "api-sepolia.arbiscan.io", api_key)
             }
             NetworkWithExplorer::Kroma => {
                 BlockExplorerApi::custom("kromascan.com", "api.kromascan.com", api_key)
             }
             NetworkWithExplorer::BaseSepolia => BlockExplorerApi::custom(
                 "sepolia.basescan.org",
-                "api.sepolia.basescan.org",
+                "api-sepolia.basescan.org",
                 api_key,
             ),
             NetworkWithExplorer::OptimismSepolia => BlockExplorerApi::custom(
                 "sepolia-optimistic.etherscan.io",
-                "api.sepolia-optimistic.etherscan.io",
+                "api-sepolia-optimistic.etherscan.io",
                 api_key,
             ),
             NetworkWithExplorer::Blast => {
                 BlockExplorerApi::custom("blastscan.io", "api.blastscan.io", api_key)
             }
             NetworkWithExplorer::BlastSepolia => {
-                BlockExplorerApi::custom("blastscan.io", "api.testnet.blastscan.io", api_key)
+                BlockExplorerApi::custom("blastscan.io", "api-testnet.blastscan.io", api_key)
             }
             _ => BlockExplorerApi::default_ethers(api_key),
         }

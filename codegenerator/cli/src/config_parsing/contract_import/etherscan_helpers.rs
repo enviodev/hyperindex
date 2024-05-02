@@ -209,14 +209,14 @@ mod tests {
 
     #[test]
     fn test_hide_api_key_with_key() {
-        let input = "error sending request for url (https://api.sepolia.basescan.org/api/?apikey=X5NZKY2RDIX8KVDDATSUY56HAKYS2QR44E&module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
-        let expected_output = "error sending request for url (https://api.sepolia.basescan.org/api/?apikey=<apikey>&module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
+        let input = "error sending request for url (https://api-sepolia.basescan.org/api/?apikey=X5NZKY2RDIX8KVDDATSUY56HAKYS2QR44E&module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
+        let expected_output = "error sending request for url (https://api-sepolia.basescan.org/api/?apikey=<apikey>&module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
         assert_eq!(hide_etherscan_api_key(input), expected_output);
     }
 
     #[test]
     fn test_hide_api_key_without_key() {
-        let input = "error sending request for url (https://api.sepolia.basescan.org/api/?module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
+        let input = "error sending request for url (https://api-sepolia.basescan.org/api/?module=contract&action=getsourcecode&address=0x1552b0dcac344ffa9702dbafa6efa5ebefb62a82): error trying to connect: dns error: failed to lookup address information: nodename nor servname provided, or not known";
         assert_eq!(hide_etherscan_api_key(input), input);
     }
 }
