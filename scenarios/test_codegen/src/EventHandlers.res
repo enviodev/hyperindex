@@ -5,7 +5,7 @@ Handlers.GravatarContract.NewGravatar.loader(_ => {
 })
 
 Handlers.GravatarContract.NewGravatar.handler(({event, context}) => {
-  let gravatarSize: Enums.gravatarSize = #SMALL
+  let gravatarSize: Enums.gravatarSize = SMALL
   let gravatarObject: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
     owner_id: event.params.owner->Ethers.ethAddressToString,
@@ -69,7 +69,7 @@ Handlers.GravatarContract.UpdatedGravatar.handler(({event, context}) => {
       Ethers.BigInt.fromInt(1),
       gravatar => gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1)),
     )
-  let gravatarSize: Enums.gravatarSize = #MEDIUM
+  let gravatarSize: Enums.gravatarSize = MEDIUM
   let gravatar: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
     owner_id: event.params.owner->Ethers.ethAddressToString,

@@ -5,7 +5,6 @@ pub struct CapitalizedOptions {
     pub capitalized: String,
     pub uncapitalized: String,
     pub original: String,
-    pub is_original_capitalized: bool,
 }
 
 pub trait Capitalize {
@@ -35,12 +34,10 @@ impl Capitalize for String {
     fn to_capitalized_options(&self) -> CapitalizedOptions {
         let capitalized = self.capitalize();
         let uncapitalized = self.uncapitalize();
-        let is_original_capitalized = self == &capitalized;
 
         CapitalizedOptions {
             capitalized,
             uncapitalized,
-            is_original_capitalized,
             original: self.clone(),
         }
     }

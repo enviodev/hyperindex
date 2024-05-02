@@ -1,17 +1,12 @@
 // Graphql Enum Type Variants
 {{#each gql_enums as | enum |}} 
 @genType.as("{{enum.name.capitalized}}")
-type {{enum.name.uncapitalized}} = [
-{{#each enum.params as | param | }}| #{{param.capitalized}}{{/each}}
-]
-let {{enum.name.uncapitalized}}Default = #{{enum.params.[0].capitalized}}
+type {{enum.name.uncapitalized}} = 
+{{#each enum.params as | param | }}| @as("{{param.original}}") {{param.capitalized}}{{/each}}
+let {{enum.name.uncapitalized}}Default = {{enum.params.[0].capitalized}}
 let {{enum.name.uncapitalized}}Schema: S.t<{{enum.name.uncapitalized}}> = S.union([
 {{#each enum.params as | param | }}
-  {{#if param.is_original_capitalized}}
-      S.literal(#{{param.capitalized}}),
-  {{else}}
-      S.literal("{{param.original}}")->S.variant((. _) => #{{param.capitalized}}),
-  {{/if}}
+  S.literal({{param.capitalized}}),
 {{/each}}
 ])
 
