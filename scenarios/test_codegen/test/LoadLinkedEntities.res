@@ -54,9 +54,18 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "TODO_TURN_THIS_INTO_NONE", a_id: "aWontLoad", stringThatIsMirroredToA: ""},
     ]
 
-    await DbFunctions.A.batchSet(sql, aEntities->Belt.Array.map(Types.aEntity_encode))
-    await DbFunctions.B.batchSet(sql, bEntities->Belt.Array.map(Types.bEntity_encode))
-    await DbFunctions.C.batchSet(sql, cEntities->Belt.Array.map(Types.cEntity_encode))
+    await DbFunctions.A.batchSet(
+      sql,
+      aEntities->Belt.Array.map(e => e->S.serializeOrRaiseWith(Types.aEntitySchema)),
+    )
+    await DbFunctions.B.batchSet(
+      sql,
+      bEntities->Belt.Array.map(e => e->S.serializeOrRaiseWith(Types.bEntitySchema)),
+    )
+    await DbFunctions.C.batchSet(
+      sql,
+      cEntities->Belt.Array.map(e => e->S.serializeOrRaiseWith(Types.cEntitySchema)),
+    )
 
     let inMemoryStore = IO.InMemoryStore.make()
 
@@ -102,15 +111,9 @@ describe("Linked Entity Loader Integration Test", () => {
     let sql = DbFunctions.sql
 
     /// NOTE: createEventA, createEventB, createEventC are all identical. Type system being really difficult!
-    let createEventA = entity => {
-      entity->Types.aEntity_encode
-    }
-    let createEventB = entity => {
-      entity->Types.bEntity_encode
-    }
-    let createEventC = entity => {
-      entity->Types.cEntity_encode
-    }
+    let createEventA = e => e->S.serializeOrRaiseWith(Types.aEntitySchema)
+    let createEventB = e => e->S.serializeOrRaiseWith(Types.bEntitySchema)
+    let createEventC = e => e->S.serializeOrRaiseWith(Types.cEntitySchema)
 
     /// Setup DB
     let a1: Types.aEntity = {id: "a1", b_id: "b1", optionalStringToTestLinkedEntities: None}

@@ -15,6 +15,7 @@ describe("nullable encodes and decodes successfully", () => {
 
   let mock1raw = `{"optNumber":1}`
   let mock2raw = `{"optNumber":null}`
+  let mock3raw = `{}`
   it("flat encodes some type", () => {
     Assert.equal(mock1->testRecord_encode->Js.Json.stringify, mock1raw)
   })
@@ -25,6 +26,10 @@ describe("nullable encodes and decodes successfully", () => {
 
   it("decodes null as None", () => {
     let decoded = mock2raw->Js.Json.parseExn->testRecord_decode->Result.getExn
+    Assert.deep_equal(decoded, mock2)
+  })
+  it("decodes undefined as None", () => {
+    let decoded = mock3raw->Js.Json.parseExn->testRecord_decode->Result.getExn
     Assert.deep_equal(decoded, mock2)
   })
   it("decodes val as Some", () => {

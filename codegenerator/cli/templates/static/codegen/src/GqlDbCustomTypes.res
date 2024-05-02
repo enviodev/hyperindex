@@ -3,8 +3,7 @@ module Float = {
   @genType
   type t = float
 
-  let t_encode = (t_value: t) =>
-    t_value->Js.Float.toString->Js.Json.string
+  let t_encode = (t_value: t) => t_value->Js.Float.toString->Js.Json.string
 
   let t_decode: Js.Json.t => result<t, Spice.decodeError> = json =>
     switch json->Js.Json.decodeString {
@@ -27,4 +26,17 @@ module Float = {
       }
       Error(spiceErr)
     }
+
+  let schema =
+    S.string
+    ->S.setName("GqlDbCustomTypes.Float")
+    ->S.transform((. s) => {
+      parser: (. string) => {
+        switch string->Belt.Float.fromString {
+        | Some(db) => db
+        | None => s.fail(. "The string is not valid GqlDbCustomTypes.Float")
+        }
+      },
+      serializer: (. float) => float->Js.Float.toString,
+    })
 }

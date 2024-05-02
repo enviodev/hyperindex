@@ -31,6 +31,7 @@ pub trait HasName {
 pub struct EventParamTypeTemplate {
     pub param_name: CapitalizedOptions,
     pub type_rescript: String,
+    pub type_rescript_schema: String,
     pub default_value_rescript: String,
     pub default_value_non_rescript: String,
     pub is_eth_address: bool,
@@ -166,6 +167,7 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
     pub type_rescript: RescriptType,
+    pub type_rescript_schema: String,
     pub type_pg: String,
     pub is_entity_field: bool,
     ///Used in template to tell whether it is a field looked up from another table or a value in
@@ -182,7 +184,7 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, entity: &Entity, config: &SystemConfig) -> Result<Self> {
-        let type_rescript = field
+        let type_rescript: RescriptType = field
             .field_type
             .to_rescript_type(&config.schema)
             .context("Failed getting rescript type")?
@@ -202,7 +204,8 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            type_rescript,
+            type_rescript_schema: type_rescript.to_rescript_schema(),
+            type_rescript: type_rescript,
             is_derived_from,
             type_pg,
             is_entity_field,
@@ -421,6 +424,7 @@ impl EventTemplate {
                     default_value_rescript: type_rescript.get_default_value_rescript(),
                     default_value_non_rescript: type_rescript.get_default_value_non_rescript(),
                     type_rescript: type_rescript.to_string(),
+                    type_rescript_schema: type_rescript.to_rescript_schema(),
                     is_eth_address: type_rescript == RescriptType::Address,
                     is_indexed: input.indexed,
                     type_rescript_skar_decoded_param: type_rescript.to_string_decoded_skar(),
@@ -1034,6 +1038,7 @@ mod test {
             Self {
                 param_name: param_name.to_string().to_capitalized_options(),
                 type_rescript: res_type.to_string(),
+                type_rescript_schema: res_type.to_rescript_schema(),
                 default_value_rescript: res_type.get_default_value_rescript(),
                 default_value_non_rescript: res_type.get_default_value_non_rescript(),
                 is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,

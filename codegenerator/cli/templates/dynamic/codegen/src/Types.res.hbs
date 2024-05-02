@@ -11,8 +11,8 @@ and {{/unless}}{{entity.name.uncapitalized}}LoaderConfig = {{#if entity.relation
   {{#each entity.relational_params.filtered_not_derived_from as | relational_param |}}
   load{{relational_param.relational_key.capitalized}}?: {{relational_param.mapped_entity.uncapitalized}}LoaderConfig,{{/each}}
 }{{else}}bool{{/if}}{{/each}}
-
 @@warning("+30")
+
 @genType
 type entityRead = 
 {{#each entities as | entity |}}
@@ -44,12 +44,18 @@ type dynamicContractRegistryEntity = {
 
 
 {{#each entities as | entity |}}
-@spice @genType.as("{{entity.name.original}}Entity")
+@genType.as("{{entity.name.original}}Entity")
 type {{entity.name.uncapitalized}}Entity = {
   {{#each entity.params as | param |}}
-  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.type_rescript}}, {{/unless}}
+  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.type_rescript}},{{/unless}}
   {{/each}}
 }
+
+let {{entity.name.uncapitalized}}EntitySchema = S.schema((. s) => {
+  {{#each entity.params as | param |}}
+  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.matches({{param.type_rescript_schema}}),{{/unless}}
+  {{/each}}
+})
  
 {{/each}}
 type entity = 
@@ -242,7 +248,6 @@ module {{event.name.capitalized}}Event = {
 }
 {{/each}}
 
-@deriving(accessors)
 type event =
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
@@ -250,13 +255,19 @@ type event =
 {{/each}}
 {{/each}}
 
-@spice
 type eventName =
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
-  | @spice.as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
+  | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
 {{/each}}
 {{/each}}
+let eventNameSchema = S.union([
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+  S.literal({{event.event_type.full}}),
+{{/each}}
+{{/each}}
+])
 
 let eventNameToString = (eventName: eventName) => switch eventName {
   {{#each codegen_contracts as | contract |}}

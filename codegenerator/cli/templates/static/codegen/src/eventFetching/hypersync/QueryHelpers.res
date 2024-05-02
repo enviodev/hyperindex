@@ -2,20 +2,26 @@ exception FailedToFetch(exn)
 exception FailedToParseJson(exn)
 
 type queryError =
-  Deserialize(Spice.decodeError) | FailedToFetch(exn) | FailedToParseJson(exn) | Other(exn)
+  | Deserialize(Js.Json.t, S.error)
+  | FailedToFetch(exn)
+  | FailedToParseJson(exn)
+  | Other(exn)
 
 let executeFetchRequest = async (
   ~endpoint,
   ~method: Fetch.method,
-  ~bodyAndEncoder: option<('a, 'a => Js.Json.t)>=?,
-  ~responseDecoder: Spice.decoder<'b>,
+  ~bodyAndSchema: option<('body, S.t<'body>)>=?,
+  ~responseSchema: S.t<'data>,
   (),
-): result<'b, queryError> => {
+): result<'data, queryError> => {
   try {
     open Fetch
 
-    let body = bodyAndEncoder->Belt.Option.map(((body, encoder)) => {
-      body->encoder->Js.Json.stringify->Body.string
+    let body = bodyAndSchema->Belt.Option.map(((body, schema)) => {
+      switch body->S.serializeToJsonStringWith(. schema) {
+      | Ok(jsonString) => jsonString->Body.string
+      | Error(error) => error->S.Error.raise
+      }
     })
 
     let res =
@@ -26,9 +32,9 @@ let executeFetchRequest = async (
 
     let data = await res->Response.json->Promise.catch(e => Promise.reject(FailedToParseJson(e)))
 
-    switch data->responseDecoder {
-    | Error(e) => Error(Deserialize(e))
-    | Ok(v) => Ok(v)
+    switch data->S.parseWith(responseSchema) {
+    | Ok(_) as ok => ok
+    | Error(e) => Error(Deserialize(data, e))
     }
   } catch {
   | FailedToFetch(exn) => Error(FailedToFetch(exn))

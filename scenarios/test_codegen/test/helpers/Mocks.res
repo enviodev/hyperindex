@@ -1,12 +1,11 @@
 open Types
 
-let encodeName_string: eventName => string = eventName_encode(_)->Obj.magic
 @genType
 let eventNames = {
-  "NftFactory_SimpleNftCreated": NftFactory_SimpleNftCreated->encodeName_string,
+  "NftFactory_SimpleNftCreated": (NftFactory_SimpleNftCreated :> string),
 }
 
-let event_type: string = Types.eventName_encode(NftFactory_SimpleNftCreated)->Obj.magic
+let event_type = (NftFactory_SimpleNftCreated :> string)
 
 @genType
 let mockRawEventRow = {

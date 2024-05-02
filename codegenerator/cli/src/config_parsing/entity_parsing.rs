@@ -797,6 +797,38 @@ impl RescriptType {
         }
     }
 
+    pub fn to_rescript_schema(&self) -> String {
+        match self {
+            RescriptType::Int => "S.int".to_string(),
+            RescriptType::Float => "GqlDbCustomTypes.Float.schema".to_string(),
+            RescriptType::BigInt => "Ethers.BigInt.schema".to_string(),
+            RescriptType::Address => "Ethers.ethAddressSchema".to_string(),
+            RescriptType::String => "S.string".to_string(),
+            RescriptType::ID => "S.string".to_string(),
+            RescriptType::Bool => "S.bool".to_string(),
+            RescriptType::Array(inner_type) => {
+                format!("S.array({})", inner_type.to_rescript_schema())
+            }
+            RescriptType::Option(inner_type) => {
+                format!("S.null({})", inner_type.to_rescript_schema())
+            }
+            RescriptType::Tuple(inner_types) => {
+                let inner_str = inner_types
+                    .iter()
+                    .enumerate()
+                    .map(|(index, inner_type)| {
+                        format!("s.item({index}, {})", inner_type.to_rescript_schema())
+                    })
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                format!("S.tuple((. s) => ({}))", inner_str)
+            }
+            RescriptType::EnumVariant(enum_name) => {
+                format!("Enums.{}Schema", &enum_name.uncapitalized)
+            }
+        }
+    }
+
     pub fn get_default_value_rescript(&self) -> String {
         match self {
             RescriptType::Int => "0".to_string(),

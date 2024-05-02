@@ -60,7 +60,7 @@ let addEventToRawEvents = (
     srcAddress,
     blockHash,
     blockTimestamp,
-    eventType: eventName->Types.eventName_encode,
+    eventType: eventName->S.serializeOrRaiseWith(Types.eventNameSchema),
     params: jsonSerializedParams->Js.Json.stringify,
   }
 
@@ -373,7 +373,10 @@ let rec getReadEntities = (
           ~event,
           ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
           ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-          ~eventWithContextAccessor=Context.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+          ~eventWithContextAccessor=(
+            event,
+            context,
+          ) => Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
         )
     {{/each}}
     {{/each}}

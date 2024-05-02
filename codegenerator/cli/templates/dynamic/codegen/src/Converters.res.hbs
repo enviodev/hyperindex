@@ -316,16 +316,18 @@ let decodeRawEventWith = (
 let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain, ~txOrigin: option<Ethers.ethAddress>): Spice.result<
   Types.eventBatchQueueItem,
 > => {
-  rawEvent.eventType
-  ->Types.eventName_decode
-  ->Belt.Result.flatMap(eventName => {
+  switch rawEvent.eventType->S.parseWith(Types.eventNameSchema) {
+  | Ok(_) as ok => ok
+  | Error({path} as error) =>
+    Spice.error(~path=path->S.Path.toString, error->S.Error.reason, rawEvent.eventType)
+  }->Belt.Result.flatMap(eventName => {
     switch eventName {
   {{#each codegen_contracts as |contract|}}
   {{#each contract.codegen_events as |event|}}
       | {{event.event_type.full}} =>
       rawEvent->decodeRawEventWith(
         ~decoder=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_decode,
-        ~variantAccessor=Types.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}},
+        ~variantAccessor=event => Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event),
         ~chain,
         ~txOrigin,
       )

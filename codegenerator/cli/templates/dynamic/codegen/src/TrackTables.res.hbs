@@ -7,8 +7,13 @@ let headers = {
   "X-Hasura-Admin-Secret": Env.Hasura.secret,
 }
 
-@spice
 type hasuraErrorResponse = {code: string, error: string, path: string}
+let hasuraErrorResponseSchema = S.object((. s) => {
+  code: s.field("code", S.string),
+  error: s.field("error", S.string),
+  path: s.field("path", S.string),
+})
+
 type validHasuraResponse = QuerySucceeded | AlreadyDone
 
 let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.Result.t<
@@ -18,7 +23,7 @@ let validateHasuraResponse = (~statusCode: int, ~responseJson: Js.Json.t): Belt.
   if statusCode == 200 {
     Ok(QuerySucceeded)
   } else {
-    switch responseJson->hasuraErrorResponse_decode {
+    switch responseJson->S.parseWith(hasuraErrorResponseSchema) {
     | Ok(decoded) =>
       switch decoded.code {
       | "already-exists"

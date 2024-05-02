@@ -436,10 +436,9 @@ let executeEntityFunction = (
 let executeSet = executeEntityFunction(~dbOp=Set)
 let executeDelete = executeEntityFunction(~dbOp=Delete)
 
-let executeSetSchemaEntity = (~entityEncoder) =>
-  executeSet(
-   ~getInputValFromRow=row => {
-    row.entity->entityEncoder
+let executeSetSchemaEntity = (~entitySchema) =>
+  executeSet(~getInputValFromRow=row => {
+    row.entity->S.serializeOrRaiseWith(entitySchema)
   })
 
 let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
@@ -471,7 +470,7 @@ let executeBatch = async ( sql, ~inMemoryStore: InMemoryStore.t ) => {
   let set{{entity.name.capitalized}}s = executeSetSchemaEntity(
     ~dbFunction=DbFunctions.{{entity.name.capitalized}}.batchSet,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
-    ~entityEncoder=Types.{{entity.name.uncapitalized}}Entity_encode,
+    ~entitySchema=Types.{{entity.name.uncapitalized}}EntitySchema,
   )
 
   {{/each}}

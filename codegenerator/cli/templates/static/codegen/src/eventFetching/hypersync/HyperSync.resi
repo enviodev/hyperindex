@@ -39,7 +39,7 @@ let queryLogsPage: (
   ~serverUrl: string,
   ~fromBlock: int,
   ~toBlock: int,
-  ~contractAddressesAndtopics: ContractInterfaceManager.contractAdressesAndTopics,
+  ~contractAddressesAndtopics: ContractInterfaceManager.contractAddressesAndTopics,
 ) => promise<queryResponse<logsQueryPage>>
 
 let queryBlockTimestampsPage: (

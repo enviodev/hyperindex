@@ -98,8 +98,8 @@ module EventFunctions = {
       let logger = Logging.createChild(
         ~params={
           "Context": `Test Processor for ${eventName
-            ->Types.eventName_encode
-            ->Js.Json.stringify} Event`,
+            ->S.serializeToJsonStringWith(. Types.eventNameSchema)
+            ->Result.getExn} Event`,
           "Chain ID": chainId,
           "event": event,
         },
@@ -280,7 +280,10 @@ module {{contract.name.capitalized}} = {
     let processEvent = EventFunctions.makeSyncEventProcessor(
       ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
       ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-      ~eventWithContextAccessor=Context.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+      ~eventWithContextAccessor=(
+        event,
+        context,
+      ) => Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
       ~eventName=Types.{{event.event_type.full}},
     )
 
@@ -288,7 +291,10 @@ module {{contract.name.capitalized}} = {
     let processEventAsync = EventFunctions.makeAsyncEventProcessor(
       ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
       ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-      ~eventWithContextAccessor=Context.{{contract.name.uncapitalized}}Contract_{{event.name.capitalized}}WithContext,
+      ~eventWithContextAccessor=(
+        event,
+        context,
+      ) => Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
       ~eventName=Types.{{event.event_type.full}},
     )
 

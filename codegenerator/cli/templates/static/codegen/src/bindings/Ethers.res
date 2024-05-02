@@ -47,6 +47,8 @@ module BigInt = {
     let logand = (a: t, b: t): t => %raw("a & b")
   }
 
+  let zero = fromInt(0)
+
   let t_encode = (bigint: t) => bigint->toString->Js.Json.string
   let t_decode: Js.Json.t => result<t, Spice.decodeError> = json =>
     switch json->Js.Json.decodeString {
@@ -70,7 +72,17 @@ module BigInt = {
       Error(spiceErr)
     }
 
-  let zero = fromInt(0)
+  let schema =
+    S.string
+    ->S.setName("Ethers.BigInt")
+    ->S.transform((. s) => {
+      parser: (. string) =>
+        switch string->fromString {
+        | Some(bigInt) => bigInt
+        | None => s.fail(. "The string is not valid BigInt")
+        },
+      serializer: (. bigint) => bigint->toString,
+    })
 }
 
 type abi
@@ -82,7 +94,21 @@ let makeAbi = (abi: Js.Json.t): abi => abi->Obj.magic
 @genType.import(("./OpaqueTypes.ts", "EthersAddress"))
 type ethAddress
 
-let ethAddress_encode = ethAdress => ethAdress->Obj.magic->Js.Json.string
+@module("ethers") @scope("ethers")
+external getAddressFromStringUnsafe: string => ethAddress = "getAddress"
+/**
+Same binding as getAddress from string 
+but used when we receive and address that's not necessarily checksummed
+*/
+@module("ethers")
+@scope("ethers")
+external formatEthAddress: ethAddress => ethAddress = "getAddress"
+let getAddressFromString = str => Misc.unsafeToOption(() => str->getAddressFromStringUnsafe)
+external ethAddressToString: ethAddress => string = "%identity"
+let ethAddressToStringLower = (address: ethAddress): string =>
+  address->ethAddressToString->Js.String2.toLowerCase
+
+let ethAddress_encode = ethAddress => ethAddress->ethAddressToString->Js.Json.string
 let ethAddress_decode: Js.Json.t => result<ethAddress, Spice.decodeError> = json =>
   switch json->Js.Json.decodeString {
   | Some(stringAddress) => Ok(stringAddress->Obj.magic)
@@ -95,19 +121,8 @@ let ethAddress_decode: Js.Json.t => result<ethAddress, Spice.decodeError> = json
     Error(spiceErr)
   }
 
-@module("ethers") @scope("ethers")
-external getAddressFromStringUnsafe: string => ethAddress = "getAddress"
-/**
-Same binding as getAddress from string 
-but used when we receive and address that's not necessarily checksummed
-*/
-@module("ethers")
-@scope("ethers")
-external formatEthAddress: ethAddress => ethAddress = "getAddress" //
-let getAddressFromString = str => Misc.unsafeToOption(() => str->getAddressFromStringUnsafe)
-let ethAddressToString = (address: ethAddress): string => address->Obj.magic
-let ethAddressToStringLower = (address: ethAddress): string =>
-  address->ethAddressToString->Js.String2.toLowerCase
+let ethAddressSchema =
+  S.string->S.setName("ethAddress")->(Obj.magic: S.t<string> => S.t<ethAddress>)
 
 type txHash = string
 
@@ -169,7 +184,6 @@ module BlockTag = {
 }
 
 module EventFilter = {
-  @spice
   type topic = string
   type t = {
     address: ethAddress,

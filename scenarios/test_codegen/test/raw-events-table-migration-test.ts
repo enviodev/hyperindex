@@ -1,4 +1,3 @@
-import { eventName_encode } from "../generated/src/Types.bs";
 import { mockRawEventRow } from "./helpers/Mocks.gen";
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 import chai, { expect } from "chai";

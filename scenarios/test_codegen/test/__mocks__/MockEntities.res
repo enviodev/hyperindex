@@ -16,8 +16,8 @@ let gravatarEntity2: Types.gravatarEntity = {
   size: #MEDIUM,
 }
 
-let gravatarSerialized1 = gravatarEntity1->Types.gravatarEntity_encode
-let gravatarSerialized2 = gravatarEntity2->Types.gravatarEntity_encode
+let gravatarSerialized1 = gravatarEntity1->S.serializeOrRaiseWith(Types.gravatarEntitySchema)
+let gravatarSerialized2 = gravatarEntity2->S.serializeOrRaiseWith(Types.gravatarEntitySchema)
 let mockInMemRow1: Types.inMemoryStoreRow<Js.Json.t> = {
   entity: gravatarSerialized1,
   dbOp: Types.Set,

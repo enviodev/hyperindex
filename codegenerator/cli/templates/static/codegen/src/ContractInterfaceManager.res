@@ -29,9 +29,12 @@ let make = (
 }
 
 let getAbiMapping = (self: t) => {
-  self.contractAddressMapping.nameByAddress->Js.Dict.entries->Belt.Array.keepMap(((addr, name)) => {
+  self.contractAddressMapping.nameByAddress
+  ->Js.Dict.entries
+  ->Belt.Array.keepMap(((addr, name)) => {
     self.contractNameInterfaceMapping->Js.Dict.get(name)->Belt.Option.map(v => (addr, v.abi))
-  })->Js.Dict.fromArray
+  })
+  ->Js.Dict.fromArray
 }
 
 let getInterfaceByName = (self: t, ~contractName) =>
@@ -155,8 +158,8 @@ let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
   {addresses, topics}
 }
 
-type contractAdressesAndTopics = array<HyperSyncClient.QueryTypes.logParams>
-let getAllContractTopicsAndAddresses = (self: t): contractAdressesAndTopics => {
+type contractAddressesAndTopics = array<HyperSyncClient.QueryTypes.logParams>
+let getAllContractTopicsAndAddresses = (self: t): contractAddressesAndTopics => {
   self.contractAddressMapping.addressesByName
   ->Js.Dict.keys
   ->Belt.Array.map(contractName => {
