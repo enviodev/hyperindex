@@ -51,11 +51,12 @@ type {{entity.name.uncapitalized}}Entity = {
   {{/each}}
 }
 
-let {{entity.name.uncapitalized}}EntitySchema = S.schema((. s) => {
+let {{entity.name.uncapitalized}}EntitySchema = S.object((. s) => {
   {{#each entity.params as | param |}}
-  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.matches({{param.type_rescript_schema}}),{{/unless}}
+  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", {{param.type_rescript_schema}}),{{/unless}}
   {{/each}}
 })
+let {{entity.name.uncapitalized}}EntitiesSchema = S.array({{entity.name.uncapitalized}}EntitySchema)
  
 {{/each}}
 type entity = 

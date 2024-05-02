@@ -51,7 +51,7 @@ describe("E2E Db check", () => {
 
     let _ = await DbFunctions.Gravatar.batchSet(
       Migrations.sql,
-      [MockEntities.gravatarSerialized1, MockEntities.gravatarSerialized2],
+      [MockEntities.gravatarEntity1, MockEntities.gravatarEntity2],
     )
 
     let checkContractIsRegisteredStub = (~chain, ~contractAddress, ~contractName) => {

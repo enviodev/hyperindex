@@ -169,31 +169,47 @@ module DynamicContractRegistry = {
 module {{entity.name.capitalized}} = {
   open Types
 
-  let decodeUnsafe = (entityJson: Js.Json.t): {{entity.name.uncapitalized}}Entity => {
-    switch entityJson->S.parseWith(Types.{{entity.name.uncapitalized}}EntitySchema) {
-    | Ok(entity) => entity
-    | Error(e) =>
+  @module("./DbFunctionsImplementation.js")
+  external batchSetRaw: (Postgres.sql, array<Js.Json.t>) => promise<unit> = "batchSet{{entity.name.capitalized}}"
+
+  let batchSet = async (sql: Postgres.sql, entities: array<Types.{{entity.name.uncapitalized}}Entity>): unit => {
+    switch entities->S.serializeOrRaiseWith(Types.{{entity.name.uncapitalized}}EntitiesSchema) {
+    | raw => await sql->batchSetRaw(raw->(Obj.magic: Js.Json.t => array<Js.Json.t>))
+    | exception S.Raised(e) =>
+      let path = e.path->S.Path.toArray
       Logging.error({
         "err": e,
-        "msg": "EE700: Failed to parse row from database of entity {{entity.name.capitalized}} using rescript-schema",
-        "raw_unparsed_object": entityJson,
+        "msg": "EE700: Failed to serialize entity {{entity.name.capitalized}} to database representation",
+        "unparsed_entity": entities->Js.Array2.unsafe_get(
+          path->Js.Array2.unsafe_get(0)->(Obj.magic: string => int),
+        ),
       })
       S.Error.raise(e)
     }
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<Js.Json.t>) => promise<(unit)> = "batchSet{{entity.name.capitalized}}"
-
-  @module("./DbFunctionsImplementation.js")
   external batchDelete: (Postgres.sql, array<Types.id>) => promise<(unit)> = "batchDelete{{entity.name.capitalized}}"
 
   @module("./DbFunctionsImplementation.js")
-  external readEntitiesFromDb: (Postgres.sql, array<Types.id>) => promise<array<Js.Json.t>> = "read{{entity.name.capitalized}}Entities"
+  external readEntitiesRaw: (Postgres.sql, array<Types.id>) => promise<array<Js.Json.t>> =
+    "read{{entity.name.capitalized}}Entities"
 
   let readEntities = async (sql: Postgres.sql, ids: array<Types.id>): array<{{entity.name.uncapitalized}}Entity> => {
-    let res = await readEntitiesFromDb(sql, ids)
-    res->Belt.Array.map(decodeUnsafe)
+    let res = await readEntitiesRaw(sql, ids)
+    switch res->S.parseAnyOrRaiseWith(Types.{{entity.name.uncapitalized}}EntitiesSchema) {
+    | entity => entity
+    | exception S.Raised(e) =>
+      let path = e.path->S.Path.toArray
+      Logging.error({
+        "err": e,
+        "msg": "EE700: Failed to parse row from database of entity {{entity.name.capitalized}}",
+        "raw_unparsed_object": res->Js.Array2.unsafe_get(
+          path->Js.Array2.unsafe_get(0)->(Obj.magic: string => int),
+        ),
+      })
+      S.Error.raise(e)
+    }
   }
 }
 {{/each}}
