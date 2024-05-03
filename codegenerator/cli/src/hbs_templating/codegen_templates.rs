@@ -54,6 +54,7 @@ impl HasName for EventRecordTypeTemplate {
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,
+    pub has_multiple_params: bool,
 }
 
 impl GraphQlEnumTypeTemplate {
@@ -67,10 +68,11 @@ impl GraphQlEnumTypeTemplate {
                 "Failed templating gql enum fields of enum: {}",
                 gql_enum.name
             ))?;
-
+        let has_multiple_params = params.len() > 1;
         Ok(GraphQlEnumTypeTemplate {
             name: gql_enum.name.to_capitalized_options(),
             params,
+            has_multiple_params,
         })
     }
 }
@@ -535,6 +537,7 @@ pub struct ContractTemplate {
     pub codegen_events: Vec<EventTemplate>,
     pub abi: StringifiedAbi,
     pub handler: HandlerPathsTemplate,
+    pub has_multiple_events: bool,
 }
 
 impl ContractTemplate {
@@ -554,12 +557,13 @@ impl ContractTemplate {
         let abi = contract
             .get_stringified_abi()
             .context(format!("Failed getting abi of contract {}", contract.name))?;
-
+        let has_multiple_events = contract.events.len() > 1;
         Ok(ContractTemplate {
             name,
             handler,
             codegen_events,
             abi,
+            has_multiple_events,
         })
     }
 }
@@ -658,6 +662,14 @@ impl NetworkTemplate {
 pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
+    has_multiple_events: bool,
+}
+
+fn count_number_of_events_in_total(codegen_contracts: &Vec<PerNetworkContractTemplate>) -> usize {
+    codegen_contracts
+        .iter()
+        .map(|contract| contract.events.len())
+        .sum()
 }
 
 impl NetworkConfigTemplate {
@@ -675,9 +687,12 @@ impl NetworkConfigTemplate {
             .collect::<Result<_>>()
             .context("Failed mapping network contracts")?;
 
+        let has_multiple_events = count_number_of_events_in_total(&codegen_contracts) > 1;
+
         Ok(NetworkConfigTemplate {
             network_config,
             codegen_contracts,
+            has_multiple_events,
         })
     }
 }

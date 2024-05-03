@@ -416,9 +416,13 @@ let actionReducer = (state: t, action: action) => {
       },
       [NextQuery(CheckAllChains)],
     )
-  | SuccessExit =>
-    NodeJsLocal.process->NodeJsLocal.exitWithCode(Success)
-    (state, [])
+  | SuccessExit => {
+      // delay for node exit race conditions
+      Time.resolvePromiseAfterDelay(~delayMilliseconds=4000)
+      ->Promise.thenResolve(_ => NodeJsLocal.process->NodeJsLocal.exitWithCode(Success))
+      ->ignore
+      (state, [])
+    }
   | ErrorExit(errHandler) =>
     errHandler->ErrorHandling.log
     NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
@@ -555,7 +559,9 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
               state.chainManager.chainFetchers,
             )
           ) {
-            dispatchAction(SuccessExit)
+            updateChainMetadataTable(state.chainManager)
+            ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
+            ->ignore
           }
         }
       }

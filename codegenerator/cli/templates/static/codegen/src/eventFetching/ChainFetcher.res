@@ -40,6 +40,10 @@ let make = (
   }
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
   let fetchState = FetchState.makeRoot(~contractAddressMapping, ~startBlock, ~endBlock)
+  let hasProcessedToEndblock = switch (latestProcessedBlock, endBlock) {
+  | (Some(latestProcessedBlock), Some(endBlock)) => latestProcessedBlock >= endBlock
+  | _ => false
+  }
   {
     logger,
     chainConfig,
@@ -48,7 +52,7 @@ let make = (
     currentBlockHeight: 0,
     isFetchingBatch: false,
     isFetchingAtHead: false,
-    hasProcessedToEndblock: false,
+    hasProcessedToEndblock,
     fetchState,
     firstEventBlockNumber,
     latestProcessedBlock,
