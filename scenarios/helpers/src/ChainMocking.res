@@ -208,10 +208,25 @@ module Make = (Indexer: Indexer.S) => {
     self.blocks->Js.Array2.find(b => b.blockNumber == blockNumber)
 
   let arrayHas = (arr, v) => arr->Js.Array2.find(item => item == v)->Option.isSome
-  let getLogsFromBlocks = (~srcAddresses, ~eventNames, blocks: array<block>) => {
+
+  type contractAddressesAndEventNames = {
+    addresses: array<Ethers.ethAddress>,
+    eventNames: array<Types.eventName>,
+  }
+
+  let getLogsFromBlocks = (
+    blocks: array<block>,
+    ~addressesAndEventNames: array<contractAddressesAndEventNames>,
+  ) => {
     blocks->Array.flatMap(b =>
       b.logs->Array.keepMap(l => {
-        if srcAddresses->arrayHas(l.srcAddress) && eventNames->arrayHas(l.eventName) {
+        let isLogInConfig = addressesAndEventNames->Array.reduce(
+          false,
+          (prev, {addresses, eventNames}) => {
+            prev || (addresses->arrayHas(l.srcAddress) && eventNames->arrayHas(l.eventName))
+          },
+        )
+        if isLogInConfig {
           Some(l.eventBatchQueueItem)
         } else {
           None
@@ -229,9 +244,9 @@ module Make = (Indexer: Indexer.S) => {
     let parentHash = self->getBlock(~blockNumber=query.fromBlock - 1)->Option.map(b => b.blockHash)
     let currentBlockHeight = self->getHeight
 
-    let srcAddresses = query.contractAddressMapping->ContractAddressingMap.getAllAddresses
-    let eventNames = self.chainConfig.contracts->Array.flatMap(c => c.events)
-    let parsedQueueItemsPreFilter = unfilteredBlocks->getLogsFromBlocks(~srcAddresses, ~eventNames)
+    let addressesAndEventNames =
+      self.chainConfig.contracts->Array.map(c => {addresses: c.addresses, eventNames: c.events})
+    let parsedQueueItemsPreFilter = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
     let parsedQueueItems = switch query.eventFilters {
     | None => parsedQueueItemsPreFilter
     | Some(eventFilters) =>
