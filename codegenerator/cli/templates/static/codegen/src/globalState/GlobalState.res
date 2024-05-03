@@ -693,6 +693,7 @@ let injectedTaskReducer = async (
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(rollbackChain)} =>
       Logging.warn("Executing rollback")
       let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(rollbackChain)
+      let rollbackChainId = rollbackChain->ChainMap.Chain.toChainId
       //Get rollback block and timestamp
       let reorgChainRolledBackLastBlockData =
         await chainFetcher->rollbackLastBlockHashesToReorgLocation
@@ -718,15 +719,18 @@ let injectedTaskReducer = async (
         ->ChainFetcher.rollbackToLastBlockHashes(~rolledBackLastBlockData)
         ->ChainFetcher.addEventFilter(
           ~filter=eventBatchQueueItem => {
+            let {timestamp, chain, blockNumber} = eventBatchQueueItem
             //Filter out events that occur passed the block where the query starts but
             //are lower than the timestamp where we rolled back to
-            eventBatchQueueItem.timestamp > lastKnownValidBlockTimestamp
+            (timestamp, chain->ChainMap.Chain.toChainId, blockNumber) >
+            (lastKnownValidBlockTimestamp, rollbackChainId, lastKnownValidBlockNumber)
           },
-          ~cleanUpCondition=fetchState => {
+          ~isValid=(~fetchState, ~chain) => {
             //Remove the event filter once the fetchState has fetched passed the
             //timestamp of the valid rollback block's timestamp
-            FetchState.getLatestFullyFetchedBlock(fetchState).blockTimestamp >
-            lastKnownValidBlockTimestamp
+            let {blockTimestamp, blockNumber} = FetchState.getLatestFullyFetchedBlock(fetchState)
+            (blockTimestamp, chain->ChainMap.Chain.toChainId, blockNumber) <=
+            (lastKnownValidBlockTimestamp, rollbackChainId, lastKnownValidBlockNumber)
           },
         )
       })

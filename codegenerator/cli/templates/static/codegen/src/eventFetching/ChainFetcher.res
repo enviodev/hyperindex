@@ -161,14 +161,14 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
 
 /**
 Adds an event filter that will be passed to worker on query
-cleanUpCondition is a function that determines when the filter
-is no longer valid and can be cleaned
+isValid is a function that determines when the filter
+should be cleaned up
 */
-let addEventFilter = (self: t, ~filter, ~cleanUpCondition) => {
+let addEventFilter = (self: t, ~filter, ~isValid) => {
   let eventFilters =
     self.eventFilters
     ->Option.getWithDefault(list{})
-    ->List.add({filter, isNoLongerValid: cleanUpCondition})
+    ->List.add({filter, isValid})
     ->Some
   {...self, eventFilters}
 }
@@ -183,7 +183,7 @@ let cleanUpEventFilters = (self: t) => {
   | Some(eventFilters) => {
       ...self,
       eventFilters: switch eventFilters->List.keep(eventFilter =>
-        !eventFilter.isNoLongerValid(self.fetchState)
+        eventFilter.isValid(~fetchState=self.fetchState, ~chain=self.chainConfig.chain)
       ) {
       | list{} => None
       | eventFilters => eventFilters->Some

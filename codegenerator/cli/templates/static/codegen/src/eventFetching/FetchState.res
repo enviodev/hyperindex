@@ -194,9 +194,13 @@ let update = (self: t, ~id, ~latestFetchedBlock, ~fetchedEvents): result<t, exn>
   ->updateInternal(~id, ~latestFetchedBlock, ~newFetchedEvents=fetchedEvents)
   ->Result.map(result => pruneAndMergeNextRegistered(result)->Option.getWithDefault(result))
 
-//A filter should return true if the event should be kept and isNoLongerValid should return
-//true when the filter should be removed/cleaned up
-type eventFilter = {filter: Types.eventBatchQueueItem => bool, isNoLongerValid: t => bool}
+//A filter should return true if the event should be kept and isValid should return
+//false when the filter should be removed/cleaned up
+type eventFilter = {
+  filter: Types.eventBatchQueueItem => bool,
+  isValid: (~fetchState: t, ~chain: ChainMap.Chain.t) => bool,
+}
+
 type eventFilters = list<eventFilter>
 let applyFilters = (eventBatchQueueItem, ~eventFilters) =>
   eventFilters->List.reduce(true, (acc, eventFilter) =>
