@@ -576,7 +576,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
         //With rolled back values
         let rollbackInMemStore = switch state.rollbackState {
         | RollbackState(inMemoryStore) => Some(inMemoryStore)
-        | NoRollback | RollingBack(_) => None
+        | NoRollback | RollingBack(_) /* This is an impossible case due to the surrounding if statement check */ => None
         }
 
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(IO.InMemoryStore.make())
@@ -619,7 +619,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
       }
     }
   | Rollback =>
-    //Wait for current batch to finish processing
+    //If it isn't processing a batch currently continue with rollback otherwise wait for current batch to finish processing
     switch state {
     | {currentlyProcessingBatch: false, rollbackState: RollingBack(rollbackChain)} =>
       let fn = async () => {

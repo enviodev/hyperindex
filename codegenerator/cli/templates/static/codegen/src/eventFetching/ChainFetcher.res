@@ -168,7 +168,6 @@ let rollbackLastBlockHashesToReorgLocation = async (chainFetcher: t) => {
     ->SourceWorker.getBlockHashes(~blockNumbers)
     ->Promise.thenResolve(Result.getExn)
 
-  // let rolledBack =
   chainFetcher.lastBlockScannedHashes
   ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)
   ->Utils.unwrapResultExn
