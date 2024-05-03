@@ -647,7 +647,7 @@ let injectedTaskReducer = async (
         //In the case of a rollback, use the provided in memory store
         //With rolled back values
         let rollbackInMemStore = switch state.rollbackState {
-        | RollbackState(inMemoryStore) => Some(inMemoryStore)
+        | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
         | NoRollback | RollingBack(_) /* This is an impossible case due to the surrounding if statement check */ => None
         }
 

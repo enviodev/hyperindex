@@ -155,7 +155,6 @@ let setupDb = async (~shouldDropRawEvents) => {
 
 describe("Single Chain Simple Rollback", () => {
   it_promise("Detects reorgs and actions a rollback", async () => {
-
     let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
@@ -182,7 +181,7 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deep_equal(
       tasks.contents,
       [UpdateChainMetaData, ProcessEventBatch, NextQuery(Chain(chain))],
-      ~message="should successfully have processed batch",
+      ~message="should successfully have actioned batch",
     )
 
     Assert.equal(
@@ -200,7 +199,7 @@ describe("Single Chain Simple Rollback", () => {
     )
   })
 
-  it_promise("Successfully", async () => {
+  it_promise("Successfully rolls back single chain indexer to expected values", async () => {
     await setupDb(~shouldDropRawEvents=true)
 
     let chainManager = {
@@ -282,7 +281,6 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deep_equal(
       tasks.contents,
       [GlobalState.NextQuery(CheckAllChains), Rollback, UpdateChainMetaData, ProcessEventBatch],
-      // [NextQuery(CheckAllChains), Rollback, UpdateChainMetaData, ProcessEventBatch],
       ~message="should detect rollback with reorg chain",
     )
 
