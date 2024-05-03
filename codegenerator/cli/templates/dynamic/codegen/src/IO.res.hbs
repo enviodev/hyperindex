@@ -539,7 +539,7 @@ let getEntityHistoryItems = (entityUpdates, ~entityEncoder, ~entityType) => {
     let entityHistoryItems = if shouldSaveHistory {
       let mapPrev = Belt.Option.map(optPreviousEventIdentifier)
       let (entity_id, params) = switch entityUpdateAction {
-      | Set(entity) => ((entity->Obj.magic)["id"], Some(entity->entityEncoder->Js.Json.stringify))
+      | Set(entity) => ((entity->Obj.magic)["id"], Some(entity->entityEncoder))
       | Delete(event_id) => (event_id, None)
       }
       let historyItem: DbFunctions.entityHistoryItem = {

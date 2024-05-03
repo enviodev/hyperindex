@@ -173,7 +173,7 @@ type entityHistoryItem = {
   previous_chain_id: option<int>,
   previous_block_number: option<int>,
   previous_log_index: option<int>,
-  params: option<string>,
+  params: option<Js.Json.t>,
   entity_type: string,
   entity_id: string,
 }
@@ -207,7 +207,7 @@ module EntityHistory = {
     block_timestamp: option<int>,
     block_number: option<int>,
     log_index: option<int>,
-    val: option<string>,
+    val: option<Js.Json.t>,
   }
 
   type previousEntity = {
@@ -235,7 +235,7 @@ module EntityHistory = {
           entity_type,
         } =>
         entity_type
-        ->Types.getEntityParamsDecoder(val->Js.Json.parseExn)
+        ->Types.getEntityParamsDecoder(val)
         ->Belt.Result.map(entity => {
           let eventIdentifier: Types.eventIdentifier = {
             chainId,
