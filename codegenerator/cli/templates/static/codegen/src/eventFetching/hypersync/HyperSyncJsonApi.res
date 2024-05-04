@@ -149,9 +149,9 @@ module QueryTypes = {
   }
 
   let fieldSelectionSchema = S.object((. s) => {
-    block: ?s.field("block", S.null(blockFieldSelectionSchema)),
-    transaction: ?s.field("transaction", S.null(transactionFieldSelectionSchema)),
-    log: ?s.field("log", S.null(logFieldSelectionSchema)),
+    block: ?s.field("block", S.option(blockFieldSelectionSchema)),
+    transaction: ?s.field("transaction", S.option(transactionFieldSelectionSchema)),
+    log: ?s.field("log", S.option(logFieldSelectionSchema)),
   })
 
   type logParams = {
@@ -160,7 +160,7 @@ module QueryTypes = {
   }
 
   let logParamsSchema = S.object((. s) => {
-    address: ?s.field("address", S.null(S.array(Ethers.ethAddressSchema))),
+    address: ?s.field("address", S.option(S.array(Ethers.ethAddressSchema))),
     topics: s.field("topics", S.array(S.array(S.string))),
   })
 
@@ -171,9 +171,9 @@ module QueryTypes = {
   }
 
   let transactionParamsSchema = S.object((. s) => {
-    from: ?s.field("from", S.nullable(S.array(Ethers.ethAddressSchema))),
-    to: ?s.field("to", S.nullable(S.array(Ethers.ethAddressSchema))),
-    sighash: ?s.field("sighash", S.nullable(S.array(S.string))),
+    from: ?s.field("from", S.option(S.array(Ethers.ethAddressSchema))),
+    to: ?s.field("to", S.option(S.array(Ethers.ethAddressSchema))),
+    sighash: ?s.field("sighash", S.option(S.array(S.string))),
   })
 
   type postQueryBody = {
@@ -186,135 +186,125 @@ module QueryTypes = {
     includeAllBlocks?: bool,
   }
 
-  // TODO: Do we want to use S.null or S.option
   let postQueryBodySchema = S.object((. s) => {
     fromBlock: s.field("from_block", S.int),
-    toBlockExclusive: ?s.field("to_block", S.null(S.int)),
-    logs: ?s.field("logs", S.null(S.array(logParamsSchema))),
-    transactions: ?s.field("transactions", S.null(S.array(transactionParamsSchema))),
+    toBlockExclusive: ?s.field("to_block", S.option(S.int)),
+    logs: ?s.field("logs", S.option(S.array(logParamsSchema))),
+    transactions: ?s.field("transactions", S.option(S.array(transactionParamsSchema))),
     fieldSelection: s.field("field_selection", fieldSelectionSchema),
-    maxNumLogs: ?s.field("max_num_logs", S.null(S.int)),
-    includeAllBlocks: ?s.field("include_all_blocks", S.null(S.bool)),
+    maxNumLogs: ?s.field("max_num_logs", S.option(S.int)),
+    includeAllBlocks: ?s.field("include_all_blocks", S.option(S.bool)),
   })
 }
 
 module ResponseTypes = {
-  // TODO: Should we use S.nullable or S.null (?)
-  //Note all fields marked as "nullable" are not explicitly null since
-  //the are option fields and nulls will be deserialized to option when
-  //in an optional field with spice
   type blockData = {
     number?: int,
     hash?: string,
     parentHash?: string,
-    nonce?: int, //nullable
+    nonce?: option<int>,
     sha3Uncles?: string,
     logsBloom?: string,
     transactionsRoot?: string,
     stateRoot?: string,
     receiptsRoot?: string,
     miner?: unchecksummedEthAddress,
-    difficulty?: Ethers.BigInt.t, //nullable
-    totalDifficulty?: Ethers.BigInt.t, //nullable
+    difficulty?: option<Ethers.BigInt.t>,
+    totalDifficulty?: option<Ethers.BigInt.t>,
     extraData?: string,
     size?: Ethers.BigInt.t,
     gasLimit?: Ethers.BigInt.t,
     gasUsed?: Ethers.BigInt.t,
     timestamp?: Ethers.BigInt.t,
-    uncles?: string, //nullable
-    baseFeePerGas?: Ethers.BigInt.t, //nullable
+    uncles?: option<string>,
+    baseFeePerGas?: option<Ethers.BigInt.t>,
   }
 
   let blockDataSchema = S.object((. s) => {
-    number: ?s.field("number", S.nullable(S.int)),
-    hash: ?s.field("hash", S.nullable(S.string)),
-    parentHash: ?s.field("parent_hash", S.nullable(S.string)),
-    nonce: ?s.field("nonce", S.nullable(S.int)),
-    sha3Uncles: ?s.field("sha3_uncles", S.nullable(S.string)),
-    logsBloom: ?s.field("logs_bloom", S.nullable(S.string)),
-    transactionsRoot: ?s.field("transactions_root", S.nullable(S.string)),
-    stateRoot: ?s.field("state_root", S.nullable(S.string)),
-    receiptsRoot: ?s.field("receipts_root", S.nullable(S.string)),
-    miner: ?s.field("miner", S.nullable(S.string)),
-    difficulty: ?s.field("difficulty", S.nullable(Ethers.BigInt.schema)),
-    totalDifficulty: ?s.field("total_difficulty", S.nullable(Ethers.BigInt.schema)),
-    extraData: ?s.field("extra_data", S.nullable(S.string)),
-    size: ?s.field("size", S.nullable(Ethers.BigInt.schema)),
-    gasLimit: ?s.field("gas_limit", S.nullable(Ethers.BigInt.schema)),
-    gasUsed: ?s.field("gas_used", S.nullable(Ethers.BigInt.schema)),
-    timestamp: ?s.field("timestamp", S.nullable(Ethers.BigInt.schema)),
-    uncles: ?s.field("unclus", S.nullable(S.string)),
-    baseFeePerGas: ?s.field("base_fee_per_gas", S.nullable(Ethers.BigInt.schema)),
+    number: ?s.field("number", S.option(S.int)),
+    hash: ?s.field("hash", S.option(S.string)),
+    parentHash: ?s.field("parent_hash", S.option(S.string)),
+    nonce: ?s.field("nonce", S.option(S.null(S.int))),
+    sha3Uncles: ?s.field("sha3_uncles", S.option(S.string)),
+    logsBloom: ?s.field("logs_bloom", S.option(S.string)),
+    transactionsRoot: ?s.field("transactions_root", S.option(S.string)),
+    stateRoot: ?s.field("state_root", S.option(S.string)),
+    receiptsRoot: ?s.field("receipts_root", S.option(S.string)),
+    miner: ?s.field("miner", S.option(S.string)),
+    difficulty: ?s.field("difficulty", S.option(S.null(Ethers.BigInt.schema))),
+    totalDifficulty: ?s.field("total_difficulty", S.option(S.null(Ethers.BigInt.schema))),
+    extraData: ?s.field("extra_data", S.option(S.string)),
+    size: ?s.field("size", S.option(Ethers.BigInt.schema)),
+    gasLimit: ?s.field("gas_limit", S.option(Ethers.BigInt.schema)),
+    gasUsed: ?s.field("gas_used", S.option(Ethers.BigInt.schema)),
+    timestamp: ?s.field("timestamp", S.option(Ethers.BigInt.schema)),
+    uncles: ?s.field("unclus", S.option(S.null(S.string))),
+    baseFeePerGas: ?s.field("base_fee_per_gas", S.option(S.null(Ethers.BigInt.schema))),
   })
 
-  // TODO: Should we use S.nullable or S.null (?)
-  //Note all fields marked as "nullable" are not explicitly null since
-  //the are option fields and nulls will be deserialized to option when
-  //in an optional field with spice
   type transactionData = {
     blockHash?: string,
     blockNumber?: int,
-    from?: unchecksummedEthAddress, //nullable
+    from?: option<unchecksummedEthAddress>,
     gas?: Ethers.BigInt.t,
-    gasPrice?: Ethers.BigInt.t, //nullable
+    gasPrice?: option<Ethers.BigInt.t>,
     hash?: string,
     input?: string,
     nonce?: int,
-    to?: unchecksummedEthAddress, //nullable
+    to?: option<unchecksummedEthAddress>,
     transactionIndex?: int,
     value?: Ethers.BigInt.t,
-    v?: string, //nullable
-    r?: string, //nullable
-    s?: string, //nullable
-    maxPriorityFeePerGas?: Ethers.BigInt.t, //nullable
-    maxFeePerGas?: Ethers.BigInt.t, //nullable
-    chainId?: int, //nullable
+    v?: option<string>,
+    r?: option<string>,
+    s?: option<string>,
+    maxPriorityFeePerGas?: option<Ethers.BigInt.t>,
+    maxFeePerGas?: option<Ethers.BigInt.t>,
+    chainId?: option<int>,
     cumulativeGasUsed?: Ethers.BigInt.t,
     effectiveGasPrice?: Ethers.BigInt.t,
     gasUsed?: Ethers.BigInt.t,
-    contractAddress?: unchecksummedEthAddress, //nullable
+    contractAddress?: option<unchecksummedEthAddress>,
     logsBoom?: string,
-    type_?: int, //nullable
-    root?: string, //nullable
-    status?: int, //nullable
-    sighash?: string, //nullable
+    type_?: option<int>,
+    root?: option<string>,
+    status?: option<int>,
+    sighash?: option<string>,
   }
 
   let transactionDataSchema = S.object((. s) => {
-    blockHash: ?s.field("block_hash", S.nullable(S.string)),
-    blockNumber: ?s.field("block_number", S.nullable(S.int)),
-    from: ?s.field("from", S.nullable(S.string)),
-    gas: ?s.field("gas", S.nullable(Ethers.BigInt.schema)),
-    gasPrice: ?s.field("gas_price", S.nullable(Ethers.BigInt.schema)),
-    hash: ?s.field("hash", S.nullable(S.string)),
-    input: ?s.field("input", S.nullable(S.string)),
-    nonce: ?s.field("nonce", S.nullable(S.int)),
-    to: ?s.field("to", S.nullable(S.string)),
-    transactionIndex: ?s.field("transaction_index", S.nullable(S.int)),
-    value: ?s.field("value", S.nullable(Ethers.BigInt.schema)),
-    v: ?s.field("v", S.nullable(S.string)),
-    r: ?s.field("r", S.nullable(S.string)),
-    s: ?s.field("s", S.nullable(S.string)),
-    maxPriorityFeePerGas: ?s.field("max_priority_fee_per_gas", S.nullable(Ethers.BigInt.schema)),
-    maxFeePerGas: ?s.field("max_fee_per_gas", S.nullable(Ethers.BigInt.schema)),
-    chainId: ?s.field("chain_id", S.nullable(S.int)),
-    cumulativeGasUsed: ?s.field("cumulative_gas_used", S.nullable(Ethers.BigInt.schema)),
-    effectiveGasPrice: ?s.field("effective_gas_price", S.nullable(Ethers.BigInt.schema)),
-    gasUsed: ?s.field("gas_used", S.nullable(Ethers.BigInt.schema)),
-    contractAddress: ?s.field("contract_address", S.nullable(S.string)),
-    logsBoom: ?s.field("logs_bloom", S.nullable(S.string)),
-    type_: ?s.field("type", S.nullable(S.int)),
-    root: ?s.field("root", S.nullable(S.string)),
-    status: ?s.field("status", S.nullable(S.int)),
-    sighash: ?s.field("sighash", S.nullable(S.string)),
+    blockHash: ?s.field("block_hash", S.option(S.string)),
+    blockNumber: ?s.field("block_number", S.option(S.int)),
+    from: ?s.field("from", S.option(S.null(S.string))),
+    gas: ?s.field("gas", S.option(Ethers.BigInt.schema)),
+    gasPrice: ?s.field("gas_price", S.option(S.null(Ethers.BigInt.schema))),
+    hash: ?s.field("hash", S.option(S.string)),
+    input: ?s.field("input", S.option(S.string)),
+    nonce: ?s.field("nonce", S.option(S.int)),
+    to: ?s.field("to", S.option(S.null(S.string))),
+    transactionIndex: ?s.field("transaction_index", S.option(S.int)),
+    value: ?s.field("value", S.option(Ethers.BigInt.schema)),
+    v: ?s.field("v", S.option(S.null(S.string))),
+    r: ?s.field("r", S.option(S.null(S.string))),
+    s: ?s.field("s", S.option(S.null(S.string))),
+    maxPriorityFeePerGas: ?s.field(
+      "max_priority_fee_per_gas",
+      S.option(S.null(Ethers.BigInt.schema)),
+    ),
+    maxFeePerGas: ?s.field("max_fee_per_gas", S.option(S.null(Ethers.BigInt.schema))),
+    chainId: ?s.field("chain_id", S.option(S.null(S.int))),
+    cumulativeGasUsed: ?s.field("cumulative_gas_used", S.option(Ethers.BigInt.schema)),
+    effectiveGasPrice: ?s.field("effective_gas_price", S.option(Ethers.BigInt.schema)),
+    gasUsed: ?s.field("gas_used", S.option(Ethers.BigInt.schema)),
+    contractAddress: ?s.field("contract_address", S.option(S.null(S.string))),
+    logsBoom: ?s.field("logs_bloom", S.option(S.string)),
+    type_: ?s.field("type", S.option(S.null(S.int))),
+    root: ?s.field("root", S.option(S.null(S.string))),
+    status: ?s.field("status", S.option(S.null(S.int))),
+    sighash: ?s.field("sighash", S.option(S.null(S.string))),
   })
 
-  // TODO: Should we use S.nullable or S.null (?)
-  //Note all fields marked as "nullable" are not explicitly null since
-  //the are option fields and nulls will be deserialized to option when
-  //in an optional field with spice
   type logData = {
-    removed?: bool, //nullable
+    removed?: option<bool>,
     index?: int,
     transactionIndex?: int,
     transactionHash?: string,
@@ -322,28 +312,27 @@ module ResponseTypes = {
     blockNumber?: int,
     address?: unchecksummedEthAddress,
     data?: string,
-    topic0?: Ethers.EventFilter.topic, //nullable
-    topic1?: Ethers.EventFilter.topic, //nullable
-    topic2?: Ethers.EventFilter.topic, //nullable
-    topic3?: Ethers.EventFilter.topic, //nullable
+    topic0?: option<Ethers.EventFilter.topic>,
+    topic1?: option<Ethers.EventFilter.topic>,
+    topic2?: option<Ethers.EventFilter.topic>,
+    topic3?: option<Ethers.EventFilter.topic>,
   }
 
   let logDataSchema = S.object((. s) => {
-    removed: ?s.field("removed", S.nullable(S.bool)),
-    index: ?s.field("log_index", S.nullable(S.int)),
-    transactionIndex: ?s.field("transaction_index", S.nullable(S.int)),
-    transactionHash: ?s.field("transaction_hash", S.nullable(S.string)),
-    blockHash: ?s.field("block_hash", S.nullable(S.string)),
-    blockNumber: ?s.field("block_number", S.nullable(S.int)),
-    address: ?s.field("address", S.nullable(S.string)),
-    data: ?s.field("data", S.nullable(S.string)),
-    topic0: ?s.field("topic0", S.nullable(S.string)),
-    topic1: ?s.field("topic1", S.nullable(S.string)),
-    topic2: ?s.field("topic2", S.nullable(S.string)),
-    topic3: ?s.field("topic3", S.nullable(S.string)),
+    removed: ?s.field("removed", S.option(S.null(S.bool))),
+    index: ?s.field("log_index", S.option(S.int)),
+    transactionIndex: ?s.field("transaction_index", S.option(S.int)),
+    transactionHash: ?s.field("transaction_hash", S.option(S.string)),
+    blockHash: ?s.field("block_hash", S.option(S.string)),
+    blockNumber: ?s.field("block_number", S.option(S.int)),
+    address: ?s.field("address", S.option(S.string)),
+    data: ?s.field("data", S.option(S.string)),
+    topic0: ?s.field("topic0", S.option(S.null(S.string))),
+    topic1: ?s.field("topic1", S.option(S.null(S.string))),
+    topic2: ?s.field("topic2", S.option(S.null(S.string))),
+    topic3: ?s.field("topic3", S.option(S.null(S.string))),
   })
 
-  // TODO: Should we use S.nullable or S.null (?)dule ResponseTypes = {
   type data = {
     blocks?: array<blockData>,
     transactions?: array<transactionData>,
@@ -351,9 +340,9 @@ module ResponseTypes = {
   }
 
   let dataSchema = S.object((. s) => {
-    blocks: ?s.field("blocks", S.array(blockDataSchema)->S.nullable),
-    transactions: ?s.field("transactions", S.array(transactionDataSchema)->S.nullable),
-    logs: ?s.field("logs", S.array(logDataSchema)->S.nullable),
+    blocks: ?s.field("blocks", S.array(blockDataSchema)->S.option),
+    transactions: ?s.field("transactions", S.array(transactionDataSchema)->S.option),
+    logs: ?s.field("logs", S.array(logDataSchema)->S.option),
   })
 
   type queryResponse = {
