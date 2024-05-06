@@ -659,14 +659,6 @@ impl NetworkTemplate {
 pub struct NetworkConfigTemplate {
     network_config: NetworkTemplate,
     codegen_contracts: Vec<PerNetworkContractTemplate>,
-    has_multiple_events: bool,
-}
-
-fn count_number_of_events_in_total(codegen_contracts: &Vec<PerNetworkContractTemplate>) -> usize {
-    codegen_contracts
-        .iter()
-        .map(|contract| contract.events.len())
-        .sum()
 }
 
 impl NetworkConfigTemplate {
@@ -684,12 +676,9 @@ impl NetworkConfigTemplate {
             .collect::<Result<_>>()
             .context("Failed mapping network contracts")?;
 
-        let has_multiple_events = count_number_of_events_in_total(&codegen_contracts) > 1;
-
         Ok(NetworkConfigTemplate {
             network_config,
             codegen_contracts,
-            has_multiple_events,
         })
     }
 }
@@ -707,6 +696,14 @@ pub struct ProjectTemplate {
     should_use_hypersync_client_decoder: bool,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
+    has_multiple_events: bool,
+}
+
+fn count_number_of_events_in_total(codegen_contracts: &Vec<ContractTemplate>) -> usize {
+    codegen_contracts
+        .iter()
+        .map(|contract| contract.codegen_events.len())
+        .sum()
 }
 
 impl ProjectTemplate {
@@ -764,7 +761,7 @@ impl ProjectTemplate {
         let persisted_state = PersistedState::get_current_state(cfg)
             .context("Failed creating default persisted state")?
             .into();
-
+        let has_multiple_events = count_number_of_events_in_total(&codegen_contracts) > 1;
         let should_use_hypersync_client_decoder =
             cfg.event_decoder == EventDecoder::HypersyncClient;
 
@@ -799,6 +796,7 @@ impl ProjectTemplate {
             should_use_hypersync_client_decoder,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
+            has_multiple_events,
         })
     }
 }
