@@ -4,9 +4,16 @@
 type {{enum.name.uncapitalized}} = 
 {{#each enum.params as | param | }}| @as("{{param.original}}") {{param.capitalized}}{{/each}}
 let {{enum.name.uncapitalized}}Default = {{enum.params.[0].capitalized}}
-let {{enum.name.uncapitalized}}Schema: S.t<{{enum.name.uncapitalized}}> = {{#if enum.has_multiple_params}} S.union([{{/if}}
-{{#each enum.params as | param | }}
-  S.literal({{param.capitalized}}){{#if enum.has_multiple_params}},{{/if}}
-{{/each}}
-{{#if enum.has_multiple_params}}]){{/if}}
+let {{enum.name.uncapitalized}}Schema: S.t<{{enum.name.uncapitalized}}> = 
+{{#if enum.has_multiple_params}} 
+S.union([
+  {{#each enum.params as | param | }}
+    S.literal({{param.capitalized}}), 
+  {{/each}}
+])
+{{else}}
+  {{#each enum.params as | param | }}
+    S.literal({{param.capitalized}})
+  {{/each}}
+{{/if}}
 {{/each}}

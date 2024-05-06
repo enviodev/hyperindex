@@ -8,7 +8,6 @@ type t = {
   currentBlockHeight: int,
   isFetchingBatch: bool,
   isFetchingAtHead: bool,
-  hasProcessedToEndblock: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -40,10 +39,6 @@ let make = (
   }
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
   let fetchState = FetchState.makeRoot(~contractAddressMapping, ~startBlock, ~endBlock)
-  let hasProcessedToEndblock = switch (latestProcessedBlock, endBlock) {
-  | (Some(latestProcessedBlock), Some(endBlock)) => latestProcessedBlock >= endBlock
-  | _ => false
-  }
   {
     logger,
     chainConfig,
@@ -52,7 +47,6 @@ let make = (
     currentBlockHeight: 0,
     isFetchingBatch: false,
     isFetchingAtHead: false,
-    hasProcessedToEndblock,
     fetchState,
     firstEventBlockNumber,
     latestProcessedBlock,
@@ -155,6 +149,10 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~lastBlockScannedH
 /**
 Gets the latest item on the front of the queue and returns updated fetcher
 */
-let getLatestItem = (self: t) => {
-  self.fetchState->FetchState.getEarliestEvent
+let hasProcessedToEndblock = (self: t) => {
+  let {latestProcessedBlock, chainConfig: {endBlock}} = self
+  switch (latestProcessedBlock, endBlock) {
+  | (Some(latestProcessedBlock), Some(endBlock)) => latestProcessedBlock >= endBlock
+  | _ => false
+  }
 }

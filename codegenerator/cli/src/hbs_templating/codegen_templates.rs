@@ -537,7 +537,6 @@ pub struct ContractTemplate {
     pub codegen_events: Vec<EventTemplate>,
     pub abi: StringifiedAbi,
     pub handler: HandlerPathsTemplate,
-    pub has_multiple_events: bool,
 }
 
 impl ContractTemplate {
@@ -557,13 +556,11 @@ impl ContractTemplate {
         let abi = contract
             .get_stringified_abi()
             .context(format!("Failed getting abi of contract {}", contract.name))?;
-        let has_multiple_events = contract.events.len() > 1;
         Ok(ContractTemplate {
             name,
             handler,
             codegen_events,
             abi,
-            has_multiple_events,
         })
     }
 }

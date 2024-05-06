@@ -272,13 +272,22 @@ type eventName =
   | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
 {{/each}}
 {{/each}}
-let eventNameSchema = {{#if has_multiple_events }}S.union([{{/if}}
+let eventNameSchema = {{#if has_multiple_events }}
+S.union([
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
-  S.literal({{event.event_type.full}}){{#if has_multiple_events }},{{/if}}
+  S.literal({{event.event_type.full}}),
 {{/each}}
 {{/each}}
-{{#if has_multiple_events }}]){{/if}}
+])
+{{else}}
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+  S.literal({{event.event_type.full}})
+{{/each}}
+{{/each}}
+{{/if}}
+
 
 let eventNameToString = (eventName: eventName) => switch eventName {
   {{#each codegen_contracts as | contract |}}

@@ -22,6 +22,7 @@ type action =
   | SetFetchState(chain, FetchState.t)
   | UpdateQueues(ChainMap.t<FetchState.t>, arbitraryEventQueue)
   | SetSyncedChains
+  | SetSyncedChainsAndExit
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
 
@@ -30,6 +31,7 @@ type task =
   | NextQuery(queryChain)
   | ProcessEventBatch
   | UpdateChainMetaData
+  | Exit
 
 let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~currentBlockHeight) => {
   if currentBlockHeight > chainFetcher.currentBlockHeight {
@@ -145,13 +147,6 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
   }
 }
 
-let greaterThanOrEqualOpt: (option<int>, option<int>) => bool = (opt1, opt2) => {
-  switch (opt1, opt2) {
-  | (Some(num1), Some(num2)) => num1 >= num2
-  | _ => false
-  }
-}
-
 let updateLatestProcessedBlocks = (
   ~state: t,
   ~latestProcessedBlocks: EventProcessing.EventsProcessed.t,
@@ -180,9 +175,6 @@ let updateLatestProcessedBlocks = (
         ...cf,
         latestProcessedBlock,
         numEventsProcessed,
-        hasProcessedToEndblock: latestProcessedBlock->greaterThanOrEqualOpt(
-          cf.chainConfig.endBlock,
-        ),
       }
     }),
   }
@@ -393,7 +385,14 @@ let actionReducer = (state: t, action: action) => {
         ...state,
         chainManager: state.chainManager->checkAndSetSyncedChains(~nextQueueItemIsKnownNone=true),
       },
-      [],
+      [UpdateChainMetaData],
+    )
+  | SetSyncedChainsAndExit => (
+      {
+        ...state,
+        chainManager: state.chainManager->checkAndSetSyncedChains(~nextQueueItemIsKnownNone=true),
+      },
+      [UpdateChainMetaData, Exit],
     )
   | UpdateQueues(fetchStatesMap, arbitraryEventPriorityQueue) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
@@ -417,10 +416,7 @@ let actionReducer = (state: t, action: action) => {
       [NextQuery(CheckAllChains)],
     )
   | SuccessExit => {
-      // delay for node exit race conditions
-      Time.resolvePromiseAfterDelay(~delayMilliseconds=4000)
-      ->Promise.thenResolve(_ => NodeJsLocal.process->NodeJsLocal.exitWithCode(Success))
-      ->ignore
+      NodeJsLocal.process->NodeJsLocal.exitWithCode(Success)
       (state, [])
     }
   | ErrorExit(errHandler) =>
@@ -501,6 +497,7 @@ let checkAndFetchForChain = (chain, ~state, ~dispatchAction) => {
 
 let taskReducer = (state: t, task: task, ~dispatchAction) => {
   switch task {
+  | Exit => dispatchAction(SuccessExit)
   | UpdateChainMetaData => updateChainMetadataTable(state.chainManager)->ignore
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(~state, ~dispatchAction)
@@ -552,17 +549,15 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
           Promise.reject(exn)
         })
         ->ignore
-      | None => {
+      | None =>
+        if (
+          EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
+            state.chainManager.chainFetchers,
+          )
+        ) {
+          dispatchAction(SetSyncedChainsAndExit)
+        } else {
           dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
-          if (
-            EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
-              state.chainManager.chainFetchers,
-            )
-          ) {
-            updateChainMetadataTable(state.chainManager)
-            ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
-            ->ignore
-          }
         }
       }
     }
