@@ -10,8 +10,12 @@ describe("Parsing Raw Events", () => {
       imageUrl: "myurl.com",
     }
 
-    let paramsEncoded =
-      params->Types.GravatarContract.NewGravatarEvent.eventArgs_encode->Js.Json.stringify
+    let paramsEncoded = switch params->S.serializeToJsonStringWith(.
+      Types.GravatarContract.NewGravatarEvent.eventArgsSchema,
+    ) {
+    | Ok(p) => p
+    | Error(e) => e->S.Error.raise
+    }
 
     let blockNumber = 11954567
     let timestamp = 1614631579

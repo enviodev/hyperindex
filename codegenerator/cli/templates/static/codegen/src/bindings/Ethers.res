@@ -49,29 +49,6 @@ module BigInt = {
 
   let zero = fromInt(0)
 
-  let t_encode = (bigint: t) => bigint->toString->Js.Json.string
-  let t_decode: Js.Json.t => result<t, Spice.decodeError> = json =>
-    switch json->Js.Json.decodeString {
-    | Some(stringBigInt) =>
-      switch stringBigInt->fromString {
-      | Some(bigInt) => Ok(bigInt)
-      | None =>
-        let spiceErr: Spice.decodeError = {
-          path: "BigInt.t",
-          message: "String not deserializeable to BigInt.t",
-          value: json,
-        }
-        Error(spiceErr)
-      }
-    | None =>
-      let spiceErr: Spice.decodeError = {
-        path: "BigInt.t",
-        message: "Json not deserializeable to string of BigInt.t",
-        value: json,
-      }
-      Error(spiceErr)
-    }
-
   let schema =
     S.string
     ->S.setName("Ethers.BigInt")
@@ -107,19 +84,6 @@ let getAddressFromString = str => Misc.unsafeToOption(() => str->getAddressFromS
 external ethAddressToString: ethAddress => string = "%identity"
 let ethAddressToStringLower = (address: ethAddress): string =>
   address->ethAddressToString->Js.String2.toLowerCase
-
-let ethAddress_encode = ethAddress => ethAddress->ethAddressToString->Js.Json.string
-let ethAddress_decode: Js.Json.t => result<ethAddress, Spice.decodeError> = json =>
-  switch json->Js.Json.decodeString {
-  | Some(stringAddress) => Ok(stringAddress->Obj.magic)
-  | None =>
-    let spiceErr: Spice.decodeError = {
-      path: "ethAddress",
-      message: "Json not deserializeable to string of ethAddress",
-      value: json,
-    }
-    Error(spiceErr)
-  }
 
 let ethAddressSchema =
   S.string->S.setName("ethAddress")->(Obj.magic: S.t<string> => S.t<ethAddress>)

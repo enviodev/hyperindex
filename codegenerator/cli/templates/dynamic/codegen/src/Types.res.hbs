@@ -1,7 +1,7 @@
 //*************
 //***ENTITIES**
 //*************
-@spice @genType.as("Id")
+@genType.as("Id")
 type id = string
 
 @@warning("-30")
@@ -108,7 +108,7 @@ module {{event.name.capitalized}}Event = {
     unit
     {{/if}}
 
-  @spice @genType
+  @genType
   type eventArgs = 
     {{#if event.params}}
     {

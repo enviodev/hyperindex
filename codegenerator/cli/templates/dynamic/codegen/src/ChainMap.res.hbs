@@ -31,21 +31,6 @@ module Chain = {
     | c => Error(UndefinedChain(c))
     }
 
-  let t_encode: Spice.encoder<t> = chain => {
-    chain->toChainId->Spice.intToJson
-  }
-
-  let t_decode: Spice.decoder<t> = json => {
-    json
-    ->Spice.intFromJson
-    ->Result.flatMap(c =>
-      switch c->fromChainId {
-      | Ok(chain) => Ok(chain)
-      | Error(_) => Spice.error(~path="ChainMap.chain", "Undefined chain", json)
-      }
-    )
-  }
-
   module ChainIdCmp = Belt.Id.MakeComparable({
     type t = t
     let cmp = (a, b) => Pervasives.compare(a->toChainId, b->toChainId)

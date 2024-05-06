@@ -34,11 +34,9 @@
     "generated",
     "@ryyppy/rescript-promise",
     "rescript-mocha",
-    "@greenlabs/ppx-spice",
     "rescript-nodejs",
     "rescript-schema"
   ],
   "pinned-dependencies": ["generated"],
-  "bsc-flags": ["-open RescriptSchema"],
-  "ppx-flags": ["@greenlabs/ppx-spice/ppx"]
+  "bsc-flags": ["-open RescriptSchema"]
 }

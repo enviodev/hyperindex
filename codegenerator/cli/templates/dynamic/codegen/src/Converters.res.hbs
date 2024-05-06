@@ -268,25 +268,13 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
 
 let decodeRawEventWith = (
   rawEvent: Types.rawEventsEntity,
-  ~decoder: Spice.decoder<'a>,
+  ~schema: S.t<'a>,
   ~variantAccessor: Types.eventLog<'a> => Types.event,
   ~chain,
   ~txOrigin: option<Ethers.ethAddress>,
-): Spice.result<Types.eventBatchQueueItem> => {
-  switch rawEvent.params->Js.Json.parseExn {
-  | exception exn =>
-    let message =
-      exn
-      ->Js.Exn.asJsExn
-      ->Belt.Option.flatMap(jsexn => jsexn->Js.Exn.message)
-      ->Belt.Option.getWithDefault("No message on exn")
-
-    Spice.error(`Failed at JSON.parse. Error: ${message}`, rawEvent.params->Obj.magic)
-  | v => Ok(v)
-  }
-  ->Belt.Result.flatMap(json => {
-    json->decoder
-  })
+): result<Types.eventBatchQueueItem, S.error> => {
+  rawEvent.params
+  ->S.parseJsonStringWith(schema)
   ->Belt.Result.map(params => {
     let event = {
       chainId: rawEvent.chainId,
@@ -313,20 +301,16 @@ let decodeRawEventWith = (
   })
 }
 
-let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain, ~txOrigin: option<Ethers.ethAddress>): Spice.result<
-  Types.eventBatchQueueItem,
-> => {
-  switch rawEvent.eventType->S.parseWith(Types.eventNameSchema) {
-  | Ok(_) as ok => ok
-  | Error({path} as error) =>
-    Spice.error(~path=path->S.Path.toString, error->S.Error.reason, rawEvent.eventType)
-  }->Belt.Result.flatMap(eventName => {
+let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain, ~txOrigin: option<Ethers.ethAddress>): result<Types.eventBatchQueueItem, S.error> => {
+  rawEvent.eventType
+  ->S.parseWith(Types.eventNameSchema)
+  ->Belt.Result.flatMap(eventName => {
     switch eventName {
   {{#each codegen_contracts as |contract|}}
   {{#each contract.codegen_events as |event|}}
       | {{event.event_type.full}} =>
       rawEvent->decodeRawEventWith(
-        ~decoder=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_decode,
+        ~schema=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgsSchema,
         ~variantAccessor=event => Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event),
         ~chain,
         ~txOrigin,
