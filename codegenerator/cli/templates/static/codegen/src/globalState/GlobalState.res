@@ -13,7 +13,7 @@ type blockRangeFetchResponse = ChainWorkerTypes.blockRangeFetchResponse<
   RpcWorker.t,
 >
 
-type shouldExit = | SuccessExit | NoExit
+type shouldExit = | ExitWithSuccess | NoExit
 type action =
   | BlockRangeResponse(chain, blockRangeFetchResponse)
   | SetFetchStateCurrentBlockHeight(chain, int)
@@ -22,7 +22,7 @@ type action =
   | SetCurrentlyFetchingBatch(chain, bool)
   | SetFetchState(chain, FetchState.t)
   | UpdateQueues(ChainMap.t<FetchState.t>, arbitraryEventQueue)
-  | SetSyncedChainsAndShouldExit(shouldExit)
+  | SetSyncedChains
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
 
@@ -379,7 +379,10 @@ let actionReducer = (state: t, action: action) => {
     )
   | SetFetchState(chain, fetchState) =>
     updateChainFetcher(currentChainFetcher => {...currentChainFetcher, fetchState}, ~chain, ~state)
-  | SetSyncedChainsAndShouldExit(shouldExit) => 
+  | SetSyncedChains => {
+    let shouldExit = 
+          EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
+            state.chainManager.chainFetchers) ? ExitWithSuccess : NoExit
     (
       {
         ...state,
@@ -388,6 +391,7 @@ let actionReducer = (state: t, action: action) => {
     ,
     [UpdateChainMetaDataAndCheckForExit(shouldExit)]
     )
+  }
   | UpdateQueues(fetchStatesMap, arbitraryEventPriorityQueue) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
@@ -493,7 +497,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
   switch task {
   | UpdateChainMetaDataAndCheckForExit(shouldExit) => 
   switch shouldExit {
-    | SuccessExit => updateChainMetadataTable(state.chainManager)->Promise.thenResolve(_ => dispatchAction(SuccessExit))->ignore
+    | ExitWithSuccess => updateChainMetadataTable(state.chainManager)->Promise.thenResolve(_ => dispatchAction(SuccessExit))->ignore
     | NoExit => updateChainMetadataTable(state.chainManager)->ignore
   }
   | NextQuery(chainCheck) =>
@@ -547,15 +551,7 @@ let taskReducer = (state: t, task: task, ~dispatchAction) => {
         })
         ->ignore
       | None =>
-        if (
-          EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
-            state.chainManager.chainFetchers,
-          )
-        ) {
-          dispatchAction(SetSyncedChainsAndShouldExit(SuccessExit))
-        } else {
-          dispatchAction(SetSyncedChainsAndShouldExit(NoExit)) //Known that there are no items available on the queue so safely call this action
-        }
+        dispatchAction(SetSyncedChains)
       }
     }
   }
