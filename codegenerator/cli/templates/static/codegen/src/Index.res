@@ -82,6 +82,9 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           : cf.currentBlockHeight
 
       let progress: ChainData.progress = if hasProcessedToEndblock {
+      // if there's chains that have no events in the block range start->end, then check 
+      // if the endblock has been reached since it's possible there are no events in that block 
+      // range (ie firstEventBlockNumber = None)
         let currentBlockHeight =
           cf.chainConfig.endBlock->Option.getWithDefault(cf.currentBlockHeight)
         let {
