@@ -119,6 +119,16 @@ module {{event.name.capitalized}}Event = {
     {{else}}
     unit
     {{/if}}
+let eventArgsSchema = 
+  {{#if event.params}}
+  S.object((. s) => {
+  {{#each event.params as | param |}}
+    {{param.param_name.uncapitalized}}: s.field("{{param.param_name.uncapitalized}}", {{param.type_rescript_schema}}),
+  {{/each}}
+  })
+  {{else}}
+  S.literal(%raw(`null`))->S.variant((. _) => ())
+  {{/if}}
 
 
   @genType.as("{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_EventLog")

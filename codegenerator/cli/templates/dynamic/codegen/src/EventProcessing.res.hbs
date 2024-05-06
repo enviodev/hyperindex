@@ -36,7 +36,7 @@ let addEventToRawEvents = (
   event: Types.eventLog<'a>,
   ~inMemoryStore: IO.InMemoryStore.t,
   ~chainId,
-  ~jsonSerializedParams: Js.Json.t,
+  ~eventArgsSchema: S.t<'a>,
   ~eventName: Types.eventName,
 ) => {
   let {
@@ -61,7 +61,10 @@ let addEventToRawEvents = (
     blockHash,
     blockTimestamp,
     eventType: eventName->S.serializeOrRaiseWith(Types.eventNameSchema),
-    params: jsonSerializedParams->Js.Json.stringify,
+    params: switch event.params->S.serializeToJsonStringWith(. eventArgsSchema) {
+    | Ok(jsonString) => jsonString
+    | Error(e) => S.Error.raise(e)
+    },
   }
 
   let eventIdStr = eventId->Ethers.BigInt.toString
@@ -96,7 +99,7 @@ let updateEventSyncState = (
 let handleEvent = (
   ~inMemoryStore,
   ~chainId,
-  ~serializer,
+  ~eventArgsSchema,
   ~context: Context.genericContextCreatorFunctions<'b, 'c, 'd>,
   ~handlerWithContextGetter: Handlers.handlerWithContextGetterSyncAsync<'a, 'b, 'c, 'd>,
   ~event,
@@ -107,9 +110,7 @@ let handleEvent = (
 ) => {
   event->updateEventSyncState(~chainId, ~inMemoryStore)
 
-  let jsonSerializedParams = event.params->serializer
-
-  event->addEventToRawEvents(~inMemoryStore, ~chainId, ~jsonSerializedParams, ~eventName)
+  event->addEventToRawEvents(~inMemoryStore, ~chainId, ~eventArgsSchema, ~eventName)
 
   let makeErr = ErrorHandling.make(
     ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
@@ -163,7 +164,7 @@ let eventRouter = (
     ) => handleEvent(
       ~event,
       ~eventName={{event.event_type.full}},
-      ~serializer=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs_encode,
+      ~eventArgsSchema=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgsSchema,
       ~handlerWithContextGetter=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler(),
       ~chainId,
       ~inMemoryStore,
