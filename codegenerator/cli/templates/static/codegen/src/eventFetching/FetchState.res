@@ -613,7 +613,8 @@ let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
   switch self.registerType {
   //Case 1 Root register that has only fetched up to a confirmed valid block number
   //Should just return itself unchanged
-  | RootRegister if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber => self
+  | RootRegister(_)
+    if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber => self
   //Case 2 Dynamic register that has only fetched up to a confirmed valid block number
   //Should just return itself, with the next register rolled back recursively
   | DynamicContractRegister(id, nextRegister)
@@ -623,7 +624,7 @@ let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
     }
   //Case 3 Root register that has fetched further than the confirmed valid block number
   //Should prune its queue and set its latest fetched block data to the latest known confirmed block
-  | RootRegister => {
+  | RootRegister(_) => {
       ...self,
       fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
       latestFetchedBlock: lastKnownValidBlock,
@@ -648,8 +649,8 @@ let isActivelyIndexing = fetchState => {
   // nesting to limit additional unnecessary computation
   switch fetchState.registerType {
   | RootRegister({endBlock: Some(endBlock)}) =>
-    let isPastEndblock = fetchState.latestFetchedBlockNumber >= endBlock
-    if isPastEndblock {       
+    let isPastEndblock = fetchState.latestFetchedBlock.blockNumber >= endBlock
+    if isPastEndblock {
       fetchState->queueSize > 0
     } else {
       true

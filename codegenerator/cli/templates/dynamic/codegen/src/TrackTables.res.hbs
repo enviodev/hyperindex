@@ -90,7 +90,7 @@ let trackFunction= async () => {
           }
 
   let response = await fetch(
-    hasuraGraphqlEndpoint,
+    Env.Hasura.graphqlEndpoint,
     {
       method: #POST,
       body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
@@ -238,7 +238,7 @@ let createRawEventsArrayRelationship = async () => {
   
 
   let response = await fetch(
-    hasuraGraphqlEndpoint,
+    Env.Hasura.graphqlEndpoint,
     {
       method: #POST,
       body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
@@ -294,7 +294,7 @@ let createEntityHistoryObjectRelationship = async () => {
   
 
   let response = await fetch(
-    hasuraGraphqlEndpoint,
+    Env.Hasura.graphqlEndpoint,
     {
       method: #POST,
       body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,
@@ -350,7 +350,7 @@ let createEntityHistoryFilterObjectRelationship = async () => {
   
 
   let response = await fetch(
-    hasuraGraphqlEndpoint,
+    Env.Hasura.graphqlEndpoint,
     {
       method: #POST,
       body: body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string,

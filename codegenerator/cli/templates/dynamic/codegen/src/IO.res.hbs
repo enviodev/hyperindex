@@ -528,7 +528,7 @@ let executeSet = (
   }
 }
 
-let getEntityHistoryItems = (entityUpdates, ~entityEncoder, ~entityType) => {
+let getEntityHistoryItems = (entityUpdates, ~entitySchema, ~entityType) => {
   let (_, entityHistoryItems) = entityUpdates->Belt.Array.reduce((None, []), (
     prev: (option<Types.eventIdentifier>, array<DbFunctions.entityHistoryItem>),
     entity: Types.entityUpdate<'a>,
@@ -539,7 +539,10 @@ let getEntityHistoryItems = (entityUpdates, ~entityEncoder, ~entityType) => {
     let entityHistoryItems = if shouldSaveHistory {
       let mapPrev = Belt.Option.map(optPreviousEventIdentifier)
       let (entity_id, params) = switch entityUpdateAction {
-      | Set(entity) => ((entity->Obj.magic)["id"], Some(entity->entityEncoder))
+      | Set(entity) => (
+          (entity->Obj.magic)["id"],
+          Some(entity->S.serializeOrRaiseWith(entitySchema)),
+        )
       | Delete(event_id) => (event_id, None)
       }
       let historyItem: DbFunctions.entityHistoryItem = {
@@ -571,7 +574,7 @@ let executeSetEntityWithHistory = (
   ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
   ~dbFunctionSet: (Postgres.sql, array<'b>) => promise<unit>,
   ~dbFunctionDelete: (Postgres.sql, array<string>) => promise<unit>,
-  ~entityEncoder,
+  ~entitySchema,
   ~entityType,
 ): promise<unit> => {
   let (entitiesToSet, idsToDelete, entityHistoryItemsToSet) = rows->Belt.Array.reduce(
@@ -580,11 +583,11 @@ let executeSetEntityWithHistory = (
       switch row {
       | Updated({latest, history}) =>
         let entityHistoryItems =
-          history->Belt.Array.concat([latest])->getEntityHistoryItems(~entityEncoder, ~entityType)
+          history->Belt.Array.concat([latest])->getEntityHistoryItems(~entitySchema, ~entityType)
 
         switch latest.entityUpdateAction {
         | Set(entity) => (
-            entitiesToSet->Belt.Array.concat([entityEncoder(entity)]),
+            entitiesToSet->Belt.Array.concat([entity]),
             idsToDelete,
             entityHistoryItemsToSet->Belt.Array.concat([entityHistoryItems]),
           )
@@ -623,7 +626,7 @@ let executeDbFunctionsEntity = (
   ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
   ~dbFunctionSet: (Postgres.sql, array<'b>) => promise<unit>,
   ~dbFunctionDelete: (Postgres.sql, array<string>) => promise<unit>,
-  ~entityEncoder,
+  ~entitySchema as _,
   ~entityType as _,
 ): promise<unit> => {
   let (entitiesToSet, idsToDelete) = rows->Belt.Array.reduce(([], []), (
@@ -632,7 +635,7 @@ let executeDbFunctionsEntity = (
   ) =>
     switch row {
     | Updated({latest: {entityUpdateAction: Set(entity)}}) => (
-        Belt.Array.concat(accumulatedSets, [entityEncoder(entity)]),
+        Belt.Array.concat(accumulatedSets, [entity]),
         accumulatedDeletes,
       )
     | Updated({latest: {entityUpdateAction: Delete(entityId)}}) => (
@@ -679,7 +682,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
     ~dbFunctionSet=DbFunctions.{{entity.name.capitalized}}.batchSet,
     ~dbFunctionDelete=placeholderDeleteFunction,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
-    ~entityEncoder=Types.{{entity.name.uncapitalized}}Entity_encode,
+    ~entitySchema=Types.{{entity.name.uncapitalized}}EntitySchema,
     ~entityType="{{entity.name.capitalized}}"
   )
 
@@ -714,7 +717,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
 }
 
 module RollBack = {
-  exception DecodeError(Spice.decodeError)
+  exception DecodeError(S.error)
   let rollBack = async (~chainId, ~blockTimestamp, ~blockNumber, ~logIndex) => {
     let reorgData = switch await DbFunctions.sql->DbFunctions.EntityHistory.getRollbackDiff(
       ~chainId,

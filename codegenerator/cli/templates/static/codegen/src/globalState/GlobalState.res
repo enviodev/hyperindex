@@ -86,7 +86,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t) => {
     cm.chainFetchers
     ->ChainMap.values
     ->Belt.Array.map(cf => {
-      let latestFetchedBlockNumber = cf.fetchState->FetchState.getLatestFullyFetchedBlock
+      let latestFetchedBlock = cf.fetchState->FetchState.getLatestFullyFetchedBlock
       let chainMetadata: DbFunctions.ChainMetadata.chainMetadata = {
         chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
         startBlock: cf.chainConfig.startBlock,
@@ -101,7 +101,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t) => {
         | Rpc(_) => false
         },
         numBatchesFetched: cf.numBatchesFetched,
-        latestFetchedBlockNumber,
+        latestFetchedBlockNumber: latestFetchedBlock.blockNumber,
         timestampCaughtUpToHeadOrEndblock: cf.timestampCaughtUpToHeadOrEndblock,
       }
       chainMetadata
@@ -648,7 +648,11 @@ let injectedTaskReducer = async (
         //With rolled back values
         let rollbackInMemStore = switch state.rollbackState {
         | RollbackInMemStore(inMemoryStore) => Some(inMemoryStore)
-        | NoRollback | RollingBack(_) /* This is an impossible case due to the surrounding if statement check */ => None
+        | NoRollback
+        | RollingBack(
+          _,
+        ) /* This is an impossible case due to the surrounding if statement check */ =>
+          None
         }
 
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(IO.InMemoryStore.make())

@@ -163,7 +163,6 @@ module DynamicContractRegistry = {
   ) => promise<array<contractTypeAndAddress>> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
 }
 
-@spice
 type entityHistoryItem = {
   block_timestamp: int,
   chain_id: int,
@@ -178,6 +177,20 @@ type entityHistoryItem = {
   entity_id: string,
 }
 
+let entityHistoryItemSchema = S.object((. s) => {
+  block_timestamp: s.field("block_timestamp", S.int),
+  chain_id: s.field("chain_id", S.int),
+  block_number: s.field("block_number", S.int),
+  log_index: s.field("log_index", S.int),
+  previous_block_timestamp: s.field("previous_block_timestamp", S.null(S.int)),
+  previous_chain_id: s.field("previous_chain_id", S.null(S.int)),
+  previous_block_number: s.field("previous_block_number", S.null(S.int)),
+  previous_log_index: s.field("previous_log_index", S.null(S.int)),
+  params: s.field("params", S.null(S.json)),
+  entity_type: s.field("entity_type", S.string),
+  entity_id: s.field("entity_id", S.string),
+})
+
 module EntityHistory = {
   @module("./DbFunctionsImplementation.js")
   external batchSetInternal: (
@@ -189,7 +202,9 @@ module EntityHistory = {
     //Encode null for for the with prev types so that it's not undefined
     batchSetInternal(
       sql,
-      ~entityHistoriesToSet=entityHistoriesToSet->Belt.Array.map(entityHistoryItem_encode),
+      ~entityHistoriesToSet=entityHistoriesToSet->Belt.Array.map(v =>
+        v->S.serializeOrRaiseWith(entityHistoryItemSchema)
+      ),
     )
   }
 
@@ -199,7 +214,6 @@ module EntityHistory = {
     ~eventIdentifier: Types.eventIdentifier,
   ) => promise<unit> = "deleteAllEntityHistoryAfterEventIdentifier"
 
-  @spice
   type rollbackDiffResponseRaw = {
     entity_type: Types.entityName,
     entity_id: string,
@@ -209,6 +223,16 @@ module EntityHistory = {
     log_index: option<int>,
     val: option<Js.Json.t>,
   }
+
+  let rollbackDiffResponseRawSchema = S.object((. s) => {
+    entity_type: s.field("entity_type", Types.entityNameSchema),
+    entity_id: s.field("entity_id", S.string),
+    chain_id: s.field("chain_id", S.null(S.int)),
+    block_timestamp: s.field("block_timestamp", S.null(S.int)),
+    block_number: s.field("block_number", S.null(S.int)),
+    log_index: s.field("log_index", S.null(S.int)),
+    val: s.field("val", S.null(S.json)),
+  })
 
   type previousEntity = {
     eventIdentifier: Types.eventIdentifier,
@@ -223,7 +247,7 @@ module EntityHistory = {
 
   let rollbackDiffResponse_decode = (json: Js.Json.t) => {
     json
-    ->rollbackDiffResponseRaw_decode
+    ->S.parseWith(. rollbackDiffResponseRawSchema)
     ->Belt.Result.flatMap(raw => {
       switch raw {
       | {
