@@ -342,7 +342,7 @@ let fetchBlockRange = async (
       lastBlockScannedData,
       firstBlockParentNumberAndHash: pageUnsafe.rollbackGuard->Option.map(v => {
         ReorgDetection.blockHash: v.firstParentHash,
-        blockNumber: v.firstBlockNumber,
+        blockNumber: v.firstBlockNumber - 1, 
       }),
     }
 
