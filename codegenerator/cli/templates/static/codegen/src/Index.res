@@ -75,38 +75,58 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
     ->Array.map(cf => {
       let {numEventsProcessed, fetchState, numBatchesFetched} = cf
       let latestFetchedBlockNumber = fetchState->FetchState.getLatestFullyFetchedBlock
+      let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
       let currentBlockHeight =
         cf->ChainFetcher.hasProcessedToEndblock
           ? cf.chainConfig.endBlock->Option.getWithDefault(cf.currentBlockHeight)
           : cf.currentBlockHeight
 
-      let progress: ChainData.progress = switch cf {
-      | {
-          firstEventBlockNumber: Some(firstEventBlockNumber),
-          latestProcessedBlock,
-          timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
-        } =>
-        let latestProcessedBlock =
-          latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
-        Synced({
+      let progress: ChainData.progress = if hasProcessedToEndblock {
+        let currentBlockHeight =
+          cf.chainConfig.endBlock->Option.getWithDefault(cf.currentBlockHeight)
+        let {
           firstEventBlockNumber,
           latestProcessedBlock,
           timestampCaughtUpToHeadOrEndblock,
           numEventsProcessed,
-        })
-      | {
-          firstEventBlockNumber: Some(firstEventBlockNumber),
-          latestProcessedBlock,
-          timestampCaughtUpToHeadOrEndblock: None,
-        } =>
-        let latestProcessedBlock =
-          latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
-        Syncing({
-          firstEventBlockNumber,
-          latestProcessedBlock,
+        } = cf
+        Synced({
+          firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
+          latestProcessedBlock: latestProcessedBlock->Option.getWithDefault(currentBlockHeight),
+          timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
+            Js.Date.now()->Js.Date.fromFloat,
+          ),
           numEventsProcessed,
         })
-      | {firstEventBlockNumber: None} => SearchingForEvents
+      } else {
+        switch cf {
+        | {
+            firstEventBlockNumber: Some(firstEventBlockNumber),
+            latestProcessedBlock,
+            timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
+          } =>
+          let latestProcessedBlock =
+            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
+          Synced({
+            firstEventBlockNumber,
+            latestProcessedBlock,
+            timestampCaughtUpToHeadOrEndblock,
+            numEventsProcessed,
+          })
+        | {
+            firstEventBlockNumber: Some(firstEventBlockNumber),
+            latestProcessedBlock,
+            timestampCaughtUpToHeadOrEndblock: None,
+          } =>
+          let latestProcessedBlock =
+            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
+          Syncing({
+            firstEventBlockNumber,
+            latestProcessedBlock,
+            numEventsProcessed,
+          })
+        | {firstEventBlockNumber: None} => SearchingForEvents
+        }
       }
 
       (
