@@ -14,14 +14,24 @@ use std::path::PathBuf;
 type NetworkId = u64;
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(
+    title = "Envio Config Schema",
+    description = "Schema for a YAML config for an envio indexer"
+)]
 pub struct HumanConfig {
+    #[schemars(description = "Name of the project")]
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Description of the project")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contracts: Option<Vec<GlobalContractConfig>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Custom path to config file")]
     pub schema: Option<String>,
+    #[schemars(
+        description = "Configuration of the blockchain networks that the project is deployed on"
+    )]
     pub networks: Vec<Network>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unordered_multichain_mode: Option<bool>,
