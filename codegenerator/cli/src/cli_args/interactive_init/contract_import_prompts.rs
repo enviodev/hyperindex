@@ -507,11 +507,29 @@ fn get_converter_network_u64(
                 Some(r) => r.clone(),
                 None => prompt_for_rpc_url()?,
             };
-            converters::Network::Unsupported(network_id, rpc_url)
+            let start_block = prompt_for_start_block()?;
+            converters::Network::Unsupported(network_id, rpc_url, start_block)
         }
     };
 
     Ok(network)
+}
+
+///Prompt the user to enter a starting block, only used when using rpc as it could be very slow to have the startblock at 0 with rpc 🦶🔫
+fn prompt_for_start_block() -> Result<u64> {
+    let prompt = Text::new(
+        "You have entered a network that is unsupported by HyperSync. Please provide a start block for this network \
+            (this can be edited later in config.yaml):",
+    )
+    .prompt();
+
+    let start_block: String = prompt.context("Failed during start block prompt")?;
+    let start_block: u64 = start_block
+        .trim()
+        .parse()
+        .context("Failed to parse start block, start block must be a number")?;
+
+    Ok(start_block)
 }
 
 ///Prompt the user to enter an rpc url
