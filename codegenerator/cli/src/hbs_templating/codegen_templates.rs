@@ -699,13 +699,6 @@ pub struct ProjectTemplate {
     has_multiple_events: bool,
 }
 
-fn count_number_of_events_in_total(codegen_contracts: &Vec<ContractTemplate>) -> usize {
-    codegen_contracts
-        .iter()
-        .map(|contract| contract.codegen_events.len())
-        .sum()
-}
-
 impl ProjectTemplate {
     pub fn generate_templates(&self, project_paths: &ParsedProjectPaths) -> Result<()> {
         let template_dirs = TemplateDirs::new();
@@ -761,7 +754,11 @@ impl ProjectTemplate {
         let persisted_state = PersistedState::get_current_state(cfg)
             .context("Failed creating default persisted state")?
             .into();
-        let has_multiple_events = count_number_of_events_in_total(&codegen_contracts) > 1;
+        let total_number_of_events: usize = codegen_contracts
+            .iter()
+            .map(|contract| contract.codegen_events.len())
+            .sum();
+        let has_multiple_events = total_number_of_events > 1;
         let should_use_hypersync_client_decoder =
             cfg.event_decoder == EventDecoder::HypersyncClient;
 
