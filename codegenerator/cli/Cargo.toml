@@ -41,6 +41,7 @@ sqlx = { version = "0.7.2", features = [
   "postgres",
 ] }
 thiserror = "1.0.50"
+schemars = { version = "0.8.19", features = ["impl_json_schema"] }
 [dev-dependencies]
 tempdir = "0.3"
 paste = "1.0.12"

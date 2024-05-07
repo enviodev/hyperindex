@@ -1,3 +1,4 @@
+use schemars::{gen, schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -45,6 +46,21 @@ impl<T: Clone> IntoIterator for NormalizedList<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
+    }
+}
+
+impl<T: Clone> JsonSchema for NormalizedList<T> {
+    fn is_referenceable() -> bool {
+        false
+    }
+
+    fn schema_name() -> String {
+        "NormalizedList".to_string()
+    }
+
+    fn json_schema(_gen: &mut gen::SchemaGenerator) -> Schema {
+        // FIXME: It currently works as any
+        Schema::Bool(true)
     }
 }
 

@@ -6,13 +6,14 @@ use crate::{
 };
 use anyhow::{anyhow, Context};
 use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
+use schemars::{gen, schema, schema_for, JsonSchema};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
 
 type NetworkId = u64;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct HumanConfig {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -28,14 +29,22 @@ pub struct HumanConfig {
     pub event_decoder: Option<EventDecoder>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+impl HumanConfig {
+    pub fn to_json_schema_pretty() -> String {
+        let schema = schema_for!(HumanConfig);
+        serde_json::to_string_pretty(&schema)
+            .expect("Failed to generate JSON schema for config.yaml")
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum EventDecoder {
     Viem,
     HypersyncClient,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 pub struct GlobalContractConfig {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -66,20 +75,20 @@ impl GlobalContractConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 pub struct HypersyncConfig {
     #[serde(alias = "url")]
     pub endpoint_url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncSourceConfig {
     RpcConfig(RpcConfig),
     HypersyncConfig(HypersyncConfig),
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 pub struct Network {
     pub id: NetworkId,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
@@ -105,7 +114,7 @@ impl Network {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
 pub struct SyncConfigUnstable {
     #[serde(default = "default_initial_block_interval")]
     initial_block_interval: u32,
@@ -160,7 +169,7 @@ fn default_query_timeout_millis() -> u32 {
     SYNC_CONFIG_DEFAULT.query_timeout_millis
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
 pub struct RpcConfig {
     pub url: String,
@@ -179,7 +188,7 @@ impl RpcConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 pub struct NetworkContractConfig {
     pub name: String,
     pub address: NormalizedList<String>,
@@ -189,7 +198,7 @@ pub struct NetworkContractConfig {
     pub local_contract_config: Option<LocalContractConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 pub struct LocalContractConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abi_file_path: Option<String>,
@@ -218,7 +227,7 @@ impl LocalContractConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigEvent {
     pub event: EventNameOrSig,
@@ -233,6 +242,21 @@ pub struct ConfigEvent {
 pub enum EventNameOrSig {
     Name(String),
     Event(EthAbiEvent),
+}
+
+impl JsonSchema for EventNameOrSig {
+    fn is_referenceable() -> bool {
+        false
+    }
+
+    fn schema_name() -> String {
+        "EventNameOrSig".to_string()
+    }
+
+    fn json_schema(_gen: &mut gen::SchemaGenerator) -> schema::Schema {
+        // FIXME: It currently works as any
+        schema::Schema::Bool(true)
+    }
 }
 
 impl EventNameOrSig {
@@ -275,7 +299,7 @@ pub fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Cont
     Ok(abi)
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RequiredEntity {
     pub name: String,
@@ -656,5 +680,314 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             },
             de
         );
+        fn test_generates_json_schema() {
+            let expected = "{
+  \"$schema\": \"http://json-schema.org/draft-07/schema#\",
+  \"title\": \"HumanConfig\",
+  \"type\": \"object\",
+  \"required\": [
+    \"name\",
+    \"networks\"
+  ],
+  \"properties\": {
+    \"contracts\": {
+      \"type\": [
+        \"array\",
+        \"null\"
+      ],
+      \"items\": {
+        \"$ref\": \"#/definitions/GlobalContractConfig\"
+      }
+    },
+    \"description\": {
+      \"type\": [
+        \"string\",
+        \"null\"
+      ]
+    },
+    \"event_decoder\": {
+      \"anyOf\": [
+        {
+          \"$ref\": \"#/definitions/EventDecoder\"
+        },
+        {
+          \"type\": \"null\"
+        }
+      ]
+    },
+    \"name\": {
+      \"type\": \"string\"
+    },
+    \"networks\": {
+      \"type\": \"array\",
+      \"items\": {
+        \"$ref\": \"#/definitions/Network\"
+      }
+    },
+    \"schema\": {
+      \"type\": [
+        \"string\",
+        \"null\"
+      ]
+    },
+    \"unordered_multichain_mode\": {
+      \"type\": [
+        \"boolean\",
+        \"null\"
+      ]
+    }
+  },
+  \"definitions\": {
+    \"ConfigEvent\": {
+      \"type\": \"object\",
+      \"required\": [
+        \"event\"
+      ],
+      \"properties\": {
+        \"event\": true,
+        \"isAsync\": {
+          \"type\": [
+            \"boolean\",
+            \"null\"
+          ]
+        },
+        \"requiredEntities\": {
+          \"type\": [
+            \"array\",
+            \"null\"
+          ],
+          \"items\": {
+            \"$ref\": \"#/definitions/RequiredEntity\"
+          }
+        }
+      }
+    },
+    \"EventDecoder\": {
+      \"type\": \"string\",
+      \"enum\": [
+        \"viem\",
+        \"hypersync-client\"
+      ]
+    },
+    \"GlobalContractConfig\": {
+      \"type\": \"object\",
+      \"required\": [
+        \"events\",
+        \"handler\",
+        \"name\"
+      ],
+      \"properties\": {
+        \"abi_file_path\": {
+          \"type\": [
+            \"string\",
+            \"null\"
+          ]
+        },
+        \"events\": {
+          \"type\": \"array\",
+          \"items\": {
+            \"$ref\": \"#/definitions/ConfigEvent\"
+          }
+        },
+        \"handler\": {
+          \"type\": \"string\"
+        },
+        \"name\": {
+          \"type\": \"string\"
+        }
+      }
+    },
+    \"HypersyncConfig\": {
+      \"type\": \"object\",
+      \"required\": [
+        \"endpoint_url\"
+      ],
+      \"properties\": {
+        \"endpoint_url\": {
+          \"type\": \"string\"
+        }
+      }
+    },
+    \"Network\": {
+      \"type\": \"object\",
+      \"oneOf\": [
+        {
+          \"type\": \"object\",
+          \"required\": [
+            \"rpc_config\"
+          ],
+          \"properties\": {
+            \"rpc_config\": {
+              \"$ref\": \"#/definitions/RpcConfig\"
+            }
+          },
+          \"additionalProperties\": false
+        },
+        {
+          \"type\": \"object\",
+          \"required\": [
+            \"hypersync_config\"
+          ],
+          \"properties\": {
+            \"hypersync_config\": {
+              \"$ref\": \"#/definitions/HypersyncConfig\"
+            }
+          },
+          \"additionalProperties\": false
+        }
+      ],
+      \"required\": [
+        \"contracts\",
+        \"id\",
+        \"start_block\"
+      ],
+      \"properties\": {
+        \"contracts\": {
+          \"type\": \"array\",
+          \"items\": {
+            \"$ref\": \"#/definitions/NetworkContractConfig\"
+          }
+        },
+        \"end_block\": {
+          \"type\": [
+            \"integer\",
+            \"null\"
+          ],
+          \"format\": \"int32\"
+        },
+        \"id\": {
+          \"type\": \"integer\",
+          \"format\": \"uint64\",
+          \"minimum\": 0.0
+        },
+        \"start_block\": {
+          \"type\": \"integer\",
+          \"format\": \"int32\"
+        }
+      }
+    },
+    \"NetworkContractConfig\": {
+      \"type\": \"object\",
+      \"required\": [
+        \"address\",
+        \"name\"
+      ],
+      \"properties\": {
+        \"abi_file_path\": {
+          \"type\": [
+            \"string\",
+            \"null\"
+          ]
+        },
+        \"address\": true,
+        \"events\": {
+          \"type\": \"array\",
+          \"items\": {
+            \"$ref\": \"#/definitions/ConfigEvent\"
+          }
+        },
+        \"handler\": {
+          \"type\": \"string\"
+        },
+        \"name\": {
+          \"type\": \"string\"
+        }
+      }
+    },
+    \"RequiredEntity\": {
+      \"type\": \"object\",
+      \"required\": [
+        \"name\"
+      ],
+      \"properties\": {
+        \"arrayLabels\": {
+          \"type\": [
+            \"array\",
+            \"null\"
+          ],
+          \"items\": {
+            \"type\": \"string\"
+          }
+        },
+        \"labels\": {
+          \"type\": [
+            \"array\",
+            \"null\"
+          ],
+          \"items\": {
+            \"type\": \"string\"
+          }
+        },
+        \"name\": {
+          \"type\": \"string\"
+        }
+      }
+    },
+    \"RpcConfig\": {
+      \"type\": \"object\",
+      \"required\": [
+        \"url\"
+      ],
+      \"properties\": {
+        \"unstable__sync_config\": {
+          \"anyOf\": [
+            {
+              \"$ref\": \"#/definitions/SyncConfigUnstable\"
+            },
+            {
+              \"type\": \"null\"
+            }
+          ]
+        },
+        \"url\": {
+          \"type\": \"string\"
+        }
+      }
+    },
+    \"SyncConfigUnstable\": {
+      \"type\": \"object\",
+      \"properties\": {
+        \"acceleration_additive\": {
+          \"default\": 2000,
+          \"type\": \"integer\",
+          \"format\": \"uint32\",
+          \"minimum\": 0.0
+        },
+        \"backoff_millis\": {
+          \"default\": 5000,
+          \"type\": \"integer\",
+          \"format\": \"uint32\",
+          \"minimum\": 0.0
+        },
+        \"backoff_multiplicative\": {
+          \"default\": 0.8,
+          \"type\": \"number\",
+          \"format\": \"float\"
+        },
+        \"initial_block_interval\": {
+          \"default\": 10000,
+          \"type\": \"integer\",
+          \"format\": \"uint32\",
+          \"minimum\": 0.0
+        },
+        \"interval_ceiling\": {
+          \"default\": 10000,
+          \"type\": \"integer\",
+          \"format\": \"uint32\",
+          \"minimum\": 0.0
+        },
+        \"query_timeout_millis\": {
+          \"default\": 20000,
+          \"type\": \"integer\",
+          \"format\": \"uint32\",
+          \"minimum\": 0.0
+        }
+      }
+    }
+  }
+}";
+
+            assert_eq!(expected, HumanConfig::to_json_schema());
+        }
     }
 }

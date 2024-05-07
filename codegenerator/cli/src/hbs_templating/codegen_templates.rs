@@ -7,7 +7,7 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
-        human_config::{self, EventDecoder, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
+        human_config::{self, EventDecoder, HumanConfig, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
         system_config::{self, SystemConfig},
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -690,6 +690,7 @@ pub struct ProjectTemplate {
     entities: Vec<EntityRecordTypeTemplate>,
     gql_enums: Vec<GraphQlEnumTypeTemplate>,
     chain_configs: Vec<NetworkConfigTemplate>,
+    config_json_schema: String,
     codegen_out_path: String,
     persisted_state: PersistedStateJsonString,
     is_unordered_multichain_mode: bool,
@@ -784,6 +785,7 @@ impl ProjectTemplate {
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
+            config_json_schema: HumanConfig::to_json_schema_pretty(),
             entities,
             gql_enums,
             chain_configs,
