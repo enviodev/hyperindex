@@ -317,7 +317,7 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
     "block_number",
     "block_hash"
   )}
-    ON CONFLICT(chain_id, event_id) DO UPDATE
+    ON CONFLICT(chain_id, block_number) DO UPDATE
     SET
     "chain_id" = EXCLUDED."chain_id",
     "block_timestamp" = EXCLUDED."block_timestamp",
