@@ -174,7 +174,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     )
 
   //TODO create filter to only accept events with blockNumber AND logIndex
-  //higher than stored in chain metadblockNumber, blockHash, blockTimestampata
+  //higher than stored in chain blockNumber, blockHash, blockTimestamp
   let eventFilters = None
 
   make(
