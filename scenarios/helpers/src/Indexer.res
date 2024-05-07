@@ -47,6 +47,7 @@ module type S = {
   module ContractAddressingMap: {
     type mapping
     let getAllAddresses: mapping => array<Ethers.ethAddress>
+    let getAddressesFromContractName: (mapping, ~contractName: string) => array<Ethers.ethAddress>
   }
 
   module FetchState: {
@@ -98,6 +99,7 @@ param 'b for rpc
     type chainConfig = {
       syncSource: syncSource,
       startBlock: int,
+      endBlock: option<int>,
       confirmedBlockThreshold: int,
       chain: ChainMap.Chain.t,
       contracts: array<contract>,

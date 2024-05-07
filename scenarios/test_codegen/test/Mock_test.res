@@ -91,41 +91,30 @@ describe_skip("E2E Db check", () => {
           },
       ),
       [
-        MockEntities.makeDefaultSet(
-          ~chainId,
-          ~blockNumber=startBlock,
-          ~logIndex=14,
-          {
-            id: "1001",
-            owner_id: "0x1230000000000000000000000000000000000000",
-            displayName: "update1",
-            imageUrl: "https://gravatar1.com",
-            updatesCount: Ethers.BigInt.fromInt(2),
-            size: MEDIUM,
-          },
-        },
-        {
-          dbOp: Set,
-          entity: {
-            id: "1002",
-            owner_id: "0x4560000000000000000000000000000000000000",
-            displayName: "update2",
-            imageUrl: "https://gravatar2.com",
-            updatesCount: Ethers.BigInt.fromInt(2),
-            size: MEDIUM,
-          },
-        },
-        {
-          dbOp: Set,
-          entity: {
-            id: "1003",
-            owner_id: "0x7890000000000000000000000000000000000000",
-            displayName: "update3",
-            imageUrl: "https://gravatar3.com",
-            updatesCount: Ethers.BigInt.fromInt(2),
-            size: MEDIUM,
-          },
-        },
+        Some({
+          id: "1001",
+          owner_id: "0x1230000000000000000000000000000000000000",
+          displayName: "update1",
+          imageUrl: "https://gravatar1.com",
+          updatesCount: Ethers.BigInt.fromInt(2),
+          size: MEDIUM,
+        }),
+        Some({
+          id: "1002",
+          owner_id: "0x4560000000000000000000000000000000000000",
+          displayName: "update2",
+          imageUrl: "https://gravatar2.com",
+          updatesCount: Ethers.BigInt.fromInt(2),
+          size: MEDIUM,
+        }),
+        Some({
+          id: "1003",
+          owner_id: "0x7890000000000000000000000000000000000000",
+          displayName: "update3",
+          imageUrl: "https://gravatar3.com",
+          updatesCount: Ethers.BigInt.fromInt(2),
+          size: MEDIUM,
+        }),
       ],
     )
   })

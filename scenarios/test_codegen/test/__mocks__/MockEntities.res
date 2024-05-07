@@ -15,16 +15,38 @@ let gravatarEntity2: Types.gravatarEntity = {
   updatesCount: Ethers.BigInt.fromInt(1),
   size: MEDIUM,
 }
+let logIndexIncrement = ref(0)
 
+let makeDefaultSet = (
+  ~chainId=0,
+  ~blockNumber=0,
+  ~blockTimestamp=0,
+  ~logIndex=?,
+  entity: 'a,
+): Types.inMemoryStoreRowEntity<'a> => {
+  // Tests break if the 'eventIdentifier' isn't unique in the event history table. So incrementing the log index helps ensure it is unique.
+  let logIndex = switch logIndex {
+  | None =>
+    logIndexIncrement := logIndexIncrement.contents + 1
+    logIndexIncrement.contents
+  | Some(logIndex) => logIndex
+  }
+
+  Types.Updated({
+    initial: Unknown,
+    latest: Set(entity)->Types.mkEntityUpdate(
+      ~eventIdentifier={
+        chainId,
+        blockTimestamp,
+        blockNumber,
+        logIndex,
+      },
+    ),
+    history: [],
+  })
+}
 let gravatarSerialized1 = gravatarEntity1->S.serializeOrRaiseWith(Types.gravatarEntitySchema)
 let gravatarSerialized2 = gravatarEntity2->S.serializeOrRaiseWith(Types.gravatarEntitySchema)
-let mockInMemRow1: Types.inMemoryStoreRow<Js.Json.t> = {
-  entity: gravatarSerialized1,
-  dbOp: Types.Set,
-}
-
-let gravatarSerialized1 = gravatarEntity1->Types.gravatarEntity_encode
-let gravatarSerialized2 = gravatarEntity2->Types.gravatarEntity_encode
 
 let mockInMemRow1: Types.inMemoryStoreRowEntity<Js.Json.t> = makeDefaultSet(gravatarSerialized1)
 

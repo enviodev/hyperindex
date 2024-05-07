@@ -86,7 +86,7 @@ module Make = (Indexer: Indexer.S) => {
   let makeEventConstructor = (
     ~accessor,
     ~params,
-    ~serializer,
+    ~schema,
     ~eventName,
     ~srcAddress,
     ~chainId,
@@ -97,7 +97,7 @@ module Make = (Indexer: Indexer.S) => {
     ~logIndex,
   ) => {
     let transactionHash =
-      Crypto.hashKeccak256Any(params->serializer)
+      Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(schema))
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
@@ -247,8 +247,14 @@ module Make = (Indexer: Indexer.S) => {
       ->Option.map(b => {ReorgDetection.blockNumber: b.blockNumber, blockHash: b.blockHash})
     let currentBlockHeight = self->getHeight
 
-    let addressesAndEventNames =
-      self.chainConfig.contracts->Array.map(c => {addresses: c.addresses, eventNames: c.events})
+    let addressesAndEventNames = self.chainConfig.contracts->Array.map(c => {
+      let addresses =
+        query.contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
+          ~contractName=c.name,
+        )
+      {addresses, eventNames: c.events}
+    })
+
     let parsedQueueItemsPreFilter = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
     let parsedQueueItems = switch query.eventFilters {
     | None => parsedQueueItemsPreFilter

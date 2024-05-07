@@ -11,24 +11,24 @@ module Gravatar = {
   )
 
   module NewGravatar = {
-    let accessor = Types.gravatarContract_NewGravatar
-    let serializer = Types.GravatarContract.NewGravatarEvent.eventArgs_encode
+    let accessor = v => Types.GravatarContract_NewGravatar(v)
+    let schema = Types.GravatarContract.NewGravatarEvent.eventArgsSchema
     let eventName = Types.Gravatar_NewGravatar
     let mkEventConstr = makeEventConstructorWithDefaultSrcAddress(
       ~accessor,
-      ~serializer,
+      ~schema,
       ~eventName,
       ~params=_,
     )
   }
 
   module UpdatedGravatar = {
-    let accessor = Types.gravatarContract_UpdatedGravatar
-    let serializer = Types.GravatarContract.UpdatedGravatarEvent.eventArgs_encode
+    let accessor = v => Types.GravatarContract_UpdatedGravatar(v)
+    let schema = Types.GravatarContract.UpdatedGravatarEvent.eventArgsSchema
     let eventName = Types.Gravatar_UpdatedGravatar
     let mkEventConstr = makeEventConstructorWithDefaultSrcAddress(
       ~accessor,
-      ~serializer,
+      ~schema,
       ~eventName,
       ~params=_,
     )

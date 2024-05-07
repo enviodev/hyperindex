@@ -169,6 +169,29 @@ module Mock = {
     | Chain_137 => Chain2.mockChainData
     }
   )
+
+  let getUpdateEndofBlockRangeScannedData = (
+    mcdMap,
+    ~chain,
+    ~blockNumber,
+    ~blockNumberThreshold,
+    ~blockTimestampThreshold,
+  ) => {
+    let {blockNumber, blockTimestamp, blockHash} =
+      mcdMap->ChainMap.get(chain)->MockChainData.getBlock(~blockNumber)->Option.getUnsafe
+
+    GlobalState.UpdateEndOfBlockRangeScannedData({
+      blockNumberThreshold,
+      blockTimestampThreshold,
+      chain,
+      nextEndOfBlockRangeScannedData: {
+        blockNumber,
+        blockHash,
+        blockTimestamp,
+        chainId: chain->ChainMap.Chain.toChainId,
+      },
+    })
+  }
 }
 
 module Sql = {
@@ -191,7 +214,7 @@ module Sql = {
     )
 
     res[0]
-    ->Option.map(v => v->Types.accountTokenEntity_decode->Result.getExn)
+    ->Option.map(v => v->S.parseWith(Types.accountTokenEntitySchema)->Result.getExn)
     ->Option.map(a => a.balance)
   }
 }
@@ -344,9 +367,23 @@ describe("Multichain rollback test", () => {
     Assert.deep_equal(
       [
         GlobalState.UpdateChainMetaData,
+        Mock.getUpdateEndofBlockRangeScannedData(
+          Mock.mockChainDataMapInitial,
+          ~chain=Chain_1,
+          ~blockNumberThreshold=-199,
+          ~blockTimestampThreshold=25,
+          ~blockNumber=1,
+        ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
         UpdateChainMetaData,
+        Mock.getUpdateEndofBlockRangeScannedData(
+          Mock.mockChainDataMapInitial,
+          ~chain=Chain_137,
+          ~blockNumberThreshold=-198,
+          ~blockTimestampThreshold=25,
+          ~blockNumber=2,
+        ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
       ],
@@ -384,9 +421,23 @@ describe("Multichain rollback test", () => {
       [
         GlobalState.NextQuery(CheckAllChains),
         UpdateChainMetaData,
+        Mock.getUpdateEndofBlockRangeScannedData(
+          Mock.mockChainDataMapInitial,
+          ~chain=Chain_1,
+          ~blockNumberThreshold=-197,
+          ~blockTimestampThreshold=25,
+          ~blockNumber=3,
+        ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
         UpdateChainMetaData,
+        Mock.getUpdateEndofBlockRangeScannedData(
+          Mock.mockChainDataMapInitial,
+          ~chain=Chain_137,
+          ~blockNumberThreshold=-195,
+          ~blockTimestampThreshold=25,
+          ~blockNumber=5,
+        ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaData,
@@ -406,9 +457,23 @@ describe("Multichain rollback test", () => {
       [
         GlobalState.NextQuery(CheckAllChains),
         UpdateChainMetaData,
+        Mock.getUpdateEndofBlockRangeScannedData(
+          Mock.mockChainDataMapInitial,
+          ~chain=Chain_1,
+          ~blockNumberThreshold=-195,
+          ~blockTimestampThreshold=25,
+          ~blockNumber=5,
+        ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
         UpdateChainMetaData,
+        Mock.getUpdateEndofBlockRangeScannedData(
+          Mock.mockChainDataMapInitial,
+          ~chain=Chain_137,
+          ~blockNumberThreshold=-192,
+          ~blockTimestampThreshold=25,
+          ~blockNumber=8,
+        ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaData,
@@ -443,6 +508,13 @@ describe("Multichain rollback test", () => {
         GlobalState.NextQuery(CheckAllChains),
         Rollback,
         UpdateChainMetaData,
+        Mock.getUpdateEndofBlockRangeScannedData(
+          Mock.mockChainDataMapInitial,
+          ~chain=Chain_137,
+          ~blockNumberThreshold=-191,
+          ~blockTimestampThreshold=25,
+          ~blockNumber=9,
+        ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaData,

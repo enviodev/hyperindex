@@ -10,21 +10,17 @@
     "dev": "pnpm build && envio dev",
     "start": "pnpm build && node generated/src/Index.bs.js"
   },
-  "devDependencies": {
-    "@rescript/react": "0.12.1",
-    "@glennsl/rescript-fetch": "0.2.0",
-    "@greenlabs/ppx-spice": "0.1.14",
-    "@ryyppy/rescript-promise": "2.1.0",
-    "rescript-envsafe": "1.3.0",
-    "rescript-express": "0.4.1",
-    "rescript-struct": "4.1.1",
-    "rescript-mocha": "^0.9.0",
-    "rescript": "^11.0.1",
-    "mocha": "10.2.0",
-    "helpers": "../helpers"
-  },
   "dependencies": {
+    "@ryyppy/rescript-promise": "2.1.0",
     "envio": "latest",
-    "ethers": "6.8.0"
+    "ethers": "6.8.0",
+    "helpers": "../helpers",
+    "mocha": "10.2.0",
+    "rescript": "^11.0.1",
+    "rescript-mocha": "^0.9.0",
+    "rescript-schema": "6.4.0"
+  },
+  "optionalDependencies": {
+    "generated": "./generated"
   }
 }

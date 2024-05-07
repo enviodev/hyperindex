@@ -177,10 +177,26 @@ describe("Single Chain Simple Rollback", () => {
     )
 
     await dispatchAllTasksInitalChain()
+    let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
 
     Assert.deep_equal(
       tasks.contents,
-      [UpdateChainMetaData, ProcessEventBatch, NextQuery(Chain(chain))],
+      [
+        UpdateChainMetaData,
+        UpdateEndOfBlockRangeScannedData({
+          blockNumberThreshold: -198,
+          blockTimestampThreshold: 50,
+          chain: Chain_1337,
+          nextEndOfBlockRangeScannedData: {
+            blockHash: block2.blockHash,
+            blockNumber: block2.blockNumber,
+            blockTimestamp: block2.blockTimestamp,
+            chainId: 1337,
+          },
+        }),
+        ProcessEventBatch,
+        NextQuery(Chain(chain)),
+      ],
       ~message="should successfully have actioned batch",
     )
 
@@ -228,9 +244,25 @@ describe("Single Chain Simple Rollback", () => {
 
     await dispatchAllTasksInitalChain()
 
+    let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
     Assert.deep_equal(
       tasks.contents,
-      [UpdateChainMetaData, ProcessEventBatch, NextQuery(Chain(chain))],
+      [
+        UpdateChainMetaData,
+        UpdateEndOfBlockRangeScannedData({
+          blockNumberThreshold: -198,
+          blockTimestampThreshold: 50,
+          chain: Chain_1337,
+          nextEndOfBlockRangeScannedData: {
+            blockHash: block2.blockHash,
+            blockNumber: block2.blockNumber,
+            blockTimestamp: block2.blockTimestamp,
+            chainId: 1337,
+          },
+        }),
+        ProcessEventBatch,
+        NextQuery(Chain(chain)),
+      ],
       ~message="should successfully have processed batch",
     )
 
@@ -244,7 +276,7 @@ describe("Single Chain Simple Rollback", () => {
 
     let getAllGravatars = async () =>
       (await Sql.getAllRowsInTable("Gravatar"))
-      ->Array.map(Types.gravatarEntity_decode)
+      ->Array.map(S.parseWith(_, Types.gravatarEntitySchema))
       ->Utils.mapArrayOfResults
       ->Result.getExn
 
@@ -259,7 +291,7 @@ describe("Single Chain Simple Rollback", () => {
         id: MockEvents.setGravatar1.id->toString,
         imageUrl: MockEvents.setGravatar1.imageUrl,
         owner_id: MockEvents.setGravatar1.owner->Obj.magic,
-        size: #MEDIUM,
+        size: MEDIUM,
         updatesCount: 2->toBigInt,
       },
       {
@@ -267,7 +299,7 @@ describe("Single Chain Simple Rollback", () => {
         id: MockEvents.newGravatar2.id->toString,
         imageUrl: MockEvents.newGravatar2.imageUrl,
         owner_id: MockEvents.newGravatar2.owner->Obj.magic,
-        size: #SMALL,
+        size: SMALL,
         updatesCount: 1->toBigInt,
       },
     ]
@@ -299,10 +331,25 @@ describe("Single Chain Simple Rollback", () => {
     replaceNexQueryCheckAllChainsWithGivenChain(chain)
     await dispatchAllTasksReorgChain()
 
+    let block2 =
+      Mock.mockChainDataReorg
+      ->MockChainData.getBlock(~blockNumber=2)
+      ->Option.getUnsafe
     Assert.deep_equal(
       tasks.contents,
       [
         GlobalState.UpdateChainMetaData,
+        UpdateEndOfBlockRangeScannedData({
+          blockNumberThreshold: -198,
+          blockTimestampThreshold: 50,
+          chain: Chain_1337,
+          nextEndOfBlockRangeScannedData: {
+            blockHash: block2.blockHash,
+            blockNumber: block2.blockNumber,
+            blockTimestamp: block2.blockTimestamp,
+            chainId: 1337,
+          },
+        }),
         ProcessEventBatch,
         NextQuery(Chain(chain)),
         NextQuery(CheckAllChains),
@@ -318,7 +365,7 @@ describe("Single Chain Simple Rollback", () => {
         id: MockEvents.newGravatar1.id->toString,
         imageUrl: MockEvents.newGravatar1.imageUrl,
         owner_id: MockEvents.newGravatar1.owner->Obj.magic,
-        size: #SMALL,
+        size: SMALL,
         updatesCount: 1->toBigInt,
       },
       {
@@ -326,7 +373,7 @@ describe("Single Chain Simple Rollback", () => {
         id: MockEvents.setGravatar2.id->toString,
         imageUrl: MockEvents.setGravatar2.imageUrl,
         owner_id: MockEvents.setGravatar2.owner->Obj.magic,
-        size: #MEDIUM,
+        size: MEDIUM,
         updatesCount: 2->toBigInt,
       },
     ]

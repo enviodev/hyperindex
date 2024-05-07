@@ -94,8 +94,11 @@ importers:
   ../helpers:
     dependencies:
       rescript:
-        specifier: ^11.1.0-rc.7
-        version: 11.1.0-rc.7
+        specifier: ^11.0.1
+        version: 11.0.1
+      rescript-schema:
+        specifier: 6.4.0
+        version: 6.4.0(rescript@11.0.1)
 
   contracts:
     dependencies:
@@ -5477,13 +5480,6 @@ packages:
     engines: {node: '>=10'}
     hasBin: true
     requiresBuild: true
-
-  /rescript@11.1.0-rc.7:
-    resolution: {integrity: sha512-4MsOugrSaS9Sh4grCVwNhOJLv1KZ7gTtN5KsV0ctPvzGyCaco7Ftwqo4uVap7xXuzLjgALPQdYBdElBgTZRvaQ==}
-    engines: {node: '>=10'}
-    hasBin: true
-    requiresBuild: true
-    dev: false
 
   /resolve-cwd@3.0.0:
     resolution: {integrity: sha512-OrZaX2Mb+rJCpH/6CpSqt9xFVpN++x01XnN2ie9g6P5/3xelLAkXWVADpdz1IHD/KFfEXyE6V0U01OQ3UO2rEg==}

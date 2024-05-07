@@ -11,12 +11,12 @@ module ERC20 = {
   let contractName = "ERC20"
   let getDefaultAddress = getDefaultAddress(_, contractName)
   module Transfer = {
-    let accessor = Types.eRC20Contract_Transfer
-    let serializer = Types.ERC20Contract.TransferEvent.eventArgs_encode
+    let accessor = v => Types.ERC20Contract_Transfer(v)
+    let schema = Types.ERC20Contract.TransferEvent.eventArgsSchema
     let eventName = Types.ERC20_Transfer
     let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
       ~accessor,
-      ~serializer,
+      ~schema,
       ~eventName,
     )
 
@@ -30,13 +30,13 @@ module ERC20Factory = {
   let getDefaultAddress = getDefaultAddress(_, contractName)
 
   module TokenCreated = {
-    let accessor = Types.eRC20FactoryContract_TokenCreated
-    let serializer = Types.ERC20FactoryContract.TokenCreatedEvent.eventArgs_encode
+    let accessor = v => Types.ERC20FactoryContract_TokenCreated(v)
+    let schema = Types.ERC20FactoryContract.TokenCreatedEvent.eventArgsSchema
     let eventName = Types.ERC20Factory_TokenCreated
 
     let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
       ~accessor,
-      ~serializer,
+      ~schema,
       ~eventName,
     )
 
