@@ -72,7 +72,7 @@ jobs:
           echo 'echo "running mock gio"' > /home/runner/.local/bin/gio && chmod +x /home/runner/.local/bin/gio
           echo 'echo "running mock xdg-open"' > /home/runner/.local/bin/xdg-open && chmod +x /home/runner/.local/bin/xdg-open
 
-      - name: test_codegen build
+      - name: run integration tests
         env:
           LOG_LEVEL: trace
         run: |
