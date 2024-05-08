@@ -22,6 +22,12 @@ let eventsProcessedCounter = PromClient.Counter.makeCounter({
   "labelNames": [],
 })
 
+let reorgsDetectedCounter = PromClient.Counter.makeCounter({
+  "name": "reorgs_detected",
+  "help": "Total number of reorgs detected",
+  "labelNames": ["chainId"],
+})
+
 let sourceChainHeight = PromClient.Gauge.makeGauge({
   "name": "chain_block_height",
   "help": "Chain Height of Source Chain",
@@ -55,6 +61,10 @@ let incrementExecuteBatchDurationCounter = (~duration) => {
 
 let incrementEventsProcessedCounter = (~number) => {
   eventsProcessedCounter->PromClient.Counter.incMany(number)
+}
+
+let incrementReorgsDetected = (~chain) => {
+  eventsProcessedCounter->PromClient.Counter.incLabels({"chainId": chain->ChainMap.Chain.toString})
 }
 
 let setSourceChainHeight = (~blockNumber, ~chain) => {

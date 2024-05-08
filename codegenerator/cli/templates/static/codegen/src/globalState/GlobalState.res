@@ -262,6 +262,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       chainFetcher.logger->Logging.childWarn(
         "Reorg detected, not rolling back due to configuration",
       )
+      Prometheus.incrementReorgsDetected(~chain)
     }
 
     let chainFetcher =
@@ -359,6 +360,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     )
   } else {
     chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")
+    Prometheus.incrementReorgsDetected(~chain)
     let chainFetcher = {
       ...chainFetcher,
       isFetchingBatch: false,
