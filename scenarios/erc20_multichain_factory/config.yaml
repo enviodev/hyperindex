@@ -1,5 +1,6 @@
 name: erc20indexer
 description: ERC-20 indexer
+rollback_on_reorg: true
 contracts:
   - name: ERC20
     handler: src/EventHandlers.bs.js

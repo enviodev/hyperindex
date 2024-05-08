@@ -33,6 +33,7 @@ pub struct SystemConfig {
     pub contracts: ContractMap,
     pub unordered_multichain_mode: bool,
     pub event_decoder: EventDecoder,
+    pub rollback_on_reorg: bool,
     pub schema: Schema,
 }
 
@@ -260,6 +261,7 @@ impl SystemConfig {
                 .event_decoder
                 .clone()
                 .unwrap_or(EventDecoder::HypersyncClient),
+            rollback_on_reorg: human_cfg.rollback_on_reorg.unwrap_or(false),
             schema,
         })
     }
@@ -313,8 +315,6 @@ impl Network {
             _ => None,
         }
     }
-    
-
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

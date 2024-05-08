@@ -296,6 +296,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
             networks,
             unordered_multichain_mode: None,
             event_decoder: None,
+            rollback_on_reorg: None,
         })
     }
 }

@@ -41,8 +41,6 @@ type chainConfig = {
 
 type chainConfigs = ChainMap.t<chainConfig>
 
-let configShouldUseHypersyncClientDecoder = {{should_use_hypersync_client_decoder}}
-
 /**
 Determines whether to use HypersyncClient Decoder or Viem for parsing events
 Default is hypersync client decoder, configurable in config with:
@@ -51,17 +49,14 @@ event_decoder: "viem" || "hypersync-client"
 ```
 */
 let shouldUseHypersyncClientDecoder =
-  Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
-    configShouldUseHypersyncClientDecoder,
-  )
+  Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault({{should_use_hypersync_client_decoder}})
 
-let configIsUnorderedMultichainMode = {{is_unordered_multichain_mode}}
+let shouldRollbackOnReorg =
+  Env.Configurable.shouldRollbackOnReorg->Belt.Option.getWithDefault({{should_rollback_on_reorg}})
 
 let isUnorderedMultichainMode =
   Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
-    Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
-      configIsUnorderedMultichainMode,
-    ),
+    Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault({{is_unordered_multichain_mode}}),
   )
 
 let db: Postgres.poolConfig = {
@@ -158,5 +153,3 @@ let getConfig = (chain: ChainMap.Chain.t) =>
   }
 
 let config: chainConfigs = ChainMap.make(getConfig)
-// TODO: think about how this config will work in the future.
-let placeholder_is_near_head_of_chain_or_in_dev_mode = true

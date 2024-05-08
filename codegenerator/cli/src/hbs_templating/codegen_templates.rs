@@ -694,6 +694,7 @@ pub struct ProjectTemplate {
     persisted_state: PersistedStateJsonString,
     is_unordered_multichain_mode: bool,
     should_use_hypersync_client_decoder: bool,
+    should_rollback_on_reorg: bool,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     has_multiple_events: bool,
@@ -791,6 +792,7 @@ impl ProjectTemplate {
             persisted_state,
             is_unordered_multichain_mode: cfg.unordered_multichain_mode,
             should_use_hypersync_client_decoder,
+            should_rollback_on_reorg: cfg.rollback_on_reorg,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             has_multiple_events,

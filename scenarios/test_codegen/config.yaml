@@ -1,5 +1,6 @@
 name: test_codegen
 description: Gravatar for Ethereum
+rollback_on_reorg: true
 networks:
   - id: 1337
     rpc_config:

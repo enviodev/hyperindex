@@ -61,7 +61,7 @@ module InMemoryStore = {
           history: [],
         })
       | Some(Updated(previous_values))
-        if !Config.placeholder_is_near_head_of_chain_or_in_dev_mode ||
+        if !Config.shouldRollbackOnReorg ||
         //Rollback initial state cases should not save history
         !previous_values.latest.shouldSaveHistory ||
         // This prevents two db actions in the same event on the same entity from being recorded to the history table.
@@ -444,7 +444,7 @@ let makeEntityExecuterComposer = (
         entities->Belt.Array.forEach(entity => {
           store->inMemStoreInitFn(~key=entity->getEntiyId, ~entity=Some(entity))
         })
-        if Config.placeholder_is_near_head_of_chain_or_in_dev_mode {
+        if Config.shouldRollbackOnReorg {
           let setOfIdsNotSavedToDb =
             idsToLoad->Belt.Set.String.removeMany(entities->Belt.Array.map(getEntiyId))
           setOfIdsNotSavedToDb
@@ -655,7 +655,7 @@ let executeDbFunctionsEntity = (
 }
 
 let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
-  let entityDbExecutionComposer = Config.placeholder_is_near_head_of_chain_or_in_dev_mode
+  let entityDbExecutionComposer = Config.shouldRollbackOnReorg
     ? executeSetEntityWithHistory
     : executeDbFunctionsEntity
 
