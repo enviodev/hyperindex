@@ -1,0 +1,26 @@
+{
+  "name": "erc20-multi-chain-factory",
+  "version": "0.1.0",
+  "scripts": {
+    "clean": "rescript clean -with-deps",
+    "build": "rescript build -with-deps",
+    "watch": "rescript build -w -with-deps",
+    "test": "pnpm build && mocha",
+    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
+    "dev": "pnpm build && envio dev",
+    "start": "pnpm build && node generated/src/Index.bs.js"
+  },
+  "dependencies": {
+    "@ryyppy/rescript-promise": "2.1.0",
+    "envio": "latest",
+    "ethers": "6.8.0",
+    "helpers": "../helpers",
+    "mocha": "10.2.0",
+    "rescript": "^11.0.1",
+    "rescript-mocha": "^0.9.0",
+    "rescript-schema": "6.4.0"
+  },
+  "optionalDependencies": {
+    "generated": "./generated"
+  }
+}

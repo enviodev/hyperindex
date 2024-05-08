@@ -18,8 +18,8 @@ type blockRangeFetchStats = {
 }
 
 type reorgGuard = {
-  lastBlockScannedData: ReorgDetection.lastBlockScannedData,
-  parentHash: option<string>,
+  lastBlockScannedData: ReorgDetection.blockData,
+  firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
 }
 
 /**

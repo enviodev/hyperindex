@@ -2,6 +2,7 @@ type hyperSyncPage<'item> = {
   items: array<'item>,
   nextBlock: int,
   archiveHeight: int,
+  rollbackGuard: option<HyperSyncClient.ResponseTypes.rollbackGuard>,
   events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
@@ -11,17 +12,6 @@ type logsQueryPageItem = {
   txOrigin: option<Ethers.ethAddress>,
 }
 
-type blockNumberAndTimestamp = {
-  timestamp: int,
-  blockNumber: int,
-}
-
-type blockNumberAndHash = {
-  blockNumber: int,
-  hash: string,
-}
-
-type blockTimestampPage = hyperSyncPage<blockNumberAndTimestamp>
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
 
 type missingParams = {
@@ -29,6 +19,12 @@ type missingParams = {
   missingParams: array<string>,
 }
 type queryError = UnexpectedMissingParams(missingParams) | QueryError(QueryHelpers.queryError)
+
+exception HyperSyncQueryError(queryError)
+
+let queryErrorToExn = queryError => {
+  HyperSyncQueryError(queryError)
+}
 
 exception UnexpectedMissingParamsExn(missingParams)
 
@@ -63,6 +59,17 @@ let queryErrorToMsq = (e: queryError): string => {
 }
 
 type queryResponse<'a> = result<'a, queryError>
+let mapExn = (queryResponse: queryResponse<'a>) =>
+  switch queryResponse {
+  | Ok(v) => Ok(v)
+  | Error(err) => err->queryErrorToExn->Error
+  }
+
+let getExn = (queryResponse: queryResponse<'a>) =>
+  switch queryResponse {
+  | Ok(v) => v
+  | Error(err) => err->queryErrorToExn->raise
+  }
 
 //Manage clients in cache so we don't need to reinstantiate each time
 //Ideally client should be passed in as a param to the functions but
@@ -116,34 +123,20 @@ module LogsQuery = {
   let checkFields = (event: HyperSyncClient.ResponseTypes.event): logsQueryPageItem => {
     let log = event.log
 
-    let blockTimestamp = event.block->Belt.Option.flatMap(b => b.timestamp)
-    let txOrigin =
-      event.transaction
-      ->Belt.Option.flatMap(b => b.from)
-      ->Belt.Option.flatMap(Ethers.getAddressFromString)
-
-    switch (
-      blockTimestamp,
-      log.address,
-      log.blockHash,
-      log.blockNumber,
-      log.data,
-      log.index,
-      log.transactionHash,
-      log.transactionIndex,
-      log.topics,
-    ) {
-    | (
-        Some(blockTimestamp),
-        Some(address),
-        Some(blockHash),
-        Some(blockNumber),
-        Some(data),
-        Some(index),
-        Some(transactionHash),
-        Some(transactionIndex),
-        Some(topics),
-      ) =>
+    switch event {
+    | {
+        block: {timestamp: blockTimestamp},
+        log: {
+          address,
+          blockHash,
+          blockNumber,
+          data,
+          index,
+          transactionHash,
+          transactionIndex,
+          topics,
+        },
+      } =>
       let topics = topics->Belt.Array.keepMap(Js.Nullable.toOption)
 
       let log: Ethers.log = {
@@ -158,12 +151,17 @@ module LogsQuery = {
         removed: log.removed,
       }
 
+      let txOrigin =
+        event.transaction
+        ->Belt.Option.flatMap(b => b.from)
+        ->Belt.Option.flatMap(Ethers.getAddressFromString)
+
       let pageItem: logsQueryPageItem = {log, blockTimestamp, txOrigin}
       pageItem
     | _ =>
       let missingParams =
         [
-          blockTimestamp->Utils.optionMapNone("log.timestamp"),
+          event.block->Belt.Option.flatMap(b => b.timestamp)->Utils.optionMapNone("log.timestamp"),
           log.address->Utils.optionMapNone("log.address"),
           log.blockHash->Utils.optionMapNone("log.blockHash-"),
           log.blockNumber->Utils.optionMapNone("log.blockNumber"),
@@ -184,13 +182,14 @@ module LogsQuery = {
     logsQueryPage,
   > => {
     try {
-      let {nextBlock, archiveHeight} = res
+      let {nextBlock, archiveHeight, rollbackGuard} = res
       let items = res.events->Belt.Array.map(event => event->checkFields)
       let page: logsQueryPage = {
         items,
         nextBlock,
-        archiveHeight,
+        archiveHeight: archiveHeight->Belt.Option.getWithDefault(0), //Archive Height is only None if height is 0
         events: res.events,
+        rollbackGuard,
       }
 
       Ok(page)
@@ -221,82 +220,6 @@ module LogsQuery = {
     let executeQuery = () => hyperSyncClient->HyperSyncClient.sendEventsReq(body)
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
-
-    res->convertResponse
-  }
-}
-
-module BlockTimestampQuery = {
-  let makeRequestBody = (
-    ~fromBlock,
-    ~toBlockInclusive,
-  ): HyperSyncJsonApi.QueryTypes.postQueryBody => {
-    fromBlock,
-    toBlockExclusive: toBlockInclusive + 1,
-    fieldSelection: {
-      block: [Timestamp, Number],
-    },
-    includeAllBlocks: true,
-  }
-
-  let convertResponse = (
-    res: result<HyperSyncJsonApi.ResponseTypes.queryResponse, QueryHelpers.queryError>,
-  ): queryResponse<blockTimestampPage> => {
-    switch res {
-    | Error(e) => Error(QueryError(e))
-    | Ok(successRes) =>
-      let {nextBlock, archiveHeight, data} = successRes
-
-      data
-      ->Belt.Array.flatMap(item => {
-        item.blocks->Belt.Option.mapWithDefault([], blocks => {
-          blocks->Belt.Array.map(
-            block => {
-              switch (block.number, block.timestamp) {
-              | (Some(blockNumber), Some(blockTimestamp)) =>
-                let timestamp = blockTimestamp->Ethers.BigInt.toInt->Belt.Option.getExn
-                Ok(
-                  (
-                    {
-                      timestamp,
-                      blockNumber,
-                    }: blockNumberAndTimestamp
-                  ),
-                )
-              | _ =>
-                let missingParams =
-                  [
-                    block.number->Utils.optionMapNone("block.number"),
-                    block.timestamp->Utils.optionMapNone("block.timestamp"),
-                  ]->Belt.Array.keepMap(p => p)
-
-                Error(
-                  UnexpectedMissingParams({
-                    queryName: "queryBlockTimestampsPage HyperSync",
-                    missingParams,
-                  }),
-                )
-              }
-            },
-          )
-        })
-      })
-      ->Utils.mapArrayOfResults
-      ->Belt.Result.map((items): blockTimestampPage => {
-        nextBlock,
-        archiveHeight,
-        items,
-        events: [], //tempory return empty events since this query contains no events
-      })
-    }
-  }
-
-  let queryBlockTimestampsPage = async (~serverUrl, ~fromBlock, ~toBlock): queryResponse<
-    blockTimestampPage,
-  > => {
-    let body = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock)
-
-    let res = await HyperSyncJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
 
     res->convertResponse
   }
@@ -344,19 +267,19 @@ module HeightQuery = {
   }
 }
 
-module BlockHashes = {
+module BlockData = {
   let makeRequestBody = (~blockNumber): HyperSyncJsonApi.QueryTypes.postQueryBody => {
     fromBlock: blockNumber,
     toBlockExclusive: blockNumber + 1,
     fieldSelection: {
-      block: [Number, Hash],
+      block: [Number, Hash, Timestamp],
     },
     includeAllBlocks: true,
   }
 
   let convertResponse = (
     res: result<HyperSyncJsonApi.ResponseTypes.queryResponse, QueryHelpers.queryError>,
-  ): queryResponse<array<blockNumberAndHash>> => {
+  ): queryResponse<array<ReorgDetection.blockData>> => {
     switch res {
     | Error(e) => Error(QueryError(e))
     | Ok(successRes) =>
@@ -365,26 +288,29 @@ module BlockHashes = {
         item.blocks->Belt.Option.mapWithDefault([], blocks => {
           blocks->Belt.Array.map(
             block => {
-              switch (block.number, block.hash) {
-              | (Some(blockNumber), Some(hash)) =>
+              switch block {
+              | {number: blockNumber, timestamp, hash: blockHash} =>
+                let blockTimestamp = timestamp->Ethers.BigInt.toInt->Belt.Option.getExn
                 Ok(
                   (
                     {
+                      blockTimestamp,
                       blockNumber,
-                      hash,
-                    }: blockNumberAndHash
+                      blockHash,
+                    }: ReorgDetection.blockData
                   ),
                 )
               | _ =>
                 let missingParams =
                   [
                     block.number->Utils.optionMapNone("block.number"),
+                    block.timestamp->Utils.optionMapNone("block.timestamp"),
                     block.hash->Utils.optionMapNone("block.hash"),
                   ]->Belt.Array.keepMap(p => p)
 
                 Error(
                   UnexpectedMissingParams({
-                    queryName: "query block hash HyperSync",
+                    queryName: "query block data HyperSync",
                     missingParams,
                   }),
                 )
@@ -397,8 +323,8 @@ module BlockHashes = {
     }
   }
 
-  let queryBlockHash = async (~serverUrl, ~blockNumber): queryResponse<
-    array<blockNumberAndHash>,
+  let queryBlockData = async (~serverUrl, ~blockNumber): queryResponse<
+    option<ReorgDetection.blockData>,
   > => {
     let body = makeRequestBody(~blockNumber)
 
@@ -410,22 +336,22 @@ module BlockHashes = {
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
-    res->convertResponse
+    res->convertResponse->Belt.Result.map(res => res->Belt.Array.get(0))
   }
 
-  let queryBlockHashes = async (~serverUrl, ~blockNumbers) => {
+  let queryBlockDataMulti = async (~serverUrl, ~blockNumbers) => {
     let res =
       await blockNumbers
-      ->Belt.Array.map(blockNumber => queryBlockHash(~blockNumber, ~serverUrl))
+      ->Belt.Array.map(blockNumber => queryBlockData(~blockNumber, ~serverUrl))
       ->Promise.all
     res
     ->Utils.mapArrayOfResults
-    ->Belt.Result.map(blockHashesNested => blockHashesNested->Belt.Array.concatMany)
+    ->Belt.Result.map(Belt.Array.keepMap(_, v => v))
   }
 }
 
 let queryLogsPage = LogsQuery.queryLogsPage
-let queryBlockTimestampsPage = BlockTimestampQuery.queryBlockTimestampsPage
 let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
-let queryBlockHashes = BlockHashes.queryBlockHashes
+let queryBlockData = BlockData.queryBlockData
+let queryBlockDataMulti = BlockData.queryBlockDataMulti

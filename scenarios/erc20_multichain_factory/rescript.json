@@ -1,0 +1,42 @@
+{
+  "name": "erc20",
+  "version": "0.1.0",
+  "uncurried": false,
+  "sources": [
+    {
+      "dir": "src",
+      "subdirs": true
+    },
+    {
+      "dir": "test",
+      "subdirs": true
+    }
+  ],
+  "gentypeconfig": {
+    "language": "typescript",
+    "shims": {
+      "Js": "Js"
+    },
+    "generatedFileExtension": ".gen.ts",
+    "debug": {
+      "all": false,
+      "basic": false
+    }
+  },
+  "package-specs": {
+    "module": "commonjs",
+    "in-source": true
+  },
+  "jsx": {
+    "version": 4
+  },
+  "suffix": ".bs.js",
+  "bs-dependencies": [
+    "generated",
+    "rescript-mocha",
+    "@ryyppy/rescript-promise",
+    "rescript-schema",
+    "helpers"
+  ],
+  "bsc-flags": ["-open RescriptSchema"]
+}

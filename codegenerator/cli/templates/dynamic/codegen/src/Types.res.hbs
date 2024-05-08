@@ -38,6 +38,7 @@ type rawEventsEntity = {
 type dynamicContractRegistryEntity = {
   @as("chain_id") chainId: int,
   @as("event_id") eventId: Ethers.BigInt.t,
+  @as("block_timestamp") blockTimestamp: int,
   @as("contract_address") contractAddress: Ethers.ethAddress,
   @as("contract_type") contractType: string,
 }
@@ -64,13 +65,76 @@ type entity =
   | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
 {{/each}}
 
-type dbOp = Read | Set | Delete
+type entityName =
+{{#each entities as | entity |}}
+  | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
+{{/each}}
 
-@genType
-type inMemoryStoreRow<'a> = {
-  dbOp: dbOp,
-  entity: 'a,
+let entityNameSchema = 
+{{#if entities.1}}
+{{!-- If there are multiple entities --}}
+S.union([
+{{#each entities as | entity |}}
+  S.literal({{entity.name.capitalized}}), 
+{{/each}}
+])
+{{else}}
+{{#each entities as | entity |}}
+  S.literal({{entity.name.capitalized}})
+{{/each}}
+{{/if}}
+
+let getEntityParamsDecoder = entityName =>
+  switch entityName {
+{{#each entities as | entity |}}
+  | {{entity.name.capitalized}} => json => json->S.parseWith(. {{entity.name.uncapitalized}}EntitySchema)->Belt.Result.map(decoded => {{entity.name.capitalized}}Entity(decoded))
+{{/each}}
+  }
+
+type eventIdentifier = {
+  chainId: int,
+  blockTimestamp: int,
+  blockNumber: int,
+  logIndex: int,
 }
+
+type entityUpdateAction<'entityType> =
+  | Set('entityType)
+  | Delete(string)
+
+type entityUpdate<'entityType> = {
+  eventIdentifier: eventIdentifier,
+  shouldSaveHistory: bool,
+  entityUpdateAction: entityUpdateAction<'entityType>,
+}
+
+let mkEntityUpdate = (~shouldSaveHistory=true, ~eventIdentifier, entityUpdateAction) => {
+  shouldSaveHistory,
+  eventIdentifier,
+  entityUpdateAction,
+}
+
+type entityValueAtStartOfBatch<'entityType> =
+  | NotSet // The entity isn't in the DB yet
+  | AlreadySet('entityType)
+
+type existingValueInDb<'entityType> =
+  | Retrieved(entityValueAtStartOfBatch<'entityType>)
+  // NOTE: We use an postgres function solve the issue of this entities previous value not being known.
+  | Unknown
+
+type updatedValue<'entityType> = {
+  // Initial value within a batch
+  initial: existingValueInDb<'entityType>,
+  latest: entityUpdate<'entityType>,
+  history: array<entityUpdate<'entityType>>,
+}
+@genType
+type inMemoryStoreRowEntity<'entityType> =
+  | Updated(updatedValue<'entityType>)
+  | InitialReadFromDb(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.
+
+type inMemoryStoreRowMeta<'a> = 'a
 
 //*************
 //**CONTRACTS**

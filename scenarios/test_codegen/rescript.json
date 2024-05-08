@@ -35,8 +35,8 @@
     "@ryyppy/rescript-promise",
     "rescript-mocha",
     "rescript-nodejs",
-    "rescript-schema"
+    "rescript-schema",
+    "helpers"
   ],
-  "pinned-dependencies": ["generated"],
   "bsc-flags": ["-open RescriptSchema"]
 }

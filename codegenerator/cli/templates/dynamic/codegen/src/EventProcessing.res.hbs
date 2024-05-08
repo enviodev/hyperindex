@@ -71,8 +71,7 @@ let addEventToRawEvents = (
 
   inMemoryStore.rawEvents->IO.InMemoryStore.RawEvents.set(
     ~key={chainId, eventId: eventIdStr},
-    ~entity=rawEvent,
-    ~dbOp=Set,
+    ~entity=rawEvent
   )
 }
 
@@ -91,7 +90,6 @@ let updateEventSyncState = (
       logIndex,
       transactionIndex,
     },
-    ~dbOp=Set,
   )
 }
 

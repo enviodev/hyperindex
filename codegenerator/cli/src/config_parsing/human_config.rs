@@ -404,7 +404,8 @@ mod tests {
     use crate::config_parsing::human_config::EventDecoder;
 
     use super::{
-        EventNameOrSig, HumanConfig, LocalContractConfig, NetworkContractConfig, NormalizedList,
+        EventNameOrSig, HumanConfig, LocalContractConfig, Network, NetworkContractConfig,
+        NormalizedList,
     };
     use ethers::abi::{Event, EventParam, ParamType};
     use serde_json::json;
@@ -630,6 +631,30 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(
             serde_json::to_value(&EventDecoder::Viem).unwrap(),
             json!("viem")
+        );
+    }
+
+    #[test]
+    fn deserialize_underscores_between_numbers() {
+        let num = serde_json::json!(2_000_000);
+        let de: i32 = serde_json::from_value(num).unwrap();
+        assert_eq!(2_000_000, de);
+    }
+
+    #[test]
+    fn deserialize_network_with_underscores_between_numbers() {
+        let network_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
+        let de: Network = serde_json::from_value(network_json).unwrap();
+
+        assert_eq!(
+            Network {
+                id: 1,
+                sync_source: None,
+                start_block: 2_000,
+                end_block: Some(2_000_000),
+                contracts: vec![]
+            },
+            de
         );
     }
 }

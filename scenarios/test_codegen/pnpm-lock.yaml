@@ -14,6 +14,9 @@ importers:
       generated:
         specifier: workspace:*
         version: link:generated
+      helpers:
+        specifier: workspace:*
+        version: link:../helpers
       rescript-nodejs:
         specifier: 16.0.0
         version: 16.0.0
@@ -87,6 +90,15 @@ importers:
       ts-node:
         specifier: ^10.9.1
         version: 10.9.1(@types/node@18.16.1)(typescript@5.0.4)
+
+  ../helpers:
+    dependencies:
+      rescript:
+        specifier: ^11.0.1
+        version: 11.0.1
+      rescript-schema:
+        specifier: 6.4.0
+        version: 6.4.0(rescript@11.0.1)
 
   contracts:
     dependencies:
@@ -2982,7 +2994,6 @@ packages:
     dependencies:
       is-hex-prefixed: 1.0.0
       strip-hex-prefix: 1.0.0
-    bundledDependencies: false
 
   /event-target-shim@5.0.1:
     resolution: {integrity: sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==}

@@ -2,28 +2,15 @@ open RescriptMocha
 module MochaPromise = RescriptMocha.Promise
 open Mocha
 
-type createEntityFunction<'a> = 'a => Types.inMemoryStoreRow<Js.Json.t>
-
-@@warning("-21")
-let resetPostgresClient: unit => unit = () => {
-  // This is a hack to reset the postgres client between tests. postgres.js seems to cache some types, and if tests clear the DB you need to also reset sql.
-
-  %raw(
-    "require('../generated/src/DbFunctions.bs.js').sql = require('postgres')(require('../generated/src/Config.bs.js').db)"
-  )
-}
-
 /// NOTE: diagrams for these tests can be found here: https://www.figma.com/file/TrBPqQHYoJ8wg6e0kAynZo/Scenarios-to-test-Linked-Entities?type=whiteboard&node-id=0%3A1&t=CZAE4T4oY9PCbszw-1
 describe("Linked Entity Loader Integration Test", () => {
   MochaPromise.before(async () => {
-    resetPostgresClient()
-    (await Migrations.runDownMigrations(~shouldExit=false, ~shouldDropRawEvents=true))->ignore
-    (await Migrations.runUpMigrations(~shouldExit=false))->ignore
+    DbHelpers.runUpDownMigration()
   })
 
   MochaPromise.after(async () => {
-    (await Migrations.runDownMigrations(~shouldExit=false, ~shouldDropRawEvents=true))->ignore
-    (await Migrations.runUpMigrations(~shouldExit=false))->ignore
+    // It is probably overkill that we are running these 'after' also
+    DbHelpers.runUpDownMigration()
   })
 
   MochaPromise.it("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {

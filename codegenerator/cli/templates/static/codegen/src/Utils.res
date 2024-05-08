@@ -98,3 +98,9 @@ let unwrapResultExn = res =>
   | Ok(v) => v
   | Error(exn) => exn->raise
   }
+
+/**
+Helper to check if a value exists in an array
+*/
+let arrayIncludes = (arr: array<'a>, val: 'a) =>
+  arr->Js.Array2.find(item => item == val)->Belt.Option.isSome

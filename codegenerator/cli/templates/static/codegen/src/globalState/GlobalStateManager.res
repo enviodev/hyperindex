@@ -4,8 +4,10 @@ module type State = {
   type action
   type task
 
-  let taskReducer: (t, task, ~dispatchAction: action => unit) => unit
+  let taskReducer: (t, task, ~dispatchAction: action => unit) => promise<unit>
   let actionReducer: (t, action) => (t, array<task>)
+  let invalidatedActionReducer: (t, action) => (t, array<task>)
+  let getId: t => int
 }
 
 module MakeManager = (S: State) => {
@@ -13,9 +15,14 @@ module MakeManager = (S: State) => {
 
   let make = (~stateUpdatedHook: option<S.t => unit>=?, state: S.t) => {state, stateUpdatedHook}
 
-  let rec dispatchAction = (self: t, action: S.action) => {
+  let rec dispatchAction = (~stateId=0, self: t, action: S.action) => {
     try {
-      let (nextState, nextTasks) = S.actionReducer(self.state, action)
+      let reducer = if stateId == self.state->S.getId {
+        S.actionReducer
+      } else {
+        S.invalidatedActionReducer
+      }
+      let (nextState, nextTasks) = reducer(self.state, action)
       self.state = nextState
       switch self.stateUpdatedHook {
       | Some(hook) => hook(nextState)
@@ -29,10 +36,15 @@ module MakeManager = (S: State) => {
     }
   }
   and dispatchTask = (self, task: S.task) => Js.Global.setTimeout(() => {
-      S.taskReducer(self.state, task, ~dispatchAction=dispatchAction(self))
+      S.taskReducer(
+        self.state,
+        task,
+        ~dispatchAction=dispatchAction(~stateId=self.state->S.getId, self),
+      )->ignore
     }, 0)->ignore
 
   let getState = self => self.state
+  let setState = (self: t, state: S.t) => self.state = state
 }
 
 module Manager = MakeManager(GlobalState)

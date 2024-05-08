@@ -122,3 +122,17 @@ jobs:
         working-directory: scenarios/test_codegen
         run: |
           pnpm test
+
+      - name: erc20_multichain_factory build
+        if: steps.changes.outputs.testChanges == 'true'
+        working-directory: scenarios/erc20_multichain_factory
+        run: |
+          pnpm codegen
+          pnpm install
+          pnpm build
+
+      - name: erc20_multichain_factory test
+        if: steps.changes.outputs.testChanges == 'true'
+        working-directory: scenarios/erc20_multichain_factory
+        run: |
+          pnpm test

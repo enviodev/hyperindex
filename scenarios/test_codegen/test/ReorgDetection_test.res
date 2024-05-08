@@ -82,15 +82,17 @@ describe("Validate reorg detection functions", () => {
   })
 
   it("Rolling back to matching hashes works as expected", () => {
+    let unusedBlockTimestamp = -1
     let blockNumbersAndHashes = [
-      (1, "0x123"),
-      (50, "0x456"),
-      (300, "0x789differnt"),
-      (500, "0x5432differnt"),
+      (1, "0x123", unusedBlockTimestamp),
+      (50, "0x456", unusedBlockTimestamp),
+      (300, "0x789differnt", unusedBlockTimestamp),
+      (500, "0x5432differnt", unusedBlockTimestamp),
     ]->Array.map(
-      ((blockNumber, hash)): HyperSync.blockNumberAndHash => {
+      ((blockNumber, blockHash, blockTimestamp)): ReorgDetection.blockData => {
         blockNumber,
-        hash,
+        blockHash,
+        blockTimestamp,
       },
     )
 

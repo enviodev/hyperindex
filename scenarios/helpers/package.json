@@ -1,0 +1,19 @@
+{
+  "name": "helpers",
+  "version": "0.0.0",
+  "namespace": "Helpers",
+  "scripts": {
+    "build": "rescript",
+    "clean": "rescript clean",
+    "watch": "rescript -w"
+  },
+  "keywords": [
+    "rescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "rescript": "^11.0.1",
+    "rescript-schema": "6.4.0"
+  }
+}

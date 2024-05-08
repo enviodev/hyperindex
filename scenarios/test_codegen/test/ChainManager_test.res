@@ -28,6 +28,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
     let fetcherStateInit: FetchState.t = FetchState.makeRoot(
       ~contractAddressMapping=ContractAddressingMap.make(),
+      ~dynamicContracts=FetchState.DynamicContractsMap.empty,
       ~startBlock=0,
       ~endBlock=None,
     )
@@ -75,8 +76,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
             fetchState.contents
             ->FetchState.update(
               ~id=Root,
-              ~latestFetchedBlockNumber=batchItem.blockNumber,
-              ~latestFetchedBlockTimestamp=batchItem.timestamp,
+              ~latestFetchedBlock={
+                blockNumber: batchItem.blockNumber,
+                blockTimestamp: batchItem.timestamp,
+              },
               ~fetchedEvents=list{batchItem},
             )
             ->Result.getExn
@@ -90,8 +93,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
               fetchState.contents
               ->FetchState.update(
                 ~id=Root,
-                ~latestFetchedBlockNumber=batchItem.blockNumber,
-                ~latestFetchedBlockTimestamp=batchItem.timestamp,
+                ~latestFetchedBlock={
+                  blockNumber: batchItem.blockNumber,
+                  blockTimestamp: batchItem.timestamp,
+                },
                 ~fetchedEvents=list{batchItem},
               )
               ->Result.getExn
@@ -122,6 +127,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       ),
       isFetchingBatch: false,
       currentBlockHeight: 0,
+      eventFilters: None,
     }
 
     mockChainFetcher
@@ -275,7 +281,7 @@ describe("determineNextEvent", () => {
       ~isUnorderedMultichainMode=false,
     )
 
-    let makeNoItem = timestamp => FetchState.NoItem({timestamp, blockNumber: 0})
+    let makeNoItem = timestamp => FetchState.NoItem({blockTimestamp: timestamp, blockNumber: 0})
     let makeMockQItem = (timestamp, chain): Types.eventBatchQueueItem => {
       {
         timestamp,
@@ -287,10 +293,13 @@ describe("determineNextEvent", () => {
     }
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
       registerType: RootRegister({endBlock: None}),
-      latestFetchedBlockTimestamp,
-      latestFetchedBlockNumber: 0,
+      latestFetchedBlock: {
+        blockTimestamp: latestFetchedBlockTimestamp,
+        blockNumber: 0,
+      },
       contractAddressMapping: ContractAddressingMap.make(),
       fetchedEventQueue: item->Option.mapWithDefault(list{}, v => list{v}),
+      dynamicContracts: FetchState.DynamicContractsMap.empty
     }
 
     it(
