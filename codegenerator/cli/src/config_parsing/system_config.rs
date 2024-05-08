@@ -1,9 +1,9 @@
 use super::{
+    chain_helpers::get_confirmed_block_threshold_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
     human_config::{self, EventDecoder, HumanConfig, HypersyncConfig, RpcConfig, SyncSourceConfig},
 };
 use crate::{
-    constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
     project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
@@ -238,10 +238,10 @@ impl SystemConfig {
                 .collect();
 
             let network = Network {
-                id: network.id as u64,
+                id: network.id,
                 confirmed_block_threshold: network
                     .confirmed_block_threshold
-                    .unwrap_or(DEFAULT_CONFIRMED_BLOCK_THRESHOLD),
+                    .unwrap_or(get_confirmed_block_threshold_from_id(network.id)),
                 start_block: network.start_block,
                 end_block: network.end_block,
                 sync_source,

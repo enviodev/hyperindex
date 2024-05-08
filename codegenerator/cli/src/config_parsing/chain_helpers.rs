@@ -7,6 +7,8 @@ use strum::FromRepr;
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
+use crate::constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD;
+
 #[subenum(NetworkWithExplorer, HypersyncNetwork, GraphNetwork)]
 #[derive(
     Clone,
@@ -231,6 +233,78 @@ impl Network {
     pub fn from_network_id(id: u64) -> anyhow::Result<Self> {
         Network::from_repr(id)
             .ok_or_else(|| anyhow!("Failed converting network_id {} to network name", id))
+    }
+
+    //TODO: research a sufficient threshold for all chain (some should be 0)
+    pub fn get_confirmed_block_threshold(&self) -> i32 {
+        match self {
+            Network::EthereumMainnet
+            | Network::Goerli
+            | Network::Optimism
+            | Network::Base
+            | Network::BaseSepolia
+            | Network::Bsc
+            | Network::PoaSokol
+            | Network::Chapel
+            | Network::PoaCore
+            | Network::Gnosis
+            | Network::Fuse
+            | Network::Fantom
+            | Network::Polygon
+            | Network::Boba
+            | Network::OptimismGoerli
+            | Network::OptimismSepolia
+            | Network::Clover
+            | Network::Moonbeam
+            | Network::Moonriver
+            | Network::Mbase
+            | Network::FantomTestnet
+            | Network::ArbitrumOne
+            | Network::ArbitrumNova
+            | Network::ArbitrumGoerli
+            | Network::ArbitrumSepolia
+            | Network::Celo
+            | Network::Fuji
+            | Network::Avalanche
+            | Network::CeloAlfajores
+            | Network::Mumbai
+            | Network::Aurora
+            | Network::AuroraTestnet
+            | Network::Harmony
+            | Network::BaseGoerli
+            | Network::ZksyncEra
+            | Network::Sepolia
+            | Network::Linea
+            | Network::Rinkeby
+            | Network::ZksyncEraTestnet
+            | Network::PolygonZkevmTestnet
+            | Network::PolygonZkevm
+            | Network::ScrollSepolia
+            | Network::Scroll
+            | Network::Metis
+            | Network::Manta
+            | Network::TaikoJolnr
+            | Network::Kroma
+            | Network::Lukso
+            | Network::OkbcTestnet
+            | Network::Holesky
+            | Network::GnosisChiado
+            | Network::Zora
+            | Network::PublicGoods
+            | Network::A1Milkomeda
+            | Network::C1Milkomeda
+            | Network::Flare
+            | Network::Mantle
+            | Network::Zeta
+            | Network::BerachainArtio
+            | Network::NeonEvm
+            | Network::Rsk
+            | Network::ShimmerEvm
+            | Network::Blast
+            | Network::BlastSepolia
+            | Network::FhenixTestnet
+            | Network::Amoy => 200,
+        }
     }
 }
 
@@ -483,6 +557,12 @@ pub fn get_etherscan_client(
     };
 
     Ok(client)
+}
+
+pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
+    Network::from_network_id(id).map_or(DEFAULT_CONFIRMED_BLOCK_THRESHOLD, |n| {
+        n.get_confirmed_block_threshold()
+    })
 }
 
 #[cfg(test)]
