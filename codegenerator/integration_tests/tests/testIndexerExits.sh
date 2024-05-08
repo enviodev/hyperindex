@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # This file will test a single scenario (language agnostic)
-echo -e "\n============================\nTesting Exit: $TEMPLATE"
+echo -e "\n============================\nTesting Exit: $TEMPLATE with config: $CONFIG_FILE and shouldFail $SHOULD_FAIL\n============================\n"
 
 # set -e # Exit on error
 
@@ -51,7 +51,7 @@ $envio_cmd stop || true
 
 start_indexer() {
     export TUI_OFF=true
-    $envio_cmd dev
+    $envio_cmd start
     local status=$?
         if [ $status -ne 0 ]; then
             if [ $SHOULD_FAIL = true ]; then
@@ -72,7 +72,8 @@ start_indexer() {
             fi
         fi
 }
-
+$envio_cmd local docker up
+$envio_cmd local db-migrate setup
 echo "Starting indexer"
 start_indexer
 
@@ -92,8 +93,7 @@ cd $root_dir
 
 sleep 8 # Weird things happen if the indexer process hasn't started yet.
 
-# NOTE: the error should propagate to this bash process, since the 'set -e' setting is used.
 echo "Running tests"
-node ./tests/EndBlockSuccess.js
+node ./tests/EndblockSuccess.js
 
 echo "finished workflow test"

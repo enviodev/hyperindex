@@ -3,7 +3,7 @@ description: My Awesome Contract # Description of the project
 
 contracts:
   - name: SwapContract # User-defined contract name
-    handler: src/EventHandler.ts # Location of the file that handles the events emitted by this contract
+    handler: src/BrokenHandler.ts # Location of the file that handles the events emitted by this contract
     events: # Configuration for each event emitted by this contract that the indexer will listen for
       - event: Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick) #  Name of the event (must match the name in the ABI)
 networks:
