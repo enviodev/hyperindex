@@ -530,19 +530,22 @@ let actionReducer = (state: t, action: action) => {
   | SetFetchState(chain, fetchState) =>
     updateChainFetcher(currentChainFetcher => {...currentChainFetcher, fetchState}, ~chain, ~state)
   | SetSyncedChains => {
-      let shouldExit = EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
-        state.chainManager.chainFetchers,
-      )
-        ? ExitWithSuccess
-        : NoExit
-      (
-        {
-          ...state,
-          chainManager: state.chainManager->checkAndSetSyncedChains(~nextQueueItemIsKnownNone=true),
-        },
-        [UpdateChainMetaDataAndCheckForExit(shouldExit)],
-      )
-    }
+    let shouldExit = 
+          EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
+            state.chainManager.chainFetchers) ? {
+              Logging.info("All chains are caught up to the endblock.")
+              ExitWithSuccess
+              } 
+              : NoExit
+    (
+      {
+        ...state,
+        chainManager: state.chainManager->checkAndSetSyncedChains(~nextQueueItemIsKnownNone=true),
+      }
+    ,
+    [UpdateChainMetaDataAndCheckForExit(shouldExit)]
+    )
+  }
   | UpdateQueues(fetchStatesMap, arbitraryEventPriorityQueue) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
@@ -570,8 +573,11 @@ let actionReducer = (state: t, action: action) => {
     )
   | ResetRollbackState => ({...state, rollbackState: NoRollback}, [])
   | SuccessExit =>
+    {
+    Logging.info("exiting with success")
     NodeJsLocal.process->NodeJsLocal.exitWithCode(Success)
     (state, [])
+    }
   | ErrorExit(errHandler) =>
     errHandler->ErrorHandling.log
     NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
