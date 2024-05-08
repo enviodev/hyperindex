@@ -1,0 +1,18 @@
+type Swap @entity {
+  id: ID!
+  recipient: String!
+  sender: String!
+  amount0: BigInt!
+  amount1: BigInt!
+  sqrtPriceX96: BigInt!
+  liquidity: BigInt!
+  tick: BigInt!
+  blockNumber: Int!
+  blockTimestamp: Int!
+  transactionHash: String!
+}
+
+type EventTracker @entity {
+  id: ID!
+  count: Int!
+}

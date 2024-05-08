@@ -1,0 +1,19 @@
+{
+  "name": "uni indexer",
+  "version": "0.1.0",
+  "scripts": {
+    "clean": "tsc --clean",
+    "build": "tsc --build",
+    "watch": "tsc --watch",
+    "codegen": "envio codegen",
+    "start": "ts-node generated/src/Index.bs.js"
+  },
+  "devDependencies": {
+    "@types/node": "^18.16.1",
+    "typescript": "^5.0.4"
+  },
+  "dependencies": {
+    "ts-node": "^10.9.1",
+    "envio": "latest"
+  }
+}

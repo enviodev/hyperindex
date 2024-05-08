@@ -1,0 +1,48 @@
+name: Uniswap # Name of the project
+description: My Awesome Contract # Description of the project
+
+contracts:
+  - name: SwapContract # User-defined contract name
+    handler: src/EventHandler.ts # Location of the file that handles the events emitted by this contract
+    events: # Configuration for each event emitted by this contract that the indexer will listen for
+      - event: Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick) #  Name of the event (must match the name in the ABI)
+networks:
+  - id: 137 # Polygon
+    start_block: 0
+    end_block: 2000000
+    contracts:
+      - name: SwapContract #A reference to the global contract definition
+        address:
+          - "0x45dda9cb7c25131df268515131f647d726f50608"
+          - "0x0e44ceb592acfc5d3f09d996302eb4c499ff8c10"
+  - id: 1 # Mainnet
+    start_block: 0
+    end_block: 2000000
+    contracts:
+      - name: SwapContract #A reference to the global contract definition
+        address:
+          - "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"
+          - "0x8ad599c3A0ff1De082011EFDDc58f1908eb6e6D8"
+  - id: 10 # Optimism
+    start_block: 0
+    end_block: 50000
+    contracts:
+      - name: SwapContract #A reference to the global contract definition
+        address:
+          - "0x85149247691df622eaf1a8bd0cafd40bc45154a9"
+          - "0xb589969d38ce76d3d7aa319de7133bc9755fd840"
+  - id: 42161 # Arb
+    start_block: 0
+    end_block: 500000
+    contracts:
+      - name: SwapContract #A reference to the global contract definition
+        address:
+          - "0xc31e54c7a869b9fcbecc14363cf510d1c41fa443"
+          - "0xc6962004f452be9203591991d15f6b388e09e8d0"
+          - "0x17c14d2c404d167802b16c450d3c99f88f2c4f4d"
+  - id: 8453 # Base
+    start_block: 0
+    end_block: 2000000
+    contracts:
+      - name: SwapContract #A reference to the global contract definition
+        address: "0x4c36388be6f416a29c8d8eee81c771ce6be14b18"
