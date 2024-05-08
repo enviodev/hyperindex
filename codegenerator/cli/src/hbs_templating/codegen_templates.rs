@@ -54,6 +54,7 @@ impl HasName for EventRecordTypeTemplate {
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,
+    pub has_multiple_params: bool,
 }
 
 impl GraphQlEnumTypeTemplate {
@@ -67,10 +68,11 @@ impl GraphQlEnumTypeTemplate {
                 "Failed templating gql enum fields of enum: {}",
                 gql_enum.name
             ))?;
-
+        let has_multiple_params = params.len() > 1;
         Ok(GraphQlEnumTypeTemplate {
             name: gql_enum.name.to_capitalized_options(),
             params,
+            has_multiple_params,
         })
     }
 }
@@ -554,7 +556,6 @@ impl ContractTemplate {
         let abi = contract
             .get_stringified_abi()
             .context(format!("Failed getting abi of contract {}", contract.name))?;
-
         Ok(ContractTemplate {
             name,
             handler,
@@ -695,6 +696,7 @@ pub struct ProjectTemplate {
     should_use_hypersync_client_decoder: bool,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
+    has_multiple_events: bool,
 }
 
 impl ProjectTemplate {
@@ -752,7 +754,11 @@ impl ProjectTemplate {
         let persisted_state = PersistedState::get_current_state(cfg)
             .context("Failed creating default persisted state")?
             .into();
-
+        let total_number_of_events: usize = codegen_contracts
+            .iter()
+            .map(|contract| contract.codegen_events.len())
+            .sum();
+        let has_multiple_events = total_number_of_events > 1;
         let should_use_hypersync_client_decoder =
             cfg.event_decoder == EventDecoder::HypersyncClient;
 
@@ -787,6 +793,7 @@ impl ProjectTemplate {
             should_use_hypersync_client_decoder,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
+            has_multiple_events,
         })
     }
 }

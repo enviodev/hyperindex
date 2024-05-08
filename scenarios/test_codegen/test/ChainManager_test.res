@@ -115,7 +115,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       numEventsProcessed: 0,
       numBatchesFetched: 0,
       isFetchingAtHead: false,
-      hasProcessedToEndblock: false,
       fetchState: fetchState.contents,
       logger: Logging.logger,
       chainConfig: "TODO"->Obj.magic,

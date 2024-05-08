@@ -173,12 +173,13 @@ pub mod codegen {
 pub mod start {
     use super::execute_command;
     use crate::project_paths::ParsedProjectPaths;
+    use anyhow::anyhow;
 
     pub async fn start_indexer(
         project_paths: &ParsedProjectPaths,
         should_use_raw_events_worker: bool,
         should_open_hasura: bool,
-    ) -> anyhow::Result<std::process::ExitStatus> {
+    ) -> anyhow::Result<()> {
         if should_open_hasura {
             println!("Opening Hasura console at http://localhost:8080 ...");
             if let Err(_) = open::that_detached("http://localhost:8080") {
@@ -199,7 +200,15 @@ pub mod start {
             args.push("--sync-from-raw-events");
         }
 
-        execute_command(cmd, args, current_dir).await
+        let exit = execute_command(cmd, args, current_dir).await?;
+
+        if !exit.success() {
+            return Err(anyhow!(
+                "Indexer has failed to run. Please see error logs for more details"
+            ));
+        }
+        println!("\nIndexer has successfully finished processing all events on all chains. Exiting process.");
+        Ok(())
     }
 }
 pub mod docker {

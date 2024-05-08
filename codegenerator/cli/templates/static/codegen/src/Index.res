@@ -73,36 +73,62 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
     chains: globalState.chainManager.chainFetchers
     ->ChainMap.values
     ->Array.map(cf => {
-      let {currentBlockHeight, numEventsProcessed, fetchState, numBatchesFetched} = cf
+      let {numEventsProcessed, fetchState, numBatchesFetched} = cf
       let latestFetchedBlockNumber = FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber
+      let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
+      let currentBlockHeight =
+        cf->ChainFetcher.hasProcessedToEndblock
+          ? cf.chainConfig.endBlock->Option.getWithDefault(cf.currentBlockHeight)
+          : cf.currentBlockHeight
 
-      let progress: ChainData.progress = switch cf {
-      | {
-          firstEventBlockNumber: Some(firstEventBlockNumber),
-          latestProcessedBlock,
-          timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
-        } =>
-        let latestProcessedBlock =
-          latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
-        Synced({
+      let progress: ChainData.progress = if hasProcessedToEndblock {
+      // If the endblock has been reached then set the progress to synced.
+      // if there's chains that have no events in the block range start->end, 
+      // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
+      // This ensures TUI still displays synced in this case
+        let {
           firstEventBlockNumber,
           latestProcessedBlock,
           timestampCaughtUpToHeadOrEndblock,
           numEventsProcessed,
-        })
-      | {
-          firstEventBlockNumber: Some(firstEventBlockNumber),
-          latestProcessedBlock,
-          timestampCaughtUpToHeadOrEndblock: None,
-        } =>
-        let latestProcessedBlock =
-          latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
-        Syncing({
-          firstEventBlockNumber,
-          latestProcessedBlock,
+        } = cf
+        Synced({
+          firstEventBlockNumber: firstEventBlockNumber->Option.getWithDefault(0),
+          latestProcessedBlock: latestProcessedBlock->Option.getWithDefault(currentBlockHeight),
+          timestampCaughtUpToHeadOrEndblock: timestampCaughtUpToHeadOrEndblock->Option.getWithDefault(
+            Js.Date.now()->Js.Date.fromFloat,
+          ),
           numEventsProcessed,
         })
-      | {firstEventBlockNumber: None} => SearchingForEvents
+      } else {
+        switch cf {
+        | {
+            firstEventBlockNumber: Some(firstEventBlockNumber),
+            latestProcessedBlock,
+            timestampCaughtUpToHeadOrEndblock: Some(timestampCaughtUpToHeadOrEndblock),
+          } =>
+          let latestProcessedBlock =
+            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
+          Synced({
+            firstEventBlockNumber,
+            latestProcessedBlock,
+            timestampCaughtUpToHeadOrEndblock,
+            numEventsProcessed,
+          })
+        | {
+            firstEventBlockNumber: Some(firstEventBlockNumber),
+            latestProcessedBlock,
+            timestampCaughtUpToHeadOrEndblock: None,
+          } =>
+          let latestProcessedBlock =
+            latestProcessedBlock->Option.getWithDefault(firstEventBlockNumber)
+          Syncing({
+            firstEventBlockNumber,
+            latestProcessedBlock,
+            numEventsProcessed,
+          })
+        | {firstEventBlockNumber: None} => SearchingForEvents
+        }
       }
 
       (

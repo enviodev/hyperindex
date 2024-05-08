@@ -14,7 +14,7 @@ module EventsProcessed = {
   let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {
     chainFetchers
     ->ChainMap.values
-    ->Array.reduce(true, (accum, cf) => cf.hasProcessedToEndblock && accum)
+    ->Array.reduce(true, (accum, cf) => cf->ChainFetcher.hasProcessedToEndblock && accum)
   }
 
   let makeFromChainManager = (cm: ChainManager.t): t => {

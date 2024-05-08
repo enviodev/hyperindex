@@ -48,6 +48,7 @@ type blockRangeFetchResponse = ChainWorkerTypes.blockRangeFetchResponse<
   RpcWorker.t,
 >
 
+type shouldExit = ExitWithSuccess | NoExit
 type action =
   | BlockRangeResponse(chain, blockRangeFetchResponse)
   | SetFetchStateCurrentBlockHeight(chain, int)
@@ -72,7 +73,7 @@ type task =
       nextEndOfBlockRangeScannedData: DbFunctions.EndOfBlockRangeScannedData.endOfBlockRangeScannedData,
     })
   | ProcessEventBatch
-  | UpdateChainMetaData
+  | UpdateChainMetaDataAndCheckForExit(shouldExit)
   | Rollback
 
 let updateChainFetcherCurrentBlockHeight = (chainFetcher: ChainFetcher.t, ~currentBlockHeight) => {
@@ -189,13 +190,6 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
   }
 }
 
-let greaterThanOrEqualOpt: (option<int>, option<int>) => bool = (opt1, opt2) => {
-  switch (opt1, opt2) {
-  | (Some(num1), Some(num2)) => num1 >= num2
-  | _ => false
-  }
-}
-
 let updateLatestProcessedBlocks = (
   ~state: t,
   ~latestProcessedBlocks: EventProcessing.EventsProcessed.t,
@@ -224,9 +218,6 @@ let updateLatestProcessedBlocks = (
         ...cf,
         latestProcessedBlock,
         numEventsProcessed,
-        hasProcessedToEndblock: latestProcessedBlock->greaterThanOrEqualOpt(
-          cf.chainConfig.endBlock,
-        ),
       }
     }),
   }
@@ -351,7 +342,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     (
       nextState,
       [
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         updateEndOfBlockRangeScannedData,
         ProcessEventBatch,
         NextQuery(Chain(chain)),
@@ -396,7 +387,11 @@ let actionReducer = (state: t, action: action) => {
           b->EventUtils.getEventComparatorFromQueueItem
       }, state.chainManager.arbitraryEventPriorityQueue)
 
-    let nextTasks = [UpdateChainMetaData, ProcessEventBatch, NextQuery(CheckAllChains)]
+    let nextTasks = [
+      UpdateChainMetaDataAndCheckForExit(NoExit),
+      ProcessEventBatch,
+      NextQuery(CheckAllChains),
+    ]
 
     let nextState = registrationsReversed->List.reduce(state, (state, registration) => {
       let {
@@ -460,7 +455,7 @@ let actionReducer = (state: t, action: action) => {
 
   | EventBatchProcessed({val, dynamicContractRegistrations: None}) => (
       updateLatestProcessedBlocks(~state, ~latestProcessedBlocks=val),
-      [UpdateChainMetaData, ProcessEventBatch],
+      [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch],
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
   | SetCurrentlyFetchingBatch(chain, isFetchingBatch) =>
@@ -471,13 +466,20 @@ let actionReducer = (state: t, action: action) => {
     )
   | SetFetchState(chain, fetchState) =>
     updateChainFetcher(currentChainFetcher => {...currentChainFetcher, fetchState}, ~chain, ~state)
-  | SetSyncedChains => (
-      {
-        ...state,
-        chainManager: state.chainManager->checkAndSetSyncedChains(~nextQueueItemIsKnownNone=true),
-      },
-      [],
-    )
+  | SetSyncedChains => {
+      let shouldExit = EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
+        state.chainManager.chainFetchers,
+      )
+        ? ExitWithSuccess
+        : NoExit
+      (
+        {
+          ...state,
+          chainManager: state.chainManager->checkAndSetSyncedChains(~nextQueueItemIsKnownNone=true),
+        },
+        [UpdateChainMetaDataAndCheckForExit(shouldExit)],
+      )
+    }
   | UpdateQueues(fetchStatesMap, arbitraryEventPriorityQueue) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
@@ -659,8 +661,14 @@ let injectedTaskReducer = async (
         ),
       ]
     })
-
-  | UpdateChainMetaData => await updateChainMetadataTable(state.chainManager)
+  | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
+    switch shouldExit {
+    | ExitWithSuccess =>
+      updateChainMetadataTable(state.chainManager)
+      ->Promise.thenResolve(_ => dispatchAction(SuccessExit))
+      ->ignore
+    | NoExit => updateChainMetadataTable(state.chainManager)->ignore
+    }
   | NextQuery(chainCheck) =>
     let fetchForChain = checkAndFetchForChain(
       ~waitForNewBlock,
@@ -735,16 +743,7 @@ let injectedTaskReducer = async (
           | Error(errHandler) => dispatchAction(ErrorExit(errHandler))
           }
         }
-      | None => {
-          dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
-          if (
-            EventProcessing.EventsProcessed.allChainsEventsProcessedToEndblock(
-              state.chainManager.chainFetchers,
-            )
-          ) {
-            dispatchAction(SuccessExit)
-          }
-        }
+      | None => dispatchAction(SetSyncedChains) //Known that there are no items available on the queue so safely call this action
       }
     }
   | Rollback =>

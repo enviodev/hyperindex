@@ -8,7 +8,6 @@ type t = {
   currentBlockHeight: int,
   isFetchingBatch: bool,
   isFetchingAtHead: bool,
-  hasProcessedToEndblock: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -55,7 +54,6 @@ let make = (
     currentBlockHeight: 0,
     isFetchingBatch: false,
     isFetchingAtHead: false,
-    hasProcessedToEndblock: false,
     fetchState,
     firstEventBlockNumber,
     latestProcessedBlock,
@@ -276,8 +274,12 @@ let getNextQuery = (self: t) => {
 /**
 Gets the latest item on the front of the queue and returns updated fetcher
 */
-let getLatestItem = (self: t) => {
-  self.fetchState->FetchState.getEarliestEvent
+let hasProcessedToEndblock = (self: t) => {
+  let {latestProcessedBlock, chainConfig: {endBlock}} = self
+  switch (latestProcessedBlock, endBlock) {
+  | (Some(latestProcessedBlock), Some(endBlock)) => latestProcessedBlock >= endBlock
+  | _ => false
+  }
 }
 
 /**
