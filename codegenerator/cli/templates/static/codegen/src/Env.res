@@ -91,9 +91,6 @@ module Configurable = {
   let shouldUseHypersyncClientDecoder =
     envSafe->EnvSafe.get(. "USE_HYPERSYNC_CLIENT_DECODER", S.option(S.bool))
 
-  let shouldRollbackOnReorg =
-    envSafe->EnvSafe.get(. "ROLLBACK_ON_REORG", S.option(S.bool))
-
   /**
     Used for backwards compatability
   */

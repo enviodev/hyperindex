@@ -41,6 +41,32 @@ type chainConfig = {
 
 type chainConfigs = ChainMap.t<chainConfig>
 
+type historyFlag = FullHistory | MinHistory
+type rollbackFlag = RollbackOnReorg | NoRollback
+type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
+
+let makeHistoryConfig = (~shouldRollbackOnReorg, ~shouldSaveFullHistory) => {
+  rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
+  historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
+}
+
+let historyConfig = makeHistoryConfig(~shouldRollbackOnReorg={{should_rollback_on_reorg}}, ~shouldSaveFullHistory={{should_save_full_history}})
+
+let shouldRollbackOnReorg = switch historyConfig {
+| {rollbackFlag: RollbackOnReorg} => true
+| _ => false
+}
+
+let shouldSaveHistory = switch historyConfig {
+| {rollbackFlag: RollbackOnReorg} | {historyFlag: FullHistory} => true
+| _ => false
+}
+
+let shouldPruneHistory = switch historyConfig {
+| {historyFlag: MinHistory} => true
+| _ => false
+}
+
 /**
 Determines whether to use HypersyncClient Decoder or Viem for parsing events
 Default is hypersync client decoder, configurable in config with:
@@ -50,9 +76,6 @@ event_decoder: "viem" || "hypersync-client"
 */
 let shouldUseHypersyncClientDecoder =
   Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault({{should_use_hypersync_client_decoder}})
-
-let shouldRollbackOnReorg =
-  Env.Configurable.shouldRollbackOnReorg->Belt.Option.getWithDefault({{should_rollback_on_reorg}})
 
 let isUnorderedMultichainMode =
   Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(

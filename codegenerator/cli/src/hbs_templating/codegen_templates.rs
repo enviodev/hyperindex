@@ -695,6 +695,7 @@ pub struct ProjectTemplate {
     is_unordered_multichain_mode: bool,
     should_use_hypersync_client_decoder: bool,
     should_rollback_on_reorg: bool,
+    should_save_full_history: bool,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     has_multiple_events: bool,
@@ -793,6 +794,7 @@ impl ProjectTemplate {
             is_unordered_multichain_mode: cfg.unordered_multichain_mode,
             should_use_hypersync_client_decoder,
             should_rollback_on_reorg: cfg.rollback_on_reorg,
+            should_save_full_history: cfg.save_full_history,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             has_multiple_events,

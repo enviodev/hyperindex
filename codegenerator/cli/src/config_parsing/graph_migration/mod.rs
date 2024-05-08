@@ -279,6 +279,7 @@ pub async fn generate_config_from_subgraph_id(
         unordered_multichain_mode: None,
         event_decoder: None,
         rollback_on_reorg: None,
+        save_full_history: None,
     };
 
     //Allow schema and abis to be fetched on different threads

@@ -27,7 +27,9 @@ pub struct HumanConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_decoder: Option<EventDecoder>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub rollback_on_reorg: Option<bool>
+    pub rollback_on_reorg: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub save_full_history: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

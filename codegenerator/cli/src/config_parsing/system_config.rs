@@ -34,6 +34,7 @@ pub struct SystemConfig {
     pub unordered_multichain_mode: bool,
     pub event_decoder: EventDecoder,
     pub rollback_on_reorg: bool,
+    pub save_full_history: bool,
     pub schema: Schema,
 }
 
@@ -262,6 +263,7 @@ impl SystemConfig {
                 .clone()
                 .unwrap_or(EventDecoder::HypersyncClient),
             rollback_on_reorg: human_cfg.rollback_on_reorg.unwrap_or(false),
+            save_full_history: human_cfg.save_full_history.unwrap_or(false),
             schema,
         })
     }

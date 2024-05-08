@@ -323,9 +323,8 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       ~currentHeight=currentBlockHeight,
     )
 
-    let updateEndOfBlockRangeScannedDataArr = 
-      //Only update endOfBlockRangeScannedData if rollbacks are enabled
-      Config.shouldRollbackOnReorg
+    let updateEndOfBlockRangeScannedDataArr = //Only update endOfBlockRangeScannedData if rollbacks are enabled
+    Config.shouldRollbackOnReorg
       ? [
           UpdateEndOfBlockRangeScannedData({
             chain,
@@ -663,13 +662,19 @@ let injectedTaskReducer = async (
           ~blockTimestampThreshold,
           ~blockNumberThreshold,
         ),
-        DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
-          sql,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~blockNumberThreshold,
-          ~blockTimestampThreshold,
-        ),
-      ]
+      ]->Array.concat(
+        //only prune history if we are not saving full history
+        Config.shouldPruneHistory
+          ? [
+              DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
+                sql,
+                ~chainId=chain->ChainMap.Chain.toChainId,
+                ~blockNumberThreshold,
+                ~blockTimestampThreshold,
+              ),
+            ]
+          : [],
+      )
     })
   | UpdateChainMetaDataAndCheckForExit(shouldExit) =>
     switch shouldExit {
