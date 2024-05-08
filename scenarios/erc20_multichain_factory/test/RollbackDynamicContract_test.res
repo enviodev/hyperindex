@@ -263,7 +263,7 @@ describe("Dynamic contract rollback test", () => {
     await dispatchAllTasks()
     Assert.deep_equal(
       [
-        GlobalState.UpdateChainMetaData,
+        GlobalState.UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_1,
@@ -273,7 +273,7 @@ describe("Dynamic contract rollback test", () => {
         ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_137,
@@ -317,7 +317,7 @@ describe("Dynamic contract rollback test", () => {
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_1,
@@ -327,7 +327,7 @@ describe("Dynamic contract rollback test", () => {
         ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_137,
@@ -337,7 +337,7 @@ describe("Dynamic contract rollback test", () => {
         ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
       stubDataInitial->Stubs.getTasks,
@@ -345,7 +345,11 @@ describe("Dynamic contract rollback test", () => {
     )
 
     //Artificially cut the tasks to only do one round of queries and batch processing
-    tasks := [UpdateChainMetaData, ProcessEventBatch, NextQuery(CheckAllChains)]
+    tasks := [
+        UpdateChainMetaDataAndCheckForExit(NoExit),
+        ProcessEventBatch,
+        NextQuery(CheckAllChains),
+      ]
 
     let getFetchStateRegisterId = () =>
       switch getFetchState(Chain_1)
@@ -363,7 +367,7 @@ describe("Dynamic contract rollback test", () => {
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_1,
@@ -373,7 +377,7 @@ describe("Dynamic contract rollback test", () => {
         ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_137,
@@ -383,7 +387,7 @@ describe("Dynamic contract rollback test", () => {
         ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(CheckAllChains),
       ],
@@ -408,14 +412,18 @@ describe("Dynamic contract rollback test", () => {
     )
 
     //Artificially cut the tasks to only do one round of queries and batch processing
-    tasks := [UpdateChainMetaData, ProcessEventBatch, NextQuery(CheckAllChains)]
+    tasks := [
+        UpdateChainMetaDataAndCheckForExit(NoExit),
+        ProcessEventBatch,
+        NextQuery(CheckAllChains),
+      ]
     //Process batch 3 of events and make queries
     //Execute queries(D)
     await dispatchAllTasks()
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_1,
@@ -425,7 +433,7 @@ describe("Dynamic contract rollback test", () => {
         ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_137,
@@ -435,7 +443,7 @@ describe("Dynamic contract rollback test", () => {
         ),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
       stubDataInitial->Stubs.getTasks,
@@ -455,7 +463,11 @@ describe("Dynamic contract rollback test", () => {
     )
 
     //Artificially cut the tasks to only do one round of queries and batch processing
-    tasks := [UpdateChainMetaData, ProcessEventBatch, NextQuery(CheckAllChains)]
+    tasks := [
+        UpdateChainMetaDataAndCheckForExit(NoExit),
+        ProcessEventBatch,
+        NextQuery(CheckAllChains),
+      ]
     //Process batch 2 of events and make queries
     //Execute queries(E)
     await dispatchAllTasks()

@@ -182,7 +182,7 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deep_equal(
       tasks.contents,
       [
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
@@ -248,7 +248,7 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deep_equal(
       tasks.contents,
       [
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
@@ -312,7 +312,12 @@ describe("Single Chain Simple Rollback", () => {
 
     Assert.deep_equal(
       tasks.contents,
-      [GlobalState.NextQuery(CheckAllChains), Rollback, UpdateChainMetaData, ProcessEventBatch],
+      [
+        GlobalState.NextQuery(CheckAllChains),
+        Rollback,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
+        ProcessEventBatch,
+      ],
       ~message="should detect rollback with reorg chain",
     )
 
@@ -338,7 +343,7 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deep_equal(
       tasks.contents,
       [
-        GlobalState.UpdateChainMetaData,
+        GlobalState.UpdateChainMetaDataAndCheckForExit(NoExit),
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
@@ -353,7 +358,7 @@ describe("Single Chain Simple Rollback", () => {
         ProcessEventBatch,
         NextQuery(Chain(chain)),
         NextQuery(CheckAllChains),
-        UpdateChainMetaData,
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
       ~message="Query should have returned with batch to process",
