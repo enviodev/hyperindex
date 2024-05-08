@@ -1,3 +1,6 @@
+// This test is two fold, firstly checking that the indexer is in the correct state after exiting with success
+// and secondly that the chain_metadata table is in the correct shape. The chain_metadata table is used by the UI
+// and so any changes should be tested for
 const assert = require("assert");
 const { exit } = require("process");
 let maxRetries = 5;

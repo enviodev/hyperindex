@@ -1,9 +1,7 @@
 #!/bin/bash
 
-# This file will test a single scenario (language agnostic)
+# This file will test a custom indexer with various configurations and fail/success states.
 echo -e "\n============================\nTesting Exit: $TEMPLATE with config: $CONFIG_FILE and shouldFail $SHOULD_FAIL\n============================\n"
-
-# set -e # Exit on error
 
 # This shouldn't be needed - but the test will fail if port 9898 isn't available - so worth checking it first.
 while :; do
@@ -42,13 +40,8 @@ $envio_cmd codegen --config ./$CONFIG_FILE
 echo "Clearing old docker state"
 $envio_cmd stop || true
 
-# start the indexer running manual steps
-# NOTE: if dev fails or has issues you can debug with these separate steps.
-# $envio_cmd local docker up
-# $envio_cmd local db-migrate setup
-# npm run start & PID=$!
-# $envio_cmd start & PID=$!
-
+# start the indexer function, and check if it fails or exits with success
+# will exit the test if failure occurs (expected or not)
 start_indexer() {
     export TUI_OFF=true
     $envio_cmd start
@@ -72,6 +65,8 @@ start_indexer() {
             fi
         fi
 }
+
+# run the setup commands and start indexer
 $envio_cmd local docker up
 sleep 10
 $envio_cmd local db-migrate up
