@@ -17,6 +17,7 @@ type logLevelUser = [
 type logLevel = [logLevelBuiltin | logLevelUser]
 
 type pinoMessageBlob
+type pinoMessageBlobWithError
 @genType
 type t = {
   trace: (. pinoMessageBlob) => unit,
@@ -26,12 +27,12 @@ type t = {
   error: (. pinoMessageBlob) => unit,
   fatal: (. pinoMessageBlob) => unit,
 }
-@send external errorExn: (t, exn, pinoMessageBlob) => unit = "error"
+@send external errorExn: (t, pinoMessageBlobWithError) => unit = "error"
 /**
 This is preferred over errorExn since it will expose the values of the error
 */
 @send
-external errorJsExn: (t, Js.Exn.t, pinoMessageBlob) => unit = "error"
+external errorJsExn: (t, pinoMessageBlobWithError) => unit = "error"
 
 // Bind to the 'level' property getter
 @get external getLevel: t => logLevel = "level"
@@ -44,6 +45,15 @@ external levels: t => 'a = "levels"
 
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
 let createPinoMessage = (message): pinoMessageBlob => Obj.magic(message)
+let createPinoMessageWithError = (message, err): pinoMessageBlobWithError => {
+//See https://github.com/pinojs/pino-std-serializers for standard pino serializers
+//for common objects. We have also defined the serializer in this format in the
+// serializers type below: `type serializers = {err: Js.Json.t => Js.Json.t}`
+ Obj.magic({
+    "msg": message,
+    "err": err,
+  })
+}
 
 module Transport = {
   type t

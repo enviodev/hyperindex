@@ -174,7 +174,10 @@ let main = async () => {
 
     gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
   } catch {
-  | e => e->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
+  | e => {
+    e->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
+    NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
+    }
   }
 }
 
