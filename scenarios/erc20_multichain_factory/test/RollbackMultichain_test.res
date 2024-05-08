@@ -366,7 +366,6 @@ describe("Multichain rollback test", () => {
     await dispatchAllTasks()
     Assert.deep_equal(
       [
-        GlobalState.UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Chain_1,
@@ -374,9 +373,9 @@ describe("Multichain rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=1,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Chain_137,
@@ -384,6 +383,7 @@ describe("Multichain rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=2,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
       ],
@@ -420,7 +420,6 @@ describe("Multichain rollback test", () => {
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Chain_1,
@@ -428,9 +427,9 @@ describe("Multichain rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=3,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Chain_137,
@@ -438,6 +437,7 @@ describe("Multichain rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -460,7 +460,6 @@ describe("Multichain rollback test", () => {
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Chain_1,
@@ -468,9 +467,9 @@ describe("Multichain rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Chain_137,
@@ -478,6 +477,7 @@ describe("Multichain rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=8,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -515,7 +515,6 @@ describe("Multichain rollback test", () => {
       [
         GlobalState.NextQuery(CheckAllChains),
         Rollback,
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
           ~chain=Chain_137,
@@ -523,6 +522,7 @@ describe("Multichain rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=9,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),

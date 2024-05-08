@@ -257,7 +257,13 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       ~firstBlockParentNumberAndHash,
     )
 
-  if !hasReorgOccurred {
+  if !hasReorgOccurred || !Config.shouldRollbackOnReorg {
+    if hasReorgOccurred {
+      chainFetcher.logger->Logging.childWarn(
+        "Reorg detected, not rolling back due to configuration",
+      )
+    }
+
     let chainFetcher =
       chainFetcher
       ->ChainFetcher.updateFetchState(
@@ -317,20 +323,26 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       ~currentHeight=currentBlockHeight,
     )
 
-    let updateEndOfBlockRangeScannedData = UpdateEndOfBlockRangeScannedData({
-      chain,
-      blockNumberThreshold: lastBlockScannedData.blockNumber -
-      chainFetcher.chainConfig.confirmedBlockThreshold,
-      blockTimestampThreshold: chainManager
-      ->ChainManager.getEarliestMultiChainTimestampInThreshold
-      ->Option.getWithDefault(0),
-      nextEndOfBlockRangeScannedData: {
-        chainId: chain->ChainMap.Chain.toChainId,
-        blockNumber: lastBlockScannedData.blockNumber,
-        blockTimestamp: lastBlockScannedData.blockTimestamp,
-        blockHash: lastBlockScannedData.blockHash,
-      },
-    })
+    let updateEndOfBlockRangeScannedDataArr = 
+      //Only update endOfBlockRangeScannedData if rollbacks are enabled
+      Config.shouldRollbackOnReorg
+      ? [
+          UpdateEndOfBlockRangeScannedData({
+            chain,
+            blockNumberThreshold: lastBlockScannedData.blockNumber -
+            chainFetcher.chainConfig.confirmedBlockThreshold,
+            blockTimestampThreshold: chainManager
+            ->ChainManager.getEarliestMultiChainTimestampInThreshold
+            ->Option.getWithDefault(0),
+            nextEndOfBlockRangeScannedData: {
+              chainId: chain->ChainMap.Chain.toChainId,
+              blockNumber: lastBlockScannedData.blockNumber,
+              blockTimestamp: lastBlockScannedData.blockTimestamp,
+              blockHash: lastBlockScannedData.blockHash,
+            },
+          }),
+        ]
+      : []
 
     let nextState = {
       ...state,
@@ -341,12 +353,10 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
 
     (
       nextState,
-      [
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        updateEndOfBlockRangeScannedData,
-        ProcessEventBatch,
-        NextQuery(Chain(chain)),
-      ],
+      Array.concat(
+        updateEndOfBlockRangeScannedDataArr,
+        [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch, NextQuery(Chain(chain))],
+      ),
     )
   } else {
     chainFetcher.logger->Logging.childWarn("Reorg detected, rolling back")

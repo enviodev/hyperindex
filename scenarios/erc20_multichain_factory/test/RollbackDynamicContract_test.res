@@ -263,7 +263,6 @@ describe("Dynamic contract rollback test", () => {
     await dispatchAllTasks()
     Assert.deep_equal(
       [
-        GlobalState.UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_1,
@@ -271,9 +270,9 @@ describe("Dynamic contract rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=1,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_137,
@@ -281,6 +280,7 @@ describe("Dynamic contract rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=2,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
       ],
@@ -317,7 +317,6 @@ describe("Dynamic contract rollback test", () => {
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_1,
@@ -325,9 +324,9 @@ describe("Dynamic contract rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=3,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_137,
@@ -335,6 +334,7 @@ describe("Dynamic contract rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -367,7 +367,6 @@ describe("Dynamic contract rollback test", () => {
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_1,
@@ -375,9 +374,9 @@ describe("Dynamic contract rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_137,
@@ -385,6 +384,7 @@ describe("Dynamic contract rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=8,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -423,7 +423,6 @@ describe("Dynamic contract rollback test", () => {
     Assert.deep_equal(
       [
         GlobalState.NextQuery(CheckAllChains),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_1,
@@ -431,9 +430,9 @@ describe("Dynamic contract rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=4,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_1)),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
           ~chain=Chain_137,
@@ -441,6 +440,7 @@ describe("Dynamic contract rollback test", () => {
           ~blockTimestampThreshold=25,
           ~blockNumber=9,
         ),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(Chain_137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),

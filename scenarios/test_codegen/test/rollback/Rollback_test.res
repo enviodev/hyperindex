@@ -182,7 +182,6 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deep_equal(
       tasks.contents,
       [
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
@@ -194,6 +193,7 @@ describe("Single Chain Simple Rollback", () => {
             chainId: 1337,
           },
         }),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(chain)),
       ],
@@ -248,7 +248,6 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deep_equal(
       tasks.contents,
       [
-        UpdateChainMetaDataAndCheckForExit(NoExit),
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
@@ -260,6 +259,7 @@ describe("Single Chain Simple Rollback", () => {
             chainId: 1337,
           },
         }),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(chain)),
       ],
@@ -343,8 +343,7 @@ describe("Single Chain Simple Rollback", () => {
     Assert.deep_equal(
       tasks.contents,
       [
-        GlobalState.UpdateChainMetaDataAndCheckForExit(NoExit),
-        UpdateEndOfBlockRangeScannedData({
+        GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
           chain: Chain_1337,
@@ -355,6 +354,7 @@ describe("Single Chain Simple Rollback", () => {
             chainId: 1337,
           },
         }),
+        UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(Chain(chain)),
         NextQuery(CheckAllChains),
