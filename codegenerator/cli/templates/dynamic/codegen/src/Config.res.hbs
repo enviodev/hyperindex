@@ -126,7 +126,7 @@ let getConfig = (chain: ChainMap.Chain.t) =>
   switch chain {
   {{#each chain_configs as | chain_config |}}
   | Chain_{{chain_config.network_config.id}} => {
-      confirmedBlockThreshold: 200, //TODO: This is currently hardcoded, it should be determined per chain
+      confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
       syncSource: 
       {{#if chain_config.network_config.rpc_config}}
       Rpc({

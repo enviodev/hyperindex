@@ -88,6 +88,8 @@ pub struct Network {
     pub id: NetworkId,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub sync_source: Option<SyncSourceConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmed_block_threshold: Option<i32>,
     pub start_block: i32,
     pub end_block: Option<i32>,
     pub contracts: Vec<NetworkContractConfig>,
@@ -655,6 +657,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
                 id: 1,
                 sync_source: None,
                 start_block: 2_000,
+                confirmed_block_threshold: None,
                 end_block: Some(2_000_000),
                 contracts: vec![]
             },

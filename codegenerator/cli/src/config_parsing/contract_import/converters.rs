@@ -263,6 +263,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                             sync_source,
                             start_block: 0,
                             end_block: None,
+                            confirmed_block_threshold: None,
                             contracts: Vec::new(),
                         }
                     });

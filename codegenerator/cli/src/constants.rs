@@ -1,3 +1,5 @@
+pub const DEFAULT_CONFIRMED_BLOCK_THRESHOLD: i32 = 200;
+
 pub mod project_paths {
     pub const DEFAULT_PROJECT_ROOT_PATH: &str = ".";
     pub const DEFAULT_GENERATED_PATH: &str = "generated";

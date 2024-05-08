@@ -306,6 +306,7 @@ pub async fn generate_config_from_subgraph_id(
             sync_source: None,
             start_block: 0,
             end_block: None,
+            confirmed_block_threshold: None,
             contracts: vec![],
         };
         // Iterate through contracts to get contract name, abi file path, address and event names

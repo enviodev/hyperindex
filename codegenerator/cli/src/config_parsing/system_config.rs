@@ -3,6 +3,7 @@ use super::{
     human_config::{self, EventDecoder, HumanConfig, HypersyncConfig, RpcConfig, SyncSourceConfig},
 };
 use crate::{
+    constants::DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
     project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
@@ -238,6 +239,9 @@ impl SystemConfig {
 
             let network = Network {
                 id: network.id as u64,
+                confirmed_block_threshold: network
+                    .confirmed_block_threshold
+                    .unwrap_or(DEFAULT_CONFIRMED_BLOCK_THRESHOLD),
                 start_block: network.start_block,
                 end_block: network.end_block,
                 sync_source,
@@ -298,6 +302,7 @@ pub struct Network {
     pub sync_source: SyncSourceConfig,
     pub start_block: i32,
     pub end_block: Option<i32>,
+    pub confirmed_block_threshold: i32,
     pub contracts: Vec<NetworkContract>,
 }
 

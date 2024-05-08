@@ -207,7 +207,7 @@ impl EntityParamTypeTemplate {
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
             type_rescript_schema: type_rescript.to_rescript_schema(),
-            type_rescript: type_rescript,
+            type_rescript,
             is_derived_from,
             type_pg,
             is_entity_field,
@@ -639,6 +639,7 @@ struct NetworkTemplate {
     pub id: u64,
     rpc_config: Option<RpcConfig>,
     skar_server_url: Option<ServerUrl>,
+    confirmed_block_threshold: i32,
     start_block: i32,
     end_block: Option<i32>,
 }
@@ -649,6 +650,7 @@ impl NetworkTemplate {
             id: network.id,
             rpc_config: network.get_rpc_config().map(|c| c.into()),
             skar_server_url: network.get_skar_url(),
+            confirmed_block_threshold: network.confirmed_block_threshold,
             start_block: network.start_block,
             end_block: network.end_block,
         }
@@ -880,6 +882,7 @@ mod test {
             skar_server_url: None,
             start_block: 0,
             end_block: None,
+            confirmed_block_threshold: 200,
         };
 
         let events =
@@ -924,6 +927,7 @@ mod test {
             skar_server_url: None,
             start_block: 0,
             end_block: None,
+            confirmed_block_threshold: 200,
         };
 
         let network2 = super::NetworkTemplate {
@@ -932,6 +936,7 @@ mod test {
             skar_server_url: None,
             start_block: 0,
             end_block: None,
+            confirmed_block_threshold: 200,
         };
 
         let events =
@@ -976,6 +981,7 @@ mod test {
             skar_server_url: Some("https://eth.hypersync.xyz".to_string()),
             start_block: 0,
             end_block: None,
+            confirmed_block_threshold: 200,
         };
 
         let events =
@@ -1007,6 +1013,7 @@ mod test {
             skar_server_url: Some("https://myskar.com".to_string()),
             start_block: 0,
             end_block: None,
+            confirmed_block_threshold: 200,
         };
 
         let network2 = super::NetworkTemplate {
@@ -1015,6 +1022,7 @@ mod test {
             skar_server_url: Some("https://goerli.hypersync.xyz".to_string()),
             start_block: 0,
             end_block: None,
+            confirmed_block_threshold: 200,
         };
 
         let chain_config_1 = super::NetworkConfigTemplate {
