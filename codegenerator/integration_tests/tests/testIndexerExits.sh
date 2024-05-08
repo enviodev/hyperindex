@@ -73,7 +73,8 @@ start_indexer() {
         fi
 }
 $envio_cmd local docker up
-$envio_cmd local db-migrate setup
+sleep 10
+$envio_cmd local db-migrate up
 echo "Starting indexer"
 start_indexer
 
