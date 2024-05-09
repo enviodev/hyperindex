@@ -22,7 +22,7 @@ module ChainMetadata = {
     @as("is_hyper_sync") isHyperSync: bool,
     @as("num_batches_fetched") numBatchesFetched: int,
     @as("latest_fetched_block_number") latestFetchedBlockNumber: int,
-    @as("timestamp_caught_up_to_head_or_endblock") timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>
+    @as("timestamp_caught_up_to_head_or_endblock") timestampCaughtUpToHeadOrEndblock: Js.Nullable.t<Js.Date.t>
   }
 
   @module("./DbFunctionsImplementation.js")

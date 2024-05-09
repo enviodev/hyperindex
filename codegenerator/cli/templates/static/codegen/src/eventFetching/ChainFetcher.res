@@ -146,13 +146,15 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     firstEventBlockNumber,
     latestProcessedBlockChainMetadata,
     numEventsProcessed,
+    timestampCaughtUpToHeadOrEndblock,
   ) = switch chainMetadata {
-  | Some({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed}) => (
+  | Some({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed, timestampCaughtUpToHeadOrEndblock}) => (
       firstEventBlockNumber,
       latestProcessedBlock,
       numEventsProcessed,
+      Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption
     )
-  | None => (None, None, None)
+  | None => (None, None, None, None)
   }
 
   let endOfBlockRangeScannedData =
@@ -184,7 +186,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     ~lastBlockScannedHashes,
     ~firstEventBlockNumber,
     ~latestProcessedBlock=latestProcessedBlockChainMetadata,
-    ~timestampCaughtUpToHeadOrEndblock=None, // recalculate this on startup
+    ~timestampCaughtUpToHeadOrEndblock, // recalculate this on startup
     ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
     ~numBatchesFetched=0,
     ~logger,
