@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # This file will test a custom indexer with various configurations and fail/success states.
-echo -e "\n============================\nTesting Exit: $TEMPLATE with config: $CONFIG_FILE and shouldFail $SHOULD_FAIL\n============================\n"
+echo -e "\n============================\nTesting Exit: $TEMPLATE with config: $CONFIG_FILE and shouldFail $SHOULD_FAIL and should restart indexer: $TEST_RESTART\n============================\n"
 
 # This shouldn't be needed - but the test will fail if port 9898 isn't available - so worth checking it first.
 while :; do
@@ -43,25 +43,25 @@ $envio_cmd stop || true
 # start the indexer function, and check if it fails or exits with success
 # will exit the test if failure occurs (expected or not)
 start_indexer() {
+    local startState="$1"
     export TUI_OFF=true
     $envio_cmd start
     local status=$?
         if [ $status -ne 0 ]; then
             if [ $SHOULD_FAIL = true ]; then
-                echo "Indexer has failed as expected"
+                echo "Indexer has failed as expected - startState: $startState"
                 echo "finished workflow test"
                 exit 0
             else 
-                echo "Indexer has failed unexpectedly"
+                echo "Indexer has failed unexpectedly - startState: $startState"
                 exit 1
             fi
         else 
             if [ $SHOULD_FAIL = true ]; then
-                echo "Indexer should have failed with exit 1"
+                echo "Indexer should have failed with exit 1 - startState: $startState"
                 exit 1
             else 
-                echo "indexer has finished syncing as expected"
-                echo "running endblock tests"
+                echo "indexer has finished syncing as expected -startState: $startState"
             fi
         fi
 }
@@ -69,9 +69,15 @@ start_indexer() {
 # run the setup commands and start indexer
 $envio_cmd local docker up
 sleep 10
-$envio_cmd local db-migrate up
+$envio_cmd local db-migrate up --config ./$CONFIG_FILE
 echo "Starting indexer"
-start_indexer
+start_indexer "start"
+
+if [ $TEST_RESTART = true ]; then
+    echo "Restarting indexer"
+    start_indexer "restart"
+fi
+echo "running endblock tests"
 
 function cleanup_indexer_process() {
     local pids=$(lsof -t -i :9898)
@@ -90,6 +96,6 @@ cd $root_dir
 sleep 8 # Weird things happen if the indexer process hasn't started yet.
 
 echo "Running tests"
-node ./tests/EndblockSuccess.js
+node ./tests/${TEST_FILE}.js
 
 echo "finished workflow test"

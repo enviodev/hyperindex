@@ -34,7 +34,7 @@ async function fetchQueryWithTestCallback(query, retryFailureMessage, testCallba
 
         if (data) {
             console.log("returned data", data);
-            shouldExitOnFailure = testCallback(data);
+            testCallback(data);
             return;
         } else {
             console.log("data not yet available, retrying in 2s");
@@ -44,6 +44,10 @@ async function fetchQueryWithTestCallback(query, retryFailureMessage, testCallba
             console.error(errors);
         }
     } catch (err) {
+        if (err.shouldExitOnFailure) {
+            console.log("set should exit to", err.shouldExitOnFailure)
+            shouldExitOnFailure = err.shouldExitOnFailure;
+        }
         if (!shouldExitOnFailure) {
             console.log("[will retry] Could not request data from Hasura due to error: ", err);
             console.log("Hasura not yet started, retrying in 2s");

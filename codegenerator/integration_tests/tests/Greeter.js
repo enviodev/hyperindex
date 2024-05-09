@@ -31,25 +31,37 @@ const pollGraphQL = async () => {
   // TODO: make this use promises rather than callbacks.
   fetchQueryWithTestCallback(rawEventsQuery, maxRetryFailureMessage, (data) => {
     let shouldExitOnFailure = false;
-    assert(
-      data.raw_events_by_pk.event_type === "Greeter_NewGreeting",
-      "event_type should be Greeter_NewGreeting"
-    );
-    console.log("First greeter passed, running the second one for user entity");
-
-    // Run the second test
-    fetchQueryWithTestCallback(userEntityQuery, maxRetryFailureMessage, ({ User_by_pk: user }) => {
-      assert(!!user, "greeting should not be null or undefined");
+    try {
       assert(
-        user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
-        "First 3 greetings should be 'gm,gn,gm paris'"
+        data.raw_events_by_pk.event_type === "Greeter_NewGreeting",
+        "event_type should be Greeter_NewGreeting"
       );
-      assert(user.numberOfGreetings >= 3, "numberOfGreetings should be >= 3");
-      console.log("Second test passed.");
-      return shouldExitOnFailure;
-    });
-    return shouldExitOnFailure;
+      console.log("First greeter passed, running the second one for user entity");
+
+      // Run the second test
+      fetchQueryWithTestCallback(userEntityQuery, maxRetryFailureMessage, ({ User_by_pk: user }) => {
+        try {
+          assert(!!user, "greeting should not be null or undefined");
+          assert(
+            user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
+            "First 3 greetings should be 'gm,gn,gm paris'"
+          );
+          assert(user.numberOfGreetings >= 3, "numberOfGreetings should be >= 3");
+          console.log("Second test passed.");
+        }
+        catch (err) {
+          //gotta love javascript
+          err.shouldExitOnFailure = shouldExitOnFailure
+          throw err;
+        }
+      });
+    } catch (err) {
+      //gotta love javascript
+      err.shouldExitOnFailure = shouldExitOnFailure
+      throw err;
+    }
   });
+
 };
 
 pollGraphQL();

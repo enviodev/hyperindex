@@ -1,0 +1,24 @@
+name: kwenta-factory-example
+networks:
+  - id: 10
+    start_block: 0
+    contracts:
+      - name: FuturesMarketManager
+        address:
+          - 0xc704c9AA89d1ca60F67B3075d05fBb92b3B00B3B
+        handler: src/DynamicContractHandlers.ts
+        events:
+          - event: MarketAdded(address market, bytes32 indexed asset, bytes32 indexed marketKey)
+      - name: FuturesMarket
+        address:
+          - 0x9F1C2f0071Bc3b31447AEda9fA3A68d651eB4632
+        handler: src/DynamicContractHandlers.ts
+        events:
+          - event: CacheUpdated(bytes32 name, address destination)
+          - event: FundingRecomputed(int256 funding, uint256 index, uint256 timestamp)
+          - event: FuturesTracking(bytes32 indexed trackingCode, bytes32 baseAsset, bytes32 marketKey, int256 sizeDelta, uint256 fee)
+          - event: MarginTransferred(address indexed account, int256 marginDelta)
+          - event: NextPriceOrderRemoved(address indexed account, uint256 currentRoundId, int256 sizeDelta, uint256 targetRoundId, uint256 commitDeposit, uint256 keeperDeposit, bytes32 trackingCode)
+          - event: NextPriceOrderSubmitted(address indexed account, int256 sizeDelta, uint256 targetRoundId, uint256 commitDeposit, uint256 keeperDeposit, bytes32 trackingCode)
+          - event: PositionLiquidated(uint256 indexed id, address indexed account, address indexed liquidator, int256 size, uint256 price, uint256 fee)
+          - event: PositionModified(uint256 indexed id, address indexed account, uint256 margin, int256 size, int256 tradeSize, uint256 lastPrice, uint256 fundingIndex, uint256 fee)
