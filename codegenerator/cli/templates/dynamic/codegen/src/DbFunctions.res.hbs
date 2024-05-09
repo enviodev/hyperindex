@@ -193,13 +193,28 @@ module DynamicContractRegistry = {
     @as("event_id") eventId: Ethers.BigInt.t,
   }
 
+  let contractTypeAndAddressSchema = S.object((. s) => {
+    contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
+    contractType: s.field("contract_type", S.string),
+    eventId: s.field("event_id", Ethers.BigInt.schema),
+  })
+
+  let contractTypeAndAddressArraySchema = S.array(contractTypeAndAddressSchema)
+
   ///Returns an array with 1 block number (the highest processed on the given chainId)
   @module("./DbFunctionsImplementation.js")
-  external readDynamicContractsOnChainIdAtOrBeforeBlock: (
+  external readDynamicContractsOnChainIdAtOrBeforeBlockRaw: (
     Postgres.sql,
     ~chainId: chainId,
     ~startBlock: int,
-  ) => promise<array<contractTypeAndAddress>> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
+  ) => promise<Js.Json.t> = "readDynamicContractsOnChainIdAtOrBeforeBlock"
+
+  let readDynamicContractsOnChainIdAtOrBeforeBlock = (sql, ~chainId, ~startBlock) =>
+    readDynamicContractsOnChainIdAtOrBeforeBlockRaw(
+      sql,
+      ~chainId,
+      ~startBlock,
+    )->Promise.thenResolve(json => json->S.parseOrRaiseWith(contractTypeAndAddressArraySchema))
 
   @module("./DbFunctionsImplementation.js")
   external deleteAllDynamicContractRegistrationsAfterEventIdentifier: (
