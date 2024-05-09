@@ -17,7 +17,7 @@ use crate::{
             self, AutoConfigError, AutoConfigSelection, ContractImportNetworkSelection,
             ContractImportSelection,
         },
-        human_config::{parse_contract_abi, ToHumanReadable},
+        human_config::parse_contract_abi,
     },
     utils::address_type::Address,
 };
@@ -43,6 +43,31 @@ fn contract_address_prompt() -> Result<Address> {
     contract_address_prompter()
         .prompt()
         .context("Prompting user for contract address")
+}
+
+pub trait ToHumanReadable {
+    fn to_human_readable(&self) -> String;
+}
+
+impl ToHumanReadable for ethers::abi::Event {
+    fn to_human_readable(&self) -> String {
+        format!(
+            "{}({}){}",
+            self.name,
+            self.inputs
+                .iter()
+                .map(|input| {
+                    let param_type = input.kind.to_string();
+                    let indexed_keyword = if input.indexed { " indexed " } else { " " };
+                    let param_name = input.name.clone();
+
+                    format!("{}{}{}", param_type, indexed_keyword, param_name)
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            if self.anonymous { " anonymous" } else { "" },
+        )
+    }
 }
 
 ///Used a wrapper to implement own Display (Display formats to a string of the

@@ -4,13 +4,14 @@ use crate::{
     config_parsing::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
         human_config::{
-            self, ConfigEvent, EventNameOrSig, GlobalContractConfig, HumanConfig,
-            LocalContractConfig, RpcConfig, SyncSourceConfig,
+            self, ConfigEvent, GlobalContractConfig, HumanConfig, LocalContractConfig, RpcConfig,
+            SyncSourceConfig,
         },
     },
     utils::{address_type::Address, unique_hashmap},
 };
 use anyhow::Context;
+use ethers::abi::EventExt;
 use itertools::{self, Itertools};
 use std::{
     collections::HashMap,
@@ -199,7 +200,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                 .events
                 .into_iter()
                 .map(|event| human_config::ConfigEvent {
-                    event: EventNameOrSig::Event(event.clone()),
+                    event: event.abi_signature(),
                     required_entities: None,
                     is_async: None,
                 })
