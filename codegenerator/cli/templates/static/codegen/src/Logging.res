@@ -101,9 +101,6 @@ let error = message => {
 let errorWithExn = (error, message) => {
   logger->Pino.errorExn(message->createPinoMessageWithError(error))
 }
-let errorWithJsExn = (error, message) => {
-  logger->Pino.errorJsExn(message->createPinoMessageWithError(error))
-}
 
 let fatal = message => {
   logger.fatal(. message->createPinoMessage)
