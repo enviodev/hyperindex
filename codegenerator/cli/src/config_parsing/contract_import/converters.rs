@@ -4,8 +4,8 @@ use crate::{
     config_parsing::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
         human_config::{
-            self, ConfigEvent, EventNameOrSig, GlobalContractConfig, HumanConfig,
-            LocalContractConfig, RpcConfig, SyncSourceConfig,
+            self, ConfigEvent, GlobalContractConfig, HumanConfig, LocalContractConfig, RpcConfig,
+            SyncSourceConfig,
         },
     },
     utils::{address_type::Address, unique_hashmap},
@@ -199,7 +199,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                 .events
                 .into_iter()
                 .map(|event| human_config::ConfigEvent {
-                    event: EventNameOrSig::Event(event.clone()),
+                    event: ConfigEvent::event_string_from_abi_event(&event),
                     required_entities: None,
                     is_async: None,
                 })

@@ -1,9 +1,9 @@
-use super::human_config::{ConfigEvent, HumanConfig, SyncSourceConfig};
+use super::human_config::{HumanConfig, SyncSourceConfig};
 use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
 };
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use regex::Regex;
 use std::{collections::HashSet, path::Path};
 
@@ -70,7 +70,7 @@ fn validate_rpc_url(url: &str) -> bool {
 }
 
 // Check if all names in the config file are valid.
-fn validate_names_not_reserved(
+pub fn validate_names_not_reserved(
     names_from_config: &[String],
     part_of_config: String,
 ) -> anyhow::Result<()> {
@@ -83,30 +83,6 @@ fn validate_names_not_reserved(
             part_of_config
         ));
     }
-    Ok(())
-}
-
-fn validate_contract_events(events: Vec<ConfigEvent>) -> anyhow::Result<()> {
-    let mut event_names = Vec::new();
-    let mut entity_and_label_names = Vec::new();
-    for event in events {
-        event_names.push(event.event.get_name());
-        if let Some(required_entities) = &event.required_entities {
-            for entity in required_entities {
-                entity_and_label_names.push(entity.name.clone());
-                if let Some(labels) = &entity.labels {
-                    entity_and_label_names.extend(labels.clone());
-                }
-                if let Some(array_labels) = &entity.array_labels {
-                    entity_and_label_names.extend(array_labels.clone());
-                }
-            }
-            // Checking that entity names do not include any reserved words
-            validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
-        }
-    }
-    // Checking that event names do not include any reserved words
-    validate_names_not_reserved(&event_names, "Events".to_string())?;
     Ok(())
 }
 
@@ -153,10 +129,8 @@ pub fn validate_deserialized_config_yaml(
         }
 
         for contract in &network.contracts {
-            if let Some(local_contract) = contract.local_contract_config.as_ref() {
+            if let Some(_) = contract.local_contract_config.as_ref() {
                 contract_names.push(contract.name.clone());
-                validate_contract_events(local_contract.events.clone())
-                    .context("Validating network contract config")?;
             }
 
             // Checking if contract addresses are valid addresses

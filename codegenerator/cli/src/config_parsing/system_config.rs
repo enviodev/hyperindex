@@ -2,13 +2,15 @@ use super::{
     chain_helpers::get_confirmed_block_threshold_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
     human_config::{self, EventDecoder, HumanConfig, HypersyncConfig, RpcConfig, SyncSourceConfig},
+    validation::validate_names_not_reserved,
 };
 use crate::{
     project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
-use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam};
+use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam, HumanReadableParser};
+
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -173,6 +175,9 @@ impl SystemConfig {
                     handler_path: g_contract.handler.clone(),
                     abi_file_path: g_contract.abi_file_path.clone(),
                 };
+                contract
+                    .validate_events()
+                    .context("Validating global contract config")?;
 
                 //Check if contract exists
                 unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
@@ -201,6 +206,9 @@ impl SystemConfig {
                             handler_path: l_contract.handler,
                             abi_file_path: l_contract.abi_file_path,
                         };
+                        contract
+                            .validate_events()
+                            .context("Validating network contract config")?;
 
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
@@ -410,6 +418,28 @@ impl Contract {
             Ok(abi_rel_path)
         })
     }
+
+    fn validate_events(&self) -> anyhow::Result<()> {
+        let mut event_names = Vec::new();
+        let mut entity_and_label_names = Vec::new();
+        for event in &self.events {
+            event_names.push(event.event.0.name.clone());
+            for entity in &event.required_entities {
+                entity_and_label_names.push(entity.name.clone());
+                if let Some(labels) = &entity.labels {
+                    entity_and_label_names.extend(labels.clone());
+                }
+                if let Some(array_labels) = &entity.array_labels {
+                    entity_and_label_names.extend(array_labels.clone());
+                }
+            }
+            // Checking that entity names do not include any reserved words
+            validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
+        }
+        // Checking that event names do not include any reserved words
+        validate_names_not_reserved(&event_names, "Events".to_string())?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -420,12 +450,48 @@ pub struct Event {
 }
 
 impl Event {
+    fn get_abi_event(
+        event_string: &String,
+        opt_abi: &Option<ethers::abi::Contract>,
+    ) -> Result<EthAbiEvent> {
+        let parse_event_sig = |sig: &str| -> Result<EthAbiEvent> {
+            match HumanReadableParser::parse_event(sig) {
+                Ok(event) => Ok(event),
+                Err(err) => Err(anyhow!(
+                    "EE103: Unable to parse event signature {} due to the following error: {}. \
+                   Please refer to our docs on how to correctly define a human readable ABI.",
+                    sig,
+                    err
+                )),
+            }
+        };
+
+        let event_string = event_string.trim();
+
+        if event_string.starts_with("event ") {
+            parse_event_sig(event_string)
+        } else if event_string.contains('(') {
+            let signature = format!("event {}", event_string);
+            parse_event_sig(&signature)
+        } else {
+            match opt_abi {
+                Some(contract_abi) => {
+                    let event = contract_abi
+                        .event(event_string)
+                        .context(format!("Failed retrieving event {} from abi", event_string))?;
+                    Ok(event.clone())
+                }
+                None => Err(anyhow!("No abi file provided for event {}", event_string)),
+            }
+        }
+    }
+
     pub fn try_from_config_event(
         human_cfg_event: human_config::ConfigEvent,
         opt_abi: &Option<ethers::abi::Contract>,
         schema: &Schema,
     ) -> Result<Self> {
-        let event = human_cfg_event.event.get_abi_event(opt_abi)?.into();
+        let event = Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
 
         let required_entities = human_cfg_event.required_entities.unwrap_or_else(|| {
             // If no required entities are specified, we assume all entities are required
@@ -502,9 +568,10 @@ impl From<human_config::RequiredEntity> for RequiredEntity {
 mod test {
     use super::SystemConfig;
     use crate::{
-        config_parsing::{self, entity_parsing::Schema},
+        config_parsing::{self, entity_parsing::Schema, system_config::Event},
         project_paths::ParsedProjectPaths,
     };
+    use ethers::abi::{Event as EthAbiEvent, EventParam, ParamType};
 
     #[test]
     fn test_get_contract_abi() {
@@ -596,5 +663,65 @@ mod test {
             serde_json::from_str(expected_abi_string).unwrap();
 
         assert_eq!(expected_abi, contract_abi);
+    }
+
+    #[test]
+    fn parse_event_sig_with_event_prefix() {
+        let event_string = "event MyEvent(uint256 myArg)".to_string();
+
+        let expected_event = EthAbiEvent {
+            name: "MyEvent".to_string(),
+            anonymous: false,
+            inputs: vec![EventParam {
+                indexed: false,
+                name: "myArg".to_string(),
+                kind: ParamType::Uint(256),
+            }],
+        };
+        assert_eq!(
+            Event::get_abi_event(&event_string, &None).unwrap(),
+            expected_event
+        );
+    }
+
+    #[test]
+    fn parse_event_sig_without_event_prefix() {
+        let event_string = ("MyEvent(uint256 myArg)").to_string();
+
+        let expected_event = EthAbiEvent {
+            name: "MyEvent".to_string(),
+            anonymous: false,
+            inputs: vec![EventParam {
+                indexed: false,
+                name: "myArg".to_string(),
+                kind: ParamType::Uint(256),
+            }],
+        };
+        assert_eq!(
+            Event::get_abi_event(&event_string, &None).unwrap(),
+            expected_event
+        );
+    }
+
+    #[test]
+    fn parse_event_sig_invalid_panics() {
+        let event_string = ("MyEvent(uint69 myArg)").to_string();
+        assert_eq!(
+            Event::get_abi_event(&event_string, &None)
+                .unwrap_err()
+                .to_string(),
+            "EE103: Unable to parse event signature event MyEvent(uint69 myArg) due to the following error: UnrecognisedToken 14:20 `uint69`. Please refer to our docs on how to correctly define a human readable ABI."
+        );
+    }
+
+    #[test]
+    fn fails_to_parse_event_name_without_abi() {
+        let event_string = ("MyEvent").to_string();
+        assert_eq!(
+            Event::get_abi_event(&event_string, &None)
+                .unwrap_err()
+                .to_string(),
+            "No abi file provided for event MyEvent"
+        );
     }
 }

@@ -17,7 +17,7 @@ use crate::{
             self, AutoConfigError, AutoConfigSelection, ContractImportNetworkSelection,
             ContractImportSelection,
         },
-        human_config::{parse_contract_abi, ToHumanReadable},
+        human_config::{parse_contract_abi, ConfigEvent},
     },
     utils::address_type::Address,
 };
@@ -51,7 +51,7 @@ struct DisplayEventWrapper(ethers::abi::Event);
 
 impl Display for DisplayEventWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0.to_human_readable())
+        write!(f, "{}", ConfigEvent::event_string_from_abi_event(&self.0))
     }
 }
 

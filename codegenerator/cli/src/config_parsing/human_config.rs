@@ -4,8 +4,7 @@ use crate::{
     project_paths::{path_utils, ParsedProjectPaths},
     utils::normalized_list::NormalizedList,
 };
-use anyhow::{anyhow, Context};
-use ethers::abi::{Event as EthAbiEvent, HumanReadableParser};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::PathBuf;
@@ -227,41 +226,36 @@ impl LocalContractConfig {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigEvent {
-    pub event: EventNameOrSig,
+    pub event: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_async: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required_entities: Option<Vec<RequiredEntity>>,
 }
 
-#[derive(Debug, PartialEq, Deserialize, Clone)]
-#[serde(try_from = "String")]
-pub enum EventNameOrSig {
-    Name(String),
-    Event(EthAbiEvent),
-}
+impl ConfigEvent {
+    pub fn event_string_from_abi_event(abi_event: &ethers::abi::Event) -> String {
+        format!(
+            "{}({}){}",
+            abi_event.name,
+            abi_event
+                .inputs
+                .iter()
+                .map(|input| {
+                    let param_type = input.kind.to_string();
+                    let indexed_keyword = if input.indexed { " indexed " } else { " " };
+                    let param_name = input.name.clone();
 
-impl EventNameOrSig {
-    pub fn get_abi_event(
-        &self,
-        opt_abi: &Option<ethers::abi::Contract>,
-    ) -> anyhow::Result<EthAbiEvent> {
-        match self {
-            EventNameOrSig::Event(e) => Ok(e.clone()),
-            EventNameOrSig::Name(config_event_name) => match opt_abi {
-                Some(contract_abi) => {
-                    let event = contract_abi.event(config_event_name).context(format!(
-                        "Failed retrieving event {} from abi",
-                        config_event_name
-                    ))?;
-                    Ok(event.clone())
-                }
-                None => Err(anyhow!(
-                    "No abi file provided for event {}",
-                    config_event_name
-                )),
+                    format!("{}{}{}", param_type, indexed_keyword, param_name)
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            if abi_event.anonymous {
+                " anonymous"
+            } else {
+                ""
             },
-        }
+        )
     }
 }
 
@@ -289,86 +283,6 @@ pub struct RequiredEntity {
     pub labels: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub array_labels: Option<Vec<String>>,
-}
-
-impl Serialize for EventNameOrSig {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            EventNameOrSig::Name(event_name) => serializer.serialize_str(event_name),
-            EventNameOrSig::Event(eth_abi_event) => {
-                serializer.serialize_str(eth_abi_event.to_human_readable().as_str())
-            }
-        }
-    }
-}
-
-pub trait ToHumanReadable {
-    fn to_human_readable(&self) -> String;
-}
-
-impl ToHumanReadable for ethers::abi::Event {
-    fn to_human_readable(&self) -> String {
-        format!(
-            "{}({}){}",
-            self.name,
-            self.inputs
-                .iter()
-                .map(|input| {
-                    let param_type = input.kind.to_string();
-                    let indexed_keyword = if input.indexed { " indexed " } else { " " };
-                    let param_name = input.name.clone();
-
-                    format!("{}{}{}", param_type, indexed_keyword, param_name)
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-            if self.anonymous { " anonymous" } else { "" },
-        )
-    }
-}
-
-impl TryFrom<String> for EventNameOrSig {
-    type Error = String;
-
-    fn try_from(event_string: String) -> Result<Self, Self::Error> {
-        let parse_event_sig = |sig: &str| -> Result<EthAbiEvent, Self::Error> {
-            match HumanReadableParser::parse_event(sig) {
-                Ok(event) => Ok(event),
-                Err(err) => Err(format!(
-                    "EE103: Unable to parse event signature {} due to the following error: {}. \
-                     Please refer to our docs on how to correctly define a human readable ABI.",
-                    sig, err
-                )),
-            }
-        };
-
-        let trimmed = event_string.trim();
-
-        let name_or_sig = if trimmed.starts_with("event ") {
-            let parsed_event = parse_event_sig(trimmed)?;
-            EventNameOrSig::Event(parsed_event)
-        } else if trimmed.contains('(') {
-            let signature = format!("event {}", trimmed);
-            let parsed_event = parse_event_sig(&signature)?;
-            EventNameOrSig::Event(parsed_event)
-        } else {
-            EventNameOrSig::Name(trimmed.to_string())
-        };
-
-        Ok(name_or_sig)
-    }
-}
-
-impl EventNameOrSig {
-    pub fn get_name(&self) -> String {
-        match self {
-            EventNameOrSig::Name(name) => name.to_owned(),
-            EventNameOrSig::Event(event) => event.name.clone(),
-        }
-    }
 }
 
 fn strip_to_letters(string: &str) -> String {
@@ -409,11 +323,7 @@ mod tests {
 
     use crate::config_parsing::human_config::EventDecoder;
 
-    use super::{
-        EventNameOrSig, HumanConfig, LocalContractConfig, Network, NetworkContractConfig,
-        NormalizedList,
-    };
-    use ethers::abi::{Event, EventParam, ParamType};
+    use super::{HumanConfig, LocalContractConfig, Network, NetworkContractConfig, NormalizedList};
     use serde_json::json;
 
     #[test]
@@ -524,58 +434,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             deserialized,
             NormalizedList::from(vec!["0x123".to_string(), "0x456".to_string()])
         );
-    }
-
-    #[test]
-    fn deserializes_event_name() {
-        let event_string = serde_json::to_string("MyEvent").unwrap();
-
-        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
-        let expected = EventNameOrSig::Name("MyEvent".to_string());
-        assert_eq!(name_or_sig, expected);
-    }
-
-    #[test]
-    fn deserializes_event_sig_with_event_prefix() {
-        let event_string = serde_json::to_string("event MyEvent(uint256 myArg)").unwrap();
-
-        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
-        let expected_event = Event {
-            name: "MyEvent".to_string(),
-            anonymous: false,
-            inputs: vec![EventParam {
-                indexed: false,
-                name: "myArg".to_string(),
-                kind: ParamType::Uint(256),
-            }],
-        };
-        let expected = EventNameOrSig::Event(expected_event);
-        assert_eq!(name_or_sig, expected);
-    }
-
-    #[test]
-    fn deserializes_event_sig_without_event_prefix() {
-        let event_string = serde_json::to_string("MyEvent(uint256 myArg)").unwrap();
-
-        let name_or_sig = serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
-        let expected_event = Event {
-            name: "MyEvent".to_string(),
-            anonymous: false,
-            inputs: vec![EventParam {
-                indexed: false,
-                name: "myArg".to_string(),
-                kind: ParamType::Uint(256),
-            }],
-        };
-        let expected = EventNameOrSig::Event(expected_event);
-        assert_eq!(name_or_sig, expected);
-    }
-
-    #[test]
-    #[should_panic]
-    fn deserializes_event_sig_invalid_panics() {
-        let event_string = serde_json::to_string("MyEvent(uint69 myArg)").unwrap();
-        serde_json::from_str::<EventNameOrSig>(&event_string).unwrap();
     }
 
     #[test]

@@ -3,8 +3,8 @@ use crate::{
     config_parsing::{
         chain_helpers::{GraphNetwork, Network},
         human_config::{
-            ConfigEvent, EventNameOrSig, HumanConfig, LocalContractConfig,
-            Network as ConfigNetwork, NetworkContractConfig,
+            ConfigEvent, HumanConfig, LocalContractConfig, Network as ConfigNetwork,
+            NetworkContractConfig,
         },
     },
     project_paths::handler_paths::DEFAULT_SCHEMA_PATH,
@@ -340,7 +340,7 @@ pub async fn generate_config_from_subgraph_id(
                                 .take(start)
                                 .collect::<String>();
                             let event = ConfigEvent {
-                                event: EventNameOrSig::Name(event_name.to_string()),
+                                event: event_name.to_string(),
                                 required_entities: Some(vec![]),
                                 is_async: None,
                             };
