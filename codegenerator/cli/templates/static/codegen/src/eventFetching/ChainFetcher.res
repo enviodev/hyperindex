@@ -186,7 +186,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     ~lastBlockScannedHashes,
     ~firstEventBlockNumber,
     ~latestProcessedBlock=latestProcessedBlockChainMetadata,
-    ~timestampCaughtUpToHeadOrEndblock, // recalculate this on startup
+    ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
     ~numBatchesFetched=0,
     ~logger,
