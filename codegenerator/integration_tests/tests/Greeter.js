@@ -1,7 +1,7 @@
 const assert = require("assert");
-let maxRetries = 200;
+const { fetchQueryWithTestCallback } = require("./graphqlFetchWithTestCallback");
 
-let shouldExitOnFailure = false; // This flag is set to true once all setup has completed and test is being performed.
+const maxRetryFailureMessage = "Max retries reached - either increase the timeout (maxRetries) or check for other bugs."
 
 const pollGraphQL = async () => {
   const rawEventsQuery = `
@@ -27,61 +27,10 @@ const pollGraphQL = async () => {
     }
   `;
 
-  let retries = 0;
-  // TODO: make this configurable
-  const endpoint = "http://localhost:8080/v1/graphql";
-
-  const fetchQuery = async (query, callback) => {
-    if (retries >= maxRetries) {
-      throw new Error(
-        "Max retries reached - either increase the timeout (maxRetries) or check for other bugs."
-      );
-    }
-    retries++;
-
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query }),
-      });
-
-      const { data, errors } = await response.json();
-
-      if (data) {
-        console.log("returned data", data);
-        callback(data);
-        return;
-      } else {
-        console.log("data not yet available, retrying in 1s");
-      }
-
-      if (errors) {
-        console.error(errors);
-      }
-    } catch (err) {
-      if (!shouldExitOnFailure) {
-        console.log(
-          "[will retry] Could not request data from Hasura due to error: ",
-          err
-        );
-        console.log("Hasura not yet started, retrying in 1s");
-      } else {
-        console.error(err);
-        process.exit(1);
-      }
-    }
-    setTimeout(() => {
-      if (!shouldExitOnFailure) fetchQuery(query, callback);
-    }, 1000);
-  };
-
   console.log("[js context] Starting running test Greeter");
-
   // TODO: make this use promises rather than callbacks.
-  fetchQuery(rawEventsQuery, (data) => {
+  fetchQueryWithTestCallback(rawEventsQuery, maxRetryFailureMessage, (data) => {
+    let shouldExitOnFailure = false;
     assert(
       data.raw_events_by_pk.event_type === "Greeter_NewGreeting",
       "event_type should be Greeter_NewGreeting"
@@ -89,7 +38,7 @@ const pollGraphQL = async () => {
     console.log("First test passed, running the second one.");
 
     // Run the second test
-    fetchQuery(userEntityQuery, ({ User_by_pk: user }) => {
+    fetchQuery(userEntityQuery, maxRetryFailureMessage, ({ User_by_pk: user }) => {
       assert(!!user, "greeting should not be null or undefined");
       assert(
         user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
@@ -97,7 +46,9 @@ const pollGraphQL = async () => {
       );
       assert(user.numberOfGreetings >= 3, "numberOfGreetings should be >= 3");
       console.log("Second test passed.");
+      return shouldExitOnFailure;
     });
+    return shouldExitOnFailure;
   });
 };
 

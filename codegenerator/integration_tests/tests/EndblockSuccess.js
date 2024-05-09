@@ -2,10 +2,10 @@
 // and secondly that the chain_metadata table is in the correct shape. The chain_metadata table is used by the UI
 // and so any changes should be tested for
 const assert = require("assert");
-const { exit } = require("process");
-let maxRetries = 5;
+const { fetchQueryWithTestCallback } = require("./graphqlFetchWithTestCallback");
 
-let shouldExitOnFailure = false; // This flag is set to true once all setup has completed and test is being performed.
+const maxRetryMessage = "Max retries reached - if you have changed the shape of the chain_metadata table update this test and the UI before releasing."
+
 let chainMetadataTests = (db_chain_metadata, expected_chain_metadata) => {
     assert(db_chain_metadata.chain_id == expected_chain_metadata.chain_id, `chain id should be ${expected_chain_metadata.chain_id}`);
     assert(db_chain_metadata.start_block == expected_chain_metadata.start_block, `start_block should be ${expected_chain_metadata.start_block} for chain id ${expected_chain_metadata.chain_id}`);
@@ -38,60 +38,12 @@ const pollGraphQL = async () => {
     }
   `;
 
-
-    let retries = 0;
-    // TODO: make this configurable
-    const endpoint = "http://localhost:8080/v1/graphql";
-
-    const fetchQuery = async (query, callback) => {
-        if (retries >= maxRetries) {
-            throw new Error(
-                "Max retries reached - if you have changed the shape of the chain_metadata table update this test and the UI before releasing."
-            );
-        }
-        retries++;
-
-        try {
-            const response = await fetch(endpoint, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ query }),
-            });
-
-            const { data, errors } = await response.json();
-
-            if (data) {
-                console.log("returned data", data);
-                callback(data);
-                return;
-            } else {
-                console.log("data not yet available, retrying in 1s");
-            }
-
-            if (errors) {
-                console.error(errors);
-            }
-        } catch (err) {
-            if (!shouldExitOnFailure) {
-                console.log("[will retry] Could not request data from Hasura due to error: ", err);
-                console.log("Hasura not yet started, retrying in 2s");
-            } else {
-                console.error(err);
-                process.exit(1);
-            }
-        }
-        setTimeout(() => { if (!shouldExitOnFailure) fetchQuery(query, callback) }, 2000);
-    };
-
-    console.log("Starting running test")
-
+    console.log("Starting endblock tests")
     // TODO: make this use promises rather than callbacks.
-    fetchQuery(chainMetaDataQuery, ({ chain_metadata }) => {
+    fetchQueryWithTestCallback(chainMetaDataQuery, maxRetryMessage, ({ chain_metadata }) => {
+        let shouldExitOnFailure = false;
         assert(chain_metadata.length == 5, "Should return 5 chain metadata objects");
         let ethereum_chain_metadata = chain_metadata[0];
-        console.log("ethereum_chain_metadata", ethereum_chain_metadata)
         let optimism_chain_metadata = chain_metadata[1];
         let polygon_chain_metadata = chain_metadata[2];
         let base_chain_metadata = chain_metadata[3];
@@ -109,6 +61,7 @@ const pollGraphQL = async () => {
             latest_fetched_block_number: 2000000,
             first_event_block_number: null
         }
+        shouldExitOnFailure = true;
         let expected_optimism_chain_metadata = {
             chain_id: 10,
             start_block: 0,
@@ -159,7 +112,7 @@ const pollGraphQL = async () => {
         chainMetadataTests(base_chain_metadata, expected_base_chain_metadata)
         chainMetadataTests(arbitrum_chain_metadata, expected_arbitrum_chain_metadata)
         console.log("Finished running tests");
-
+        return shouldExitOnFailure;
     });
 };
 
