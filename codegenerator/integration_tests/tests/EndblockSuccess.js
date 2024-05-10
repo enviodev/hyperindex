@@ -29,7 +29,6 @@ const pollGraphQL = async () => {
     console.log("Starting endblock tests")
     // TODO: make this use promises rather than callbacks.
     fetchQueryWithTestCallback(chainMetaDataQuery, maxRetryMessage, ({ chain_metadata }) => {
-        let shouldExitOnFailure = true;
         try {
             assert(chain_metadata.length == 5, "Should return 5 chain metadata objects");
             let ethereum_chain_metadata = chain_metadata[0];
@@ -51,7 +50,6 @@ const pollGraphQL = async () => {
                 first_event_block_number: null,
                 expected_block_height: 2000000,
             }
-            shouldExitOnFailure = true;
             let expected_optimism_chain_metadata = {
                 chain_id: 10,
                 start_block: 0,
@@ -108,7 +106,7 @@ const pollGraphQL = async () => {
         }
         catch (err) {
             //gotta love javascript
-            err.shouldExitOnFailure = shouldExitOnFailure
+            err.shouldExitOnFailure = true
             throw err;
         }
         console.log("Finished running tests");

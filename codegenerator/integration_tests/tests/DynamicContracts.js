@@ -27,7 +27,6 @@ const pollGraphQL = async () => {
     console.log("Starting endblock restart tests for dynamic contracts")
     // TODO: make this use promises rather than callbacks.
     fetchQueryWithTestCallback(chainMetaDataQuery, maxRetryMessage, ({ chain_metadata }) => {
-        let shouldExitOnFailure = true;
         try {
             assert(chain_metadata.length == 1, "Should return 1 chain metadata object");
             let optimism_chain_metadata = chain_metadata[0];
@@ -49,7 +48,7 @@ const pollGraphQL = async () => {
         }
         catch (err) {
             //gotta love javascript
-            err.shouldExitOnFailure = shouldExitOnFailure
+            err.shouldExitOnFailure = true
             throw err;
         }
         console.log("Finished running dynamic contract chain_metadata tests");
