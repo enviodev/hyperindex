@@ -7,11 +7,11 @@ fn get_env_with_default(var: &str, default: &str) -> String {
 }
 
 async fn get_pg_pool() -> Result<PgPool, sqlx::Error> {
-    let host = get_env_with_default("PG_HOST", "localhost");
-    let port = get_env_with_default("PG_PORT", "5433");
-    let user = get_env_with_default("PG_USER", "postgres");
-    let password = get_env_with_default("PG_PASSWORD", "testing");
-    let database = get_env_with_default("PG_DATABASE", "envio-dev");
+    let host = get_env_with_default("ENVIO_PG_HOST", "localhost");
+    let port = get_env_with_default("ENVIO_PG_PORT", "5433");
+    let user = get_env_with_default("ENVIO_PG_USER", "postgres");
+    let password = get_env_with_default("ENVIO_POSTGRES_PASSWORD", "testing");
+    let database = get_env_with_default("ENVIO_PG_DATABASE", "envio-dev");
 
     let connection_url = format!("postgres://{user}:{password}@{host}:{port}/{database}");
 
