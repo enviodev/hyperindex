@@ -659,9 +659,6 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
     ? executeSetEntityWithHistory
     : executeDbFunctionsEntity
 
-  let placeholderDeleteFunction = (_sql: Postgres.sql, _ids: array<string>): promise<unit> =>
-    Js.Promise.resolve()
-
   let setEventSyncState = executeSet(
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
     ~items=inMemoryStore.eventSyncState->InMemoryStore.EventSyncState.values,
@@ -680,7 +677,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   {{#each entities as | entity |}}
   let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
     ~dbFunctionSet=DbFunctions.{{entity.name.capitalized}}.batchSet,
-    ~dbFunctionDelete=placeholderDeleteFunction,
+    ~dbFunctionDelete=DbFunctions.{{entity.name.capitalized}}.batchDelete,
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
     ~entitySchema=Types.{{entity.name.uncapitalized}}EntitySchema,
     ~entityType="{{entity.name.capitalized}}"
