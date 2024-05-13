@@ -1,6 +1,7 @@
 open Types.GravatarContract
 
 let setMock = Sinon.stub()
+let deleteUnsafeMock = Sinon.stub()
 
 let mockNewGravatarHandlerContext: NewGravatarEvent.handlerContext = {
   //note the js use uppercased even though the rescript context is lower case gravatar due to @as
@@ -9,6 +10,9 @@ let mockNewGravatarHandlerContext: NewGravatarEvent.handlerContext = {
       setMock->Sinon.callStub1(gravatarSet.id)
     },
     delete: _id => Js.log("inimplemented delete"),
+    deleteUnsafe: id => {
+      deleteUnsafeMock->Sinon.callStub1(id)
+    },
   },
 }->Obj.magic
 
@@ -28,9 +32,13 @@ let mockUpdateGravatarHandlerContext: UpdatedGravatarEvent.handlerContext = {
     {
       gravatarWithChanges: Some(MockEntities.gravatarEntity1),
       set: gravatarSet => {
+        Js.log("calling set stubs")
         setMock->Sinon.callStub1(gravatarSet.id)
       },
       delete: _id => Js.log("inimplemented delete"),
+      deleteUnsafe: id => {
+        deleteUnsafeMock->Sinon.callStub1(id)
+      },
       getOwner: Obj.magic,
       get: _id => Some(MockEntities.gravatarEntity1),
     }: UpdatedGravatarEvent.gravatarEntityHandlerContext

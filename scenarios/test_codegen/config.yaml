@@ -47,7 +47,6 @@ networks:
             requiredEntities: []
       - name: SimpleNft
         abi_file_path: abis/SimpleNft.json
-        address: null
         handler: src/EventHandlers.ts
         events:
           - event: "Erc20Transfer(address indexed from, address indexed to, uint256 amount)"

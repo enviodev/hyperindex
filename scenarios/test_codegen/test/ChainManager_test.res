@@ -299,7 +299,7 @@ describe("determineNextEvent", () => {
       },
       contractAddressMapping: ContractAddressingMap.make(),
       fetchedEventQueue: item->Option.mapWithDefault(list{}, v => list{v}),
-      dynamicContracts: FetchState.DynamicContractsMap.empty
+      dynamicContracts: FetchState.DynamicContractsMap.empty,
     }
 
     it(

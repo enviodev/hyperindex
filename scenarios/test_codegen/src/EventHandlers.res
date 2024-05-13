@@ -78,6 +78,11 @@ Handlers.GravatarContract.UpdatedGravatar.handler(({event, context}) => {
     size: gravatarSize,
   }
 
+  if event.params.id->Ethers.BigInt.toString == "1001" {
+    context.log.info("id matched, deleting gravatar 1004")
+    context.gravatar.deleteUnsafe("1004")
+  }
+
   context.gravatar.set(gravatar)
 })
 

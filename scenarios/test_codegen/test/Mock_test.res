@@ -28,9 +28,10 @@ describe("E2E Mock Event Batch", () => {
 
   after(() => {
     ContextMock.setMock->Sinon.resetStub
+    ContextMock.deleteUnsafeMock->Sinon.resetStub
   })
 
-  it("6 newgravatar event set calls in order", () => {
+  it("8 gravatar events (new and set) calls in order", () => {
     let setCallFirstArgs =
       ContextMock.setMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
 
@@ -40,10 +41,23 @@ describe("E2E Mock Event Batch", () => {
         MockEvents.newGravatar1.id->Ethers.BigInt.toString,
         MockEvents.newGravatar2.id->Ethers.BigInt.toString,
         MockEvents.newGravatar3.id->Ethers.BigInt.toString,
+        MockEvents.newGravatar4_deleted.id->Ethers.BigInt.toString,
         MockEvents.setGravatar1.id->Ethers.BigInt.toString,
         MockEvents.setGravatar2.id->Ethers.BigInt.toString,
         MockEvents.setGravatar3.id->Ethers.BigInt.toString,
+        MockEvents.setGravatar4.id->Ethers.BigInt.toString,
       ],
+    )
+  })
+  it("should delete 1 gravatar", () => {
+    let deleteCallFirstArgs =
+      ContextMock.deleteUnsafeMock
+      ->Sinon.getCalls
+      ->Belt.Array.map(call => call->Sinon.getCallFirstArg)
+
+    Assert.deep_equal(
+      deleteCallFirstArgs,
+      [MockEvents.newGravatar4_deleted.id->Ethers.BigInt.toString],
     )
   })
 })
@@ -80,6 +94,15 @@ describe_skip("E2E Db check", () => {
 
   it("Validate inmemory store state", () => {
     let inMemoryStoreRows = inMemoryStore.gravatar->IO.InMemoryStore.Gravatar.values
+    let gravatars = inMemoryStoreRows->Belt.Array.map(
+      row =>
+        switch row {
+        | Updated({latest: {entityUpdateAction: Set(_)}}) => None
+        | Updated({latest: {entityUpdateAction: Delete(id)}}) => Some(id)
+        | InitialReadFromDb(_) => None
+        },
+    )
+    Js.log2("gravatars", gravatars)
 
     Assert.deep_equal(
       inMemoryStoreRows->Belt.Array.map(

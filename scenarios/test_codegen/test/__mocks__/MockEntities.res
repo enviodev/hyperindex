@@ -1,3 +1,12 @@
+let gravatarEntity0_delete: Types.gravatarEntity = {
+  id: "1000",
+  owner_id: "0x123",
+  displayName: "gravatar1",
+  imageUrl: "https://gravatar1.com",
+  updatesCount: Ethers.BigInt.fromInt(0),
+  size: LARGE,
+}
+
 let gravatarEntity1: Types.gravatarEntity = {
   id: "1001",
   owner_id: "0x123",
