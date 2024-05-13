@@ -195,7 +195,6 @@ module {{contract.name.capitalized}}Contract = {
               )},
 
               deleteUnsafe: id => {
-                Logging.warn(`Unsafe delete: this feature is in experimentation, issues may occur if other entities reference this {{entity.name.capitalized}} entity with id: ${id}.`)
                 inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
                 ~key=id,
                 ~entity=Delete(id)->Types.mkEntityUpdate(~eventIdentifier),
@@ -303,7 +302,6 @@ It is also possible that you have saved an ID for an entity that doesn't exist i
                 ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
               )},
               deleteUnsafe: id => {
-                Logging.warn(`Unsafe delete: this feature is in experimentation, issues may occur if other entities reference this {{entity.name.capitalized}} entity with id: ${id}.`)
                 inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
                 ~key=id,
                 ~entity=Delete(id)->Types.mkEntityUpdate(~eventIdentifier),
