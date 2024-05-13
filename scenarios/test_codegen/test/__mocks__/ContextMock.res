@@ -9,7 +9,6 @@ let mockNewGravatarHandlerContext: NewGravatarEvent.handlerContext = {
     NewGravatarEvent.set: gravatarSet => {
       setMock->Sinon.callStub1(gravatarSet.id)
     },
-    delete: _id => Js.log("inimplemented delete"),
     deleteUnsafe: id => {
       deleteUnsafeMock->Sinon.callStub1(id)
     },
@@ -35,7 +34,6 @@ let mockUpdateGravatarHandlerContext: UpdatedGravatarEvent.handlerContext = {
         Js.log("calling set stubs")
         setMock->Sinon.callStub1(gravatarSet.id)
       },
-      delete: _id => Js.log("inimplemented delete"),
       deleteUnsafe: id => {
         deleteUnsafeMock->Sinon.callStub1(id)
       },
