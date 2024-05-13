@@ -231,7 +231,6 @@ let eventArgsSchema =
         {{/if}},
       {{/each}}
       set: {{entity.name.uncapitalized}}Entity => unit,
-      delete: id => unit,
       deleteUnsafe: id => unit,
     }
 
@@ -267,7 +266,7 @@ let eventArgsSchema =
         >,
       {{/each}}
       set: {{entity.name.uncapitalized}}Entity => unit,
-      delete: id => unit,
+      deleteUnsafe: id => unit,
     }
     {{/each}}
 
