@@ -43,6 +43,20 @@ module ERC20Factory = {
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
   }
+  module DeleteUser = {
+    let accessor = v => Types.ERC20FactoryContract_DeleteUser(v)
+    let schema = Types.ERC20FactoryContract.DeleteUserEvent.eventArgsSchema
+    let eventName = Types.ERC20Factory_DeleteUser
+
+    let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
+      ~accessor,
+      ~schema,
+      ~eventName,
+    )
+
+    let mkEventConstr = (params, ~chain) =>
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
+  }
 }
 
 module Stubs = {

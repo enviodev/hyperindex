@@ -71,4 +71,35 @@ describe("Transfers", () => {
       ~message="Should have added transfer amount 3 to userAddress2 balance 0",
     )
   })
+
+  it("Deletes Account", () => {
+    //Get mock addresses from helpers
+    let userAddress1 = Ethers.Addresses.mockAddresses[0]->Option.getUnsafe
+
+    let account_id = userAddress1->Ethers.ethAddressToString
+    //Make a mock entity to set the initial state of the mock db
+    let mockAccountEntity: Types.accountEntity = {
+      id: account_id,
+    }
+
+    //Set an initial state for the user
+    //Note: set and delete functions do not mutate the mockDb, they return a new
+    //mockDb with with modified state
+    let mockDb = MockDb.createMockDb().entities.account.set(mockAccountEntity)
+
+    let mockDeleteUser = ERC20Factory.DeleteUser.createMockEvent({user: userAddress1})
+
+    //Process the mockEvent
+    //Note: processEvent functions do not mutate the mockDb, they return a new
+    //mockDb with with modified state
+    let mockDbAfterDelete = ERC20Factory.DeleteUser.processEvent({
+      event: mockDeleteUser,
+      mockDb,
+    })
+
+    //Get the balance of userAddress1 after the transfer
+    let accountsInDb = mockDbAfterDelete.entities.account.getAll()
+    //Assert the expected balance
+    Assert.equal(accountsInDb->Array.length, 0, ~message="Should have delete account 1")
+  })
 })

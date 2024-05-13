@@ -11,6 +11,7 @@ contracts:
     handler: src/EventHandlers.bs.js
     events:
       - event: "TokenCreated(address indexed token)"
+      - event: "DeleteUser(address indexed user)"
 networks:
   - id: 1 # Ethereum Mainnet
     start_block: 0

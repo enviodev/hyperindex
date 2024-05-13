@@ -131,3 +131,7 @@ Handlers.ERC20Contract.Transfer.handler(({event, context}) => {
   senderAccountToken->manipulateAccountBalance(subFromBalance, ~account_id=fromAccount_id)
   receiverAccountToken->manipulateAccountBalance(addToBalance, ~account_id=toAccount_id)
 })
+
+Handlers.ERC20FactoryContract.DeleteUser.handler(({event, context}) => {
+  context.account.deleteUnsafe(event.params.user->Ethers.ethAddressToString)
+})
