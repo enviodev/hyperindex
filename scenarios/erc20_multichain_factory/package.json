@@ -2,9 +2,9 @@
   "name": "erc20-multi-chain-factory",
   "version": "0.1.0",
   "scripts": {
-    "clean": "rescript clean -with-deps",
-    "build": "rescript build -with-deps",
-    "watch": "rescript build -w -with-deps",
+    "clean": "rescript clean",
+    "build": "rescript",
+    "watch": "rescript -w",
     "test": "pnpm build && mocha",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
     "dev": "pnpm build && envio dev",
