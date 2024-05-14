@@ -4,9 +4,9 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "clean": "rescript clean -with-deps",
-    "build": "rescript build -with-deps",
-    "watch": "rescript build -with-deps -w",
+    "clean": "rescript clean",
+    "build": "rescript",
+    "watch": "rescript -w",
     "db-up": "node -e 'require(`./src/Migrations.bs.js`).runUpMigrations(true)'",
     "db-down": "node -e 'require(`./src/Migrations.bs.js`).runDownMigrations(true, true)'",
     "db-setup": "node -e 'require(`./src/Migrations.bs.js`).setupDb(true)'",
@@ -19,7 +19,7 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "rescript": "11.0.1",
+    "rescript": "11.1.0",
     "@elastic/ecs-pino-format": "1.4.0",
     "@envio-dev/hypersync-client": "0.1.10",
     "@glennsl/rescript-fetch": "0.2.0",

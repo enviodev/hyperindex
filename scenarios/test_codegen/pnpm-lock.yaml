@@ -73,8 +73,8 @@ importers:
         specifier: ^15.1.0
         version: 15.1.0
       rescript:
-        specifier: 11.0.1
-        version: 11.0.1
+        specifier: 11.1.0
+        version: 11.1.0
       rescript-express:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
@@ -83,7 +83,7 @@ importers:
         version: 0.9.0
       rescript-schema:
         specifier: 6.4.0
-        version: 6.4.0(rescript@11.0.1)
+        version: 6.4.0(rescript@11.1.0)
       sinon:
         specifier: ^15.0.4
         version: 15.0.4
@@ -181,17 +181,17 @@ importers:
         specifier: 18.2.0
         version: 18.2.0
       rescript:
-        specifier: 11.0.1
-        version: 11.0.1
+        specifier: 11.1.0
+        version: 11.1.0
       rescript-envsafe:
         specifier: 3.1.0
-        version: 3.1.0(rescript-schema@6.4.0)(rescript@11.0.1)
+        version: 3.1.0(rescript-schema@6.4.0)(rescript@11.1.0)
       rescript-express:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
       rescript-schema:
         specifier: 6.4.0
-        version: 6.4.0(rescript@11.0.1)
+        version: 6.4.0(rescript@11.1.0)
       viem:
         specifier: 1.16.6
         version: 1.16.6(typescript@5.0.4)
@@ -2994,6 +2994,7 @@ packages:
     dependencies:
       is-hex-prefixed: 1.0.0
       strip-hex-prefix: 1.0.0
+    bundledDependencies: false
 
   /event-target-shim@5.0.1:
     resolution: {integrity: sha512-i/2XbnSz/uxRCU6+NdVJgKWDTM427+MqYbkQzD321DuCQJUqOuJKIA0IM2+W2xtYHdKOmZ4dR6fExsd4SXL+WQ==}
@@ -5441,14 +5442,14 @@ packages:
     resolution: {integrity: sha512-KigOCHcocU3XODJxsu8i/j8T9tzT4adHiecwORRQ0ZZFcp7ahwXuRU1m+yuO90C5ZUyGeGfocHDI14M3L3yDAQ==}
     dev: true
 
-  /rescript-envsafe@3.1.0(rescript-schema@6.4.0)(rescript@11.0.1):
+  /rescript-envsafe@3.1.0(rescript-schema@6.4.0)(rescript@11.1.0):
     resolution: {integrity: sha512-XphCDfDloSvUwX/dhghRIK81AMKez0rmXUXvLyVW7s3cjzWjHKMc0GTYwIJDB6J7RRmXuA8ZPTsphwEj9yVJeQ==}
     peerDependencies:
       rescript: 11.x
       rescript-schema: 6.x
     dependencies:
-      rescript: 11.0.1
-      rescript-schema: 6.4.0(rescript@11.0.1)
+      rescript: 11.1.0
+      rescript-schema: 6.4.0(rescript@11.1.0)
     dev: false
 
   /rescript-express@0.4.1(express@4.19.2):
@@ -5474,9 +5475,24 @@ packages:
       rescript: 11.x
     dependencies:
       rescript: 11.0.1
+    dev: false
+
+  /rescript-schema@6.4.0(rescript@11.1.0):
+    resolution: {integrity: sha512-rBHtZOEVskKKAf7jfJicuTA1xsQRu2qBdB73FVtPsUSmtgIYpGGKk4YSURQss7WYQEHRds+zPjFLJWzeAnwsLg==}
+    peerDependencies:
+      rescript: 11.x
+    dependencies:
+      rescript: 11.1.0
 
   /rescript@11.0.1:
     resolution: {integrity: sha512-7T4PRp/d0+CBNnY6PYKffFqo9tGZlvnZpboF/n+8SKS+JZ6VvXJO7W538VPZXf3EYx1COGAWWvkF9e/HgSAqHg==}
+    engines: {node: '>=10'}
+    hasBin: true
+    requiresBuild: true
+    dev: false
+
+  /rescript@11.1.0:
+    resolution: {integrity: sha512-9la2Dv+ACylQ77I8s4spPu1JnLZXbH5WgxcLHLLUBWgFFSiv0wXqgzWztrBIZqwFgVX5BYcwldUqUVcEzdCyHg==}
     engines: {node: '>=10'}
     hasBin: true
     requiresBuild: true
