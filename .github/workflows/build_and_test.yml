@@ -90,8 +90,9 @@ jobs:
         with:
           path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
           key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          # updating the pnmp-lock.yaml in the test_codegen folder has strange side effects in this test, look to make this more robust
           restore-keys: |
-            ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+            ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }} 
             ${{ runner.os }}-pnpm-store-
 
       - name: Cargo Build
