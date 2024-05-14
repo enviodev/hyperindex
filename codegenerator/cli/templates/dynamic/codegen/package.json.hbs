@@ -4,9 +4,9 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "clean": "rescript clean -with-deps",
-    "build": "rescript build -with-deps",
-    "watch": "rescript build -with-deps -w",
+    "clean": "rescript clean",
+    "build": "rescript",
+    "watch": "rescript -w",
     "db-up": "node -e 'require(`./src/db/Migrations.bs.js`).runUpMigrations(true)'",
     "db-down": "node -e 'require(`./src/db/Migrations.bs.js`).runDownMigrations(true, true)'",
     "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).setupDb(true)'",
