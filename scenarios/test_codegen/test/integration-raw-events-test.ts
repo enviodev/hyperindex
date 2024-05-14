@@ -26,7 +26,7 @@ import {
 // import { setLogLevel } from "generated/src/Logging.bs.js";
 // require("mocha-reporter").hook(); //Outputs filename in error logs with mocha-reporter
 
-describe.skip("Raw Events Integration", () => {
+describe("Raw Events Integration", () => {
   const sql = createSql();
   let simpleNftContractAddress: string;
   let nftFactoryContractAddress: string;
