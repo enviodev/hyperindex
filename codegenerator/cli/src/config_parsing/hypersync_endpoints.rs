@@ -35,7 +35,8 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::Lukso => "https://lukso.hypersync.xyz".to_string(),
         HypersyncNetwork::Holesky => "https://holesky.hypersync.xyz".to_string(),
         HypersyncNetwork::GnosisChiado => "https://gnosis-chiado.hypersync.xyz".to_string(),
-        HypersyncNetwork::OkbcTestnet => "https://okbc-testnet.hypersync.xyz".to_string(),
+        HypersyncNetwork::XLayerTestnet => "https://x-layer-testnet.hypersync.xyz".to_string(),
+        HypersyncNetwork::XLayer => "https://x-layer.hypersync.xyz".to_string(),
         HypersyncNetwork::A1Milkomeda => "https://a1-milkomeda.hypersync.xyz".to_string(),
         HypersyncNetwork::PublicGoods => "https://publicgoods.hypersync.xyz".to_string(),
         HypersyncNetwork::Zora => "https://zora.hypersync.xyz".to_string(),
@@ -55,6 +56,9 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::BlastSepolia => "https://blast-sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::FhenixTestnet => "https://fhenix-testnet.hypersync.xyz".to_string(),
         HypersyncNetwork::Amoy => "https://amoy.hypersync.xyz".to_string(),
+        HypersyncNetwork::Crab => "https://crab.hypersync.xyz".to_string(),
+        HypersyncNetwork::Darwinia => "https://darwinia.hypersync.xyz".to_string(),
+        HypersyncNetwork::Cyber => "https://cyber.hypersync.xyz".to_string(),
     }
 }
 

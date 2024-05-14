@@ -156,8 +156,11 @@ pub enum Network {
     #[subenum(HypersyncNetwork)]
     // Explorers:
     // https://www.oklink.com/x1-test
-    OkbcTestnet = 195,
-
+    XLayerTestnet = 195,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://www.oklink.com/xlayer
+    XLayer = 196,
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Holesky = 17000,
     #[subenum(HypersyncNetwork)]
@@ -223,6 +226,24 @@ pub enum Network {
     FhenixTestnet = 42069,
     #[subenum(HypersyncNetwork)]
     Amoy = 80002,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://crab.subscan.io/
+    Crab = 44,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // https://darwinia.subscan.io/
+    Darwinia = 46,
+    #[subenum(HypersyncNetwork)]
+    // Explorers:
+    // NOTE: this does have contract verification and an api to get verified contracts, but this
+    // breaks with the current setup. TODO: get non-etherscan contract verification working.
+    // https://cyber.socialscan.io/
+    Cyber = 7560,
+    // #[subenum(HypersyncNetwork)]
+    // // Explorers:
+    // // https://explorer.degen.tips/
+    // Degen = 666666666,
 }
 
 impl Network {
@@ -286,7 +307,8 @@ impl Network {
             | Network::TaikoJolnr
             | Network::Kroma
             | Network::Lukso
-            | Network::OkbcTestnet
+            | Network::XLayerTestnet
+            | Network::XLayer
             | Network::Holesky
             | Network::GnosisChiado
             | Network::Zora
@@ -303,7 +325,10 @@ impl Network {
             | Network::Blast
             | Network::BlastSepolia
             | Network::FhenixTestnet
-            | Network::Amoy => 200,
+            | Network::Amoy
+            | Network::Crab
+            | Network::Darwinia
+            | Network::Cyber => 200,
         }
     }
 }
