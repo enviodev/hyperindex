@@ -47,28 +47,6 @@ pub struct GlobalContractConfig {
     pub events: Vec<ConfigEvent>,
 }
 
-impl GlobalContractConfig {
-    pub fn parse_abi(
-        &self,
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<Option<ethers::abi::Contract>> {
-        match &self.abi_file_path {
-            None => Ok(None),
-            Some(abi_path_relative_string) => {
-                let relative_path_buf = PathBuf::from(abi_path_relative_string);
-                let abi_path =
-                    path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)
-                        .context("Failed getting abi path")?;
-                let parsed = parse_contract_abi(abi_path).context(format!(
-                    "Failed parsing global contract {} abi {}",
-                    self.name, abi_path_relative_string
-                ))?;
-                Ok(Some(parsed))
-            }
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct HypersyncConfig {
     #[serde(alias = "url")]

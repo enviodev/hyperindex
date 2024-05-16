@@ -12,9 +12,9 @@ use anyhow::{anyhow, Context, Result};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam, HumanReadableParser};
 
 use itertools::Itertools;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
+    fs,
     path::PathBuf,
 };
 
@@ -133,8 +133,8 @@ impl SystemConfig {
         let mut filtered_unique_abi_files = self
             .get_contracts()
             .into_iter()
-            .filter_map(|c| c.get_path_to_abi_file(&self.parsed_project_paths))
-            .collect::<Result<HashSet<_>>>()?
+            .filter_map(|c| c.abi.path.clone())
+            .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
 
@@ -157,27 +157,26 @@ impl SystemConfig {
         //Add all global contracts
         if let Some(global_contracts) = &human_cfg.contracts {
             for g_contract in global_contracts {
-                let opt_abi = g_contract.parse_abi(project_paths)?;
+                let abi_from_file = EvmAbi::from_file(&g_contract.abi_file_path, project_paths)?;
+
                 let events = g_contract
                     .events
                     .iter()
                     .cloned()
-                    .map(|e| Event::try_from_config_event(e, &opt_abi, &schema))
+                    .map(|e| Event::try_from_config_event(e, &abi_from_file, &schema))
                     .collect::<Result<Vec<_>>>()
                     .context(format!(
                         "Failed parsing abi types for events in global contract {}",
                         g_contract.name,
                     ))?;
 
-                let contract = Contract {
-                    name: g_contract.name.clone(),
+                let contract = Contract::new(
+                    g_contract.name.clone(),
+                    g_contract.handler.clone(),
                     events,
-                    handler_path: g_contract.handler.clone(),
-                    abi_file_path: g_contract.abi_file_path.clone(),
-                };
-                contract
-                    .validate_events()
-                    .context("Validating global contract config")?;
+                    abi_from_file,
+                )
+                .context("Failed parsing globally defined contract")?;
 
                 //Check if contract exists
                 unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
@@ -191,30 +190,27 @@ impl SystemConfig {
                 match contract.local_contract_config {
                     Some(l_contract) => {
                         //If there is a local contract, parse it and insert into contracts
-                        let opt_abi = l_contract.parse_abi(project_paths)?;
+                        let abi_from_file =
+                            EvmAbi::from_file(&l_contract.abi_file_path, project_paths)?;
 
                         let events = l_contract
                             .events
                             .iter()
                             .cloned()
-                            .map(|e| Event::try_from_config_event(e, &opt_abi, &schema))
+                            .map(|e| Event::try_from_config_event(e, &abi_from_file, &schema))
                             .collect::<Result<Vec<_>>>()?;
 
-                        let contract = Contract {
-                            name: contract.name,
-                            events,
-                            handler_path: l_contract.handler,
-                            abi_file_path: l_contract.abi_file_path,
-                        };
-                        contract
-                            .validate_events()
-                            .context("Validating network contract config")?;
+                        let contract =
+                            Contract::new(contract.name, l_contract.handler, events, abi_from_file)
+                                .context(format!(
+                            "Failed parsing locally defined network contract at network id {}",
+                            network.id
+                        ))?;
 
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
                             .context(format!(
-                                "Failed inserting locally defined network contract at network id \
-                                 {}",
+                                "Failed inserting locally defined network contract at network id {}",
                                 network.id,
                             ))?;
                     }
@@ -304,7 +300,7 @@ impl SystemConfig {
 
 type ServerUrl = String;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Network {
     pub id: u64,
     pub sync_source: SyncSourceConfig,
@@ -332,7 +328,7 @@ impl Network {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NetworkContract {
     pub name: ContractNameKey,
     pub addresses: Vec<String>,
@@ -349,36 +345,98 @@ impl NetworkContract {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvmAbi {
+    // The path is not always present since we allow to get ABI from events
+    pub path: Option<PathBuf>,
+    pub raw: String,
+    typed: ethers::abi::Contract,
+}
+
+impl EvmAbi {
+    pub fn from_file(
+        abi_file_path: &Option<String>,
+        project_paths: &ParsedProjectPaths,
+    ) -> Result<Option<Self>> {
+        match &abi_file_path {
+            None => Ok(None),
+            Some(abi_file_path) => {
+                let relative_path_buf = PathBuf::from(abi_file_path);
+                let path =
+                    path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)
+                        .context("Failed to get path to ABI relative to the root of the project")?;
+                let raw = fs::read_to_string(&path)
+                    .context(format!("Failed to read ABI file at \"{}\"", abi_file_path))?;
+                let decoding_context_error =
+                    format!("Failed to decode ABI file at \"{}\"", abi_file_path);
+                let typed: ethers::abi::Abi =
+                    serde_json::from_str(&raw).context(decoding_context_error.clone())?;
+                Ok(Some(Self {
+                    path: Some(path),
+                    raw,
+                    typed,
+                }))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Contract {
     pub name: ContractNameKey,
     pub handler_path: String,
-    pub abi_file_path: Option<String>,
+    pub abi: EvmAbi,
     pub events: Vec<Event>,
 }
 
 impl Contract {
-    pub fn get_abi(&self) -> ethers::abi::Contract {
+    pub fn new(
+        name: ContractNameKey,
+        handler_path: String,
+        events: Vec<Event>,
+        abi_from_file: Option<EvmAbi>,
+    ) -> Result<Self> {
         let mut events_abi = ethers::abi::Contract::default();
 
-        for event_container in &self.events {
+        let mut event_names = Vec::new();
+        let mut entity_and_label_names = Vec::new();
+        for event in &events {
             events_abi
                 .events
-                .entry(event_container.get_event().name.clone())
+                .entry(event.get_event().name.clone())
                 .or_default()
-                .push(event_container.get_event().clone());
+                .push(event.get_event().clone());
+
+            event_names.push(event.event.0.name.clone());
+
+            for entity in &event.required_entities {
+                entity_and_label_names.push(entity.name.clone());
+                if let Some(labels) = &entity.labels {
+                    entity_and_label_names.extend(labels.clone());
+                }
+                if let Some(array_labels) = &entity.array_labels {
+                    entity_and_label_names.extend(array_labels.clone());
+                }
+            }
+            // Checking that entity names do not include any reserved words
+            validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
         }
+        // Checking that event names do not include any reserved words
+        validate_names_not_reserved(&event_names, "Events".to_string())?;
 
-        events_abi
-    }
+        let events_abi_raw = serde_json::to_string(&events_abi)
+            .context("Failed serializing ABI with filtered events")?;
 
-    pub fn get_stringified_abi(&self) -> Result<String> {
-        let events_abi = self.get_abi();
-
-        let stringified_abi =
-            serde_json::to_string(&events_abi).context("Failed serializing abi")?;
-
-        Ok(stringified_abi)
+        Ok(Self {
+            name,
+            events,
+            handler_path,
+            abi: EvmAbi {
+                path: abi_from_file.and_then(|abi| abi.path),
+                raw: events_abi_raw,
+                typed: events_abi,
+            },
+        })
     }
 
     pub fn get_event_names(&self) -> Vec<String> {
@@ -400,49 +458,9 @@ impl Contract {
 
         Ok(handler_path)
     }
-
-    pub fn get_path_to_abi_file(
-        &self,
-        project_paths: &ParsedProjectPaths,
-    ) -> Option<Result<PathBuf>> {
-        self.abi_file_path.as_ref().map(|abi_path| {
-            let abi_rel_path = path_utils::get_config_path_relative_to_root(
-                project_paths,
-                PathBuf::from(abi_path),
-            )
-            .context(format!(
-                "Failed creating a relative path to abi in contract {}",
-                self.name
-            ))?;
-
-            Ok(abi_rel_path)
-        })
-    }
-
-    fn validate_events(&self) -> anyhow::Result<()> {
-        let mut event_names = Vec::new();
-        let mut entity_and_label_names = Vec::new();
-        for event in &self.events {
-            event_names.push(event.event.0.name.clone());
-            for entity in &event.required_entities {
-                entity_and_label_names.push(entity.name.clone());
-                if let Some(labels) = &entity.labels {
-                    entity_and_label_names.extend(labels.clone());
-                }
-                if let Some(array_labels) = &entity.array_labels {
-                    entity_and_label_names.extend(array_labels.clone());
-                }
-            }
-            // Checking that entity names do not include any reserved words
-            validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
-        }
-        // Checking that event names do not include any reserved words
-        validate_names_not_reserved(&event_names, "Events".to_string())?;
-        Ok(())
-    }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     event: NormalizedEthAbiEvent,
     pub required_entities: Vec<human_config::RequiredEntity>,
@@ -450,10 +468,7 @@ pub struct Event {
 }
 
 impl Event {
-    fn get_abi_event(
-        event_string: &String,
-        opt_abi: &Option<ethers::abi::Contract>,
-    ) -> Result<EthAbiEvent> {
+    fn get_abi_event(event_string: &String, opt_abi: &Option<EvmAbi>) -> Result<EthAbiEvent> {
         let parse_event_sig = |sig: &str| -> Result<EthAbiEvent> {
             match HumanReadableParser::parse_event(sig) {
                 Ok(event) => Ok(event),
@@ -475,8 +490,9 @@ impl Event {
             parse_event_sig(&signature)
         } else {
             match opt_abi {
-                Some(contract_abi) => {
-                    let event = contract_abi
+                Some(abi) => {
+                    let event = abi
+                        .typed
                         .event(event_string)
                         .context(format!("Failed retrieving event {} from abi", event_string))?;
                     Ok(event.clone())
@@ -488,7 +504,7 @@ impl Event {
 
     pub fn try_from_config_event(
         human_cfg_event: human_config::ConfigEvent,
-        opt_abi: &Option<ethers::abi::Contract>,
+        opt_abi: &Option<EvmAbi>,
         schema: &Schema,
     ) -> Result<Self> {
         let event = Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
@@ -521,7 +537,7 @@ impl Event {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct NormalizedEthAbiEvent(EthAbiEvent);
 
 impl From<EthAbiEvent> for NormalizedEthAbiEvent {
@@ -548,7 +564,7 @@ impl From<EthAbiEvent> for NormalizedEthAbiEvent {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct RequiredEntity {
     pub name: String,
     pub labels: Vec<String>,
@@ -598,7 +614,9 @@ mod test {
         let contract_abi = config
             .get_contract(&contract_name)
             .expect("Failed getting contract")
-            .get_abi();
+            .abi
+            .typed
+            .clone();
 
         let expected_abi_string = r#"
                 [

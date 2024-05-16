@@ -553,14 +553,11 @@ impl ContractTemplate {
             .iter()
             .map(|event| EventTemplate::from_config_event(event, config, &contract.name))
             .collect::<Result<_>>()?;
-        let abi = contract
-            .get_stringified_abi()
-            .context(format!("Failed getting abi of contract {}", contract.name))?;
         Ok(ContractTemplate {
             name,
             handler,
             codegen_events,
-            abi,
+            abi: contract.abi.raw.clone(),
         })
     }
 }
