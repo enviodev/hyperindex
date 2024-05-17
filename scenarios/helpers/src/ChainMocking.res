@@ -45,6 +45,7 @@ module Make = (Indexer: Indexer.S) => {
     ~srcAddress,
     ~chainId,
     ~txOrigin,
+    ~txTo,
     ~blockNumber,
     ~blockTimestamp,
     ~blockHash,
@@ -57,6 +58,7 @@ module Make = (Indexer: Indexer.S) => {
       srcAddress,
       chainId,
       txOrigin,
+      txTo,
       blockNumber,
       blockTimestamp,
       blockHash,
@@ -80,6 +82,7 @@ module Make = (Indexer: Indexer.S) => {
     ~blockNumber: int,
     ~transactionIndex: int,
     ~txOrigin: option<Ethers.ethAddress>,
+    ~txTo: option<Ethers.ethAddress>,
     ~logIndex: int,
   ) => logConstructor
 
@@ -94,6 +97,7 @@ module Make = (Indexer: Indexer.S) => {
     ~blockNumber,
     ~transactionIndex,
     ~txOrigin,
+    ~txTo,
     ~logIndex,
   ) => {
     let transactionHash =
@@ -110,6 +114,7 @@ module Make = (Indexer: Indexer.S) => {
       ~srcAddress,
       ~chainId,
       ~txOrigin,
+      ~txTo,
       ~blockNumber,
       ~blockTimestamp,
     )
@@ -163,6 +168,7 @@ module Make = (Indexer: Indexer.S) => {
           ~logIndex=i,
           ~chainId=self.chainConfig.chain->ChainMap.Chain.toChainId,
           ~txOrigin=None,
+          ~txTo=None,
           ~blockNumber,
           ~blockTimestamp,
         )

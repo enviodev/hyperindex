@@ -10,6 +10,7 @@ type logsQueryPageItem = {
   log: Ethers.log,
   blockTimestamp: int,
   txOrigin: option<Ethers.ethAddress>,
+  txTo: option<Ethers.ethAddress>,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
@@ -115,7 +116,7 @@ module LogsQuery = {
         Removed,
       ],
       block: [Number, Timestamp],
-      transaction: [From],
+      transaction: [From, To],
     },
   }
 
@@ -156,7 +157,12 @@ module LogsQuery = {
         ->Belt.Option.flatMap(b => b.from)
         ->Belt.Option.flatMap(Ethers.getAddressFromString)
 
-      let pageItem: logsQueryPageItem = {log, blockTimestamp, txOrigin}
+      let txTo =
+        event.transaction
+        ->Belt.Option.flatMap(b => b.to)
+        ->Belt.Option.flatMap(Ethers.getAddressFromString)
+
+      let pageItem: logsQueryPageItem = {log, blockTimestamp, txOrigin, txTo}
       pageItem
     | _ =>
       let missingParams =

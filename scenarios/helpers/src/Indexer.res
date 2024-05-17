@@ -22,6 +22,7 @@ module type S = {
       params: 'a,
       chainId: int,
       txOrigin: option<Ethers.ethAddress>,
+      txTo: option<Ethers.ethAddress>,
       blockNumber: int,
       blockTimestamp: int,
       blockHash: string,

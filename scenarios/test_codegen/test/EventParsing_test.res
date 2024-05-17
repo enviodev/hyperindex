@@ -27,6 +27,7 @@ describe("Parsing Raw Events", () => {
     let transactionHash = "0x4637e2c771f4a3543a91add8d12d7d189cd98cc7ad36c39bc3ea5f57832e84d4"
     let transactionIndex = 66
     let txOrigin = None
+    let txTo = None
 
     let mockRawEventsEntity: Types.rawEventsEntity = {
       blockNumber,
@@ -43,7 +44,7 @@ describe("Parsing Raw Events", () => {
     }
 
     let parsedEvent =
-      mockRawEventsEntity->Converters.parseRawEvent(~chain, ~txOrigin)->Belt.Result.getExn
+      mockRawEventsEntity->Converters.parseRawEvent(~chain, ~txOrigin, ~txTo)->Belt.Result.getExn
 
     let expectedParseResult: Types.eventBatchQueueItem = {
       timestamp: 1614631579,
@@ -61,6 +62,7 @@ describe("Parsing Raw Events", () => {
         logIndex,
         params,
         txOrigin,
+        txTo,
       }),
     }
 

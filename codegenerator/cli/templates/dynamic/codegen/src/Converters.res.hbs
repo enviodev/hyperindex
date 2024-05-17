@@ -56,6 +56,7 @@ module {{contract.name.capitalized}} = {
     ~blockTimestamp: int,
     ~chainId: int,
     ~txOrigin: option<Ethers.ethAddress>,
+    ~txTo: option<Ethers.ethAddress>,
   ) => {
     let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
     {{#if event.params}}
@@ -72,6 +73,7 @@ module {{contract.name.capitalized}} = {
       params,
       chainId,
       txOrigin,
+      txTo,
       blockNumber: log.blockNumber,
       blockTimestamp,
       blockHash: log.blockHash,
@@ -92,6 +94,7 @@ module {{contract.name.capitalized}} = {
     ~blockTimestamp: int,
     ~chainId: int,
     ~txOrigin: option<Ethers.ethAddress>,
+    ~txTo: option<Ethers.ethAddress>,
   ) => {
     let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
     {{#if event.params}}
@@ -108,6 +111,7 @@ module {{contract.name.capitalized}} = {
       params,
       chainId,
       txOrigin,
+      txTo,
       blockNumber: log.blockNumber,
       blockTimestamp,
       blockHash: log.blockHash,
@@ -151,7 +155,7 @@ module {{contract.name.capitalized}} = {
 exception ParseError(Ethers.Interface.parseLogError)
 exception UnregisteredContract(Ethers.ethAddress)
 
-let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin): Belt.Result.t<
+let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin, ~txTo): Belt.Result.t<
   Types.event,
   _,
 > => {
@@ -175,7 +179,7 @@ let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chain
         | {{event.event_type.full}} =>
             logDescription
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp, ~chainId, ~txOrigin)
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
       {{/each}}
       {{/each}}
       }
@@ -191,10 +195,12 @@ let makeEventLog = (
   ~blockTimestamp: int,
   ~chainId: int,
   ~txOrigin: option<Ethers.ethAddress>,
+  ~txTo: option<Ethers.ethAddress>,
 ): Types.eventLog<'args> => {
   chainId,
   params,
   txOrigin,
+  txTo,
   blockNumber: log.blockNumber,
   blockTimestamp,
   blockHash: log.blockHash,
@@ -211,6 +217,7 @@ let convertDecodedEvent = (
   ~blockTimestamp,
   ~chainId,
   ~txOrigin: option<Ethers.ethAddress>,
+  ~txTo: option<Ethers.ethAddress>,
 ): result<Types.event, _> => {
   switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
     ~contractAddress=log.address,
@@ -223,7 +230,7 @@ let convertDecodedEvent = (
         | {{event.event_type.full}} =>
             event
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}DecodedEventParams
-            ->makeEventLog(~log, ~blockTimestamp, ~chainId, ~txOrigin)
+            ->makeEventLog(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
             ->Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}
       {{/each}}
      {{/each}}
@@ -232,7 +239,7 @@ let convertDecodedEvent = (
   }
 }
 
-let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin): Belt.Result.t<
+let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin, ~txTo): Belt.Result.t<
   Types.event,
   _,
 > => {
@@ -256,7 +263,7 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
         | {{event.event_type.full}} =>
             decodedEvent
             ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}ViemDecodedEvent
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogViem(~log, ~blockTimestamp, ~chainId, ~txOrigin)
+            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogViem(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
       {{/each}}
      {{/each}}
       }
@@ -272,6 +279,7 @@ let decodeRawEventWith = (
   ~variantAccessor: Types.eventLog<'a> => Types.event,
   ~chain,
   ~txOrigin: option<Ethers.ethAddress>,
+  ~txTo: option<Ethers.ethAddress>,
 ): result<Types.eventBatchQueueItem, S.error> => {
   rawEvent.params
   ->S.parseJsonStringWith(schema)
@@ -279,6 +287,7 @@ let decodeRawEventWith = (
     let event = {
       chainId: rawEvent.chainId,
       txOrigin,
+      txTo,
       blockNumber: rawEvent.blockNumber,
       blockTimestamp: rawEvent.blockTimestamp,
       blockHash: rawEvent.blockHash,
@@ -301,7 +310,7 @@ let decodeRawEventWith = (
   })
 }
 
-let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain, ~txOrigin: option<Ethers.ethAddress>): result<Types.eventBatchQueueItem, S.error> => {
+let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain, ~txOrigin: option<Ethers.ethAddress>, ~txTo: option<Ethers.ethAddress>): result<Types.eventBatchQueueItem, S.error> => {
   rawEvent.eventType
   ->S.parseWith(Types.eventNameSchema)
   ->Belt.Result.flatMap(eventName => {
@@ -314,6 +323,7 @@ let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain, ~txOrigin: option<
         ~variantAccessor=event => Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event),
         ~chain,
         ~txOrigin,
+        ~txTo,
       )
   {{/each}}
   {{/each}}

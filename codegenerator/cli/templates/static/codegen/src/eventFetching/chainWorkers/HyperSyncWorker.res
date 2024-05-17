@@ -276,6 +276,7 @@ let fetchBlockRange = async (
             ~blockTimestamp,
             ~chainId,
             ~txOrigin=item.txOrigin,
+            ~txTo=item.txTo,
           ) {
           | Ok(v) => v
           | Error(exn) =>
@@ -298,6 +299,7 @@ let fetchBlockRange = async (
           ~contractInterfaceManager,
           ~chainId,
           ~txOrigin=item.txOrigin,
+          ~txTo=item.txTo,
         ) {
         | Ok(parsed) =>
           (

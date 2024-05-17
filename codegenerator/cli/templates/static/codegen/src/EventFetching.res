@@ -105,6 +105,7 @@ let convertLogs = (
           ~contractInterfaceManager,
           ~chainId=chain->ChainMap.Chain.toChainId,
           ~txOrigin=None,
+          ~txTo=None,
         )
         switch parsed {
         | Error(exn) =>

@@ -64,6 +64,7 @@ let newGravatarEventLog1: Types.eventLog<Types.GravatarContract.NewGravatarEvent
   transactionHash: "0xaaa",
   transactionIndex: 1,
   txOrigin: None,
+  txTo: None,
   logIndex: 11,
 }
 
@@ -77,6 +78,7 @@ let newGravatarEventLog2: Types.eventLog<Types.GravatarContract.NewGravatarEvent
   transactionHash: "0xaaa",
   transactionIndex: 1,
   txOrigin: None,
+  txTo: None,
   logIndex: 12,
 }
 
@@ -90,6 +92,7 @@ let newGravatarEventLog3: Types.eventLog<Types.GravatarContract.NewGravatarEvent
   transactionHash: "0xaaa",
   transactionIndex: 1,
   txOrigin: None,
+  txTo: None,
   logIndex: 13,
 }
 
@@ -103,6 +106,7 @@ let newGravatarEventLog4: Types.eventLog<Types.GravatarContract.NewGravatarEvent
   transactionHash: "0xaaa",
   transactionIndex: 1,
   txOrigin: None,
+  txTo: None,
   logIndex: 13,
 }
 
@@ -116,6 +120,7 @@ let setGravatarEventLog1: Types.eventLog<Types.GravatarContract.UpdatedGravatarE
   transactionHash: "0xaaa",
   transactionIndex: 1,
   txOrigin: None,
+  txTo: None,
   logIndex: 14,
 }
 
@@ -129,6 +134,7 @@ let setGravatarEventLog2: Types.eventLog<Types.GravatarContract.UpdatedGravatarE
   transactionHash: "0xaaa",
   transactionIndex: 1,
   txOrigin: None,
+  txTo: None,
   logIndex: 15,
 }
 
@@ -142,6 +148,7 @@ let setGravatarEventLog3: Types.eventLog<Types.GravatarContract.UpdatedGravatarE
   transactionHash: "0xaaa",
   transactionIndex: 1,
   txOrigin: None,
+  txTo: None,
   logIndex: 16,
 }
 let setGravatarEventLog4: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
@@ -154,6 +161,7 @@ let setGravatarEventLog4: Types.eventLog<Types.GravatarContract.UpdatedGravatarE
   transactionHash: "0xaaa",
   transactionIndex: 1,
   txOrigin: None,
+  txTo: None,
   logIndex: 17,
 }
 
