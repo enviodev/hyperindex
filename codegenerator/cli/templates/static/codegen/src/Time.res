@@ -16,7 +16,7 @@ let rec retryAsyncWithExponentialBackOff = async (
   try {
     await f()
   } catch {
-  | Js.Exn.Error(exn) =>
+  | exn =>
     if retryCount < maxRetries {
       let nextRetryCount = retryCount + 1
       logger

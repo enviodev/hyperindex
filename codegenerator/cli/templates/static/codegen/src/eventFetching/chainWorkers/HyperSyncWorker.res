@@ -212,34 +212,22 @@ let fetchBlockRange = async (
       | None =>
         //If there were no logs at all in the current page query then fetch the
         //timestamp of the heighest block accounted for
-        let getEndBlockData = () =>
-          HyperSync.queryBlockData(
-            ~serverUrl,
-            ~blockNumber=heighestBlockQueried,
-          )->Promise.thenResolve(res =>
-            switch res {
-            | Ok(Some(blockData)) => blockData
-            | Ok(None) =>
-              logAndRaise(
-                Not_found,
-                ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
-              )
-            | Error(e) =>
-              Helpers.ErrorMessage(HyperSync.queryErrorToMsq(e))->logAndRaise(
-                ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
-              )
-            }
-          )
-
-        let exponentialBackoffLogger = Logging.createChild(
-          ~params={"type": "hypersync get block not found"},
-        )
-
-        getEndBlockData->Time.retryAsyncWithExponentialBackOff(
-          ~logger=Some(exponentialBackoffLogger),
-          ~backOffMillis=10,
-          ~multiplicative=2,
-          ~maxRetries=4, // 4 retries with 10ms, 20ms, 40ms, 80ms which is more than 1.5 seconds of wait (closer to 2 with latency)
+        HyperSync.queryBlockData(
+          ~serverUrl,
+          ~blockNumber=heighestBlockQueried,
+        )->Promise.thenResolve(res =>
+          switch res {
+          | Ok(Some(blockData)) => blockData
+          | Ok(None) =>
+            logAndRaise(
+              Not_found,
+              ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
+            )
+          | Error(e) =>
+            Helpers.ErrorMessage(HyperSync.queryErrorToMsq(e))->logAndRaise(
+              ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
+            )
+          }
         )
       }
     }
