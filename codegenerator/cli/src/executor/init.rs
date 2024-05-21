@@ -149,7 +149,7 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     }
 
     let platform = match parsed_init_args.template {
-        InitilizationTypeWithArgs::Template(Template::GreeterOnFuelVM) => Platform::Fuel,
+        InitilizationTypeWithArgs::Template(Template::GreeterOnFuel) => Platform::Fuel,
         _ => Platform::Ethereum,
     };
 

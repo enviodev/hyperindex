@@ -238,7 +238,7 @@ pub enum Platform {
 ///Template to work off
 pub enum Template {
     Greeter,
-    GreeterOnFuelVM,
+    GreeterOnFuel,
     Erc20,
 }
 
