@@ -19,14 +19,12 @@ let rec retryAsyncWithExponentialBackOff = async (
   | exn =>
     if retryCount < maxRetries {
       let nextRetryCount = retryCount + 1
-      logger
-      ->Belt.Option.map(l =>
-        l->Logging.childErrorWithExn(
-          exn->Obj.magic,
-          `Failure. Retrying ${nextRetryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} in ${backOffMillis->Belt.Int.toString}ms`,
-        )
+      exn
+      ->ErrorHandling.make(
+        ~logger?,
+        ~msg=`Failure. Retrying ${nextRetryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} in ${backOffMillis->Belt.Int.toString}ms`,
       )
-      ->ignore
+      ->ErrorHandling.log
       await resolvePromiseAfterDelay(~delayMilliseconds=backOffMillis)
 
       await f->retryAsyncWithExponentialBackOff(
@@ -36,14 +34,12 @@ let rec retryAsyncWithExponentialBackOff = async (
         ~maxRetries,
       )
     } else {
-      logger
-      ->Belt.Option.map(l =>
-        l->Logging.childErrorWithExn(
-          exn->Obj.magic,
-          `Failure. Max retries ${retryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} exceeded`,
-        )
+      exn
+      ->ErrorHandling.make(
+        ~logger?,
+        ~msg=`Failure. Max retries ${retryCount->Belt.Int.toString}/${maxRetries->Belt.Int.toString} exceeded`,
       )
-      ->ignore
+      ->ErrorHandling.log
       await Promise.reject(exn->Js.Exn.anyToExnInternal)
     }
   }
