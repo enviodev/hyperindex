@@ -151,7 +151,7 @@ pub mod codegen {
         project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<()> {
         let package = format!("envio@{}", envio_version);
-        let args = vec![package.as_str(), "codegen"];
+        let args = vec![package.as_str(), "codegen", "--yes"];
         execute_command("npx", args, &project_paths.project_root)
             .await
             .context("Failed to execute codegen")?;
