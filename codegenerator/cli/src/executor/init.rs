@@ -1,11 +1,12 @@
 use crate::{
+    clap_definitions::{Platform, Template},
     cli_args::{
         clap_definitions::{InitArgs, Language, ProjectPaths},
         interactive_init::InitilizationTypeWithArgs,
     },
     commands,
     config_parsing::{
-        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id, human_config,
+        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id,
         system_config::SystemConfig,
     },
     hbs_templating::{
@@ -17,7 +18,17 @@ use crate::{
     utils::file_system,
 };
 use anyhow::{anyhow, Context, Result};
+use regex::Regex;
 use std::path::PathBuf;
+
+//Validates version name (3 digits separated by period ".")
+//Returns false if there are any additional chars as this should imply
+//it is a dev release version or an unstable release
+fn is_valid_release_version_number(version: &str) -> bool {
+    let re_version_pattern =
+        Regex::new(r"^\d+\.\d+\.\d+$").expect("version regex pattern should be valid regex");
+    re_version_pattern.is_match(version)
+}
 
 pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -> Result<()> {
     let template_dirs = TemplateDirs::new();
@@ -137,10 +148,31 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
         }
     }
 
+    let platform = match parsed_init_args.template {
+        InitilizationTypeWithArgs::Template(Template::GreeterOnFuelVM) => Platform::Fuel,
+        _ => Platform::Ethereum,
+    };
+
+    let envio_version = match platform {
+        Platform::Fuel => "0.0.2-fuel".to_string(),
+        Platform::Ethereum => {
+            let crate_version = env!("CARGO_PKG_VERSION");
+            if is_valid_release_version_number(crate_version) {
+                //Check that crate version is not a dev release. In which case the
+                //version should be installable from npm
+                crate_version.to_string()
+            } else {
+                //Else install the latest version from npm so as not to break dev environments
+                "latest".to_string()
+            }
+        }
+    };
+
     let hbs_template = InitTemplates::new(
         parsed_init_args.name.clone(),
         &parsed_init_args.language,
         &parsed_project_paths,
+        envio_version.clone(),
     )
     .context("Failed creating init templates")?;
 
@@ -157,20 +189,7 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     println!("Project template ready");
     println!("Running codegen");
 
-    let yaml_config = human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
-        .context("Failed deserializing config")?;
-
-    let config = SystemConfig::parse_from_human_config(&yaml_config, &parsed_project_paths)
-        .context("Failed parsing config")?;
-
-    commands::codegen::run_codegen(&config, &parsed_project_paths).await?;
-
-    let post_codegen_exit =
-        commands::codegen::run_post_codegen_command_sequence(&parsed_project_paths).await?;
-
-    if !post_codegen_exit.success() {
-        return Err(anyhow!("Failed to complete post codegen command sequence"))?;
-    }
+    commands::codegen::exec_codegen(envio_version, &parsed_project_paths).await?;
 
     if parsed_init_args.language == Language::ReScript {
         let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
@@ -188,4 +207,36 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn test_valid_version_numbers() {
+        let valid_version_numbers = vec!["0.0.0", "999.999.999", "0.0.1", "10.2.3"];
+
+        for vn in valid_version_numbers {
+            assert!(super::is_valid_release_version_number(vn));
+        }
+    }
+
+    #[test]
+    fn test_invalid_version_numbers() {
+        let invalid_version_numbers = vec![
+            "v10.1.0",
+            "0.1",
+            "0.0.1-dev",
+            "0.1.*",
+            "^0.1.2",
+            "0.0.1.2",
+            "1..1",
+            "1.1.",
+            ".1.1",
+            "1.1.1.",
+        ];
+        for vn in invalid_version_numbers {
+            assert!(!super::is_valid_release_version_number(vn));
+        }
+    }
 }

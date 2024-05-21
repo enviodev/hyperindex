@@ -4,7 +4,6 @@ use crate::{
 };
 use anyhow::{anyhow, Context};
 use pathdiff::diff_paths;
-use regex::Regex;
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -24,18 +23,8 @@ impl InitTemplates {
         project_name: String,
         lang: &Language,
         project_paths: &ParsedProjectPaths,
+        envio_version: String,
     ) -> anyhow::Result<Self> {
-        let crate_version = env!("CARGO_PKG_VERSION");
-
-        let envio_version = if is_valid_release_version_number(crate_version) {
-            //Check that crate version is not a dev release. In which case the
-            //version should be installable from npm
-            crate_version.to_string()
-        } else {
-            //Else install the latest version from npm so as not to break dev environments
-            "latest".to_string()
-        };
-
         //Take the absolute paths of  project root and generated, diff them to get
         //relative path from root to generated and add a leading dot. So in a default project, if your
         //generated folder is at root folder "generated". Then this should output ./generated
@@ -66,47 +55,10 @@ impl InitTemplates {
     }
 }
 
-//Validates version name (3 digits separated by period ".")
-//Returns false if there are any additional chars as this should imply
-//it is a dev release version or an unstable release
-fn is_valid_release_version_number(version: &str) -> bool {
-    let re_version_pattern =
-        Regex::new(r"^\d+\.\d+\.\d+$").expect("version regex pattern should be valid regex");
-    re_version_pattern.is_match(version)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
     use pretty_assertions::assert_eq;
-
-    #[test]
-    fn test_valid_version_numbers() {
-        let valid_version_numbers = vec!["0.0.0", "999.999.999", "0.0.1", "10.2.3"];
-
-        for vn in valid_version_numbers {
-            assert!(super::is_valid_release_version_number(vn));
-        }
-    }
-
-    #[test]
-    fn test_invalid_version_numbers() {
-        let invalid_version_numbers = vec![
-            "v10.1.0",
-            "0.1",
-            "0.0.1-dev",
-            "0.1.*",
-            "^0.1.2",
-            "0.0.1.2",
-            "1..1",
-            "1.1.",
-            ".1.1",
-            "1.1.1.",
-        ];
-        for vn in invalid_version_numbers {
-            assert!(!super::is_valid_release_version_number(vn));
-        }
-    }
 
     #[test]
     fn test_new_init_template() {
@@ -114,6 +66,7 @@ mod test {
             "my-project".to_string(),
             &Language::ReScript,
             &ParsedProjectPaths::default(),
+            "latest".to_string(),
         )
         .unwrap();
 

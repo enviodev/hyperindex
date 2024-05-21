@@ -229,9 +229,16 @@ pub struct LocalImportArgs {
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
+pub enum Platform {
+    Ethereum,
+    Fuel,
+}
+
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
 ///Template to work off
 pub enum Template {
     Greeter,
+    GreeterOnFuelVM,
     Erc20,
 }
 

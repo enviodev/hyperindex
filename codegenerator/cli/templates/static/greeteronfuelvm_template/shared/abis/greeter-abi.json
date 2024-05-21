@@ -1,0 +1,228 @@
+{
+  "types": [
+    {
+      "typeId": 0,
+      "type": "()",
+      "components": [],
+      "typeParameters": null
+    },
+    {
+      "typeId": 1,
+      "type": "b256",
+      "components": null,
+      "typeParameters": null
+    },
+    {
+      "typeId": 2,
+      "type": "enum Error",
+      "components": [
+        {
+          "name": "InvalidContractSender",
+          "type": 0,
+          "typeArguments": null
+        },
+        {
+          "name": "ToThrow",
+          "type": 0,
+          "typeArguments": null
+        }
+      ],
+      "typeParameters": null
+    },
+    {
+      "typeId": 3,
+      "type": "enum Option",
+      "components": [
+        {
+          "name": "None",
+          "type": 0,
+          "typeArguments": null
+        },
+        {
+          "name": "Some",
+          "type": 4,
+          "typeArguments": null
+        }
+      ],
+      "typeParameters": [4]
+    },
+    {
+      "typeId": 4,
+      "type": "generic T",
+      "components": null,
+      "typeParameters": null
+    },
+    {
+      "typeId": 5,
+      "type": "str[8]",
+      "components": null,
+      "typeParameters": null
+    },
+    {
+      "typeId": 6,
+      "type": "struct Address",
+      "components": [
+        {
+          "name": "value",
+          "type": 1,
+          "typeArguments": null
+        }
+      ],
+      "typeParameters": null
+    },
+    {
+      "typeId": 7,
+      "type": "struct ClearGreeting",
+      "components": [
+        {
+          "name": "user",
+          "type": 6,
+          "typeArguments": null
+        }
+      ],
+      "typeParameters": null
+    },
+    {
+      "typeId": 8,
+      "type": "struct Greeting",
+      "components": [
+        {
+          "name": "value",
+          "type": 5,
+          "typeArguments": null
+        }
+      ],
+      "typeParameters": null
+    },
+    {
+      "typeId": 9,
+      "type": "struct NewGreeting",
+      "components": [
+        {
+          "name": "user",
+          "type": 6,
+          "typeArguments": null
+        },
+        {
+          "name": "greeting",
+          "type": 8,
+          "typeArguments": null
+        }
+      ],
+      "typeParameters": null
+    }
+  ],
+  "functions": [
+    {
+      "inputs": [],
+      "name": "clear_greeting",
+      "output": {
+        "name": "",
+        "type": 0,
+        "typeArguments": null
+      },
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": ["write"]
+        }
+      ]
+    },
+    {
+      "inputs": [],
+      "name": "greet",
+      "output": {
+        "name": "",
+        "type": 3,
+        "typeArguments": [
+          {
+            "name": "",
+            "type": 8,
+            "typeArguments": null
+          }
+        ]
+      },
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": ["read"]
+        }
+      ]
+    },
+    {
+      "inputs": [
+        {
+          "name": "greeting",
+          "type": 5,
+          "typeArguments": null
+        }
+      ],
+      "name": "set_greeting",
+      "output": {
+        "name": "",
+        "type": 0,
+        "typeArguments": null
+      },
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": ["write"]
+        }
+      ]
+    },
+    {
+      "inputs": [],
+      "name": "throw_error",
+      "output": {
+        "name": "",
+        "type": 0,
+        "typeArguments": null
+      },
+      "attributes": null
+    }
+  ],
+  "loggedTypes": [
+    {
+      "logId": 0,
+      "loggedType": {
+        "name": "",
+        "type": 7,
+        "typeArguments": []
+      }
+    },
+    {
+      "logId": 1,
+      "loggedType": {
+        "name": "",
+        "type": 2,
+        "typeArguments": []
+      }
+    },
+    {
+      "logId": 2,
+      "loggedType": {
+        "name": "",
+        "type": 9,
+        "typeArguments": []
+      }
+    },
+    {
+      "logId": 3,
+      "loggedType": {
+        "name": "",
+        "type": 2,
+        "typeArguments": []
+      }
+    },
+    {
+      "logId": 4,
+      "loggedType": {
+        "name": "",
+        "type": 2,
+        "typeArguments": []
+      }
+    }
+  ],
+  "messagesTypes": [],
+  "configurables": []
+}
