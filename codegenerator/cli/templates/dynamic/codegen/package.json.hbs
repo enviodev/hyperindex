@@ -7,10 +7,10 @@
     "clean": "rescript clean -with-deps",
     "build": "rescript build -with-deps",
     "watch": "rescript build -with-deps -w",
-    "db-up": "node -e 'require(`./src/Migrations.bs.js`).runUpMigrations(true)'",
-    "db-down": "node -e 'require(`./src/Migrations.bs.js`).runDownMigrations(true, true)'",
-    "db-setup": "node -e 'require(`./src/Migrations.bs.js`).setupDb(true)'",
-    "db-track-tables": "node -e 'require(`./src/Migrations.bs.js`).trackAllTables()'",
+    "db-up": "node -e 'require(`./src/db/Migrations.bs.js`).runUpMigrations(true)'",
+    "db-down": "node -e 'require(`./src/db/Migrations.bs.js`).runDownMigrations(true, true)'",
+    "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).setupDb(true)'",
+    "db-track-tables": "node -e 'require(`./db/src/Migrations.bs.js`).trackAllTables()'",
     "start": "node src/Index.bs.js"
   },
   "keywords": [
