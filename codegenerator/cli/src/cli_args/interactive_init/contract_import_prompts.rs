@@ -4,7 +4,7 @@ use super::{
     },
     inquire_helpers::FilePathCompleter,
     validation::{
-        contains_no_whitespace_validator, first_char_is_alphabet_validator, is_abi_file_validator,
+        contains_no_whitespace_validator, first_char_is_alphabet_validator,
         is_only_alpha_numeric_characters_validator, UniqueValueValidator,
     },
 };
@@ -17,14 +17,14 @@ use crate::{
             self, AutoConfigError, AutoConfigSelection, ContractImportNetworkSelection,
             ContractImportSelection,
         },
-        human_config::{parse_contract_abi, ConfigEvent},
+        human_config::ConfigEvent,
     },
     utils::address_type::Address,
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
-use inquire::{CustomType, MultiSelect, Select, Text};
-use std::{fmt::Display, path::PathBuf, str::FromStr};
+use inquire::{validator::Validation, CustomType, CustomUserError, MultiSelect, Select, Text};
+use std::{env, fmt::Display, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
@@ -555,6 +555,31 @@ impl ExplorerImportArgs {
 }
 
 impl LocalImportArgs {
+    fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
+        let abi_file = std::fs::read_to_string(&abi_path).context(format!(
+            "Failed to read abi file at {:?}, relative to the current directory {:?}",
+            abi_path,
+            env::current_dir().unwrap_or(PathBuf::default())
+        ))?;
+
+        let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
+            "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted correctly \
+            or contact the team.",
+            abi_path
+        ))?;
+
+        Ok(abi)
+    }
+
+    fn is_abi_file_validator(abi_file_path: &str) -> Result<Validation, CustomUserError> {
+        let maybe_parsed_abi = Self::parse_contract_abi(PathBuf::from(abi_file_path));
+
+        match maybe_parsed_abi {
+            Ok(_) => Ok(Validation::Valid),
+            Err(e) => Ok(Validation::Invalid(e.into())),
+        }
+    }
+
     ///Internal function to get the abi path from the cli args or prompt for
     ///a file path to the abi
     fn get_abi_path_string(&self) -> Result<String> {
@@ -566,7 +591,7 @@ impl LocalImportArgs {
                     .with_autocomplete(FilePathCompleter::default())
                     //Tries to parse the abi to ensure its valid and doesn't
                     //crash the prompt if not. Simply asks for a valid abi
-                    .with_validator(is_abi_file_validator)
+                    .with_validator(Self::is_abi_file_validator)
                     .prompt()
                     .context("Failed during prompt for abi file path")?;
 
@@ -579,8 +604,8 @@ impl LocalImportArgs {
     fn get_parsed_abi(&self) -> Result<ethers::abi::Abi> {
         let abi_path_string = self.get_abi_path_string()?;
 
-        let mut parsed_abi =
-            parse_contract_abi(PathBuf::from(abi_path_string)).context("Failed to parse abi")?;
+        let mut parsed_abi = Self::parse_contract_abi(PathBuf::from(abi_path_string))
+            .context("Failed to parse abi")?;
 
         parsed_abi.events = filter_duplicate_events(parsed_abi.events);
 

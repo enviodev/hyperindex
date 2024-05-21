@@ -7,8 +7,8 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
-        human_config::{self, EventDecoder, SyncConfigUnstable, SYNC_CONFIG_DEFAULT},
-        system_config::{self, SystemConfig},
+        human_config::EventDecoder,
+        system_config::{self, RpcConfig, SystemConfig},
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
@@ -612,25 +612,6 @@ type EthAddress = String;
 type StringifiedAbi = String;
 type ServerUrl = String;
 
-///Same as Rpc config defined in human config but no optional values
-#[derive(Debug, Serialize, PartialEq, Clone)]
-#[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
-struct RpcConfig {
-    pub url: String,
-    pub unstable__sync_config: SyncConfigUnstable,
-}
-
-impl From<human_config::RpcConfig> for RpcConfig {
-    fn from(value: human_config::RpcConfig) -> Self {
-        Self {
-            url: value.url,
-            unstable__sync_config: value
-                .unstable__sync_config
-                .unwrap_or_else(|| SYNC_CONFIG_DEFAULT),
-        }
-    }
-}
-
 #[derive(Debug, Serialize, PartialEq, Clone)]
 struct NetworkTemplate {
     pub id: u64,
@@ -807,8 +788,9 @@ mod test {
     use crate::{
         capitalization::Capitalize,
         config_parsing::{
-            entity_parsing::RescriptType, human_config, human_config::RpcConfig,
-            system_config::SystemConfig,
+            entity_parsing::RescriptType,
+            human_config,
+            system_config::{RpcConfig, SystemConfig},
         },
         project_paths::ParsedProjectPaths,
     };
@@ -871,7 +853,10 @@ mod test {
     fn chain_configs_parsed_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let rpc_config1 = RpcConfig::new("https://eth.com").into();
+        let rpc_config1 = RpcConfig {
+            url: "https://eth.com".to_string(),
+            sync_config: system_config::SyncConfig::default(),
+        };
 
         let network1 = super::NetworkTemplate {
             id: 1,
@@ -916,8 +901,10 @@ mod test {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
         let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
-        let rpc_config1: super::RpcConfig = RpcConfig::new("https://eth.com").into();
-
+        let rpc_config1 = RpcConfig {
+            url: "https://eth.com".to_string(),
+            sync_config: system_config::SyncConfig::default(),
+        };
         let network1 = super::NetworkTemplate {
             id: 1,
             rpc_config: Some(rpc_config1.clone()),

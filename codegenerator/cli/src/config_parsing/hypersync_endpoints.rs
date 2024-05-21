@@ -1,9 +1,6 @@
 use anyhow::Context;
 
-use super::{
-    chain_helpers::{HypersyncNetwork, Network},
-    human_config,
-};
+use super::chain_helpers::{HypersyncNetwork, Network};
 
 pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
     match network {
@@ -62,9 +59,7 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
     }
 }
 
-pub fn get_default_hypersync_endpoint(
-    chain_id: u64,
-) -> anyhow::Result<human_config::HypersyncConfig> {
+pub fn get_default_hypersync_endpoint(chain_id: u64) -> anyhow::Result<String> {
     let network_name = Network::from_network_id(chain_id)
         .context(format!("Getting network name from id ({})", chain_id))?;
 
@@ -73,11 +68,7 @@ pub fn get_default_hypersync_endpoint(
         network_name, chain_id
     ))?;
 
-    let endpoint = human_config::HypersyncConfig {
-        endpoint_url: network_to_skar_url(&network),
-    };
-
-    Ok(endpoint)
+    Ok(network_to_skar_url(&network))
 }
 
 #[cfg(test)]

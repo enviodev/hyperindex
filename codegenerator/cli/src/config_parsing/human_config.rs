@@ -1,12 +1,7 @@
-use super::{hypersync_endpoints, validation};
-use crate::{
-    constants::links,
-    project_paths::{path_utils, ParsedProjectPaths},
-    utils::normalized_list::NormalizedList,
-};
+use super::validation;
+use crate::{constants::links, utils::normalized_list::NormalizedList};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::path::PathBuf;
 
 type NetworkId = u64;
@@ -72,75 +67,20 @@ pub struct Network {
     pub contracts: Vec<NetworkContractConfig>,
 }
 
-impl Network {
-    pub fn get_sync_source_with_default(&self) -> anyhow::Result<SyncSourceConfig> {
-        match &self.sync_source {
-            Some(s) => Ok(s.clone()),
-            None => {
-                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(self.id.clone())
-                    .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
-
-                Ok(SyncSourceConfig::HypersyncConfig(
-                    defualt_hypersync_endpoint,
-                ))
-            }
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct SyncConfigUnstable {
-    #[serde(default = "default_initial_block_interval")]
-    initial_block_interval: u32,
-
-    #[serde(default = "default_backoff_multiplicative")]
-    backoff_multiplicative: f32,
-
-    #[serde(default = "default_acceleration_additive")]
-    acceleration_additive: u32,
-
-    #[serde(default = "default_interval_ceiling")]
-    interval_ceiling: u32,
-
-    #[serde(default = "default_backoff_millis")]
-    backoff_millis: u32,
-
-    #[serde(default = "default_query_timeout_millis")]
-    query_timeout_millis: u32,
-}
-
-pub const SYNC_CONFIG_DEFAULT: SyncConfigUnstable = SyncConfigUnstable {
-    initial_block_interval: 10_000,
-    backoff_multiplicative: 0.8,
-    acceleration_additive: 2_000,
-    interval_ceiling: 10_000,
-    backoff_millis: 5000,
-    query_timeout_millis: 20_000,
-};
-
-// default value functions for sync config
-fn default_initial_block_interval() -> u32 {
-    SYNC_CONFIG_DEFAULT.initial_block_interval
-}
-
-fn default_backoff_multiplicative() -> f32 {
-    SYNC_CONFIG_DEFAULT.backoff_multiplicative
-}
-
-fn default_acceleration_additive() -> u32 {
-    SYNC_CONFIG_DEFAULT.acceleration_additive
-}
-
-fn default_interval_ceiling() -> u32 {
-    SYNC_CONFIG_DEFAULT.interval_ceiling
-}
-
-fn default_backoff_millis() -> u32 {
-    SYNC_CONFIG_DEFAULT.backoff_millis
-}
-
-fn default_query_timeout_millis() -> u32 {
-    SYNC_CONFIG_DEFAULT.query_timeout_millis
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_block_interval: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backoff_multiplicative: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acceleration_additive: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval_ceiling: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backoff_millis: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query_timeout_millis: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -149,17 +89,6 @@ pub struct RpcConfig {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unstable__sync_config: Option<SyncConfigUnstable>,
-}
-
-impl RpcConfig {
-    //used only in tests
-    #[cfg(test)]
-    pub fn new(url: &str) -> Self {
-        RpcConfig {
-            url: String::from(url),
-            unstable__sync_config: Some(SYNC_CONFIG_DEFAULT),
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -178,27 +107,6 @@ pub struct LocalContractConfig {
     pub abi_file_path: Option<String>,
     pub handler: String,
     pub events: Vec<ConfigEvent>,
-}
-
-impl LocalContractConfig {
-    pub fn parse_abi(
-        &self,
-        project_paths: &ParsedProjectPaths,
-    ) -> anyhow::Result<Option<ethers::abi::Contract>> {
-        match &self.abi_file_path {
-            None => Ok(None),
-            Some(abi_path_relative_string) => {
-                let relative_path_buf = PathBuf::from(abi_path_relative_string);
-                let abi_path =
-                    path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)?;
-                let parsed = parse_contract_abi(abi_path).context(format!(
-                    "Failed parsing local network contract abi {}",
-                    abi_path_relative_string
-                ))?;
-                Ok(Some(parsed))
-            }
-        }
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -235,22 +143,6 @@ impl ConfigEvent {
             },
         )
     }
-}
-
-pub fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
-    let abi_file = std::fs::read_to_string(&abi_path).context(format!(
-        "Failed to read abi file at {:?}, relative to the current directory {:?}",
-        abi_path,
-        env::current_dir().unwrap_or(PathBuf::default())
-    ))?;
-
-    let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
-        "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted correctly \
-         or contact the team.",
-        abi_path
-    ))?;
-
-    Ok(abi)
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]

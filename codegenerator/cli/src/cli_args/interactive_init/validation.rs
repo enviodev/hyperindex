@@ -1,13 +1,10 @@
-use crate::{
-    config_parsing::human_config::parse_contract_abi,
-    constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
-};
+use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use colored::Colorize;
 use inquire::validator::CustomTypeValidator;
 use inquire::{validator::Validation, CustomUserError};
 use std::collections::BTreeMap;
 use std::fmt::Display;
-use std::{fs, path::PathBuf};
+use std::fs;
 
 pub fn is_valid_folder_name(name: &str) -> bool {
     // Disallow invalid characters in folder names.
@@ -52,15 +49,6 @@ pub fn is_directory_new_validator(directory: &str) -> Result<Validation, CustomU
         ))
     } else {
         Ok(Validation::Valid)
-    }
-}
-
-pub fn is_abi_file_validator(abi_file_path: &str) -> Result<Validation, CustomUserError> {
-    let maybe_parsed_abi = parse_contract_abi(PathBuf::from(abi_file_path));
-
-    match maybe_parsed_abi {
-        Ok(_) => Ok(Validation::Valid),
-        Err(e) => Ok(Validation::Invalid(e.into())),
     }
 }
 

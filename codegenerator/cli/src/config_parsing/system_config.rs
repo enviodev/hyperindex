@@ -1,7 +1,8 @@
 use super::{
     chain_helpers::get_confirmed_block_threshold_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
-    human_config::{self, EventDecoder, HumanConfig, HypersyncConfig, RpcConfig, SyncSourceConfig},
+    human_config::{self, EventDecoder, HumanConfig},
+    hypersync_endpoints,
     validation::validate_names_not_reserved,
 };
 use crate::{
@@ -12,6 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam, HumanReadableParser};
 
 use itertools::Itertools;
+use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -226,10 +228,7 @@ impl SystemConfig {
                 }
             }
 
-            let sync_source = network.get_sync_source_with_default().context(
-                "EE106: Undefined network config, please provide rpc_config, \
-                    read more in our docs https://docs.envio.dev/docs/configuration-file",
-            )?;
+            let sync_source = SyncSource::from_human_config(network.clone())?;
 
             let contracts: Vec<NetworkContract> = network
                 .contracts
@@ -301,9 +300,90 @@ impl SystemConfig {
 type ServerUrl = String;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct HypersyncConfig {
+    pub endpoint_url: ServerUrl,
+}
+
+#[derive(Debug, Serialize, PartialEq, Clone)]
+pub struct SyncConfig {
+    initial_block_interval: u32,
+    backoff_multiplicative: f32,
+    acceleration_additive: u32,
+    interval_ceiling: u32,
+    backoff_millis: u32,
+    query_timeout_millis: u32,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            initial_block_interval: 10_000,
+            backoff_multiplicative: 0.8,
+            acceleration_additive: 2_000,
+            interval_ceiling: 10_000,
+            backoff_millis: 5000,
+            query_timeout_millis: 20_000,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, PartialEq, Clone)]
+pub struct RpcConfig {
+    pub url: String,
+    pub sync_config: SyncConfig,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SyncSource {
+    RpcConfig(RpcConfig),
+    HypersyncConfig(HypersyncConfig),
+}
+
+impl SyncSource {
+    fn from_human_config(network: human_config::Network) -> Result<Self> {
+        match network.sync_source {
+            None => {
+                let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id.clone())
+                    .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
+
+                Ok(Self::HypersyncConfig(HypersyncConfig {
+                    endpoint_url: defualt_hypersync_endpoint,
+                }))
+            }
+            Some(human_config::SyncSourceConfig::RpcConfig(human_config::RpcConfig {
+                url,
+                unstable__sync_config,
+            })) => Ok(Self::RpcConfig(RpcConfig {
+                url,
+                sync_config: match unstable__sync_config {
+                  | None => SyncConfig::default(),
+                  | Some(c) => SyncConfig {
+                    acceleration_additive: c.acceleration_additive
+                        .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
+                    backoff_millis: c.backoff_millis
+                        .unwrap_or_else(|| SyncConfig::default().backoff_millis),
+                    backoff_multiplicative: c.backoff_multiplicative
+                        .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
+                    initial_block_interval: c.initial_block_interval
+                        .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
+                    interval_ceiling: c.interval_ceiling
+                        .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
+                    query_timeout_millis: c.query_timeout_millis
+                        .unwrap_or_else(|| SyncConfig::default().query_timeout_millis),
+                  },
+                } 
+            })),
+            Some(human_config::SyncSourceConfig::HypersyncConfig(
+                human_config::HypersyncConfig { endpoint_url },
+            )) => Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url })),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Network {
     pub id: u64,
-    pub sync_source: SyncSourceConfig,
+    pub sync_source: SyncSource,
     pub start_block: i32,
     pub end_block: Option<i32>,
     pub confirmed_block_threshold: i32,
@@ -313,14 +393,14 @@ pub struct Network {
 impl Network {
     pub fn get_rpc_config(&self) -> Option<RpcConfig> {
         match &self.sync_source {
-            SyncSourceConfig::RpcConfig(cfg) => Some(cfg.clone()),
+            SyncSource::RpcConfig(cfg) => Some(cfg.clone()),
             _ => None,
         }
     }
 
     pub fn get_skar_url(&self) -> Option<ServerUrl> {
         match &self.sync_source {
-            SyncSourceConfig::HypersyncConfig(HypersyncConfig { endpoint_url }) => {
+            SyncSource::HypersyncConfig(HypersyncConfig { endpoint_url }) => {
                 Some(endpoint_url.clone())
             }
             _ => None,
