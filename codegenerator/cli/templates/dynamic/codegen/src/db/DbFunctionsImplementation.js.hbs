@@ -258,7 +258,7 @@ module.exports.deleteAllEntityHistoryAfterEventIdentifier = async (
 `;
 };
 
-const EventUtils = require("./EventUtils.bs.js");
+const EventUtils = require("../EventUtils.bs.js");
 module.exports.deleteAllDynamicContractRegistrationsAfterEventIdentifier =
   async (sql, { blockTimestamp, chainId, blockNumber, logIndex }) => {
     const eventId = EventUtils.packEventIndexFromRecord({
