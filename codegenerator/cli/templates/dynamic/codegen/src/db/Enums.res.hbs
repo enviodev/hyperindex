@@ -1,4 +1,94 @@
 // Graphql Enum Type Variants
+type enumType<'a> = {
+  enumName: string,
+  variants: array<'a>,
+}
+
+module type Enum = {
+  type variants
+  let enumName: string
+  let variants: array<variants>
+  let enumType: enumType<variants>
+}
+
+module MakeEnum = (
+  E: {
+    type variants
+    let enumName: string
+    let variants: array<variants>
+  },
+): Enum => {
+  include E
+  let enumType = {
+    enumName,
+    variants,
+  }
+}
+
+module EventType = MakeEnum({
+  type variants = 
+  {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
+    | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
+  {{/each}}{{/each}}
+  let enumName = "EVENT_TYPE"
+  let variants = [
+  {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
+    {{event.event_type.full}},
+  {{/each}}{{/each}}
+  ]
+})
+
+module ContractType = MakeEnum({
+  type variants = 
+  {{#each codegen_contracts as | contract |}}
+    | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
+  {{/each}}
+  let enumName = "CONTRACT_TYPE"
+  let variants = [
+  {{#each codegen_contracts as | contract |}}
+    {{contract.name.capitalized}},
+  {{/each}}
+  ]
+})
+
+module EntityType = MakeEnum({
+  type variants = 
+  {{#each entities as | entity |}}
+    | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
+  {{/each}}
+  let enumName = "ENTITY_TYPE"
+  let variants = [
+  {{#each entities as | entity |}}
+    {{entity.name.capitalized}},
+  {{/each}}
+  ]
+})
+
+{{#each gql_enums as | enum |}} 
+module {{enum.name.capitalized}} = MakeEnum({
+  type variants = 
+  {{#each enum.params as | param | }}
+    | @as("{{param.original}}") {{param.capitalized}}
+  {{/each}}
+  let enumName = "{{enum.name.capitalized}}"
+  let variants = [
+  {{#each enum.params as | param | }}
+    {{param.capitalized}},
+  {{/each}}
+  ]
+})
+{{/each}}
+
+let allEnums: array<module(Enum)> = [
+  module(EventType), 
+  module(ContractType), 
+  module(EntityType),
+{{#each gql_enums as | enum |}} 
+  module({{enum.name.capitalized}}),
+{{/each}}
+]
+//todo move logic into above modules
+// Graphql Enum Type Variants
 {{#each gql_enums as | enum |}} 
 @genType.as("{{enum.name.capitalized}}")
 type {{enum.name.uncapitalized}} = 

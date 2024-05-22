@@ -54,7 +54,11 @@ module ChainMetadata = {
       mkField("is_hyper_sync", Bool),
       mkField("num_batches_fetched", Integer),
       mkField("latest_fetched_block_number", Integer),
-      mkField("timestamp_caught_up_to_head_or_endblock", Timestamp, ~with="TIME ZONE NULL"), //TODO enable with field
+      mkField(
+        "timestamp_caught_up_to_head_or_endblock",
+        Timestamp,
+        // ~with="TIME ZONE NULL"//TODO enable with field
+      ),
     ],
   )
 }
