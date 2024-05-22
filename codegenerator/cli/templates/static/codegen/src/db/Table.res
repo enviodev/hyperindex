@@ -2,6 +2,7 @@ open Belt
 @unboxed
 type fieldType =
   | @as("INTEGER") Integer
+  | @as("BOOL") Bool
   | @as("NUMERIC") Numeric
   | @as("TEXT") Text
   | @as("SERIAL") Serial
@@ -57,4 +58,33 @@ let mkTable = (~compositeIndices=[], ~fields, tableName) => {
   tableName,
   fields,
   compositeIndices,
+}
+
+let getPrimaryKeyFieldNames = table =>
+  table.fields->Array.keepMap(field => field.isPrimaryKey ? Some(field.fieldName) : None)
+
+let getSingleIndices = (table): array<string> => {
+  let indexFields =
+    table.fields->Array.keepMap(field => field.isIndex ? Some(field.fieldName) : None)
+
+  table.compositeIndices
+  ->Array.keep(ind => ind->Array.length == 1)
+  ->Array.concat([indexFields])
+  ->Array.concatMany
+  ->Set.String.fromArray
+  ->Set.String.toArray
+  ->Js.Array2.sortInPlace
+}
+
+let getCompositeIndices = (table): array<array<string>> => {
+  table.compositeIndices->Array.keep(ind => ind->Array.length > 1)
+}
+
+let getFields = table => table.fields->Array.keep(field => field.derivedFrom->Option.isNone)
+
+let getDerivedFromFields = table =>
+  table.fields->Array.keep(field => field.derivedFrom->Option.isSome)
+
+let getFieldNames = table => {
+  table->getFields->Array.map(getFieldName)
 }
