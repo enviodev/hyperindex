@@ -49,7 +49,7 @@ Alternatively you can add an alias in your shell config. This will allow you to 
 Go to your shell config file and add the following line:
 
 ```
-alias lenvio="cargo run --manifest-path <absolute repository path>/indexer/codegenerator/cli/Cargo.toml --"
+alias lenvio="cargo run --manifest-path <absolute repository path>/hyperindex/codegenerator/cli/Cargo.toml --"
 ```
 
 > `lenvio` is like `local envio` 😁
