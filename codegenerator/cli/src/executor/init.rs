@@ -1,5 +1,5 @@
 use crate::{
-    clap_definitions::{Platform, Template},
+    clap_definitions::{Ecosystem, Template},
     cli_args::{
         clap_definitions::{InitArgs, Language, ProjectPaths},
         interactive_init::InitilizationTypeWithArgs,
@@ -148,14 +148,14 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
         }
     }
 
-    let platform = match parsed_init_args.template {
-        InitilizationTypeWithArgs::Template(Template::GreeterOnFuel) => Platform::Fuel,
-        _ => Platform::Ethereum,
+    let ecosystem = match parsed_init_args.template {
+        InitilizationTypeWithArgs::Template(Template::GreeterOnFuel) => Ecosystem::Fuel,
+        _ => Ecosystem::Ethereum,
     };
 
-    let envio_version = match platform {
-        Platform::Fuel => "0.0.2-fuel".to_string(),
-        Platform::Ethereum => {
+    let envio_version = match ecosystem {
+        Ecosystem::Fuel => "0.0.2-fuel".to_string(),
+        Ecosystem::Ethereum => {
             let crate_version = env!("CARGO_PKG_VERSION");
             if is_valid_release_version_number(crate_version) {
                 //Check that crate version is not a dev release. In which case the

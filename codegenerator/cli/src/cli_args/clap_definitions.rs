@@ -229,7 +229,7 @@ pub struct LocalImportArgs {
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-pub enum Platform {
+pub enum Ecosystem {
     Ethereum,
     Fuel,
 }
