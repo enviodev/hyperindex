@@ -1,82 +1,75 @@
 // Graphql Enum Type Variants
 type enumType<'a> = {
-  enumName: string,
+  name: string,
   variants: array<'a>,
+}
+
+let mkEnum = (~name, ~variants) => {
+  name,
+  variants,
 }
 
 module type Enum = {
   type variants
-  let enumName: string
-  let variants: array<variants>
-  let enumType: enumType<variants>
+  let enum: enumType<variants>
 }
 
-module MakeEnum = (
-  E: {
-    type variants
-    let enumName: string
-    let variants: array<variants>
-  },
-): Enum => {
-  include E
-  let enumType = {
-    enumName,
-    variants,
-  }
-}
-
-module EventType = MakeEnum({
+module EventType = {
   type variants = 
   {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
     | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
   {{/each}}{{/each}}
-  let enumName = "EVENT_TYPE"
+  let name = "EVENT_TYPE"
   let variants = [
   {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
     {{event.event_type.full}},
   {{/each}}{{/each}}
   ]
-})
+  let enum = mkEnum(~name, ~variants)
+}
 
-module ContractType = MakeEnum({
+module ContractType = {
   type variants = 
   {{#each codegen_contracts as | contract |}}
     | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
   {{/each}}
-  let enumName = "CONTRACT_TYPE"
+  let name = "CONTRACT_TYPE"
   let variants = [
   {{#each codegen_contracts as | contract |}}
     {{contract.name.capitalized}},
   {{/each}}
   ]
-})
+  let enum = mkEnum(~name, ~variants)
+}
 
-module EntityType = MakeEnum({
+module EntityType = {
   type variants = 
   {{#each entities as | entity |}}
     | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
   {{/each}}
-  let enumName = "ENTITY_TYPE"
+  let name = "ENTITY_TYPE"
   let variants = [
   {{#each entities as | entity |}}
     {{entity.name.capitalized}},
   {{/each}}
   ]
-})
+  let enum = mkEnum(~name, ~variants)
+}
 
 {{#each gql_enums as | enum |}} 
-module {{enum.name.capitalized}} = MakeEnum({
+module {{enum.name.capitalized}} = {
   type variants = 
   {{#each enum.params as | param | }}
     | @as("{{param.original}}") {{param.capitalized}}
   {{/each}}
-  let enumName = "{{enum.name.capitalized}}"
+  let name = "{{enum.name.capitalized}}"
   let variants = [
   {{#each enum.params as | param | }}
     {{param.capitalized}},
   {{/each}}
   ]
-})
+  let enum = mkEnum(~name, ~variants)
+  }
 {{/each}}
 
 let allEnums: array<module(Enum)> = [
