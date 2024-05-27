@@ -132,7 +132,7 @@ module RawEventsTable = {
       mkField("src_address", Text),
       mkField("block_hash", Text),
       mkField("block_timestamp", Integer),
-      mkField("event_type", Enum(EventType.enumName)),
+      mkField("event_type", Enum(EventType.enum.name)),
       mkField("params", Json),
       mkField("db_write_timestamp", Timestamp, ~default="CURRENT_TIMESTAMP"),
     ],
@@ -154,7 +154,7 @@ module DynamicContractRegistryTable = {
       mkField("event_id", Numeric),
       mkField("block_timestamp", Integer),
       mkField("contract_address", Text, ~isPrimaryKey),
-      mkField("contract_type", Enum(ContractType.enumName)),
+      mkField("contract_type", Enum(ContractType.enum.name)),
     ],
   )
 }
@@ -182,7 +182,7 @@ module EntityHistoryTable = {
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("block_number", Integer, ~isPrimaryKey),
       mkField("log_index", Integer, ~isPrimaryKey),
-      mkField("entity_type", Enum(EntityType.enumName), ~isPrimaryKey),
+      mkField("entity_type", Enum(EntityType.enum.name), ~isPrimaryKey),
       mkField("params", Json, ~isNullable),
       mkField("previous_block_timestamp", Integer, ~isNullable),
       mkField("previous_chain_id", Integer, ~isNullable),
@@ -221,7 +221,7 @@ module EntityHistoryFilterTable = {
       mkField("previous_block_number", Integer, ~isNullable),
       mkField("log_index", Integer, ~isPrimaryKey),
       mkField("previous_log_index", Integer, ~isNullable, ~isPrimaryKey),
-      mkField("entity_type", Enum(EntityType.enumName), ~isPrimaryKey),
+      mkField("entity_type", Enum(EntityType.enum.name), ~isPrimaryKey),
     ],
   )
 }

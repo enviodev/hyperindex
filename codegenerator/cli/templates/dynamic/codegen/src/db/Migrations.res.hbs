@@ -57,12 +57,12 @@ let createTableIndices = (sql, table: Table.table) => {
 
 let createEnumIfNotExists = (sql, enum: Enums.enumType<_>) => {
   open Belt
-  let {variants, enumName} = enum
+  let {variants, name} = enum
   let mappedVariants = variants->Array.map(v => `'${v->Obj.magic}'`)->Js.Array2.joinWith(", ")
   let query = `
       DO $$ BEGIN
-      IF NOT EXISTS(SELECT 1 FROM pg_type WHERE typname = '${enumName->Js.String2.toLowerCase}') THEN
-        CREATE TYPE ${enumName} AS ENUM(${mappedVariants});
+      IF NOT EXISTS(SELECT 1 FROM pg_type WHERE typname = '${name->Js.String2.toLowerCase}') THEN
+        CREATE TYPE ${name} AS ENUM(${mappedVariants});
         END IF;
       END $$; `
 
@@ -424,9 +424,9 @@ let runUpMigrations = async (~shouldExit) => {
 
   //Add all enums
   await Enums.allEnums->awaitEach(enum => {
-    let module(Enum) = enum
-    createEnumIfNotExists(DbFunctions.sql, Enum.enumType)->handleFailure(
-      ~msg=`EE800: Error creating ${Enum.enumName} enum`,
+    let module(EnumMod) = enum
+    createEnumIfNotExists(DbFunctions.sql, EnumMod.enum)->handleFailure(
+      ~msg=`EE800: Error creating ${EnumMod.enum.name} enum`,
     )
   })
 
