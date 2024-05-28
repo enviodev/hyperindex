@@ -8,7 +8,7 @@ let creatTableIfNotExists = (sql, table) => {
     ->Table.getFields
     ->Array.map(field => {
       let {fieldType, isNullable, defaultValue} = field
-      let fieldName = field->Table.getFieldName
+      let fieldName = field->Table.getDbFieldName
 
       {
         `"${fieldName}" ${(fieldType :> string)}${switch defaultValue {
@@ -33,16 +33,18 @@ let creatTableIfNotExists = (sql, table) => {
   sql->unsafe(query)
 }
 
+let makeCreateIndexQuery = (~tableName, ~indexFields) => {
+  let indexName = tableName ++ "_" ++ indexFields->Js.Array2.joinWith("_")
+  let index = indexFields->Belt.Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
+  `CREATE INDEX IF NOT EXISTS "${indexName}" ON "public"."${tableName}"(${index}); `
+}
+
 let createTableIndices = (sql, table: Table.table) => {
   open Belt
   let tableName = table.tableName
-  let createIndex = indexField =>
-    `CREATE INDEX IF NOT EXISTS "${tableName}_${indexField}" ON "public"."${tableName}"("${indexField}"); `
-
+  let createIndex = indexField => makeCreateIndexQuery(~tableName, ~indexFields=[indexField])
   let createCompositeIndex = indexFields => {
-    let indexName = indexFields->Js.Array2.joinWith("_")
-    let index = indexFields->Array.map(idx => `"${idx}"`)->Js.Array2.joinWith(", ")
-    `CREATE INDEX IF NOT EXISTS "${tableName}_${indexName}" ON "public"."${tableName}"(${index}); `
+    makeCreateIndexQuery(~tableName, ~indexFields)
   }
 
   let singleIndices = table->Table.getSingleIndices
@@ -52,6 +54,15 @@ let createTableIndices = (sql, table: Table.table) => {
     singleIndices->Array.map(createIndex)->Js.Array2.joinWith("\n") ++
       compositeIndices->Array.map(createCompositeIndex)->Js.Array2.joinWith("\n")
 
+  sql->unsafe(query)
+}
+
+let createDerivedFromDbIndex = (~derivedFromField: Table.derivedFromField, ~schema: Schema.t) => {
+  let indexField = schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
+  let query = makeCreateIndexQuery(
+    ~tableName=derivedFromField.derivedFromEntity,
+    ~indexFields=[indexField],
+  )
   sql->unsafe(query)
 }
 
@@ -320,19 +331,6 @@ module EntityHistory = {
   }
 }
 
-module DbIndexes = {
-  let createDerivedFromDbIndexes = async () => {
-  {{#each entities as |entity|}}
-    {{#each entity.relational_params.filtered_is_derived_from as | param |}}
-  let _ = await %raw("sql`
-    CREATE INDEX IF NOT EXISTS \"index_{{param.mapped_entity.original}}_{{param.relational_key.uncapitalized}}\" ON public.\"{{param.mapped_entity.original}}\" (\"{{param.relational_key.uncapitalized}}\");
-  `")
-    {{/each}}
-  {{/each}}
-  ()
-  }
-}
-
 let deleteAllTables: unit => promise<unit> = async () => {
   // await EntityHistory.dropEntityHistoryTable()
 
@@ -425,10 +423,18 @@ let runUpMigrations = async (~shouldExit) => {
     ~msg=`EE800: Error creating entity history db function table`,
   )
 
-  // TODO: catch errors here
-  await DbIndexes.createDerivedFromDbIndexes()->handleFailure(
-    ~msg=`EE800: Error creating derivedFrom indices`,
-  )
+  //Create all derivedFromField indices (must be done after all tables are created)
+  await [Entities.allTables]
+  ->Belt.Array.concatMany
+  ->awaitEach(async table => {
+    await table
+    ->Table.getDerivedFromFields
+    ->awaitEach(derivedFromField => {
+      createDerivedFromDbIndex(~derivedFromField, ~schema=Entities.schema)->handleFailure(
+        ~msg=`Error creating derivedFrom index of "${derivedFromField.fieldName}" in entity "${table.tableName}"`,
+      )
+    })
+  })
 
   await TrackTables.trackAllTables()->Promise.catch(err => {
     Logging.errorWithExn(err, `EE803: Error tracking tables`)->Promise.resolve
@@ -452,10 +458,13 @@ let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
   } else {
     await deleteAllTablesExceptRawEventsAndDynamicContractRegistry()->Promise.catch(err => {
       exitCode := Failure
-      Logging.errorWithExn(err, "EE805: Error dropping entity tables except for raw events")->Promise.resolve
+      Logging.errorWithExn(
+        err,
+        "EE805: Error dropping entity tables except for raw events",
+      )->Promise.resolve
     })
   }
-   if shouldExit {
+  if shouldExit {
     process->exit(exitCode.contents)
   }
   exitCode.contents
@@ -473,9 +482,9 @@ let setupDb = async (~shouldDropRawEvents) => {
   let exitCodeUp = await runUpMigrations(~shouldExit=false)
 
   let exitCode = switch (exitCodeDown, exitCodeUp) {
-      | (Success, Success) => Success
-      | _ => Failure
-    }
+  | (Success, Success) => Success
+  | _ => Failure
+  }
 
   process->exit(exitCode)
 }

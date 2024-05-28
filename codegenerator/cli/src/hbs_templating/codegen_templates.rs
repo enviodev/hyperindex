@@ -229,10 +229,18 @@ pub struct EntityIndexParamGroup {
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
+pub struct DerivedFieldTemplate {
+    pub field_name: String,
+    pub derived_from_entity: String,
+    pub derived_from_field: String,
+}
+
+#[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub postgres_fields: Vec<postgres_types::Field>,
     pub composite_indices: Vec<Vec<String>>,
+    pub derived_fields: Vec<DerivedFieldTemplate>,
     pub params: Vec<EntityParamTypeTemplate>,
     pub index_groups: Vec<EntityIndexParamGroup>,
     pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
@@ -313,10 +321,16 @@ impl EntityRecordTypeTemplate {
         let postgres_fields = entity
             .get_fields()
             .iter()
-            .map(|gql_field| gql_field.to_postgres_field(&config.schema, entity))
+            .map(|gql_field| gql_field.get_postgres_field(&config.schema, entity))
             .collect::<Result<Vec<_>>>()?
             .into_iter()
             .filter_map(|opt| opt)
+            .collect();
+
+        let derived_fields = entity
+            .get_fields()
+            .iter()
+            .filter_map(|gql_field| gql_field.get_derived_from_field())
             .collect();
 
         let composite_indices = entity.get_composite_indices();
@@ -324,6 +338,7 @@ impl EntityRecordTypeTemplate {
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
             postgres_fields,
+            derived_fields,
             composite_indices,
             params,
             index_groups,
