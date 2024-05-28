@@ -2,7 +2,7 @@ open Belt
 @unboxed
 type fieldType =
   | @as("INTEGER") Integer
-  | @as("BOOL") Bool
+  | @as("BOOLEAN") Boolean
   | @as("NUMERIC") Numeric
   | @as("TEXT") Text
   | @as("SERIAL") Serial
@@ -10,25 +10,29 @@ type fieldType =
   | @as("TIMESTAMP") Timestamp
   | Enum(string)
 
-type derivedFromField = {
-  entity: string,
-  field: string,
-}
+//TODO: Support derivedFromField definitions at table level
+//Challenges are creating indexes on other tables from here etc
+// type derivedFromField = {
+//   entity: string,
+//   field: string,
+// }
 
 type field = {
   fieldName: string,
   fieldType: fieldType,
+  isArray: bool,
   isNullable: bool,
   isPrimaryKey: bool,
   isIndex: bool,
   isLinkedEntityField: bool,
-  derivedFrom: option<derivedFromField>,
+  // derivedFrom: option<derivedFromField>,
   defaultValue: option<string>,
 }
 
 let mkField = (
   ~default=?,
   ~derivedFrom=?,
+  ~isArray=false,
   ~isNullable=false,
   ~isPrimaryKey=false,
   ~isIndex=false,
@@ -38,12 +42,13 @@ let mkField = (
 ) => {
   fieldName,
   fieldType,
+  isArray,
   isNullable,
   isPrimaryKey,
   isIndex,
   isLinkedEntityField,
   defaultValue: default,
-  derivedFrom,
+  // derivedFrom,
 }
 
 let getFieldName = field => field.isLinkedEntityField ? field.fieldName ++ "_id" : field.fieldName
@@ -80,10 +85,10 @@ let getCompositeIndices = (table): array<array<string>> => {
   table.compositeIndices->Array.keep(ind => ind->Array.length > 1)
 }
 
-let getFields = table => table.fields->Array.keep(field => field.derivedFrom->Option.isNone)
+let getFields = table => table.fields //->Array.keep(field => field.derivedFrom->Option.isNone)
 
-let getDerivedFromFields = table =>
-  table.fields->Array.keep(field => field.derivedFrom->Option.isSome)
+// let getDerivedFromFields = table =>
+//   table.fields->Array.keep(field => field.derivedFrom->Option.isSome)
 
 let getFieldNames = table => {
   table->getFields->Array.map(getFieldName)
