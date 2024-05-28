@@ -1,4 +1,7 @@
 open Belt
+
+type primitive
+type derived
 @unboxed
 type fieldType =
   | @as("INTEGER") Integer
@@ -10,13 +13,6 @@ type fieldType =
   | @as("TIMESTAMP") Timestamp
   | Enum(string)
 
-//TODO: Support derivedFromField definitions at table level
-//Challenges are creating indexes on other tables from here etc
-// type derivedFromField = {
-//   entity: string,
-//   field: string,
-// }
-
 type field = {
   fieldName: string,
   fieldType: fieldType,
@@ -25,13 +21,19 @@ type field = {
   isPrimaryKey: bool,
   isIndex: bool,
   isLinkedEntityField: bool,
-  // derivedFrom: option<derivedFromField>,
   defaultValue: option<string>,
 }
 
+type derivedFromField = {
+  fieldName: string,
+  derivedFromEntity: string,
+  derivedFromField: string,
+}
+
+type fieldOrDerived = Field(field) | DerivedFrom(derivedFromField)
+
 let mkField = (
   ~default=?,
-  ~derivedFrom=?,
   ~isArray=false,
   ~isNullable=false,
   ~isPrimaryKey=false,
@@ -39,38 +41,70 @@ let mkField = (
   ~isLinkedEntityField=false,
   fieldName,
   fieldType,
-) => {
-  fieldName,
-  fieldType,
-  isArray,
-  isNullable,
-  isPrimaryKey,
-  isIndex,
-  isLinkedEntityField,
-  defaultValue: default,
-  // derivedFrom,
-}
+) =>
+  {
+    fieldName,
+    fieldType,
+    isArray,
+    isNullable,
+    isPrimaryKey,
+    isIndex,
+    isLinkedEntityField,
+    defaultValue: default,
+  }->Field
 
-let getFieldName = field => field.isLinkedEntityField ? field.fieldName ++ "_id" : field.fieldName
+let mkDerivedFromField = (fieldName, ~derivedFromEntity, ~derivedFromField) =>
+  {
+    fieldName,
+    derivedFromField,
+    derivedFromEntity,
+  }->DerivedFrom
+
+let getUserDefinedFieldName = fieldOrDerived =>
+  switch fieldOrDerived {
+  | Field({fieldName})
+  | DerivedFrom({fieldName}) => fieldName
+  }
+
+let getDbFieldName = field => field.isLinkedEntityField ? field.fieldName ++ "_id" : field.fieldName
+
+let getFieldName = fieldOrDerived =>
+  switch fieldOrDerived {
+  | Field(field) => field->getDbFieldName
+  | DerivedFrom({fieldName}) => fieldName
+  }
 
 type table = {
   tableName: string,
-  fields: array<field>,
+  fields: array<fieldOrDerived>,
   compositeIndices: array<array<string>>,
 }
 
-let mkTable = (~compositeIndices=[], ~fields, tableName) => {
+let mkTable: 'b. (
+  ~compositeIndices: array<array<string>>=?,
+  ~fields: array<fieldOrDerived>,
+  string,
+) => 'c = (~compositeIndices=[], ~fields, tableName) => {
   tableName,
   fields,
   compositeIndices,
 }
 
 let getPrimaryKeyFieldNames = table =>
-  table.fields->Array.keepMap(field => field.isPrimaryKey ? Some(field.fieldName) : None)
+  table.fields->Array.keepMap(field =>
+    switch field {
+    | Field({isPrimaryKey: true, fieldName}) => Some(fieldName)
+    | _ => None
+    }
+  )
 
 let getSingleIndices = (table): array<string> => {
-  let indexFields =
-    table.fields->Array.keepMap(field => field.isIndex ? Some(field.fieldName) : None)
+  let indexFields = table.fields->Array.keepMap(field =>
+    switch field {
+    | Field({isIndex: true, fieldName}) => Some(fieldName)
+    | _ => None
+    }
+  )
 
   table.compositeIndices
   ->Array.keep(ind => ind->Array.length == 1)
@@ -85,11 +119,25 @@ let getCompositeIndices = (table): array<array<string>> => {
   table.compositeIndices->Array.keep(ind => ind->Array.length > 1)
 }
 
-let getFields = table => table.fields //->Array.keep(field => field.derivedFrom->Option.isNone)
+let getFields = table =>
+  table.fields->Array.keepMap(field =>
+    switch field {
+    | Field(field) => Some(field)
+    | DerivedFrom(_) => None
+    }
+  )
 
-// let getDerivedFromFields = table =>
-//   table.fields->Array.keep(field => field.derivedFrom->Option.isSome)
+let getDerivedFromFields = table =>
+  table.fields->Array.keepMap(field =>
+    switch field {
+    | DerivedFrom(field) => Some(field)
+    | Field(_) => None
+    }
+  )
 
 let getFieldNames = table => {
-  table->getFields->Array.map(getFieldName)
+  table->getFields->Array.map(getDbFieldName)
 }
+
+let getFieldByName = (table, fieldNameSearch) =>
+  table.fields->Js.Array2.find(field => field->getUserDefinedFieldName == fieldNameSearch)

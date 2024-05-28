@@ -7,6 +7,7 @@ use super::{
 };
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
+    hbs_templating::codegen_templates::DerivedFieldTemplate,
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context};
@@ -652,7 +653,8 @@ impl Field {
         self.name.as_str().to_lowercase() == "id"
     }
 
-    pub fn to_postgres_field(
+    ///Returns None if it is a derived field
+    pub fn get_postgres_field(
         &self,
         schema: &Schema,
         entity: &Entity,
@@ -671,6 +673,20 @@ impl Field {
                 is_primary_key: self.is_primary_key(),
                 is_nullable: gql_field_type.is_optional(),
             })),
+        }
+    }
+
+    pub fn get_derived_from_field(&self) -> Option<DerivedFieldTemplate> {
+        match &self.field_type {
+            FieldType::DerivedFromField {
+                entity_name,
+                derived_from_field,
+            } => Some(DerivedFieldTemplate {
+                field_name: self.name.clone(),
+                derived_from_field: derived_from_field.clone(),
+                derived_from_entity: entity_name.clone(),
+            }),
+            FieldType::RegularField { .. } => None,
         }
     }
 }

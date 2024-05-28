@@ -38,6 +38,13 @@ module {{entity.name.capitalized}} = {
       {{#if pg_field.is_linked_entity_field}}~isLinkedEntityField,{{/if}}
       ),
   {{/each}}
+  {{#each entity.derived_fields as | derived_field |}}
+      mkDerivedFromField(
+      "{{derived_field.field_name}}", 
+      ~derivedFromEntity="{{derived_from_entity}}",
+      ~derivedFromField="{{derived_from_field}}",
+      ),
+  {{/each}}
     ],
   {{!--Only add these if there are any--}}
   {{#if entity.composite_indices.0}}
@@ -54,3 +61,4 @@ let allTables: array<table> = [
   {{entity.name.capitalized}}.table,
 {{/each}}
 ]
+let schema = Schema.make(allTables)
