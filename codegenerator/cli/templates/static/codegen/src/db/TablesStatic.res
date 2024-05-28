@@ -51,7 +51,7 @@ module ChainMetadata = {
       mkField("first_event_block_number", Integer, ~isNullable),
       mkField("latest_processed_block", Integer, ~isNullable),
       mkField("num_events_processed", Integer, ~isNullable),
-      mkField("is_hyper_sync", Bool),
+      mkField("is_hyper_sync", Boolean),
       mkField("num_batches_fetched", Integer),
       mkField("latest_fetched_block_number", Integer),
       mkField(

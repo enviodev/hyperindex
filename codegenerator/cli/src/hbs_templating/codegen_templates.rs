@@ -8,6 +8,7 @@ use crate::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
         human_config::EventDecoder,
+        postgres_types,
         system_config::{self, RpcConfig, SystemConfig},
     },
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -230,6 +231,8 @@ pub struct EntityIndexParamGroup {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityRecordTypeTemplate {
     pub name: CapitalizedOptions,
+    pub postgres_fields: Vec<postgres_types::Field>,
+    pub composite_indices: Vec<Vec<String>>,
     pub params: Vec<EntityParamTypeTemplate>,
     pub index_groups: Vec<EntityIndexParamGroup>,
     pub relational_params: FilteredTemplateLists<EntityRelationalTypesTemplate>,
@@ -307,8 +310,21 @@ impl EntityRecordTypeTemplate {
             })
             .collect();
 
+        let postgres_fields = entity
+            .get_fields()
+            .iter()
+            .map(|gql_field| gql_field.to_postgres_field(&config.schema, entity))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter_map(|opt| opt)
+            .collect();
+
+        let composite_indices = entity.get_composite_indices();
+
         Ok(EntityRecordTypeTemplate {
             name: entity.name.to_capitalized_options(),
+            postgres_fields,
+            composite_indices,
             params,
             index_groups,
             relational_params,

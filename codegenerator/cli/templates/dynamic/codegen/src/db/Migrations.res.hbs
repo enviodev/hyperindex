@@ -320,32 +320,6 @@ module EntityHistory = {
   }
 }
 
-{{#each entities as |entity|}}
-module {{entity.name.capitalized}} = {
-  //silence unused var warnings for raw bindings
-  @@warning("-21")
-  let create{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
-    await %raw("sql`
-      CREATE TABLE \"public\".\"{{entity.name.original}}\" (
-      {{#each entity.params as |param|}}
-        {{#unless param.is_derived_from}}\"{{param.field_name.uncapitalized}}{{#if is_entity_field}}_id{{/if}}\" {{param.type_pg}},{{/unless}}
-      {{/each}} 
-        db_write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, 
-        PRIMARY KEY (\"id\"));`")
-
-    let _ = await %raw("sql`
-      CREATE INDEX IF NOT EXISTS \"{{entity.name.original}}_id\" ON public.\"{{entity.name.original}}\" (id);
-    `")
-  }
-
-  let delete{{entity.name.capitalized}}Table:unit => promise<unit> = async () => {
-    // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
-    await %raw("sql`DROP TABLE IF EXISTS \"public\".\"{{entity.name.original}}\";`")
-  }
-}
-
-{{/each}}
-
 module DbIndexes = {
   let createDerivedFromDbIndexes = async () => {
   {{#each entities as |entity|}}
@@ -431,7 +405,7 @@ let runUpMigrations = async (~shouldExit) => {
   })
 
   //Create all tables with indices
-  await [TablesStatic.allTables]//TODO add Entity tables here
+  await [TablesStatic.allTables, Entities.allTables]
   ->Belt.Array.concatMany
   ->awaitEach(async table => {
     await creatTableIfNotExists(DbFunctions.sql, table)->handleFailure(
@@ -451,12 +425,6 @@ let runUpMigrations = async (~shouldExit) => {
     ~msg=`EE800: Error creating entity history db function table`,
   )
 
-{{#each entities as |entity|}}
-  await {{entity.name.capitalized}}.create{{entity.name.capitalized}}Table()->handleFailure(
-    ~msg=`EE802: Error creating {{entity.name.original}} table`,
-  )
-
-{{/each}}
   // TODO: catch errors here
   await DbIndexes.createDerivedFromDbIndexes()->handleFailure(
     ~msg=`EE800: Error creating derivedFrom indices`,
@@ -474,9 +442,6 @@ let runUpMigrations = async (~shouldExit) => {
 
 let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
   let exitCode = ref(Success)
-  // {{#each entities as |entity|}}
-  // await {{entity.name.capitalized}}.delete{{entity.name.capitalized}}Table()
-  // {{/each}}
 
   // NOTE: For now delete any remaining tables.
   if shouldDropRawEvents {

@@ -1,6 +1,9 @@
-use super::validation::{
-    check_enums_for_internal_reserved_words, check_names_from_schema_for_reserved_words,
-    is_valid_postgres_db_name,
+use super::{
+    postgres_types::{Field as PGField, Primitive as PGPrimitive},
+    validation::{
+        check_enums_for_internal_reserved_words, check_names_from_schema_for_reserved_words,
+        is_valid_postgres_db_name,
+    },
 };
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
@@ -474,6 +477,22 @@ impl Entity {
         }
         Ok(())
     }
+
+    ///Returns defined multi field indices where definitions
+    ///have > 1 fields.
+    pub fn get_composite_indices(&self) -> Vec<Vec<String>> {
+        self.multi_field_indexes
+            .iter()
+            .cloned()
+            .filter_map(|multi_field_index| {
+                if multi_field_index.0.len() > 1 {
+                    Some(multi_field_index.0)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -627,6 +646,32 @@ impl Field {
             .any(|single_field_index| single_field_index == self.name);
 
         has_indexed_directive || has_single_field_index_directive
+    }
+
+    pub fn is_primary_key(&self) -> bool {
+        self.name.as_str().to_lowercase() == "id"
+    }
+
+    pub fn to_postgres_field(
+        &self,
+        schema: &Schema,
+        entity: &Entity,
+    ) -> anyhow::Result<Option<PGField>> {
+        match &self.field_type {
+            FieldType::DerivedFromField { .. } => Ok(None),
+            FieldType::RegularField {
+                field_type: gql_field_type,
+                ..
+            } => Ok(Some(PGField {
+                field_name: self.name.clone(),
+                field_type: gql_field_type.to_underlying_postgres_primitive(schema)?,
+                is_array: gql_field_type.is_array(),
+                is_index: self.is_indexed_field(entity),
+                is_linked_entity_field: gql_field_type.is_entity_field(schema)?,
+                is_primary_key: self.is_primary_key(),
+                is_nullable: gql_field_type.is_optional(),
+            })),
+        }
     }
 }
 
@@ -975,6 +1020,15 @@ impl UserDefinedFieldType {
         }
     }
 
+    pub fn to_underlying_postgres_primitive(&self, schema: &Schema) -> anyhow::Result<PGPrimitive> {
+        match self {
+            Self::Single(gql_scalar) => gql_scalar.to_underlying_postgres_primitive(schema),
+            Self::ListType(field_type) | Self::NonNullType(field_type) => {
+                field_type.to_underlying_postgres_primitive(schema)
+            }
+        }
+    }
+
     pub fn is_optional(&self) -> bool {
         !matches!(self, Self::NonNullType(_))
     }
@@ -1302,6 +1356,23 @@ impl GqlScalar {
             },
         };
         Ok(converted.to_string())
+    }
+
+    pub fn to_underlying_postgres_primitive(&self, schema: &Schema) -> anyhow::Result<PGPrimitive> {
+        let converted = match self {
+            GqlScalar::ID => PGPrimitive::Text,
+            GqlScalar::String => PGPrimitive::Text,
+            GqlScalar::Int => PGPrimitive::Integer,
+            GqlScalar::Float => PGPrimitive::Numeric, // Should we allow this type? Rounding issues will abound.
+            GqlScalar::Boolean => PGPrimitive::Boolean,
+            GqlScalar::Bytes => PGPrimitive::Text,
+            GqlScalar::BigInt => PGPrimitive::Numeric, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
+                TypeDef::Entity(_) => PGPrimitive::Text,
+                TypeDef::Enum => PGPrimitive::Enum(name.clone()),
+            },
+        };
+        Ok(converted)
     }
 
     fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptType> {

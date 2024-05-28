@@ -5,5 +5,6 @@ pub mod event_parsing;
 pub mod graph_migration;
 pub mod human_config;
 pub mod hypersync_endpoints;
+pub mod postgres_types;
 pub mod system_config;
 pub mod validation;

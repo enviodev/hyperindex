@@ -1,0 +1,56 @@
+open Table
+open Types
+
+//shorthand for punning
+let isPrimaryKey = true
+let isNullable = true
+let isIndex = true
+let isLinkedEntityField = true
+
+{{#each entities as |entity|}}
+@genType
+module {{entity.name.capitalized}} = {
+  type row = {
+    {{#each entity.params as | param |}}
+    {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.type_rescript}},{{/unless}}
+    {{/each}}
+  }
+
+  let schema = S.object((. s) => {
+    {{#each entity.params as | param |}}
+    {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", {{param.type_rescript_schema}}),{{/unless}}
+    {{/each}}
+  })
+
+  let rowsSchema = S.array({{entity.name.uncapitalized}}EntitySchema)
+
+  let table = mkTable(
+    "{{entity.name.original}}",
+    ~fields=[
+  {{#each entity.postgres_fields as | pg_field |}}
+      mkField(
+      "{{pg_field.field_name}}", 
+      {{pg_field.field_type}},
+      {{!--Cleaner readability if the flags are not applied when not needed but it could be inlined--}}
+      {{#if pg_field.is_primary_key}}~isPrimaryKey,{{/if}}
+      {{#if pg_field.is_nullable}}~isNullable,{{/if}}
+      {{#if pg_field.is_index}}~isIndex,{{/if}}
+      {{#if pg_field.is_linked_entity_field}}~isLinkedEntityField,{{/if}}
+      ),
+  {{/each}}
+    ],
+  {{!--Only add these if there are any--}}
+  {{#if entity.composite_indices.0}}
+    ~compositeIndices={{entity.composite_indices}},
+  {{/if}}
+  )
+}
+ 
+{{/each}}
+
+
+let allTables: array<table> = [
+{{#each entities as |entity|}}
+  {{entity.name.capitalized}}.table,
+{{/each}}
+]
