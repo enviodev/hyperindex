@@ -24,7 +24,7 @@ impl Primitive {
             Self::Serial => "Serial".to_string(),
             Self::Json => "Json".to_string(),
             Self::Timestamp => "Timestamp".to_string(),
-            Self::Enum(enum_name) => format!("Enums.{enum_name}.enum.name"),
+            Self::Enum(enum_name) => format!("Enum(Enums.{enum_name}.enum.name)"),
         }
     }
 }
