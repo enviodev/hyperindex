@@ -669,7 +669,7 @@ impl Field {
                 field_type: gql_field_type.to_underlying_postgres_primitive(schema)?,
                 is_array: gql_field_type.is_array(),
                 is_index: self.is_indexed_field(entity),
-                is_linked_entity_field: gql_field_type.is_entity_field(schema)?,
+                linked_entity: gql_field_type.get_linked_entity(schema)?,
                 is_primary_key: self.is_primary_key(),
                 is_nullable: gql_field_type.is_optional(),
             })),
@@ -1094,6 +1094,11 @@ impl UserDefinedFieldType {
         self.get_underlying_scalar().is_entity(schema)
     }
 
+    ///Returns None if field is not a linked entity and   Some(<ENTITY_NAME>) if it is
+    pub fn get_linked_entity(&self, schema: &Schema) -> anyhow::Result<Option<String>> {
+        self.get_underlying_scalar().get_linked_entity(schema)
+    }
+
     fn to_string(&self) -> String {
         match &self {
             Self::Single(gql_scalar) => gql_scalar.to_string(),
@@ -1406,6 +1411,18 @@ impl GqlScalar {
             },
         };
         Ok(res_type)
+    }
+
+    fn get_linked_entity(&self, schema: &Schema) -> anyhow::Result<Option<String>> {
+        let opt_entity_name = match self {
+            Self::Custom(name) => match schema.try_get_type_def(name)? {
+                TypeDef::Entity(entity) => Some(entity.name.clone()),
+                TypeDef::Enum => None,
+            },
+            _ => None,
+        };
+
+        Ok(opt_entity_name)
     }
 }
 
