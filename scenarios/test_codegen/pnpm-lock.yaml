@@ -1,5 +1,3 @@
-#changes to this file will lead to breaking changes in the pipeline currently, do not commit unless you are sure the tests will pass.
-#TODO: make the pipeline more robust
 lockfileVersion: '6.0'
 
 settings:

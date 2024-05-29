@@ -134,6 +134,7 @@ type inMemoryStoreRowEntity<'entityType> =
   | Updated(updatedValue<'entityType>)
   | InitialReadFromDb(entityValueAtStartOfBatch<'entityType>) // This means there is no change from the db.
 
+@genType
 type inMemoryStoreRowMeta<'a> = 'a
 
 //*************
