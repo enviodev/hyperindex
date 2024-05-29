@@ -1,8 +1,7 @@
-
 import {
   runDownMigrations,
   runUpMigrations,
-} from "../../generated/src/Migrations.bs";
+} from "../../generated/src/db/Migrations.bs";
 import Postgres from "postgres";
 import { db } from "../../generated/src/Config.bs";
 export const createSql = () => Postgres(db);

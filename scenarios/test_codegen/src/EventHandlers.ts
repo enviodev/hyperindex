@@ -6,7 +6,7 @@ import {
 } from "../generated/src/Handlers.gen";
 
 import { NftCollectionEntity, UserEntity } from "../generated/src/Types.gen";
-import { AccountType } from "../generated/src/Enums.gen";
+import { AccountType } from "../generated/src/db/Enums.gen";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
@@ -73,7 +73,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       updatesCountOnUserForTesting:
         loadedUserFrom?.updatesCountOnUserForTesting || 0,
       gravatar_id: undefined,
-      accountType
+      accountType,
     };
     context.User.set(userFrom);
   }
@@ -87,7 +87,7 @@ SimpleNftContract_Transfer_handler(({ event, context }) => {
       updatesCountOnUserForTesting:
         loadedUserTo?.updatesCountOnUserForTesting || 0,
       gravatar_id: undefined,
-      accountType: "ADMIN"
+      accountType: "ADMIN",
     };
     context.User.set(userTo);
   }
