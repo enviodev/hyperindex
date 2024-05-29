@@ -98,27 +98,6 @@ let getPrimaryKeyFieldNames = table =>
     }
   )
 
-let getSingleIndices = (table): array<string> => {
-  let indexFields = table.fields->Array.keepMap(field =>
-    switch field {
-    | Field({isIndex: true, fieldName}) => Some(fieldName)
-    | _ => None
-    }
-  )
-
-  table.compositeIndices
-  ->Array.keep(ind => ind->Array.length == 1)
-  ->Array.concat([indexFields])
-  ->Array.concatMany
-  ->Set.String.fromArray
-  ->Set.String.toArray
-  ->Js.Array2.sortInPlace
-}
-
-let getCompositeIndices = (table): array<array<string>> => {
-  table.compositeIndices->Array.keep(ind => ind->Array.length > 1)
-}
-
 let getFields = table =>
   table.fields->Array.keepMap(field =>
     switch field {
@@ -141,3 +120,54 @@ let getFieldNames = table => {
 
 let getFieldByName = (table, fieldNameSearch) =>
   table.fields->Js.Array2.find(field => field->getUserDefinedFieldName == fieldNameSearch)
+
+exception NonExistingTableField(string)
+
+/*
+Gets all composite indicies (whether they are single indices or not)
+And maps the fields defined to their actual db name (some have _id suffix)
+*/
+let getUnfilteredCompositeIndicesUnsafe = (table): array<array<string>> => {
+  table.compositeIndices->Array.map(compositeIndex =>
+    compositeIndex->Array.map(userDefinedFieldName =>
+      switch table->getFieldByName(userDefinedFieldName) {
+      | Some(field) => field->getFieldName
+      | None => raise(NonExistingTableField(userDefinedFieldName)) //Unexpected should be validated in schema parser
+      }
+    )
+  )
+}
+
+/*
+Gets all single indicies
+And maps the fields defined to their actual db name (some have _id suffix)
+*/
+let getSingleIndices = (table): array<string> => {
+  let indexFields = table.fields->Array.keepMap(field =>
+    switch field {
+    | Field(field) if field.isIndex => Some(field->getDbFieldName)
+    | _ => None
+    }
+  )
+
+  table
+  ->getUnfilteredCompositeIndicesUnsafe
+  //get all composite indices with only 1 field defined
+  //this is still a single index
+  ->Array.keep(cidx => cidx->Array.length == 1)
+  ->Array.concat([indexFields])
+  ->Array.concatMany
+  ->Set.String.fromArray
+  ->Set.String.toArray
+  ->Js.Array2.sortInPlace
+}
+
+/*
+Gets all composite indicies
+And maps the fields defined to their actual db name (some have _id suffix)
+*/
+let getCompositeIndices = (table): array<array<string>> => {
+  table
+  ->getUnfilteredCompositeIndicesUnsafe
+  ->Array.keep(ind => ind->Array.length > 1)
+}
