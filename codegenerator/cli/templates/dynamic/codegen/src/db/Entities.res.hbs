@@ -8,8 +8,8 @@ let isIndex = true
 let isLinkedEntityField = true
 
 {{#each entities as |entity|}}
-@genType
 module {{entity.name.capitalized}} = {
+  @genType
   type row = {
     {{#each entity.params as | param |}}
     {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.type_rescript}},{{/unless}}
@@ -48,7 +48,15 @@ module {{entity.name.capitalized}} = {
     ],
   {{!--Only add these if there are any--}}
   {{#if entity.composite_indices.0}}
-    ~compositeIndices={{entity.composite_indices}},
+    ~compositeIndices=[
+  {{#each entity.composite_indices as | composite_index |}}
+      [
+    {{#each composite_index as | index |}}
+      "{{index}}",
+    {{/each}}
+      ],
+  {{/each}}
+    ],
   {{/if}}
   )
 }
