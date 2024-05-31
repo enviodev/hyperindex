@@ -1,4 +1,5 @@
 open Types
+open Entities
 
 Handlers.ERC20FactoryContract.TokenCreated.loader(({event, context}) => {
   context.contractRegistration.addERC20(event.params.token)
@@ -14,7 +15,7 @@ let makeAccountTokenId = (~account_id, ~tokenAddress) => {
   account_id->join(tokenAddress)
 }
 
-let makeAccountToken = (~account_id, ~tokenAddress, ~balance): accountTokenEntity => {
+let makeAccountToken = (~account_id, ~tokenAddress, ~balance): AccountToken.t => {
   id: makeAccountTokenId(~account_id, ~tokenAddress),
   account_id,
   tokenAddress,
@@ -25,7 +26,7 @@ let makeApprovalId = (~tokenAddress, ~owner_id, ~spender_id) =>
   tokenAddress->join(owner_id)->join(spender_id)
 
 let makeApprivalEntity = (~tokenAddress, ~owner_id, ~spender_id, ~amount) => {
-  id: makeApprovalId(~tokenAddress, ~owner_id, ~spender_id),
+  Approval.id: makeApprovalId(~tokenAddress, ~owner_id, ~spender_id),
   amount,
   owner_id,
   spender_id,
@@ -38,7 +39,7 @@ let createNewAccountWithZeroBalance = (
   ~setAccount,
   ~setAccountToken,
 ) => {
-  let accountObject: accountEntity = {
+  let accountObject: Account.t = {
     id: account_id,
   }
   // setting the accountEntity with the new transfer field value
@@ -86,7 +87,7 @@ Handlers.ERC20Contract.Transfer.loader(({event, context}) => {
   context.accountToken.load(toAccountToken_id, ~loaders={})
 })
 
-let manipulateAccountTokenBalance = (fn, accountToken, amount) => {
+let manipulateAccountTokenBalance = (fn, accountToken: AccountToken.t, amount): AccountToken.t => {
   {...accountToken, balance: accountToken.balance->fn(amount)}
 }
 

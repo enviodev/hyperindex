@@ -2,6 +2,7 @@ open RescriptMocha
 open Mocha
 open Belt
 open TestHelpers
+open Entities
 
 describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", () => {
@@ -11,7 +12,7 @@ describe("Transfers", () => {
 
     let account_id = userAddress1->Ethers.ethAddressToString
     //Make a mock entity to set the initial state of the mock db
-    let mockAccountEntity: Types.accountEntity = {
+    let mockAccountEntity: Entities.Account.t = {
       id: account_id,
     }
     let tokenAddress = Ethers.Addresses.defaultAddress->Ethers.ethAddressToString

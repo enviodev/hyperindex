@@ -214,7 +214,7 @@ module Sql = {
     )
 
     res[0]
-    ->Option.map(v => v->S.parseWith(Types.accountTokenEntitySchema)->Result.getExn)
+    ->Option.map(v => v->S.parseWith(Entities.AccountToken.schema)->Result.getExn)
     ->Option.map(a => a.balance)
   }
 }
