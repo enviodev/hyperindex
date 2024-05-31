@@ -164,7 +164,7 @@ module InMemoryStore = {
   {{#each entities as | entity |}}
 
   module {{entity.name.capitalized}} = MakeStoreEntity({
-    type t = Types.{{entity.name.uncapitalized}}Entity
+    type t = Entities.{{entity.name.capitalized}}.t
     type key = string
     let hasher = Obj.magic
   })
@@ -462,14 +462,20 @@ let makeEntityExecuterComposer = (
 Specifically create an sql executor with async functionality
 */
 let makeSqlEntityExecuter = (
+  type entity,
+  ~entityMod: module(Entities.Entity with type t = entity),
   ~idsToLoad: LoadLayer.idsToLoad,
-  ~dbReadFn: (Postgres.sql, array<Belt.Set.String.value>) => Promise.t<Belt.Array.t<'a>>,
-  ~inMemStoreInitFn: (~allowOverWriteEntity: bool=?, ~key: 'c, ~entity: option<'a>, 'b) => unit,
-  ~store: 'b,
-  ~getEntiyId: 'a => 'c,
+  ~inMemStoreInitFn: (
+    ~allowOverWriteEntity: bool=?,
+    ~key: string,
+    ~entity: option<entity>,
+    'store,
+  ) => unit,
+  ~store: 'store,
+  ~getEntiyId: entity => string,
 ) => {
   makeEntityExecuterComposer(
-    ~dbReadFn=DbFunctions.sql->dbReadFn,
+    ~dbReadFn=Entities.batchRead(~entityMod, DbFunctions.sql),
     ~idsToLoad,
     ~getEntiyId,
     ~store,
@@ -487,7 +493,7 @@ let executeSqlLoadLayer = (~loadLayer: LoadLayer.t, ~inMemoryStore: InMemoryStor
   {{#each entities as | entity |}}
     makeSqlEntityExecuter(
       ~idsToLoad=loadLayer.{{entity.name.uncapitalized}}IdsToLoad,
-      ~dbReadFn=DbFunctions.{{entity.name.capitalized}}.readEntities,
+      ~entityMod=module(Entities.{{entity.name.capitalized}}),
       ~inMemStoreInitFn=InMemoryStore.{{entity.name.capitalized}}.initValue,
       ~store=inMemoryStore.{{entity.name.uncapitalized}},
       ~getEntiyId=entity => entity.id,
@@ -570,20 +576,22 @@ let getEntityHistoryItems = (entityUpdates, ~entitySchema, ~entityType) => {
 }
 
 let executeSetEntityWithHistory = (
+  type entity,
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
-  ~dbFunctionSet: (Postgres.sql, array<'b>) => promise<unit>,
-  ~dbFunctionDelete: (Postgres.sql, array<string>) => promise<unit>,
-  ~entitySchema,
-  ~entityType,
+  ~rows: array<Types.inMemoryStoreRowEntity<entity>>,
+  ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
+  let module(EntityMod) = entityMod
+  let {schema, table} = module(EntityMod)
   let (entitiesToSet, idsToDelete, entityHistoryItemsToSet) = rows->Belt.Array.reduce(
     ([], [], []),
     ((entitiesToSet, idsToDelete, entityHistoryItemsToSet), row) => {
       switch row {
       | Updated({latest, history}) =>
         let entityHistoryItems =
-          history->Belt.Array.concat([latest])->getEntityHistoryItems(~entitySchema, ~entityType)
+          history
+          ->Belt.Array.concat([latest])
+          ->getEntityHistoryItems(~entitySchema=schema, ~entityType=table.tableName)
 
         switch latest.entityUpdateAction {
         | Set(entity) => (
@@ -607,12 +615,12 @@ let executeSetEntityWithHistory = (
       ~entityHistoriesToSet=Belt.Array.concatMany(entityHistoryItemsToSet),
     ),
     if entitiesToSet->Array.length > 0 {
-      sql->dbFunctionSet(entitiesToSet)
+      sql->Entities.batchSet(entitiesToSet, ~entityMod)
     } else {
       Promise.resolve()
     },
     if idsToDelete->Array.length > 0 {
-      sql->dbFunctionDelete(idsToDelete)
+      sql->Entities.batchDelete(idsToDelete, ~entityMod)
     } else {
       Promise.resolve()
     },
@@ -622,12 +630,10 @@ let executeSetEntityWithHistory = (
 }
 
 let executeDbFunctionsEntity = (
+  type entity,
   sql: Postgres.sql,
-  ~rows: array<Types.inMemoryStoreRowEntity<'a>>,
-  ~dbFunctionSet: (Postgres.sql, array<'b>) => promise<unit>,
-  ~dbFunctionDelete: (Postgres.sql, array<string>) => promise<unit>,
-  ~entitySchema as _,
-  ~entityType as _,
+  ~rows: array<Types.inMemoryStoreRowEntity<entity>>,
+  ~entityMod: module(Entities.Entity with type t = entity),
 ): promise<unit> => {
   let (entitiesToSet, idsToDelete) = rows->Belt.Array.reduce(([], []), (
     (accumulatedSets, accumulatedDeletes),
@@ -647,8 +653,10 @@ let executeDbFunctionsEntity = (
   )
 
   let promises =
-    (entitiesToSet->Array.length > 0 ? [sql->dbFunctionSet(entitiesToSet)] : [])->Belt.Array.concat(
-      idsToDelete->Array.length > 0 ? [sql->dbFunctionDelete(idsToDelete)] : [],
+    (
+      entitiesToSet->Array.length > 0 ? [sql->Entities.batchSet(entitiesToSet, ~entityMod)] : []
+    )->Belt.Array.concat(
+      idsToDelete->Array.length > 0 ? [sql->Entities.batchDelete(idsToDelete, ~entityMod)] : [],
     )
 
   promises->Promise.all->Promise.thenResolve(_ => ())
@@ -676,11 +684,8 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
 
   {{#each entities as | entity |}}
   let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
-    ~dbFunctionSet=DbFunctions.{{entity.name.capitalized}}.batchSet,
-    ~dbFunctionDelete=DbFunctions.{{entity.name.capitalized}}.batchDelete,
+    ~entityMod=module(Entities.{{entity.name.capitalized}}),
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
-    ~entitySchema=Types.{{entity.name.uncapitalized}}EntitySchema,
-    ~entityType="{{entity.name.capitalized}}"
   )
 
   {{/each}}
@@ -727,7 +732,7 @@ module RollBack = {
     | Error(exn) =>
       exn
       ->DecodeError
-      ->ErrorHandling.logAndRaise(~msg="Failed to get rollback diff from entity history")
+      ->ErrorHandling.mkLogAndRaise(~msg="Failed to get rollback diff from entity history")
     }
 
     let rollBackEventIdentifier: Types.eventIdentifier = {

@@ -286,7 +286,7 @@ module EntityHistory = {
   ) => promise<unit> = "deleteAllEntityHistoryAfterEventIdentifier"
 
   type rollbackDiffResponseRaw = {
-    entity_type: Types.entityName,
+    entity_type: Entities.entityName,
     entity_id: string,
     chain_id: option<int>,
     block_timestamp: option<int>,
@@ -296,7 +296,7 @@ module EntityHistory = {
   }
 
   let rollbackDiffResponseRawSchema = S.object((. s) => {
-    entity_type: s.field("entity_type", Types.entityNameSchema),
+    entity_type: s.field("entity_type", Entities.entityNameSchema),
     entity_id: s.field("entity_id", S.string),
     chain_id: s.field("chain_id", S.null(S.int)),
     block_timestamp: s.field("block_timestamp", S.null(S.int)),
@@ -307,11 +307,11 @@ module EntityHistory = {
 
   type previousEntity = {
     eventIdentifier: Types.eventIdentifier,
-    entity: Types.entity,
+    entity: Entities.entity,
   }
 
   type rollbackDiffResponse = {
-    entityType: Types.entityName,
+    entityType: Entities.entityName,
     entityId: string,
     previousEntity: option<previousEntity>,
   }
@@ -330,7 +330,7 @@ module EntityHistory = {
           entity_type,
         } =>
         entity_type
-        ->Types.getEntityParamsDecoder(val)
+        ->Entities.getEntityParamsDecoder(val)
         ->Belt.Result.map(entity => {
           let eventIdentifier: Types.eventIdentifier = {
             chainId,
@@ -367,52 +367,3 @@ module EntityHistory = {
       rollbackDiffResponseArr_decode,
     )
 }
-
-{{#each entities as |entity|}}
-module {{entity.name.capitalized}} = {
-  open Types
-
-  @module("./DbFunctionsImplementation.js")
-  external batchSetRaw: (Postgres.sql, array<Js.Json.t>) => promise<unit> = "batchSet{{entity.name.capitalized}}"
-
-  let batchSet = async (sql: Postgres.sql, entities: array<Types.{{entity.name.uncapitalized}}Entity>): unit => {
-    switch entities->S.serializeOrRaiseWith(Types.{{entity.name.uncapitalized}}EntitiesSchema) {
-    | raw => await sql->batchSetRaw(raw->(Obj.magic: Js.Json.t => array<Js.Json.t>))
-    | exception S.Raised(e) =>
-      let path = e.path->S.Path.toArray
-      Logging.error({
-        "err": e,
-        "msg": "EE700: Failed to serialize entity {{entity.name.capitalized}} to database representation",
-        "unparsed_entity": entities->Js.Array2.unsafe_get(
-          path->Js.Array2.unsafe_get(0)->(Obj.magic: string => int),
-        ),
-      })
-      S.Error.raise(e)
-    }
-  }
-
-  @module("./DbFunctionsImplementation.js")
-  external batchDelete: (Postgres.sql, array<Types.id>) => promise<(unit)> = "batchDelete{{entity.name.capitalized}}"
-
-  @module("./DbFunctionsImplementation.js")
-  external readEntitiesRaw: (Postgres.sql, array<Types.id>) => promise<array<Js.Json.t>> =
-    "read{{entity.name.capitalized}}Entities"
-
-  let readEntities = async (sql: Postgres.sql, ids: array<Types.id>): array<{{entity.name.uncapitalized}}Entity> => {
-    let res = await readEntitiesRaw(sql, ids)
-    switch res->S.parseAnyOrRaiseWith(Types.{{entity.name.uncapitalized}}EntitiesSchema) {
-    | entity => entity
-    | exception S.Raised(e) =>
-      let path = e.path->S.Path.toArray
-      Logging.error({
-        "err": e,
-        "msg": "EE700: Failed to parse row from database of entity {{entity.name.capitalized}}",
-        "raw_unparsed_object": res->Js.Array2.unsafe_get(
-          path->Js.Array2.unsafe_get(0)->(Obj.magic: string => int),
-        ),
-      })
-      S.Error.raise(e)
-    }
-  }
-}
-{{/each}}

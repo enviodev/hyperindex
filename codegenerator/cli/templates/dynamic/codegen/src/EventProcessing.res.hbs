@@ -177,9 +177,11 @@ let eventRouter = (
   }
 }
 
+let readEntity = (entityMod, id) => Entities.batchRead(DbFunctions.sql, [id], ~entityMod)
+
 let asyncGetters: Context.entityGetters = {
 {{#each entities as | entity |}}
- get{{entity.name.capitalized}}: id => DbFunctions.{{entity.name.capitalized}}.readEntities(DbFunctions.sql, [id]),
+ get{{entity.name.capitalized}}: readEntity(module(Entities.{{entity.name.capitalized}}), ...),
 {{/each}}
 }
 

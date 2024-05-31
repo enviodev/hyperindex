@@ -36,7 +36,12 @@ let raiseExn = (self: t) => {
   self->getExn->raise
 }
 
-let logAndRaise = (~logger=?, ~msg=?, exn) => {
+let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {
   exn->make(~logger?, ~msg?)->log
   exn->raise
+}
+
+let logAndRaise = self => {
+  self->log
+  self->raiseExn
 }

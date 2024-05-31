@@ -4,6 +4,7 @@ open Enums
 //shorthand for punning
 let isPrimaryKey = true
 let isNullable = true
+let isIndex = true
 
 module EventSyncState = {
   type row = {
@@ -39,8 +40,9 @@ module ChainMetadata = {
     is_hyper_sync: bool,
     num_batches_fetched: int,
     latest_fetched_block_number: int,
-    timestamp_caught_up_to_head_or_endblock: Js.Date.t
+    timestamp_caught_up_to_head_or_endblock: Js.Date.t,
   }
+
   let table = mkTable(
     "chain_metadata",
     ~fields=[
@@ -54,11 +56,7 @@ module ChainMetadata = {
       mkField("is_hyper_sync", Boolean),
       mkField("num_batches_fetched", Integer),
       mkField("latest_fetched_block_number", Integer),
-      mkField(
-        "timestamp_caught_up_to_head_or_endblock",
-        Timestamp,
-        // ~with="TIME ZONE NULL"//TODO enable with field
-      ),
+      mkField("timestamp_caught_up_to_head_or_endblock", TimestampWithTZNull, ~isNullable),
     ],
   )
 }

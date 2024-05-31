@@ -11,6 +11,7 @@ type fieldType =
   | @as("SERIAL") Serial
   | @as("JSON") Json
   | @as("TIMESTAMP") Timestamp
+  | @as("TIMESTAMP WITH TIME ZONE NULL") TimestampWithTZNull
   | Enum(string)
 
 type field = {
