@@ -61,7 +61,7 @@ type rec t = {
 @genType
 and entities = {
   {{#each entities as | entity |}}
-    @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityStoreOperations<Types.{{entity.name.uncapitalized}}Entity>,
+    @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityStoreOperations<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}
   }
 // User defined entities always have a string for an id which is used as the

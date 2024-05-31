@@ -44,52 +44,11 @@ type dynamicContractRegistryEntity = {
 }
 
 
+//Re-exporting types for backwards compatability
 {{#each entities as | entity |}}
 @genType.as("{{entity.name.original}}Entity")
-type {{entity.name.uncapitalized}}Entity = {
-  {{#each entity.params as | param |}}
-  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.type_rescript}},{{/unless}}
-  {{/each}}
-}
-
-let {{entity.name.uncapitalized}}EntitySchema = S.object((. s) => {
-  {{#each entity.params as | param |}}
-  {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", {{param.type_rescript_schema}}),{{/unless}}
-  {{/each}}
-})
-let {{entity.name.uncapitalized}}EntitiesSchema = S.array({{entity.name.uncapitalized}}EntitySchema)
- 
+type {{entity.name.uncapitalized}}Entity = Entities.{{entity.name.capitalized}}.t
 {{/each}}
-type entity = 
-{{#each entities as | entity |}}
-  | {{entity.name.capitalized}}Entity({{entity.name.uncapitalized}}Entity)
-{{/each}}
-
-type entityName =
-{{#each entities as | entity |}}
-  | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
-{{/each}}
-
-let entityNameSchema = 
-{{#if entities.1}}
-{{!-- If there are multiple entities --}}
-S.union([
-{{#each entities as | entity |}}
-  S.literal({{entity.name.capitalized}}), 
-{{/each}}
-])
-{{else}}
-{{#each entities as | entity |}}
-  S.literal({{entity.name.capitalized}})
-{{/each}}
-{{/if}}
-
-let getEntityParamsDecoder = entityName =>
-  switch entityName {
-{{#each entities as | entity |}}
-  | {{entity.name.capitalized}} => json => json->S.parseWith(. {{entity.name.uncapitalized}}EntitySchema)->Belt.Result.map(decoded => {{entity.name.capitalized}}Entity(decoded))
-{{/each}}
-  }
 
 type eventIdentifier = {
   chainId: int,
@@ -208,31 +167,31 @@ let eventArgsSchema =
       {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
         {{#if required_entity.labels}}
         {{#each required_entity.labels as |label| }}
-        {{label}}: option<{{required_entity.name.uncapitalized}}Entity>,
+        {{label}}: option<Entities.{{required_entity.name.capitalized}}.t>,
         {{/each}}
         {{/if}}
         {{#if required_entity.array_labels}}
         {{#each required_entity.array_labels as |array_label| }}
-        {{array_label}}: array<option<{{required_entity.name.uncapitalized}}Entity>>,
+        {{array_label}}: array<option<Entities.{{required_entity.name.capitalized}}.t>>,
         {{/each}}
         {{/if}}
-        get: id => option<{{required_entity.name.uncapitalized}}Entity>,
+        get: id => option<Entities.{{required_entity.name.capitalized}}.t>,
       {{/if}}
 
     {{/each}}
     {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
-        get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}}Entity => 
+        get{{entity_field.relational_key.capitalized}}: Entities.{{entity.name.capitalized}}.t => 
         {{#if entity_field.is_optional}}
-          option<{{entity_field.mapped_entity.uncapitalized}}Entity>
+          option<Entities.{{entity_field.mapped_entity.capitalized}}.t>
         {{else}}
           {{#if entity_field.is_array}}
-            array<{{entity_field.mapped_entity.uncapitalized}}Entity>
+            array<Entities.{{entity_field.mapped_entity.capitalized}}.t>
           {{else}}
-            {{entity_field.mapped_entity.uncapitalized}}Entity
+            Entities.{{entity_field.mapped_entity.capitalized}}.t
           {{/if}}
         {{/if}},
       {{/each}}
-      set: {{entity.name.uncapitalized}}Entity => unit,
+      set: Entities.{{entity.name.capitalized}}.t => unit,
       deleteUnsafe: id => unit,
     }
 
@@ -241,33 +200,33 @@ let eventArgsSchema =
       {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
         {{#if required_entity.labels}}
         {{#each required_entity.labels as |label| }}
-        {{label}}: option<{{required_entity.name.uncapitalized}}Entity>,
+        {{label}}: option<Entities.{{required_entity.name.capitalized}}.t>,
         {{/each}}
         {{/if}}
         {{#if required_entity.array_labels}}
         {{#each required_entity.array_labels as |array_label| }}
-        {{array_label}}: array<option<{{required_entity.name.uncapitalized}}Entity>>,
+        {{array_label}}: array<option<Entities.{{required_entity.name.capitalized}}.t>>,
         {{/each}}
         {{/if}}
-        get: id => promise<option<{{required_entity.name.uncapitalized}}Entity>>,
+        get: id => promise<option<Entities.{{required_entity.name.capitalized}}.t>>,
       {{/if}}
 
     {{/each}}
     {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
-        get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}}Entity => 
+        get{{entity_field.relational_key.capitalized}}: Entities.{{entity.name.capitalized}}.t => 
         promise<{{#if entity_field.is_optional}}
-          option<{{entity_field.mapped_entity.uncapitalized}}Entity>,
+          option<Entities.{{entity_field.mapped_entity.capitalized}}.t>,
         {{else}}
           {{#if entity_field.is_array}}
           {{!-- NOTE: this case is currently impossible. However, we should make this work for `derivedFrom` fields. - see: https://github.com/Float-Capital/indexer/issues/1168 --}}
-            array<{{entity_field.mapped_entity.uncapitalized}}Entity>,
+            array<Entities.{{entity_field.mapped_entity.capitalized}}.t>,
           {{else}}
-            {{entity_field.mapped_entity.uncapitalized}}Entity,
+            Entities.{{entity_field.mapped_entity.capitalized}}.t,
           {{/if}}
         {{/if}}
         >,
       {{/each}}
-      set: {{entity.name.uncapitalized}}Entity => unit,
+      set: Entities.{{entity.name.capitalized}}.t => unit,
       deleteUnsafe: id => unit,
     }
     {{/each}}

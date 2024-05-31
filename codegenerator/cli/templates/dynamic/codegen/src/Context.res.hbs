@@ -1,6 +1,6 @@
 type entityGetters = {
 {{#each entities as | entity |}}
- get{{entity.name.capitalized}}: Types.id => promise<array<Types.{{entity.name.uncapitalized}}Entity>>,
+ get{{entity.name.capitalized}}: Types.id => promise<array<Entities.{{entity.name.capitalized}}.t>>,
 {{/each}}
 }
 

@@ -304,7 +304,7 @@ let rollbackLastBlockHashesToReorgLocation = async (
       switch res {
       | Ok(v) => v
       | Error(exn) =>
-        exn->ErrorHandling.logAndRaise(
+        exn->ErrorHandling.mkLogAndRaise(
           ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
         )
       }
