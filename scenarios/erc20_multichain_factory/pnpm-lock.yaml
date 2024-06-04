@@ -1,7 +1,7 @@
 lockfileVersion: '6.0'
 
 settings:
-  autoInstallPeers: true
+  autoInstallPeers: false
   excludeLinksFromLockfile: false
 
 importers:
@@ -13,7 +13,7 @@ importers:
         version: 2.1.0
       envio:
         specifier: latest
-        version: 0.0.38
+        version: 1.1.0
       ethers:
         specifier: 6.8.0
         version: 6.8.0
@@ -24,14 +24,14 @@ importers:
         specifier: 10.2.0
         version: 10.2.0
       rescript:
-        specifier: ^11.0.1
-        version: 11.0.1
+        specifier: 11.1.0
+        version: 11.1.0
       rescript-mocha:
         specifier: ^0.9.0
         version: 0.9.0
       rescript-schema:
         specifier: 6.4.0
-        version: 6.4.0(rescript@11.0.1)
+        version: 6.4.0(rescript@11.1.0)
     optionalDependencies:
       generated:
         specifier: ./generated
@@ -40,11 +40,11 @@ importers:
   ../helpers:
     dependencies:
       rescript:
-        specifier: ^11.0.1
-        version: 11.0.1
+        specifier: 11.1.0
+        version: 11.1.0
       rescript-schema:
         specifier: 6.4.0
-        version: 6.4.0(rescript@11.0.1)
+        version: 6.4.0(rescript@11.1.0)
 
   generated:
     dependencies:
@@ -59,7 +59,7 @@ importers:
         version: 0.2.0
       '@rescript/react':
         specifier: 0.12.1
-        version: 0.12.1(react-dom@18.2.0)(react@18.2.0)
+        version: 0.12.1(react@18.2.0)
       '@ryyppy/rescript-promise':
         specifier: 2.1.0
         version: 2.1.0
@@ -106,17 +106,17 @@ importers:
         specifier: 18.2.0
         version: 18.2.0
       rescript:
-        specifier: 11.0.1
-        version: 11.0.1
+        specifier: 11.1.0
+        version: 11.1.0
       rescript-envsafe:
         specifier: 3.1.0
-        version: 3.1.0(rescript-schema@6.4.0)(rescript@11.0.1)
+        version: 3.1.0(rescript-schema@6.4.0)(rescript@11.1.0)
       rescript-express:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
       rescript-schema:
         specifier: 6.4.0
-        version: 6.4.0(rescript@11.0.1)
+        version: 6.4.0(rescript@11.1.0)
       viem:
         specifier: 1.16.6
         version: 1.16.6
@@ -234,14 +234,13 @@ packages:
     engines: {node: '>=8.0.0'}
     dev: false
 
-  /@rescript/react@0.12.1(react-dom@18.2.0)(react@18.2.0):
+  /@rescript/react@0.12.1(react@18.2.0):
     resolution: {integrity: sha512-ZD7nhDr5FZgLYqRH9s4CNM+LRz/3IMuTb+LH12fd2Akk0xYkYUP+DZveB2VQUC2UohJnTf/c8yPSNsiFihVCCg==}
     peerDependencies:
       react: '>=18.0.0'
       react-dom: '>=18.0.0'
     dependencies:
       react: 18.2.0
-      react-dom: 18.2.0(react@18.2.0)
     dev: false
 
   /@ryyppy/rescript-promise@2.1.0:
@@ -698,46 +697,46 @@ packages:
       once: 1.4.0
     dev: false
 
-  /envio-darwin-arm64@0.0.38:
-    resolution: {integrity: sha512-B7mgOc4kLHmUG+0uNAofsG3DmV0ln94RkNA7gVXiJ1YgTm5WQZXmmgUJFDr+CnGKItL8Xh5ylaTzYaePaj5Eqw==}
+  /envio-darwin-arm64@1.1.0:
+    resolution: {integrity: sha512-DzWnUo0EFVuhgkoRhBvuzpIg2dT9J4brVt/fSIXJDsDP6pOq+ITEO79T48Li49S3iK7T+WOsGfOE82L2rI5bCQ==}
     cpu: [arm64]
     os: [darwin]
     requiresBuild: true
     dev: false
     optional: true
 
-  /envio-darwin-x64@0.0.38:
-    resolution: {integrity: sha512-J0VCjFIC7CjXGh7LcZej6E7lc4TIWBRLs1SOtWuzqozHyeWVRuE7O5JPZxNYsyD5V43tn8daTKEQiiV3Gbz5Lg==}
+  /envio-darwin-x64@1.1.0:
+    resolution: {integrity: sha512-4JS+4Y68gog93FMEvhVTBE7Pk8dVsUVEAloOMu/FpEFFxXNNRT9OjOGa2zrUleAZ8anIxqxyc6V96zIlS+QYSA==}
     cpu: [x64]
     os: [darwin]
     requiresBuild: true
     dev: false
     optional: true
 
-  /envio-linux-arm64@0.0.38:
-    resolution: {integrity: sha512-kEsuLEtfNTpmkC8U/aDyVAvtXOecXlQqeiX3fQXcJewafc4cwDgBhJawBiypM/svslSiXBpzDqVGrXcw5kxsFA==}
+  /envio-linux-arm64@1.1.0:
+    resolution: {integrity: sha512-wTeeONjBf9zwEsLP+JsRHMjAMweDC8AhCuNaDAiSV28Kzo9Bsmvv1togR/zav7SE4VLzf804dLx/qT9qmMipww==}
     cpu: [arm64]
     os: [linux]
     requiresBuild: true
     dev: false
     optional: true
 
-  /envio-linux-x64@0.0.38:
-    resolution: {integrity: sha512-iWqrDMsjiusPblXnjlYhO3Qzo1nLLtbq28iQNiCoKL46X7B+Pv0obXy1FkG58jUF+PCtywjMz/PK73AvVvhsxw==}
+  /envio-linux-x64@1.1.0:
+    resolution: {integrity: sha512-z8aNWpOmE4CIZuwkrpF4gxBofNIZ0MjAkOyT9PBVnwJ+dICm1bNyoMy0xtX+c7zfzmJEUIKNIF2Tad2/mV2xDQ==}
     cpu: [x64]
     os: [linux]
     requiresBuild: true
     dev: false
     optional: true
 
-  /envio@0.0.38:
-    resolution: {integrity: sha512-hWHGisB68qqsvHYfeuzn1qVSYdX1nb/0V0juH9P2Cg7rsK9XoEBcOQSYBTrqQ+S1BB1RdM/Syu/RDRKsfgzTcg==}
+  /envio@1.1.0:
+    resolution: {integrity: sha512-oVRqQtRYqJJnLj6Rftoh+lrwCrW4RE7ZEfdhJDqfHPLwUy+Qzhi7jqWMPQ+SAnPjtyFNL1Rcsi7MEYJewZ9tEA==}
     hasBin: true
     optionalDependencies:
-      envio-darwin-arm64: 0.0.38
-      envio-darwin-x64: 0.0.38
-      envio-linux-arm64: 0.0.38
-      envio-linux-x64: 0.0.38
+      envio-darwin-arm64: 1.1.0
+      envio-darwin-x64: 1.1.0
+      envio-linux-arm64: 1.1.0
+      envio-linux-x64: 1.1.0
     dev: false
 
   /es-define-property@1.0.0:
@@ -970,6 +969,7 @@ packages:
   /glob@8.1.0:
     resolution: {integrity: sha512-r8hpEjiQEYlF2QU0df3dS+nxxSIreXQS1qRhMJM0Q5NDdR386C7jb7Hwwod8Fgiuex+k0GFjgft18yvxm5XoCQ==}
     engines: {node: '>=12'}
+    deprecated: Glob versions prior to v9 are no longer supported
     dependencies:
       fs.realpath: 1.0.0
       inflight: 1.0.6
@@ -1534,6 +1534,13 @@ packages:
       split2: 4.2.0
     dev: false
 
+  /pino-abstract-transport@1.2.0:
+    resolution: {integrity: sha512-Guhh8EZfPCfH+PMXAb6rKOjGQEoy0xlAIn+irODG5kgfYV+BQ0rGYYWTIel3P5mmyXqkYkPmdIkywsn6QKUR1Q==}
+    dependencies:
+      readable-stream: 4.5.2
+      split2: 4.2.0
+    dev: false
+
   /pino-pretty@10.2.3:
     resolution: {integrity: sha512-4jfIUc8TC1GPUfDyMSlW1STeORqkoxec71yhxIpLDQapUu8WOuoz2TTCoidrIssyz78LZC69whBMPIKCMbi3cw==}
     hasBin: true
@@ -1546,7 +1553,7 @@ packages:
       joycon: 3.1.1
       minimist: 1.2.8
       on-exit-leak-free: 2.1.2
-      pino-abstract-transport: 1.1.0
+      pino-abstract-transport: 1.2.0
       pump: 3.0.0
       readable-stream: 4.5.2
       secure-json-parse: 2.7.0
@@ -1572,7 +1579,7 @@ packages:
       real-require: 0.2.0
       safe-stable-stringify: 2.4.3
       sonic-boom: 3.8.1
-      thread-stream: 2.4.1
+      thread-stream: 2.7.0
     dev: false
 
   /postgres@3.4.1:
@@ -1667,16 +1674,6 @@ packages:
       - utf-8-validate
     dev: false
 
-  /react-dom@18.2.0(react@18.2.0):
-    resolution: {integrity: sha512-6IMTriUmvsjHUjNtEDudZfuDQUoWXVxKHhlEGSk81n4YFS+r/Kl99wXiwlVXtPBtJenozv2P+hxDsw9eA7Xo6g==}
-    peerDependencies:
-      react: ^18.2.0
-    dependencies:
-      loose-envify: 1.4.0
-      react: 18.2.0
-      scheduler: 0.23.0
-    dev: false
-
   /react-is@16.13.1:
     resolution: {integrity: sha512-24e6ynE2H+OKt4kqsOvNd8kBpV65zoxbA4BVsEOB3ARVWQki/DHzaUoC5KuON/BiccDaCCTZBuOcfZs70kR8bQ==}
     dev: false
@@ -1737,14 +1734,14 @@ packages:
     engines: {node: '>=0.10.0'}
     dev: false
 
-  /rescript-envsafe@3.1.0(rescript-schema@6.4.0)(rescript@11.0.1):
+  /rescript-envsafe@3.1.0(rescript-schema@6.4.0)(rescript@11.1.0):
     resolution: {integrity: sha512-XphCDfDloSvUwX/dhghRIK81AMKez0rmXUXvLyVW7s3cjzWjHKMc0GTYwIJDB6J7RRmXuA8ZPTsphwEj9yVJeQ==}
     peerDependencies:
       rescript: 11.x
       rescript-schema: 6.x
     dependencies:
-      rescript: 11.0.1
-      rescript-schema: 6.4.0(rescript@11.0.1)
+      rescript: 11.1.0
+      rescript-schema: 6.4.0(rescript@11.1.0)
     dev: false
 
   /rescript-express@0.4.1(express@4.19.2):
@@ -1761,16 +1758,16 @@ packages:
       mocha: 9.2.2
     dev: false
 
-  /rescript-schema@6.4.0(rescript@11.0.1):
+  /rescript-schema@6.4.0(rescript@11.1.0):
     resolution: {integrity: sha512-rBHtZOEVskKKAf7jfJicuTA1xsQRu2qBdB73FVtPsUSmtgIYpGGKk4YSURQss7WYQEHRds+zPjFLJWzeAnwsLg==}
     peerDependencies:
       rescript: 11.x
     dependencies:
-      rescript: 11.0.1
+      rescript: 11.1.0
     dev: false
 
-  /rescript@11.0.1:
-    resolution: {integrity: sha512-7T4PRp/d0+CBNnY6PYKffFqo9tGZlvnZpboF/n+8SKS+JZ6VvXJO7W538VPZXf3EYx1COGAWWvkF9e/HgSAqHg==}
+  /rescript@11.1.0:
+    resolution: {integrity: sha512-9la2Dv+ACylQ77I8s4spPu1JnLZXbH5WgxcLHLLUBWgFFSiv0wXqgzWztrBIZqwFgVX5BYcwldUqUVcEzdCyHg==}
     engines: {node: '>=10'}
     hasBin: true
     requiresBuild: true
@@ -1806,12 +1803,6 @@ packages:
     dependencies:
       loose-envify: 1.4.0
       object-assign: 4.1.1
-    dev: false
-
-  /scheduler@0.23.0:
-    resolution: {integrity: sha512-CtuThmgHNg7zIZWAXi3AsyIzA3n4xx7aNyjwC2VJldO2LMVDhFK+63xGqq6CsJH4rTAt6/M+N4GhZiDYPx9eUw==}
-    dependencies:
-      loose-envify: 1.4.0
     dev: false
 
   /secure-json-parse@2.7.0:
@@ -1975,8 +1966,8 @@ packages:
       bintrees: 1.0.2
     dev: false
 
-  /thread-stream@2.4.1:
-    resolution: {integrity: sha512-d/Ex2iWd1whipbT681JmTINKw0ZwOUBZm7+Gjs64DHuX34mmw8vJL2bFAaNacaW72zYiTJxSHi5abUuOi5nsfg==}
+  /thread-stream@2.7.0:
+    resolution: {integrity: sha512-qQiRWsU/wvNolI6tbbCKd9iKaTnCXsTwVxhhKM6nctPdujTyztjlbUkUTUymidWcMnZ5pWR0ej4a0tjsW021vw==}
     dependencies:
       real-require: 0.2.0
     dev: false
