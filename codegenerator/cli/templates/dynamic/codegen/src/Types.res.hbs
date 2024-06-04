@@ -169,6 +169,7 @@ type eventLog<'a> = {
   logIndex: int,
 }
 
+@genType
 type eventName =
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
