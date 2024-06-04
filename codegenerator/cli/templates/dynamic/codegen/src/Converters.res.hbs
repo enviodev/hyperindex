@@ -13,139 +13,73 @@ let eventStringToEvent = (eventName: string, contractName: string): Types.eventN
 {{#each codegen_contracts as |contract|}}
 module {{contract.name.capitalized}} = {
 {{#each contract.codegen_events as |event|}}
-  let convert{{event.name.capitalized}}ViemDecodedEvent: Viem.decodedEvent<'a> => Viem.decodedEvent<
-    Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
-  > = Obj.magic
+  module {{event.name.capitalized}} = {
+    let convertViemDecodedEvent: Viem.decodedEvent<'a> => Viem.decodedEvent<
+      Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
+    > = Obj.magic
 
-  {{#unless event.params}}
-  @warning("-27")
-  {{/unless}}
-  let convert{{event.name.capitalized}}LogDescription = (log: Ethers.logDescription<'a>): Ethers.logDescription<
-    Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
-  > => {
-    //Convert from the ethersLog type with indexs as keys to named key value object
-    let ethersLog: 
-      Ethers.logDescription<
-        Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.ethersEventArgs
-      >
-      = log->Obj.magic
-    let {args, name, signature, topic} = ethersLog
-
+    {{#unless event.params}}
+    @warning("-27")
+    {{/unless}}
+    let convertLogViem = (
+      decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
+      ~log: Ethers.log,
+      ~blockTimestamp: int,
+      ~chainId: int,
+      ~txOrigin: option<Ethers.ethAddress>,
+      ~txTo: option<Ethers.ethAddress>,
+    ) => {
+      let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
+      {{#if event.params}}
       {
-        name,
-        signature,
-        topic,
-        {{#if event.params}}
-        args: {
         {{#each event.params as | param |}}
-          {{param.param_name.uncapitalized}}: args.{{param.param_name.uncapitalized}},
+          {{param.param_name.uncapitalized}}: decodedEvent.args.{{param.param_name.uncapitalized}},
         {{/each}}
-        }
-        {{else}}
-        args: ()
-        {{/if}}
       }
-  }
-  
-  {{#unless event.params}}
-  @warning("-27")
-  {{/unless}}
-  let convert{{event.name.capitalized}}Log = (
-    logDescription: Ethers.logDescription<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-    ~log: Ethers.log,
-    ~blockTimestamp: int,
-    ~chainId: int,
-    ~txOrigin: option<Ethers.ethAddress>,
-    ~txTo: option<Ethers.ethAddress>,
-  ) => {
-    let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
-    {{#if event.params}}
-    {
-      {{#each event.params as | param |}}
-        {{param.param_name.uncapitalized}}: logDescription.args.{{param.param_name.uncapitalized}},
-      {{/each}}
-    }
-    {{else}}
-    ()
-    {{/if}}
-
-    let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
-      params,
-      chainId,
-      txOrigin,
-      txTo,
-      blockNumber: log.blockNumber,
-      blockTimestamp,
-      blockHash: log.blockHash,
-      srcAddress: log.address,
-      transactionHash: log.transactionHash,
-      transactionIndex: log.transactionIndex,
-      logIndex: log.logIndex,
-    }
-
-    Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}({{event.name.uncapitalized}}Log)
-  }
-  {{#unless event.params}}
-  @warning("-27")
-  {{/unless}}
-  let convert{{event.name.capitalized}}LogViem = (
-    decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-    ~log: Ethers.log,
-    ~blockTimestamp: int,
-    ~chainId: int,
-    ~txOrigin: option<Ethers.ethAddress>,
-    ~txTo: option<Ethers.ethAddress>,
-  ) => {
-    let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
-    {{#if event.params}}
-    {
-      {{#each event.params as | param |}}
-        {{param.param_name.uncapitalized}}: decodedEvent.args.{{param.param_name.uncapitalized}},
-      {{/each}}
-    }
-    {{else}}
-    ()
-    {{/if}}
-
-    let {{event.name.uncapitalized}}Log: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
-      params,
-      chainId,
-      txOrigin,
-      txTo,
-      blockNumber: log.blockNumber,
-      blockTimestamp,
-      blockHash: log.blockHash,
-      srcAddress: log.address,
-      transactionHash: log.transactionHash,
-      transactionIndex: log.transactionIndex,
-      logIndex: log.logIndex,
-    }
-
-    Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}({{event.name.uncapitalized}}Log)
-  }
-
-  let convert{{event.name.capitalized}}DecodedEventParams = ( 
-  {{!-- Add underscore if there are no params, to avoid compiler warning of unused argument --}}
-    {{#unless event.params[0]}}_{{/unless}}decodedEvent: HyperSyncClient.Decoder.decodedEvent,
-  ): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs => {
-    {{#if event.params[0]}}{{!--Only create this body if there are params.  Otherwise its always unit--}}
-    open Belt
-    let fields = [
-      {{#each event.indexed_params as | param |}}
-        "{{param.param_name.uncapitalized}}",
-      {{/each}}
-      {{#each event.body_params as | param |}}
-        "{{param.param_name.uncapitalized}}",
-      {{/each}}
-    ]
-    let values =
-      Array.concat(decodedEvent.indexed, decodedEvent.body)->Array.map(
-        HyperSyncClient.Decoder.toUnderlying,
-      )
-    Array.zip(fields, values)->Js.Dict.fromArray->Obj.magic
-    {{else}}
+      {{else}}
       ()
-    {{/if}}
+      {{/if}}
+
+      let eventLog: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
+        params,
+        chainId,
+        txOrigin,
+        txTo,
+        blockNumber: log.blockNumber,
+        blockTimestamp,
+        blockHash: log.blockHash,
+        srcAddress: log.address,
+        transactionHash: log.transactionHash,
+        transactionIndex: log.transactionIndex,
+        logIndex: log.logIndex,
+      }
+
+      Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog)
+    }
+
+    let convertDecodedEventParams = ( 
+    {{!-- Add underscore if there are no params, to avoid compiler warning of unused argument --}}
+      {{#unless event.params[0]}}_{{/unless}}decodedEvent: HyperSyncClient.Decoder.decodedEvent,
+    ): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs => {
+      {{#if event.params[0]}}{{!--Only create this body if there are params.  Otherwise its always unit--}}
+      open Belt
+      let fields = [
+        {{#each event.indexed_params as | param |}}
+          "{{param.param_name.uncapitalized}}",
+        {{/each}}
+        {{#each event.body_params as | param |}}
+          "{{param.param_name.uncapitalized}}",
+        {{/each}}
+      ]
+      let values =
+        Array.concat(decodedEvent.indexed, decodedEvent.body)->Array.map(
+          HyperSyncClient.Decoder.toUnderlying,
+        )
+      Array.zip(fields, values)->Js.Dict.fromArray->Obj.magic
+      {{else}}
+        ()
+      {{/if}}
+    }
   }
 {{/each}}
 }
@@ -154,40 +88,6 @@ module {{contract.name.capitalized}} = {
 
 exception ParseError(Ethers.Interface.parseLogError)
 exception UnregisteredContract(Ethers.ethAddress)
-
-let parseEventEthers = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin, ~txTo): Belt.Result.t<
-  Types.event,
-  _,
-> => {
-  let logDescriptionResult = contractInterfaceManager->ContractInterfaceManager.parseLogEthers(~log)
-  switch logDescriptionResult {
-  | Error(e) =>
-    switch e {
-    | ParseError(parseError) => ParseError(parseError)
-    | UndefinedInterface(contractAddress) => UnregisteredContract(contractAddress)
-    }->Error
-
-  | Ok(logDescription) =>
-    switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
-      ~contractAddress=log.address,
-    ) {
-    | None => Error(UnregisteredContract(log.address))
-    | Some(contractName) =>
-      let event = switch eventStringToEvent(logDescription.name, contractName) {
-      {{#each codegen_contracts as |contract|}}
-      {{#each contract.codegen_events as |event|}}
-        | {{event.event_type.full}} =>
-            logDescription
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogDescription
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}Log(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
-      {{/each}}
-      {{/each}}
-      }
-
-      Ok(event)
-    }
-  }
-}
 
 let makeEventLog = (
   params: 'args,
@@ -229,7 +129,7 @@ let convertDecodedEvent = (
       {{#each contract.codegen_events as |event|}}
         | {{event.event_type.full}} =>
             event
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}DecodedEventParams
+            ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertDecodedEventParams
             ->makeEventLog(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
             ->Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}
       {{/each}}
@@ -262,8 +162,8 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
       {{#each contract.codegen_events as |event|}}
         | {{event.event_type.full}} =>
             decodedEvent
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}ViemDecodedEvent
-            ->{{contract.name.capitalized}}.convert{{event.name.capitalized}}LogViem(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
+            ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertViemDecodedEvent
+            ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertLogViem(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
       {{/each}}
      {{/each}}
       }
