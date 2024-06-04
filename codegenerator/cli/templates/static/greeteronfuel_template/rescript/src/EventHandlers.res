@@ -6,7 +6,7 @@ NewGreeting event handler might need on the Greeter contract.
 */
 Handlers.GreeterContract.NewGreeting.loader(({event, context}) => {
   //The id for the "User" entity derived from params of the NewGreeting event
-  let userId = event.data.user.value
+  let userId = event.data.user.bits
   //Try load in in a "User" entity with id of the user param on the
   //NewGreeting event
   context.user.load(userId)
@@ -19,7 +19,7 @@ the DB.
 */
 Handlers.GreeterContract.NewGreeting.handler(({event, context}) => {
   //The id for the "User" entity
-  let userId = event.data.user.value
+  let userId = event.data.user.bits
   //The greeting string that was added.
   let latestGreeting = event.data.greeting.value
 
@@ -62,7 +62,7 @@ ClearGreeting event handler might need on the Greeter contract.
 Handlers.GreeterContract.ClearGreeting.loader(({event, context}) => {
   //Try load in in a "User" entity with id of the user param on the
   //ClearGreeting event
-  context.user.load(event.data.user.value)
+  context.user.load(event.data.user.bits)
 })
 
 /**
@@ -72,7 +72,7 @@ the DB.
 */
 Handlers.GreeterContract.ClearGreeting.handler(({event, context}) => {
   //The id for the "User" entity
-  let userId = event.data.user.value
+  let userId = event.data.user.bits
   //The optional User entity that may exist already at "userId"
   //This value would be None in the case that it was not loaded in the
   //loader function above OR in the case where it never existed in the db

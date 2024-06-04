@@ -1,4 +1,5 @@
 {
+  "encoding": "1",
   "types": [
     {
       "typeId": 0,
@@ -63,7 +64,7 @@
       "type": "struct Address",
       "components": [
         {
-          "name": "value",
+          "name": "bits",
           "type": 1,
           "typeArguments": null
         }
@@ -130,7 +131,7 @@
     },
     {
       "inputs": [],
-      "name": "greet",
+      "name": "current_greeting",
       "output": {
         "name": "",
         "type": 3,
@@ -183,7 +184,7 @@
   ],
   "loggedTypes": [
     {
-      "logId": 0,
+      "logId": "4485582493926303652",
       "loggedType": {
         "name": "",
         "type": 7,
@@ -191,7 +192,7 @@
       }
     },
     {
-      "logId": 1,
+      "logId": "5679770223941778533",
       "loggedType": {
         "name": "",
         "type": 2,
@@ -199,26 +200,10 @@
       }
     },
     {
-      "logId": 2,
+      "logId": "5586735131546214350",
       "loggedType": {
         "name": "",
         "type": 9,
-        "typeArguments": []
-      }
-    },
-    {
-      "logId": 3,
-      "loggedType": {
-        "name": "",
-        "type": 2,
-        "typeArguments": []
-      }
-    },
-    {
-      "logId": 4,
-      "loggedType": {
-        "name": "",
-        "type": 2,
         "typeArguments": []
       }
     }

@@ -154,7 +154,7 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     };
 
     let envio_version = match ecosystem {
-        Ecosystem::Fuel => "0.0.2-fuel".to_string(),
+        Ecosystem::Fuel => "1.1.1-fuel".to_string(),
         Ecosystem::Ethereum => {
             let crate_version = env!("CARGO_PKG_VERSION");
             if is_valid_release_version_number(crate_version) {
