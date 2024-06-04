@@ -22,10 +22,13 @@ type handlerFunction<'eventArgs, 'context, 'returned> = handlerArgs<
   'context,
 > => 'returned
 
+@genType.opaque
+type contextGetter = Context.t
+
 @genType
 type handlerWithContextGetter<'eventArgs, 'context, 'returned> = {
   handler: handlerFunction<'eventArgs, 'context, 'returned>,
-  contextGetter: Context.t => 'context,
+  contextGetter: contextGetter => 'context,
 }
 
 @genType
@@ -60,6 +63,7 @@ let getDefaultLoaderHandlerWithContextGetter = (~functionRegister, ~eventName) =
   contextGetter: ctx => ctx->Context.getHandlerContextSync,
 })
 
+@genType
 type t<'eventArgs> = {
   eventName: Types.eventName,
   mutable loader: option<loader<'eventArgs>>,
