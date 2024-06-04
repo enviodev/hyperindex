@@ -216,19 +216,6 @@ module {{contract.name.capitalized}}Contract = {
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}}Event = {
     let eventName = {{event.event_type.full}}
-    //Note: each parameter is using a binding of its index to help with binding in ethers
-    //This handles both unamed params and also named params that clash with reserved keywords
-    //eg. if an event param is called "values" it will clash since eventArgs will have a '.values()' iterator
-    type ethersEventArgs = 
-    {{#if event.params}}
-    {
-      {{#each event.params as | param |}}
-      @as("{{@index}}") {{param.param_name.uncapitalized}}: {{param.type_rescript}},
-      {{/each}}
-    }
-    {{else}}
-    unit
-    {{/if}}
 
     @genType
     type eventArgs = 
