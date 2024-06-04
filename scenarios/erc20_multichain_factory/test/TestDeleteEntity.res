@@ -122,25 +122,6 @@ describe("Unsafe delete test", () => {
     let tasks = ref([])
     let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks)
 
-    //helpers
-    let getChainFetcher = chain => {
-      let state = gsManager->GlobalStateManager.getState
-      state.chainManager.chainFetchers->ChainMap.get(chain)
-    }
-
-    let getFetchState = chain => {
-      let cf = chain->getChainFetcher
-      cf.fetchState
-    }
-
-    let getQueueSize = chain => {
-      chain->getFetchState->FetchState.queueSize
-    }
-
-    let getTokenBalance = chain => {
-      Sql.getAccountTokenBalance(~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain))
-    }
-
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions
     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMap)

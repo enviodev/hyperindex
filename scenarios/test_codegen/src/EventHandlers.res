@@ -19,10 +19,9 @@ Handlers.GravatarContract.NewGravatar.handler(({event, context}) => {
 })
 
 Handlers.GravatarContract.UpdatedGravatar.loader(({event, context}) => {
-  context.gravatar.gravatarWithChangesLoad(
-    event.params.id->Ethers.BigInt.toString,
-    ~loaders={loadOwner: {}},
-  )
+  //Note required entities have gone for now,
+  //Refactor coming with v2 loaders
+  context.gravatar.load(event.params.id->Ethers.BigInt.toString, ~loaders={loadOwner: {}})
 })
 
 Handlers.GravatarContract.UpdatedGravatar.handler(({event, context}) => {
@@ -63,10 +62,11 @@ Handlers.GravatarContract.UpdatedGravatar.handler(({event, context}) => {
     },
   )
 
+  let gravatarWithChanges = context.gravatar.get(event.params.id->Ethers.BigInt.toString)
+
   let updatesCount =
-    context.gravatar.gravatarWithChanges->Belt.Option.mapWithDefault(
-      Ethers.BigInt.fromInt(1),
-      gravatar => gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1)),
+    gravatarWithChanges->Belt.Option.mapWithDefault(Ethers.BigInt.fromInt(1), gravatar =>
+      gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1))
     )
   let gravatarSize: Enums.gravatarSize = MEDIUM
   let gravatar: gravatarEntity = {
@@ -95,14 +95,18 @@ Handlers.GravatarContract.TestEventThatCopiesBigIntViaLinkedEntities.handlerAsyn
   let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
     switch await context.a.get(idOfGrandparent) {
     | Some(a) =>
-      let b = await a->context.a.getB
+      let optB = await context.b.get(a.b_id)
 
-      switch await b->context.b.getC {
-      | Some(cWithText) =>
-        context.a.set({
-          ...a,
-          optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
-        })
+      switch optB->Belt.Option.flatMap(b => b.c_id) {
+      | Some(c_id) =>
+        switch await context.c.get(c_id) {
+        | Some(cWithText) =>
+          context.a.set({
+            ...a,
+            optionalStringToTestLinkedEntities: Some(cWithText.stringThatIsMirroredToA),
+          })
+        | None => ()
+        }
       | None => ()
       }
     | None => ()

@@ -2,7 +2,6 @@ open RescriptMocha
 open Mocha
 open Belt
 open TestHelpers
-open Entities
 
 describe("Transfers", () => {
   it("Transfer subtracts the from account balance and adds to the to account balance", () => {

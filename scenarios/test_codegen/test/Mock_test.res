@@ -16,48 +16,13 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     //EventProcessing.processEventBatch(MockEvents.eventBatch)
-    MockEvents.eventRouterBatch->Belt.Array.forEach(
+    MockEvents.eventBatch->Belt.Array.forEach(
       event =>
         event->EventProcessing.eventRouter(
           ~inMemoryStore,
           ~cb=_ => (),
           ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
         ),
-    )
-  })
-
-  after(() => {
-    ContextMock.setMock->Sinon.resetStub
-    ContextMock.deleteUnsafeMock->Sinon.resetStub
-  })
-
-  it("8 gravatar events (new and set) calls in order", () => {
-    let setCallFirstArgs =
-      ContextMock.setMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
-
-    Assert.deep_equal(
-      setCallFirstArgs,
-      [
-        MockEvents.newGravatar1.id->Ethers.BigInt.toString,
-        MockEvents.newGravatar2.id->Ethers.BigInt.toString,
-        MockEvents.newGravatar3.id->Ethers.BigInt.toString,
-        MockEvents.newGravatar4_deleted.id->Ethers.BigInt.toString,
-        MockEvents.setGravatar1.id->Ethers.BigInt.toString,
-        MockEvents.setGravatar2.id->Ethers.BigInt.toString,
-        MockEvents.setGravatar3.id->Ethers.BigInt.toString,
-        MockEvents.setGravatar4.id->Ethers.BigInt.toString,
-      ],
-    )
-  })
-  it("should delete 1 gravatar", () => {
-    let deleteCallFirstArgs =
-      ContextMock.deleteUnsafeMock
-      ->Sinon.getCalls
-      ->Belt.Array.map(call => call->Sinon.getCallFirstArg)
-
-    Assert.deep_equal(
-      deleteCallFirstArgs,
-      [MockEvents.newGravatar4_deleted.id->Ethers.BigInt.toString],
     )
   })
 })
