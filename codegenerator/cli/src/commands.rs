@@ -226,7 +226,10 @@ pub mod start {
                 "Indexer has failed to run. Please see error logs for more details"
             ));
         }
-        println!("\nIndexer has successfully finished processing all events on all chains. Exiting process.");
+        println!(
+            "\nIndexer has successfully finished processing all events on all chains. Exiting \
+             process."
+        );
         Ok(())
     }
 }

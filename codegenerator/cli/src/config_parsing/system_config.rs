@@ -208,14 +208,16 @@ impl SystemConfig {
                         let contract =
                             Contract::new(contract.name, l_contract.handler, events, abi_from_file)
                                 .context(format!(
-                            "Failed parsing locally defined network contract at network id {}",
-                            network.id
-                        ))?;
+                                    "Failed parsing locally defined network contract at network \
+                                     id {}",
+                                    network.id
+                                ))?;
 
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
                             .context(format!(
-                                "Failed inserting locally defined network contract at network id {}",
+                                "Failed inserting locally defined network contract at network id \
+                                 {}",
                                 network.id,
                             ))?;
                     }
@@ -549,7 +551,7 @@ impl Event {
                 Ok(event) => Ok(event),
                 Err(err) => Err(anyhow!(
                     "EE103: Unable to parse event signature {} due to the following error: {}. \
-                   Please refer to our docs on how to correctly define a human readable ABI.",
+                     Please refer to our docs on how to correctly define a human readable ABI.",
                     sig,
                     err
                 )),
@@ -768,7 +770,9 @@ mod test {
             Event::get_abi_event(&event_string, &None)
                 .unwrap_err()
                 .to_string(),
-            "EE103: Unable to parse event signature event MyEvent(uint69 myArg) due to the following error: UnrecognisedToken 14:20 `uint69`. Please refer to our docs on how to correctly define a human readable ABI."
+            "EE103: Unable to parse event signature event MyEvent(uint69 myArg) due to the \
+             following error: UnrecognisedToken 14:20 `uint69`. Please refer to our docs on how \
+             to correctly define a human readable ABI."
         );
     }
 

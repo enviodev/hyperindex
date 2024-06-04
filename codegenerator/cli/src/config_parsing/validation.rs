@@ -121,10 +121,13 @@ pub fn validate_deserialized_config_yaml(
         if let Some(&network_endblock) = network.end_block.as_ref() {
             if network_endblock < network.start_block {
                 return Err(anyhow!(
-                        "EE110: The config file ({}) has an endBlock that is less than the startBlock for network id: {}. The endBlock must be greater than the startBlock.",
-                        &config_path.to_str().unwrap_or("unknown config file name path"),
-                        &network.id.to_string()
-                    ));
+                    "EE110: The config file ({}) has an endBlock that is less than the startBlock \
+                     for network id: {}. The endBlock must be greater than the startBlock.",
+                    &config_path
+                        .to_str()
+                        .unwrap_or("unknown config file name path"),
+                    &network.id.to_string()
+                ));
             }
         }
 
