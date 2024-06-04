@@ -192,7 +192,6 @@ impl AutoConfigSelection {
                 .into_iter()
                 .map(|event| EventConfig {
                     event: EventConfig::event_string_from_abi_event(&event),
-                    required_entities: None,
                     is_async: None,
                 })
                 .collect();

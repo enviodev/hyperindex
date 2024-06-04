@@ -234,10 +234,7 @@ pub struct Contract {
 }
 
 impl Contract {
-    fn from_config_contract(
-        contract: &system_config::Contract,
-        config: &SystemConfig,
-    ) -> Result<Self> {
+    fn from_config_contract(contract: &system_config::Contract) -> Result<Self> {
         let imported_events = contract
             .events
             .iter()
@@ -251,9 +248,7 @@ impl Contract {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| {
-                EventTemplate::from_config_event(event, config, &contract.name.to_string())
-            })
+            .map(|event| EventTemplate::from_config_event(event, &contract.name.to_string()))
             .collect::<Result<_>>()
             .context(format!(
                 "Failed getting events for contract {}",
@@ -357,7 +352,7 @@ impl AutoSchemaHandlerTemplate {
         let imported_contracts = config
             .get_contracts()
             .iter()
-            .map(|contract| Contract::from_config_contract(contract, &config))
+            .map(|contract| Contract::from_config_contract(contract))
             .collect::<Result<_>>()?;
         Ok(AutoSchemaHandlerTemplate { imported_contracts })
     }
