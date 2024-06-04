@@ -200,7 +200,6 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                 .into_iter()
                 .map(|event| human_config::ConfigEvent {
                     event: ConfigEvent::event_string_from_abi_event(&event),
-                    required_entities: None,
                     is_async: None,
                 })
                 .collect();

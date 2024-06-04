@@ -11,8 +11,6 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam, HumanReadableParser};
-
-use itertools::Itertools;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -165,7 +163,7 @@ impl SystemConfig {
                     .events
                     .iter()
                     .cloned()
-                    .map(|e| Event::try_from_config_event(e, &abi_from_file, &schema))
+                    .map(|e| Event::try_from_config_event(e, &abi_from_file))
                     .collect::<Result<Vec<_>>>()
                     .context(format!(
                         "Failed parsing abi types for events in global contract {}",
@@ -199,7 +197,7 @@ impl SystemConfig {
                             .events
                             .iter()
                             .cloned()
-                            .map(|e| Event::try_from_config_event(e, &abi_from_file, &schema))
+                            .map(|e| Event::try_from_config_event(e, &abi_from_file))
                             .collect::<Result<Vec<_>>>()?;
 
                         let contract =
@@ -356,22 +354,28 @@ impl SyncSource {
             })) => Ok(Self::RpcConfig(RpcConfig {
                 url,
                 sync_config: match unstable__sync_config {
-                  | None => SyncConfig::default(),
-                  | Some(c) => SyncConfig {
-                    acceleration_additive: c.acceleration_additive
-                        .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
-                    backoff_millis: c.backoff_millis
-                        .unwrap_or_else(|| SyncConfig::default().backoff_millis),
-                    backoff_multiplicative: c.backoff_multiplicative
-                        .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
-                    initial_block_interval: c.initial_block_interval
-                        .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
-                    interval_ceiling: c.interval_ceiling
-                        .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
-                    query_timeout_millis: c.query_timeout_millis
-                        .unwrap_or_else(|| SyncConfig::default().query_timeout_millis),
-                  },
-                } 
+                    None => SyncConfig::default(),
+                    Some(c) => SyncConfig {
+                        acceleration_additive: c
+                            .acceleration_additive
+                            .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
+                        backoff_millis: c
+                            .backoff_millis
+                            .unwrap_or_else(|| SyncConfig::default().backoff_millis),
+                        backoff_multiplicative: c
+                            .backoff_multiplicative
+                            .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
+                        initial_block_interval: c
+                            .initial_block_interval
+                            .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
+                        interval_ceiling: c
+                            .interval_ceiling
+                            .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
+                        query_timeout_millis: c
+                            .query_timeout_millis
+                            .unwrap_or_else(|| SyncConfig::default().query_timeout_millis),
+                    },
+                },
             })),
             Some(human_config::SyncSourceConfig::HypersyncConfig(
                 human_config::HypersyncConfig { endpoint_url },
@@ -479,7 +483,6 @@ impl Contract {
         let mut events_abi = ethers::abi::Contract::default();
 
         let mut event_names = Vec::new();
-        let mut entity_and_label_names = Vec::new();
         for event in &events {
             events_abi
                 .events
@@ -488,18 +491,6 @@ impl Contract {
                 .push(event.get_event().clone());
 
             event_names.push(event.event.0.name.clone());
-
-            for entity in &event.required_entities {
-                entity_and_label_names.push(entity.name.clone());
-                if let Some(labels) = &entity.labels {
-                    entity_and_label_names.extend(labels.clone());
-                }
-                if let Some(array_labels) = &entity.array_labels {
-                    entity_and_label_names.extend(array_labels.clone());
-                }
-            }
-            // Checking that entity names do not include any reserved words
-            validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
         }
         // Checking that event names do not include any reserved words
         validate_names_not_reserved(&event_names, "Events".to_string())?;
@@ -543,7 +534,6 @@ impl Contract {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     event: NormalizedEthAbiEvent,
-    pub required_entities: Vec<human_config::RequiredEntity>,
     pub is_async: bool,
 }
 
@@ -585,31 +575,12 @@ impl Event {
     pub fn try_from_config_event(
         human_cfg_event: human_config::ConfigEvent,
         opt_abi: &Option<EvmAbi>,
-        schema: &Schema,
     ) -> Result<Self> {
         let event = Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
 
-        let required_entities = human_cfg_event.required_entities.unwrap_or_else(|| {
-            // If no required entities are specified, we assume all entities are required
-            schema
-                .entities
-                .values()
-                .sorted_by_key(|v| &v.name)
-                .cloned()
-                .map(|entity| human_config::RequiredEntity {
-                    name: entity.name,
-                    labels: None,
-                    array_labels: None,
-                })
-                .collect()
-        });
         let is_async = human_cfg_event.is_async.unwrap_or_else(|| false);
 
-        Ok(Event {
-            event,
-            required_entities,
-            is_async,
-        })
+        Ok(Event { event, is_async })
     }
 
     pub fn get_event(&self) -> &EthAbiEvent {
@@ -641,22 +612,6 @@ impl From<EthAbiEvent> for NormalizedEthAbiEvent {
         };
 
         NormalizedEthAbiEvent(event)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct RequiredEntity {
-    pub name: String,
-    pub labels: Vec<String>,
-    pub array_labels: Vec<String>,
-}
-impl From<human_config::RequiredEntity> for RequiredEntity {
-    fn from(r: human_config::RequiredEntity) -> Self {
-        RequiredEntity {
-            name: r.name,
-            labels: r.labels.unwrap_or_else(|| vec![]),
-            array_labels: r.array_labels.unwrap_or_else(|| vec![]),
-        }
     }
 }
 
