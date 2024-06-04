@@ -96,16 +96,16 @@ let updateEventSyncState = (
 /** Function composer for handling an event*/
 let handleEvent = (
   ~inMemoryStore,
-  ~chainId,
   ~eventArgsSchema,
-  ~context: Context.genericContextCreatorFunctions<'b, 'c, 'd>,
-  ~handlerWithContextGetter: Handlers.handlerWithContextGetterSyncAsync<'a, 'b, 'c, 'd>,
+  ~context: Context.t,
+  ~handlerLoaderRegister: HandlerLoaderRegister.t<'eventArgs>,
   ~event,
   ~eventName,
   ~cb,
   ~latestProcessedBlocks: EventsProcessed.t,
-  ~chain,
 ) => {
+  let {chain} = context
+  let chainId = chain->ChainMap.Chain.toChainId
   event->updateEventSyncState(~chainId, ~inMemoryStore)
 
   event->addEventToRawEvents(~inMemoryStore, ~chainId, ~eventArgsSchema, ~eventName)
@@ -121,7 +121,7 @@ let handleEvent = (
       ~blockNumber=event.blockNumber,
     )
 
-  switch handlerWithContextGetter {
+  switch handlerLoaderRegister->HandlerLoaderRegister.getHandler {
   | Sync({handler, contextGetter}) =>
     //Call the context getter here, ensures no stale values in the context
     //Since loaders and previous handlers have already run
@@ -144,45 +144,34 @@ let handleEvent = (
   }
 }
 
+type eventAndContext = {
+  event: Types.event,
+  context: Context.t,
+}
+
 let eventRouter = (
-  item: Context.eventRouterEventAndContext,
+  {event, context}: eventAndContext,
   ~inMemoryStore,
   ~cb,
   ~latestProcessedBlocks: EventsProcessed.t,
 ) => {
-  let {event, chainId} = item
-  let chain = chainId->ChainMap.Chain.fromChainId->Utils.unwrapResultExn
-
   switch event {
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(
-      event,
-      context,
-    ) => handleEvent(
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) => handleEvent(
       ~event,
       ~eventName={{event.event_type.full}},
       ~eventArgsSchema=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgsSchema,
-      ~handlerWithContextGetter=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler(),
-      ~chainId,
+      ~handlerLoaderRegister=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.register,
       ~inMemoryStore,
       ~cb,
       ~context,
       ~latestProcessedBlocks,
-      ~chain,
     )
 
 {{/each}}
 {{/each}}
   }
-}
-
-let readEntity = (entityMod, id) => Entities.batchRead(DbFunctions.sql, [id], ~entityMod)
-
-let asyncGetters: Context.entityGetters = {
-{{#each entities as | entity |}}
- get{{entity.name.capitalized}}: readEntity(module(Entities.{{entity.name.capitalized}}), ...),
-{{/each}}
 }
 
 type dynamicContractRegistration = {
@@ -209,45 +198,50 @@ type loadResponse<'a> = {
 }
 
 type getReadEntitiesRes = loadResponse<
-  array<(array<Types.entityRead>, Context.eventRouterEventAndContext)>,
+  array<(array<Types.entityRead>, eventAndContext)>,
 >
+
+let readEntity = (entityMod, id) => Entities.batchRead(DbFunctions.sql, [id], ~entityMod)
+
+let asyncGetters: Context.asyncGetters = {
+{{#each entities as | entity |}}
+ get{{entity.name.capitalized}}: readEntity(module(Entities.{{entity.name.capitalized}})),
+{{/each}}
+}
 
 /**
 Composer for getting entitiesToLoad and dynamicContractRegistrations for a given event
 */
 let composeGetReadEntity = (
-  ~event: Types.eventLog<_>,
-  ~contextCreator,
+  ~event: Types.eventLog<'eventArgs>,
   ~inMemoryStore,
   ~logger,
-  ~asyncGetters,
-  ~getLoader: unit => Handlers.loader<_>,
+  ~handlerLoaderRegister: HandlerLoaderRegister.t<'eventArgs>,
   ~item: Types.eventBatchQueueItem,
   ~entitiesToLoad,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
-  ~eventWithContextAccessor,
+  ~eventAccessor,
   ~checkContractIsRegistered,
 ): result<getReadEntitiesRes, ErrorHandling.t> => {
   let {chain} = item
-  let chainId = chain->ChainMap.Chain.toChainId
   //If there are dynamic contracts, context loader should use the cloned in memory store
   //Otherwise we can use the passed in one
   let inMemoryStore =
     dynamicContractRegistrations->Option.mapWithDefault(inMemoryStore, d => d.inMemoryStore)
 
-  let contextHelper: Context.genericContextCreatorFunctions<_> = contextCreator(
+  let contextHelper: Context.t = Context.make(
     ~inMemoryStore,
-    ~chainId,
     ~event,
     ~logger,
+    ~chain,
     ~asyncGetters,
   )
 
-  let context = contextHelper.getLoaderContext()
+  let loaderContext = contextHelper->Context.getLoaderContext
 
-  let loader = getLoader()
+  let loader = handlerLoaderRegister->HandlerLoaderRegister.getLoader
 
-  switch loader({event, context}) {
+  switch loader({event, context: loaderContext}) {
   | exception exn =>
     let errorHandler =
       exn->ErrorHandling.make(
@@ -261,10 +255,9 @@ let composeGetReadEntity = (
       //put back on the arbitrary events queue and is now being reprocessed
       []
     } else {
-      contextHelper.getAddedDynamicContractRegistrations()->Array.keep(({
-        contractAddress,
-        contractType,
-      }) => {
+      contextHelper
+      ->Context.getAddedDynamicContractRegistrations
+      ->Array.keep(({contractAddress, contractType}) => {
         !checkContractIsRegistered(~chain, ~contractAddress, ~contractName=contractType)
       })
     }
@@ -312,12 +305,12 @@ let composeGetReadEntity = (
         //return a context with the event for the handlers
         let entitiesToLoad = entitiesToLoad->Array.concat([
           (
-            contextHelper.getEntitiesToLoad(),
+            contextHelper->Context.getEntitiesToLoad,
             (
               {
-                chainId,
-                event: eventWithContextAccessor(event, contextHelper),
-              }: Context.eventRouterEventAndContext
+                event: eventAccessor(event),
+                context: contextHelper,
+              }: eventAndContext
             ),
           ),
         ])
@@ -358,7 +351,6 @@ let rec getReadEntities = (
   | list{item, ...tail} => {
       let composer = composeGetReadEntity(
         ~entitiesToLoad,
-        ~asyncGetters,
         ~inMemoryStore,
         ~logger,
         ~item,
@@ -372,12 +364,8 @@ let rec getReadEntities = (
       | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) =>
         composer(
           ~event,
-          ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
-          ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-          ~eventWithContextAccessor=(
-            event,
-            context,
-          ) => Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
+          ~handlerLoaderRegister=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.register,
+          ~eventAccessor=event => Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event),
         )
     {{/each}}
     {{/each}}
@@ -404,13 +392,10 @@ let loadReadEntities = async (
   ~eventBatch: list<Types.eventBatchQueueItem>,
   ~checkContractIsRegistered,
   ~logger: Pino.t,
-): result<loadResponse<array<Context.eventRouterEventAndContext>>, ErrorHandling.t> => {
+): result<loadResponse<array<eventAndContext>>, ErrorHandling.t> => {
   switch eventBatch->getReadEntities(~inMemoryStore, ~logger, ~checkContractIsRegistered) {
   | Ok({val: entitiesToLoad, dynamicContractRegistrations}) =>
-    let (readEntitiesGrouped, contexts): (
-      array<array<Types.entityRead>>,
-      array<Context.eventRouterEventAndContext>,
-    ) =
+    let (readEntitiesGrouped, contexts): (array<array<Types.entityRead>>, array<eventAndContext>) =
       entitiesToLoad->Array.unzip
 
     let readEntities = readEntitiesGrouped->Belt.Array.concatMany
@@ -466,12 +451,17 @@ let processEventBatch = async (
 
     switch await eventBatchAndContext->Belt.Array.reduce(
       Promise.resolve(Ok(latestProcessedBlocks)),
-      async (previousPromise, event) => {
+      async (previousPromise, eventAndContext) => {
         switch await previousPromise {
         | Error(e) => Error(e)
         | Ok(latestProcessedBlocks) =>
           await Promise.make((resolve, _reject) =>
-            event->eventRouter(~inMemoryStore, ~cb=res => resolve(. res), ~latestProcessedBlocks)
+            eventRouter(
+              eventAndContext,
+              ~inMemoryStore,
+              ~cb=res => resolve(. res),
+              ~latestProcessedBlocks,
+            )
           )
         }
       },

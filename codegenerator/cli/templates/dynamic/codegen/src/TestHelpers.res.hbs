@@ -70,21 +70,8 @@ module EventFunctions = {
   A function composer to help create individual processEvent functions
   */
   let makeEventProcessor = (
-    ~contextCreator: Context.contextCreator<
-      'eventArgs,
-      'loaderContext,
-      'handlerContextSync,
-      'handlerContextAsync,
-    >,
-    ~getLoader: unit => Handlers.loader<_>,
-    ~eventWithContextAccessor: (
-      Types.eventLog<'eventArgs>,
-      Context.genericContextCreatorFunctions<
-        'loaderContext,
-        'handlerContextSync,
-        'handlerContextAsync,
-      >,
-    ) => Context.eventAndContext,
+    ~handlerLoaderRegister: HandlerLoaderRegister.t<'eventArgs>,
+    ~eventAccessor: Types.eventLog<'eventArgs> => Types.event,
     ~eventName: Types.eventName,
     ~cb: TestHelpers_MockDb.t => unit,
   ) => {
@@ -105,43 +92,45 @@ module EventFunctions = {
         },
       )
 
+      let chain = chainId->ChainMap.Chain.fromChainId->Utils.unwrapResultExn
+
       //Deep copy the data in mockDb, mutate the clone and return the clone
       //So no side effects occur here and state can be compared between process
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-     let asyncGetters: Context.entityGetters = {
-     {{#each entities as | entity |}}
+      let asyncGetters: Context.asyncGetters = {
+      {{#each entities as | entity |}}
        get{{entity.name.capitalized}}: async id => mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-     {{/each}}
-     }
+      {{/each}}
+      }
 
       //Construct a new instance of an in memory store to run for the given event
       let inMemoryStore = IO.InMemoryStore.make()
 
       //Construct a context with the inMemory store for the given event to run
       //loaders and handlers
-      let context = contextCreator(~event, ~inMemoryStore, ~chainId, ~logger, ~asyncGetters)
+      let context = Context.make(~event, ~inMemoryStore, ~chain, ~logger, ~asyncGetters)
 
-      let loaderContext = context.getLoaderContext()
+      let loaderContext = context->Context.getLoaderContext
 
-      let loader = getLoader()
+      let loader = handlerLoaderRegister->HandlerLoaderRegister.getLoader
 
       //Run the loader, to get all the read values/contract registrations
       //into the context
       loader({event, context: loaderContext})
 
       //Get all the entities are requested to be loaded from the mockDB
-      let entityBatch = context.getEntitiesToLoad()
+      let entityBatch = context->Context.getEntitiesToLoad
 
       //Load requested entities from the cloned mockDb into the inMemoryStore
       mockDbClone->TestHelpers_MockDb.loadEntitiesToInMemStore(~entityBatch, ~inMemoryStore)
 
       //Run the event and handler context through the eventRouter
       //With inMemoryStore
-      let eventAndContext: Context.eventRouterEventAndContext = {
-        chainId,
-        event: eventWithContextAccessor(event, context),
+      let eventAndContext: EventProcessing.eventAndContext = {
+        context,
+        event: eventAccessor(event),
       }
 
       eventAndContext->EventProcessing.eventRouter(
@@ -168,17 +157,15 @@ module EventFunctions = {
 
   /**Creates a mock event processor, wrapping the callback in a Promise for async use*/
   let makeAsyncEventProcessor = (
-    ~contextCreator,
-    ~getLoader,
-    ~eventWithContextAccessor,
+    ~handlerLoaderRegister,
+    ~eventAccessor,
     ~eventName,
     eventProcessorArgs,
   ) => {
     Promise.make((res, _rej) => {
       makeEventProcessor(
-        ~contextCreator,
-        ~getLoader,
-        ~eventWithContextAccessor,
+        ~handlerLoaderRegister,
+        ~eventAccessor,
         ~eventName,
         ~cb=mockDb => res(. mockDb),
         eventProcessorArgs,
@@ -191,18 +178,16 @@ module EventFunctions = {
   raises an exception if the handler is async
   */
   let makeSyncEventProcessor = (
-    ~contextCreator,
-    ~getLoader,
-    ~eventWithContextAccessor,
+    ~handlerLoaderRegister,
+    ~eventAccessor,
     ~eventName,
     eventProcessorArgs,
   ) => {
     //Dangerously set to None, nextMockDb will be set in the callback
     let nextMockDb = ref(None)
     makeEventProcessor(
-      ~contextCreator,
-      ~getLoader,
-      ~eventWithContextAccessor,
+      ~handlerLoaderRegister,
+      ~eventAccessor,
       ~eventName,
       ~cb=mockDb => nextMockDb := Some(mockDb),
       eventProcessorArgs,
@@ -279,26 +264,22 @@ module EventFunctions = {
 module {{contract.name.capitalized}} = {
   {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
+    let handlerLoaderRegister = Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.register
+    let eventAccessor = event => Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event)
+    let eventName = Types.{{event.event_type.full}}
+
     @genType
     let processEvent = EventFunctions.makeSyncEventProcessor(
-      ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
-      ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-      ~eventWithContextAccessor=(
-        event,
-        context,
-      ) => Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
-      ~eventName=Types.{{event.event_type.full}},
+      ~handlerLoaderRegister,
+      ~eventAccessor,
+      ~eventName,
     )
 
     @genType
     let processEventAsync = EventFunctions.makeAsyncEventProcessor(
-      ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
-      ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-      ~eventWithContextAccessor=(
-        event,
-        context,
-      ) => Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
-      ~eventName=Types.{{event.event_type.full}},
+      ~handlerLoaderRegister,
+      ~eventAccessor,
+      ~eventName,
     )
 
     @genType
@@ -341,4 +322,5 @@ module {{contract.name.capitalized}} = {
 
   {{/each}}
 }
+
 {{/each}}

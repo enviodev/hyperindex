@@ -25,7 +25,7 @@ module InMemoryStore = {
     type value = StoreItem.t
     @genType
     type key = StoreItem.key
-    type t = storeStateEntity<value, key>
+    type t = storeStateEntity<StoreItem.t, StoreItem.key>
 
     let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
 

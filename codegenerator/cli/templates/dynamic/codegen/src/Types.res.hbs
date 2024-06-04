@@ -19,6 +19,60 @@ type entityRead =
 | {{entity.name.capitalized}}Read(id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}})
 {{/each}}
 
+//Individual entity loader contexts
+//Note these will be uniform after v2 api implementation
+{{#each entities as | entity |}}
+@genType
+type {{entity.name.uncapitalized}}EntityLoaderContext = {
+  load: (id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, ~loaders: {{entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
+}
+{{/each}}
+
+@genType
+type contractRegistrations = {
+  //TODO only add contracts we've registered for the event in the config
+  {{#each codegen_contracts as |contract| }}
+  add{{contract.name.capitalized}}: (Ethers.ethAddress) => unit,
+  {{/each}}
+}
+
+@genType
+type loaderContext = {
+  log: Logs.userLogger,
+  contractRegistration: contractRegistrations,
+  {{#each entities as | entity |}}
+  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityLoaderContext,
+  {{/each}}
+}
+
+type entityHandlerContext<'entity> = {
+  get: id => option<'entity>,
+  set: 'entity => unit,
+  deleteUnsafe: id => unit,
+}
+
+type entityHandlerContextAsync<'entity> = {
+  get: id => promise<option<'entity>>,
+  set: 'entity => unit,
+  deleteUnsafe: id => unit,
+}
+
+@genType
+type handlerContext = {
+  log: Logs.userLogger,
+  {{#each entities as | entity |}}
+  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t>,
+  {{/each}}
+}
+
+@genType
+type handlerContextAsync = {
+  log: Logs.userLogger,
+  {{#each entities as | entity |}}
+  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContextAsync<Entities.{{entity.name.capitalized}}.t>,
+  {{/each}}
+}
+
 @genType
 type rawEventsEntity = {
   @as("chain_id") chainId: int,
@@ -115,189 +169,13 @@ type eventLog<'a> = {
   logIndex: int,
 }
 
-{{#each codegen_contracts as | contract |}}
-module {{contract.name.capitalized}}Contract = {
-{{#each contract.codegen_events as | event |}}
-module {{event.name.capitalized}}Event = {
-  //Note: each parameter is using a binding of its index to help with binding in ethers
-  //This handles both unamed params and also named params that clash with reserved keywords
-  //eg. if an event param is called "values" it will clash since eventArgs will have a '.values()' iterator
-  type ethersEventArgs = 
-    {{#if event.params}}
-    {
-      {{#each event.params as | param |}}
-      @as("{{@index}}") {{param.param_name.uncapitalized}}: {{param.type_rescript}},
-      {{/each}}
-    }
-    {{else}}
-    unit
-    {{/if}}
-
-  @genType
-  type eventArgs = 
-    {{#if event.params}}
-    {
-      {{#each event.params as | param |}}
-      {{param.param_name.uncapitalized}}: {{param.type_rescript}},
-      {{/each}}
-    }
-    {{else}}
-    unit
-    {{/if}}
-let eventArgsSchema = 
-  {{#if event.params}}
-  S.object((. s) => {
-  {{#each event.params as | param |}}
-    {{param.param_name.uncapitalized}}: s.field("{{param.param_name.uncapitalized}}", {{param.type_rescript_schema}}),
-  {{/each}}
-  })
-  {{else}}
-  S.literal(%raw(`null`))->S.variant((. _) => ())
-  {{/if}}
-
-
-  @genType.as("{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_EventLog")
-  type log = eventLog<eventArgs>
-
-    {{#each ../../entities as | entity |}}
-
-    // Entity: {{entity.name.original}}
-    type {{entity.name.uncapitalized}}EntityHandlerContext = {
-    {{#each event.required_entities as | required_entity |}}
-      {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
-        {{#if required_entity.labels}}
-        {{#each required_entity.labels as |label| }}
-        {{label}}: option<Entities.{{required_entity.name.capitalized}}.t>,
-        {{/each}}
-        {{/if}}
-        {{#if required_entity.array_labels}}
-        {{#each required_entity.array_labels as |array_label| }}
-        {{array_label}}: array<option<Entities.{{required_entity.name.capitalized}}.t>>,
-        {{/each}}
-        {{/if}}
-        get: id => option<Entities.{{required_entity.name.capitalized}}.t>,
-      {{/if}}
-
-    {{/each}}
-    {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
-        get{{entity_field.relational_key.capitalized}}: Entities.{{entity.name.capitalized}}.t => 
-        {{#if entity_field.is_optional}}
-          option<Entities.{{entity_field.mapped_entity.capitalized}}.t>
-        {{else}}
-          {{#if entity_field.is_array}}
-            array<Entities.{{entity_field.mapped_entity.capitalized}}.t>
-          {{else}}
-            Entities.{{entity_field.mapped_entity.capitalized}}.t
-          {{/if}}
-        {{/if}},
-      {{/each}}
-      set: Entities.{{entity.name.capitalized}}.t => unit,
-      deleteUnsafe: id => unit,
-    }
-
-    type {{entity.name.uncapitalized}}EntityHandlerContextAsync = {
-    {{#each event.required_entities as | required_entity |}}
-      {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
-        {{#if required_entity.labels}}
-        {{#each required_entity.labels as |label| }}
-        {{label}}: option<Entities.{{required_entity.name.capitalized}}.t>,
-        {{/each}}
-        {{/if}}
-        {{#if required_entity.array_labels}}
-        {{#each required_entity.array_labels as |array_label| }}
-        {{array_label}}: array<option<Entities.{{required_entity.name.capitalized}}.t>>,
-        {{/each}}
-        {{/if}}
-        get: id => promise<option<Entities.{{required_entity.name.capitalized}}.t>>,
-      {{/if}}
-
-    {{/each}}
-    {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
-        get{{entity_field.relational_key.capitalized}}: Entities.{{entity.name.capitalized}}.t => 
-        promise<{{#if entity_field.is_optional}}
-          option<Entities.{{entity_field.mapped_entity.capitalized}}.t>,
-        {{else}}
-          {{#if entity_field.is_array}}
-          {{!-- NOTE: this case is currently impossible. However, we should make this work for `derivedFrom` fields. - see: https://github.com/Float-Capital/indexer/issues/1168 --}}
-            array<Entities.{{entity_field.mapped_entity.capitalized}}.t>,
-          {{else}}
-            Entities.{{entity_field.mapped_entity.capitalized}}.t,
-          {{/if}}
-        {{/if}}
-        >,
-      {{/each}}
-      set: Entities.{{entity.name.capitalized}}.t => unit,
-      deleteUnsafe: id => unit,
-    }
-    {{/each}}
-
-    @genType
-    type handlerContext = {
-      log: Logs.userLogger,
-      {{#each ../../entities as | entity |}}
-        @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContext,
-      {{/each}}
-    }
-    @genType
-    type handlerContextAsync = {
-      log: Logs.userLogger,
-      {{#each ../../entities as | entity |}}
-        @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityHandlerContextAsync,
-      {{/each}}
-    }
-
-    {{#each event.required_entities as | required_entity |}}
-    @genType
-    type {{required_entity.name.uncapitalized}}EntityLoaderContext = {
-      {{#if required_entity.labels}}
-      {{#each required_entity.labels as | label |}}
-      {{label}}Load: (id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
-      {{/each}}
-      {{/if}}
-      {{#if required_entity.array_labels}}
-      {{#each required_entity.array_labels as | array_label |}}
-      {{array_label}}Load: (array<id>{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
-      {{/each}}
-      {{/if}}
-      load: (id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders: {{required_entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
-    }
-    {{/each}}
-
-    
-    @genType
-    type contractRegistrations = {
-    {{#each ../../codegen_contracts as |contract_inner| }}
-      //TODO only add contracts we've registered for the event in the config
-      add{{contract_inner.name.capitalized}}: (Ethers.ethAddress) => unit,
-    {{/each}}
-    }
-    @genType
-    type loaderContext = {
-      log: Logs.userLogger,
-      contractRegistration: contractRegistrations,
-    {{#each event.required_entities as | required_entity |}}
-      @as("{{required_entity.name.original}}") {{required_entity.name.uncapitalized}} : {{required_entity.name.uncapitalized}}EntityLoaderContext,
-    {{/each}}
-    }
-}
-{{/each}}
-}
-{{/each}}
-
-type event =
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>)
-{{/each}}
-{{/each}}
-
 type eventName =
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
   | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
 {{/each}}
 {{/each}}
-// {{has_multiple_events}}
+
 let eventNameSchema = {{#if has_multiple_events }}
 S.union([
 {{#each codegen_contracts as | contract |}}
@@ -313,7 +191,6 @@ S.union([
 {{/each}}
 {{/each}}
 {{/if}}
-
 
 let eventNameToString = (eventName: eventName) => switch eventName {
   {{#each codegen_contracts as | contract |}}
@@ -334,6 +211,62 @@ let eventTopicToEventName = (contractName, topic0) =>
   | (contractName, topic0) => UnknownEvent(contractName, topic0)->raise
   }
 
+{{#each codegen_contracts as | contract |}}
+module {{contract.name.capitalized}}Contract = {
+{{#each contract.codegen_events as | event |}}
+  module {{event.name.capitalized}}Event = {
+    let eventName = {{event.event_type.full}}
+    //Note: each parameter is using a binding of its index to help with binding in ethers
+    //This handles both unamed params and also named params that clash with reserved keywords
+    //eg. if an event param is called "values" it will clash since eventArgs will have a '.values()' iterator
+    type ethersEventArgs = 
+    {{#if event.params}}
+    {
+      {{#each event.params as | param |}}
+      @as("{{@index}}") {{param.param_name.uncapitalized}}: {{param.type_rescript}},
+      {{/each}}
+    }
+    {{else}}
+    unit
+    {{/if}}
+
+    @genType
+    type eventArgs = 
+    {{#if event.params}}
+    {
+      {{#each event.params as | param |}}
+      {{param.param_name.uncapitalized}}: {{param.type_rescript}},
+      {{/each}}
+    }
+    {{else}}
+    unit
+    {{/if}}
+
+    let eventArgsSchema = 
+      {{#if event.params}}
+      S.object((. s) => {
+      {{#each event.params as | param |}}
+        {{param.param_name.uncapitalized}}: s.field("{{param.param_name.uncapitalized}}", {{param.type_rescript_schema}}),
+      {{/each}}
+      })
+      {{else}}
+      S.literal(%raw(`null`))->S.variant((. _) => ())
+      {{/if}}
+
+    @genType.as("{{contract.name.capitalized}}Contract_{{event.name.capitalized}}_EventLog")
+    type log = eventLog<eventArgs>
+  }
+
+{{/each}}
+}
+
+{{/each}}
+type event =
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>)
+{{/each}}
+{{/each}}
 
 @genType
 type chainId = int

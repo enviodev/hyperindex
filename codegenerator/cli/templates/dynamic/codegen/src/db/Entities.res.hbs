@@ -1,14 +1,14 @@
 open Table
 type id = string
 
-//shorthand for punning
-let isPrimaryKey = true
-let isNullable = true
-let isArray = true
-let isIndex = true
+type entityName =
+{{#each entities as | entity |}}
+  | @as("{{entity.name.original}}") {{entity.name.capitalized}}
+{{/each}}
 
 module type Entity = {
   type t
+  let name: entityName
   let schema: S.schema<t>
   let rowsSchema: S.schema<array<t>>
   let table: Table.table
@@ -32,8 +32,15 @@ let batchDelete = (type entity, ~entityMod: module(Entity with type t = entity))
   DbFunctionsEntities.makeBatchDelete(~table)
 }
 
+//shorthand for punning
+let isPrimaryKey = true
+let isNullable = true
+let isArray = true
+let isIndex = true
+
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
+  let name = {{entity.name.capitalized}}
   @genType
   type t = {
     {{#each entity.params as | param |}}
@@ -50,7 +57,7 @@ module {{entity.name.capitalized}} = {
   let rowsSchema = S.array(schema)
 
   let table = mkTable(
-    "{{entity.name.original}}",
+     (name :> string),
     ~fields=[
   {{#each entity.postgres_fields as | pg_field |}}
       mkField(
@@ -93,11 +100,6 @@ module {{entity.name.capitalized}} = {
 type entity = 
 {{#each entities as | entity |}}
   | {{entity.name.capitalized}}Entity({{entity.name.capitalized}}.t)
-{{/each}}
-
-type entityName =
-{{#each entities as | entity |}}
-  | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
 {{/each}}
 
 let entityNameSchema = 
