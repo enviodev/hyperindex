@@ -341,7 +341,6 @@ pub async fn generate_config_from_subgraph_id(
                                 .collect::<String>();
                             let event = ConfigEvent {
                                 event: event_name.to_string(),
-                                required_entities: Some(vec![]),
                                 is_async: None,
                             };
 

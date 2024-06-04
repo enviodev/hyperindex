@@ -115,8 +115,6 @@ pub struct ConfigEvent {
     pub event: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_async: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub required_entities: Option<Vec<RequiredEntity>>,
 }
 
 impl ConfigEvent {
@@ -143,16 +141,6 @@ impl ConfigEvent {
             },
         )
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RequiredEntity {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub labels: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub array_labels: Option<Vec<String>>,
 }
 
 fn strip_to_letters(string: &str) -> String {

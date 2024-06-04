@@ -446,7 +446,7 @@ impl Entity {
         &'a self,
         schema: &'a Schema,
     ) -> anyhow::Result<Vec<(&'a Field, &'a Self)>> {
-        let required_entities_with_field = self
+        let related_entities_with_field = self
             .get_fields()
             .into_iter()
             .filter_map(|field| {
@@ -465,7 +465,7 @@ impl Entity {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        Ok(required_entities_with_field)
+        Ok(related_entities_with_field)
     }
 
     /// Validate each field type in an the given entity
