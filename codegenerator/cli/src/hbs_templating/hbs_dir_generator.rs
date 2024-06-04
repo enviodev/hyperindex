@@ -11,7 +11,7 @@ pub struct HandleBarsDirGenerator<'a, T: Serialize> {
     templates_dir: &'a RelativeDir<'a>,
     rs_template: &'a T,
     output_dir: &'a Path,
-} 
+}
 
 impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
     pub fn new(templates_dir: &'a RelativeDir, rs_template: &'a T, output_dir: &'a Path) -> Self {

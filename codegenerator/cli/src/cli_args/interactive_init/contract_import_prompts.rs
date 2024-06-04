@@ -562,8 +562,8 @@ impl LocalImportArgs {
         ))?;
 
         let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
-            "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted correctly \
-            or contact the team.",
+            "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted \
+             correctly or contact the team.",
             abi_path
         ))?;
 
