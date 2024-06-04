@@ -1,424 +1,254 @@
-type entityGetters = {
+open Types
+
+module EntityIdsMap = {
+  type t = Js.Dict.t<Set.t<Types.id>>
+
+  let makeEmptyEntityIdsMap = (): t => {
+    Entities.allTables->Belt.Array.map(table => (table.tableName, Set.make()))->Js.Dict.fromArray
+  }
+
+  let addId = (entityIdsMap: t, ~entityName: Entities.entityName, ~entityId) => {
+    switch entityIdsMap->Js.Dict.get((entityName :> string)) {
+    | Some(ids) => ids->Set.add(entityId)->ignore
+    | None => () //unexpected
+    }
+  }
+
+  let hasId = (entityIdsMap: t, ~entityName: Entities.entityName, ~entityId) => {
+    switch entityIdsMap->Js.Dict.get((entityName :> string)) {
+    | Some(ids) => ids->Set.has(entityId)
+    | None => false //unexpected
+    }
+  }
+}
+
+type asyncGetters = {
 {{#each entities as | entity |}}
  get{{entity.name.capitalized}}: Types.id => promise<array<Entities.{{entity.name.capitalized}}.t>>,
 {{/each}}
 }
 
-@genType
-type genericContextCreatorFunctions<'loaderContext, 'handlerContextSync, 'handlerContextAsync> = {
+/**
+The context holds all the state for a given events loader and handler.
+We should avoid using type parameters per event type so that this can be passed
+around with each event without needing to be wrapped in a variant with the given event
+*/
+type t = {
   logger: Pino.t,
-  log: Logs.userLogger,
-  getLoaderContext: unit => 'loaderContext,
-  getHandlerContextSync: unit => 'handlerContextSync,
-  getHandlerContextAsync: unit => 'handlerContextAsync,
-  getEntitiesToLoad: unit => array<Types.entityRead>,
-  getAddedDynamicContractRegistrations: unit => array<Types.dynamicContractRegistryEntity>,
+  eventIdentifier: eventIdentifier,
+  eventId: Ethers.BigInt.t,
+  blockTimestamp: int,
+  chain: ChainMap.Chain.t,
+  inMemoryStore: IO.InMemoryStore.t,
+  entitiesToLoad: array<entityRead>, //TODO, these could be constructed from the entity ids map later
+  addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity>,
+  entityIdsMap: EntityIdsMap.t,
+  asyncGetters: asyncGetters,
 }
 
-type contextCreator<'eventArgs, 'loaderContext, 'handlerContext, 'handlerContextAsync> = (
-  ~inMemoryStore: IO.InMemoryStore.t,
-  ~chainId: int,
-  ~event: Types.eventLog<'eventArgs>,
-  ~logger: Pino.t,
-  ~asyncGetters: entityGetters,
-) => genericContextCreatorFunctions<'loaderContext, 'handlerContext, 'handlerContextAsync>
+let getUserLogger = ({logger}: t): Logs.userLogger => {
+  info: (message: string) => logger->Logging.uinfo(message),
+  debug: (message: string) => logger->Logging.udebug(message),
+  warn: (message: string) => logger->Logging.uwarn(message),
+  error: (message: string) => logger->Logging.uerror(message),
+  errorWithExn: (exn: option<Js.Exn.t>, message: string) =>
+    logger->Logging.uerrorWithExn(exn, message),
+}
 
-let getEventIdentifier = (event: Types.eventLog<'a>, ~chainId): Types.eventIdentifier => {
-  chainId,
+let makeEventIdentifier = (event: Types.eventLog<'a>): Types.eventIdentifier => {
+  chainId: event.chainId,
   blockTimestamp: event.blockTimestamp,
   blockNumber: event.blockNumber,
   logIndex: event.logIndex,
 }
 
-exception UnableToLoadNonNullableLinkedEntity(string)
-exception LinkedEntityNotAvailableInSyncHandler(string)
+let getEventId = (event: Types.eventLog<'a>) => {
+  EventUtils.packEventIndex(~blockNumber=event.blockNumber, ~logIndex=event.logIndex)
+}
 
-{{#each codegen_contracts as | contract |}}
+let make = (~inMemoryStore, ~chain, ~event: Types.eventLog<'eventArgs>, ~logger, ~asyncGetters) => {
+  //async getters get injected for dual use with testing framework
+  let {blockTimestamp} = event
+  let eventIdentifier = event->makeEventIdentifier
+  let eventId = event->getEventId
 
-module {{contract.name.capitalized}}Contract = {
-{{#each contract.codegen_events as | event |}}
-
-  module {{event.name.capitalized}}Event = {
-    type loaderContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.loaderContext
-    type handlerContext = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContext
-    type handlerContextAsync = Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.handlerContextAsync
-    type context = genericContextCreatorFunctions<
-      loaderContext,
-      handlerContext,
-      handlerContextAsync,
-    >
-
-    let contextCreator: contextCreator<
-      Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
-      loaderContext,
-      handlerContext,
-      handlerContextAsync,
-    > = (~inMemoryStore, ~chainId, ~event, ~logger, ~asyncGetters) => {
-      let eventIdentifier = event->getEventIdentifier(~chainId)
-      // NOTE: we could optimise this code to onle create a logger if there was a log called.
-      let logger = logger->Logging.createChildFrom(
-        ~logger=_,
-        ~params={
-          "context": "{{contract.name.capitalized}}.{{event.name.capitalized}}",
-          "chainId": chainId,
-          "block": event.blockNumber,
-          "logIndex": event.logIndex,
-          "txHash": event.transactionHash,
-        },
-      )
-
-      let contextLogger: Logs.userLogger = {
-        info: (message: string) => logger->Logging.uinfo(message),
-        debug: (message: string) => logger->Logging.udebug(message),
-        warn: (message: string) => logger->Logging.uwarn(message),
-        error: (message: string) => logger->Logging.uerror(message),
-        errorWithExn: (exn: option<Js.Exn.t>, message: string) =>
-          logger->Logging.uerrorWithExn(exn, message),
-      }
-
-      {{#each event.required_entities as | required_entity |}}
-      {{#if required_entity.labels}}
-      {{#each required_entity.labels as |label| }}
-      let optIdOf_{{label}} = ref(None)
-      {{/each}}
-      {{/if}}
-      {{#if required_entity.array_labels}}
-        {{#each required_entity.array_labels as |array_label|}}
-          let optIdArrayOf_{{array_label}} = ref(None)
-        {{/each}}
-      {{/if}}
-      let optSetOfIds_{{required_entity.name.uncapitalized}}: Set.t<Types.id> = Set.make()
-      {{/each}}
-
-      let entitiesToLoad: array<Types.entityRead> = []
-
-      let addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity> = []
-
-      //Loader context can be defined as a value and the getter can return that value
-      @warning("-16")
-      let loaderContext: loaderContext = {
-        log: contextLogger,
-        contractRegistration: {
-        {{#each ../../codegen_contracts as |contract_inner| }}
-          //TODO only add contracts we've registered for the event in the config
-          add{{contract_inner.name.capitalized}}: (contractAddress: Ethers.ethAddress) => 
-          {
-            let eventId = EventUtils.packEventIndex(
-              ~blockNumber=event.blockNumber,
-              ~logIndex=event.logIndex,
-            )
-            let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
-              chainId,
-              eventId,
-              blockTimestamp: event.blockTimestamp,
-              contractAddress,
-              contractType: "{{contract_inner.name.capitalized}}",
-            }
-
-            addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
-
-            inMemoryStore.dynamicContractRegistry->IO.InMemoryStore.DynamicContractRegistry.set(
-              ~key={chainId, contractAddress},
-              ~entity=dynamicContractRegistration,
-            )
-          },
-        {{/each}}
-        },
-      {{#each event.required_entities as | required_entity |}}
-        {{required_entity.name.uncapitalized}}: {
-      {{#if required_entity.labels}}
-      {{#each required_entity.labels as |label| }}
-          {{label}}Load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
-            optIdOf_{{label}} := Some(id)
-
-            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
-          },
-      {{/each}}
-      {{/if}}
-      {{#if required_entity.array_labels}}
-      {{#each required_entity.array_labels as |array_label| }}
-          {{array_label}}Load: (ids: array<Types.id>{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => {
-            optIdArrayOf_{{array_label}} := Some(ids)
-
-            let _ =
-              ids->Belt.Array.map(id => entitiesToLoad->Js.Array2.push(Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}})))
-          },
-      {{/each}}
-      {{/if}}
-      
-          load: (id: Types.id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => 
-          {
-            let _ = optSetOfIds_{{required_entity.name.uncapitalized}}->Set.add(id)
-            let _ = Js.Array2.push(entitiesToLoad, Types.{{required_entity.name.capitalized}}Read(id{{#if required_entity.entity_fields_of_required_entity.filtered_not_derived_from.[0]}}, loaders{{/if}}))
-          },
-        },
-      {{/each}}
-      }
-
-      //handler context must be defined as a getter function so that it can construct the context
-      //without stale values whenever it is used
-      let getHandlerContextSync: unit => handlerContext = () => {
-          {{#each ../../entities as | entity |}}
-            {{#each event.required_entities as | required_entity |}}
-              {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
-                {{#if required_entity.labels}}
-                  {{#each required_entity.labels as |label| }}
-                  let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
-                    | Some(id) => inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
-                    | None =>
-                      Logging.warn(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
-                      None
-                    }
-                  {{/each}}
-                {{/if}}
-                {{#if required_entity.array_labels}}
-                  {{#each required_entity.array_labels as |array_label| }}
-                  let {{array_label}}_{{required_entity.name.capitalized}} = switch optIdArrayOf_{{array_label}}.contents {
-                    | Some(ids) =>
-                      ids->Belt.Array.map(id => inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id))
-                    | None =>
-                      Logging.warn(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
-                      []
-                    }
-                  {{/each}}
-                {{/if}}
-              {{/if}}
-            {{/each}}
-          {{/each}}
-        {
-          log: contextLogger,
-          {{#each ../../entities as | entity |}}
-            {{entity.name.uncapitalized}}: {
-              set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
-                ~key=entity.id,
-                ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
-              )},
-
-              deleteUnsafe: id => {
-                inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
-                ~key=id,
-                ~entity=Delete(id)->Types.mkEntityUpdate(~eventIdentifier),
-              )
-                },
-              {{#each event.required_entities as | required_entity |}}
-                {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
-                  {{#if required_entity.labels}}
-                  {{#each required_entity.labels as |label| }}
-                  {{label}}: {{label}}_{{required_entity.name.capitalized}},
-                  {{/each}}
-                  {{/if}}
-                  {{#if required_entity.array_labels}}
-                  {{#each required_entity.array_labels as |array_label| }}
-                  {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
-                  {{/each}}
-                  {{/if}}
-                  get: (id: Types.id) => {
-                    if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
-                      inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
-                    } else {
-                      Logging.warn(
-                        `The loader for a "{{required_entity.name.capitalized}}" of entity with id "${id}" was not used please add it to your default loader function (ie. place 'context.{{required_entity.name.uncapitalized}}.load("${id}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
-                      )
-
-                      // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
-                      inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
-
-                      // TODO: add a further step to synchronously try fetch this from the DB if it isn't in the in-memory store - similar to this PR: https://github.com/Float-Capital/indexer/pull/759
-                    }
-                 },
-                {{/if}}
-              {{/each}}
-              {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
-              get{{entity_field.relational_key.capitalized}}: {{entity.name.uncapitalized}} => {
-                {{#if entity_field.is_optional}}
-                 switch {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id {
-                  | Some({{entity_field.relational_key.uncapitalized}}_field) =>
-                    // TODO: we aren't handling the case where the code is an optional array. Maybe we should enforce that at the compile step, and force users to use an empty array instead.
-                    let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity_field.relational_key.uncapitalized}}_field)
-
-                    (
-                {{else}}
-                  let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id)
-                {{/if}}
-                  switch opt{{entity_field.relational_key.capitalized}} {
-                  | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
-                  | None =>
-                    Logging.error(`Linked entity field '{{entity_field.relational_key.uncapitalized}}' not found  for '{{entity.name.capitalized}}' entity.
-Please ensure this field '{{entity_field.relational_key.uncapitalized}}' is loaded in the '{{entity.name.capitalized}}' entity loader for this entity with id ${ {{entity.name.uncapitalized}}.id }.
-
-It is also possible that you have saved an ID for an entity that doesn't exist in the code. Please validate in the Database that an entity of type '{{entity_field.mapped_entity.original}}' with ID ${ {{#if entity_field.is_optional}} {{entity_field.relational_key.uncapitalized}}_field  {{else}} {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id  {{/if}} } exists. If it doesn't you need to examine the code that is meant to create and save that entity initially.`)
-
-                raise(
-                  LinkedEntityNotAvailableInSyncHandler(
-                    "The required linked entity {{entity_field.relational_key.uncapitalized}} was not defined in the loader for entity {{entity.name.capitalized}}",
-                  ),
-                )
-                 }
-          {{#if entity_field.is_optional}})->Some
-          | None => None
-          }
-              {{/if}}
-            },
-            {{/each}}
-            },
-          {{/each}}
-        }
-      }
-
-      let getHandlerContextAsync= (): handlerContextAsync => {
-          {{#each ../../entities as | entity |}}
-            {{#each event.required_entities as | required_entity |}}
-              {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
-                {{#if required_entity.labels}}
-                  {{#each required_entity.labels as |label| }}
-                  let {{label}}_{{required_entity.name.capitalized}} = switch optIdOf_{{label}}.contents {
-                    | Some(id) => inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
-                    | None =>
-                      Logging.warn(`The loader for "{{label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
-                      None
-                    }
-                  {{/each}}
-                {{/if}}
-                {{#if required_entity.array_labels}}
-                  {{#each required_entity.array_labels as |array_label| }}
-                  let {{array_label}}_{{required_entity.name.capitalized}} = switch optIdArrayOf_{{array_label}}.contents {
-                    | Some(ids) =>
-                      ids->Belt.Array.map(id => inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id))
-                    | None =>
-                      Logging.warn(`The array loader for "{{array_label}}" of entity type "{{required_entity.name.capitalized}}"" was not used please add it to your loader function or remove it from your config.yaml file to avoid unexpected behaviour. This is a runtime validation check.`)
-                      []
-                    }
-                  {{/each}}
-                {{/if}}
-              {{/if}}
-            {{/each}}
-          {{/each}}
-        {
-          log: contextLogger,
-          {{#each ../../entities as | entity |}}
-            {{entity.name.uncapitalized}}: {
-              set: entity => {inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
-                ~key=entity.id,
-                ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
-              )},
-              deleteUnsafe: id => {
-                inMemoryStore.{{entity.name.uncapitalized}}->IO.InMemoryStore.{{entity.name.capitalized}}.set(
-                ~key=id,
-                ~entity=Delete(id)->Types.mkEntityUpdate(~eventIdentifier),
-              )
-                },
-              {{#each event.required_entities as | required_entity |}}
-                {{#if (eq entity.name.capitalized required_entity.name.capitalized)}}
-                  {{#if required_entity.labels}}
-                  {{#each required_entity.labels as |label| }}
-                  {{label}}: {{label}}_{{required_entity.name.capitalized}},
-                  {{/each}}
-                  {{/if}}
-                  {{#if required_entity.array_labels}}
-                  {{#each required_entity.array_labels as |array_label| }}
-                  {{array_label}}: {{array_label}}_{{required_entity.name.capitalized}},
-                  {{/each}}
-                  {{/if}}
-                  get: async (id: Types.id) => {
-                    if (optSetOfIds_{{required_entity.name.uncapitalized}}->Set.has(id)) {
-                      inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id)
-                    } else {
-                      // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
-                      switch inMemoryStore.{{required_entity.name.uncapitalized}}->IO.InMemoryStore.{{required_entity.name.capitalized}}.get(id) {
-                      | Some(entity) => Some(entity)
-                      | None =>
-                        let entities = await asyncGetters.get{{required_entity.name.capitalized}}(id)
-
-                        let optEntity = entities->Belt.Array.get(0)
-
-                        IO.InMemoryStore.{{required_entity.name.capitalized}}.initValue(
-                          inMemoryStore.{{required_entity.name.uncapitalized}},
-                          ~key=id,
-                          ~entity=optEntity,
-                        )
-
-                        optEntity
-                      }
-                    }
-                 },
-                {{/if}}
-              {{/each}}
-              {{#each entity.relational_params.filtered_not_derived_from as | entity_field |}}
-              get{{entity_field.relational_key.capitalized}}: async {{entity.name.uncapitalized}} => {
-                {{#if entity_field.is_optional}}
-                 switch {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id {
-                  | Some({{entity_field.relational_key.uncapitalized}}_field) =>
-                    // TODO: we aren't handling the case where the code is an optional array. Maybe we should enforce that at the compile step, and force users to use an empty array instead.
-                    let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity_field.relational_key.uncapitalized}}_field)
-                 
-                {{else}}
-                  let {{entity_field.relational_key.uncapitalized}}_field = {{entity.name.uncapitalized}}.{{entity_field.relational_key.uncapitalized}}_id
-                  let opt{{entity_field.relational_key.capitalized}} = inMemoryStore.{{entity_field.mapped_entity.uncapitalized}}->IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.get({{entity_field.relational_key.uncapitalized}}_field)
-                {{/if}}
-                  switch opt{{entity_field.relational_key.capitalized}} {
-                  | Some({{entity_field.relational_key.uncapitalized}}) => {{entity_field.relational_key.uncapitalized}}
-                  | None => 
-                    let entities = await asyncGetters.get{{entity_field.mapped_entity.capitalized}}({{entity_field.relational_key.uncapitalized}}_field)
-
-                    switch entities->Belt.Array.get(0) {
-                    | Some(entity) =>
-                      // TODO: make this work with the test framework too.
-                      IO.InMemoryStore.{{entity_field.mapped_entity.capitalized}}.initValue(
-                        inMemoryStore.{{entity_field.mapped_entity.uncapitalized}},
-                        ~key=entity.id,
-                        ~entity=Some(entity),
-                      )
-                      entity
-                    | None =>
-                      Logging.error(`{{entity.name.capitalized}} {{entity_field.relational_key.uncapitalized}} data not found. Loading associated {{entity_field.mapped_entity.uncapitalized}} from database.
-This is likely due to a database corruption. Please reach out to the team on discord.
-`)
-
-                  raise(
-                    UnableToLoadNonNullableLinkedEntity(
-                      "The required linked entity {{entity_field.relational_key.uncapitalized}} of {{entity.name.capitalized}} is undefined.",
-                    ),
-                  )
-                }
-               }
-          {{#if entity_field.is_optional}}
-          ->Some
-          | None => None
-          }
-              {{/if}}
-            },
-            {{/each}}
-            },
-          {{/each}}
-        }
-      }
-
-      {
-        logger,
-        log: contextLogger,
-        getEntitiesToLoad: () => entitiesToLoad,
-        getAddedDynamicContractRegistrations: () => addedDynamicContractRegistrations,
-        getLoaderContext: () => loaderContext,
-        getHandlerContextSync,
-        getHandlerContextAsync,
-      }
-    }
+  {
+    logger,
+    eventIdentifier,
+    eventId,
+    blockTimestamp,
+    chain,
+    inMemoryStore,
+    entitiesToLoad: [],
+    addedDynamicContractRegistrations: [],
+    entityIdsMap: EntityIdsMap.makeEmptyEntityIdsMap(),
+    asyncGetters,
   }
-{{/each}}
 }
-{{/each}}
 
-type eventAndContext =
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(
-      Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
-      {{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.context
+let makeDynamicContractRegisterFn = (
+  ~context,
+  ~contractName,
+  contractAddress: Ethers.ethAddress,
+) => {
+  let {eventId, blockTimestamp, chain} = context
+  let chainId = chain->ChainMap.Chain.toChainId
+  let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+    chainId,
+    eventId,
+    blockTimestamp,
+    contractAddress,
+    contractType: contractName,
+  }
+
+  context.addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+  context.inMemoryStore.dynamicContractRegistry->IO.InMemoryStore.DynamicContractRegistry.set(
+    ~key={chainId, contractAddress},
+    ~entity=dynamicContractRegistration,
+  )
+}
+
+//TODO remove this warning with next load api
+@warning("-16")
+let getLoaderContext = (context: t): loaderContext => {
+  log: context->getUserLogger,
+  contractRegistration: {
+    //TODO only add contracts we've registered for the event in the config
+    {{#each codegen_contracts as |contract| }}
+    add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~context, ~contractName="{{contract.name.original}}"),
+    {{/each}}
+  },
+  {{#each entities as | entity |}}
+  {{entity.name.uncapitalized}}: {
+    load: (entityId: Types.id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, ~loaders={}{{/if}}) => 
+    {
+      context.entityIdsMap->EntityIdsMap.addId(~entityName={{entity.name.capitalized}}, ~entityId)
+      let _ = context.entitiesToLoad->Js.Array2.push({{entity.name.capitalized}}Read(entityId{{#if entity.relational_params.filtered_not_derived_from.[0]}}, loaders{{/if}}))
+    },
+  },
+  {{/each}}
+}
+
+let makeEntityHandlerContext = (
+  ~eventIdentifier,
+  ~store, //TODO: store and store functions should be passed in via module
+  ~set,
+  ~get,
+  ~entityIdsMap: EntityIdsMap.t,
+  ~entityName: Entities.entityName,
+): entityHandlerContext<'entity> => {
+  {
+    set: entity => {
+      store->set(
+        ~key=Obj.magic(entity)["id"],
+        ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
       )
-{{/each}}
-{{/each}}
+    },
+    deleteUnsafe: id => {
+      store->set(~key=id, ~entity=Delete(id)->Types.mkEntityUpdate(~eventIdentifier))
+    },
+    get: (entityId: Types.id) => {
+      if entityIdsMap->EntityIdsMap.hasId(~entityName, ~entityId) {
+        store->get(entityId)
+      } else {
+        Logging.warn(
+          `The loader for a "${(entityName :> string)}" of entity with id "${entityId}" was not used please add it to your default loader function (ie. place 'context.${(entityName :> string)}.load("${entityId}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
+        )
 
-type eventRouterEventAndContext = {
-  chainId: int,
-  event: eventAndContext,
+        // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
+        store->get(entityId)
+
+        // TODO: add a further step to synchronously try fetch this from the DB if it isn't in the in-memory store - similar to this PR: https://github.com/Float-Capital/indexer/pull/759
+      }
+    },
+  }
 }
+
+let makeEntityHandlerContextAsync = (
+  type entity,
+  ~eventIdentifier,
+  ~store: 'store, //TODO: store and store functions should be passed in via module
+  ~set,
+  ~get,
+  ~entityIdsMap: EntityIdsMap.t,
+  ~entityMod: module(Entities.Entity with type t = entity),
+  ~initValue: (
+    ~allowOverWriteEntity: bool=?,
+    ~key: string,
+    ~entity: option<entity>,
+    'store,
+  ) => unit,
+  ~asyncGetter,
+): entityHandlerContextAsync<entity> => {
+  let module(EntityMod) = entityMod
+  {
+    set: entity => {
+      store->set(
+        ~key=Obj.magic(entity)["id"],
+        ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
+      )
+    },
+    deleteUnsafe: id => {
+      store->set(~key=id, ~entity=Delete(id)->Types.mkEntityUpdate(~eventIdentifier))
+    },
+    get: async entityId => {
+      if entityIdsMap->EntityIdsMap.hasId(~entityName=EntityMod.name, ~entityId) {
+        store->get(entityId)
+      } else {
+        // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
+        switch store->get(entityId) {
+        | Some(entity) => Some(entity)
+        | None =>
+          let entities = await asyncGetter(entityId)
+
+          let optEntity = entities->Belt.Array.get(0)
+
+          store->initValue(~key=entityId, ~entity=optEntity)
+
+          optEntity
+        }
+      }
+    },
+  }
+}
+//handler context must be defined as a getter function so that it can construct the context
+//without stale values whenever it is used
+let getHandlerContextSync: t => handlerContext = context => {
+  let {inMemoryStore, entityIdsMap, eventIdentifier} = context
+  {
+    log: context->getUserLogger,
+    {{#each entities as | entity |}}
+    {{entity.name.uncapitalized}}: makeEntityHandlerContext(
+      ~eventIdentifier,
+      ~entityIdsMap,
+      ~set=IO.InMemoryStore.{{entity.name.capitalized}}.set,
+      ~get=IO.InMemoryStore.{{entity.name.capitalized}}.get,
+      ~store=inMemoryStore.{{entity.name.uncapitalized}},
+      ~entityName={{entity.name.capitalized}},
+    ),
+    {{/each}}
+  }
+}
+
+let getHandlerContextAsync = context => {
+  let {inMemoryStore, entityIdsMap, eventIdentifier, asyncGetters} = context
+  {
+    log: context->getUserLogger,
+    {{#each entities as | entity |}}
+    {{entity.name.uncapitalized}}: makeEntityHandlerContextAsync(
+      ~eventIdentifier,
+      ~entityIdsMap,
+      ~asyncGetter=asyncGetters.get{{entity.name.capitalized}},
+      ~set=IO.InMemoryStore.{{entity.name.capitalized}}.set,
+      ~get=IO.InMemoryStore.{{entity.name.capitalized}}.get,
+      ~store=inMemoryStore.{{entity.name.uncapitalized}},
+      ~entityMod=module(Entities.{{entity.name.capitalized}}),
+      ~initValue=IO.InMemoryStore.{{entity.name.capitalized}}.initValue,
+    ),
+    {{/each}}
+  }
+}
+
+let getAddedDynamicContractRegistrations = (context: t) => context.addedDynamicContractRegistrations
+let getEntitiesToLoad = (context: t) => context.entitiesToLoad
