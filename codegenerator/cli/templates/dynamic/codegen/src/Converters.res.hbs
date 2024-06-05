@@ -174,7 +174,7 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
 }
 
 let decodeRawEventWith = (
-  rawEvent: Types.rawEventsEntity,
+  rawEvent: TablesStatic.RawEvents.t,
   ~schema: S.t<'a>,
   ~variantAccessor: Types.eventLog<'a> => Types.event,
   ~chain,
@@ -210,11 +210,14 @@ let decodeRawEventWith = (
   })
 }
 
-let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain, ~txOrigin: option<Ethers.ethAddress>, ~txTo: option<Ethers.ethAddress>): result<Types.eventBatchQueueItem, S.error> => {
-  rawEvent.eventType
-  ->S.parseWith(Types.eventNameSchema)
-  ->Belt.Result.flatMap(eventName => {
-    switch eventName {
+
+let parseRawEvent = (
+  rawEvent: TablesStatic.RawEvents.t,
+  ~chain,
+  ~txOrigin: option<Ethers.ethAddress>,
+  ~txTo: option<Ethers.ethAddress>,
+): result<Types.eventBatchQueueItem, S.error> => {
+  switch rawEvent.eventType {
   {{#each codegen_contracts as |contract|}}
   {{#each contract.codegen_events as |event|}}
       | {{event.event_type.full}} =>
@@ -227,6 +230,5 @@ let parseRawEvent = (rawEvent: Types.rawEventsEntity, ~chain, ~txOrigin: option<
       )
   {{/each}}
   {{/each}}
-    }
-  })
+  }
 }

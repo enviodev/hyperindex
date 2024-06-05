@@ -1,7 +1,7 @@
 open Belt
 
 type chain = ChainMap.Chain.t
-type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(IO.InMemoryStore.t)
+type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
 type t = {
   chainManager: ChainManager.t,
@@ -62,7 +62,7 @@ type action =
   | SetSyncedChains
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
-  | SetRollbackState(IO.InMemoryStore.t, ChainManager.t)
+  | SetRollbackState(InMemoryStore.t, ChainManager.t)
   | ResetRollbackState
 
 type queryChain = CheckAllChains | Chain(chain)
@@ -441,7 +441,7 @@ let actionReducer = (state: t, action: action) => {
 
       let contractAddressMapping =
         dynamicContracts
-        ->Array.map(d => (d.contractAddress, d.contractType))
+        ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
         ->ContractAddressingMap.fromArray
 
       let currentChainFetcher =
@@ -785,11 +785,15 @@ let injectedTaskReducer = async (
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
 
         // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
-        let checkContractIsRegistered = (~chain, ~contractAddress, ~contractName) => {
+        let checkContractIsRegistered = (
+          ~chain,
+          ~contractAddress,
+          ~contractName: Enums.ContractType.variants,
+        ) => {
           let fetchState = fetchStatesMap->ChainMap.get(chain)
           fetchState->FetchState.checkContainsRegisteredContractAddress(
             ~contractAddress,
-            ~contractName,
+            ~contractName=(contractName :> string),
           )
         }
 
@@ -808,7 +812,7 @@ let injectedTaskReducer = async (
           None
         }
 
-        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(IO.InMemoryStore.make())
+        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
         switch await EventProcessing.processEventBatch(
           ~eventBatch=batch,
           ~inMemoryStore,
