@@ -200,7 +200,7 @@ let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem 
   }
 })
 
-let inMemoryStoreMock = IO.InMemoryStore.make()
+let inMemoryStoreMock = InMemoryStore.make()
 let makeContext = event =>
   Context.make(
     ~logger=Logging.logger,

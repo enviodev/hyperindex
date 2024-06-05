@@ -255,7 +255,7 @@ let sortOrderedEventBatchArrays = (batches: array<array<Types.eventBatchQueueIte
 
 let addDynamicContractAndFetchMissingEvents = async (
   self: t,
-  ~dynamicContracts: array<Types.dynamicContractRegistryEntity>,
+  ~dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
   ~fromBlock,
   ~fromLogIndex,
   ~logger,
@@ -270,7 +270,7 @@ let addDynamicContractAndFetchMissingEvents = async (
   let unaddedDynamicContracts =
     dynamicContracts->Array.keep(({contractType, contractAddress}) =>
       self.contractAddressMapping->ContractAddressingMap.addAddressIfNotExists(
-        ~name=contractType,
+        ~name=(contractType :> string),
         ~address=contractAddress,
       )
     )
@@ -278,8 +278,8 @@ let addDynamicContractAndFetchMissingEvents = async (
   //Sort unaddedDynamicContracts into 3 arrays for separate cases
   let (existingDynamicContracts, existingDynamicContractsWithMissingEvents, newDynamicContracts): (
     array<Ethers.ethAddress>,
-    array<Types.dynamicContractRegistryEntity>,
-    array<Types.dynamicContractRegistryEntity>,
+    array<TablesStatic.DynamicContractRegistry.t>,
+    array<TablesStatic.DynamicContractRegistry.t>,
   ) = unaddedDynamicContracts->Array.reduce(([], [], []), (
     (existingDynamicContracts, existingDynamicContractsWithMissingEvents, newDynamicContracts),
     contract,
@@ -353,7 +353,10 @@ let addDynamicContractAndFetchMissingEvents = async (
     | [] => currentQueueItems
     | page =>
       let newQueueItems = page->Belt.Array.map(rawEvent => {
-        let parsedEvent = rawEvent->Converters.parseRawEvent(~chain=self.chain, ~txOrigin=None, ~txTo=None)->Result.getExn
+        let parsedEvent =
+          rawEvent
+          ->Converters.parseRawEvent(~chain=self.chain, ~txOrigin=None, ~txTo=None)
+          ->Result.getExn
         let queueItem: Types.eventBatchQueueItem = {
           timestamp: parsedEvent.timestamp,
           chain: self.chain,

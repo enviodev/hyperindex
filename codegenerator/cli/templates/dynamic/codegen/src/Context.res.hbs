@@ -7,14 +7,14 @@ module EntityIdsMap = {
     Entities.allTables->Belt.Array.map(table => (table.tableName, Set.make()))->Js.Dict.fromArray
   }
 
-  let addId = (entityIdsMap: t, ~entityName: Entities.entityName, ~entityId) => {
+  let addId = (entityIdsMap: t, ~entityName: Enums.EntityType.variants, ~entityId) => {
     switch entityIdsMap->Js.Dict.get((entityName :> string)) {
     | Some(ids) => ids->Set.add(entityId)->ignore
     | None => () //unexpected
     }
   }
 
-  let hasId = (entityIdsMap: t, ~entityName: Entities.entityName, ~entityId) => {
+  let hasId = (entityIdsMap: t, ~entityName: Enums.EntityType.variants, ~entityId) => {
     switch entityIdsMap->Js.Dict.get((entityName :> string)) {
     | Some(ids) => ids->Set.has(entityId)
     | None => false //unexpected
@@ -39,9 +39,9 @@ type t = {
   eventId: Ethers.BigInt.t,
   blockTimestamp: int,
   chain: ChainMap.Chain.t,
-  inMemoryStore: IO.InMemoryStore.t,
+  inMemoryStore: InMemoryStore.t,
   entitiesToLoad: array<entityRead>, //TODO, these could be constructed from the entity ids map later
-  addedDynamicContractRegistrations: array<Types.dynamicContractRegistryEntity>,
+  addedDynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
   entityIdsMap: EntityIdsMap.t,
   asyncGetters: asyncGetters,
 }
@@ -93,7 +93,7 @@ let makeDynamicContractRegisterFn = (
 ) => {
   let {eventId, blockTimestamp, chain} = context
   let chainId = chain->ChainMap.Chain.toChainId
-  let dynamicContractRegistration: Types.dynamicContractRegistryEntity = {
+  let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
     chainId,
     eventId,
     blockTimestamp,
@@ -103,9 +103,9 @@ let makeDynamicContractRegisterFn = (
 
   context.addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
 
-  context.inMemoryStore.dynamicContractRegistry->IO.InMemoryStore.DynamicContractRegistry.set(
-    ~key={chainId, contractAddress},
-    ~entity=dynamicContractRegistration,
+  context.inMemoryStore.dynamicContractRegistry->InMemoryTable.set(
+    {chainId, contractAddress},
+    dynamicContractRegistration,
   )
 }
 
@@ -116,7 +116,7 @@ let getLoaderContext = (context: t): loaderContext => {
   contractRegistration: {
     //TODO only add contracts we've registered for the event in the config
     {{#each codegen_contracts as |contract| }}
-    add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~context, ~contractName="{{contract.name.original}}"),
+    add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~context, ~contractName={{contract.name.capitalized}}),
     {{/each}}
   },
   {{#each entities as | entity |}}
@@ -132,32 +132,30 @@ let getLoaderContext = (context: t): loaderContext => {
 
 let makeEntityHandlerContext = (
   ~eventIdentifier,
-  ~store, //TODO: store and store functions should be passed in via module
-  ~set,
-  ~get,
+  ~inMemTable, //TODO: store and store functions should be passed in via module
   ~entityIdsMap: EntityIdsMap.t,
-  ~entityName: Entities.entityName,
+  ~entityName: Enums.EntityType.variants,
 ): entityHandlerContext<'entity> => {
   {
     set: entity => {
-      store->set(
-        ~key=Obj.magic(entity)["id"],
-        ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
+      inMemTable->InMemoryTable.Entity.set(
+        Obj.magic(entity)["id"],
+        Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
       )
     },
     deleteUnsafe: id => {
-      store->set(~key=id, ~entity=Delete(id)->Types.mkEntityUpdate(~eventIdentifier))
+      inMemTable->InMemoryTable.Entity.set(id, Delete(id)->Types.mkEntityUpdate(~eventIdentifier))
     },
     get: (entityId: Types.id) => {
       if entityIdsMap->EntityIdsMap.hasId(~entityName, ~entityId) {
-        store->get(entityId)
+        inMemTable->InMemoryTable.Entity.get(entityId)
       } else {
         Logging.warn(
           `The loader for a "${(entityName :> string)}" of entity with id "${entityId}" was not used please add it to your default loader function (ie. place 'context.${(entityName :> string)}.load("${entityId}")' inside your loader) to avoid unexpected behaviour. This is a runtime validation check.`,
         )
 
         // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
-        store->get(entityId)
+        inMemTable->InMemoryTable.Entity.get(entityId)
 
         // TODO: add a further step to synchronously try fetch this from the DB if it isn't in the in-memory store - similar to this PR: https://github.com/Float-Capital/indexer/pull/759
       }
@@ -168,43 +166,34 @@ let makeEntityHandlerContext = (
 let makeEntityHandlerContextAsync = (
   type entity,
   ~eventIdentifier,
-  ~store: 'store, //TODO: store and store functions should be passed in via module
-  ~set,
-  ~get,
+  ~inMemTable: InMemoryTable.Entity.t<entity>, //TODO: store and store functions should be passed in via module
   ~entityIdsMap: EntityIdsMap.t,
   ~entityMod: module(Entities.Entity with type t = entity),
-  ~initValue: (
-    ~allowOverWriteEntity: bool=?,
-    ~key: string,
-    ~entity: option<entity>,
-    'store,
-  ) => unit,
   ~asyncGetter,
 ): entityHandlerContextAsync<entity> => {
   let module(EntityMod) = entityMod
   {
     set: entity => {
-      store->set(
-        ~key=Obj.magic(entity)["id"],
-        ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
+      inMemTable->InMemoryTable.Entity.set(
+        Obj.magic(entity)["id"],
+        Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
       )
     },
     deleteUnsafe: id => {
-      store->set(~key=id, ~entity=Delete(id)->Types.mkEntityUpdate(~eventIdentifier))
+      inMemTable->InMemoryTable.Entity.set(id, Delete(id)->Types.mkEntityUpdate(~eventIdentifier))
     },
     get: async entityId => {
       if entityIdsMap->EntityIdsMap.hasId(~entityName=EntityMod.name, ~entityId) {
-        store->get(entityId)
+        inMemTable->InMemoryTable.Entity.get(entityId)
       } else {
         // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
-        switch store->get(entityId) {
+        switch inMemTable->InMemoryTable.Entity.get(entityId) {
         | Some(entity) => Some(entity)
         | None =>
           let entities = await asyncGetter(entityId)
 
           let optEntity = entities->Belt.Array.get(0)
-
-          store->initValue(~key=entityId, ~entity=optEntity)
+          inMemTable->InMemoryTable.Entity.initValue(~key=entityId, ~entity=optEntity)
 
           optEntity
         }
@@ -212,6 +201,7 @@ let makeEntityHandlerContextAsync = (
     },
   }
 }
+
 //handler context must be defined as a getter function so that it can construct the context
 //without stale values whenever it is used
 let getHandlerContextSync: t => handlerContext = context => {
@@ -222,9 +212,7 @@ let getHandlerContextSync: t => handlerContext = context => {
     {{entity.name.uncapitalized}}: makeEntityHandlerContext(
       ~eventIdentifier,
       ~entityIdsMap,
-      ~set=IO.InMemoryStore.{{entity.name.capitalized}}.set,
-      ~get=IO.InMemoryStore.{{entity.name.capitalized}}.get,
-      ~store=inMemoryStore.{{entity.name.uncapitalized}},
+      ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
       ~entityName={{entity.name.capitalized}},
     ),
     {{/each}}
@@ -240,11 +228,8 @@ let getHandlerContextAsync = context => {
       ~eventIdentifier,
       ~entityIdsMap,
       ~asyncGetter=asyncGetters.get{{entity.name.capitalized}},
-      ~set=IO.InMemoryStore.{{entity.name.capitalized}}.set,
-      ~get=IO.InMemoryStore.{{entity.name.capitalized}}.get,
-      ~store=inMemoryStore.{{entity.name.uncapitalized}},
+      ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
-      ~initValue=IO.InMemoryStore.{{entity.name.capitalized}}.initValue,
     ),
     {{/each}}
   }

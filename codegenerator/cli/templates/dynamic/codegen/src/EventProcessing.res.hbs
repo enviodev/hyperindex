@@ -34,10 +34,10 @@ module EventsProcessed = {
 
 let addEventToRawEvents = (
   event: Types.eventLog<'a>,
-  ~inMemoryStore: IO.InMemoryStore.t,
+  ~inMemoryStore: InMemoryStore.t,
   ~chainId,
   ~eventArgsSchema: S.t<'a>,
-  ~eventName: Types.eventName,
+  ~eventName: Enums.EventType.variants,
 ) => {
   let {
     blockNumber,
@@ -50,7 +50,7 @@ let addEventToRawEvents = (
   } = event
 
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-  let rawEvent: Types.rawEventsEntity = {
+  let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
     eventId: eventId->Ethers.BigInt.toString,
     blockNumber,
@@ -60,7 +60,7 @@ let addEventToRawEvents = (
     srcAddress,
     blockHash,
     blockTimestamp,
-    eventType: eventName->S.serializeOrRaiseWith(Types.eventNameSchema),
+    eventType: eventName,
     params: switch event.params->S.serializeToJsonStringWith(. eventArgsSchema) {
     | Ok(jsonString) => jsonString
     | Error(e) => S.Error.raise(e)
@@ -69,21 +69,18 @@ let addEventToRawEvents = (
 
   let eventIdStr = eventId->Ethers.BigInt.toString
 
-  inMemoryStore.rawEvents->IO.InMemoryStore.RawEvents.set(
-    ~key={chainId, eventId: eventIdStr},
-    ~entity=rawEvent
-  )
+  inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
 }
 
 let updateEventSyncState = (
   event: Types.eventLog<'a>,
   ~chainId,
-  ~inMemoryStore: IO.InMemoryStore.t,
+  ~inMemoryStore: InMemoryStore.t,
 ) => {
   let {blockNumber, logIndex, transactionIndex, blockTimestamp} = event
-  let _ = inMemoryStore.eventSyncState->IO.InMemoryStore.EventSyncState.set(
-    ~key=chainId,
-    ~entity={
+  let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
+    chainId,
+    {
       chainId,
       blockTimestamp,
       blockNumber,
@@ -178,7 +175,7 @@ type dynamicContractRegistration = {
   registeringEventBlockNumber: int,
   registeringEventLogIndex: int,
   registeringEventChain: ChainMap.Chain.t,
-  dynamicContracts: array<Types.dynamicContractRegistryEntity>,
+  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
 }
 
 type dynamicContractRegistrations = {
@@ -189,7 +186,7 @@ type dynamicContractRegistrations = {
   //Once a single registration happens, the rest of the batches
   //loaders should be run on an isolated in memory store so that
   //they don't affect state of the batch that will be processed
-  inMemoryStore: IO.InMemoryStore.t,
+  inMemoryStore: InMemoryStore.t,
 }
 
 type loadResponse<'a> = {
@@ -293,7 +290,7 @@ let composeGetReadEntity = (
     | None =>
       if dynamicContracts->Array.length > 0 {
         //Clone the inMemoryStore
-        let inMemoryStoreDeepClone = inMemoryStore->IO.InMemoryStore.clone
+        let inMemoryStoreDeepClone = inMemoryStore->InMemoryStore.clone
 
         addToDynamicContractRegistrations(
           ~registrationsReversed=list{},
@@ -433,7 +430,7 @@ let registerProcessEventBatchMetrics = (
 
 let processEventBatch = async (
   ~eventBatch: list<Types.eventBatchQueueItem>,
-  ~inMemoryStore: IO.InMemoryStore.t,
+  ~inMemoryStore: InMemoryStore.t,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
 ) => {
