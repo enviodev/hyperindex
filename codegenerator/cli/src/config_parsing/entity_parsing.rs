@@ -737,6 +737,7 @@ pub enum RescriptType {
     Int,
     Float,
     BigInt,
+    BigDecimal,
     Address,
     String,
     Bool,
@@ -775,6 +776,7 @@ impl RescriptType {
             RescriptType::Int => "int".to_string(),
             RescriptType::Float => "GqlDbCustomTypes.Float.t".to_string(),
             RescriptType::BigInt => "Ethers.BigInt.t".to_string(),
+            RescriptType::BigDecimal => "BigDecimal.t".to_string(),
             RescriptType::Address => "Ethers.ethAddress".to_string(),
             RescriptType::String => "string".to_string(),
             RescriptType::ID => "id".to_string(),
@@ -802,6 +804,7 @@ impl RescriptType {
             RescriptType::Int => "S.int".to_string(),
             RescriptType::Float => "GqlDbCustomTypes.Float.schema".to_string(),
             RescriptType::BigInt => "Ethers.BigInt.schema".to_string(),
+            RescriptType::BigDecimal => "BigDecimal.schema".to_string(),
             RescriptType::Address => "Ethers.ethAddressSchema".to_string(),
             RescriptType::String => "S.string".to_string(),
             RescriptType::ID => "S.string".to_string(),
@@ -834,6 +837,7 @@ impl RescriptType {
             RescriptType::Int => "0".to_string(),
             RescriptType::Float => "0.0".to_string(),
             RescriptType::BigInt => "Ethers.BigInt.zero".to_string(), //TODO: Migrate to RescriptCore on ReScript migration
+            RescriptType::BigDecimal => "BigDecimal.zero".to_string(),
             RescriptType::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
             RescriptType::String => "\"foo\"".to_string(),
             RescriptType::ID => "\"my_id\"".to_string(),
@@ -859,6 +863,7 @@ impl RescriptType {
         match self {
             RescriptType::Int | RescriptType::Float => "0".to_string(),
             RescriptType::BigInt => "0n".to_string(),
+            RescriptType::BigDecimal => "BigDecimal.zero".to_string(),
             RescriptType::Address => "Addresses.defaultAddress".to_string(),
             RescriptType::String => "\"foo\"".to_string(),
             RescriptType::ID => "\"my_id\"".to_string(),
@@ -1250,6 +1255,8 @@ pub enum GqlScalar {
     #[subenum(AdditionalGqlScalar)]
     BigInt,
     #[subenum(AdditionalGqlScalar)]
+    BigDecimal,
+    #[subenum(AdditionalGqlScalar)]
     Bytes,
     Custom(String),
 }
@@ -1283,6 +1290,7 @@ impl GqlScalar {
             "Float" => GqlScalar::Float, // Should we allow this type? Rounding issues will abound.
             "Boolean" => GqlScalar::Boolean,
             "BigInt" => GqlScalar::BigInt, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            "BigDecimal" => GqlScalar::BigDecimal,
             "Bytes" => GqlScalar::Bytes,
             name => GqlScalar::Custom(name.to_string()),
         }
@@ -1296,6 +1304,7 @@ impl GqlScalar {
             GqlScalar::Boolean => "boolean",
             GqlScalar::Bytes => "text",
             GqlScalar::BigInt => "numeric", // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            GqlScalar::BigDecimal => "numeric",
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => "text",
                 TypeDef::Enum => name.as_str(),
@@ -1310,6 +1319,7 @@ impl GqlScalar {
             GqlScalar::String => RescriptType::String,
             GqlScalar::Int => RescriptType::Int,
             GqlScalar::BigInt => RescriptType::BigInt,
+            GqlScalar::BigDecimal => RescriptType::BigDecimal,
             GqlScalar::Float => RescriptType::Float,
             GqlScalar::Bytes => RescriptType::String,
             GqlScalar::Boolean => RescriptType::Bool,
