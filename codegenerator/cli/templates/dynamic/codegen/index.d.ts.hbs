@@ -1,21 +1,29 @@
-export { 
-{{#each codegen_contracts as | contract |}}
-{{contract.name.capitalized}}Contract,
+export {
+{{#each codegen_contracts as |contract|}}
+  {{contract.name.capitalized}}Contract,
 {{/each}}
 } from "./src/Handlers.gen";
 export type * from "./src/Types.gen";
-import { 
-{{#each codegen_contracts as | contract |}}
-{{contract.name.capitalized}},
+import {
+{{#each codegen_contracts as |contract|}}
+  {{contract.name.capitalized}},
 {{/each}}
 MockDb,
 Addresses 
 } from "./src/TestHelpers.gen";
 
 export const TestHelpers = {
-{{#each codegen_contracts as | contract |}}
-{{contract.name.capitalized}},
+{{#each codegen_contracts as |contract|}}
+  {{contract.name.capitalized}},
 {{/each}}
 MockDb,
 Addresses 
 };
+
+export {
+{{#each gql_enums as |enum|}}
+  {{enum.name.capitalized}},
+{{/each}}
+} from "./src/Enum.gen";
+
+export { BigDecimal } from './src/bindings/BigDecimal';

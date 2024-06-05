@@ -1,4 +1,4 @@
-@genType.import(("bignumber.js", "BigNumber"))
+@genType.import(("./BigDecimal.ts", "BigDecimal")) // This feature might not work in future versions of gentype: https://rescript-lang.org/docs/manual/latest/typescript-integration#deprecated-features
 type t
 
 // Constructors
@@ -35,13 +35,13 @@ let one = fromInt(1)
 
 // Serialization
 let schema =
-    S.string
-    ->S.setName("Ethers.BigInt")
-    ->S.transform((. s) => {
-      parser: (. string) =>
-        switch string->fromString {
-        | Some(bigDecimal) => bigDecimal
-        | None => s.fail(. "The string is not valid BigDecimal")
-        },
-      serializer: (. bigint) => bigint->toString,
-    })
+  S.string
+  ->S.setName("Ethers.BigInt")
+  ->S.transform((. s) => {
+    parser: (. string) =>
+      switch string->fromString {
+      | Some(bigDecimal) => bigDecimal
+      | None => s.fail(. "The string is not valid BigDecimal")
+      },
+    serializer: (. bigint) => bigint->toString,
+  })

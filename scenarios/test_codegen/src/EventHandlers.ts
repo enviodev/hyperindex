@@ -7,14 +7,22 @@ import {
 
 import { NftCollectionEntity, UserEntity } from "../generated/src/Types.gen";
 import { AccountType } from "../generated/src/db/Enums.gen";
+//   NftFactoryContract,
+//   SimpleNftContract,
+//   NftCollectionEntity,
+//   UserEntity,
+//   // BigDecimal, /// For some reason this doesn't work?
+//   AccountType
+// } from "generated";
+// import BigDecimal from "../generated/src/bindings/BigDecimal";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
-NftFactoryContract_SimpleNftCreated_loader(({ event, context }) => {
+NftFactoryContract.SimpleNftCreated.loader(({ event, context }) => {
   context.contractRegistration.addSimpleNft(event.params.contractAddress);
 });
 
-NftFactoryContract_SimpleNftCreated_handler(({ event, context }) => {
+NftFactoryContract.SimpleNftCreated.handler(({ event, context }) => {
   let nftCollection: NftCollectionEntity = {
     id: event.params.contractAddress,
     contractAddress: event.params.contractAddress,
@@ -24,9 +32,11 @@ NftFactoryContract_SimpleNftCreated_handler(({ event, context }) => {
     currentSupply: 0,
   };
   context.NftCollection.set(nftCollection);
+
+  // context.EntityWithFields.set({ id: "testingBigDecimalWorks", bigDecimal: BigDecimal.fromFloat(123.456) })
 });
 
-SimpleNftContract_Transfer_loader(({ event, context }) => {
+SimpleNftContract.Transfer.loader(({ event, context }) => {
   context.User.load(event.params.from, {});
   context.User.load(event.params.to, {});
   context.NftCollection.load(event.srcAddress);
@@ -36,7 +46,7 @@ SimpleNftContract_Transfer_loader(({ event, context }) => {
   );
 });
 
-SimpleNftContract_Transfer_handler(({ event, context }) => {
+SimpleNftContract.Transfer.handler(({ event, context }) => {
   let nftCollectionUpdated = context.NftCollection.get(event.srcAddress);
   let token = {
     id: event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
