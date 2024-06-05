@@ -46,6 +46,11 @@ type Token
   owner: User!
 }
 
+type EntityWithFields {
+  id: ID!
+  bigDecimal: BigDecimal!
+}
+
 type A {
   id: ID!
   b: B! @index
