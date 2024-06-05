@@ -14,9 +14,6 @@ importers:
       bignumber.js:
         specifier: ^9.1.2
         version: 9.1.2
-      generated:
-        specifier: workspace:*
-        version: link:generated
       helpers:
         specifier: workspace:*
         version: link:../helpers
@@ -26,6 +23,10 @@ importers:
       typescript:
         specifier: ^5.0.4
         version: 5.0.4
+    optionalDependencies:
+      generated:
+        specifier: ./generated
+        version: link:generated
     devDependencies:
       '@glennsl/rescript-fetch':
         specifier: 0.2.0

@@ -863,7 +863,10 @@ impl RescriptType {
         match self {
             RescriptType::Int | RescriptType::Float => "0".to_string(),
             RescriptType::BigInt => "0n".to_string(),
-            RescriptType::BigDecimal => "BigDecimal.zero".to_string(),
+            RescriptType::BigDecimal => {
+                "// default value not required since BigDecimal doesn't exist on contracts for contract import"
+                    .to_string()
+            }
             RescriptType::Address => "Addresses.defaultAddress".to_string(),
             RescriptType::String => "\"foo\"".to_string(),
             RescriptType::ID => "\"my_id\"".to_string(),
