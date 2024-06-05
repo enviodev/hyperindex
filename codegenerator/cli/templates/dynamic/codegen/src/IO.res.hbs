@@ -1,211 +1,3 @@
-module InMemoryStore = {
-  type stringHasher<'val> = 'val => string
-
-  type storeStateEntity<'entity, 'entityKey> = {
-    dict: Js.Dict.t<Types.inMemoryStoreRowEntity<'entity>>,
-    hasher: stringHasher<'entityKey>,
-  }
-
-  type storeStateMeta<'entity, 'entityKey> = {
-    dict: Js.Dict.t<Types.inMemoryStoreRowMeta<'entity>>,
-    hasher: stringHasher<'entityKey>,
-  }
-
-  module type StoreItem = {
-    type t
-    type key
-    let hasher: stringHasher<key>
-  }
-
-  //Binding used for deep cloning stores in tests
-  @val external structuredClone: 'a => 'a = "structuredClone"
-
-  module MakeStoreEntity = (StoreItem: StoreItem) => {
-    @genType
-    type value = StoreItem.t
-    @genType
-    type key = StoreItem.key
-    type t = storeStateEntity<StoreItem.t, StoreItem.key>
-
-    let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
-
-    let initValue = (
-      // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
-      ~allowOverWriteEntity=false,
-      ~key: StoreItem.key,
-      ~entity: option<StoreItem.t>,
-      self: t,
-    ) => {
-      let shouldWriteEntity =
-        allowOverWriteEntity || self.dict->Js.Dict.get(key->self.hasher)->Belt.Option.isNone
-
-      //Only initialize a row in the case where it is none
-      //or if allowOverWriteEntity is true (used for mockDb in test helpers)
-      if shouldWriteEntity {
-        let initialStoreRow: Types.inMemoryStoreRowEntity<StoreItem.t> = switch entity {
-        | Some(entity) => InitialReadFromDb(AlreadySet(entity))
-        | None => InitialReadFromDb(NotSet)
-        }
-        self.dict->Js.Dict.set(key->self.hasher, initialStoreRow)
-      }
-    }
-
-    let set = (self: t, ~key: StoreItem.key, ~entity: Types.entityUpdate<StoreItem.t>) => {
-      let mapKey = key->self.hasher
-      let currentEntity = self.dict->Js.Dict.get(mapKey)
-      let entityData: Types.inMemoryStoreRowEntity<StoreItem.t> = switch currentEntity {
-      | Some(InitialReadFromDb(entity_read)) =>
-        Updated({
-          initial: Retrieved(entity_read),
-          latest: entity,
-          history: [],
-        })
-      | Some(Updated(previous_values))
-        if !Config.shouldRollbackOnReorg ||
-        //Rollback initial state cases should not save history
-        !previous_values.latest.shouldSaveHistory ||
-        // This prevents two db actions in the same event on the same entity from being recorded to the history table.
-        previous_values.latest.eventIdentifier == entity.eventIdentifier =>
-        Updated({
-          ...previous_values,
-          latest: entity,
-        })
-      | Some(Updated(previous_values)) =>
-        Updated({
-          initial: previous_values.initial,
-          latest: entity,
-          history: previous_values.history->Belt.Array.concat([previous_values.latest]),
-        })
-      | None =>
-        Updated({
-          initial: Unknown,
-          latest: entity,
-          history: [],
-        })
-      }
-      self.dict->Js.Dict.set(mapKey, entityData)
-    }
-
-    let get = (self: t, key: StoreItem.key) =>
-      self.dict
-      ->Js.Dict.get(key->self.hasher)
-      ->Belt.Option.flatMap(row => {
-        switch row {
-        | Updated({latest: {entityUpdateAction: Set(entity)}}) => Some(entity)
-        | Updated({latest: {entityUpdateAction: Delete(_)}}) => None
-        | InitialReadFromDb(AlreadySet(entity)) => Some(entity)
-        | InitialReadFromDb(NotSet) => None
-        }
-      })
-
-    let values = (self: t) => self.dict->Js.Dict.values
-
-    let clone = (self: t) => {
-      ...self,
-      dict: self.dict->structuredClone,
-    }
-  }
-
-  module MakeStoreMeta = (StoreItem: StoreItem) => {
-    @genType
-    type value = StoreItem.t
-    @genType
-    type key = StoreItem.key
-    type t = storeStateMeta<value, key>
-
-    let make = (): t => {dict: Js.Dict.empty(), hasher: StoreItem.hasher}
-
-    let set = (self: t, ~key: StoreItem.key, ~entity: StoreItem.t) =>
-      self.dict->Js.Dict.set(key->self.hasher, entity)
-
-    let get = (self: t, key: StoreItem.key) =>
-      self.dict->Js.Dict.get(key->self.hasher)->Belt.Option.map(row => row)
-
-    let values = (self: t) => self.dict->Js.Dict.values
-
-    let clone = (self: t) => {
-      ...self,
-      dict: self.dict->structuredClone,
-    }
-  }
-
-  module EventSyncState = MakeStoreMeta({
-    type t = DbFunctions.EventSyncState.eventSyncState
-    type key = int
-    let hasher = Belt.Int.toString
-  })
-
-  @genType
-  type rawEventsKey = {
-    chainId: int,
-    eventId: string,
-  }
-
-  module RawEvents = MakeStoreMeta({
-    type t = Types.rawEventsEntity
-    type key = rawEventsKey
-    let hasher = (key: key) =>
-      EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
-  })
-
-  @genType
-  type dynamicContractRegistryKey = {
-    chainId: int,
-    contractAddress: Ethers.ethAddress,
-  }
-
-  module DynamicContractRegistry = MakeStoreMeta({
-    type t = Types.dynamicContractRegistryEntity
-    type key = dynamicContractRegistryKey
-    let hasher = ({chainId, contractAddress}) =>
-      EventUtils.getContractAddressKeyString(~chainId, ~contractAddress)
-  })
-  
-  {{#each entities as | entity |}}
-
-  module {{entity.name.capitalized}} = MakeStoreEntity({
-    type t = Entities.{{entity.name.capitalized}}.t
-    type key = string
-    let hasher = Obj.magic
-  })
-
-{{/each}}
-
-  @genType 
-  type t = {
-    eventSyncState: EventSyncState.t,
-    rawEvents: RawEvents.t,
-    dynamicContractRegistry: DynamicContractRegistry.t,
-  {{#each entities as | entity |}}
-    {{entity.name.uncapitalized}}: {{entity.name.capitalized}}.t,
-  {{/each}}
-    rollBackEventIdentifier: option<Types.eventIdentifier>,
-  }
-
-  let makeWithRollBackEventIdentifier = (rollBackEventIdentifier): t => {
-    eventSyncState: EventSyncState.make(),
-    rawEvents: RawEvents.make(),
-    dynamicContractRegistry: DynamicContractRegistry.make(),
-  {{#each entities as | entity |}}
-    {{entity.name.uncapitalized}}: {{entity.name.capitalized}}.make(),
-  {{/each}}
-    rollBackEventIdentifier,
-  }
-
-  let make = () => makeWithRollBackEventIdentifier(None)
-
-  let clone = (self: t) => {
-    eventSyncState: self.eventSyncState->EventSyncState.clone,
-    rawEvents: self.rawEvents->RawEvents.clone,
-    dynamicContractRegistry: self.dynamicContractRegistry->DynamicContractRegistry.clone,
-  {{#each entities as | entity |}}
-    {{entity.name.uncapitalized}}: self.{{entity.name.uncapitalized}}->{{entity.name.capitalized}}.clone,
-  {{/each}}
-    rollBackEventIdentifier: self.rollBackEventIdentifier->structuredClone,
-  }
-}
-
-
 module LoadLayer = {
   /**The ids to load for a particular entity*/
   type idsToLoad = Belt.Set.String.t
@@ -271,7 +63,7 @@ let rec{{#each entities as | entity |}}{{#unless @first}}@warning("-27") and {{/
     {{entity.name.uncapitalized}}LoaderConfig.load{{relational_param.relational_key.capitalized}}->Belt.Option.map({{relational_param.mapped_entity.uncapitalized}}LoaderConfig => {
       () =>
       inMemoryStore.{{entity.name.uncapitalized}}
-      ->InMemoryStore.{{entity.name.capitalized}}.get(entityId)
+        ->InMemoryTable.Entity.get(entityId)
       ->Belt.Option.mapWithDefault([],entity => {
         //getLoader can be used to map arrays of ids, optional ids or single ids
         let getLoader = 
@@ -427,9 +219,8 @@ let loadEntitiesToInMemStoreComposer = (
 let makeEntityExecuterComposer = (
   ~idsToLoad: LoadLayer.idsToLoad,
   ~dbReadFn: array<Belt.Set.String.value> => 'a,
-  ~inMemStoreInitFn: (~allowOverWriteEntity: bool=?, ~key: 'c, ~entity: option<'d>, 'b) => unit,
-  ~store: 'b,
-  ~getEntiyId: 'd => 'c,
+  ~inMemTable: InMemoryTable.Entity.t<'entity>,
+  ~getEntiyId: 'entity => Types.id,
   ~unit: 'e,
   ~then: ('a, Belt.Array.t<'d> => unit) => 'e,
 ) => {
@@ -442,7 +233,7 @@ let makeEntityExecuterComposer = (
       ->dbReadFn
       ->then(entities => {
         entities->Belt.Array.forEach(entity => {
-          store->inMemStoreInitFn(~key=entity->getEntiyId, ~entity=Some(entity))
+          inMemTable->InMemoryTable.Entity.initValue(~key=entity->getEntiyId, ~entity=Some(entity))
         })
         if Config.shouldRollbackOnReorg {
           let setOfIdsNotSavedToDb =
@@ -450,7 +241,7 @@ let makeEntityExecuterComposer = (
           setOfIdsNotSavedToDb
           ->Belt.Set.String.toArray
           ->Belt.Array.forEach(entityId => {
-            store->inMemStoreInitFn(~key=entityId, ~entity=None)
+            inMemTable->InMemoryTable.Entity.initValue(~key=entityId, ~entity=None)
           })
         }
       })
@@ -465,21 +256,14 @@ let makeSqlEntityExecuter = (
   type entity,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~idsToLoad: LoadLayer.idsToLoad,
-  ~inMemStoreInitFn: (
-    ~allowOverWriteEntity: bool=?,
-    ~key: string,
-    ~entity: option<entity>,
-    'store,
-  ) => unit,
-  ~store: 'store,
+  ~inMemTable: InMemoryTable.Entity.t<entity>,
   ~getEntiyId: entity => string,
 ) => {
   makeEntityExecuterComposer(
     ~dbReadFn=Entities.batchRead(~entityMod, DbFunctions.sql),
     ~idsToLoad,
     ~getEntiyId,
-    ~store,
-    ~inMemStoreInitFn,
+    ~inMemTable,
     ~then=Promise.thenResolve,
     ~unit=Promise.resolve(),
   )
@@ -494,8 +278,7 @@ let executeSqlLoadLayer = (~loadLayer: LoadLayer.t, ~inMemoryStore: InMemoryStor
     makeSqlEntityExecuter(
       ~idsToLoad=loadLayer.{{entity.name.uncapitalized}}IdsToLoad,
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
-      ~inMemStoreInitFn=InMemoryStore.{{entity.name.capitalized}}.initValue,
-      ~store=inMemoryStore.{{entity.name.uncapitalized}},
+      ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
       ~getEntiyId=entity => entity.id,
     ),
   {{/each}}
@@ -669,23 +452,23 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
 
   let setEventSyncState = executeSet(
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
-    ~items=inMemoryStore.eventSyncState->InMemoryStore.EventSyncState.values,
+    ~items=inMemoryStore.eventSyncState->InMemoryTable.values,
   )
 
   let setRawEvents = executeSet(
     ~dbFunction=DbFunctions.RawEvents.batchSet,
-    ~items=inMemoryStore.rawEvents->InMemoryStore.RawEvents.values,
+    ~items=inMemoryStore.rawEvents->InMemoryTable.values,
   )
 
   let setDynamicContracts = executeSet(
     ~dbFunction=DbFunctions.DynamicContractRegistry.batchSet,
-    ~items=inMemoryStore.dynamicContractRegistry->InMemoryStore.DynamicContractRegistry.values,
+    ~items=inMemoryStore.dynamicContractRegistry->InMemoryTable.values,
   )
 
   {{#each entities as | entity |}}
   let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
     ~entityMod=module(Entities.{{entity.name.capitalized}}),
-    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.values,
+    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryTable.values,
   )
 
   {{/each}}
@@ -750,18 +533,18 @@ module RollBack = {
       //set the value with the eventIdentifier that set that value initially
       {{#each entities as | entity |}}
       | {previousEntity: Some({entity: {{entity.name.capitalized}}Entity(entity), eventIdentifier}), entityId} =>
-        inMemStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(
-          ~entity=Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~shouldSaveHistory=false),
-          ~key=entityId,
+        inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
+          entityId,
+          Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~shouldSaveHistory=false),
         )
       {{/each}}
       //Where previousEntity is None, 
       //delete it with the eventIdentifier of the rollback event
       {{#each entities as | entity |}}
       | {previousEntity: None, entityType: {{entity.name.capitalized}}, entityId} =>
-        inMemStore.{{entity.name.uncapitalized}}->InMemoryStore.{{entity.name.capitalized}}.set(
-          ~entity=Delete(entityId)->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~shouldSaveHistory=false),
-          ~key=entityId,
+        inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
+          entityId,
+          Delete(entityId)->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~shouldSaveHistory=false),
         )
       {{/each}}
       }

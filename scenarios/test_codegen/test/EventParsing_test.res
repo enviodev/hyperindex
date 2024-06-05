@@ -29,7 +29,7 @@ describe("Parsing Raw Events", () => {
     let txOrigin = None
     let txTo = None
 
-    let mockRawEventsEntity: Types.rawEventsEntity = {
+    let mockRawEventsEntity: TablesStatic.RawEvents.t = {
       blockNumber,
       blockTimestamp: timestamp,
       chainId,
@@ -38,7 +38,7 @@ describe("Parsing Raw Events", () => {
       logIndex,
       transactionHash,
       srcAddress,
-      eventType: Js.Json.string("Gravatar_NewGravatar"),
+      eventType: Gravatar_NewGravatar,
       blockHash,
       params: paramsEncoded,
     }

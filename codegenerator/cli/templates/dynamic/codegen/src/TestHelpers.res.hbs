@@ -106,7 +106,7 @@ module EventFunctions = {
       }
 
       //Construct a new instance of an in memory store to run for the given event
-      let inMemoryStore = IO.InMemoryStore.make()
+      let inMemoryStore = InMemoryStore.make()
 
       //Construct a context with the inMemory store for the given event to run
       //loaders and handlers
