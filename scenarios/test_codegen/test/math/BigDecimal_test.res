@@ -1,57 +1,71 @@
-
-module BigDecimal = {
-  @genType.import(("bignumber.js", "BigNumber"))
-  type t
-
-  // Constructors
-
-  @new @module external fromBigInt: Ethers.BigInt.t => t = "bignumber.js"
-  @new @module external fromFloat: float => t = "bignumber.js"
-  @new @module external fromInt: int => t = "bignumber.js"
-  @new @module external fromStringUnsafe: string => t = "bignumber.js"
-  @new @module external fromString: string => option<t> = "bignumber.js"
-
-  // Methods
-  @send external toString: t => string = "toString"
-  @send external toFixed: t => string = "toFixed"
-  let toInt = (b: t): option<int> => b->toString->Belt.Int.fromString
-
-  // Arithmetic Operations
-  @send external plus: (t, t) => t = "plus"
-  @send external minus: (t, t) => t = "minus"
-  @send external times: (t, t) => t = "multipliedBy"
-  @send external div: (t, t) => t = "dividedBy"
-  // @send external pow: (t, int) => t = "toExponential"
-  // @send external mod: (t, t) => t = "modulo"
-
-  // Comparison
-  @send external equals: (t, t) => bool = "isEqualTo"
-  let notEquals: (t, t) => bool = (a, b) => !equals(a, b)
-  @send external gt: (t, t) => bool = "isGreaterThan"
-  @send external gte: (t, t) => bool = "isGreaterThanOrEqualTo"
-  @send external lt: (t, t) => bool = "isLessThan"
-  @send external lte: (t, t) => bool = "isLessThanOrEqualTo"
-
-  // Utilities
-  let zero = fromInt(0)
-  let one = fromInt(1)
-
-  // Serialization
-  let t_encode = (bn: t) => bn->toString->Js.Json.string
-  let t_decode: Js.Json.t => result<t, string> = json =>
-    switch json->Js.Json.decodeString {
-    | Some(stringBN) => Ok(fromString(stringBN))
-    | None => Error("Json not deserializeable to BigNumber")
-    }
-}
-
 open RescriptMocha
 open Mocha
+module MochaPromise = RescriptMocha.Promise
+open Mocha
 
-describe.only("BigDecimal Operations", () => {
+describe("Load and save an entity with a BigDecimal from DB", () => {
+  MochaPromise.before(async () => {
+    DbHelpers.runUpDownMigration()
+  })
+
+  MochaPromise.after(async () => {
+    // It is probably overkill that we are running these 'after' also
+    DbHelpers.runUpDownMigration()
+  })
+
+  MochaPromise.it(
+    "be able to set and read entities with BigDecimal from DB",
+    ~timeout=5 * 1000,
+    async () => {
+      let sql = DbFunctions.sql
+      /// Setup DB
+      let testEntity1: Types.entityWithFieldsEntity = {
+        id: "testEntity",
+        bigDecimal: BigDecimal.fromFloat(123.456),
+      }
+      let testEntity2: Types.entityWithFieldsEntity = {
+        id: "testEntity2",
+        bigDecimal: BigDecimal.fromFloat(654.321),
+      }
+
+      await DbFunctions.EntityWithFields.batchSet(sql, [testEntity1, testEntity2])
+
+      let inMemoryStore = IO.InMemoryStore.make()
+
+      let context = Context.GravatarContract.EmptyEventEvent.contextCreator(
+        ~inMemoryStore,
+        ~chainId=123,
+        ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
+        ~logger=Logging.logger,
+        ~asyncGetters=EventProcessing.asyncGetters,
+      )
+
+      let loaderContext = context.getLoaderContext()
+
+      let _ = loaderContext.entityWithFields.load(testEntity1.id)
+      let _ = loaderContext.entityWithFields.load(testEntity2.id)
+
+      let entitiesToLoad = context.getEntitiesToLoad()
+
+      await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
+
+      let handlerContext = context.getHandlerContextSync()
+
+      switch handlerContext.entityWithFields.get(testEntity1.id) {
+      | Some(entity) => Assert.equal(entity.bigDecimal->BigDecimal.toString, "123.456")
+      | None => Assert.fail("Entity should exist")
+      }
+      switch handlerContext.entityWithFields.get(testEntity2.id) {
+      | Some(entity) => Assert.equal(entity.bigDecimal->BigDecimal.toString, "654.321")
+      | None => Assert.fail("Entity should exist")
+      }
+    },
+  )
+})
+describe("BigDecimal Operations", () => {
   it("BigDecimal add 123.456 + 654.123 = 777.579", () => {
     let a = BigDecimal.fromFloat(123.456)
-    let b = BigDecimal.fromString("654.123")
+    let b = BigDecimal.fromStringUnsafe("654.123")
 
     let c = a->BigDecimal.plus(b)
 
@@ -60,7 +74,7 @@ describe.only("BigDecimal Operations", () => {
 
   it("minus: 654.321 - 123.123 = 531.198", () => {
     let a = BigDecimal.fromFloat(654.321)
-    let b = BigDecimal.fromString("123.123")
+    let b = BigDecimal.fromStringUnsafe("123.123")
 
     let result = a->BigDecimal.minus(b)
 
