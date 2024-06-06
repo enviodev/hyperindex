@@ -26,6 +26,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         CommandType::Codegen => {
             codegen::run_codegen(&parsed_project_paths).await?;
         }
+
         CommandType::Dev => {
             dev::run_dev(parsed_project_paths).await?;
         }

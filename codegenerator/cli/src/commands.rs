@@ -109,7 +109,7 @@ pub mod codegen {
         execute_command("pnpm", args, current_dir).await
     }
 
-    pub async fn run_post_codegen_command_sequence(
+    async fn run_post_codegen_command_sequence(
         project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<std::process::ExitStatus> {
         println!("installing packages... ");
@@ -146,6 +146,21 @@ pub mod codegen {
         Ok(last_exit)
     }
 
+    pub async fn npx_codegen(
+        envio_version: String,
+        project_paths: &ParsedProjectPaths,
+    ) -> anyhow::Result<()> {
+        let package = format!("envio@{}", envio_version);
+        let args = vec!["--yes", package.as_str(), "codegen"];
+        execute_command("npx", args, &project_paths.project_root)
+            .await
+            .context(format!(
+                "Failed to run codegen for the envio version {}",
+                envio_version
+            ))?;
+        Ok(())
+    }
+
     pub async fn run_codegen(
         config: &SystemConfig,
         project_paths: &ParsedProjectPaths,
@@ -165,6 +180,10 @@ pub mod codegen {
         template
             .generate_templates(project_paths)
             .context("Failed generating dynamic codegen files")?;
+
+        run_post_codegen_command_sequence(project_paths)
+            .await
+            .context("Failed running post codegen command sequence")?;
 
         Ok(())
     }

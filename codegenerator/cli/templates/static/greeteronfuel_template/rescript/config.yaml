@@ -1,0 +1,12 @@
+name: Fuel Greeter Indexer
+networks:
+  - id: 0
+    start_block: 0
+    contracts:
+      - name: Greeter
+        address: 0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b
+        abi_file_path: abis/greeter-abi.json
+        handler: ./src/EventHandlers.bs.js
+        events:
+          - name: NewGreeting
+          - name: ClearGreeting

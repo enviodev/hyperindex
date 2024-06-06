@@ -65,9 +65,6 @@ pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
         commands::codegen::run_codegen(&config, &project_paths)
             .await
             .context("Failed running codegen")?;
-        commands::codegen::run_post_codegen_command_sequence(&project_paths)
-            .await
-            .context("Failed running post codegen command sequence")?;
     }
     // if hasura healhz check returns not found assume docker isnt running and start it up {
     let hasura_health_check_is_error = service_health::fetch_hasura_healthz().await.is_err();
