@@ -45,12 +45,10 @@ module Entity = {
     }
   }
 
-  let set = (
-    inMemTable: t<'entity>,
-    entityId: Types.id, //todo add entity id to entityUpdate type
-    entityUpdate: Types.entityUpdate<'entity>,
-  ) => {
-    let entityData: Types.inMemoryStoreRowEntity<'entity> = switch inMemTable->get(entityId) {
+  let set = (inMemTable: t<'entity>, entityUpdate: Types.entityUpdate<'entity>) => {
+    let entityData: Types.inMemoryStoreRowEntity<'entity> = switch inMemTable->get(
+      entityUpdate.entityId,
+    ) {
     | Some(InitialReadFromDb(entity_read)) =>
       Updated({
         initial: Retrieved(entity_read),
@@ -80,33 +78,25 @@ module Entity = {
         history: [],
       })
     }
-    inMemTable->set(entityId, entityData)
+    inMemTable->set(entityUpdate.entityId, entityData)
   }
+
+  let rowToEntity = row =>
+    switch row {
+    | Types.Updated({latest: {entityUpdateAction: Set(entity)}}) => Some(entity)
+    | Updated({latest: {entityUpdateAction: Delete}}) => None
+    | InitialReadFromDb(AlreadySet(entity)) => Some(entity)
+    | InitialReadFromDb(NotSet) => None
+    }
 
   let get = (inMemTable: t<'entity>, key: Types.id) =>
     inMemTable
     ->get(key)
-    ->Option.flatMap(row => {
-      switch row {
-      | Updated({latest: {entityUpdateAction: Set(entity)}}) => Some(entity)
-      | Updated({latest: {entityUpdateAction: Delete(_)}}) => None
-      | InitialReadFromDb(AlreadySet(entity)) => Some(entity)
-      | InitialReadFromDb(NotSet) => None
-      }
-    })
+    ->Option.flatMap(rowToEntity)
 
   let values = (inMemTable: t<'entity>) => {
     inMemTable
     ->values
-    ->Array.keepMap(row =>
-      switch row {
-      | Updated({latest: {entityUpdateAction: Set(entity)}})
-      | InitialReadFromDb(AlreadySet(entity)) =>
-        Some(entity)
-      | Updated({latest: {entityUpdateAction: Delete(_)}})
-      | InitialReadFromDb(NotSet) =>
-        None
-      }
-    )
+    ->Array.keepMap(rowToEntity)
   }
 }

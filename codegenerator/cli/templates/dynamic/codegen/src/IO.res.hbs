@@ -320,19 +320,17 @@ let executeSet = (
 let getEntityHistoryItems = (entityUpdates, ~entitySchema, ~entityType) => {
   let (_, entityHistoryItems) = entityUpdates->Belt.Array.reduce((None, []), (
     prev: (option<Types.eventIdentifier>, array<DbFunctions.entityHistoryItem>),
-    entity: Types.entityUpdate<'a>,
+    entityUpdate: Types.entityUpdate<'a>,
   ) => {
     let (optPreviousEventIdentifier, entityHistoryItems) = prev
 
-    let {eventIdentifier, shouldSaveHistory, entityUpdateAction} = entity
+    let {eventIdentifier, shouldSaveHistory, entityUpdateAction, entityId} = entityUpdate
     let entityHistoryItems = if shouldSaveHistory {
       let mapPrev = Belt.Option.map(optPreviousEventIdentifier)
-      let (entity_id, params) = switch entityUpdateAction {
-      | Set(entity) => (
-          (entity->Obj.magic)["id"],
-          Some(entity->S.serializeOrRaiseWith(entitySchema)),
-        )
-      | Delete(event_id) => (event_id, None)
+      let params = switch entityUpdateAction {
+      | Set(entity) => Some(entity->S.serializeOrRaiseWith(entitySchema))
+
+      | Delete => None
       }
       let historyItem: DbFunctions.entityHistoryItem = {
         chain_id: eventIdentifier.chainId,
@@ -344,7 +342,7 @@ let getEntityHistoryItems = (entityUpdates, ~entitySchema, ~entityType) => {
         previous_block_number: mapPrev(prev => prev.blockNumber),
         previous_log_index: mapPrev(prev => prev.logIndex),
         entity_type: entityType,
-        entity_id,
+        entity_id: entityId,
         params,
       }
       entityHistoryItems->Belt.Array.concat([historyItem])
@@ -382,9 +380,9 @@ let executeSetEntityWithHistory = (
             idsToDelete,
             entityHistoryItemsToSet->Belt.Array.concat([entityHistoryItems]),
           )
-        | Delete(entityId) => (
+        | Delete => (
             entitiesToSet,
-            idsToDelete->Belt.Array.concat([entityId]),
+            idsToDelete->Belt.Array.concat([latest.entityId]),
             entityHistoryItemsToSet->Belt.Array.concat([entityHistoryItems]),
           )
         }
@@ -427,7 +425,7 @@ let executeDbFunctionsEntity = (
         Belt.Array.concat(accumulatedSets, [entity]),
         accumulatedDeletes,
       )
-    | Updated({latest: {entityUpdateAction: Delete(entityId)}}) => (
+    | Updated({latest: {entityUpdateAction: Delete, entityId}}) => (
         accumulatedSets,
         Belt.Array.concat(accumulatedDeletes, [entityId]),
       )
@@ -534,8 +532,7 @@ module RollBack = {
       {{#each entities as | entity |}}
       | {previousEntity: Some({entity: {{entity.name.capitalized}}Entity(entity), eventIdentifier}), entityId} =>
         inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
-          entityId,
-          Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~shouldSaveHistory=false),
+          Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId, ~shouldSaveHistory=false),
         )
       {{/each}}
       //Where previousEntity is None, 
@@ -543,8 +540,7 @@ module RollBack = {
       {{#each entities as | entity |}}
       | {previousEntity: None, entityType: {{entity.name.capitalized}}, entityId} =>
         inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
-          entityId,
-          Delete(entityId)->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~shouldSaveHistory=false),
+          Delete->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~entityId, ~shouldSaveHistory=false),
         )
       {{/each}}
       }
