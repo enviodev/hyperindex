@@ -98,7 +98,7 @@ pub enum DbMigrateSubcommands {
 
 type SubgraphMigrationID = String;
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct InitArgs {
     ///The name of your project
     #[arg(global = true, short, long)]

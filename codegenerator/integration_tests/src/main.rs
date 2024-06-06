@@ -1,6 +1,9 @@
 mod hypersync_health;
 use envio::{
-    clap_definitions::{InitArgs, InitFlow, Language, ProjectPaths, Template, TemplateArgs},
+    clap_definitions::{
+        EvmTemplate, EvmTemplateArgs, FuelInitFlow, FuelTemplate, FuelTemplateArgs, InitArgs,
+        InitFlow, Language, ProjectPaths,
+    },
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
     executor::init::run_init_args,
 };
@@ -32,33 +35,28 @@ fn clear_path_if_it_exists(path_str: &str) -> io::Result<()> {
     }
 }
 
-struct TemplateLangCombo {
+struct InitCombo {
+    id: String,
     language: Language,
-    template: Template,
     init_args: InitArgs,
 }
 
-impl TemplateLangCombo {
-    fn new(l: Language, t: Template) -> Self {
+impl InitCombo {
+    fn new(id: String, l: Language, init_flow: InitFlow) -> Self {
         let init_args = InitArgs {
             language: Some(l.clone()),
-            init_commands: Some(InitFlow::Template(TemplateArgs {
-                template: Some(t.clone()),
-            })),
+            init_commands: Some(init_flow),
             name: Some("test".to_string()),
         };
-        TemplateLangCombo {
+        InitCombo {
+            id,
             language: l,
-            template: t,
             init_args,
         }
     }
 
     fn get_dir(&self) -> String {
-        format!(
-            "./integration_test_output/{}/{}",
-            self.template, self.language
-        )
+        format!("./integration_test_output/{}/{}", self.id, self.language)
     }
 
     fn get_project_paths(&self) -> ProjectPaths {
@@ -70,11 +68,28 @@ impl TemplateLangCombo {
     }
 }
 
-fn generate_init_args_combinations() -> Vec<TemplateLangCombo> {
+fn generate_init_args_combinations() -> Vec<InitCombo> {
     Language::iter()
         .flat_map(|l| {
-            Template::iter()
-                .map(|t| TemplateLangCombo::new(l.clone(), t.clone()))
+            EvmTemplate::iter()
+                .map(|t| {
+                    InitCombo::new(
+                        format!("evm_{t}"),
+                        l.clone(),
+                        InitFlow::Template(EvmTemplateArgs {
+                            template: Some(t.clone()),
+                        }),
+                    )
+                })
+                .chain(FuelTemplate::iter().map(|t| {
+                    InitCombo::new(
+                        format!("fuel_{t}"),
+                        l.clone(),
+                        InitFlow::Fuel(FuelInitFlow::Template(FuelTemplateArgs {
+                            template: Some(t.clone()),
+                        })),
+                    )
+                }))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -94,7 +109,12 @@ async fn run_all_init_combinations() {
         //5 minute timeout
         let timeout_duration: Duration = Duration::from_secs(60);
 
-        match timeout(timeout_duration, run_init_args(&init_args, &project_paths)).await {
+        match timeout(
+            timeout_duration,
+            run_init_args(init_args.clone(), &project_paths),
+        )
+        .await
+        {
             Err(e) => panic!(
                 "Timed out after elapsed {} on running init args: {:?}",
                 e, init_args
