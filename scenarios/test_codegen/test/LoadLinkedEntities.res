@@ -41,9 +41,10 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "TODO_TURN_THIS_INTO_NONE", a_id: "aWontLoad", stringThatIsMirroredToA: ""},
     ]
 
-    await DbFunctions.A.batchSet(sql, aEntities)
-    await DbFunctions.B.batchSet(sql, bEntities)
-    await DbFunctions.C.batchSet(sql, cEntities)
+    let batchSet = Entities.batchSet(sql)
+    await batchSet(aEntities, ~entityMod=module(Entities.A))
+    await batchSet(bEntities, ~entityMod=module(Entities.B))
+    await batchSet(cEntities, ~entityMod=module(Entities.C))
 
     let inMemoryStore = IO.InMemoryStore.make()
 
@@ -105,9 +106,10 @@ describe("Linked Entity Loader Integration Test", () => {
       {id: "c1", a_id: "aWontLoad", stringThatIsMirroredToA: ""},
     ]
 
-    await DbFunctions.A.batchSet(sql, aEntities)
-    await DbFunctions.B.batchSet(sql, bEntities)
-    await DbFunctions.C.batchSet(sql, cEntities)
+    let batchSet = Entities.batchSet(sql)
+    await batchSet(aEntities, ~entityMod=module(Entities.A))
+    await batchSet(bEntities, ~entityMod=module(Entities.B))
+    await batchSet(cEntities, ~entityMod=module(Entities.C))
 
     let inMemoryStore = IO.InMemoryStore.make()
     let context = Context.GravatarContract.TestEventEvent.contextCreator(

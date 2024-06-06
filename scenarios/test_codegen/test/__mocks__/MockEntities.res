@@ -54,8 +54,8 @@ let makeDefaultSet = (
     history: [],
   })
 }
-let gravatarSerialized1 = gravatarEntity1->S.serializeOrRaiseWith(Types.gravatarEntitySchema)
-let gravatarSerialized2 = gravatarEntity2->S.serializeOrRaiseWith(Types.gravatarEntitySchema)
+let gravatarSerialized1 = gravatarEntity1->S.serializeOrRaiseWith(Entities.Gravatar.schema)
+let gravatarSerialized2 = gravatarEntity2->S.serializeOrRaiseWith(Entities.Gravatar.schema)
 
 let mockInMemRow1: Types.inMemoryStoreRowEntity<Js.Json.t> = makeDefaultSet(gravatarSerialized1)
 

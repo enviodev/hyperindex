@@ -276,7 +276,7 @@ describe("Single Chain Simple Rollback", () => {
 
     let getAllGravatars = async () =>
       (await Sql.getAllRowsInTable("Gravatar"))
-      ->Array.map(S.parseWith(_, Types.gravatarEntitySchema))
+      ->Array.map(S.parseWith(_, Entities.Gravatar.schema))
       ->Utils.mapArrayOfResults
       ->Result.getExn
 
@@ -285,9 +285,9 @@ describe("Single Chain Simple Rollback", () => {
     let toBigInt = Ethers.BigInt.fromInt
     let toString = Ethers.BigInt.toString
 
-    let expectedGravatars = [
+    let expectedGravatars: array<Entities.Gravatar.t> = [
       {
-        Types.displayName: MockEvents.setGravatar1.displayName,
+        displayName: MockEvents.setGravatar1.displayName,
         id: MockEvents.setGravatar1.id->toString,
         imageUrl: MockEvents.setGravatar1.imageUrl,
         owner_id: MockEvents.setGravatar1.owner->Obj.magic,
@@ -295,7 +295,7 @@ describe("Single Chain Simple Rollback", () => {
         updatesCount: 2->toBigInt,
       },
       {
-        Types.displayName: MockEvents.newGravatar2.displayName,
+        displayName: MockEvents.newGravatar2.displayName,
         id: MockEvents.newGravatar2.id->toString,
         imageUrl: MockEvents.newGravatar2.imageUrl,
         owner_id: MockEvents.newGravatar2.owner->Obj.magic,
@@ -364,9 +364,9 @@ describe("Single Chain Simple Rollback", () => {
       ~message="Query should have returned with batch to process",
     )
 
-    let expectedGravatars = [
+    let expectedGravatars: array<Entities.Gravatar.t> = [
       {
-        Types.displayName: MockEvents.newGravatar1.displayName,
+        displayName: MockEvents.newGravatar1.displayName,
         id: MockEvents.newGravatar1.id->toString,
         imageUrl: MockEvents.newGravatar1.imageUrl,
         owner_id: MockEvents.newGravatar1.owner->Obj.magic,
@@ -374,7 +374,7 @@ describe("Single Chain Simple Rollback", () => {
         updatesCount: 1->toBigInt,
       },
       {
-        Types.displayName: MockEvents.setGravatar2.displayName,
+        displayName: MockEvents.setGravatar2.displayName,
         id: MockEvents.setGravatar2.id->toString,
         imageUrl: MockEvents.setGravatar2.imageUrl,
         owner_id: MockEvents.setGravatar2.owner->Obj.magic,
