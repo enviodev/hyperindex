@@ -20,7 +20,7 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
 
     match command_line_args.command {
         CommandType::Init(init_args) => {
-            init::run_init_args(&init_args, &global_project_paths).await?;
+            init::run_init_args(init_args, &global_project_paths).await?;
         }
 
         CommandType::Codegen => {

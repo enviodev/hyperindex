@@ -1,5 +1,5 @@
 use crate::{
-    cli_args::clap_definitions::Language,
+    cli_args::init_config::Language,
     config_parsing::{
         chain_helpers::{GraphNetwork, Network},
         human_config::{
@@ -433,7 +433,7 @@ async fn fetch_ipfs_file_and_write_to_system(
 mod test {
     use super::GraphManifest;
     use crate::{
-        cli_args::clap_definitions::Language,
+        cli_args::init_config::Language,
         config_parsing::{
             chain_helpers::{GraphNetwork, Network},
             graph_migration::get_ipfs_id_from_file_path,

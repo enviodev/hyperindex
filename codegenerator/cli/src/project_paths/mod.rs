@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use std::path::{Component, PathBuf};
 
 use crate::{
-    cli_args::{clap_definitions::ProjectPaths, interactive_init::InitInteractive},
+    cli_args::{clap_definitions::ProjectPaths, init_config::InitConfig},
     constants::project_paths::{
         DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH, DEFAULT_PROJECT_ROOT_PATH,
     },
@@ -78,10 +78,10 @@ impl TryFrom<ProjectPaths> for ParsedProjectPaths {
     }
 }
 
-impl TryFrom<InitInteractive> for ParsedProjectPaths {
+impl TryFrom<InitConfig> for ParsedProjectPaths {
     type Error = anyhow::Error;
-    fn try_from(init_interactive: InitInteractive) -> Result<Self, Self::Error> {
-        Self::default_with_root(&init_interactive.directory)
+    fn try_from(init_config: InitConfig) -> Result<Self, Self::Error> {
+        Self::default_with_root(&init_config.directory)
     }
 }
 

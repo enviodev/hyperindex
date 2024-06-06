@@ -1,6 +1,6 @@
 use super::etherscan_helpers::fetch_contract_auto_selection_from_etherscan;
 use crate::{
-    cli_args::clap_definitions::Language,
+    cli_args::init_config::Language,
     config_parsing::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
         human_config::{

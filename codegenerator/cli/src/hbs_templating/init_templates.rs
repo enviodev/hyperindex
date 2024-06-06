@@ -1,5 +1,5 @@
 use crate::{
-    cli_args::clap_definitions::Language,
+    cli_args::init_config::Language,
     project_paths::{path_utils::add_leading_relative_dot, ParsedProjectPaths},
 };
 use anyhow::{anyhow, Context};

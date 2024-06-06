@@ -9,8 +9,7 @@ use super::{
     },
 };
 use crate::{
-    clap_definitions::Language,
-    cli_args::interactive_init::validation::filter_duplicate_events,
+    cli_args::{init_config::Language, interactive_init::validation::filter_duplicate_events},
     config_parsing::{
         chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
         contract_import::converters::{

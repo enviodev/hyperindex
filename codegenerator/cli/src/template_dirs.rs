@@ -1,4 +1,4 @@
-use crate::cli_args::clap_definitions::{Language, Template};
+use crate::cli_args::init_config::{Language, Template};
 use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir, DirEntry};
 use pathdiff::diff_paths;
@@ -274,20 +274,17 @@ impl<'a> TemplateDirs<'a> {
     }
 
     ///Gets template from templates/static/{init_template}_template/{language}
-    fn get_template_lang_dir(
+    fn get_template_lang_dir<T: Template>(
         &self,
-        template: &Template,
+        template: &T,
         lang: &Language,
     ) -> Result<RelativeDir<'a>> {
-        self.get_template_static_dir(
-            template.to_string().to_lowercase(),
-            lang.to_string().to_lowercase(),
-        )
+        self.get_template_static_dir(template.to_dir_name(), lang.to_string().to_lowercase())
     }
 
     ///Gets template from templates/static/{init_template}_template/shared
-    fn get_template_shared_dir(&self, template: &Template) -> Result<RelativeDir<'a>> {
-        self.get_template_static_dir(template.to_string().to_lowercase(), "shared".to_string())
+    fn get_template_shared_dir(&self, template: &dyn Template) -> Result<RelativeDir<'a>> {
+        self.get_template_static_dir(template.to_dir_name(), "shared".to_string())
     }
 
     ///Gets template from templates/static/blank_template/{language}
@@ -302,9 +299,9 @@ impl<'a> TemplateDirs<'a> {
 
     ///Extracts static template for language and shared folder for a given template and language
     ///Extracts to the given project_root
-    pub fn get_and_extract_template(
+    pub fn get_and_extract_template<T: Template + Display>(
         &self,
-        template: &Template,
+        template: &T,
         lang: &Language,
         project_root: &PathBuf,
     ) -> Result<()> {
@@ -361,6 +358,8 @@ impl<'a> TemplateDirs<'a> {
 
 #[cfg(test)]
 mod test {
+    use crate::cli_args::init_config::{EvmTemplate, FuelTemplate};
+
     use super::*;
     use strum::IntoEnumIterator;
     use tempdir::TempDir;
@@ -380,7 +379,18 @@ mod test {
     #[test]
     fn all_init_templates_exist() {
         let template_dirs = TemplateDirs::new();
-        for template in Template::iter() {
+
+        for template in EvmTemplate::iter() {
+            for lang in Language::iter() {
+                template_dirs
+                    .get_template_lang_dir(&template, &lang)
+                    .expect("static lang");
+            }
+            template_dirs
+                .get_template_shared_dir(&template)
+                .expect("static templte shared");
+        }
+        for template in FuelTemplate::iter() {
             for lang in Language::iter() {
                 template_dirs
                     .get_template_lang_dir(&template, &lang)
@@ -402,7 +412,14 @@ mod test {
         let temp_dir =
             TempDir::new("init_extract_lang_test").expect("Failed creating tempdir init template");
 
-        for template in Template::iter() {
+        for template in EvmTemplate::iter() {
+            for lang in Language::iter() {
+                template_dirs
+                    .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
+                    .expect("static lang");
+            }
+        }
+        for template in FuelTemplate::iter() {
             for lang in Language::iter() {
                 template_dirs
                     .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))

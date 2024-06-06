@@ -116,23 +116,46 @@ pub struct InitArgs {
 
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum InitFlow {
-    ///Initialize from an example template
-    Template(TemplateArgs),
-    ///Initialize by importing config from a contract for a given chain
+    ///Initialize Evm indexer from an example template
+    Template(EvmTemplateArgs),
+    ///Initialize Evm indexer by importing config from a contract for a given chain
     #[strum(serialize = "Contract Import")]
     ContractImport(ContractImportArgs),
-    ///Initialize by migrating config from an existing subgraph
+    ///Initialize Evm indexer by migrating config from an existing subgraph
     #[clap(hide = true)] //hiding for now until this is more stable
     #[strum(serialize = "Subgraph Migration (Experimental)")]
     SubgraphMigration(SubgraphMigrationArgs),
+    ///Initialization option for creating Fuel indexer
+    #[command(subcommand)]
+    Fuel(FuelInitFlow),
+}
+
+#[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
+pub enum FuelInitFlow {
+    ///Initialize Fuel indexer from an example template
+    Template(FuelTemplateArgs),
+}
+
+impl Default for FuelInitFlow {
+    fn default() -> Self {
+        Self::Template(FuelTemplateArgs { template: None })
+    }
 }
 
 #[derive(Args, Debug, Default, Clone)]
-pub struct TemplateArgs {
+pub struct EvmTemplateArgs {
     ///Name of the template to be used in initialization
     #[arg(short, long)]
     #[clap(value_enum)]
-    pub template: Option<Template>,
+    pub template: Option<EvmTemplate>,
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct FuelTemplateArgs {
+    ///Name of the template to be used in initialization
+    #[arg(short, long)]
+    #[clap(value_enum)]
+    pub template: Option<FuelTemplate>,
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -229,17 +252,16 @@ pub struct LocalImportArgs {
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-pub enum Ecosystem {
-    Ethereum,
-    Fuel,
+///Template to work off
+pub enum EvmTemplate {
+    Greeter,
+    Erc20,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
 ///Template to work off
-pub enum Template {
+pub enum FuelTemplate {
     Greeter,
-    GreeterOnFuel,
-    Erc20,
 }
 
 #[derive(
