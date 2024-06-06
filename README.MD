@@ -8,7 +8,9 @@ Aim of Envio is to optimize developer experience of using an indexer, whilst pro
 
 This repo uses `clap` CLI library.
 
-Help file for CLI commands can be found [here](codegenerator/CommandLineHelp.md)
+Help file for CLI commands can be found [here](codegenerator/cli/CommandLineHelp.md)
+
+You can use `cargo run --bin envio -- print-all-help > CommandLineHelp.md` to regenerate the file.
 
 # Getting Started
 
