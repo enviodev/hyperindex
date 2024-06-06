@@ -95,7 +95,6 @@ pub enum Network {
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     ArbitrumSepolia = 421614,
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
-    // Blockscout: https://explorer.celo.org/mainnet/
     Celo = 42220,
     #[subenum(GraphNetwork)]
     Fuji = 43113,
@@ -508,6 +507,9 @@ impl NetworkWithExplorer {
 
         //Define all custom block explorer definitions at the top otherwise default with ethers api
         match self {
+            NetworkWithExplorer::Celo => {
+                BlockExplorerApi::custom("celoscan.io", "api.celoscan.io", api_key)
+            }
             NetworkWithExplorer::Gnosis => {
                 BlockExplorerApi::custom("gnosisscan.io", "api.gnosisscan.io", api_key)
             }
