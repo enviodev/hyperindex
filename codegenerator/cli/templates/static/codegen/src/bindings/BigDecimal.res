@@ -36,7 +36,7 @@ let one = fromInt(1)
 // Serialization
 let schema =
   S.string
-  ->S.setName("Ethers.BigInt")
+  ->S.setName("BigDecimal")
   ->S.transform((. s) => {
     parser: (. string) =>
       switch string->fromString {
