@@ -70,7 +70,8 @@ describe_skip("E2E Db check", () => {
 
     RegisterHandlers.registerAllHandlers()
 
-    let _ = await DbFunctions.Gravatar.batchSet(
+    let _ = await Entities.batchSet(
+      ~entityMod=module(Entities.Gravatar),
       Migrations.sql,
       [MockEntities.gravatarEntity1, MockEntities.gravatarEntity2],
     )
