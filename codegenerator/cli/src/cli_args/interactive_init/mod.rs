@@ -12,11 +12,17 @@ use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use anyhow::{Context, Result};
 use inquire::{Select, Text};
 use std::str::FromStr;
-use strum::IntoEnumIterator;
+use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
     contains_no_whitespace_validator, is_directory_new_validator, is_not_empty_string_validator,
     is_valid_foldername_inquire_validator,
 };
+
+#[derive(Clone, Debug, Display, PartialEq, EnumIter)]
+pub enum EcosystemOption {
+    Evm,
+    Fuel,
+}
 
 fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
     Select::new("Which template would you like to use?", options)
@@ -25,14 +31,50 @@ fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
 }
 
 async fn prompt_ecosystem(
-    init_flow: InitFlow,
+    cli_init_flow: Option<InitFlow>,
     project_name: String,
     language: Language,
 ) -> Result<Ecosystem> {
+    let init_flow = match cli_init_flow {
+        Some(v) => v,
+        None => {
+            let ecosystem_options = EcosystemOption::iter().collect();
+
+            let ecosystem_option = Select::new("Choose blockchain ecosystem", ecosystem_options)
+                .prompt()
+                .context("Failed prompting for blockchain ecosystem")?;
+
+            match ecosystem_option {
+                EcosystemOption::Fuel => {
+                    let flow_option = clap_definitions::FuelInitFlow::iter().collect();
+                    let fuel_init_flow =
+                        Select::new("Choose an initialization option", flow_option)
+                            .prompt()
+                            .context("Failed prompting for Fuel initialization option")?;
+                    InitFlow::Fuel(fuel_init_flow)
+                }
+                EcosystemOption::Evm => {
+                    // start prompt to ask the user which initialization option they want
+                    let user_response_options = InitFlow::iter()
+                        // Filter out subgraph migration for now until stabilized
+                        // And don't include different ecosystem options
+                        .filter(|v| {
+                            matches!(v, InitFlow::Template(_))
+                                || matches!(v, InitFlow::ContractImport(_))
+                        })
+                        .collect();
+                    Select::new("Choose an initialization option", user_response_options)
+                        .prompt()
+                        .context("Failed prompting for Evm initialization option")?
+                }
+            }
+        }
+    };
+
     let initialization = match init_flow {
         InitFlow::Fuel(clap_definitions::FuelInitFlow::Template(args)) => {
-            let chosen_template = match &args.template {
-                Some(template) => template.clone(),
+            let chosen_template = match args.template {
+                Some(template) => template,
                 None => {
                     let options = clap_definitions::FuelTemplate::iter().collect();
                     prompt_template(options)?
@@ -45,8 +87,8 @@ async fn prompt_ecosystem(
             }
         }
         InitFlow::Template(args) => {
-            let chosen_template = match &args.template {
-                Some(template) => template.clone(),
+            let chosen_template = match args.template {
+                Some(template) => template,
                 None => {
                     let options = clap_definitions::EvmTemplate::iter().collect();
                     prompt_template(options)?
@@ -60,8 +102,8 @@ async fn prompt_ecosystem(
             }
         }
         InitFlow::SubgraphMigration(args) => {
-            let input_subgraph_id = match &args.subgraph_id {
-                Some(id) => id.clone(),
+            let input_subgraph_id = match args.subgraph_id {
+                Some(id) => id,
                 None => Text::new("[BETA VERSION] What is the subgraph ID?")
                     .prompt()
                     .context("Prompting user for subgraph id")?,
@@ -122,6 +164,7 @@ pub async fn prompt_missing_init_args(
                 .collect::<Vec<String>>();
 
             let input_language = Select::new("Which language would you like to use?", options)
+                .with_starting_cursor(1)
                 .prompt()
                 .context("prompting user to select language")?;
 
@@ -135,22 +178,7 @@ pub async fn prompt_missing_init_args(
         clap_definitions::Language::ReScript => Language::ReScript,
     };
 
-    let init_flow = match init_args.init_commands {
-        Some(v) => v,
-        None => {
-            //start prompt to ask the user which initialization option they want
-            let user_response_options = InitFlow::iter()
-                //filter out subgraph migration for now until stabilized
-                .filter(|v| !matches!(v, InitFlow::SubgraphMigration(_)))
-                .collect();
-
-            Select::new("Choose an initialization option", user_response_options)
-                .prompt()
-                .context("Failed prompting for initialization option")?
-        }
-    };
-
-    let ecosystem = prompt_ecosystem(init_flow, name.clone(), language.clone())
+    let ecosystem = prompt_ecosystem(init_args.init_commands, name.clone(), language.clone())
         .await
         .context("Failed getting template")?;
 

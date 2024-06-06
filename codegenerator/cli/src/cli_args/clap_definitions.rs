@@ -131,6 +131,19 @@ pub enum InitFlow {
 }
 
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
+pub enum EvmInitFlow {
+    ///Initialize Evm indexer from an example template
+    Template(EvmTemplateArgs),
+    ///Initialize Evm indexer by importing config from a contract for a given chain
+    #[strum(serialize = "Contract Import")]
+    ContractImport(ContractImportArgs),
+    ///Initialize Evm indexer by migrating config from an existing subgraph
+    #[clap(hide = true)] //hiding for now until this is more stable
+    #[strum(serialize = "Subgraph Migration (Experimental)")]
+    SubgraphMigration(SubgraphMigrationArgs),
+}
+
+#[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum FuelInitFlow {
     ///Initialize Fuel indexer from an example template
     Template(FuelTemplateArgs),
