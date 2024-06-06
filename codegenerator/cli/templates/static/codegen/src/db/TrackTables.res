@@ -438,7 +438,8 @@ let trackAllTables = async () => {
   let _ = await createRawEventsArrayRelationship()
   let _ = await createEntityHistoryFilterObjectRelationship()
 
-  await Entities.allTables
+  await [Entities.allTables]
+  ->Belt.Array.concatMany
   ->Utils.awaitEach(async table => {
     let {tableName} = table
     //Set array relationships
