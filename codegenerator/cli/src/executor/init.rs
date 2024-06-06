@@ -1,8 +1,8 @@
 use crate::{
-    clap_definitions::{Ecosystem, Template},
     cli_args::{
-        clap_definitions::{InitArgs, Language, ProjectPaths},
-        interactive_init::InitilizationTypeWithArgs,
+        clap_definitions::{InitArgs, ProjectPaths},
+        init_config::{Ecosystem, EvmInitFlow, FuelInitFlow, Language},
+        interactive_init::prompt_missing_init_args,
     },
     commands,
     config_parsing::{
@@ -30,49 +30,66 @@ fn is_valid_release_version_number(version: &str) -> bool {
     re_version_pattern.is_match(version)
 }
 
-pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -> Result<()> {
+pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) -> Result<()> {
     let template_dirs = TemplateDirs::new();
     //get_init_args_interactive opens an interactive cli for required args to be selected
     //if they haven't already been
-    let parsed_init_args = init_args
-        .get_init_args_interactive(project_paths)
+    let init_config = prompt_missing_init_args(init_args, project_paths)
         .await
         .context("Failed during interactive input")?;
 
-    let parsed_project_paths = ParsedProjectPaths::try_from(parsed_init_args.clone())
+    let parsed_project_paths = ParsedProjectPaths::try_from(init_config.clone())
         .context("Failed parsing paths from interactive input")?;
     // The cli errors if the folder exists, the user must provide a new folder to proceed which we create below
     std::fs::create_dir_all(&parsed_project_paths.project_root)?;
 
-    match &parsed_init_args.template {
-        InitilizationTypeWithArgs::Template(template) => {
+    match &init_config.ecosystem {
+        Ecosystem::Fuel {
+            init_flow: FuelInitFlow::Template(template),
+        } => {
             template_dirs
                 .get_and_extract_template(
-                    &template,
-                    &parsed_init_args.language,
+                    template,
+                    &init_config.language,
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
-                    "Failed initializing with template {} with language {} at path {:?}",
-                    &template, &parsed_init_args.language, &parsed_project_paths.project_root,
+                    "Failed initializing Fuel template {} with language {} at path {:?}",
+                    &template, &init_config.language, &parsed_project_paths.project_root,
                 ))?;
         }
-        InitilizationTypeWithArgs::SubgraphID(cid) => {
+        Ecosystem::Evm {
+            init_flow: EvmInitFlow::Template(template),
+        } => {
+            template_dirs
+                .get_and_extract_template(
+                    template,
+                    &init_config.language,
+                    &parsed_project_paths.project_root,
+                )
+                .context(format!(
+                    "Failed initializing Evm template {} with language {} at path {:?}",
+                    &template, &init_config.language, &parsed_project_paths.project_root,
+                ))?;
+        }
+        Ecosystem::Evm {
+            init_flow: EvmInitFlow::SubgraphID(cid),
+        } => {
             template_dirs
                 .get_and_extract_blank_template(
-                    &parsed_init_args.language,
+                    &init_config.language,
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
                     "Failed initializing blank template for Subgraph Migration with language {} \
                      at path {:?}",
-                    &parsed_init_args.language, &parsed_project_paths.project_root,
+                    &init_config.language, &parsed_project_paths.project_root,
                 ))?;
 
             let yaml_config = generate_config_from_subgraph_id(
                 &parsed_project_paths.project_root,
                 cid,
-                &parsed_init_args.language,
+                &init_config.language,
             )
             .await
             .context("Failed generating config from subgraph")?;
@@ -90,13 +107,15 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
 
             auto_schema_handler_template
                 .generate_subgraph_migration_templates(
-                    &parsed_init_args.language,
+                    &init_config.language,
                     &parsed_project_paths.project_root,
                 )
                 .context("Failed generating subgraph migration templates for event handlers.")?;
         }
 
-        InitilizationTypeWithArgs::ContractImportWithArgs(auto_config_selection) => {
+        Ecosystem::Evm {
+            init_flow: EvmInitFlow::ContractImportWithArgs(auto_config_selection),
+        } => {
             let yaml_config = auto_config_selection
                 .clone()
                 .try_into()
@@ -128,18 +147,18 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
 
             template_dirs
                 .get_and_extract_blank_template(
-                    &parsed_init_args.language,
+                    &init_config.language,
                     &parsed_project_paths.project_root,
                 )
                 .context(format!(
                     "Failed initializing blank template for Contract Import with language {} at \
                      path {:?}",
-                    &parsed_init_args.language, &parsed_project_paths.project_root,
+                    &init_config.language, &parsed_project_paths.project_root,
                 ))?;
 
             auto_schema_handler_template
                 .generate_contract_import_templates(
-                    &parsed_init_args.language,
+                    &init_config.language,
                     &parsed_project_paths.project_root,
                 )
                 .context(
@@ -148,14 +167,9 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
         }
     }
 
-    let ecosystem = match parsed_init_args.template {
-        InitilizationTypeWithArgs::Template(Template::GreeterOnFuel) => Ecosystem::Fuel,
-        _ => Ecosystem::Ethereum,
-    };
-
-    let envio_version = match ecosystem {
-        Ecosystem::Fuel => "1.1.2-fuel".to_string(),
-        Ecosystem::Ethereum => {
+    let envio_version = match init_config.ecosystem {
+        Ecosystem::Fuel { .. } => "1.1.2-fuel".to_string(),
+        Ecosystem::Evm { .. } => {
             let crate_version = env!("CARGO_PKG_VERSION");
             if is_valid_release_version_number(crate_version) {
                 // Check that crate version is not a dev release. In which case the
@@ -169,8 +183,8 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     };
 
     let hbs_template = InitTemplates::new(
-        parsed_init_args.name.clone(),
-        &parsed_init_args.language,
+        init_config.name.clone(),
+        &init_config.language,
         &parsed_project_paths,
         envio_version.clone(),
     )
@@ -189,11 +203,11 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     println!("Project template ready");
     println!("Running codegen");
 
-    match ecosystem {
-        Ecosystem::Fuel => {
+    match init_config.ecosystem {
+        Ecosystem::Fuel { .. } => {
             commands::codegen::npx_codegen(envio_version, &parsed_project_paths).await?
         }
-        Ecosystem::Ethereum => {
+        Ecosystem::Evm { .. } => {
             let yaml_config =
                 human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
                     .context("Failed deserializing config")?;
@@ -205,7 +219,7 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
         }
     };
 
-    if parsed_init_args.language == Language::ReScript {
+    if init_config.language == Language::ReScript {
         let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
         if !res_build_exit.success() {
             return Err(anyhow!("Failed to build rescript"))?;

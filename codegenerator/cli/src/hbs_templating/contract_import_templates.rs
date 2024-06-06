@@ -191,7 +191,7 @@ use super::codegen_templates::EventTemplate;
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
-    cli_args::clap_definitions::Language,
+    cli_args::init_config::Language,
     config_parsing::{
         entity_parsing::{Entity, Field, FieldType, Schema},
         system_config::{self, SystemConfig},
