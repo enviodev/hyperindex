@@ -102,8 +102,8 @@ let makeStoreOperatorEntity = (
     cloned
     ->getStore
     ->set(
-      entity->getKey,
       Set(entity)->Types.mkEntityUpdate(
+        ~entityId=entity->getKey,
         ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
       ),
     )
@@ -307,7 +307,7 @@ let executeRowsEntity = (
         ~key=getKey(entity),
         ~entity=Some(entity),
       )
-    | Updated({latest: {entityUpdateAction: Delete(entityId)}}) =>
+    | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
       inMemTable.dict->deleteDictKey(entityId)
     | InitialReadFromDb(NotSet) => ()
     }
