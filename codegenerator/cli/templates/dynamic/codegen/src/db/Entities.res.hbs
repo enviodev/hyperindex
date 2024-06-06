@@ -62,6 +62,7 @@ module {{entity.name.capitalized}} = {
       {{#if pg_field.linked_entity}}~linkedEntity="{{pg_field.linked_entity}}",{{/if}}
       ),
   {{/each}}
+      mkField("db_write_timestamp", Timestamp, ~default="CURRENT_TIMESTAMP"),
   {{#each entity.derived_fields as | derived_field |}}
       mkDerivedFromField(
       "{{derived_field.field_name}}", 
