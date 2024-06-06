@@ -283,7 +283,7 @@ impl<'a> TemplateDirs<'a> {
     }
 
     ///Gets template from templates/static/{init_template}_template/shared
-    fn get_template_shared_dir(&self, template: &dyn Template) -> Result<RelativeDir<'a>> {
+    fn get_template_shared_dir<T: Template>(&self, template: &T) -> Result<RelativeDir<'a>> {
         self.get_template_static_dir(template.to_dir_name(), "shared".to_string())
     }
 
