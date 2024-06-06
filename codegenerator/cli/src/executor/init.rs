@@ -6,7 +6,7 @@ use crate::{
     },
     commands,
     config_parsing::{
-        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id,
+        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id, human_config,
         system_config::SystemConfig,
     },
     hbs_templating::{
@@ -154,15 +154,15 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     };
 
     let envio_version = match ecosystem {
-        Ecosystem::Fuel => "1.1.1-fuel".to_string(),
+        Ecosystem::Fuel => "1.1.2-fuel".to_string(),
         Ecosystem::Ethereum => {
             let crate_version = env!("CARGO_PKG_VERSION");
             if is_valid_release_version_number(crate_version) {
-                //Check that crate version is not a dev release. In which case the
-                //version should be installable from npm
+                // Check that crate version is not a dev release. In which case the
+                // version should be installable from npm
                 crate_version.to_string()
             } else {
-                //Else install the latest version from npm so as not to break dev environments
+                // Else install the latest version from npm so as not to break dev environments
                 "latest".to_string()
             }
         }
@@ -189,7 +189,21 @@ pub async fn run_init_args(init_args: &InitArgs, project_paths: &ProjectPaths) -
     println!("Project template ready");
     println!("Running codegen");
 
-    commands::codegen::exec_codegen(envio_version, &parsed_project_paths).await?;
+    match ecosystem {
+        Ecosystem::Fuel => {
+            commands::codegen::npx_codegen(envio_version, &parsed_project_paths).await?
+        }
+        Ecosystem::Ethereum => {
+            let yaml_config =
+                human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
+                    .context("Failed deserializing config")?;
+
+            let config = SystemConfig::parse_from_human_config(&yaml_config, &parsed_project_paths)
+                .context("Failed parsing config")?;
+
+            commands::codegen::run_codegen(&config, &parsed_project_paths).await?;
+        }
+    };
 
     if parsed_init_args.language == Language::ReScript {
         let res_build_exit = commands::rescript::build(&parsed_project_paths.project_root).await?;
