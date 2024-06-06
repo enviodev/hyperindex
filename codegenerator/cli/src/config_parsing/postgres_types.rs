@@ -47,7 +47,7 @@ impl Display for Primitive {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct Field {
     pub field_name: String,
-    pub linked_entity: Option<String>,
+    pub is_linked_entity_field: bool,
     pub is_index: bool,
     pub is_primary_key: bool,
     pub is_nullable: bool,

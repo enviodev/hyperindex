@@ -5,6 +5,7 @@ open Types
 let isPrimaryKey = true
 let isNullable = true
 let isIndex = true
+let isLinkedEntityField = true
 
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
@@ -34,7 +35,7 @@ module {{entity.name.capitalized}} = {
       {{#if pg_field.is_primary_key}}~isPrimaryKey,{{/if}}
       {{#if pg_field.is_nullable}}~isNullable,{{/if}}
       {{#if pg_field.is_index}}~isIndex,{{/if}}
-      {{#if pg_field.linked_entity}}~linkedEntity="{{pg_field.linked_entity}}",{{/if}}
+      {{#if pg_field.is_linked_entity_field}}~isLinkedEntityField,{{/if}}
       ),
   {{/each}}
   {{#each entity.derived_fields as | derived_field |}}

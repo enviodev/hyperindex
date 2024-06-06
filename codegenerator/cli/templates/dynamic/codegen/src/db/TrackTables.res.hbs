@@ -76,18 +76,18 @@ let clearHasuraMetadata = async () => {
   }
 }
 
-let trackGetEntityHistoryFilterFunction = async () => {
+let trackFunction= async () => {
   let body = {
-    "type": "pg_track_function",
-    "args": {
-      "source": "default",
-      "function": {
-        "schema": "public",
-        "name": "get_entity_history_filter",
-      },
-      "comment": "This function helps search for articles",
-    },
-  }
+        "type": "pg_track_function",
+        "args": {
+            "source": "default",
+            "function": {
+                "schema": "public",
+                "name": "get_entity_history_filter"
+                },
+            "comment": "This function helps search for articles"
+            }
+          }
 
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
@@ -110,8 +110,8 @@ let trackGetEntityHistoryFilterFunction = async () => {
     })
   | Ok(case) =>
     let msg = switch case {
-    | QuerySucceeded => "Function Tracked"
-    | AlreadyDone => "Function Already Tracked"
+    | QuerySucceeded => "Table Tracked"
+    | AlreadyDone => "Table Already Tracked"
     }
     Logging.trace({
       "msg": msg,
@@ -224,17 +224,18 @@ let createRawEventsArrayRelationship = async () => {
       },
       "name": "event_history", // Name of the new relationship
       "using": {
-        "manual_configuration": {
-          "remote_table": "entity_history",
-          "column_mapping": {
-            "chain_id": "chain_id",
-            "block_number": "block_number",
-            "log_index": "log_index",
-          },
-        },
-      },
-    },
-  }
+            "manual_configuration" : {
+                "remote_table" : "entity_history",
+                "column_mapping" : {
+                    "chain_id" : "chain_id",
+                    "block_number": "block_number",
+                    "log_index": "log_index"
+                  }
+               }
+            }
+        }
+      }
+  
 
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
@@ -252,6 +253,7 @@ let createRawEventsArrayRelationship = async () => {
   | Error(_) =>
     Logging.error({
       "msg": `EE808: There was an issue setting up view permissions for the table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
     })
@@ -278,17 +280,18 @@ let createEntityHistoryObjectRelationship = async () => {
       },
       "name": "event", // Name of the new relationship
       "using": {
-        "manual_configuration": {
-          "remote_table": "raw_events",
-          "column_mapping": {
-            "chain_id": "chain_id",
-            "block_number": "block_number",
-            "log_index": "log_index",
-          },
-        },
-      },
-    },
-  }
+            "manual_configuration" : {
+                "remote_table" : "raw_events",
+                "column_mapping" : {
+                    "chain_id" : "chain_id",
+                    "block_number": "block_number",
+                    "log_index": "log_index"
+                  }
+               }
+            }
+        }
+      }
+  
 
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
@@ -306,6 +309,7 @@ let createEntityHistoryObjectRelationship = async () => {
   | Error(_) =>
     Logging.error({
       "msg": `EE808: There was an issue setting up view permissions for the table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
     })
@@ -332,17 +336,18 @@ let createEntityHistoryFilterObjectRelationship = async () => {
       },
       "name": "event", // Name of the new relationship
       "using": {
-        "manual_configuration": {
-          "remote_table": "raw_events",
-          "column_mapping": {
-            "chain_id": "chain_id",
-            "block_number": "block_number",
-            "log_index": "log_index",
-          },
-        },
-      },
-    },
-  }
+            "manual_configuration" : {
+                "remote_table" : "raw_events",
+                "column_mapping" : {
+                    "chain_id" : "chain_id",
+                    "block_number": "block_number",
+                    "log_index": "log_index"
+                  }
+               }
+            }
+        }
+      }
+  
 
   let response = await fetch(
     Env.Hasura.graphqlEndpoint,
@@ -360,6 +365,7 @@ let createEntityHistoryFilterObjectRelationship = async () => {
   | Error(_) =>
     Logging.error({
       "msg": `EE808: There was an issue setting up view permissions for the table in hasura - indexing may still work - but you may have issues querying the data in hasura.`,
+
       "requestStatusCode": statusCode,
       "requestResponseJson": responseJson,
     })
@@ -424,54 +430,42 @@ let createEntityRelationship = async (
 
 let trackAllTables = async () => {
   Logging.info("Tracking tables in Hasura")
-
   let _ = await clearHasuraMetadata()
-  await [TablesStatic.allTables, Entities.allTables]
-  ->Belt.Array.concatMany
-  ->Utils.awaitEach(async ({tableName}) => {
-    await trackTable(~tableName)
-    await createSelectPermissions(~tableName)
-  })
-
-  let _ = await trackGetEntityHistoryFilterFunction()
+  let _ = await trackTable(~tableName="raw_events")
+  let _ = await createSelectPermissions(~tableName="raw_events")
+  let _ = await trackTable(~tableName="chain_metadata")
+  let _ = await createSelectPermissions(~tableName="chain_metadata")
+  let _ = await trackTable(~tableName="dynamic_contract_registry")
+  let _ = await createSelectPermissions(~tableName="dynamic_contract_registry")
+  let _ = await trackTable(~tableName="persisted_state")
+  let _ = await createSelectPermissions(~tableName="persisted_state")
+  let _ = await trackTable(~tableName="entity_history")
+  let _ = await createSelectPermissions(~tableName="entity_history")
+  let _ = await trackTable(~tableName="entity_history_filter")
+  let _ = await createSelectPermissions(~tableName="entity_history_filter")
+  let _ = await trackFunction()
+  let _ = await trackTable(~tableName="event_sync_state")
+  let _ = await createSelectPermissions(~tableName="event_sync_state")
   let _ = await createEntityHistoryObjectRelationship()
   let _ = await createRawEventsArrayRelationship()
   let _ = await createEntityHistoryFilterObjectRelationship()
-
-  await [Entities.allTables]
-  ->Belt.Array.concatMany
-  ->Utils.awaitEach(async table => {
-    let {tableName} = table
-    //Set array relationships
-    await table
-    ->Table.getDerivedFromFields
-    ->Utils.awaitEach(async derivedFromField => {
-      //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
-      let relationalFieldName =
-        Entities.schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
-
-      await createEntityRelationship(
-        ~tableName,
-        ~relationshipType="array",
-        ~isDerivedFrom=true,
-        ~objectName=derivedFromField.fieldName,
-        ~relationalKey=relationalFieldName,
-        ~mappedEntity=derivedFromField.derivedFromEntity,
+  {{#each entities as |entity|}}
+  let _ = await trackTable(~tableName="{{entity.name.original}}")
+  let _ = await createSelectPermissions(~tableName="{{entity.name.original}}")
+  {{/each}}
+    {{#each entities as |entity|}}
+    {{#each entity.relational_params.all as | relational_param | }}
+      let _ = await createEntityRelationship(
+        ~tableName="{{entity.name.original}}",
+        ~relationshipType="{{relational_param.relationship_type}}",
+        ~isDerivedFrom={{relational_param.is_derived_from}}, 
+        ~objectName="{{relational_param.object_name.original}}",
+        ~relationalKey="{{relational_param.relational_key.original}}",
+        ~mappedEntity="{{relational_param.mapped_entity.original}}",
       )
-    })
+    {{/each}}
+{{/each}}
 
-    //Set object relationships
-    await table
-    ->Table.getLinkedEntityFields
-    ->Utils.awaitEach(async ((field, linkedEntityName)) => {
-      await createEntityRelationship(
-        ~tableName,
-        ~relationshipType="object",
-        ~isDerivedFrom=false,
-        ~objectName=field.fieldName,
-        ~relationalKey=field.fieldName,
-        ~mappedEntity=linkedEntityName,
-      )
-    })
-  })
 }
+
+

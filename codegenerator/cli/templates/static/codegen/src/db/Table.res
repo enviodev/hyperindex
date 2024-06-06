@@ -20,7 +20,7 @@ type field = {
   isNullable: bool,
   isPrimaryKey: bool,
   isIndex: bool,
-  linkedEntity: option<string>,
+  isLinkedEntityField: bool,
   defaultValue: option<string>,
 }
 
@@ -38,7 +38,7 @@ let mkField = (
   ~isNullable=false,
   ~isPrimaryKey=false,
   ~isIndex=false,
-  ~linkedEntity=?,
+  ~isLinkedEntityField=false,
   fieldName,
   fieldType,
 ) =>
@@ -49,7 +49,7 @@ let mkField = (
     isNullable,
     isPrimaryKey,
     isIndex,
-    linkedEntity,
+    isLinkedEntityField,
     defaultValue: default,
   }->Field
 
@@ -66,10 +66,7 @@ let getUserDefinedFieldName = fieldOrDerived =>
   | DerivedFrom({fieldName}) => fieldName
   }
 
-let isLinkedEntityField = field => field.linkedEntity->Option.isSome
-
-let getDbFieldName = field =>
-  field->isLinkedEntityField ? field.fieldName ++ "_id" : field.fieldName
+let getDbFieldName = field => field.isLinkedEntityField ? field.fieldName ++ "_id" : field.fieldName
 
 let getFieldName = fieldOrDerived =>
   switch fieldOrDerived {
@@ -105,18 +102,6 @@ let getFields = table =>
   table.fields->Array.keepMap(field =>
     switch field {
     | Field(field) => Some(field)
-    | DerivedFrom(_) => None
-    }
-  )
-
-let getLinkedEntityFields = table =>
-  table.fields->Array.keepMap(field =>
-    switch field {
-    | Field(field) =>
-      switch field {
-      | {linkedEntity: Some(linkedEntityName)} => Some((field, linkedEntityName))
-      | _ => None
-      }
     | DerivedFrom(_) => None
     }
   )

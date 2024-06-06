@@ -374,7 +374,12 @@ type t
 type exitCode = | @as(0) Success | @as(1) Failure
 @send external exit: (t, exitCode) => unit = "exit"
 
-let awaitEach = Utils.awaitEach
+let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
+  for i in 0 to arr->Array.length - 1 {
+    let item = arr[i]
+    await item->fn
+  }
+}
 
 // TODO: all the migration steps should run as a single transaction
 let runUpMigrations = async (~shouldExit) => {
