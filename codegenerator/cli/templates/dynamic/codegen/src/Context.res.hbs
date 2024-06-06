@@ -135,16 +135,18 @@ let makeEntityHandlerContext = (
   ~inMemTable, //TODO: store and store functions should be passed in via module
   ~entityIdsMap: EntityIdsMap.t,
   ~entityName: Enums.EntityType.variants,
+  ~getKey,
 ): entityHandlerContext<'entity> => {
   {
     set: entity => {
       inMemTable->InMemoryTable.Entity.set(
-        Obj.magic(entity)["id"],
-        Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
+        Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=getKey(entity)),
       )
     },
-    deleteUnsafe: id => {
-      inMemTable->InMemoryTable.Entity.set(id, Delete(id)->Types.mkEntityUpdate(~eventIdentifier))
+    deleteUnsafe: entityId => {
+      inMemTable->InMemoryTable.Entity.set(
+        Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
+      )
     },
     get: (entityId: Types.id) => {
       if entityIdsMap->EntityIdsMap.hasId(~entityName, ~entityId) {
@@ -170,17 +172,19 @@ let makeEntityHandlerContextAsync = (
   ~entityIdsMap: EntityIdsMap.t,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~asyncGetter,
+  ~getKey,
 ): entityHandlerContextAsync<entity> => {
   let module(EntityMod) = entityMod
   {
     set: entity => {
       inMemTable->InMemoryTable.Entity.set(
-        Obj.magic(entity)["id"],
-        Set(entity)->Types.mkEntityUpdate(~eventIdentifier),
+        Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=getKey(entity)),
       )
     },
-    deleteUnsafe: id => {
-      inMemTable->InMemoryTable.Entity.set(id, Delete(id)->Types.mkEntityUpdate(~eventIdentifier))
+    deleteUnsafe: entityId => {
+      inMemTable->InMemoryTable.Entity.set(
+        Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
+      )
     },
     get: async entityId => {
       if entityIdsMap->EntityIdsMap.hasId(~entityName=EntityMod.name, ~entityId) {
@@ -214,6 +218,7 @@ let getHandlerContextSync: t => handlerContext = context => {
       ~entityIdsMap,
       ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
       ~entityName={{entity.name.capitalized}},
+      ~getKey=entity => entity.id,
     ),
     {{/each}}
   }
@@ -230,6 +235,7 @@ let getHandlerContextAsync = context => {
       ~asyncGetter=asyncGetters.get{{entity.name.capitalized}},
       ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
+      ~getKey=entity => entity.id,
     ),
     {{/each}}
   }

@@ -88,15 +88,17 @@ type eventIdentifier = {
 
 type entityUpdateAction<'entityType> =
   | Set('entityType)
-  | Delete(string)
+  | Delete
 
 type entityUpdate<'entityType> = {
   eventIdentifier: eventIdentifier,
   shouldSaveHistory: bool,
+  entityId: id,
   entityUpdateAction: entityUpdateAction<'entityType>,
 }
 
-let mkEntityUpdate = (~shouldSaveHistory=true, ~eventIdentifier, entityUpdateAction) => {
+let mkEntityUpdate = (~shouldSaveHistory=true, ~eventIdentifier, ~entityId, entityUpdateAction) => {
+  entityId,
   shouldSaveHistory,
   eventIdentifier,
   entityUpdateAction,
