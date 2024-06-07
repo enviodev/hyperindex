@@ -1,6 +1,6 @@
 use super::{
     clap_definitions::{
-        ContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
+        EvmContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
     },
     inquire_helpers::FilePathCompleter,
     validation::{
@@ -204,7 +204,7 @@ impl AutoConfigSelection {
         if add_new_contract_option == AddNewContractOption::AddContract {
             //Import a new contract
             let (contract_import_selection, add_new_contract_option) =
-                ContractImportArgs::default()
+                EvmContractImportArgs::default()
                     .get_contract_import_selection()
                     .await
                     .context("Failed getting new contract import selection")?;
@@ -246,7 +246,7 @@ impl AutoConfigSelection {
     }
 }
 
-impl ContractImportArgs {
+impl EvmContractImportArgs {
     ///Constructs AutoConfigSelection vial cli args and prompts
     pub async fn get_auto_config_selection(
         &self,

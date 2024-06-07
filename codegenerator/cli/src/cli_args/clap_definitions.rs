@@ -120,7 +120,7 @@ pub enum InitFlow {
     Template(EvmTemplateArgs),
     ///Initialize Evm indexer by importing config from a contract for a given chain
     #[strum(serialize = "Contract Import")]
-    ContractImport(ContractImportArgs),
+    ContractImport(EvmContractImportArgs),
     ///Initialize Evm indexer by migrating config from an existing subgraph
     #[clap(hide = true)] //hiding for now until this is more stable
     #[strum(serialize = "Subgraph Migration (Experimental)")]
@@ -130,56 +130,8 @@ pub enum InitFlow {
     Fuel(FuelInitFlow),
 }
 
-#[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
-pub enum EvmInitFlow {
-    ///Initialize Evm indexer from an example template
-    Template(EvmTemplateArgs),
-    ///Initialize Evm indexer by importing config from a contract for a given chain
-    #[strum(serialize = "Contract Import")]
-    ContractImport(ContractImportArgs),
-    ///Initialize Evm indexer by migrating config from an existing subgraph
-    #[clap(hide = true)] //hiding for now until this is more stable
-    #[strum(serialize = "Subgraph Migration (Experimental)")]
-    SubgraphMigration(SubgraphMigrationArgs),
-}
-
-#[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
-pub enum FuelInitFlow {
-    ///Initialize Fuel indexer from an example template
-    Template(FuelTemplateArgs),
-}
-
-impl Default for FuelInitFlow {
-    fn default() -> Self {
-        Self::Template(FuelTemplateArgs { template: None })
-    }
-}
-
 #[derive(Args, Debug, Default, Clone)]
-pub struct EvmTemplateArgs {
-    ///Name of the template to be used in initialization
-    #[arg(short, long)]
-    #[clap(value_enum)]
-    pub template: Option<EvmTemplate>,
-}
-
-#[derive(Args, Debug, Default, Clone)]
-pub struct FuelTemplateArgs {
-    ///Name of the template to be used in initialization
-    #[arg(short, long)]
-    #[clap(value_enum)]
-    pub template: Option<FuelTemplate>,
-}
-
-#[derive(Args, Debug, Default, Clone)]
-pub struct SubgraphMigrationArgs {
-    ///Subgraph ID to start a migration from
-    #[arg(short, long)]
-    pub subgraph_id: Option<SubgraphMigrationID>,
-}
-
-#[derive(Args, Debug, Default, Clone)]
-pub struct ContractImportArgs {
+pub struct EvmContractImportArgs {
     ///Choose to import a contract from a local abi or
     ///using get values from an explorer using a contract address
     #[command(subcommand)]
@@ -196,6 +148,28 @@ pub struct ContractImportArgs {
     ///If selected, prompt will not ask to confirm selection of events on a contract
     #[arg(long, action)]
     pub all_events: bool,
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct EvmTemplateArgs {
+    ///Name of the template to be used in initialization
+    #[arg(short, long)]
+    #[clap(value_enum)]
+    pub template: Option<EvmTemplate>,
+}
+
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
+///Template to work off
+pub enum EvmTemplate {
+    Greeter,
+    Erc20,
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct SubgraphMigrationArgs {
+    ///Subgraph ID to start a migration from
+    #[arg(short, long)]
+    pub subgraph_id: Option<SubgraphMigrationID>,
 }
 
 #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
@@ -264,11 +238,24 @@ pub struct LocalImportArgs {
     pub rpc_url: Option<String>,
 }
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-///Template to work off
-pub enum EvmTemplate {
-    Greeter,
-    Erc20,
+#[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
+pub enum FuelInitFlow {
+    ///Initialize Fuel indexer from an example template
+    Template(FuelTemplateArgs),
+}
+
+impl Default for FuelInitFlow {
+    fn default() -> Self {
+        Self::Template(FuelTemplateArgs { template: None })
+    }
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct FuelTemplateArgs {
+    ///Name of the template to be used in initialization
+    #[arg(short, long)]
+    #[clap(value_enum)]
+    pub template: Option<FuelTemplate>,
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
