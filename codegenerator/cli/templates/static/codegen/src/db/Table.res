@@ -113,12 +113,10 @@ let getFields = table =>
 let getLinkedEntityFields = table =>
   table.fields->Array.keepMap(field =>
     switch field {
-    | Field(field) =>
-      switch field {
-      | {linkedEntity: Some(linkedEntityName)} => Some((field, linkedEntityName))
-      | _ => None
-      }
-    | DerivedFrom(_) => None
+    | Field({linkedEntity: Some(linkedEntityName)} as field) => Some((field, linkedEntityName))
+    | Field({linkedEntity: None})
+    | DerivedFrom(_) =>
+      None
     }
   )
 
