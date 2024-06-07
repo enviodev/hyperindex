@@ -7,11 +7,11 @@ let creatTableIfNotExists = (sql, table) => {
     table
     ->Table.getFields
     ->Array.map(field => {
-      let {fieldType, isNullable, defaultValue} = field
+      let {fieldType, isNullable, isArray, defaultValue} = field
       let fieldName = field->Table.getDbFieldName
 
       {
-        `"${fieldName}" ${(fieldType :> string)}${switch defaultValue {
+        `"${fieldName}" ${(fieldType :> string)}${isArray ? "[]" : ""}${switch defaultValue {
           | Some(defaultValue) => ` DEFAULT ${defaultValue}`
           | None => isNullable ? `` : ` NOT NULL`
           }}`

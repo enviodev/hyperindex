@@ -4,6 +4,7 @@ type id = string
 //shorthand for punning
 let isPrimaryKey = true
 let isNullable = true
+let isArray = true
 let isIndex = true
 
 module type Entity = {
@@ -58,6 +59,7 @@ module {{entity.name.capitalized}} = {
       {{!--Cleaner readability if the flags are not applied when not needed but it could be inlined--}}
       {{#if pg_field.is_primary_key}}~isPrimaryKey,{{/if}}
       {{#if pg_field.is_nullable}}~isNullable,{{/if}}
+      {{#if pg_field.is_array}}~isArray,{{/if}}
       {{#if pg_field.is_index}}~isIndex,{{/if}}
       {{#if pg_field.linked_entity}}~linkedEntity="{{pg_field.linked_entity}}",{{/if}}
       ),
