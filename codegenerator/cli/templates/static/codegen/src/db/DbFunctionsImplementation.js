@@ -16,12 +16,15 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-        }`,
+      sql`${constrQuery(sql)}${
+        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+      }`,
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
-  const fieldNames = TableModule.getFieldNames(table);
+  const fieldNames = TableModule.getFieldNames(table).filter(
+    (fieldName) => fieldName !== "db_write_timestamp",
+  );
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
   const fieldQueryConstructors = fieldNames.map(
     (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`,
@@ -135,7 +138,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => { })
+    .then((res) => {})
     .catch((err) => {
       console.log("errored", err);
     });
@@ -155,7 +158,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => { })
+    .then((res) => {})
     .catch((err) => {
       console.log("errored", err);
     });
