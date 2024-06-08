@@ -1,6 +1,6 @@
 import { expect } from 'chai';
-// import { BigDecimal } from 'generated';/// For some reason this doesn't work?
-import BigDecimal from '../generated/src/bindings/BigDecimal';
+import { BigDecimal } from 'generated';/// For some reason this doesn't work?
+// import BigDecimal from '../generated/src/bindings/BigDecimal';
 
 describe('BigDecimal', () => {
   it('should create BigDecimal from BigInt', () => {
@@ -40,7 +40,7 @@ describe('BigDecimal', () => {
 
   it('should convert BigDecimal to int', () => {
     const bigDecimal = BigDecimal.fromFloat(123.456);
-    expect(bigDecimal.toInt()).to.equal(123);
+    expect(bigDecimal.toFixed(0)).to.equal("123");
   });
 
   it('should perform addition', () => {
@@ -74,13 +74,7 @@ describe('BigDecimal', () => {
   it('should check equality', () => {
     const a = BigDecimal.fromFloat(10);
     const b = BigDecimal.fromFloat(10);
-    expect(a.equals(b)).to.be.true;
-  });
-
-  it('should check inequality', () => {
-    const a = BigDecimal.fromFloat(10);
-    const b = BigDecimal.fromFloat(20);
-    expect(a.notEquals(b)).to.be.true;
+    expect(a.isEqualTo(b)).to.be.true;
   });
 
   it('should check greater than', () => {

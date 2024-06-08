@@ -3,10 +3,9 @@ import {
   SimpleNftContract,
   NftCollectionEntity,
   UserEntity,
-  // BigDecimal, /// For some reason this doesn't work?
+  BigDecimal,
   AccountType
 } from "generated";
-import BigDecimal from "../generated/src/bindings/BigDecimal";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
