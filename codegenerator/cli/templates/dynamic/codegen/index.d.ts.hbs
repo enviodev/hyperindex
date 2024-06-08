@@ -26,4 +26,6 @@ export {
 {{/each}}
 } from "./src/Enum.gen";
 
-export { BigDecimal } from './src/bindings/BigDecimal';
+import { BigDecimalTypescript as BigDecimal } from './src/bindings/BigDecimal.gen.ts';
+
+export { BigDecimal };

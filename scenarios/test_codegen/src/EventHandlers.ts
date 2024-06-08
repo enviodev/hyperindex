@@ -15,6 +15,13 @@ import { AccountType } from "../generated/src/db/Enums.gen";
 //   AccountType
 // } from "generated";
 // import BigDecimal from "../generated/src/bindings/BigDecimal";
+//   NftFactoryContract,
+//   SimpleNftContract,
+//   NftCollectionEntity,
+//   UserEntity,
+//   BigDecimal,
+//   AccountType
+// } from "generated";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
