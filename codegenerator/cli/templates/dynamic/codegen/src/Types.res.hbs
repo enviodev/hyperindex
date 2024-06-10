@@ -4,30 +4,6 @@
 @genType.as("Id")
 type id = string
 
-@@warning("-30")
-@genType
-type rec {{#each entities as | entity |}}{{#unless @first}}
-and {{/unless}}{{entity.name.uncapitalized}}LoaderConfig = {{#if entity.relational_params.filtered_not_derived_from.[0]}}{
-  {{#each entity.relational_params.filtered_not_derived_from as | relational_param |}}
-  load{{relational_param.relational_key.capitalized}}?: {{relational_param.mapped_entity.uncapitalized}}LoaderConfig,{{/each}}
-}{{else}}bool{{/if}}{{/each}}
-@@warning("+30")
-
-@genType
-type entityRead = 
-{{#each entities as | entity |}}
-| {{entity.name.capitalized}}Read(id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, {{entity.name.uncapitalized}}LoaderConfig{{/if}})
-{{/each}}
-
-//Individual entity loader contexts
-//Note these will be uniform after v2 api implementation
-{{#each entities as | entity |}}
-@genType
-type {{entity.name.uncapitalized}}EntityLoaderContext = {
-  load: (id{{#if entity.relational_params.filtered_not_derived_from.[0]}}, ~loaders: {{entity.name.uncapitalized}}LoaderConfig=?{{/if}}) => unit,
-}
-{{/each}}
-
 @genType
 type contractRegistrations = {
   //TODO only add contracts we've registered for the event in the config
@@ -37,39 +13,29 @@ type contractRegistrations = {
 }
 
 @genType
+type entityLoaderContext<'entity> = {get: id => promise<option<'entity>>}
+
+@genType
 type loaderContext = {
   log: Logs.userLogger,
-  contractRegistration: contractRegistrations,
   {{#each entities as | entity |}}
-  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: {{entity.name.uncapitalized}}EntityLoaderContext,
+  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityLoaderContext<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}
 }
 
+@genType
 type entityHandlerContext<'entity> = {
-  get: id => option<'entity>,
-  set: 'entity => unit,
-  deleteUnsafe: id => unit,
-}
-
-type entityHandlerContextAsync<'entity> = {
   get: id => promise<option<'entity>>,
   set: 'entity => unit,
   deleteUnsafe: id => unit,
 }
+
 
 @genType
 type handlerContext = {
   log: Logs.userLogger,
   {{#each entities as | entity |}}
   @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContext<Entities.{{entity.name.capitalized}}.t>,
-  {{/each}}
-}
-
-@genType
-type handlerContextAsync = {
-  log: Logs.userLogger,
-  {{#each entities as | entity |}}
-  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityHandlerContextAsync<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}
 }
 
@@ -144,28 +110,9 @@ type eventLog<'a> = {
 }
 
 @genType
-type eventName =
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
-{{/each}}
-{{/each}}
+type eventName = Enums.EventType.variants
 
-let eventNameSchema = {{#if has_multiple_events }}
-S.union([
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  S.literal({{event.event_type.full}}),
-{{/each}}
-{{/each}}
-])
-{{else}}
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  S.literal({{event.event_type.full}})
-{{/each}}
-{{/each}}
-{{/if}}
+let eventNameSchema = Enums.EventType.schema
 
 let eventNameToString = (eventName: eventName) => switch eventName {
   {{#each codegen_contracts as | contract |}}
@@ -176,7 +123,7 @@ let eventNameToString = (eventName: eventName) => switch eventName {
 }
 
 exception UnknownEvent(string, string)
-let eventTopicToEventName = (contractName, topic0) =>
+let eventTopicToEventName = (contractName, topic0): Enums.EventType.variants =>
   switch (contractName, topic0) {
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
@@ -186,11 +133,17 @@ let eventTopicToEventName = (contractName, topic0) =>
   | (contractName, topic0) => UnknownEvent(contractName, topic0)->raise
   }
 
+module type Event = {
+  let eventName: Enums.EventType.variants
+  type eventArgs
+  let eventArgsSchema: S.schema<eventArgs>
+}
+
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}}Contract = {
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}}Event = {
-    let eventName = {{event.event_type.full}}
+    let eventName = Enums.EventType.{{event.event_type.full}}
 
     @genType
     type eventArgs = 
@@ -226,7 +179,7 @@ module {{contract.name.capitalized}}Contract = {
 type event =
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>)
+  | {{contract.name.capitalized}}_{{event.name.capitalized}}(eventLog<{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>)
 {{/each}}
 {{/each}}
 
@@ -243,4 +196,20 @@ type eventBatchQueueItem = {
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events
   hasRegisteredDynamicContracts?: bool,
+}
+
+let mkEventBatchQueueItem = (
+  ~hasRegisteredDynamicContracts=?,
+  event,
+  ~timestamp,
+  ~chain,
+  ~blockNumber,
+  ~logIndex,
+) => {
+  timestamp,
+  chain,
+  blockNumber,
+  logIndex,
+  event,
+  ?hasRegisteredDynamicContracts,
 }
