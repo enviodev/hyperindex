@@ -7,6 +7,7 @@ use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use std::str::FromStr;
 use strum_macros::{Display, EnumIter, EnumString};
+use subenum::subenum;
 
 use super::init_config::{self};
 
@@ -115,11 +116,14 @@ pub struct InitArgs {
     pub language: Option<init_config::Language>,
 }
 
+#[subenum(EvmInitFlowInteractive)]
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
 pub enum InitFlow {
     ///Initialize Evm indexer from an example template
+    #[subenum(EvmInitFlowInteractive)]
     Template(EvmTemplateArgs),
     ///Initialize Evm indexer by importing config from a contract for a given chain
+    #[subenum(EvmInitFlowInteractive)]
     #[strum(serialize = "Contract Import")]
     ContractImport(EvmContractImportArgs),
     ///Initialize Evm indexer by migrating config from an existing subgraph
