@@ -1,7 +1,6 @@
 open RescriptMocha
 open Mocha
 module MochaPromise = RescriptMocha.Promise
-open Mocha
 
 describe("Load and save an entity with a BigDecimal from DB", () => {
   MochaPromise.before(async () => {
@@ -28,7 +27,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
         bigDecimal: BigDecimal.fromFloat(654.321),
       }
 
-      await DbFunctions.EntityWithFields.batchSet(sql, [testEntity1, testEntity2])
+      await Entities.batchSet(sql, [testEntity1, testEntity2], ~entityMod=module(Entities.EntityWithFields))
 
       let inMemoryStore = IO.InMemoryStore.make()
 

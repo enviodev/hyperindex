@@ -4,10 +4,10 @@
 
 const handlers = require("./src/Handlers.bs");
 const TestHelpers = require("./src/TestHelpers.bs");
-const { BigDecimalTypescript } = require("./src/bindings/BigDecimal.bs");
+const BigDecimal = require("bignumber.js");
 
 module.exports = {
   ...handlers,
-  BigDecimal: BigDecimalTypescript,
+  BigDecimal,
   TestHelpers,
 };

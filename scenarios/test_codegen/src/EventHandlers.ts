@@ -1,27 +1,11 @@
 import {
-  NftFactoryContract_SimpleNftCreated_loader,
-  NftFactoryContract_SimpleNftCreated_handler,
-  SimpleNftContract_Transfer_loader,
-  SimpleNftContract_Transfer_handler,
-} from "../generated/src/Handlers.gen";
-
-import { NftCollectionEntity, UserEntity } from "../generated/src/Types.gen";
-import { AccountType } from "../generated/src/db/Enums.gen";
-//   NftFactoryContract,
-//   SimpleNftContract,
-//   NftCollectionEntity,
-//   UserEntity,
-//   // BigDecimal, /// For some reason this doesn't work?
-//   AccountType
-// } from "generated";
-// import BigDecimal from "../generated/src/bindings/BigDecimal";
-//   NftFactoryContract,
-//   SimpleNftContract,
-//   NftCollectionEntity,
-//   UserEntity,
-//   BigDecimal,
-//   AccountType
-// } from "generated";
+  NftFactoryContract,
+  SimpleNftContract,
+  NftCollectionEntity,
+  UserEntity,
+  BigDecimal,
+  AccountType
+} from "generated";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
@@ -40,7 +24,7 @@ NftFactoryContract.SimpleNftCreated.handler(({ event, context }) => {
   };
   context.NftCollection.set(nftCollection);
 
-  // context.EntityWithFields.set({ id: "testingBigDecimalWorks", bigDecimal: BigDecimal.fromFloat(123.456) })
+  context.EntityWithFields.set({ id: "testingBigDecimalWorks", bigDecimal: new BigDecimal(123.456) })
 });
 
 SimpleNftContract.Transfer.loader(({ event, context }) => {

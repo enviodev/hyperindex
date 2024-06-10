@@ -1,20 +1,17 @@
-@genType
-type rec bigDecimal = {
+@genType.import(("bignumber.js", "default"))
+type rec t = {
   toString: (. unit) => string,
   toFixed: (. int) => string,
-  plus: (. bigDecimal) => bigDecimal,
-  minus: (. bigDecimal) => bigDecimal,
-  times: (. bigDecimal) => bigDecimal,
-  div: (. bigDecimal) => bigDecimal,
-  isEqualTo: (. bigDecimal) => bool,
-  gt: (. bigDecimal) => bool,
-  gte: (. bigDecimal) => bool,
-  lt: (. bigDecimal) => bool,
-  lte: (. bigDecimal) => bool,
+  plus: (. t) => t,
+  minus: (. t) => t,
+  times: (. t) => t,
+  div: (. t) => t,
+  isEqualTo: (. t) => bool,
+  gt: (. t) => bool,
+  gte: (. t) => bool,
+  lt: (. t) => bool,
+  lte: (. t) => bool,
 }
-
-@genType.import(("bignumber.js", "default"))
-type rec t = bigDecimal
 
 // Constructors
 @new @module external fromBigInt: Ethers.BigInt.t => t = "bignumber.js"
@@ -39,20 +36,3 @@ let schema =
       },
     serializer: (. bigDecimal) => bigDecimal.toString(),
   })
-
-@genType
-module BigDecimalTypescript = {
-  @getType
-  type t = bigDecimal
-
-  @getType
-  let fromBigInt = fromBigInt
-  @getType
-  let fromFloat = fromFloat
-  @getType
-  let fromInt = fromInt
-  @getType
-  let fromString = fromString
-  @getType
-  let fromStringUnsafe = fromStringUnsafe
-}
