@@ -58,13 +58,13 @@ async fn prompt_ecosystem(
                 EcosystemOption::Evm => {
                     // Start prompt to ask the user which initialization option they want
                     // Explicitelly build options, since we don't want to include graph migration and other ecosystem selection subcomands
-                    let user_response_options = vec![
-                        InitFlow::Template(clap_definitions::EvmTemplateArgs::default()),
-                        InitFlow::ContractImport(clap_definitions::EvmContractImportArgs::default()),
-                    ];
+                    let user_response_options =
+                        clap_definitions::EvmInitFlowInteractive::iter().collect();
+
                     Select::new("Choose an initialization option", user_response_options)
                         .prompt()
                         .context("Failed prompting for Evm initialization option")?
+                        .into()
                 }
             }
         }
