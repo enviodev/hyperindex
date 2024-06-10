@@ -52,7 +52,7 @@ type shouldExit = ExitWithSuccess | NoExit
 type action =
   | BlockRangeResponse(chain, blockRangeFetchResponse)
   | SetFetchStateCurrentBlockHeight(chain, int)
-  | EventBatchProcessed(EventProcessing.loadResponse<EventProcessing.EventsProcessed.t>)
+  | EventBatchProcessed(EventProcessing.batchProcessed)
   | SetCurrentlyProcessing(bool)
   | SetCurrentlyFetchingBatch(chain, bool)
   | SetFetchState(chain, FetchState.t)
@@ -412,7 +412,7 @@ let actionReducer = (state: t, action: action) => {
     state->handleSetCurrentBlockHeight(~chain, ~currentBlockHeight)
   | BlockRangeResponse(chain, response) => state->handleBlockRangeResponse(~chain, ~response)
   | EventBatchProcessed({
-      val,
+      latestProcessedBlocks,
       dynamicContractRegistrations: Some({registrationsReversed, unprocessedBatchReversed}),
     }) =>
     let updatedArbQueue =
@@ -523,11 +523,11 @@ let actionReducer = (state: t, action: action) => {
 
       Prometheus.setFetchedEventsUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
     })
-    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks=val)
+    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
     (nextState, nextTasks)
 
-  | EventBatchProcessed({val, dynamicContractRegistrations: None}) => (
-      updateLatestProcessedBlocks(~state, ~latestProcessedBlocks=val),
+  | EventBatchProcessed({latestProcessedBlocks, dynamicContractRegistrations: None}) => (
+      updateLatestProcessedBlocks(~state, ~latestProcessedBlocks),
       [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch],
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
@@ -707,6 +707,7 @@ let injectedTaskReducer = async (
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation,
+  ~registeredEvents,
   //required args
   state: t,
   task: task,
@@ -813,6 +814,7 @@ let injectedTaskReducer = async (
           ~inMemoryStore,
           ~checkContractIsRegistered,
           ~latestProcessedBlocks,
+          ~registeredEvents,
         ) {
         | exception exn =>
           //All casese should be handled/caught before this with better user messaging.
@@ -905,4 +907,5 @@ let taskReducer = injectedTaskReducer(
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
+  ~registeredEvents=RegisteredEvents.global,
 )

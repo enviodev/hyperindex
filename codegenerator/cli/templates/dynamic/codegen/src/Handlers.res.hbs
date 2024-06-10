@@ -1,9 +1,8 @@
-open HandlerLoaderRegister
 {{#each codegen_contracts as | contract |}}
   @genType
 module {{contract.name.capitalized}}Contract = {
   {{#each contract.codegen_events as | event |}}  
-  module {{event.name.capitalized}} = MakeRegister(Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event)
+  module {{event.name.capitalized}} = RegisteredEvents.MakeRegister(Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event)
   {{/each}}  
 }
 
