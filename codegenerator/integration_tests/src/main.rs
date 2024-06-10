@@ -1,11 +1,11 @@
 mod hypersync_health;
 use envio::{
     clap_definitions::{
-        EvmTemplate, EvmTemplateArgs, FuelInitFlow, FuelTemplate, FuelTemplateArgs, InitArgs,
-        InitFlow, Language, ProjectPaths,
+        EvmTemplateArgs, FuelInitFlow, FuelTemplateArgs, InitArgs, InitFlow, ProjectPaths,
     },
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
     executor::init::run_init_args,
+    init_config::{EvmTemplate, FuelTemplate, Language},
 };
 use std::{fs, io, path::Path, time::Duration};
 use strum::IntoEnumIterator;
