@@ -53,7 +53,9 @@ async fn prompt_ecosystem(
                         Select::new("Choose an initialization option", flow_option)
                             .prompt()
                             .context("Failed prompting for Fuel initialization option")?;
-                    InitFlow::Fuel(fuel_init_flow)
+                    InitFlow::Fuel {
+                        init_flow: Some(fuel_init_flow),
+                    }
                 }
                 EcosystemOption::Evm => {
                     // Start prompt to ask the user which initialization option they want
@@ -71,7 +73,9 @@ async fn prompt_ecosystem(
     };
 
     let initialization = match init_flow {
-        InitFlow::Fuel(clap_definitions::FuelInitFlow::Template(args)) => {
+        InitFlow::Fuel {
+            init_flow: Some(clap_definitions::FuelInitFlow::Template(args)),
+        } => {
             let chosen_template = match args.template {
                 Some(template) => template,
                 None => {
@@ -83,6 +87,7 @@ async fn prompt_ecosystem(
                 init_flow: FuelInitFlow::Template(chosen_template),
             }
         }
+        InitFlow::Fuel { init_flow: _ } => todo!("Other init_flows are not supported"),
         InitFlow::Template(args) => {
             let chosen_template = match args.template {
                 Some(template) => template,
