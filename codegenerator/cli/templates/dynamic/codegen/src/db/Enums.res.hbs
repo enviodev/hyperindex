@@ -19,6 +19,23 @@ module EventType = {
   {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
     | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
   {{/each}}{{/each}}
+
+  let schema = {{#if has_multiple_events }}
+    S.union([
+    {{#each codegen_contracts as | contract |}}
+    {{#each contract.codegen_events as | event |}}
+      S.literal({{event.event_type.full}}),
+    {{/each}}
+    {{/each}}
+    ])
+  {{else}}
+    {{#each codegen_contracts as | contract |}}
+    {{#each contract.codegen_events as | event |}}
+      S.literal({{event.event_type.full}})
+    {{/each}}
+    {{/each}}
+  {{/if}}
+
   let name = "EVENT_TYPE"
   let variants = [
   {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}

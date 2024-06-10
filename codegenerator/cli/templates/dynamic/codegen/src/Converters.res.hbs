@@ -54,7 +54,7 @@ module {{contract.name.capitalized}} = {
         logIndex: log.logIndex,
       }
 
-      Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}(eventLog)
+      Types.{{contract.name.capitalized}}_{{event.name.capitalized}}(eventLog)
     }
 
     let convertDecodedEventParams = ( 
@@ -131,7 +131,7 @@ let convertDecodedEvent = (
             event
             ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertDecodedEventParams
             ->makeEventLog(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
-            ->Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}
+            ->Types.{{contract.name.capitalized}}_{{event.name.capitalized}}
       {{/each}}
      {{/each}}
     }
@@ -223,7 +223,7 @@ let parseRawEvent = (
       | {{event.event_type.full}} =>
       rawEvent->decodeRawEventWith(
         ~schema=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgsSchema,
-        ~variantAccessor=event => Types.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event),
+        ~variantAccessor=event => Types.{{contract.name.capitalized}}_{{event.name.capitalized}}(event),
         ~chain,
         ~txOrigin,
         ~txTo,

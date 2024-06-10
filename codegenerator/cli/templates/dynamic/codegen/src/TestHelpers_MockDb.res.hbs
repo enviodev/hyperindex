@@ -229,59 +229,35 @@ let cloneMockDb = (self: t) => {
   clonedInternalDb->makeWithInMemoryStore
 }
 
-/**
-Specifically create an executor for the mockDb
-*/
-let makeMockDbEntityExecuter = (~idsToLoad, ~dbReadFn, ~inMemTable, ~getEntiyId) => {
-  let dbReadFn = idsArr => idsArr->Belt.Array.keepMap(id => id->dbReadFn)
-  IO.makeEntityExecuterComposer(~idsToLoad, ~dbReadFn, ~inMemTable, ~getEntiyId, ~unit=(), ~then=(
-    res,
-    fn,
-  ) => res->fn)
-}
+let batchRead = (entity: entityStoreOperations<'entity>, ids) =>
+  ids->Array.keepMap(id => entity.get(id))->Promise.resolve
 
 /**
 Executes a single load layer using the mockDb functions
 */
-let executeMockDbLoadLayer = (
+let executeMockDbLoadLayer = async (
   mockDb: t,
-  ~loadLayer: IO.LoadLayer.t,
+  loadLayer: LoadLayer.loadLayer,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
-  let entityExecutors = [
-  {{#each entities as | entity |}}
-    makeMockDbEntityExecuter(
-      ~idsToLoad=loadLayer.{{entity.name.uncapitalized}}IdsToLoad,
-      ~dbReadFn=mockDb.entities.{{entity.name.uncapitalized}}.get,
-      ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
-      ~getEntiyId=entity => entity.id,
-    ),
-  {{/each}}
-  ]
-  let handleResponses = _ => {
-    IO.getNextLayer(~loadLayer)
+  let hasLoadActions = ref(true)
+
+  while hasLoadActions.contents {
+    let hasLoadActionsAll = await [
+      //each of the entities in the load layer
+      {{#each entities as | entity |}}
+      loadLayer.{{entity.name.uncapitalized}}->LoadLayer.executeLoadActionMap(
+        ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
+        ~batchLoadIds=batchRead(mockDb.entities.{{entity.name.uncapitalized}}),
+      ),
+      {{/each}}
+    ]->Promise.all
+
+    hasLoadActions :=
+      hasLoadActionsAll->Array.reduce(false, (accum, entityHasLoadActions) => {
+        accum || entityHasLoadActions->LoadLayer.toBool
+      })
   }
-
-  IO.executeLoadLayerComposer(~entityExecutors, ~handleResponses)
-}
-
-/**
-Given an isolated inMemoryStore and an array of read entities. This function loads the 
-requested data from the mockDb into the inMemory store. Simulating how loading happens
-from and external db into the inMemoryStore for a batch during event processing
-*/
-let loadEntitiesToInMemStore = (mockDb, ~entityBatch, ~inMemoryStore) => {
-  let executeLoadLayerFn = mockDb->executeMockDbLoadLayer
-  //In an async handler this would be a Promise.then... in this case
-  //just need to return the value and pass it into the callback
-  let then = (res, fn) => res->fn
-  IO.loadEntitiesToInMemStoreComposer(
-    ~inMemoryStore,
-    ~entityBatch,
-    ~executeLoadLayerFn,
-    ~then,
-    ~unit=(),
-  )
 }
 
 /**
