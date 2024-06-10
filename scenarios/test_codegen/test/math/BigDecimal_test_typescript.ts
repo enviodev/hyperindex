@@ -3,8 +3,8 @@ import { BigDecimal } from 'generated';
 
 describe('BigDecimal', () => {
   it('should create BigDecimal from BigInt', () => {
-    const bigDecimal = new BigDecimal(BigInt(123456789));
-    expect(bigDecimal.toString()).to.equal('123456789');
+    const bigDecimal = new BigDecimal(123456789123456n as any); // The upstream types don't accept BigInt, but the code does work correctly.
+    expect(bigDecimal.toString()).to.equal('123456789123456');
   });
 
   it('should create BigDecimal from float', () => {
