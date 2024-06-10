@@ -6,7 +6,9 @@ use std::fmt::Display;
 
 use super::{
     clap_definitions::{self, InitArgs, InitFlow, ProjectPaths},
-    init_config::{self, Ecosystem, EvmInitFlow, FuelInitFlow, InitConfig, Language},
+    init_config::{
+        Ecosystem, EvmInitFlow, EvmTemplate, FuelInitFlow, FuelTemplate, InitConfig, Language,
+    },
 };
 use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use anyhow::{Context, Result};
@@ -54,15 +56,12 @@ async fn prompt_ecosystem(
                     InitFlow::Fuel(fuel_init_flow)
                 }
                 EcosystemOption::Evm => {
-                    // start prompt to ask the user which initialization option they want
-                    let user_response_options = InitFlow::iter()
-                        // Filter out subgraph migration for now until stabilized
-                        // And don't include different ecosystem options
-                        .filter(|v| {
-                            matches!(v, InitFlow::Template(_))
-                                || matches!(v, InitFlow::ContractImport(_))
-                        })
-                        .collect();
+                    // Start prompt to ask the user which initialization option they want
+                    // Explicitelly build options, since we don't want to include graph migration and other ecosystem selection subcomands
+                    let user_response_options = vec![
+                        InitFlow::Template(clap_definitions::EvmTemplateArgs::default()),
+                        InitFlow::ContractImport(clap_definitions::EvmContractImportArgs::default()),
+                    ];
                     Select::new("Choose an initialization option", user_response_options)
                         .prompt()
                         .context("Failed prompting for Evm initialization option")?
@@ -76,29 +75,24 @@ async fn prompt_ecosystem(
             let chosen_template = match args.template {
                 Some(template) => template,
                 None => {
-                    let options = clap_definitions::FuelTemplate::iter().collect();
+                    let options = FuelTemplate::iter().collect();
                     prompt_template(options)?
                 }
             };
             Ecosystem::Fuel {
-                init_flow: FuelInitFlow::Template(match chosen_template {
-                    clap_definitions::FuelTemplate::Greeter => init_config::FuelTemplate::Greeter,
-                }),
+                init_flow: FuelInitFlow::Template(chosen_template),
             }
         }
         InitFlow::Template(args) => {
             let chosen_template = match args.template {
                 Some(template) => template,
                 None => {
-                    let options = clap_definitions::EvmTemplate::iter().collect();
+                    let options = EvmTemplate::iter().collect();
                     prompt_template(options)?
                 }
             };
             Ecosystem::Evm {
-                init_flow: EvmInitFlow::Template(match chosen_template {
-                    clap_definitions::EvmTemplate::Greeter => init_config::EvmTemplate::Greeter,
-                    clap_definitions::EvmTemplate::Erc20 => init_config::EvmTemplate::Erc20,
-                }),
+                init_flow: EvmInitFlow::Template(chosen_template),
             }
         }
         InitFlow::SubgraphMigration(args) => {
@@ -159,7 +153,7 @@ pub async fn prompt_missing_init_args(
     let language = match init_args.language {
         Some(args_language) => args_language,
         None => {
-            let options = clap_definitions::Language::iter()
+            let options = Language::iter()
                 .map(|language| language.to_string())
                 .collect::<Vec<String>>();
 
@@ -168,14 +162,9 @@ pub async fn prompt_missing_init_args(
                 .prompt()
                 .context("prompting user to select language")?;
 
-            clap_definitions::Language::from_str(&input_language)
+            Language::from_str(&input_language)
                 .context("parsing user input for language selection")?
         }
-    };
-    let language = match language {
-        clap_definitions::Language::JavaScript => Language::JavaScript,
-        clap_definitions::Language::TypeScript => Language::TypeScript,
-        clap_definitions::Language::ReScript => Language::ReScript,
     };
 
     let ecosystem = prompt_ecosystem(init_args.init_commands, name.clone(), language.clone())

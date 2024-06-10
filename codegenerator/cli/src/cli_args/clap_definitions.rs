@@ -4,10 +4,11 @@ use crate::{
     utils::address_type::Address,
 };
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use serde::{Deserialize, Serialize};
+use clap::{Args, Parser, Subcommand};
 use std::str::FromStr;
 use strum_macros::{Display, EnumIter, EnumString};
+
+use super::init_config::{self};
 
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
@@ -111,7 +112,7 @@ pub struct InitArgs {
     ///The language used to write handlers
     #[arg(global = true, short = 'l', long = "language")]
     #[clap(value_enum)]
-    pub language: Option<Language>,
+    pub language: Option<init_config::Language>,
 }
 
 #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
@@ -155,14 +156,7 @@ pub struct EvmTemplateArgs {
     ///Name of the template to be used in initialization
     #[arg(short, long)]
     #[clap(value_enum)]
-    pub template: Option<EvmTemplate>,
-}
-
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-///Template to work off
-pub enum EvmTemplate {
-    Greeter,
-    Erc20,
+    pub template: Option<init_config::EvmTemplate>,
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -255,24 +249,5 @@ pub struct FuelTemplateArgs {
     ///Name of the template to be used in initialization
     #[arg(short, long)]
     #[clap(value_enum)]
-    pub template: Option<FuelTemplate>,
-}
-
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-///Template to work off
-pub enum FuelTemplate {
-    Greeter,
-}
-
-#[derive(
-    Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, PartialEq, Eq, Display,
-)]
-///Which language do you want to write in?
-pub enum Language {
-    #[clap(name = "javascript")]
-    JavaScript,
-    #[clap(name = "typescript")]
-    TypeScript,
-    #[clap(name = "rescript")]
-    ReScript,
+    pub template: Option<init_config::FuelTemplate>,
 }

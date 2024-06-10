@@ -1,21 +1,14 @@
-use strum::{Display, EnumIter};
+use clap::ValueEnum;
+use serde::{Deserialize, Serialize};
+use strum::{Display, EnumIter, EnumString};
 
 use crate::config_parsing::contract_import::converters::AutoConfigSelection;
 
-pub trait Template {
-    fn to_dir_name(self: &Self) -> String;
-}
-
-#[derive(Clone, Debug, Display, EnumIter)]
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
+///Template to work off
 pub enum EvmTemplate {
     Greeter,
     Erc20,
-}
-
-impl Template for EvmTemplate {
-    fn to_dir_name(self: &Self) -> String {
-        self.to_string().to_lowercase()
-    }
 }
 
 #[derive(Clone, Debug, Display)]
@@ -25,17 +18,10 @@ pub enum EvmInitFlow {
     ContractImportWithArgs(AutoConfigSelection),
 }
 
-#[derive(Clone, Debug, Display, EnumIter)]
+#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
+///Template to work off
 pub enum FuelTemplate {
     Greeter,
-}
-
-impl Template for FuelTemplate {
-    fn to_dir_name(self: &Self) -> String {
-        match self {
-            FuelTemplate::Greeter => "greeteronfuel".to_string(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Display)]
@@ -49,10 +35,16 @@ pub enum Ecosystem {
     Fuel { init_flow: FuelInitFlow },
 }
 
-#[derive(Clone, Debug, Display, PartialEq, EnumIter)]
+#[derive(
+    Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, PartialEq, Eq, Display,
+)]
+///Which language do you want to write in?
 pub enum Language {
+    #[clap(name = "javascript")]
     JavaScript,
+    #[clap(name = "typescript")]
     TypeScript,
+    #[clap(name = "rescript")]
     ReScript,
 }
 

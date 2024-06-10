@@ -1,4 +1,4 @@
-use crate::cli_args::init_config::{Language, Template};
+use crate::cli_args::init_config::{EvmTemplate, FuelTemplate, Language};
 use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir, DirEntry};
 use pathdiff::diff_paths;
@@ -7,6 +7,29 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+pub trait Template: Display {
+    fn to_dir_name(self: &Self) -> String;
+}
+
+impl Template for EvmTemplate {
+    fn to_dir_name(self: &Self) -> String {
+        match self {
+            EvmTemplate::Greeter => "greeter",
+            EvmTemplate::Erc20 => "erc20",
+        }
+        .to_string()
+    }
+}
+
+impl Template for FuelTemplate {
+    fn to_dir_name(self: &Self) -> String {
+        match self {
+            FuelTemplate::Greeter => "greeteronfuel",
+        }
+        .to_string()
+    }
+}
 
 static TEMPLATES_DIR: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/templates");
 
@@ -299,7 +322,7 @@ impl<'a> TemplateDirs<'a> {
 
     ///Extracts static template for language and shared folder for a given template and language
     ///Extracts to the given project_root
-    pub fn get_and_extract_template<T: Template + Display>(
+    pub fn get_and_extract_template<T: Template>(
         &self,
         template: &T,
         lang: &Language,
