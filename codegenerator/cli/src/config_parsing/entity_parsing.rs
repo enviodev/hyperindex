@@ -1400,6 +1400,7 @@ impl GqlScalar {
             GqlScalar::Boolean => PGPrimitive::Boolean,
             GqlScalar::Bytes => PGPrimitive::Text,
             GqlScalar::BigInt => PGPrimitive::Numeric, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
+            GqlScalar::BigDecimal => PGPrimitive::Numeric, //   also not setting precision here.
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => PGPrimitive::Text,
                 TypeDef::Enum => PGPrimitive::Enum(name.clone()),
