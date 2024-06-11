@@ -41,7 +41,7 @@ jobs:
         with:
           version: 8.9
 
-      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
+      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again)
         id: pnpm-cache
         shell: bash
         run: |
@@ -63,21 +63,27 @@ jobs:
       - name: Run envio codegen
         run: pnpm codegen
 
-      - uses: webfactory/ssh-agent@v0.7.0
-        with:
-          ssh-private-key: ${{ secrets.OPERATOR_SSH_PRIVATE_KEY }}
+      - name: Setup Git
+        run: |
+          git config --global user.name "Codegen Bot Beep Boop"
+          git config --global user.email "codegen-bot@example.com"
+
+      - name: Authenticate with GitHub
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          echo "https://${GH_PAT}:x-oauth-basic@github.com" > ~/.git-credentials
+          git config --global credential.helper store
 
       - name: Get the branch name
         id: extract_branch
         run: |
-          # ${{ github.head_ref || github.ref_name }} or ${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}} both work. `github.head_ref` doesn't work for direct pushes (not PRs).
-          #   Reference: https://stackoverflow.com/questions/60300169/how-to-get-branch-name-on-github-action
           echo "::set-output name=branch::$(echo ${{ github.head_ref || github.ref_name }})"
 
       - name: Commit and push changes to output repository
         id: git_push
         run: |
-          git clone git@github.com:Float-Capital/test-codegen-output.git
+          git clone https://github.com/enviodev/test-codegen-output.git
           cd test-codegen-output
           git fetch origin
           if git branch -r | grep -q "origin/${{ steps.extract_branch.outputs.branch }}"; then
@@ -86,7 +92,6 @@ jobs:
           else
             git checkout -b ${{ steps.extract_branch.outputs.branch }}
           fi
-          git config --local user.name "Codegen Bot Beep Boop"
           find . -not -name ".git" -not -name ".gitignore" -mindepth 1 -maxdepth 1 -exec rm -rf {} \;
           cp -r ../generated/* .
           git add -A
@@ -104,7 +109,7 @@ jobs:
         id: diff
         run: |
           cd test-codegen-output
-          echo "::set-output name=url::https://github.com/Float-Capital/test-codegen-output/compare/$(git rev-parse main)...${{ steps.extract_branch.outputs.branch }}"
+          echo "::set-output name=url::https://github.com/enviodev/test-codegen-output/compare/$(git rev-parse main)...${{ steps.extract_branch.outputs.branch }}"
 
       - name: Comment PR
         uses: actions/github-script@v6
@@ -137,3 +142,4 @@ jobs:
                 });
               }
             }
+

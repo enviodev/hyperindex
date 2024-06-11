@@ -21,7 +21,7 @@ services:
       - "envio-postgres"
     restart: always
     environment:
-      # TODO: refine migrations. For now we will run migrations externally.
+      # TODO: refine migrations. For now we will run hasura setup via custom scripts, rather than standard migrations.
       # See details of this image here: https://hasura.io/docs/latest/graphql/core/migrations/advanced/auto-apply-migrations.html
       # HASURA_GRAPHQL_MIGRATIONS_DIR: /hasura-migrations
       # HASURA_GRAPHQL_METADATA_DIR: /hasura-metadata
