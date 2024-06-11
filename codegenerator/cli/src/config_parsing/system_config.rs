@@ -189,7 +189,7 @@ impl SystemConfig {
         for network in &human_cfg.networks {
             for contract in network.contracts.clone() {
                 //Add values for local contract
-                match contract.local_contract_config {
+                match contract.config {
                     Some(l_contract) => {
                         //If there is a local contract, parse it and insert into contracts
                         let abi_from_file =
@@ -218,7 +218,7 @@ impl SystemConfig {
                     }
                     None => {
                         //Validate that there is a global contract for the given contract if
-                        //there is no local_contract_config
+                        //there is no config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
                                 "Expected a local network config definition or a global definition"
@@ -340,7 +340,7 @@ pub enum SyncSource {
 }
 
 impl SyncSource {
-    fn from_human_config(network: human_config::Network) -> Result<Self> {
+    fn from_human_config(network: human_config::EvmNetwork) -> Result<Self> {
         match network.sync_source {
             None => {
                 let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id.clone())
@@ -356,22 +356,28 @@ impl SyncSource {
             })) => Ok(Self::RpcConfig(RpcConfig {
                 url,
                 sync_config: match unstable__sync_config {
-                  | None => SyncConfig::default(),
-                  | Some(c) => SyncConfig {
-                    acceleration_additive: c.acceleration_additive
-                        .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
-                    backoff_millis: c.backoff_millis
-                        .unwrap_or_else(|| SyncConfig::default().backoff_millis),
-                    backoff_multiplicative: c.backoff_multiplicative
-                        .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
-                    initial_block_interval: c.initial_block_interval
-                        .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
-                    interval_ceiling: c.interval_ceiling
-                        .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
-                    query_timeout_millis: c.query_timeout_millis
-                        .unwrap_or_else(|| SyncConfig::default().query_timeout_millis),
-                  },
-                } 
+                    None => SyncConfig::default(),
+                    Some(c) => SyncConfig {
+                        acceleration_additive: c
+                            .acceleration_additive
+                            .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
+                        backoff_millis: c
+                            .backoff_millis
+                            .unwrap_or_else(|| SyncConfig::default().backoff_millis),
+                        backoff_multiplicative: c
+                            .backoff_multiplicative
+                            .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
+                        initial_block_interval: c
+                            .initial_block_interval
+                            .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
+                        interval_ceiling: c
+                            .interval_ceiling
+                            .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
+                        query_timeout_millis: c
+                            .query_timeout_millis
+                            .unwrap_or_else(|| SyncConfig::default().query_timeout_millis),
+                    },
+                },
             })),
             Some(human_config::SyncSourceConfig::HypersyncConfig(
                 human_config::HypersyncConfig { endpoint_url },
@@ -583,7 +589,7 @@ impl Event {
     }
 
     pub fn try_from_config_event(
-        human_cfg_event: human_config::ConfigEvent,
+        human_cfg_event: human_config::EvmEventConfig,
         opt_abi: &Option<EvmAbi>,
         schema: &Schema,
     ) -> Result<Self> {

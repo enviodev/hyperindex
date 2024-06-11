@@ -15,7 +15,7 @@ pub struct HumanConfig {
     pub contracts: Option<Vec<GlobalContractConfig>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    pub networks: Vec<Network>,
+    pub networks: Vec<EvmNetwork>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unordered_multichain_mode: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,7 +39,7 @@ pub struct GlobalContractConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abi_file_path: Option<String>,
     pub handler: String,
-    pub events: Vec<ConfigEvent>,
+    pub events: Vec<EvmEventConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -56,7 +56,7 @@ pub enum SyncSourceConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct Network {
+pub struct EvmNetwork {
     pub id: NetworkId,
     #[serde(flatten, skip_serializing_if = "Option::is_none")]
     pub sync_source: Option<SyncSourceConfig>,
@@ -64,7 +64,31 @@ pub struct Network {
     pub confirmed_block_threshold: Option<i32>,
     pub start_block: i32,
     pub end_block: Option<i32>,
-    pub contracts: Vec<NetworkContractConfig>,
+    pub contracts: Vec<EvmNetworkContract>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct FuelNetwork {
+    pub id: NetworkId,
+    pub start_block: i32,
+    pub end_block: Option<i32>,
+    pub contracts: Vec<FuelNetworkContract>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct FuelNetworkContract {
+    pub name: String,
+    pub address: NormalizedList<String>,
+    pub abi_file_path: String,
+    pub handler: String,
+    pub events: Vec<FuelEventConfig>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FuelEventConfig {
+    pub name: String,
+    pub log_id: NormalizedList<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -92,26 +116,26 @@ pub struct RpcConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct NetworkContractConfig {
+pub struct EvmNetworkContract {
     pub name: String,
     pub address: NormalizedList<String>,
     #[serde(flatten)]
     //If this is "None" it should be expected that
     //there is a global config for the contract
-    pub local_contract_config: Option<LocalContractConfig>,
+    pub config: Option<EvmContractConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct LocalContractConfig {
+pub struct EvmContractConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abi_file_path: Option<String>,
     pub handler: String,
-    pub events: Vec<ConfigEvent>,
+    pub events: Vec<EvmEventConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct ConfigEvent {
+pub struct EvmEventConfig {
     pub event: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_async: Option<bool>,
@@ -119,7 +143,7 @@ pub struct ConfigEvent {
     pub required_entities: Option<Vec<RequiredEntity>>,
 }
 
-impl ConfigEvent {
+impl EvmEventConfig {
     pub fn event_string_from_abi_event(abi_event: &ethers::abi::Event) -> String {
         format!(
             "{}({}){}",
@@ -193,7 +217,7 @@ mod tests {
 
     use crate::config_parsing::human_config::EventDecoder;
 
-    use super::{HumanConfig, LocalContractConfig, Network, NetworkContractConfig, NormalizedList};
+    use super::{EvmContractConfig, EvmNetwork, EvmNetworkContract, HumanConfig, NormalizedList};
     use serde_json::json;
 
     #[test]
@@ -205,13 +229,13 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 events: []
     "#;
 
-        let deserialized: NetworkContractConfig = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContractConfig {
+        let deserialized: EvmNetworkContract = serde_yaml::from_str(yaml).unwrap();
+        let expected = EvmNetworkContract {
             name: "Contract1".to_string(),
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
             ]),
-            local_contract_config: Some(LocalContractConfig {
+            config: Some(EvmContractConfig {
                 abi_file_path: None,
                 handler: "./src/EventHandler.js".to_string(),
                 events: vec![],
@@ -229,11 +253,11 @@ handler: ./src/EventHandler.js
 events: []
     "#;
 
-        let deserialized: NetworkContractConfig = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContractConfig {
+        let deserialized: EvmNetworkContract = serde_yaml::from_str(yaml).unwrap();
+        let expected = EvmNetworkContract {
             name: "Contract1".to_string(),
             address: vec![].into(),
-            local_contract_config: Some(LocalContractConfig {
+            config: Some(EvmContractConfig {
                 abi_file_path: None,
                 handler: "./src/EventHandler.js".to_string(),
                 events: vec![],
@@ -252,11 +276,11 @@ address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
 events: []
     "#;
 
-        let deserialized: NetworkContractConfig = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContractConfig {
+        let deserialized: EvmNetworkContract = serde_yaml::from_str(yaml).unwrap();
+        let expected = EvmNetworkContract {
             name: "Contract1".to_string(),
             address: vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()].into(),
-            local_contract_config: Some(LocalContractConfig {
+            config: Some(EvmContractConfig {
                 abi_file_path: None,
                 handler: "./src/EventHandler.js".to_string(),
                 events: vec![],
@@ -273,13 +297,13 @@ name: Contract1
 address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     "#;
 
-        let deserialized: NetworkContractConfig = serde_yaml::from_str(yaml).unwrap();
-        let expected = NetworkContractConfig {
+        let deserialized: EvmNetworkContract = serde_yaml::from_str(yaml).unwrap();
+        let expected = EvmNetworkContract {
             name: "Contract1".to_string(),
             address: NormalizedList::from(vec![
                 "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()
             ]),
-            local_contract_config: None,
+            config: None,
         };
 
         assert_eq!(expected, deserialized);
@@ -330,8 +354,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         println!("{:?}", cfg.networks[0].contracts[0]);
 
-        assert!(cfg.networks[0].contracts[0].local_contract_config.is_some());
-        assert!(cfg.networks[0].contracts[1].local_contract_config.is_some());
+        assert!(cfg.networks[0].contracts[0].config.is_some());
+        assert!(cfg.networks[0].contracts[1].config.is_some());
         assert_eq!(cfg.networks[0].contracts[1].address, None.into());
     }
 
@@ -344,8 +368,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        assert!(cfg.networks[0].contracts[0].local_contract_config.is_some());
-        assert!(cfg.networks[1].contracts[0].local_contract_config.is_none());
+        assert!(cfg.networks[0].contracts[0].config.is_some());
+        assert!(cfg.networks[1].contracts[0].config.is_none());
     }
 
     #[test]
@@ -378,10 +402,10 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     #[test]
     fn deserialize_network_with_underscores_between_numbers() {
         let network_json = serde_json::json!({"id": 1, "start_block": 2_000, "end_block": 2_000_000, "contracts": []});
-        let de: Network = serde_json::from_value(network_json).unwrap();
+        let de: EvmNetwork = serde_json::from_value(network_json).unwrap();
 
         assert_eq!(
-            Network {
+            EvmNetwork {
                 id: 1,
                 sync_source: None,
                 start_block: 2_000,

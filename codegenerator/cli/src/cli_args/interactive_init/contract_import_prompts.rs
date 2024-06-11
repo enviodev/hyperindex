@@ -16,7 +16,7 @@ use crate::{
             self, AutoConfigError, AutoConfigSelection, ContractImportNetworkSelection,
             ContractImportSelection,
         },
-        human_config::ConfigEvent,
+        human_config::EvmEventConfig,
     },
     evm::address::Address,
 };
@@ -50,7 +50,7 @@ struct DisplayEventWrapper(ethers::abi::Event);
 
 impl Display for DisplayEventWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", ConfigEvent::event_string_from_abi_event(&self.0))
+        write!(f, "{}", EvmEventConfig::event_string_from_abi_event(&self.0))
     }
 }
 

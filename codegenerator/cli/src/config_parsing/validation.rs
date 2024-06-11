@@ -129,7 +129,7 @@ pub fn validate_deserialized_config_yaml(
         }
 
         for contract in &network.contracts {
-            if let Some(_) = contract.local_contract_config.as_ref() {
+            if let Some(_) = contract.config.as_ref() {
                 contract_names.push(contract.name.clone());
             }
 

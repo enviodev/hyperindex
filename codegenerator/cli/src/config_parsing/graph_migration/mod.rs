@@ -3,8 +3,7 @@ use crate::{
     config_parsing::{
         chain_helpers::{GraphNetwork, Network},
         human_config::{
-            ConfigEvent, HumanConfig, LocalContractConfig, Network as ConfigNetwork,
-            NetworkContractConfig,
+            EvmContractConfig, EvmEventConfig, EvmNetwork, EvmNetworkContract, HumanConfig,
         },
     },
     project_paths::handler_paths::DEFAULT_SCHEMA_PATH,
@@ -300,7 +299,7 @@ pub async fn generate_config_from_subgraph_id(
 
     for (graph_network, contracts) in &network_hashmap {
         // Create network object to be populated
-        let mut network = ConfigNetwork {
+        let mut network = EvmNetwork {
             id: Network::from(*graph_network).get_network_id(),
             // TODO: update to the final rpc url
             sync_source: None,
@@ -339,7 +338,7 @@ pub async fn generate_config_from_subgraph_id(
                                 .chars()
                                 .take(start)
                                 .collect::<String>();
-                            let event = ConfigEvent {
+                            let event = EvmEventConfig {
                                 event: event_name.to_string(),
                                 required_entities: Some(vec![]),
                                 is_async: None,
@@ -349,10 +348,10 @@ pub async fn generate_config_from_subgraph_id(
                         })
                         .collect::<anyhow::Result<Vec<_>>>()?;
 
-                    let contract = NetworkContractConfig {
+                    let contract = EvmNetworkContract {
                         name: data_source.name.to_string(),
                         address: vec![data_source.source.address.to_string()].into(),
-                        local_contract_config: Some(LocalContractConfig {
+                        config: Some(EvmContractConfig {
                             abi_file_path: Some(format!("abis/{}.json", data_source.name)),
                             handler: get_event_handler_directory(language),
                             events,
