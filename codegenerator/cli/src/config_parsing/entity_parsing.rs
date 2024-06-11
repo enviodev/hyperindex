@@ -856,7 +856,7 @@ impl RescriptType {
                     .join(", ");
                 format!("({})", inner_types_str)
             }
-            RescriptType::EnumVariant(enum_name) => format!("Enums.{}", &enum_name.uncapitalized),
+            RescriptType::EnumVariant(enum_name) => format!("Enums.{}.t", &enum_name.capitalized),
         }
     }
 
@@ -888,7 +888,7 @@ impl RescriptType {
                 format!("S.tuple((. s) => ({}))", inner_str)
             }
             RescriptType::EnumVariant(enum_name) => {
-                format!("Enums.{}Schema", &enum_name.uncapitalized)
+                format!("Enums.{}.schema", &enum_name.capitalized)
             }
         }
     }
@@ -906,7 +906,7 @@ impl RescriptType {
             RescriptType::Array(_) => "[]".to_string(),
             RescriptType::Option(_) => "None".to_string(),
             RescriptType::EnumVariant(enum_name) => {
-                format!("Enums.{}Default", &enum_name.uncapitalized)
+                format!("Enums.{}.default", &enum_name.capitalized)
             }
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
@@ -1702,7 +1702,7 @@ type TestEntity {
 
         assert_eq!(
             rescript_type.to_string(),
-            "option<Enums.testEnum>".to_owned()
+            "option<Enums.TestEnum.t>".to_owned()
         );
     }
 
