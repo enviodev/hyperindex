@@ -240,7 +240,7 @@ Executes a single load layer using the mockDb functions
 */
 let executeMockDbLoadLayer = async (
   mockDb: t,
-  loadLayer: LoadLayer.loadLayer,
+  loadLayer: LoadLayer.t,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
   let hasLoadActions = ref(true)
