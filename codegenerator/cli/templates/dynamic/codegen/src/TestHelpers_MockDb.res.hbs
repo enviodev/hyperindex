@@ -45,9 +45,12 @@ The mockDb type is simply an InMemoryStore internally. __dbInternal__ holds a re
 to an inMemoryStore and all the the accessor methods point to the reference of that inMemory
 store
 */
+@genType.opaque
+type inMemoryStore = InMemoryStore.t
+
 @genType
 type rec t = {
-  __dbInternal__: InMemoryStore.t,
+  __dbInternal__: inMemoryStore,
   entities: entities,
   rawEvents: storeOperations<InMemoryStore.rawEventsKey, TablesStatic.RawEvents.t>,
   eventSyncState: storeOperations<Types.chainId, TablesStatic.EventSyncState.t>,
