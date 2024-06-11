@@ -1,5 +1,6 @@
 open Belt
-@genType
+
+@genType 
 type rawEventsKey = {
   chainId: int,
   eventId: string,
@@ -7,15 +8,16 @@ type rawEventsKey = {
 
 let hashRawEventsKey = (key: rawEventsKey) =>
   EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
-@genType
+
+@genType 
 type dynamicContractRegistryKey = {
   chainId: int,
   contractAddress: Ethers.ethAddress,
 }
+
 let hashDynamicContractRegistryKey = ({chainId, contractAddress}) =>
   EventUtils.getContractAddressKeyString(~chainId, ~contractAddress)
 
-@genType
 type t = {
   eventSyncState: InMemoryTable.t<int, TablesStatic.EventSyncState.t>,
   rawEvents: InMemoryTable.t<rawEventsKey, TablesStatic.RawEvents.t>,
