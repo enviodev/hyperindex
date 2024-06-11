@@ -1,10 +1,10 @@
 import {
+  AccountType,
+  BigDecimal,
+  NftCollectionEntity,
   NftFactoryContract,
   SimpleNftContract,
-  NftCollectionEntity,
   UserEntity,
-  BigDecimal,
-  AccountType
 } from "generated";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
