@@ -114,11 +114,10 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
 
         Ecosystem::Evm {
-            init_flow: EvmInitFlow::ContractImportWithArgs(auto_config_selection),
+            init_flow: EvmInitFlow::ContractImport(auto_config_selection),
         } => {
             let yaml_config = auto_config_selection
-                .clone()
-                .try_into()
+                .to_human_config(&init_config)
                 .context("Failed to converting auto config selection into config.yaml")?;
 
             let serialized_config =

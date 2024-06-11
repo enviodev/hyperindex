@@ -9,9 +9,10 @@ use crate::{
         },
     },
     evm::address::Address,
+    init_config::InitConfig,
     utils::unique_hashmap,
 };
-use anyhow::Context;
+use anyhow::{Context, Result};
 use itertools::{self, Itertools};
 use std::{
     collections::HashMap,
@@ -24,9 +25,7 @@ use thiserror;
 ///abis etc.
 #[derive(Clone, Debug)]
 pub struct AutoConfigSelection {
-    pub project_name: String,
     selected_contracts: Vec<ContractImportSelection>,
-    language: Language,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -36,14 +35,8 @@ pub enum AutoConfigError {
 }
 
 impl AutoConfigSelection {
-    pub fn new(
-        project_name: String,
-        language: Language,
-        selected_contract: ContractImportSelection,
-    ) -> Self {
+    pub fn new(selected_contract: ContractImportSelection) -> Self {
         Self {
-            project_name,
-            language,
             selected_contracts: vec![selected_contract],
         }
     }
@@ -73,8 +66,6 @@ impl AutoConfigSelection {
     }
 
     pub async fn from_etherscan(
-        project_name: String,
-        language: Language,
         network: &NetworkWithExplorer,
         address: Address,
     ) -> anyhow::Result<Self> {
@@ -82,7 +73,7 @@ impl AutoConfigSelection {
             .await
             .context("Failed fetching selected contract")?;
 
-        Ok(Self::new(project_name, language, selected_contract))
+        Ok(Self::new(selected_contract))
     }
 }
 
@@ -187,13 +178,12 @@ impl ContractImportNetworkSelection {
 
 ///Converts the selection object into a human config
 type ContractName = String;
-impl TryFrom<AutoConfigSelection> for HumanConfig {
-    type Error = anyhow::Error;
-    fn try_from(selection: AutoConfigSelection) -> Result<Self, Self::Error> {
+impl AutoConfigSelection {
+    pub fn to_human_config(self: &Self, init_config: &InitConfig) -> Result<HumanConfig> {
         let mut networks_map: HashMap<u64, human_config::Network> = HashMap::new();
         let mut global_contracts: HashMap<ContractName, GlobalContractConfig> = HashMap::new();
 
-        for selected_contract in selection.selected_contracts {
+        for selected_contract in self.selected_contracts.clone() {
             let is_multi_chain_contract = selected_contract.networks.len() > 1;
 
             let events: Vec<ConfigEvent> = selected_contract
@@ -206,7 +196,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                 })
                 .collect();
 
-            let handler = get_event_handler_directory(&selection.language);
+            let handler = get_event_handler_directory(&init_config.language);
 
             let local_contract_config = if is_multi_chain_contract {
                 //Add the contract to global contract config and return none for local contract
@@ -291,7 +281,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
         let networks = networks_map.into_values().sorted_by_key(|v| v.id).collect();
 
         Ok(HumanConfig {
-            name: selection.project_name,
+            name: init_config.name.clone(),
             description: None,
             schema: None,
             contracts,

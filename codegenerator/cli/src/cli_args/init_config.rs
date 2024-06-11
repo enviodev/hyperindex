@@ -15,7 +15,7 @@ pub enum EvmTemplate {
 pub enum EvmInitFlow {
     Template(EvmTemplate),
     SubgraphID(String),
-    ContractImportWithArgs(AutoConfigSelection),
+    ContractImport(AutoConfigSelection),
 }
 
 #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]

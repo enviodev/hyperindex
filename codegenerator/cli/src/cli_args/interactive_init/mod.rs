@@ -32,11 +32,7 @@ fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
         .context("Prompting user for template selection")
 }
 
-async fn prompt_ecosystem(
-    cli_init_flow: Option<InitFlow>,
-    project_name: String,
-    language: Language,
-) -> Result<Ecosystem> {
+async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> {
     let init_flow = match cli_init_flow {
         Some(v) => v,
         None => {
@@ -113,11 +109,11 @@ async fn prompt_ecosystem(
 
         InitFlow::ContractImport(args) => {
             let auto_config_selection = args
-                .get_auto_config_selection(project_name, language)
+                .get_auto_config_selection()
                 .await
                 .context("Failed getting AutoConfigSelection selection")?;
             Ecosystem::Evm {
-                init_flow: EvmInitFlow::ContractImportWithArgs(auto_config_selection),
+                init_flow: EvmInitFlow::ContractImport(auto_config_selection),
             }
         }
     };
@@ -171,7 +167,7 @@ pub async fn prompt_missing_init_args(
         }
     };
 
-    let ecosystem = prompt_ecosystem(init_args.init_commands, name.clone(), language.clone())
+    let ecosystem = prompt_ecosystem(init_args.init_commands)
         .await
         .context("Failed getting template")?;
 

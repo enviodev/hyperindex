@@ -9,7 +9,7 @@ use super::{
     },
 };
 use crate::{
-    cli_args::{init_config::Language, interactive_init::validation::filter_duplicate_events},
+    cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
         chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
         contract_import::converters::{
@@ -248,18 +248,13 @@ impl AutoConfigSelection {
 
 impl EvmContractImportArgs {
     ///Constructs AutoConfigSelection vial cli args and prompts
-    pub async fn get_auto_config_selection(
-        &self,
-        project_name: String,
-        language: Language,
-    ) -> Result<AutoConfigSelection> {
+    pub async fn get_auto_config_selection(&self) -> Result<AutoConfigSelection> {
         let (contract_import_selection, add_new_contract_option) = self
             .get_contract_import_selection()
             .await
             .context("Failed getting ContractImportSelection")?;
 
-        let auto_config_selection =
-            AutoConfigSelection::new(project_name, language, contract_import_selection);
+        let auto_config_selection = AutoConfigSelection::new(contract_import_selection);
 
         let auto_config_selection = if !self.single_contract {
             auto_config_selection
