@@ -18,11 +18,11 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     async () => {
       let sql = DbFunctions.sql
       /// Setup DB
-      let testEntity1: Types.entityWithFieldsEntity = {
+      let testEntity1: Entities.EntityWithFields.t = {
         id: "testEntity",
         bigDecimal: BigDecimal.fromFloat(123.456),
       }
-      let testEntity2: Types.entityWithFieldsEntity = {
+      let testEntity2: Entities.EntityWithFields.t = {
         id: "testEntity2",
         bigDecimal: BigDecimal.fromFloat(654.321),
       }

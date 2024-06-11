@@ -88,7 +88,7 @@ describe("Transfers", () => {
 
     let account_id = userAddress1->Ethers.ethAddressToString
     //Make a mock entity to set the initial state of the mock db
-    let mockAccountEntity: Types.accountEntity = {
+    let mockAccountEntity: Types.account = {
       id: account_id,
     }
 

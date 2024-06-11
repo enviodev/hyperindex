@@ -1,8 +1,8 @@
 open Types
 
-Handlers.GravatarContract.NewGravatar.handler(async ({event, context}) => {
+Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
   let gravatarSize: Enums.gravatarSize = SMALL
-  let gravatarObject: gravatarEntity = {
+  let gravatarObject: gravatar = {
     id: event.params.id->Ethers.BigInt.toString,
     owner_id: event.params.owner->Ethers.ethAddressToString,
     displayName: event.params.displayName,
@@ -14,7 +14,7 @@ Handlers.GravatarContract.NewGravatar.handler(async ({event, context}) => {
   context.gravatar.set(gravatarObject)
 })
 
-Handlers.GravatarContract.UpdatedGravatar.register({
+Handlers.Gravatar.UpdatedGravatar.register({
   preLoader: ({event, context}) => {
     context.gravatar.get(event.params.id->Ethers.BigInt.toString)
   },
@@ -62,7 +62,7 @@ Handlers.GravatarContract.UpdatedGravatar.register({
       )
 
     let gravatarSize: Enums.gravatarSize = MEDIUM
-    let gravatar: gravatarEntity = {
+    let gravatar: Entities.Gravatar.t = {
       id: event.params.id->Ethers.BigInt.toString,
       owner_id: event.params.owner->Ethers.ethAddressToString,
       displayName: event.params.displayName,
@@ -83,7 +83,7 @@ Handlers.GravatarContract.UpdatedGravatar.register({
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Handlers.GravatarContract.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
+Handlers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
   let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
     switch await context.a.get(idOfGrandparent) {
     | Some(a) =>

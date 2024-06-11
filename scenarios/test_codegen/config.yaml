@@ -23,38 +23,21 @@ networks:
           - event: "EmptyEvent()"
           - event: "TestEventWithLongNameBeyondThePostgresEnumCharacterLimit(address testField)"
           - event: "TestEventThatCopiesBigIntViaLinkedEntities(string param_that_should_be_removed_when_issue_1026_is_fixed)"
-            isAsync: true
-            requiredEntities:
-              - name: A
           - event: "TestEvent"
-            requiredEntities:
-              - name: "A"
-                arrayLabels:
-                  - "all"
           - event: "NewGravatar"
-            requiredEntities: [] # empty signifies no requirements
           - event: "UpdatedGravatar"
-            requiredEntities: # if this field isn't specified it should default to include all entities
-              - name: "Gravatar"
-                labels:
-                  - gravatarWithChanges
       - name: NftFactory
         abi_file_path: abis/NftFactory.json
         address: "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"
         handler: src/EventHandlers.ts
         events:
           - event: "SimpleNftCreated"
-            requiredEntities: []
       - name: SimpleNft
         abi_file_path: abis/SimpleNft.json
         handler: src/EventHandlers.ts
         events:
           - event: "Erc20Transfer(address indexed from, address indexed to, uint256 amount)"
           - event: "Transfer"
-            requiredEntities:
-              - name: "User"
-              - name: NftCollection
-              - name: Token
   - id: 1
     start_block: 1
     contracts: []
