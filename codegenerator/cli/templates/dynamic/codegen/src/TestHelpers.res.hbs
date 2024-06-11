@@ -136,7 +136,6 @@ module EventFunctions = {
           ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
             false,
           ~dynamicContractRegistrations=None,
-          ~eventsBeforeDynamicRegistrations=[],
           ~eventName,
           ~inMemoryStore,
         ) {
