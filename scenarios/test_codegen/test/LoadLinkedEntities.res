@@ -160,6 +160,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //   Assert.equal(resultBWontLoad, None, ~message="bWontLoad should not be in the store")
   // })
 })
+
 describe("Async linked entity loaders", () => {
   Promise.it("should update the big int to be the same ", async () => {
     // Initializing values for mock db
@@ -199,7 +200,7 @@ describe("Async linked entity loaders", () => {
     })
 
     // Processing the mock event on the mock database
-    let updatedMockDb = await TestHelpers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.processEventAsync({
+    let updatedMockDb = await TestHelpers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     })
