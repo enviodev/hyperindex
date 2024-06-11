@@ -30,13 +30,13 @@ module LoadActionMap = {
     `)
 }
 
-type loadLayer = {
+type t = {
   {{#each entities as | entity |}}
   {{entity.name.uncapitalized}}: ref<LoadActionMap.t<Entities.{{entity.name.capitalized}}.t>>,
   {{/each}}
 }
 
-let makeLoadLayer = () => {
+let make = () => {
   {{#each entities as | entity |}}
   {{entity.name.uncapitalized}}: ref(LoadActionMap.empty()),
   {{/each}}

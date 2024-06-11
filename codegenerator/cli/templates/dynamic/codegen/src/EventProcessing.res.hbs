@@ -231,7 +231,7 @@ let runEventHandler = (
   runAsyncEnv(async () => {
     let module(Event) = eventMod
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName=Event.eventName)
-    let loadLayer = LoadLayer.makeLoadLayer()
+    let loadLayer = LoadLayer.make()
 
     let preLoaderReturnUnawaited = runEventPreloader(~contextEnv, ~handler, ~loadLayer)
 
@@ -392,7 +392,7 @@ let runPreloaders = (
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let loadLayer = LoadLayer.makeLoadLayer()
+    let loadLayer = LoadLayer.make()
 
     let preLoaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, event}) => {
       let preLoad = (event, eventName) =>

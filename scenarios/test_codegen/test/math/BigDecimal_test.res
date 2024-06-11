@@ -34,7 +34,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       )
 
       let inMemoryStore = InMemoryStore.make()
-      let loadLayer = LoadLayer.makeLoadLayer()
+      let loadLayer = LoadLayer.make()
 
       let contextEnv = ContextEnv.make(
         ~eventName=Gravatar_EmptyEvent,
