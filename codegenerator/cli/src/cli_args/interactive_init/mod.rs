@@ -47,16 +47,7 @@ async fn prompt_ecosystem(
                 .context("Failed prompting for blockchain ecosystem")?;
 
             match ecosystem_option {
-                EcosystemOption::Fuel => {
-                    let flow_option = clap_definitions::FuelInitFlow::iter().collect();
-                    let fuel_init_flow =
-                        Select::new("Choose an initialization option", flow_option)
-                            .prompt()
-                            .context("Failed prompting for Fuel initialization option")?;
-                    InitFlow::Fuel {
-                        init_flow: Some(fuel_init_flow),
-                    }
-                }
+                EcosystemOption::Fuel => InitFlow::Fuel { init_flow: None },
                 EcosystemOption::Evm => {
                     // Start prompt to ask the user which initialization option they want
                     // Explicitelly build options, since we don't want to include graph migration and other ecosystem selection subcomands
@@ -73,10 +64,19 @@ async fn prompt_ecosystem(
     };
 
     let initialization = match init_flow {
-        InitFlow::Fuel {
-            init_flow: Some(clap_definitions::FuelInitFlow::Template(args)),
-        } => {
-            let chosen_template = match args.template {
+        InitFlow::Fuel { init_flow } => {
+            let clap_definitions::FuelInitFlow::Template(clap_definitions::FuelTemplateArgs {
+                template,
+            }) = match init_flow {
+                Some(f) => f,
+                None => {
+                    let flow_option = clap_definitions::FuelInitFlow::iter().collect();
+                    Select::new("Choose an initialization option", flow_option)
+                        .prompt()
+                        .context("Failed prompting for Fuel initialization option")?
+                }
+            };
+            let chosen_template = match template {
                 Some(template) => template,
                 None => {
                     let options = FuelTemplate::iter().collect();
@@ -87,7 +87,6 @@ async fn prompt_ecosystem(
                 init_flow: FuelInitFlow::Template(chosen_template),
             }
         }
-        InitFlow::Fuel { init_flow: _ } => todo!("Other init_flows are not supported"),
         InitFlow::Template(args) => {
             let chosen_template = match args.template {
                 Some(template) => template,

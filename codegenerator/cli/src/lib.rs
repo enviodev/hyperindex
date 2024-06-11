@@ -7,6 +7,7 @@ pub mod config_parsing;
 pub mod constants;
 mod evm;
 pub mod executor;
+mod fuel;
 mod hbs_templating;
 mod persisted_state;
 mod project_paths;

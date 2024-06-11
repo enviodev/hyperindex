@@ -1,6 +1,6 @@
 use super::{
     clap_definitions::{
-        EvmContractImportArgs, EvmLocalOrExplorerImport, ExplorerImportArgs, LocalImportArgs,
+        EvmContractImportArgs, EvmLocalImportArgs, EvmLocalOrExplorerImport, ExplorerImportArgs,
     },
     inquire_helpers::FilePathCompleter,
     validation::{
@@ -307,7 +307,7 @@ impl EvmContractImportArgs {
     //network/contract config
     async fn get_contract_import_selection_from_local_import_args(
         &self,
-        local_import_args: &LocalImportArgs,
+        local_import_args: &EvmLocalImportArgs,
     ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         let parsed_abi = local_import_args
             .get_parsed_abi()
@@ -553,7 +553,7 @@ impl ExplorerImportArgs {
     }
 }
 
-impl LocalImportArgs {
+impl EvmLocalImportArgs {
     fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
         let abi_file = std::fs::read_to_string(&abi_path).context(format!(
             "Failed to read abi file at {:?}, relative to the current directory {:?}",

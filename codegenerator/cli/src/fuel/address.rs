@@ -1,18 +1,18 @@
 use anyhow::{Context, Error, Result};
-use ethers::{types::H160, utils::to_checksum};
+use ethers::{abi::AbiEncode, types::H256};
 use serde::{Deserialize, Serialize};
 use std::{fmt::Display, str::FromStr};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Address(H160);
+pub struct Address(H256);
 
 impl<'de> Deserialize<'de> for Address {
     fn deserialize<D>(deserializer: D) -> Result<Address, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        // Deserialize the inner H160 type and wrap it in the Address struct
-        let h160 = H160::deserialize(deserializer)?;
+        // Deserialize the inner H256 type and wrap it in the Address struct
+        let h160 = H256::deserialize(deserializer)?;
         Ok(Address(h160))
     }
 }
@@ -32,11 +32,7 @@ impl Address {
         address.parse()
     }
 
-    pub fn to_checksum_hex_string(&self) -> String {
-        to_checksum(&self.0, None)
-    }
-
-    pub fn as_h160(&self) -> &H160 {
+    pub fn as_h256(&self) -> &H256 {
         &self.0
     }
 }
@@ -52,15 +48,15 @@ impl FromStr for Address {
     }
 }
 
-impl From<H160> for Address {
-    fn from(address: H160) -> Self {
+impl From<H256> for Address {
+    fn from(address: H256) -> Self {
         Self(address)
     }
 }
 
 impl Display for Address {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_checksum_hex_string())
+        write!(f, "{}", self.as_h256().encode_hex())
     }
 }
 
@@ -70,20 +66,21 @@ mod test {
     use std::collections::HashMap;
 
     #[test]
-    fn convert_address_to_checksum_string() {
-        let address_str = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
+    fn convert_address_to_string() {
+        let address_str = "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b";
         let address = Address::new(address_str).unwrap();
         assert_eq!(address_str, address.to_string());
-        assert_eq!(address_str, address.to_checksum_hex_string()); //same as above
     }
 
     #[test]
     fn deserialize_address() {
-        let address_json = r#"{"test_field": "0x6B175474E89094C44Da98b954EedeAC495271d0F"}"#;
+        let address_json = r#"{"test_field": "0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b"}"#;
         let deserialized_map: HashMap<&str, Address> = serde_json::from_str(address_json).unwrap();
         let deserialized = deserialized_map.get("test_field").unwrap();
 
-        let expected_address = Address::new("0x6B175474E89094C44Da98b954EedeAC495271d0F").unwrap();
+        let expected_address =
+            Address::new("0xb9bc445e5696c966dcf7e5d1237bd03c04e3ba6929bdaedfeebc7aae784c3a0b")
+                .unwrap();
 
         assert_eq!(&expected_address, deserialized);
     }

@@ -85,9 +85,11 @@ fn generate_init_args_combinations() -> Vec<InitCombo> {
                     InitCombo::new(
                         format!("fuel_{t}"),
                         l.clone(),
-                        InitFlow::Fuel(FuelInitFlow::Template(FuelTemplateArgs {
-                            template: Some(t.clone()),
-                        })),
+                        InitFlow::Fuel {
+                            init_flow: Some(FuelInitFlow::Template(FuelTemplateArgs {
+                                template: Some(t.clone()),
+                            })),
+                        },
                     )
                 }))
                 .collect::<Vec<_>>()
