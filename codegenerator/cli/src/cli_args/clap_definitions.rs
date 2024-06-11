@@ -145,7 +145,7 @@ pub struct EvmContractImportArgs {
     pub local_or_explorer: Option<EvmLocalOrExplorerImport>,
 
     ///Contract address to generate the config from
-    #[arg(short, long)]
+    #[arg(global = true, short, long)]
     pub contract_address: Option<evm::address::Address>,
 
     ///If selected, prompt will not ask for additional contracts/addresses/networks
@@ -255,7 +255,7 @@ pub struct FuelContractImportArgs {
     pub local_or_explorer: Option<FuelLocalOrExplorerImport>,
 
     ///Contract address to generate the config from
-    #[arg(short, long)]
+    #[arg(global = true, short, long)]
     pub contract_address: Option<fuel::address::Address>,
 
     ///If selected, prompt will not ask for additional contracts/addresses/networks
