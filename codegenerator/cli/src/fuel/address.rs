@@ -12,8 +12,8 @@ impl<'de> Deserialize<'de> for Address {
         D: serde::Deserializer<'de>,
     {
         // Deserialize the inner H256 type and wrap it in the Address struct
-        let h160 = H256::deserialize(deserializer)?;
-        Ok(Address(h160))
+        let h256 = H256::deserialize(deserializer)?;
+        Ok(Address(h256))
     }
 }
 

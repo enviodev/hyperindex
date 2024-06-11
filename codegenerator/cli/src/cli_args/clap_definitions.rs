@@ -270,7 +270,7 @@ pub struct FuelContractImportArgs {
 #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
 pub enum FuelLocalOrExplorerImport {
     // Not supported https://forum.fuel.network/t/get-abi-by-contract-address/5535
-    // Initialize by pulling the contract ABI from a block explorer
+    // ///Initialize by pulling the contract ABI from a block explorer
     // #[strum(serialize = "Block Explorer")]
     // Explorer(ExplorerImportArgs),
     // ----
