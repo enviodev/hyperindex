@@ -458,7 +458,7 @@ let runHandlers = (
         {{#each contract.codegen_events as | event |}}
         | {{event.event_type.full}}(event) =>
           await event
-          ->runHandler(module(Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event))
+          ->runHandler(module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}))
           ->propogateAsync
         {{/each}}
         {{/each}}

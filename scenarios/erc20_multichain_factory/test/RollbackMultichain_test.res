@@ -36,7 +36,7 @@ module Mock = {
   | 144  |     | 9d
   | 150  |  6d |
  */
-  let makeTransferMock = (~from, ~to, ~value): Types.ERC20Contract.TransferEvent.eventArgs => {
+  let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
     value: value->Ethers.BigInt.fromInt,

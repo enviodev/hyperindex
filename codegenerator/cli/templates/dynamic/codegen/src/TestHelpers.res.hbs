@@ -229,7 +229,7 @@ module {{contract.name.capitalized}} = {
     @genType
     let processEvent = EventFunctions.makeEventProcessor(
       ~eventAccessor,
-      ~eventMod=module(Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event),
+      ~eventMod=module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
     )
 
     @genType
@@ -253,7 +253,7 @@ module {{contract.name.capitalized}} = {
         ?mockEventData,
       } = args
 
-      let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
+      let params: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs = 
       {{#if event.params}}
       {
       {{#each event.params as | param |}}

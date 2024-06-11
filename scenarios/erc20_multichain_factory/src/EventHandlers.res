@@ -1,7 +1,7 @@
 open Types
 open Entities
 
-Handlers.ERC20FactoryContract.TokenCreated.register({
+Handlers.ERC20Factory.TokenCreated.register({
   contractRegister: ({event, context}) => {
     context.addERC20(event.params.token)
   },
@@ -52,7 +52,7 @@ let createNewAccountWithZeroBalance = (
   accountToken
 }
 
-Handlers.ERC20Contract.Approval.register({
+Handlers.ERC20.Approval.register({
   preLoader: ({event, context}) => {
     context.account.get(event.params.owner->Ethers.ethAddressToString)
   },
@@ -108,7 +108,7 @@ let manipulateAccountBalance = (
   ->fn(value)
   ->setAccountToken
 
-Handlers.ERC20Contract.Transfer.register({
+Handlers.ERC20.Transfer.register({
   preLoader: ({event, context}) => {
     let fromAccount_id = event.params.from->Ethers.ethAddressToString
     let toAccount_id = event.params.to->Ethers.ethAddressToString
@@ -140,6 +140,6 @@ Handlers.ERC20Contract.Transfer.register({
   },
 })
 
-Handlers.ERC20FactoryContract.DeleteUser.handler(async ({event, context}) => {
+Handlers.ERC20Factory.DeleteUser.handler(async ({event, context}) => {
   context.account.deleteUnsafe(event.params.user->Ethers.ethAddressToString)
 })

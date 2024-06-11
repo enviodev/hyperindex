@@ -1,6 +1,6 @@
 export {
 {{#each codegen_contracts as |contract|}}
-  {{contract.name.capitalized}}Contract,
+  {{contract.name.capitalized}},
 {{/each}}
 } from "./src/Handlers.gen";
 export type * from "./src/Types.gen";

@@ -15,21 +15,21 @@ module {{contract.name.capitalized}} = {
 {{#each contract.codegen_events as |event|}}
   module {{event.name.capitalized}} = {
     let convertViemDecodedEvent: Viem.decodedEvent<'a> => Viem.decodedEvent<
-      Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs,
+      Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs,
     > = Obj.magic
 
     {{#unless event.params}}
     @warning("-27")
     {{/unless}}
     let convertLogViem = (
-      decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs>,
+      decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs>,
       ~log: Ethers.log,
       ~blockTimestamp: int,
       ~chainId: int,
       ~txOrigin: option<Ethers.ethAddress>,
       ~txTo: option<Ethers.ethAddress>,
     ) => {
-      let params: Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs = 
+      let params: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs = 
       {{#if event.params}}
       {
         {{#each event.params as | param |}}
@@ -40,7 +40,7 @@ module {{contract.name.capitalized}} = {
       ()
       {{/if}}
 
-      let eventLog: Types.eventLog<Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs> = {
+      let eventLog: Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs> = {
         params,
         chainId,
         txOrigin,
@@ -60,7 +60,7 @@ module {{contract.name.capitalized}} = {
     let convertDecodedEventParams = ( 
     {{!-- Add underscore if there are no params, to avoid compiler warning of unused argument --}}
       {{#unless event.params[0]}}_{{/unless}}decodedEvent: HyperSyncClient.Decoder.decodedEvent,
-    ): Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgs => {
+    ): Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs => {
       {{#if event.params[0]}}{{!--Only create this body if there are params.  Otherwise its always unit--}}
       open Belt
       let fields = [
@@ -222,7 +222,7 @@ let parseRawEvent = (
   {{#each contract.codegen_events as |event|}}
       | {{event.event_type.full}} =>
       rawEvent->decodeRawEventWith(
-        ~schema=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgsSchema,
+        ~schema=Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgsSchema,
         ~variantAccessor=event => Types.{{contract.name.capitalized}}_{{event.name.capitalized}}(event),
         ~chain,
         ~txOrigin,

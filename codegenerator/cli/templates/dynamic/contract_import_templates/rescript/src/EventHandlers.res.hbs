@@ -14,13 +14,13 @@ let initialEventsSummary: Types.eventsSummaryEntity = {
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-    Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized
+    Handlers.{{contract.name.capitalized}}.{{event.name.capitalized
     }}.loader(({event, context}) => {
   context.eventsSummary.load(globalEventsSummaryKey)
 })
 
 Handlers.{{contract.name.capitalized
-    }}Contract.{{event.name.capitalized
+    }}.{{event.name.capitalized
     }}.handler(({event, context}) => {
   let summary = context.eventsSummary.get(globalEventsSummaryKey)
 
@@ -35,9 +35,9 @@ Handlers.{{contract.name.capitalized
   }
 
   let {{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}Entity: Types.{{contract.name.uncapitalized
+    }}_{{event.name.capitalized}}: Types.{{contract.name.uncapitalized
     }}_{{event.name.capitalized
-    }}Entity = {
+    }} = {
     id: event.transactionHash ++ event.logIndex->Belt.Int.toString,
     {{#each event.params as |param|}}
       {{param.entity_key.uncapitalized
@@ -58,7 +58,7 @@ Handlers.{{contract.name.capitalized
   context.eventsSummary.set(nextSummaryEntity)
   context.{{contract.name.uncapitalized
     }}_{{event.name.capitalized}}.set({{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}Entity)
+    }}_{{event.name.capitalized}})
 })
   {{/each}}
 {{/each}}

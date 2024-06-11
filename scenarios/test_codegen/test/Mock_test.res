@@ -42,9 +42,9 @@ describe("E2E Mock Event Batch", () => {
 
       let res = switch event {
       | Gravatar_NewGravatar(event) =>
-        await event->runEventHandler(module(Types.GravatarContract.NewGravatarEvent))
+        await event->runEventHandler(module(Types.Gravatar.NewGravatar))
       | Gravatar_UpdatedGravatar(event) =>
-        await event->runEventHandler(module(Types.GravatarContract.UpdatedGravatarEvent))
+        await event->runEventHandler(module(Types.Gravatar.UpdatedGravatar))
       | _ => Js.Exn.raiseError("Unhandled mock event")
       }
       switch res {

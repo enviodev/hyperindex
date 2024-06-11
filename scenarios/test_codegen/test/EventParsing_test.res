@@ -3,7 +3,7 @@ open Mocha
 
 describe("Parsing Raw Events", () => {
   it("Parses a raw event entity into a batch queue item", () => {
-    let params: Types.GravatarContract.NewGravatarEvent.eventArgs = {
+    let params: Types.Gravatar.NewGravatar.eventArgs = {
       id: 1->Ethers.BigInt.fromInt,
       owner: "0xc944E90C64B2c07662A292be6244BDf05Cda44a7"->Ethers.getAddressFromStringUnsafe,
       displayName: "Testname",
@@ -11,7 +11,7 @@ describe("Parsing Raw Events", () => {
     }
 
     let paramsEncoded = switch params->S.serializeToJsonStringWith(.
-      Types.GravatarContract.NewGravatarEvent.eventArgsSchema,
+      Types.Gravatar.NewGravatar.eventArgsSchema,
     ) {
     | Ok(p) => p
     | Error(e) => e->S.Error.raise
