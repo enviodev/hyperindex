@@ -10,16 +10,15 @@ let mkEnum = (~name, ~variants) => {
 }
 
 module type Enum = {
-  type variants
-  let enum: enumType<variants>
+  type t
+  let enum: enumType<t>
 }
 
 module EventType = {
   @genType
-  type variants = 
+  type t = 
   {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
-    | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
-  {{/each}}{{/each}}
+    | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}} {{/each}}{{/each}}
 
   let schema = {{#if has_multiple_events }}
     S.union([
@@ -48,10 +47,11 @@ module EventType = {
 
 module ContractType = {
   @genType
-  type variants = 
+  type t = 
   {{#each codegen_contracts as | contract |}}
     | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
   {{/each}}
+
   let name = "CONTRACT_TYPE"
   let variants = [
   {{#each codegen_contracts as | contract |}}
@@ -63,7 +63,7 @@ module ContractType = {
 
 module EntityType = {
   @genType
-  type variants = 
+  type t = 
   {{#each entities as | entity |}}
     | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
   {{/each}}
@@ -94,10 +94,26 @@ module EntityType = {
 {{#each gql_enums as | enum |}} 
 module {{enum.name.capitalized}} = {
   @genType
-  type variants = 
+  type t = 
   {{#each enum.params as | param | }}
     | @as("{{param.original}}") {{param.capitalized}}
   {{/each}}
+
+
+  let default = {{enum.params.[0].capitalized}}
+  let schema: S.t<t> = 
+  {{#if enum.has_multiple_params}} 
+  S.union([
+    {{#each enum.params as | param | }}
+      S.literal({{param.capitalized}}), 
+    {{/each}}
+  ])
+  {{else}}
+    {{#each enum.params as | param | }}
+      S.literal({{param.capitalized}})
+    {{/each}}
+  {{/if}}
+
   let name = "{{enum.name.capitalized}}"
   let variants = [
   {{#each enum.params as | param | }}
@@ -116,23 +132,3 @@ let allEnums: array<module(Enum)> = [
   module({{enum.name.capitalized}}),
 {{/each}}
 ]
-//todo move logic into above modules
-// Graphql Enum Type Variants
-{{#each gql_enums as | enum |}} 
-@genType.as("{{enum.name.capitalized}}")
-type {{enum.name.uncapitalized}} = 
-{{#each enum.params as | param | }}| @as("{{param.original}}") {{param.capitalized}}{{/each}}
-let {{enum.name.uncapitalized}}Default = {{enum.params.[0].capitalized}}
-let {{enum.name.uncapitalized}}Schema: S.t<{{enum.name.uncapitalized}}> = 
-{{#if enum.has_multiple_params}} 
-S.union([
-  {{#each enum.params as | param | }}
-    S.literal({{param.capitalized}}), 
-  {{/each}}
-])
-{{else}}
-  {{#each enum.params as | param | }}
-    S.literal({{param.capitalized}})
-  {{/each}}
-{{/if}}
-{{/each}}

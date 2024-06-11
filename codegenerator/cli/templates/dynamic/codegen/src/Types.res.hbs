@@ -110,7 +110,7 @@ type eventLog<'a> = {
 }
 
 @genType
-type eventName = Enums.EventType.variants
+type eventName = Enums.EventType.t
 
 let eventNameSchema = Enums.EventType.schema
 
@@ -123,7 +123,7 @@ let eventNameToString = (eventName: eventName) => switch eventName {
 }
 
 exception UnknownEvent(string, string)
-let eventTopicToEventName = (contractName, topic0): Enums.EventType.variants =>
+let eventTopicToEventName = (contractName, topic0): Enums.EventType.t =>
   switch (contractName, topic0) {
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
@@ -134,7 +134,7 @@ let eventTopicToEventName = (contractName, topic0): Enums.EventType.variants =>
   }
 
 module type Event = {
-  let eventName: Enums.EventType.variants
+  let eventName: Enums.EventType.t
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
 }

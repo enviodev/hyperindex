@@ -4,7 +4,7 @@ type id = string
 
 module type Entity = {
   type t
-  let name: Enums.EntityType.variants
+  let name: Enums.EntityType.t
   let schema: S.schema<t>
   let rowsSchema: S.schema<array<t>>
   let table: Table.table
@@ -100,7 +100,7 @@ type entity =
 
 let makeGetter = (schema, accessor, json) => json->S.parseWith(. schema)->Belt.Result.map(accessor)
 
-let getEntityParamsDecoder = (entityName: Enums.EntityType.variants) =>
+let getEntityParamsDecoder = (entityName: Enums.EntityType.t) =>
   switch entityName {
 {{#each entities as | entity |}}
   | {{entity.name.capitalized}} => makeGetter({{entity.name.capitalized}}.schema, e => {{entity.name.capitalized}}(e))

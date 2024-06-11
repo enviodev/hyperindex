@@ -784,7 +784,7 @@ let injectedTaskReducer = async (
         let checkContractIsRegistered = (
           ~chain,
           ~contractAddress,
-          ~contractName: Enums.ContractType.variants,
+          ~contractName: Enums.ContractType.t,
         ) => {
           let fetchState = fetchStatesMap->ChainMap.get(chain)
           fetchState->FetchState.checkContainsRegisteredContractAddress(
