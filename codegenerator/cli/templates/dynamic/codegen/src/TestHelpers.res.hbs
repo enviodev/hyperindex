@@ -99,14 +99,10 @@ module EventFunctions = {
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
       let asyncGetters: ContextEnv.asyncGetters = {
-        getAccount: async id =>
-          mockDbClone.entities.account.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-        getAccountToken: async id =>
-          mockDbClone.entities.accountToken.get(id)->Belt.Option.mapWithDefault([], entity => [
-            entity,
-          ]),
-        getApproval: async id =>
-          mockDbClone.entities.approval.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
+        {{#each entities as | entity |}}
+        get{{entity.name.capitalized}}: async id =>
+          mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
+        {{/each}}
       }
 
       let registeredEvent = switch RegisteredEvents.global->RegisteredEvents.get(eventName) {
@@ -153,7 +149,7 @@ module EventFunctions = {
       let latestProcessedBlocks = EventProcessing.EventsProcessed.makeEmpty()
 
       switch await event->EventProcessing.runEventHandler(
-        ~executeLoadLayer=TestHelpers_MockDb.executeMockDbLoadLayer(mockDb),
+        ~executeLoadLayer=TestHelpers_MockDb.executeMockDbLoadLayer(mockDbClone),
         ~inMemoryStore,
         ~handler=registeredEvent,
         ~eventMod,
@@ -162,7 +158,9 @@ module EventFunctions = {
         ~latestProcessedBlocks,
         ~asyncGetters,
       ) {
-      | Ok(_) => ()
+      | Ok(_) =>
+        mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
+        mockDbClone
       | Error(e) => e->ErrorHandling.logAndRaise
       }
     }
