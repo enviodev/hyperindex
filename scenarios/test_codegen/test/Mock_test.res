@@ -9,20 +9,49 @@ let {
 } = module(RescriptMocha.Promise)
 
 let inMemoryStore = InMemoryStore.make()
+
 describe("E2E Mock Event Batch", () => {
-  before(() => {
+  before_promise(async () => {
     RegisterHandlers.registerAllHandlers()
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
-    //EventProcessing.processEventBatch(MockEvents.eventBatch)
-    MockEvents.eventBatch->Belt.Array.forEach(
-      event =>
-        event->EventProcessing.eventRouter(
-          ~inMemoryStore,
-          ~cb=_ => (),
+    // EventProcessing.processEventBatch(MockEvents.eventBatch)
+
+    let runEventHandler = async (
+      type eventArgs,
+      event,
+      eventMod: module(Types.Event with type eventArgs = eventArgs),
+    ) => {
+      let module(Event) = eventMod
+      switch RegisteredEvents.global->RegisteredEvents.get(Event.eventName) {
+      | Some(handler) =>
+        await event->EventProcessing.runEventHandler(
+          ~handler,
           ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
-        ),
-    )
+          ~inMemoryStore,
+          ~logger=Logging.logger,
+          ~chain=Chain_1,
+          ~eventMod,
+        )
+      | None => Ok(EventProcessing.EventsProcessed.makeEmpty())
+      }
+    }
+
+    for i in 0 to MockEvents.eventBatch->Array.length - 1 {
+      let event = MockEvents.eventBatch[i]->Option.getUnsafe
+
+      let res = switch event {
+      | Gravatar_NewGravatar(event) =>
+        await event->runEventHandler(module(Types.GravatarContract.NewGravatarEvent))
+      | Gravatar_UpdatedGravatar(event) =>
+        await event->runEventHandler(module(Types.GravatarContract.UpdatedGravatarEvent))
+      | _ => Js.Exn.raiseError("Unhandled mock event")
+      }
+      switch res {
+      | Error(e) => e->ErrorHandling.logAndRaise
+      | Ok(_) => ()
+      }
+    }
   })
 })
 
@@ -50,6 +79,7 @@ describe_skip("E2E Db check", () => {
       ~eventBatch=MockEvents.eventBatchItems->List.fromArray,
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
+      ~registeredEvents=RegisteredEvents.global,
     )
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)

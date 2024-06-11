@@ -34,39 +34,33 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       )
 
       let inMemoryStore = InMemoryStore.make()
+      let loadLayer = LoadLayer.makeLoadLayer()
 
-      let contextEnv = Context.make(
-        ~inMemoryStore,
+      let contextEnv = ContextEnv.make(
+        ~eventName=Gravatar_EmptyEvent,
+        ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
         ~chain=Chain_1,
-        ~event=TestHelpers.Gravatar.EmptyEvent.createMockEvent({}),
         ~logger=Logging.logger,
-        ~asyncGetters=EventProcessing.asyncGetters,
       )
 
-      // let context = Context.Gravatar.EmptyEventEvent.contextCreator(
-      //   ~inMemoryStore,
-      //   ~chainId=123,
-      //   ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
-      //   ~logger=Logging.logger,
-      //   ~asyncGetters=EventProcessing.asyncGetters,
-      // )
+      let loaderContext = contextEnv->ContextEnv.getLoaderContext(~loadLayer)
 
-      let loaderContext = contextEnv->Context.getLoaderContext
+      let _ = loaderContext.entityWithFields.get(testEntity1.id)
+      let _ = loaderContext.entityWithFields.get(testEntity2.id)
 
-      let _ = loaderContext.entityWithFields.load(testEntity1.id)
-      let _ = loaderContext.entityWithFields.load(testEntity2.id)
+      await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore)
 
-      let entitiesToLoad = contextEnv->Context.getEntitiesToLoad
+      let handlerContext =
+        contextEnv->ContextEnv.getHandlerContext(
+          ~inMemoryStore,
+          ~asyncGetters=EventProcessing.asyncGetters,
+        )
 
-      await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
-
-      let handlerContext = contextEnv->Context.getHandlerContextSync
-
-      switch handlerContext.entityWithFields.get(testEntity1.id) {
+      switch await handlerContext.entityWithFields.get(testEntity1.id) {
       | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")
       | None => Assert.fail("Entity should exist")
       }
-      switch handlerContext.entityWithFields.get(testEntity2.id) {
+      switch await handlerContext.entityWithFields.get(testEntity2.id) {
       | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "654.321")
       | None => Assert.fail("Entity should exist")
       }

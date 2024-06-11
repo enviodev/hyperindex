@@ -1,10 +1,6 @@
 open Types
 
-Handlers.GravatarContract.NewGravatar.loader(_ => {
-  ()
-})
-
-Handlers.GravatarContract.NewGravatar.handler(({event, context}) => {
+Handlers.GravatarContract.NewGravatar.handler(async ({event, context}) => {
   let gravatarSize: Enums.gravatarSize = SMALL
   let gravatarObject: gravatarEntity = {
     id: event.params.id->Ethers.BigInt.toString,
@@ -18,80 +14,76 @@ Handlers.GravatarContract.NewGravatar.handler(({event, context}) => {
   context.gravatar.set(gravatarObject)
 })
 
-Handlers.GravatarContract.UpdatedGravatar.loader(({event, context}) => {
-  //Note required entities have gone for now,
-  //Refactor coming with v2 loaders
-  context.gravatar.load(event.params.id->Ethers.BigInt.toString, ~loaders={loadOwner: {}})
-})
+Handlers.GravatarContract.UpdatedGravatar.register({
+  preLoader: ({event, context}) => {
+    context.gravatar.get(event.params.id->Ethers.BigInt.toString)
+  },
+  handler: async ({event, context, preLoaderReturn}) => {
+    /// Some examples of user logging
+    context.log.debug(`We are processing the event, ${event.blockHash} (debug)`)
+    context.log.info(`We are processing the event, ${event.blockHash} (info)`)
+    context.log.warn(`We are processing the event, ${event.blockHash} (warn)`)
+    context.log.error(`We are processing the event, ${event.blockHash} (error)`)
 
-Handlers.GravatarContract.UpdatedGravatar.handler(({event, context}) => {
-  /// Some examples of user logging
-  context.log.debug(`We are processing the event, ${event.blockHash} (debug)`)
-  context.log.info(`We are processing the event, ${event.blockHash} (info)`)
-  context.log.warn(`We are processing the event, ${event.blockHash} (warn)`)
-  context.log.error(`We are processing the event, ${event.blockHash} (error)`)
-
-  // Some examples of user logging not using strings
-  context.log->Logs.debug({
-    "msg": "We are processing the event",
-    "type": "debug",
-    "data": {"blockHash": event.blockHash},
-  })
-  context.log->Logs.info({
-    "msg": "We are processing the event",
-    "type": "info",
-    "data": {"blockHash": event.blockHash},
-  })
-  context.log->Logs.warn({
-    "msg": "We are processing the event",
-    "type": "warn",
-    "data": {"blockHash": event.blockHash},
-  })
-  context.log->Logs.error({
-    "msg": "We are processing the event",
-    "type": "error",
-    "data": {"blockHash": event.blockHash},
-  })
-  exception ExampleException(string)
-  context.log->Logs.errorWithExn(
-    ExampleException("some error processing the event")->Js.Exn.asJsExn,
-    {
+    // Some examples of user logging not using strings
+    context.log->Logs.debug({
+      "msg": "We are processing the event",
+      "type": "debug",
+      "data": {"blockHash": event.blockHash},
+    })
+    context.log->Logs.info({
+      "msg": "We are processing the event",
+      "type": "info",
+      "data": {"blockHash": event.blockHash},
+    })
+    context.log->Logs.warn({
+      "msg": "We are processing the event",
+      "type": "warn",
+      "data": {"blockHash": event.blockHash},
+    })
+    context.log->Logs.error({
       "msg": "We are processing the event",
       "type": "error",
       "data": {"blockHash": event.blockHash},
-    },
-  )
-
-  let gravatarWithChanges = context.gravatar.get(event.params.id->Ethers.BigInt.toString)
-
-  let updatesCount =
-    gravatarWithChanges->Belt.Option.mapWithDefault(Ethers.BigInt.fromInt(1), gravatar =>
-      gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1))
+    })
+    exception ExampleException(string)
+    context.log->Logs.errorWithExn(
+      ExampleException("some error processing the event")->Js.Exn.asJsExn,
+      {
+        "msg": "We are processing the event",
+        "type": "error",
+        "data": {"blockHash": event.blockHash},
+      },
     )
-  let gravatarSize: Enums.gravatarSize = MEDIUM
-  let gravatar: gravatarEntity = {
-    id: event.params.id->Ethers.BigInt.toString,
-    owner_id: event.params.owner->Ethers.ethAddressToString,
-    displayName: event.params.displayName,
-    imageUrl: event.params.imageUrl,
-    updatesCount,
-    size: gravatarSize,
-  }
 
-  if event.params.id->Ethers.BigInt.toString == "1001" {
-    context.log.info("id matched, deleting gravatar 1004")
-    context.gravatar.deleteUnsafe("1004")
-  }
+    let updatesCount =
+      preLoaderReturn->Belt.Option.mapWithDefault(Ethers.BigInt.fromInt(1), gravatar =>
+        gravatar.Entities.Gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1))
+      )
 
-  context.gravatar.set(gravatar)
+    let gravatarSize: Enums.gravatarSize = MEDIUM
+    let gravatar: gravatarEntity = {
+      id: event.params.id->Ethers.BigInt.toString,
+      owner_id: event.params.owner->Ethers.ethAddressToString,
+      displayName: event.params.displayName,
+      imageUrl: event.params.imageUrl,
+      updatesCount,
+      size: gravatarSize,
+    }
+
+    if event.params.id->Ethers.BigInt.toString == "1001" {
+      context.log.info("id matched, deleting gravatar 1004")
+      context.gravatar.deleteUnsafe("1004")
+    }
+
+    context.gravatar.set(gravatar)
+  },
 })
 
 let aIdWithGrandChildC = "aIdWithGrandChildC"
 let aIdWithNoGrandChildC = "aIdWithNoGrandChildC"
 
-Handlers.GravatarContract.TestEventThatCopiesBigIntViaLinkedEntities.handlerAsync(async ({
-  context,
-}) => {
+Handlers.GravatarContract.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({context}) => {
   let copyStringFromGrandchildIfAvailable = async (idOfGrandparent: Types.id) =>
     switch await context.a.get(idOfGrandparent) {
     | Some(a) =>
