@@ -38,5 +38,7 @@
     "rescript-schema",
     "helpers"
   ],
-  "bsc-flags": ["-open RescriptSchema"]
+  "bsc-flags": [
+    "-open RescriptSchema"
+  ]
 }

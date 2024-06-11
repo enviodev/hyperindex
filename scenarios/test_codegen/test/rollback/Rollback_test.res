@@ -117,6 +117,7 @@ module Stubs = {
         ~getBlockHashes=getBlockHashes(mockChainData),
       ),
       ~dispatchAction=dispatchAction(gsManager),
+      ~registeredEvents=RegisteredEvents.global,
       gsManager->GlobalStateManager.getState,
       task,
     )

@@ -51,7 +51,7 @@ describe("Parsing Raw Events", () => {
       chain,
       blockNumber,
       logIndex,
-      event: Types.GravatarContract_NewGravatar({
+      event: Types.Gravatar_NewGravatar({
         blockNumber,
         chainId,
         blockTimestamp: timestamp,

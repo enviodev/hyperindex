@@ -1,4 +1,4 @@
-open Types
+open Enums.EventType
 
 @genType
 let eventNames = {
