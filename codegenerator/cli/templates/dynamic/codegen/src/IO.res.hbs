@@ -223,7 +223,7 @@ module RollBack = {
       //Where previousEntity is Some, 
       //set the value with the eventIdentifier that set that value initially
       {{#each entities as | entity |}}
-      | {previousEntity: Some({entity: {{entity.name.capitalized}}Entity(entity), eventIdentifier}), entityId} =>
+      | {previousEntity: Some({entity: {{entity.name.capitalized}}(entity), eventIdentifier}), entityId} =>
         inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
           Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId, ~shouldSaveHistory=false),
         )

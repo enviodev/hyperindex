@@ -1,20 +1,20 @@
 import {
-  NftFactoryContract,
-  SimpleNftContract,
-  NftCollectionEntity,
-  UserEntity,
+  NftFactory,
+  SimpleNft,
+  NftCollection,
+  User,
   BigDecimal,
 } from "generated";
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
-NftFactoryContract.SimpleNftCreated.register({
+NftFactory.SimpleNftCreated.register({
   contractRegister: ({ event, context }) => {
     context.addSimpleNft(event.params.contractAddress);
   },
   preLoader: async (_) => undefined,
   handler: async ({ event, context }) => {
-    let nftCollection: NftCollectionEntity = {
+    let nftCollection: NftCollection = {
       id: event.params.contractAddress,
       contractAddress: event.params.contractAddress,
       name: event.params.name,
@@ -30,7 +30,7 @@ NftFactoryContract.SimpleNftCreated.register({
   },
 });
 
-SimpleNftContract.Transfer.register({
+SimpleNft.Transfer.register({
   preLoader: async ({ event, context }) => {
     const [loadedUserFrom, loadedUserTo, nftCollectionUpdated, existingToken] =
       await Promise.all([
@@ -66,7 +66,7 @@ SimpleNftContract.Transfer.register({
       if (!existingToken) {
         let currentSupply = Number(nftCollectionUpdated.currentSupply) + 1;
 
-        let nftCollection: NftCollectionEntity = {
+        let nftCollection: NftCollection = {
           ...nftCollectionUpdated,
           currentSupply,
         };
@@ -80,7 +80,7 @@ SimpleNftContract.Transfer.register({
     }
 
     if (event.params.from !== zeroAddress) {
-      const userFrom: UserEntity = {
+      const userFrom: User = {
         id: event.params.from,
         address: event.params.from,
         updatesCountOnUserForTesting:
@@ -92,7 +92,7 @@ SimpleNftContract.Transfer.register({
     }
 
     if (event.params.to !== zeroAddress) {
-      const userTo: UserEntity = {
+      const userTo: User = {
         id: event.params.to,
         address: event.params.to,
         updatesCountOnUserForTesting:

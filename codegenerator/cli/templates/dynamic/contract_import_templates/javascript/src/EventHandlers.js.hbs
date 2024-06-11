@@ -3,7 +3,7 @@
  */
   const {
 {{#each imported_contracts as |contract|}}
- {{contract.name.capitalized}}Contract,
+ {{contract.name.capitalized}},
 {{/each}}
 } = require("generated");
 
@@ -24,12 +24,12 @@ const INITIAL_EVENTS_SUMMARY = {
 
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-    {{contract.name.capitalized}}Contract.{{event.name.capitalized
+    {{contract.name.capitalized}}.{{event.name.capitalized
     }}.loader(({event, context}) => {
   context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
 });
 
-    {{contract.name.capitalized}}Contract.{{event.name.capitalized
+    {{contract.name.capitalized}}.{{event.name.capitalized
     }}.handler(({event, context}) => {
   const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
@@ -45,7 +45,7 @@ const INITIAL_EVENTS_SUMMARY = {
 
   const {{contract.name.uncapitalized
     }}_{{event.name.capitalized
-    }}Entity = {
+    }} = {
     id: event.transactionHash + event.logIndex.toString(),
     {{#each event.params as |param|}}
       {{param.entity_key.uncapitalized
@@ -64,7 +64,7 @@ const INITIAL_EVENTS_SUMMARY = {
   context.EventsSummary.set(nextSummaryEntity);
   context.{{contract.name.capitalized
     }}_{{event.name.capitalized}}.set({{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}Entity);
+    }}_{{event.name.capitalized}});
 });
   {{/each}}
 {{/each}}

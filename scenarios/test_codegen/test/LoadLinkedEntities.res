@@ -19,8 +19,8 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   // MochaPromise.it_skip("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
   //   let sql = DbFunctions.sql
   //   /// Setup DB
-  //   let a1: Types.aEntity = {optionalStringToTestLinkedEntities: None, id: "a1", b_id: "b1"}
-  //   let a2: Types.aEntity = {optionalStringToTestLinkedEntities: None, id: "a2", b_id: "b2"}
+  //   let a1: Types.a = {optionalStringToTestLinkedEntities: None, id: "a1", b_id: "b1"}
+  //   let a2: Types.a = {optionalStringToTestLinkedEntities: None, id: "a2", b_id: "b2"}
   //   let aEntities: array<Types.aEntity> = [
   //     a1,
   //     a2,
@@ -98,7 +98,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //   let sql = DbFunctions.sql
   //
   //   /// Setup DB
-  //   let a1: Types.aEntity = {id: "a1", b_id: "b1", optionalStringToTestLinkedEntities: None}
+  //   let a1: Types.a = {id: "a1", b_id: "b1", optionalStringToTestLinkedEntities: None}
   //   let aEntities: array<Types.aEntity> = [
   //     a1,
   //     {id: "a2", b_id: "b1", optionalStringToTestLinkedEntities: None},
@@ -119,7 +119,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //   await DbFunctions.C.batchSet(sql, cEntities)
   //
   //   let inMemoryStore = IO.InMemoryStore.make()
-  //   let context = Context.GravatarContract.TestEventEvent.contextCreator(
+  //   let context = Context.Gravatar.TestEventEvent.contextCreator(
   //     ~inMemoryStore,
   //     ~chainId=123,
   //     ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
@@ -166,25 +166,25 @@ describe("Async linked entity loaders", () => {
     // Initializing values for mock db
     let messageFromC = "Hi there I was in C originally"
     // mockDbInitial->Testhelpers.MockDb.
-    let c: Types.cEntity = {
+    let c: Types.c = {
       id: "hasStringToCopy",
       stringThatIsMirroredToA: messageFromC,
       a_id: "",
     }
-    let b: Types.bEntity = {
+    let b: Types.b = {
       id: "hasC",
       c_id: Some(c.id),
     }
-    let a: Types.aEntity = {
+    let a: Types.a = {
       id: EventHandlers.aIdWithGrandChildC,
       b_id: b.id,
       optionalStringToTestLinkedEntities: None,
     }
-    let bNoC: Types.bEntity = {
+    let bNoC: Types.b = {
       id: "noC",
       c_id: None,
     }
-    let aNoGrandchild: Types.aEntity = {
+    let aNoGrandchild: Types.a = {
       id: EventHandlers.aIdWithNoGrandChildC,
       b_id: bNoC.id,
       optionalStringToTestLinkedEntities: None,

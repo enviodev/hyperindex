@@ -95,27 +95,15 @@ module {{entity.name.capitalized}} = {
 
 type entity = 
 {{#each entities as | entity |}}
-  | {{entity.name.capitalized}}Entity({{entity.name.capitalized}}.t)
+  | {{entity.name.capitalized}}({{entity.name.capitalized}}.t)
 {{/each}}
 
-let entityNameSchema = 
-{{#if entities.1}}
-{{!-- If there are multiple entities --}}
-S.union([
-{{#each entities as | entity |}}
-  S.literal({{entity.name.capitalized}}), 
-{{/each}}
-])
-{{else}}
-{{#each entities as | entity |}}
-  S.literal({{entity.name.capitalized}})
-{{/each}}
-{{/if}}
+let makeGetter = (schema, accessor, json) => json->S.parseWith(. schema)->Belt.Result.map(accessor)
 
-let getEntityParamsDecoder = entityName =>
+let getEntityParamsDecoder = (entityName: Enums.EntityType.variants) =>
   switch entityName {
 {{#each entities as | entity |}}
-  | {{entity.name.capitalized}} => json => json->S.parseWith(. {{entity.name.capitalized}}.schema)->Belt.Result.map(decoded => {{entity.name.capitalized}}Entity(decoded))
+  | {{entity.name.capitalized}} => makeGetter({{entity.name.capitalized}}.schema, e => {{entity.name.capitalized}}(e))
 {{/each}}
   }
 

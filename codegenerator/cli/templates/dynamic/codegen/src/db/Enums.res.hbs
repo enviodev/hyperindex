@@ -67,12 +67,27 @@ module EntityType = {
   {{#each entities as | entity |}}
     | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
   {{/each}}
+
+  let schema = 
+  {{#if entities.1}}
+  {{!-- If there are multiple entities --}}
+  S.union([
+  {{#each entities as | entity |}}
+    S.literal({{entity.name.capitalized}}), 
+  {{/each}}
+  ])
+  {{else}}
+  {{#each entities as | entity |}}
+    S.literal({{entity.name.capitalized}})
+  {{/each}}
+  {{/if}}
   let name = "ENTITY_TYPE"
   let variants = [
   {{#each entities as | entity |}}
     {{entity.name.capitalized}},
   {{/each}}
   ]
+
   let enum = mkEnum(~name, ~variants)
 }
 

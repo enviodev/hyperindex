@@ -14,13 +14,13 @@ module Mock = {
   Block creates a user
   Block that removes a user
 */
-  let makeTransferMock = (~from, ~to, ~value): Types.ERC20Contract.TransferEvent.eventArgs => {
+  let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
     value: value->Ethers.BigInt.fromInt,
   }
 
-  let makeDeleteUserMock = (~user): Types.ERC20FactoryContract.DeleteUserEvent.eventArgs => {
+  let makeDeleteUserMock = (~user): Types.ERC20Factory.DeleteUser.eventArgs => {
     user: user,
   }
 
