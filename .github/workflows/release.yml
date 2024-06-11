@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*.*.*"
+      - "v*.*.*-*"
     branches:
       - main
       # The following two branch names can be used to force build a version for development and sharing a patch.
