@@ -280,7 +280,7 @@ module EntityHistory = {
   ) => promise<unit> = "deleteAllEntityHistoryAfterEventIdentifier"
 
   type rollbackDiffResponseRaw = {
-    entity_type: Enums.EntityType.variants,
+    entity_type: Enums.EntityType.t,
     entity_id: string,
     chain_id: option<int>,
     block_timestamp: option<int>,
@@ -305,7 +305,7 @@ module EntityHistory = {
   }
 
   type rollbackDiffResponse = {
-    entityType: Enums.EntityType.variants,
+    entityType: Enums.EntityType.t,
     entityId: string,
     previousEntity: option<previousEntity>,
   }
