@@ -164,10 +164,7 @@ let getContractRegisterContext = (contextEnv, ~inMemoryStore) => {
   {{/each}}
 }
 
-let getLoaderContext = (
-  contextEnv: t<'eventArgs>,
-  ~loadLayer: LoadLayer.loadLayer,
-): loaderContext => {
+let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loaderContext => {
   let {entityIdsMap, logger} = contextEnv
   {
     log: logger->getUserLogger,
