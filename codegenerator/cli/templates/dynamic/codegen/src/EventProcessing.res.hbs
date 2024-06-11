@@ -82,7 +82,6 @@ let runEventContractRegister = (
   ~logger,
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
-  ~eventsBeforeDynamicRegistrations,
   ~inMemoryStore,
 ) => {
   let {chain} = eventBatchQueueItem
@@ -110,11 +109,8 @@ let runEventContractRegister = (
         ~registeringEventLogIndex=event.logIndex,
       )
 
-    switch (dynamicContracts, dynamicContractRegistrations) {
-    | ([], None) =>
-      //Mutate for performance (could otherwise use concat?)
-      let _ = eventsBeforeDynamicRegistrations->Js.Array2.push(eventBatchQueueItem)
-      None
+    let val = switch (dynamicContracts, dynamicContractRegistrations) {
+    | ([], dynamicContractRegistrations) => dynamicContractRegistrations
     | (dynamicContracts, Some({registrationsReversed, unprocessedBatchReversed})) =>
       addToDynamicContractRegistrations(
         ~dynamicContracts,
@@ -127,7 +123,9 @@ let runEventContractRegister = (
         ~registrationsReversed=list{},
         ~unprocessedBatchReversed=list{},
       )->Some
-    }->Ok
+    }
+
+    val->Ok
   }
 }
 
@@ -304,6 +302,18 @@ let getHandlerRunner = (
   }
 }
 
+let addToUnprocessedBatch = (
+  eventBatchQueueItem: Types.eventBatchQueueItem,
+  dynamicContractRegistrations,
+) => {
+  {
+    ...dynamicContractRegistrations,
+    unprocessedBatchReversed: dynamicContractRegistrations.unprocessedBatchReversed->List.add(
+      eventBatchQueueItem,
+    ),
+  }
+}
+
 let rec registerDynamicContracts = (
   ~registeredEvents: RegisteredEvents.t,
   ~checkContractIsRegistered,
@@ -315,19 +325,15 @@ let rec registerDynamicContracts = (
 ) => {
   switch eventBatch {
   | list{} => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
-  | list{item, ...tail} =>
+  | list{eventBatchQueueItem, ...tail} =>
     let dynamicContractRegistrationsResult = if (
-      item.hasRegisteredDynamicContracts->Option.getWithDefault(false)
+      eventBatchQueueItem.hasRegisteredDynamicContracts->Option.getWithDefault(false)
     ) {
       //If an item has already been registered, it would have been
       //put back on the arbitrary events queue and is now being reprocessed
-      switch dynamicContractRegistrations {
-      | None =>
-        //Mutate for performance (could otherwise use concat?)
-        let _ = eventsBeforeDynamicRegistrations->Js.Array2.push(item)
-      | _ => ()
-      }
-      Ok(dynamicContractRegistrations)
+      dynamicContractRegistrations
+      ->Option.map(addToUnprocessedBatch(eventBatchQueueItem))
+      ->Ok
     } else {
       let runEventContractRegister = (eventName, event) =>
         switch registeredEvents
@@ -338,17 +344,19 @@ let rec registerDynamicContracts = (
             ~event,
             ~logger,
             ~checkContractIsRegistered,
-            ~eventBatchQueueItem=item,
-            ~eventsBeforeDynamicRegistrations,
+            ~eventBatchQueueItem,
             ~dynamicContractRegistrations,
             ~eventName,
             ~inMemoryStore,
           )
-        | None => Ok(None)
+        | None =>
+          dynamicContractRegistrations
+          ->Option.map(addToUnprocessedBatch(eventBatchQueueItem))
+          ->Ok
         }
 
       open Enums.EventType
-      switch item.event {
+      switch eventBatchQueueItem.event {
       {{#each codegen_contracts as | contract |}}
       {{#each contract.codegen_events as | event |}}
       | {{event.event_type.full}}(event) => runEventContractRegister({{event.event_type.full}}, event)
@@ -359,6 +367,10 @@ let rec registerDynamicContracts = (
 
     switch dynamicContractRegistrationsResult {
     | Ok(dynamicContractRegistrations) =>
+      if dynamicContractRegistrations->Option.isNone {
+        //Mutate for performance (could otherwise use concat?)
+        eventsBeforeDynamicRegistrations->Js.Array2.push(eventBatchQueueItem)->ignore
+      }
       tail->registerDynamicContracts(
         ~registeredEvents,
         ~checkContractIsRegistered,
