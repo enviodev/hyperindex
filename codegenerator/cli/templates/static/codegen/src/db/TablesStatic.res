@@ -7,6 +7,7 @@ let isNullable = true
 let isIndex = true
 
 module EventSyncState = {
+  @genType
   type t = {
     @as("chain_id") chainId: int,
     @as("block_number") blockNumber: int,
@@ -28,6 +29,7 @@ module EventSyncState = {
 }
 
 module ChainMetadata = {
+  @genType
   type t = {
     chain_id: int,
     start_block: int,
@@ -61,6 +63,7 @@ module ChainMetadata = {
 }
 
 module PersistedState = {
+  @genType
   type t = {
     id: int,
     envio_version: string,
@@ -84,6 +87,7 @@ module PersistedState = {
 }
 
 module EndOfBlockRangeScannedData = {
+  @genType
   type t = {
     chain_id: int,
     block_timestamp: int,
@@ -103,6 +107,7 @@ module EndOfBlockRangeScannedData = {
 }
 
 module RawEvents = {
+  @genType
   type t = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: string,
@@ -159,6 +164,7 @@ module DynamicContractRegistry = {
 }
 
 module EntityHistory = {
+  @genType
   type t = {
     entity_id: string,
     block_timestamp: int,
@@ -193,6 +199,7 @@ module EntityHistory = {
 }
 
 module EntityHistoryFilter = {
+  @genType
   type t = {
     entity_id: option<string>,
     chain_id: int,

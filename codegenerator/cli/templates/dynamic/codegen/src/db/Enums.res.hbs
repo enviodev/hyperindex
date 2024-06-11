@@ -15,6 +15,7 @@ module type Enum = {
 }
 
 module EventType = {
+  @genType
   type variants = 
   {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
     | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}}
@@ -29,6 +30,7 @@ module EventType = {
 }
 
 module ContractType = {
+  @genType
   type variants = 
   {{#each codegen_contracts as | contract |}}
     | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
@@ -43,6 +45,7 @@ module ContractType = {
 }
 
 module EntityType = {
+  @genType
   type variants = 
   {{#each entities as | entity |}}
     | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
@@ -58,6 +61,7 @@ module EntityType = {
 
 {{#each gql_enums as | enum |}} 
 module {{enum.name.capitalized}} = {
+  @genType
   type variants = 
   {{#each enum.params as | param | }}
     | @as("{{param.original}}") {{param.capitalized}}
