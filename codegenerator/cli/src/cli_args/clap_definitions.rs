@@ -1,7 +1,7 @@
 use crate::{
     config_parsing::chain_helpers::{Network, NetworkWithExplorer},
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
-    utils::address_type::Address,
+    evm::address::Address,
 };
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};

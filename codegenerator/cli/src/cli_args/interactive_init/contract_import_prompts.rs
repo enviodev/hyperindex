@@ -18,7 +18,7 @@ use crate::{
         },
         human_config::ConfigEvent,
     },
-    utils::address_type::Address,
+    evm::address::Address,
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;

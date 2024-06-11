@@ -8,7 +8,8 @@ use crate::{
             SyncSourceConfig,
         },
     },
-    utils::{address_type::Address, unique_hashmap},
+    evm::address::Address,
+    utils::unique_hashmap,
 };
 use anyhow::Context;
 use itertools::{self, Itertools};

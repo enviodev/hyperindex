@@ -5,6 +5,7 @@ pub use cli_args::init_config;
 mod commands;
 pub mod config_parsing;
 pub mod constants;
+mod evm;
 pub mod executor;
 mod hbs_templating;
 mod persisted_state;

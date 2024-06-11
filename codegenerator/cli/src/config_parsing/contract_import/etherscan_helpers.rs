@@ -2,7 +2,7 @@ use super::converters::{self, ContractImportNetworkSelection, ContractImportSele
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::chain_helpers::{self, NetworkWithExplorer},
-    utils::address_type::Address,
+    evm::address::Address,
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
