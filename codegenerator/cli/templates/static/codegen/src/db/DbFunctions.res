@@ -125,7 +125,6 @@ module RawEvents = {
     array<rawEventRowId>,
   ) => promise<array<TablesStatic.RawEvents.t>> = "readRawEventsEntities"
 
-  //TODO
   @module("./DbFunctionsImplementation.js")
   external getRawEventsPageGtOrEqEventId: (
     Postgres.sql,
