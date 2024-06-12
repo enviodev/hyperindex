@@ -340,7 +340,7 @@ pub enum SyncSource {
 }
 
 impl SyncSource {
-    fn from_human_config(network: human_config::EvmNetwork) -> Result<Self> {
+    fn from_human_config(network: human_config::evm::Network) -> Result<Self> {
         match network.sync_source {
             None => {
                 let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id.clone())
@@ -589,7 +589,7 @@ impl Event {
     }
 
     pub fn try_from_config_event(
-        human_cfg_event: human_config::EvmEventConfig,
+        human_cfg_event: human_config::evm::EventConfig,
         opt_abi: &Option<EvmAbi>,
         schema: &Schema,
     ) -> Result<Self> {

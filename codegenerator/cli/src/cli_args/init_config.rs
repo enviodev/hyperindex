@@ -2,37 +2,47 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use strum::{Display, EnumIter, EnumString};
 
-use crate::config_parsing::contract_import::converters::AutoConfigSelection;
+pub mod evm {
+    use clap::ValueEnum;
+    use serde::{Deserialize, Serialize};
+    use strum::{Display, EnumIter, EnumString};
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-///Template to work off
-pub enum EvmTemplate {
-    Greeter,
-    Erc20,
+    use crate::config_parsing::contract_import::converters::AutoConfigSelection;
+
+    #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
+    pub enum Template {
+        Greeter,
+        Erc20,
+    }
+
+    #[derive(Clone, Debug, Display)]
+    pub enum InitFlow {
+        Template(Template),
+        SubgraphID(String),
+        ContractImport(AutoConfigSelection),
+    }
 }
 
-#[derive(Clone, Debug, Display)]
-pub enum EvmInitFlow {
-    Template(EvmTemplate),
-    SubgraphID(String),
-    ContractImport(AutoConfigSelection),
-}
+pub mod fuel {
+    use clap::ValueEnum;
+    use serde::{Deserialize, Serialize};
+    use strum::{Display, EnumIter, EnumString};
 
-#[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
-///Template to work off
-pub enum FuelTemplate {
-    Greeter,
-}
+    #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
+    pub enum Template {
+        Greeter,
+    }
 
-#[derive(Clone, Debug, Display)]
-pub enum FuelInitFlow {
-    Template(FuelTemplate),
+    #[derive(Clone, Debug, Display)]
+    pub enum InitFlow {
+        Template(Template),
+    }
 }
 
 #[derive(Clone, Debug, Display)]
 pub enum Ecosystem {
-    Evm { init_flow: EvmInitFlow },
-    Fuel { init_flow: FuelInitFlow },
+    Evm { init_flow: evm::InitFlow },
+    Fuel { init_flow: fuel::InitFlow },
 }
 
 #[derive(

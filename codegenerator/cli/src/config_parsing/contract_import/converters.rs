@@ -3,10 +3,7 @@ use crate::{
     cli_args::init_config::Language,
     config_parsing::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
-        human_config::{
-            self, EvmContractConfig, EvmEventConfig, GlobalContractConfig, HumanConfig, RpcConfig,
-            SyncSourceConfig,
-        },
+        human_config::{self, GlobalContractConfig, HumanConfig, RpcConfig, SyncSourceConfig},
     },
     evm::address::Address,
     init_config::InitConfig,
@@ -180,17 +177,17 @@ impl ContractImportNetworkSelection {
 type ContractName = String;
 impl AutoConfigSelection {
     pub fn to_human_config(self: &Self, init_config: &InitConfig) -> Result<HumanConfig> {
-        let mut networks_map: HashMap<u64, human_config::EvmNetwork> = HashMap::new();
+        let mut networks_map: HashMap<u64, human_config::evm::Network> = HashMap::new();
         let mut global_contracts: HashMap<ContractName, GlobalContractConfig> = HashMap::new();
 
         for selected_contract in self.selected_contracts.clone() {
             let is_multi_chain_contract = selected_contract.networks.len() > 1;
 
-            let events: Vec<EvmEventConfig> = selected_contract
+            let events: Vec<human_config::evm::EventConfig> = selected_contract
                 .events
                 .into_iter()
-                .map(|event| human_config::EvmEventConfig {
-                    event: EvmEventConfig::event_string_from_abi_event(&event),
+                .map(|event| human_config::evm::EventConfig {
+                    event: human_config::evm::EventConfig::event_string_from_abi_event(&event),
                     required_entities: None,
                     is_async: None,
                 })
@@ -221,7 +218,7 @@ impl AutoConfigSelection {
                 None
             } else {
                 //Return some for local contract config
-                Some(EvmContractConfig {
+                Some(human_config::evm::ContractConfig {
                     abi_file_path: None,
                     handler,
                     events,
@@ -249,7 +246,7 @@ impl AutoConfigSelection {
                             }
                         };
 
-                        human_config::EvmNetwork {
+                        human_config::evm::Network {
                             id: selected_network.network.get_network_id(),
                             sync_source,
                             start_block: 0,
@@ -259,7 +256,7 @@ impl AutoConfigSelection {
                         }
                     });
 
-                let contract = human_config::EvmNetworkContract {
+                let contract = human_config::evm::NetworkContract {
                     name: selected_contract.name.clone(),
                     address,
                     config: config.clone(),

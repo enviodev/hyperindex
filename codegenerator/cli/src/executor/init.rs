@@ -1,7 +1,7 @@
 use crate::{
     cli_args::{
         clap_definitions::{InitArgs, ProjectPaths},
-        init_config::{Ecosystem, EvmInitFlow, FuelInitFlow, Language},
+        init_config::{Ecosystem, Language},
         interactive_init::prompt_missing_init_args,
     },
     commands,
@@ -13,6 +13,7 @@ use crate::{
         contract_import_templates, hbs_dir_generator::HandleBarsDirGenerator,
         init_templates::InitTemplates,
     },
+    init_config,
     project_paths::ParsedProjectPaths,
     template_dirs::TemplateDirs,
     utils::file_system,
@@ -45,7 +46,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
     match &init_config.ecosystem {
         Ecosystem::Fuel {
-            init_flow: FuelInitFlow::Template(template),
+            init_flow: init_config::fuel::InitFlow::Template(template),
         } => {
             template_dirs
                 .get_and_extract_template(
@@ -59,7 +60,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 ))?;
         }
         Ecosystem::Evm {
-            init_flow: EvmInitFlow::Template(template),
+            init_flow: init_config::evm::InitFlow::Template(template),
         } => {
             template_dirs
                 .get_and_extract_template(
@@ -73,7 +74,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 ))?;
         }
         Ecosystem::Evm {
-            init_flow: EvmInitFlow::SubgraphID(cid),
+            init_flow: init_config::evm::InitFlow::SubgraphID(cid),
         } => {
             template_dirs
                 .get_and_extract_blank_template(
@@ -114,7 +115,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
 
         Ecosystem::Evm {
-            init_flow: EvmInitFlow::ContractImport(auto_config_selection),
+            init_flow: init_config::evm::InitFlow::ContractImport(auto_config_selection),
         } => {
             let yaml_config = auto_config_selection
                 .to_human_config(&init_config)

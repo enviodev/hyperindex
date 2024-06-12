@@ -1,6 +1,6 @@
 use super::{
-    clap_definitions::{
-        EvmContractImportArgs, EvmLocalImportArgs, EvmLocalOrExplorerImport, ExplorerImportArgs,
+    clap_definitions::evm::{
+        ContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
     },
     inquire_helpers::FilePathCompleter,
     validation::{
@@ -16,7 +16,7 @@ use crate::{
             self, AutoConfigError, AutoConfigSelection, ContractImportNetworkSelection,
             ContractImportSelection,
         },
-        human_config::EvmEventConfig,
+        human_config::evm::EventConfig,
     },
     evm::address::Address,
 };
@@ -50,7 +50,7 @@ struct DisplayEventWrapper(ethers::abi::Event);
 
 impl Display for DisplayEventWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", EvmEventConfig::event_string_from_abi_event(&self.0))
+        write!(f, "{}", EventConfig::event_string_from_abi_event(&self.0))
     }
 }
 
@@ -204,7 +204,7 @@ impl AutoConfigSelection {
         if add_new_contract_option == AddNewContractOption::AddContract {
             //Import a new contract
             let (contract_import_selection, add_new_contract_option) =
-                EvmContractImportArgs::default()
+                ContractImportArgs::default()
                     .get_contract_import_selection()
                     .await
                     .context("Failed getting new contract import selection")?;
@@ -246,7 +246,7 @@ impl AutoConfigSelection {
     }
 }
 
-impl EvmContractImportArgs {
+impl ContractImportArgs {
     ///Constructs AutoConfigSelection vial cli args and prompts
     pub async fn get_auto_config_selection(&self) -> Result<AutoConfigSelection> {
         let (contract_import_selection, add_new_contract_option) = self
@@ -275,11 +275,11 @@ impl EvmContractImportArgs {
         //Construct ContractImportSelection via explorer or local import
         let (contract_import_selection, add_new_contract_option) =
             match &self.get_local_or_explorer()? {
-                EvmLocalOrExplorerImport::Explorer(explorer_import_args) => self
+                LocalOrExplorerImport::Explorer(explorer_import_args) => self
                     .get_contract_import_selection_from_explore_import_args(explorer_import_args)
                     .await
                     .context("Failed getting ContractImportSelection from explorer")?,
-                EvmLocalOrExplorerImport::Local(local_import_args) => self
+                LocalOrExplorerImport::Local(local_import_args) => self
                     .get_contract_import_selection_from_local_import_args(local_import_args)
                     .await
                     .context("Failed getting ContractImportSelection from local")?,
@@ -302,7 +302,7 @@ impl EvmContractImportArgs {
     //network/contract config
     async fn get_contract_import_selection_from_local_import_args(
         &self,
-        local_import_args: &EvmLocalImportArgs,
+        local_import_args: &LocalImportArgs,
     ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         let parsed_abi = local_import_args
             .get_parsed_abi()
@@ -409,11 +409,11 @@ impl EvmContractImportArgs {
 
     ///Takes either the "local" or "explorer" subcommand from the cli args
     ///or prompts for a choice from the user
-    fn get_local_or_explorer(&self) -> Result<EvmLocalOrExplorerImport> {
+    fn get_local_or_explorer(&self) -> Result<LocalOrExplorerImport> {
         match &self.local_or_explorer {
             Some(v) => Ok(v.clone()),
             None => {
-                let options = EvmLocalOrExplorerImport::iter().collect();
+                let options = LocalOrExplorerImport::iter().collect();
 
                 Select::new(
                     "Would you like to import from a block explorer or a local abi?",
@@ -548,7 +548,7 @@ impl ExplorerImportArgs {
     }
 }
 
-impl EvmLocalImportArgs {
+impl LocalImportArgs {
     fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
         let abi_file = std::fs::read_to_string(&abi_path).context(format!(
             "Failed to read abi file at {:?}, relative to the current directory {:?}",

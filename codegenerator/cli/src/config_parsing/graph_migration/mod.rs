@@ -1,9 +1,10 @@
 use crate::{
     cli_args::init_config::Language,
     config_parsing::{
-        chain_helpers::{GraphNetwork, Network},
+        chain_helpers::{self, GraphNetwork},
         human_config::{
-            EvmContractConfig, EvmEventConfig, EvmNetwork, EvmNetworkContract, HumanConfig,
+            evm::{ContractConfig, EventConfig, Network, NetworkContract},
+            HumanConfig,
         },
     },
     project_paths::handler_paths::DEFAULT_SCHEMA_PATH,
@@ -299,8 +300,8 @@ pub async fn generate_config_from_subgraph_id(
 
     for (graph_network, contracts) in &network_hashmap {
         // Create network object to be populated
-        let mut network = EvmNetwork {
-            id: Network::from(*graph_network).get_network_id(),
+        let mut network = Network {
+            id: chain_helpers::Network::from(*graph_network).get_network_id(),
             // TODO: update to the final rpc url
             sync_source: None,
             start_block: 0,
@@ -338,7 +339,7 @@ pub async fn generate_config_from_subgraph_id(
                                 .chars()
                                 .take(start)
                                 .collect::<String>();
-                            let event = EvmEventConfig {
+                            let event = EventConfig {
                                 event: event_name.to_string(),
                                 required_entities: Some(vec![]),
                                 is_async: None,
@@ -348,10 +349,10 @@ pub async fn generate_config_from_subgraph_id(
                         })
                         .collect::<anyhow::Result<Vec<_>>>()?;
 
-                    let contract = EvmNetworkContract {
+                    let contract = NetworkContract {
                         name: data_source.name.to_string(),
                         address: vec![data_source.source.address.to_string()].into(),
-                        config: Some(EvmContractConfig {
+                        config: Some(ContractConfig {
                             abi_file_path: Some(format!("abis/{}.json", data_source.name)),
                             handler: get_event_handler_directory(language),
                             events,

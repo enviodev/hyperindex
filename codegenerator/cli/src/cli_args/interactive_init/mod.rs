@@ -6,9 +6,7 @@ use std::fmt::Display;
 
 use super::{
     clap_definitions::{self, InitArgs, InitFlow, ProjectPaths},
-    init_config::{
-        Ecosystem, EvmInitFlow, EvmTemplate, FuelInitFlow, FuelTemplate, InitConfig, Language,
-    },
+    init_config::{evm, fuel, Ecosystem, InitConfig, Language},
 };
 use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use anyhow::{Context, Result};
@@ -61,12 +59,12 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
 
     let initialization = match init_flow {
         InitFlow::Fuel { init_flow } => {
-            let clap_definitions::FuelInitFlow::Template(clap_definitions::FuelTemplateArgs {
+            let clap_definitions::fuel::InitFlow::Template(clap_definitions::fuel::TemplateArgs {
                 template,
             }) = match init_flow {
                 Some(f) => f,
                 None => {
-                    let flow_option = clap_definitions::FuelInitFlow::iter().collect();
+                    let flow_option = clap_definitions::fuel::InitFlow::iter().collect();
                     Select::new("Choose an initialization option", flow_option)
                         .prompt()
                         .context("Failed prompting for Fuel initialization option")?
@@ -75,24 +73,24 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
             let chosen_template = match template {
                 Some(template) => template,
                 None => {
-                    let options = FuelTemplate::iter().collect();
+                    let options = fuel::Template::iter().collect();
                     prompt_template(options)?
                 }
             };
             Ecosystem::Fuel {
-                init_flow: FuelInitFlow::Template(chosen_template),
+                init_flow: fuel::InitFlow::Template(chosen_template),
             }
         }
         InitFlow::Template(args) => {
             let chosen_template = match args.template {
                 Some(template) => template,
                 None => {
-                    let options = EvmTemplate::iter().collect();
+                    let options = evm::Template::iter().collect();
                     prompt_template(options)?
                 }
             };
             Ecosystem::Evm {
-                init_flow: EvmInitFlow::Template(chosen_template),
+                init_flow: evm::InitFlow::Template(chosen_template),
             }
         }
         InitFlow::SubgraphMigration(args) => {
@@ -103,7 +101,7 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
                     .context("Prompting user for subgraph id")?,
             };
             Ecosystem::Evm {
-                init_flow: EvmInitFlow::SubgraphID(input_subgraph_id),
+                init_flow: evm::InitFlow::SubgraphID(input_subgraph_id),
             }
         }
 
@@ -113,7 +111,7 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
                 .await
                 .context("Failed getting AutoConfigSelection selection")?;
             Ecosystem::Evm {
-                init_flow: EvmInitFlow::ContractImport(auto_config_selection),
+                init_flow: evm::InitFlow::ContractImport(auto_config_selection),
             }
         }
     };
