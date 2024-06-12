@@ -140,7 +140,7 @@ Initialize from a local json ABI file
 
 Initialization option for creating Fuel indexer
 
-**Usage:** `envio init fuel <COMMAND>`
+**Usage:** `envio init fuel [COMMAND]`
 
 ###### **Subcommands:**
 

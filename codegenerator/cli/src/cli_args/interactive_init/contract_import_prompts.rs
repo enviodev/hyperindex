@@ -1,6 +1,6 @@
 use super::{
     clap_definitions::{
-        EvmContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
+        EvmContractImportArgs, EvmLocalImportArgs, EvmLocalOrExplorerImport, ExplorerImportArgs,
     },
     inquire_helpers::FilePathCompleter,
     validation::{
@@ -18,7 +18,7 @@ use crate::{
         },
         human_config::ConfigEvent,
     },
-    utils::address_type::Address,
+    evm::address::Address,
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
@@ -280,11 +280,11 @@ impl EvmContractImportArgs {
         //Construct ContractImportSelection via explorer or local import
         let (contract_import_selection, add_new_contract_option) =
             match &self.get_local_or_explorer()? {
-                LocalOrExplorerImport::Explorer(explorer_import_args) => self
+                EvmLocalOrExplorerImport::Explorer(explorer_import_args) => self
                     .get_contract_import_selection_from_explore_import_args(explorer_import_args)
                     .await
                     .context("Failed getting ContractImportSelection from explorer")?,
-                LocalOrExplorerImport::Local(local_import_args) => self
+                EvmLocalOrExplorerImport::Local(local_import_args) => self
                     .get_contract_import_selection_from_local_import_args(local_import_args)
                     .await
                     .context("Failed getting ContractImportSelection from local")?,
@@ -307,7 +307,7 @@ impl EvmContractImportArgs {
     //network/contract config
     async fn get_contract_import_selection_from_local_import_args(
         &self,
-        local_import_args: &LocalImportArgs,
+        local_import_args: &EvmLocalImportArgs,
     ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         let parsed_abi = local_import_args
             .get_parsed_abi()
@@ -414,11 +414,11 @@ impl EvmContractImportArgs {
 
     ///Takes either the "local" or "explorer" subcommand from the cli args
     ///or prompts for a choice from the user
-    fn get_local_or_explorer(&self) -> Result<LocalOrExplorerImport> {
+    fn get_local_or_explorer(&self) -> Result<EvmLocalOrExplorerImport> {
         match &self.local_or_explorer {
             Some(v) => Ok(v.clone()),
             None => {
-                let options = LocalOrExplorerImport::iter().collect();
+                let options = EvmLocalOrExplorerImport::iter().collect();
 
                 Select::new(
                     "Would you like to import from a block explorer or a local abi?",
@@ -553,7 +553,7 @@ impl ExplorerImportArgs {
     }
 }
 
-impl LocalImportArgs {
+impl EvmLocalImportArgs {
     fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
         let abi_file = std::fs::read_to_string(&abi_path).context(format!(
             "Failed to read abi file at {:?}, relative to the current directory {:?}",

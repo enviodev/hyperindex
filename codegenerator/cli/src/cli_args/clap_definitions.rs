@@ -1,7 +1,7 @@
 use crate::{
     config_parsing::chain_helpers::{Network, NetworkWithExplorer},
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
-    utils::address_type::Address,
+    evm, fuel,
 };
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
@@ -131,8 +131,10 @@ pub enum InitFlow {
     #[strum(serialize = "Subgraph Migration (Experimental)")]
     SubgraphMigration(SubgraphMigrationArgs),
     ///Initialization option for creating Fuel indexer
-    #[command(subcommand)]
-    Fuel(FuelInitFlow),
+    Fuel {
+        #[command(subcommand)]
+        init_flow: Option<FuelInitFlow>,
+    },
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -140,11 +142,11 @@ pub struct EvmContractImportArgs {
     ///Choose to import a contract from a local abi or
     ///using get values from an explorer using a contract address
     #[command(subcommand)]
-    pub local_or_explorer: Option<LocalOrExplorerImport>,
+    pub local_or_explorer: Option<EvmLocalOrExplorerImport>,
 
     ///Contract address to generate the config from
     #[arg(global = true, short, long)]
-    pub contract_address: Option<Address>,
+    pub contract_address: Option<evm::address::Address>,
 
     ///If selected, prompt will not ask for additional contracts/addresses/networks
     #[arg(long, action)]
@@ -171,13 +173,13 @@ pub struct SubgraphMigrationArgs {
 }
 
 #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
-pub enum LocalOrExplorerImport {
+pub enum EvmLocalOrExplorerImport {
     ///Initialize by pulling the contract ABI from a block explorer
     #[strum(serialize = "Block Explorer")]
     Explorer(ExplorerImportArgs),
     ///Initialize from a local json ABI file
     #[strum(serialize = "Local ABI")]
-    Local(LocalImportArgs),
+    Local(EvmLocalImportArgs),
 }
 
 #[derive(Args, Debug, Default, Clone)]
@@ -219,7 +221,7 @@ impl FromStr for NetworkOrChainId {
 }
 
 #[derive(Args, Debug, Default, Clone)]
-pub struct LocalImportArgs {
+pub struct EvmLocalImportArgs {
     ///The path to a json abi file
     #[arg(short, long)]
     pub abi_file: Option<String>,
@@ -240,12 +242,51 @@ pub struct LocalImportArgs {
 pub enum FuelInitFlow {
     ///Initialize Fuel indexer from an example template
     Template(FuelTemplateArgs),
+    // ///Initialize Fuel indexer by importing config from a contract for a given chain
+    // #[strum(serialize = "Contract Import")]
+    // ContractImport(FuelContractImportArgs),
 }
 
-impl Default for FuelInitFlow {
-    fn default() -> Self {
-        Self::Template(FuelTemplateArgs { template: None })
-    }
+#[derive(Args, Debug, Default, Clone)]
+pub struct FuelContractImportArgs {
+    ///Choose to import a contract from a local abi or
+    ///using get values from an explorer using a contract address
+    #[command(subcommand)]
+    pub local_or_explorer: Option<FuelLocalOrExplorerImport>,
+
+    ///Contract address to generate the config from
+    #[arg(global = true, short, long)]
+    pub contract_address: Option<fuel::address::Address>,
+
+    ///If selected, prompt will not ask for additional contracts/addresses/networks
+    #[arg(long, action)]
+    pub single_contract: bool,
+
+    ///If selected, prompt will not ask to confirm selection of events on a contract
+    #[arg(long, action)]
+    pub all_events: bool,
+}
+
+#[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
+pub enum FuelLocalOrExplorerImport {
+    // Not supported https://forum.fuel.network/t/get-abi-by-contract-address/5535
+    // ///Initialize by pulling the contract ABI from a block explorer
+    // #[strum(serialize = "Block Explorer")]
+    // Explorer(ExplorerImportArgs),
+    // ----
+    ///Initialize from a local json ABI file
+    #[strum(serialize = "Local ABI")]
+    Local(FuelLocalImportArgs),
+}
+
+#[derive(Args, Debug, Default, Clone)]
+pub struct FuelLocalImportArgs {
+    ///The path to a json abi file
+    #[arg(short, long)]
+    pub abi_file: Option<String>,
+    ///The name of the contract
+    #[arg(long)]
+    pub contract_name: Option<String>,
 }
 
 #[derive(Args, Debug, Default, Clone)]
