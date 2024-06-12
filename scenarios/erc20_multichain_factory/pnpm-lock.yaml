@@ -63,6 +63,9 @@ importers:
       '@ryyppy/rescript-promise':
         specifier: 2.1.0
         version: 2.1.0
+      bignumber.js:
+        specifier: 9.1.2
+        version: 9.1.2
       date-fns:
         specifier: 3.3.1
         version: 3.3.1
@@ -379,6 +382,10 @@ packages:
 
   /base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
+    dev: false
+
+  /bignumber.js@9.1.2:
+    resolution: {integrity: sha512-2/mKyZH9K85bzOEfhXDBFZTGd1CTs+5IHpeFQo9luiBG7hghdC851Pj2WAhb6E3R6b9tZj/XKhbg4fum+Kepug==}
     dev: false
 
   /binary-extensions@2.3.0:
