@@ -334,7 +334,10 @@ impl Entity {
             .map(|multi_field_index| {
                 multi_field_index
                     .validate_no_duplicates(&fields)?
-                    .validate_field_name_exists(&fields)?
+                    .validate_field_name_exists_or_is_allowed(
+                        &fields,
+                        &vec!["db_write_timestamp".to_string()],
+                    )?
                     .validate_no_index_on_derived_field(&fields)?
                     .validate_no_index_on_id_field()
             })
@@ -719,12 +722,16 @@ impl MultiFieldIndex {
         }
     }
 
-    fn validate_field_name_exists(self, fields: &HashMap<String, Field>) -> anyhow::Result<Self> {
+    fn validate_field_name_exists_or_is_allowed(
+        self,
+        fields: &HashMap<String, Field>,
+        allowed_names: &Vec<String>,
+    ) -> anyhow::Result<Self> {
         for field_name in &self.0 {
-            if let None = fields.get(field_name) {
+            if !fields.contains_key(field_name) && !allowed_names.contains(field_name) {
                 return Err(anyhow!(
                     "Index error: Field '{}' does not exist in entity, please remove it from the \
-                     `@index` directive.",
+                 `@index` directive.",
                     field_name,
                 ));
             }
