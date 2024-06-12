@@ -1,12 +1,13 @@
 import "@nomiclabs/hardhat-ethers";
 import "hardhat-deploy";
-import "hardhat-abi-exporter";
 import { HardhatUserConfig } from "hardhat/config";
+
+import "hardhat-abi-exporter";
+import { AbiExporterUserConfig } from "hardhat-abi-exporter";
 
 import "@typechain/hardhat";
 import "./contracts/tasks";
 import { TypechainUserConfig } from "@typechain/hardhat/dist/types";
-
 
 let secertsConfig;
 try {
@@ -18,13 +19,16 @@ try {
   secertsConfig = require("./contracts/secretsManager.example.ts");
 }
 
-const {
-  mnemonic,
-} = secertsConfig;
-;
-
+const { mnemonic } = secertsConfig;
 let typeChainConfig: TypechainUserConfig = {
   target: "ethers-v6",
+};
+
+const abiExporter: AbiExporterUserConfig = {
+  path: "./abis",
+  clear: true,
+  flat: true,
+  spacing: 2,
 };
 
 const config: HardhatUserConfig = {
@@ -33,6 +37,7 @@ const config: HardhatUserConfig = {
     root: "contracts",
   },
   typechain: typeChainConfig,
+  abiExporter: abiExporter,
   networks: {
     hardhat: {
       accounts: {
@@ -51,17 +56,11 @@ const config: HardhatUserConfig = {
       },
     },
     fuji: {
-      url: 'https://api.avax-test.network/ext/bc/C/rpc',
+      url: "https://api.avax-test.network/ext/bc/C/rpc",
       gasPrice: 225000000000,
       chainId: 43113,
       accounts: { mnemonic },
     },
-  },
-  abiExporter: {
-    path: "./abis",
-    clear: true,
-    flat: true,
-    spacing: 2,
   },
 };
 

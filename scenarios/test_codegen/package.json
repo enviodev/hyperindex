@@ -41,7 +41,7 @@
     "chai": "^4.3.7",
     "chai-as-promised": "^7.1.1",
     "ethers": "^6.4.0",
-    "hardhat": "2.14.0",
+    "hardhat": "2.22.5",
     "mocha": "^10.2.0",
     "nyc": "^15.1.0",
     "rescript": "11.1.0",
@@ -54,6 +54,7 @@
   "dependencies": {
     "@rescript/react": "0.12.1",
     "bignumber.js": "^9.1.2",
+    "hardhat-abi-exporter": "^2.10.1",
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
     "typescript": "^5.0.4"
