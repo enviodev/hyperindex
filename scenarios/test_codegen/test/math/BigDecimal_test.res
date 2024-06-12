@@ -27,28 +27,40 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
         bigDecimal: BigDecimal.fromFloat(654.321),
       }
 
-      await Entities.batchSet(sql, [testEntity1, testEntity2], ~entityMod=module(Entities.EntityWithFields))
+      await Entities.batchSet(
+        sql,
+        [testEntity1, testEntity2],
+        ~entityMod=module(Entities.EntityWithFields),
+      )
 
-      let inMemoryStore = IO.InMemoryStore.make()
+      let inMemoryStore = InMemoryStore.make()
 
-      let context = Context.GravatarContract.EmptyEventEvent.contextCreator(
+      let contextEnv = Context.make(
         ~inMemoryStore,
-        ~chainId=123,
-        ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
+        ~chain=Chain_1,
+        ~event=TestHelpers.Gravatar.EmptyEvent.createMockEvent({}),
         ~logger=Logging.logger,
         ~asyncGetters=EventProcessing.asyncGetters,
       )
 
-      let loaderContext = context.getLoaderContext()
+      // let context = Context.Gravatar.EmptyEventEvent.contextCreator(
+      //   ~inMemoryStore,
+      //   ~chainId=123,
+      //   ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
+      //   ~logger=Logging.logger,
+      //   ~asyncGetters=EventProcessing.asyncGetters,
+      // )
+
+      let loaderContext = contextEnv->Context.getLoaderContext
 
       let _ = loaderContext.entityWithFields.load(testEntity1.id)
       let _ = loaderContext.entityWithFields.load(testEntity2.id)
 
-      let entitiesToLoad = context.getEntitiesToLoad()
+      let entitiesToLoad = contextEnv->Context.getEntitiesToLoad
 
       await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
 
-      let handlerContext = context.getHandlerContextSync()
+      let handlerContext = contextEnv->Context.getHandlerContextSync
 
       switch handlerContext.entityWithFields.get(testEntity1.id) {
       | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")

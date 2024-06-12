@@ -14,7 +14,7 @@ import {
   createNftFromFactory,
   mintSimpleNft,
 } from "./helpers/node-and-contracts";
-import { deployContracts } from "./helpers/setupNodeAndContracts.js";
+import { deployContracts } from "./helpers/setupNodeAndContracts";
 
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 
@@ -45,7 +45,7 @@ describe("Raw Events Integration", () => {
     );
 
     console.log("Creating Nft");
-    const createNftTx = await createNftFromFactory(deployedNftFactory, {
+    const _createNftTx = await createNftFromFactory(deployedNftFactory, {
       name: "test_name",
       symbol: "t_sym",
       supply: 200,
@@ -54,8 +54,7 @@ describe("Raw Events Integration", () => {
     const simpleNftCreatedEventFilter =
       deployedNftFactory.getEvent("SimpleNftCreated");
     const eventQuery = await deployedNftFactory.queryFilter(
-      simpleNftCreatedEventFilter,
-      createNftTx.hash
+      simpleNftCreatedEventFilter
     );
     const simplNftCreatedEvent = eventQuery[0];
 
