@@ -63,18 +63,7 @@ let makeChainManager = (cfg: chainConfig): chainManager => {
 
 @genType
 let startProcessing = (cfg: chainConfig, chainManager: chainManager) => {
-  let globalState: GlobalState.t = {
-    currentlyProcessingBatch: false,
-    chainManager,
-    maxBatchSize: Env.maxProcessBatchSize,
-    maxPerChainQueueSize: {
-      let numChains = Config.config->ChainMap.size
-      Env.maxEventFetchedQueueSize / numChains
-    },
-    indexerStartTime: Js.Date.make(),
-    rollbackState: NoRollback,
-    id: 0,
-  }
+  let globalState: GlobalState.t = GlobalState.make(~chainManager)
 
   let gsManager = globalState->GlobalStateManager.make
 
