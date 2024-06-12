@@ -65,10 +65,10 @@ module Db = {
   let database = envSafe->EnvSafe.get(. "ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev")
   let ssl = envSafe->EnvSafe.get(.
     "ENVIO_PG_SSL_MODE",
-    S.string,
+    S.bool,
     //this is a dev fallback option for local deployments, shouldn't run in the prod env
     //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
-    ~devFallback=false->Obj.magic,
+    ~devFallback=false,
   )
 }
 

@@ -48,18 +48,7 @@ describe("E2E Integration Test", () => {
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
-    let globalState: GlobalState.t = {
-      currentlyProcessingBatch: false,
-      chainManager,
-      maxBatchSize: Env.maxProcessBatchSize,
-      maxPerChainQueueSize: {
-        let numChains = Config.config->ChainMap.size
-        Env.maxEventFetchedQueueSize / numChains
-      },
-      indexerStartTime: Js.Date.make(),
-      rollbackState: NoRollback,
-      id: 0,
-    }
+    let globalState: GlobalState.t = GlobalState.make(~chainManager)
 
     let gsManager = globalState->GlobalStateManager.make
 

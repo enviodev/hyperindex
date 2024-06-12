@@ -1,16 +1,41 @@
 type sql
 
-type undefinedOpaque
-type transformConfig = {undefined: Js.Null.t<undefinedOpaque>}
+type undefinedTransform = | @as(undefined) Undefined | @as(null) Null
+
+type transformConfig = {
+  undefined?: undefinedTransform, // Transforms undefined values (eg. to null) (default: undefined)
+  // column?: 'c => 'd, // Transforms incoming column names (default: fn)
+  // value?: 'e => 'f, // Transforms incoming row values (default: fn)
+  // row?: 'g => 'h, // Transforms entire rows (default: fn)
+}
+
+type connectionConfig = {
+  applicationName?: string, // Default application_name (default: 'postgres.js')
+  // Other connection parameters, see https://www.postgresql.org/docs/current/runtime-config-client.html
+}
+
 type poolConfig = {
-  host: string,
-  port: int,
-  user: string,
-  password: string,
-  database: string,
-  ssl: string,
-  onnotice: option<unit => unit>,
+  host?: string, // Postgres ip address[es] or domain name[s] (default: '')
+  port?: int, // Postgres server port[s] (default: 5432)
+  path?: string, // unix socket path (usually '/tmp') (default: '')
+  database?: string, // Name of database to connect to (default: '')
+  username?: string, // Username of database user (default: '')
+  password?: string, // Password of database user (default: '')
+  ssl?: bool, // true, prefer, require, tls.connect options (default: false)
+  max?: int, // Max number of connections (default: 10)
+  maxLifetime?: option<int>, // Max lifetime in seconds (more info below) (default: null)
+  idleTimeout?: int, // Idle connection timeout in seconds (default: 0)
+  connectTimeout?: int, // Connect timeout in seconds (default: 30)
+  prepare?: bool, // Automatic creation of prepared statements (default: true)
+  // types?: array<'a>, // Array of custom types, see more below (default: [])
+  onnotice?: string => unit, // Default console.log, set false to silence NOTICE (default: fn)
+  onParameter?: (string, string) => unit, // (key, value) when server param change (default: fn)
+  debug?: 'a. 'a => unit, //(connection, query, params, types) => unit, // Is called with (connection, query, params, types) (default: fn)
+  socket?: unit => unit, // fn returning custom socket to use (default: fn)
   transform?: transformConfig,
+  connection?: connectionConfig,
+  targetSessionAttrs?: option<string>, // Use 'read-write' with multiple hosts to ensure only connecting to primary (default: null)
+  fetchTypes?: bool, // Automatically fetches types on connect on initial connection. (default: true)
 }
 
 @module
