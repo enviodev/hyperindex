@@ -41,7 +41,7 @@ jobs:
         with:
           version: 8.9
 
-      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again)
+      - name: Get pnpm store directory (if this seems stable and static we can hard-code it again) # Source: https://github.com/pnpm/action-setup#use-cache-to-reduce-installation-time
         id: pnpm-cache
         shell: bash
         run: |
@@ -78,6 +78,8 @@ jobs:
       - name: Get the branch name
         id: extract_branch
         run: |
+          # ${{ github.head_ref || github.ref_name }} or ${GITHUB_HEAD_REF:-${GITHUB_REF#refs/heads/}} both work. `github.head_ref` doesn't work for direct pushes (not PRs).
+          #   Reference: https://stackoverflow.com/questions/60300169/how-to-get-branch-name-on-github-action
           echo "::set-output name=branch::$(echo ${{ github.head_ref || github.ref_name }})"
 
       - name: Commit and push changes to output repository
