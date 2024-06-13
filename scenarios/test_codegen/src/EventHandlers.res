@@ -14,7 +14,7 @@ Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
   context.gravatar.set(gravatarObject)
 })
 
-Handlers.Gravatar.UpdatedGravatar.registerWithLoader({
+Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
   loader: ({event, context}) => {
     context.gravatar.get(event.params.id->Ethers.BigInt.toString)
   },
