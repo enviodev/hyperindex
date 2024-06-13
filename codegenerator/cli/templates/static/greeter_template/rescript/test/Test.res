@@ -3,7 +3,7 @@ open Mocha
 open Belt
 
 describe("Greeter template tests", () => {
-  it("A NewGreeting event creates a User entity", () => {
+  RescriptMocha.Promise.it("A NewGreeting event creates a User entity", async () => {
     // Initializing the mock database
     let mockDbInitial = TestHelpers.MockDb.createMockDb()
 
@@ -18,7 +18,7 @@ describe("Greeter template tests", () => {
     })
 
     // Processing the mock event on the mock database
-    let updatedMockDb = TestHelpers.Greeter.NewGreeting.processEvent({
+    let updatedMockDb = await TestHelpers.Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     })
@@ -39,7 +39,7 @@ describe("Greeter template tests", () => {
     Assert.deep_equal(expectedUserEntity, actualUserEntity)
   })
 
-  it("2 Greetings from the same users results in that user having a greeter count of 2", () => {
+  RescriptMocha.Promise.it("2 Greetings from the same users results in that user having a greeter count of 2", async () => {
     // Initializing the mock database
     let mockDbInitial = TestHelpers.MockDb.createMockDb()
 
@@ -61,13 +61,13 @@ describe("Greeter template tests", () => {
     })
 
     // Processing the mock event on the mock database
-    let updatedMockDb = TestHelpers.Greeter.NewGreeting.processEvent({
+    let updatedMockDb = await TestHelpers.Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     })
 
     // Processing the mock event on the updated mock database
-    let updatedMockDb2 = TestHelpers.Greeter.NewGreeting.processEvent({
+    let updatedMockDb2 = await TestHelpers.Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     })
@@ -82,9 +82,9 @@ describe("Greeter template tests", () => {
     Assert.equal(actualUserEntity.numberOfGreetings, expectedGreetingCount)
   })
 
-  it(
+  RescriptMocha.Promise.it(
     "2 Greetings from the same users results in the latest greeting being the greeting from the second event",
-    () => {
+    async () => {
       // Initializing the mock database
       let mockDbInitial = TestHelpers.MockDb.createMockDb()
 
@@ -106,13 +106,13 @@ describe("Greeter template tests", () => {
       })
 
       // Processing the mock event on the mock database
-      let updatedMockDb = TestHelpers.Greeter.NewGreeting.processEvent({
+      let updatedMockDb = await TestHelpers.Greeter.NewGreeting.processEvent({
         event: mockNewGreetingEvent,
         mockDb: mockDbInitial,
       })
 
       // Processing the mock event on the updated mock database
-      let updatedMockDb2 = TestHelpers.Greeter.NewGreeting.processEvent({
+      let updatedMockDb2 = await TestHelpers.Greeter.NewGreeting.processEvent({
         event: mockNewGreetingEvent2,
         mockDb: updatedMockDb,
       })

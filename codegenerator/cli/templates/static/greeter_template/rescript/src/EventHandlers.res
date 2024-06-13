@@ -1,32 +1,19 @@
 open Types
 
 /**
-Registers a loader that loads any values from your database that your
-NewGreeting event handler might need on the Greeter contract.
-*/
-Handlers.GreeterContract.NewGreeting.loader(({event, context}) => {
-  //The id for the "User" entity derived from params of the NewGreeting event
-  let userId = event.params.user->Ethers.ethAddressToString
-  //Try load in in a "User" entity with id of the user param on the
-  //NewGreeting event
-  context.user.load(userId)
-})
-
-/**
 Registers a handler that handles any values from the
 NewGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Handlers.GreeterContract.NewGreeting.handler(({event, context}) => {
+Handlers.GreeterContract.NewGreeting.handler(async ({event, context}) => {
   //The id for the "User" entity
   let userId = event.params.user->Ethers.ethAddressToString
   //The greeting string that was added.
   let latestGreeting = event.params.greeting
 
   //The optional User entity that may exist already at "userId"
-  //This value would be None in the case that it was not loaded in the
-  //loader function above OR in the case where it never existed in the db
-  let maybeCurrentUserEntity = context.user.get(userId)
+  //This value would be None in the case that it never existed in the db
+  let maybeCurrentUserEntity = await context.user.get(userId)
 
   //Construct the userEntity that is to be set in the DB
   let userEntity: userEntity = switch maybeCurrentUserEntity {
@@ -56,27 +43,16 @@ Handlers.GreeterContract.NewGreeting.handler(({event, context}) => {
 })
 
 /**
-Registers a loader that loads any values from your database that your
-ClearGreeting event handler might need on the Greeter contract.
-*/
-Handlers.GreeterContract.ClearGreeting.loader(({event, context}) => {
-  //Try load in in a "User" entity with id of the user param on the
-  //ClearGreeting event
-  context.user.load(event.params.user->Ethers.ethAddressToString)
-})
-
-/**
 Registers a handler that handles any values from the
 ClearGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Handlers.GreeterContract.ClearGreeting.handler(({event, context}) => {
+Handlers.GreeterContract.ClearGreeting.handler(async ({event, context}) => {
   //The id for the "User" entity
   let userId = event.params.user->Ethers.ethAddressToString
   //The optional User entity that may exist already at "userId"
-  //This value would be None in the case that it was not loaded in the
-  //loader function above OR in the case where it never existed in the db
-  let maybeCurrentUserEntity = context.user.get(userId)
+  //This value would be None in the case that it never existed in the db
+  let maybeCurrentUserEntity = await context.user.get(userId)
 
   switch maybeCurrentUserEntity {
   //Only make any changes in the case that there is an existing User

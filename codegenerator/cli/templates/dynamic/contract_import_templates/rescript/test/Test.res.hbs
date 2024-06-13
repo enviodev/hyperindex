@@ -43,12 +43,13 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
   })
 
   // Processing the event
-  let mockDbUpdated = {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
+  let mockDbUpdatedPromise = {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
     event: mock{{contract.name.capitalized}}{{event.name.capitalized}},
     mockDb: mockDbFinal,
   })
 
-  it("{{contract.name.capitalized}}_{{event.name.capitalized}} is created correctly", () => {
+  RescriptMocha.Promise.it("{{contract.name.capitalized}}_{{event.name.capitalized}} is created correctly", () => {
+    let mockDbUpdatedPromise = await mockDbUpdatedPromise
     // Getting the actual entity from the mock database
     let actual{{contract.name.capitalized}}{{event.name.capitalized}} =
       mockDbUpdated.entities.{{contract.name.uncapitalized}}_{{event.name.capitalized}}.get(
@@ -71,7 +72,8 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
     )
   })
 
-  it("EventsSummaryEntity is updated correctly", () => {
+  RescriptMocha.Promise.it("EventsSummaryEntity is updated correctly", () => {
+    let mockDbUpdatedPromise = await mockDbUpdatedPromise
     // Getting the actual entity from the mock database
     let actualEventsSummaryEntity =
       mockDbUpdated.entities.eventsSummary.get(globalEventsSummaryKey)->Option.getExn
