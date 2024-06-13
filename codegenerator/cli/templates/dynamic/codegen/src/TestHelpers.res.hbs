@@ -147,21 +147,29 @@ module EventFunctions = {
 
       let latestProcessedBlocks = EventProcessing.EventsProcessed.makeEmpty()
 
-      switch await event->EventProcessing.runEventHandler(
-        ~executeLoadLayer=TestHelpers_MockDb.executeMockDbLoadLayer(mockDbClone),
-        ~inMemoryStore,
-        ~handler=registeredEvent,
-        ~eventMod,
-        ~chain,
-        ~logger,
-        ~latestProcessedBlocks,
-        ~asyncGetters,
-      ) {
-      | Ok(_) =>
-        mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
-        mockDbClone
-      | Error(e) => e->ErrorHandling.logAndRaise
+      switch registeredEvent.loaderHandler {
+      | Some(handler) =>
+        switch await event->EventProcessing.runEventHandler(
+          ~executeLoadLayer=TestHelpers_MockDb.executeMockDbLoadLayer(mockDbClone),
+          ~inMemoryStore,
+          ~handler,
+          ~eventMod,
+          ~chain,
+          ~logger,
+          ~latestProcessedBlocks,
+          ~asyncGetters,
+        ) {
+        | Ok(_) => ()
+        | Error(e) => e->ErrorHandling.logAndRaise
+        }
+      | None => ()//No need to run loaders or handlers
       }
+
+      //In mem store can still contatin raw events and dynamic contracts for the
+      //testing framework in cases where either contract register or loaderHandler
+      //is None
+      mockDbClone->TestHelpers_MockDb.writeFromMemoryStore(~inMemoryStore)
+      mockDbClone
     }
   }
 

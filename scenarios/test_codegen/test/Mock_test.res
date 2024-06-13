@@ -23,7 +23,9 @@ describe("E2E Mock Event Batch", () => {
       eventMod: module(Types.Event with type eventArgs = eventArgs),
     ) => {
       let module(Event) = eventMod
-      switch RegisteredEvents.global->RegisteredEvents.get(Event.eventName) {
+      switch RegisteredEvents.global
+      ->RegisteredEvents.get(Event.eventName)
+      ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler) {
       | Some(handler) =>
         await event->EventProcessing.runEventHandler(
           ~handler,

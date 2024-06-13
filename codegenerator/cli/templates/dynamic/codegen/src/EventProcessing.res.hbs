@@ -131,7 +131,7 @@ let runEventContractRegister = (
 
 let runEventLoader = async (
   ~contextEnv,
-  ~handler: RegisteredEvents.registerArgsWithLoader<_>,
+  ~handler: RegisteredEvents.registeredLoaderHandler<_>,
   ~loadLayer,
 ) => {
   let {loader} = handler
@@ -288,7 +288,9 @@ let getHandlerRunner = (
   ~registeredEvents,
 ) => {
   let module(Event) = eventMod
-  switch registeredEvents->RegisteredEvents.get(Event.eventName) {
+  switch registeredEvents
+  ->RegisteredEvents.get(Event.eventName)
+  ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler) {
   | Some(handler) =>
     event->runEventHandler(
       ~handler,
@@ -398,6 +400,7 @@ let runLoaders = (
       let load = (event, eventName) =>
         registeredEvents
         ->RegisteredEvents.get(eventName)
+        ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
         ->Option.map(
           handler => {
             let contextEnv = ContextEnv.make(~chain, ~eventName, ~event, ~logger)
