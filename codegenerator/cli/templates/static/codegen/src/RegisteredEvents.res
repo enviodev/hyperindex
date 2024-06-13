@@ -17,28 +17,40 @@ type handlerArgs<'eventArgs, 'loaderReturn> = {
 
 type handler<'eventArgs, 'loaderReturn> = handlerArgs<'eventArgs, 'loaderReturn> => promise<unit>
 
-type registerArgsWithLoader<'eventArgs, 'loaderReturn> = {
-  handler: handler<'eventArgs, 'loaderReturn>,
+type registeredLoaderHandler<'eventArgs, 'loaderReturn> = {
   loader: loader<'eventArgs, 'loaderReturn>,
+  handler: handler<'eventArgs, 'loaderReturn>,
+}
+
+type registeredEvent<'eventArgs, 'loaderReturn> = {
+  loaderHandler?: registeredLoaderHandler<'eventArgs, 'loaderReturn>,
   contractRegister?: contractRegister<'eventArgs>,
 }
 
-type registerArgs<'eventArgs> = {
-  handler: handler<'eventArgs, unit>,
-  contractRegister?: contractRegister<'eventArgs>,
+type t = {
+  loaderHandlers: Js.Dict.t<registeredLoaderHandler<unknown, unknown>>,
+  contractRegisters: Js.Dict.t<contractRegister<unknown>>,
 }
 
-type t = Js.Dict.t<registerArgsWithLoader<unknown, unknown>>
+let make = () => {
+  loaderHandlers: Js.Dict.empty(),
+  contractRegisters: Js.Dict.empty(),
+}
 
-let add = (registeredEvents, eventName: Types.eventName, args) => {
+let addLoaderHandler = (
+  registeredEvents: t,
+  eventName: Types.eventName,
+  args: registeredLoaderHandler<'eventArgs, 'loadReturn>,
+) => {
   let key = (eventName :> string)
-  if registeredEvents->Js.Dict.get(key)->Belt.Option.isSome {
+
+  if registeredEvents.loaderHandlers->Js.Dict.get(key)->Belt.Option.isSome {
     Js.Exn.raiseError(`[envio] The event ${key} is alredy registered.`)
   } else {
-    registeredEvents->Js.Dict.set(
+    registeredEvents.loaderHandlers->Js.Dict.set(
       key,
       args->(
-        Obj.magic: registerArgsWithLoader<'eventArgs, 'loadReturn> => registerArgsWithLoader<
+        Obj.magic: registeredLoaderHandler<'eventArgs, 'loadReturn> => registeredLoaderHandler<
           unknown,
           unknown,
         >
@@ -47,19 +59,43 @@ let add = (registeredEvents, eventName: Types.eventName, args) => {
   }
 }
 
+let addContractRegister = (
+  registeredEvents: t,
+  eventName: Types.eventName,
+  args: contractRegister<'eventArgs>,
+) => {
+  let key = (eventName :> string)
+
+  if registeredEvents.contractRegisters->Js.Dict.get(key)->Belt.Option.isSome {
+    Js.Exn.raiseError(`[envio] The event ${key} is alredy registered.`)
+  } else {
+    registeredEvents.contractRegisters->Js.Dict.set(
+      key,
+      args->(Obj.magic: contractRegister<'eventArgs> => contractRegister<unknown>),
+    )
+  }
+}
+
 // This set makes sure that the warning doesn't print for every event of a type, but rather only prints the first time.
 let hasPrintedWarning = Set.make()
 
-let get = (registeredEvents, eventName: Types.eventName) => {
-  let registeredEvent =
-    registeredEvents
+let get = (registeredEvents: t, eventName: Types.eventName) => {
+  let registeredLoaderHandler =
+    registeredEvents.loaderHandlers
     ->Js.Dict.unsafeGet((eventName :> string))
     ->(
-      Obj.magic: registerArgsWithLoader<unknown, unknown> => option<
-        registerArgsWithLoader<'eventArgs, 'loadReturn>,
+      Obj.magic: registeredLoaderHandler<unknown, unknown> => option<
+        registeredLoaderHandler<'eventArgs, 'loadReturn>,
       >
     )
-  if registeredEvent->Belt.Option.isNone {
+
+  let contractRegister =
+    registeredEvents.contractRegisters
+    ->Js.Dict.unsafeGet((eventName :> string))
+    ->(Obj.magic: contractRegister<unknown> => option<contractRegister<'eventArgs>>)
+
+  switch (registeredLoaderHandler, contractRegister) {
+  | (None, None) =>
     if !(hasPrintedWarning->Set.has((eventName :> string))) {
       // Here are docs on the 'terminal hyperlink' formatting that I use to link to the docs: https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
       Logging.warn(
@@ -67,21 +103,22 @@ let get = (registeredEvents, eventName: Types.eventName) => {
       )
       let _ = hasPrintedWarning->Set.add((eventName :> string))
     }
+    None
+  | (loaderHandler, contractRegister) =>
+    Some({
+      ?loaderHandler,
+      ?contractRegister,
+    })
   }
-  registeredEvent
 }
 
-let global = Js.Dict.empty()
+let global = make()
 
 let defaultAsyncFn = _ => Promise.resolve()
-let defaultRegister = {
-  handler: defaultAsyncFn,
-  loader: defaultAsyncFn,
-}
 
 module MakeRegister = (Event: Types.Event) => {
   let handler = handler =>
-    global->add(
+    global->addLoaderHandler(
       Event.eventName,
       {
         loader: defaultAsyncFn,
@@ -90,20 +127,8 @@ module MakeRegister = (Event: Types.Event) => {
     )
 
   let contractRegister: contractRegister<Event.eventArgs> => unit = contractRegister =>
-    global->add(
-      Event.eventName,
-      {
-        ...defaultRegister,
-        contractRegister,
-      },
-    )
+    global->addContractRegister(Event.eventName, contractRegister)
 
-  let register: registerArgs<Event.eventArgs> => unit = args =>
-    global->add(
-      Event.eventName,
-      {...defaultRegister, handler: args.handler, contractRegister: ?args.contractRegister},
-    )
-
-  let registerWithLoader: registerArgsWithLoader<'a, 'b> => unit = args =>
-    global->add(Event.eventName, args)
+  let handlerWithLoader: registeredLoaderHandler<Event.eventArgs, 'loaderReturn> => unit = args =>
+    global->addLoaderHandler(Event.eventName, args)
 }
