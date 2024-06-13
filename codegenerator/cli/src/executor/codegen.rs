@@ -26,7 +26,7 @@ pub async fn run_codegen(project_paths: &ParsedProjectPaths) -> Result<()> {
         _ => (),
     };
 
-    let config = SystemConfig::parse_from_human_config(&yaml_config, project_paths)
+    let config = SystemConfig::parse_from_human_config(yaml_config, project_paths)
         .context("Failed parsing config")?;
 
     commands::codegen::run_codegen(&config, project_paths).await?;

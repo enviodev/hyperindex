@@ -128,7 +128,7 @@ mod test {
         let human_cfg =
             human_config::deserialize_config_from_yaml(&config_path).context("human cfg")?;
         let system_cfg = SystemConfig::parse_from_human_cfg_with_schema(
-            &human_cfg,
+            human_cfg,
             Schema::empty(),
             &ParsedProjectPaths::new(&root, "generated", "config1.yaml")?,
         )

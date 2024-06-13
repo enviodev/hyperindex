@@ -96,7 +96,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             .context("Failed generating config from subgraph")?;
 
             let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
-                &yaml_config,
+                yaml_config,
                 Schema::empty(),
                 &parsed_project_paths,
             )
@@ -135,7 +135,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             //Use an empty schema config to generate auto_schema_handler_template
             //After it's been generated, the schema exists and codegen can parse it/use it
             let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
-                &yaml_config,
+                yaml_config,
                 Schema::empty(),
                 &parsed_project_paths,
             )
@@ -212,7 +212,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
                     .context("Failed deserializing config")?;
 
-            let config = SystemConfig::parse_from_human_config(&yaml_config, &parsed_project_paths)
+            let config = SystemConfig::parse_from_human_config(yaml_config, &parsed_project_paths)
                 .context("Failed parsing config")?;
 
             commands::codegen::run_codegen(&config, &parsed_project_paths).await?;

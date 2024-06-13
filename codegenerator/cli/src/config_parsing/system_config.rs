@@ -149,7 +149,7 @@ impl SystemConfig {
 //Parse methods for system config
 impl SystemConfig {
     pub fn parse_from_human_cfg_with_schema(
-        human_cfg: &HumanConfig,
+        human_cfg: HumanConfig,
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
@@ -157,7 +157,7 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         //Add all global contracts
-        if let Some(global_contracts) = &human_cfg.contracts {
+        if let Some(global_contracts) = human_cfg.contracts {
             for g_contract in global_contracts {
                 let abi_from_file =
                     EvmAbi::from_file(&g_contract.config.abi_file_path, project_paths)?;
@@ -190,7 +190,6 @@ impl SystemConfig {
 
         for network in human_cfg
             .networks
-            .as_ref()
             .context("At least one EVM network configuration required")?
         {
             for contract in network.contracts.clone() {
@@ -282,7 +281,7 @@ impl SystemConfig {
     }
 
     pub fn parse_from_human_config(
-        human_cfg: &HumanConfig,
+        human_cfg: HumanConfig,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
         let relative_schema_path_from_config = human_cfg
@@ -695,7 +694,7 @@ mod test {
                 .expect("Failed deserializing config");
 
         let config = SystemConfig::parse_from_human_cfg_with_schema(
-            &human_cfg,
+            human_cfg,
             Schema::empty(),
             &project_paths,
         )

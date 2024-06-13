@@ -85,7 +85,7 @@ mod tests {
             .expect("Failed deserializing config");
 
         let config = SystemConfig::parse_from_human_cfg_with_schema(
-            &yaml_cfg,
+            yaml_cfg,
             Schema::empty(),
             &project_paths,
         )
@@ -131,7 +131,7 @@ mod tests {
             .expect("Failed deserializing config");
 
         let config = SystemConfig::parse_from_human_cfg_with_schema(
-            &yaml_cfg,
+            yaml_cfg,
             Schema::empty(),
             &project_paths,
         )
