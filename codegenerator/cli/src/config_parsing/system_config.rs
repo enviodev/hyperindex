@@ -153,6 +153,19 @@ impl SystemConfig {
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
+        if human_cfg.fuel.is_some() {
+            Err(anyhow!("Running envio with Fuel configuration is not supported by the version. Please install envio@fuel instead."))?;
+        }
+        let evm_networks = match human_cfg.networks {
+            Some(n) => n,
+            None => vec![],
+        };
+        if evm_networks.is_empty() {
+            Err(anyhow!(
+                "At least one EVM network configuration is required."
+            ))?;
+        }
+
         let mut networks: NetworkMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
@@ -188,10 +201,7 @@ impl SystemConfig {
             }
         }
 
-        for network in human_cfg
-            .networks
-            .context("At least one EVM network configuration required")?
-        {
+        for network in evm_networks {
             for contract in network.contracts.clone() {
                 //Add values for local contract
                 match contract.config {
