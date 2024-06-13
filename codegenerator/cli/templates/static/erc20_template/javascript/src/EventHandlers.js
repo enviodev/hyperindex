@@ -1,6 +1,6 @@
-const { ERC20Contract } = require("generated");
+const { ERC20 } = require("generated");
 
-ERC20Contract.Approval.handler(async ({ event, context }) => {
+ERC20.Approval.handler(async ({ event, context }) => {
   //  getting the owner Account entity
   const ownerAccount = await context.Account.get(event.params.owner);
 
@@ -28,7 +28,7 @@ ERC20Contract.Approval.handler(async ({ event, context }) => {
   context.Approval.set(approvalObject);
 });
 
-ERC20Contract.Transfer.handler(async ({ event, context }) => {
+ERC20.Transfer.handler(async ({ event, context }) => {
   const senderAccount = await context.Account.get(event.params.from);
 
   if (senderAccount === undefined) {

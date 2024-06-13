@@ -1,6 +1,6 @@
-import { ERC20Contract, AccountEntity, ApprovalEntity } from "generated";
+import { ERC20, AccountEntity, ApprovalEntity } from "generated";
 
-ERC20Contract.Approval.handler(async ({ event, context }) => {
+ERC20.Approval.handler(async ({ event, context }) => {
   //  getting the owner Account entity
   let ownerAccount = await context.Account.get(event.params.owner.toString());
 
@@ -29,7 +29,7 @@ ERC20Contract.Approval.handler(async ({ event, context }) => {
   context.Approval.set(approvalObject);
 });
 
-ERC20Contract.Transfer.handler(async ({ event, context }) => {
+ERC20.Transfer.handler(async ({ event, context }) => {
   let senderAccount = await context.Account.get(event.params.from.toString());
 
   if (senderAccount === undefined) {

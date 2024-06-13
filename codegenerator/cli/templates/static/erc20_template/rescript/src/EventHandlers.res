@@ -1,6 +1,6 @@
 open Types
 
-Handlers.ERC20Contract.Approval.handler(async ({event, context}) => {
+Handlers.ERC20.Approval.handler(async ({event, context}) => {
   let ownerAccount = await context.account.get(event.params.owner->Ethers.ethAddressToString)
 
   if(ownerAccount->Belt.Option.isNone)
@@ -30,7 +30,7 @@ Handlers.ERC20Contract.Approval.handler(async ({event, context}) => {
   
 })
 
-Handlers.ERC20Contract.Transfer.handler(async ({event, context}) => {
+Handlers.ERC20.Transfer.handler(async ({event, context}) => {
   let senderAccount = await context.account.get(event.params.from->Ethers.ethAddressToString)
 
   switch senderAccount {
