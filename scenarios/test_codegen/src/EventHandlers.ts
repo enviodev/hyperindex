@@ -12,7 +12,7 @@ NftFactory.SimpleNftCreated.register({
   contractRegister: ({ event, context }) => {
     context.addSimpleNft(event.params.contractAddress);
   },
-  preLoader: async (_) => undefined,
+  loader: async (_) => undefined,
   handler: async ({ event, context }) => {
     let nftCollection: NftCollection = {
       id: event.params.contractAddress,
@@ -31,7 +31,7 @@ NftFactory.SimpleNftCreated.register({
 });
 
 SimpleNft.Transfer.register({
-  preLoader: async ({ event, context }) => {
+  loader: async ({ event, context }) => {
     const [loadedUserFrom, loadedUserTo, nftCollectionUpdated, existingToken] =
       await Promise.all([
         context.User.get(event.params.from),
@@ -49,13 +49,13 @@ SimpleNft.Transfer.register({
       existingToken,
     };
   },
-  handler: async ({ event, context, preLoaderReturn }) => {
+  handler: async ({ event, context, loaderReturn }) => {
     const {
       loadedUserFrom,
       loadedUserTo,
       nftCollectionUpdated,
       existingToken,
-    } = preLoaderReturn;
+    } = loaderReturn;
     const token = {
       id: event.srcAddress.concat("-").concat(event.params.tokenId.toString()),
       tokenId: event.params.tokenId,

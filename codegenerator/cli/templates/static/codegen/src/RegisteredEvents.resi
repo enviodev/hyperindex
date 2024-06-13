@@ -10,40 +10,40 @@ type contractRegisterFnArgs<'eventArgs> = fnArgs<'eventArgs, Types.contractRegis
 type contractRegisterFn<'eventArgs> = contractRegisterFnArgs<'eventArgs> => unit
 
 @genType
-type preLoaderFnArgs<'eventArgs> = fnArgs<'eventArgs, Types.loaderContext>
+type loaderFnArgs<'eventArgs> = fnArgs<'eventArgs, Types.loaderContext>
 @genType
-type preLoaderFn<'eventArgs, 'preLoaderReturn> = preLoaderFnArgs<'eventArgs> => promise<
-  'preLoaderReturn,
+type loaderFn<'eventArgs, 'loaderReturn> = loaderFnArgs<'eventArgs> => promise<
+  'loaderReturn,
 >
 
 @genType
-type handlerFnArgs<'eventArgs, 'preLoaderReturn> = {
+type handlerFnArgs<'eventArgs, 'loaderReturn> = {
   event: Types.eventLog<'eventArgs>,
   context: Types.handlerContext,
-  preLoaderReturn: 'preLoaderReturn,
+  loaderReturn: 'loaderReturn,
 }
 
 @genType
-type handlerFn<'eventArgs, 'preLoaderReturn> = handlerFnArgs<
+type handlerFn<'eventArgs, 'loaderReturn> = handlerFnArgs<
   'eventArgs,
-  'preLoaderReturn,
+  'loaderReturn,
 > => promise<unit>
 
 @genType
-type registerArgsWithPreLoader<'eventArgs, 'preLoaderReturn> = {
-  handler: handlerFn<'eventArgs, 'preLoaderReturn>,
-  preLoader: preLoaderFn<'eventArgs, 'preLoaderReturn>,
+type registerArgsWithLoader<'eventArgs, 'loaderReturn> = {
+  handler: handlerFn<'eventArgs, 'loaderReturn>,
+  loader: loaderFn<'eventArgs, 'loaderReturn>,
   contractRegister?: contractRegisterFn<'eventArgs>,
 }
 
 type t
 
-let get: (t, Types.eventName) => option<registerArgsWithPreLoader<'eventArgs, 'preLoadReturn>>
+let get: (t, Types.eventName) => option<registerArgsWithLoader<'eventArgs, 'loadReturn>>
 
 let global: t
 
 module MakeRegister: (E: Types.Event) =>
 {
-  let register: registerArgsWithPreLoader<E.eventArgs, 'b> => unit
+  let register: registerArgsWithLoader<E.eventArgs, 'b> => unit
   let handler: handlerFn<E.eventArgs, unit> => unit
 }
