@@ -15,10 +15,10 @@ Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
 })
 
 Handlers.Gravatar.UpdatedGravatar.register({
-  preLoader: ({event, context}) => {
+  loader: ({event, context}) => {
     context.gravatar.get(event.params.id->Ethers.BigInt.toString)
   },
-  handler: async ({event, context, preLoaderReturn}) => {
+  handler: async ({event, context, loaderReturn}) => {
     /// Some examples of user logging
     context.log.debug(`We are processing the event, ${event.blockHash} (debug)`)
     context.log.info(`We are processing the event, ${event.blockHash} (info)`)
@@ -57,7 +57,7 @@ Handlers.Gravatar.UpdatedGravatar.register({
     )
 
     let updatesCount =
-      preLoaderReturn->Belt.Option.mapWithDefault(Ethers.BigInt.fromInt(1), gravatar =>
+      loaderReturn->Belt.Option.mapWithDefault(Ethers.BigInt.fromInt(1), gravatar =>
         gravatar.Entities.Gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1))
       )
 

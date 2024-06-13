@@ -210,13 +210,13 @@ let getContractRegisterArgs = (contextEnv, ~inMemoryStore) => {
   context: contextEnv->getContractRegisterContext(~inMemoryStore),
 }
 
-let getPreLoaderArgs = (contextEnv, ~loadLayer) => {
+let getLoaderArgs = (contextEnv, ~loadLayer) => {
   RegisteredEvents.event: contextEnv.event,
   context: contextEnv->getLoaderContext(~loadLayer),
 }
 
-let getHandlerArgs = (contextEnv, ~asyncGetters, ~inMemoryStore, ~preLoaderReturn) => {
+let getHandlerArgs = (contextEnv, ~asyncGetters, ~inMemoryStore, ~loaderReturn) => {
   RegisteredEvents.event: contextEnv.event,
   context: contextEnv->getHandlerContext(~asyncGetters, ~inMemoryStore),
-  preLoaderReturn,
+  loaderReturn,
 }
