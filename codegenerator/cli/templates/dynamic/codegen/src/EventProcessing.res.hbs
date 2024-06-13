@@ -75,7 +75,7 @@ let addToDynamicContractRegistrations = (
 }
 
 let runEventContractRegister = (
-  contractRegister: RegisteredEvents.fnArgs<_> => unit,
+  contractRegister: RegisteredEvents.args<_> => unit,
   ~event,
   ~eventName,
   ~eventBatchQueueItem: Types.eventBatchQueueItem,

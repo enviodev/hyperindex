@@ -8,7 +8,7 @@ import {
 
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
-NftFactory.SimpleNftCreated.register({
+NftFactory.SimpleNftCreated.registerWithLoader({
   contractRegister: ({ event, context }) => {
     context.addSimpleNft(event.params.contractAddress);
   },
@@ -30,7 +30,7 @@ NftFactory.SimpleNftCreated.register({
   },
 });
 
-SimpleNft.Transfer.register({
+SimpleNft.Transfer.registerWithLoader({
   loader: async ({ event, context }) => {
     const [loadedUserFrom, loadedUserTo, nftCollectionUpdated, existingToken] =
       await Promise.all([
