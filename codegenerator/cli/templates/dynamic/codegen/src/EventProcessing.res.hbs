@@ -129,14 +129,14 @@ let runEventContractRegister = (
   }
 }
 
-let runEventPreloader = async (
+let runEventLoader = async (
   ~contextEnv,
-  ~handler: RegisteredEvents.registerArgsWithPreLoader<_>,
+  ~handler: RegisteredEvents.registerArgsWithLoader<_>,
   ~loadLayer,
 ) => {
-  let {preLoader} = handler
+  let {loader} = handler
 
-  switch await preLoader(contextEnv->ContextEnv.getPreLoaderArgs(~loadLayer)) {
+  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~loadLayer)) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
@@ -144,7 +144,7 @@ let runEventPreloader = async (
       ~logger=contextEnv.logger,
     )
     ->Error
-  | preLoadReturn => preLoadReturn->Ok
+  | loadReturn => loadReturn->Ok
   }
 }
 
@@ -233,7 +233,7 @@ let runEventHandler = (
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName=Event.eventName)
     let loadLayer = LoadLayer.make()
 
-    let preLoaderReturnUnawaited = runEventPreloader(~contextEnv, ~handler, ~loadLayer)
+    let loaderReturnUnawaited = runEventLoader(~contextEnv, ~handler, ~loadLayer)
 
     switch await loadLayer->executeLoadLayer(~inMemoryStore) {
     | exception exn =>
@@ -247,10 +247,10 @@ let runEventHandler = (
     | () => ()
     }
 
-    let preLoaderReturn = await preLoaderReturnUnawaited->propogateAsync
+    let loaderReturn = await loaderReturnUnawaited->propogateAsync
 
     switch await handler.handler(
-      contextEnv->ContextEnv.getHandlerArgs(~preLoaderReturn, ~inMemoryStore, ~asyncGetters),
+      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters),
     ) {
     | exception exn =>
       exn
@@ -384,7 +384,7 @@ let rec registerDynamicContracts = (
   }
 }
 
-let runPreloaders = (
+let runLoaders = (
   eventBatch: array<Types.eventBatchQueueItem>,
   ~registeredEvents: RegisteredEvents.t,
   ~inMemoryStore,
@@ -394,21 +394,21 @@ let runPreloaders = (
   runAsyncEnv(async () => {
     let loadLayer = LoadLayer.make()
 
-    let preLoaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, event}) => {
-      let preLoad = (event, eventName) =>
+    let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, event}) => {
+      let load = (event, eventName) =>
         registeredEvents
         ->RegisteredEvents.get(eventName)
         ->Option.map(
           handler => {
             let contextEnv = ContextEnv.make(~chain, ~eventName, ~event, ~logger)
-            runEventPreloader(~contextEnv, ~handler, ~loadLayer)
+            runEventLoader(~contextEnv, ~handler, ~loadLayer)
           },
         )
 
       switch event {
       {{#each codegen_contracts as | contract |}}
       {{#each contract.codegen_events as | event |}}
-      | {{event.event_type.full}}(event) => event->preLoad({{event.event_type.full}})
+      | {{event.event_type.full}}(event) => event->load({{event.event_type.full}})
       {{/each}}
       {{/each}}
       }
@@ -423,10 +423,10 @@ let runPreloaders = (
     | () => ()
     }
 
-    let preLoaderReturns = await preLoaderReturnsUnawaited->Promise.all
+    let loaderReturns = await loaderReturnsUnawaited->Promise.all
     //We don't actually need these returns here but errors will be propogated
     //here
-    let _unusedReturns = preLoaderReturns->Utils.mapArrayOfResults->propogate
+    let _unusedReturns = loaderReturns->Utils.mapArrayOfResults->propogate
     Ok()
   })
 }
@@ -528,7 +528,7 @@ let processEventBatch = (
       ->propogate
 
     await eventsBeforeDynamicRegistrations
-    ->runPreloaders(~registeredEvents, ~inMemoryStore, ~logger)
+    ->runLoaders(~registeredEvents, ~inMemoryStore, ~logger)
     ->propogateAsync
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

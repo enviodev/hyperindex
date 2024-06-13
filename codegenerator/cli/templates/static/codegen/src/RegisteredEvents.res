@@ -6,29 +6,29 @@ type fnArgs<'eventArgs, 'context> = {
 type contractRegisterFnArgs<'eventArgs> = fnArgs<'eventArgs, Types.contractRegistrations>
 type contractRegisterFn<'eventArgs> = contractRegisterFnArgs<'eventArgs> => unit
 
-type preLoaderFnArgs<'eventArgs> = fnArgs<'eventArgs, Types.loaderContext>
-type preLoaderFn<'eventArgs, 'preLoaderReturn> = preLoaderFnArgs<'eventArgs> => promise<
-  'preLoaderReturn,
+type loaderFnArgs<'eventArgs> = fnArgs<'eventArgs, Types.loaderContext>
+type loaderFn<'eventArgs, 'loaderReturn> = loaderFnArgs<'eventArgs> => promise<
+  'loaderReturn,
 >
 
-type handlerFnArgs<'eventArgs, 'preLoaderReturn> = {
+type handlerFnArgs<'eventArgs, 'loaderReturn> = {
   event: Types.eventLog<'eventArgs>,
   context: Types.handlerContext,
-  preLoaderReturn: 'preLoaderReturn,
+  loaderReturn: 'loaderReturn,
 }
 
-type handlerFn<'eventArgs, 'preLoaderReturn> = handlerFnArgs<
+type handlerFn<'eventArgs, 'loaderReturn> = handlerFnArgs<
   'eventArgs,
-  'preLoaderReturn,
+  'loaderReturn,
 > => promise<unit>
 
-type registerArgsWithPreLoader<'eventArgs, 'preLoaderReturn> = {
-  handler: handlerFn<'eventArgs, 'preLoaderReturn>,
-  preLoader: preLoaderFn<'eventArgs, 'preLoaderReturn>,
+type registerArgsWithLoader<'eventArgs, 'loaderReturn> = {
+  handler: handlerFn<'eventArgs, 'loaderReturn>,
+  loader: loaderFn<'eventArgs, 'loaderReturn>,
   contractRegister?: contractRegisterFn<'eventArgs>,
 }
 
-type t = Js.Dict.t<registerArgsWithPreLoader<unknown, unknown>>
+type t = Js.Dict.t<registerArgsWithLoader<unknown, unknown>>
 
 let add = (registeredEvents, eventName: Types.eventName, args) => {
   let key = (eventName :> string)
@@ -38,10 +38,10 @@ let add = (registeredEvents, eventName: Types.eventName, args) => {
     registeredEvents->Js.Dict.set(
       key,
       args->(
-        Obj.magic: registerArgsWithPreLoader<
+        Obj.magic: registerArgsWithLoader<
           'eventArgs,
-          'preLoadReturn,
-        > => registerArgsWithPreLoader<unknown, unknown>
+          'loadReturn,
+        > => registerArgsWithLoader<unknown, unknown>
       ),
     )
   }
@@ -55,8 +55,8 @@ let get = (registeredEvents, eventName: Types.eventName) => {
     registeredEvents
     ->Js.Dict.unsafeGet((eventName :> string))
     ->(
-      Obj.magic: registerArgsWithPreLoader<unknown, unknown> => option<
-        registerArgsWithPreLoader<'eventArgs, 'preLoadReturn>,
+      Obj.magic: registerArgsWithLoader<unknown, unknown> => option<
+        registerArgsWithLoader<'eventArgs, 'loadReturn>,
       >
     )
   if registeredEvent->Belt.Option.isNone {
@@ -79,7 +79,7 @@ module MakeRegister = (Event: Types.Event) => {
     global->add(
       Event.eventName,
       {
-        preLoader: _ => Promise.resolve(),
+        loader: _ => Promise.resolve(),
         handler,
       },
     )
