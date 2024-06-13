@@ -51,12 +51,13 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
   });
 
   // Processing the event
-  const mockDbUpdated = {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
+  const mockDbUpdatedPromise = {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
     event: mock{{contract.name.capitalized}}{{event.name.capitalized}},
     mockDb: mockDbFinal,
   });
 
-  it("{{contract.name.capitalized}}_{{event.name.capitalized}} is created correctly", () => {
+  it("{{contract.name.capitalized}}_{{event.name.capitalized}} is created correctly", async () => {
+    const mockDbUpdated = await mockDbUpdatedPromise;
     // Getting the actual entity from the mock database
     let actual{{contract.name.capitalized}}{{event.name.capitalized}} = mockDbUpdated.entities.{{contract.name.capitalized}}_{{event.name.capitalized}}.get(
       mock{{contract.name.capitalized}}{{event.name.capitalized}}.transactionHash +
@@ -77,7 +78,8 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
     assert.deepEqual(actual{{contract.name.capitalized}}{{event.name.capitalized}}, expected{{contract.name.capitalized}}{{event.name.capitalized}}, "Actual {{contract.name.capitalized}}{{event.name.capitalized}} should be the same as the expected{{contract.name.capitalized}}{{event.name.capitalized}}");
   });
 
-  it("EventsSummaryEntity is updated correctly", () => {
+  it("EventsSummaryEntity is updated correctly", async () => {
+    const mockDbUpdated = await mockDbUpdatedPromise;
     // Getting the actual entity from the mock database
     let actualEventsSummaryEntity = mockDbUpdated.entities.EventsSummary.get(
       GLOBAL_EVENTS_SUMMARY_KEY

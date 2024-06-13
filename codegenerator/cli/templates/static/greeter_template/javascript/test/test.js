@@ -3,7 +3,7 @@ const { TestHelpers } = require("generated");
 const { MockDb, Greeter, Addresses } = TestHelpers;
 
 describe("Greeter template tests", () => {
-  it("A NewGreeting event creates a User entity", () => {
+  it("A NewGreeting event creates a User entity", async () => {
     // Initializing the mock database
     const mockDbInitial = MockDb.createMockDb();
 
@@ -18,7 +18,7 @@ describe("Greeter template tests", () => {
     });
 
     // Processing the mock event on the mock database
-    const updatedMockDb = Greeter.NewGreeting.processEvent({
+    const updatedMockDb = await Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
@@ -38,7 +38,7 @@ describe("Greeter template tests", () => {
     assert.deepEqual(expectedUserEntity, actualUserEntity);
   });
 
-  it("2 Greetings from the same users results in that user having a greeter count of 2", () => {
+  it("2 Greetings from the same users results in that user having a greeter count of 2", async () => {
     // Initializing the mock database
     const mockDbInitial = MockDb.createMockDb();
     // Initializing values for mock event
@@ -59,13 +59,13 @@ describe("Greeter template tests", () => {
     });
 
     // Processing the mock event on the mock database
-    const updatedMockDb = Greeter.NewGreeting.processEvent({
+    const updatedMockDb = await Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
 
     // Processing the mock event on the updated mock database
-    const updatedMockDb2 = Greeter.NewGreeting.processEvent({
+    const updatedMockDb2 = await Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     });
@@ -77,7 +77,7 @@ describe("Greeter template tests", () => {
     assert.equal(2, actualUserEntity?.numberOfGreetings);
   });
 
-  it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", () => {
+  it("2 Greetings from the same users results in the latest greeting being the greeting from the second event", async () => {
     // Initializing the mock database
     const mockDbInitial = MockDb.createMockDb();
     // Initializing values for mock event
@@ -98,13 +98,13 @@ describe("Greeter template tests", () => {
     });
 
     // Processing the mock event on the mock database
-    const updatedMockDb = Greeter.NewGreeting.processEvent({
+    const updatedMockDb = await Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent,
       mockDb: mockDbInitial,
     });
 
     // Processing the mock event on the updated mock database
-    const updatedMockDb2 = Greeter.NewGreeting.processEvent({
+    const updatedMockDb2 = await Greeter.NewGreeting.processEvent({
       event: mockNewGreetingEvent2,
       mockDb: updatedMockDb,
     });

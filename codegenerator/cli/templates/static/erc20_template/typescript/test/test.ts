@@ -3,7 +3,7 @@ import { TestHelpers, AccountEntity } from "generated";
 const { MockDb, ERC20, Addresses } = TestHelpers;
 
 describe("Transfers", () => {
-  it("Transfer subtracts the from account balance and adds to the to account balance", () => {
+  it("Transfer subtracts the from account balance and adds to the to account balance", async () => {
     //Instantiate a mock DB
     const mockDbEmpty = MockDb.createMockDb();
 
@@ -32,7 +32,7 @@ describe("Transfers", () => {
     //Process the mockEvent
     //Note: processEvent functions do not mutate the mockDb, they return a new
     //mockDb with with modified state
-    const mockDbAfterTransfer = ERC20.Transfer.processEvent({
+    const mockDbAfterTransfer = await ERC20.Transfer.processEvent({
       event: mockTransfer,
       mockDb,
     });
