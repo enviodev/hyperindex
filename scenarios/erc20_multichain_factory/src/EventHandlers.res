@@ -1,12 +1,8 @@
 open Types
 open Entities
 
-Handlers.ERC20Factory.TokenCreated.register({
-  contractRegister: ({event, context}) => {
-    context.addERC20(event.params.token)
-  },
-  loader: async _ => (),
-  handler: async _ => (),
+Handlers.ERC20Factory.TokenCreated.contractRegister(({event, context}) => {
+  context.addERC20(event.params.token)
 })
 
 let join = (a, b) => a ++ "-" ++ b
@@ -52,7 +48,7 @@ let createNewAccountWithZeroBalance = (
   accountToken
 }
 
-Handlers.ERC20.Approval.register({
+Handlers.ERC20.Approval.registerWithLoader({
   loader: ({event, context}) => {
     context.account.get(event.params.owner->Ethers.ethAddressToString)
   },
@@ -108,7 +104,7 @@ let manipulateAccountBalance = (
   ->fn(value)
   ->setAccountToken
 
-Handlers.ERC20.Transfer.register({
+Handlers.ERC20.Transfer.registerWithLoader({
   loader: ({event, context}) => {
     let fromAccount_id = event.params.from->Ethers.ethAddressToString
     let toAccount_id = event.params.to->Ethers.ethAddressToString

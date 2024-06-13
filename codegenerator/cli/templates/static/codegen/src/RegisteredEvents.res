@@ -1,31 +1,31 @@
-type fnArgs<'eventArgs, 'context> = {
+type args<'eventArgs, 'context> = {
   event: Types.eventLog<'eventArgs>,
   context: 'context,
 }
 
-type contractRegisterFnArgs<'eventArgs> = fnArgs<'eventArgs, Types.contractRegistrations>
-type contractRegisterFn<'eventArgs> = contractRegisterFnArgs<'eventArgs> => unit
+type contractRegisterArgs<'eventArgs> = args<'eventArgs, Types.contractRegistrations>
+type contractRegister<'eventArgs> = contractRegisterArgs<'eventArgs> => unit
 
-type loaderFnArgs<'eventArgs> = fnArgs<'eventArgs, Types.loaderContext>
-type loaderFn<'eventArgs, 'loaderReturn> = loaderFnArgs<'eventArgs> => promise<
-  'loaderReturn,
->
+type loaderArgs<'eventArgs> = args<'eventArgs, Types.loaderContext>
+type loader<'eventArgs, 'loaderReturn> = loaderArgs<'eventArgs> => promise<'loaderReturn>
 
-type handlerFnArgs<'eventArgs, 'loaderReturn> = {
+type handlerArgs<'eventArgs, 'loaderReturn> = {
   event: Types.eventLog<'eventArgs>,
   context: Types.handlerContext,
   loaderReturn: 'loaderReturn,
 }
 
-type handlerFn<'eventArgs, 'loaderReturn> = handlerFnArgs<
-  'eventArgs,
-  'loaderReturn,
-> => promise<unit>
+type handler<'eventArgs, 'loaderReturn> = handlerArgs<'eventArgs, 'loaderReturn> => promise<unit>
 
 type registerArgsWithLoader<'eventArgs, 'loaderReturn> = {
-  handler: handlerFn<'eventArgs, 'loaderReturn>,
-  loader: loaderFn<'eventArgs, 'loaderReturn>,
-  contractRegister?: contractRegisterFn<'eventArgs>,
+  handler: handler<'eventArgs, 'loaderReturn>,
+  loader: loader<'eventArgs, 'loaderReturn>,
+  contractRegister?: contractRegister<'eventArgs>,
+}
+
+type registerArgs<'eventArgs> = {
+  handler: handler<'eventArgs, unit>,
+  contractRegister?: contractRegister<'eventArgs>,
 }
 
 type t = Js.Dict.t<registerArgsWithLoader<unknown, unknown>>
@@ -38,10 +38,10 @@ let add = (registeredEvents, eventName: Types.eventName, args) => {
     registeredEvents->Js.Dict.set(
       key,
       args->(
-        Obj.magic: registerArgsWithLoader<
-          'eventArgs,
-          'loadReturn,
-        > => registerArgsWithLoader<unknown, unknown>
+        Obj.magic: registerArgsWithLoader<'eventArgs, 'loadReturn> => registerArgsWithLoader<
+          unknown,
+          unknown,
+        >
       ),
     )
   }
@@ -73,14 +73,37 @@ let get = (registeredEvents, eventName: Types.eventName) => {
 
 let global = Js.Dict.empty()
 
+let defaultAsyncFn = _ => Promise.resolve()
+let defaultRegister = {
+  handler: defaultAsyncFn,
+  loader: defaultAsyncFn,
+}
+
 module MakeRegister = (Event: Types.Event) => {
-  let register = args => global->add(Event.eventName, args)
   let handler = handler =>
     global->add(
       Event.eventName,
       {
-        loader: _ => Promise.resolve(),
+        loader: defaultAsyncFn,
         handler,
       },
     )
+
+  let contractRegister: contractRegister<Event.eventArgs> => unit = contractRegister =>
+    global->add(
+      Event.eventName,
+      {
+        ...defaultRegister,
+        contractRegister,
+      },
+    )
+
+  let register: registerArgs<Event.eventArgs> => unit = args =>
+    global->add(
+      Event.eventName,
+      {...defaultRegister, handler: args.handler, contractRegister: ?args.contractRegister},
+    )
+
+  let registerWithLoader: registerArgsWithLoader<'a, 'b> => unit = args =>
+    global->add(Event.eventName, args)
 }
