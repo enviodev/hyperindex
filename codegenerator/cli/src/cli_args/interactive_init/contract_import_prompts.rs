@@ -434,7 +434,7 @@ impl ContractImportArgs {
 fn prompt_for_network_id(
     opt_rpc_url: &Option<String>,
     already_selected_ids: Vec<u64>,
-) -> Result<converters::Network> {
+) -> Result<converters::NetworkKind> {
     //The first option of the list, funnels the user to enter a u64
     let enter_id = "<Enter Network Id>";
 
@@ -475,7 +475,7 @@ fn prompt_for_network_id(
         //If a supported network choice was selected. We should be able to
         //parse it back to a supported network since it was serialized as a
         //string
-        choice => converters::Network::Supported(
+        choice => converters::NetworkKind::Supported(
             HypersyncNetwork::from_str(&choice)
                 .context("Unexpected input, not a supported network.")?,
         ),
@@ -490,18 +490,18 @@ fn prompt_for_network_id(
 fn get_converter_network_u64(
     network_id: u64,
     rpc_url: &Option<String>,
-) -> Result<converters::Network> {
+) -> Result<converters::NetworkKind> {
     let maybe_supported_network =
         Network::from_network_id(network_id).and_then(|n| Ok(HypersyncNetwork::try_from(n)?));
 
     let network = match maybe_supported_network {
-        Ok(s) => converters::Network::Supported(s),
+        Ok(s) => converters::NetworkKind::Supported(s),
         Err(_) => {
             let rpc_url = match rpc_url {
                 Some(r) => r.clone(),
                 None => prompt_for_rpc_url()?,
             };
-            converters::Network::Unsupported(network_id, rpc_url)
+            converters::NetworkKind::Unsupported(network_id, rpc_url)
         }
     };
 
@@ -608,7 +608,7 @@ impl LocalImportArgs {
 
     ///Gets the network from from cli args or prompts for
     ///a network
-    fn get_network(&self) -> Result<converters::Network> {
+    fn get_network(&self) -> Result<converters::NetworkKind> {
         match &self.blockchain {
             Some(b) => {
                 let network_id: u64 = (b.clone()).into();

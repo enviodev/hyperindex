@@ -159,9 +159,11 @@ impl SystemConfig {
         //Add all global contracts
         if let Some(global_contracts) = &human_cfg.contracts {
             for g_contract in global_contracts {
-                let abi_from_file = EvmAbi::from_file(&g_contract.abi_file_path, project_paths)?;
+                let abi_from_file =
+                    EvmAbi::from_file(&g_contract.config.abi_file_path, project_paths)?;
 
                 let events = g_contract
+                    .config
                     .events
                     .iter()
                     .cloned()
@@ -174,7 +176,7 @@ impl SystemConfig {
 
                 let contract = Contract::new(
                     g_contract.name.clone(),
-                    g_contract.handler.clone(),
+                    g_contract.config.handler.clone(),
                     events,
                     abi_from_file,
                 )
@@ -186,7 +188,11 @@ impl SystemConfig {
             }
         }
 
-        for network in &human_cfg.networks {
+        for network in human_cfg
+            .networks
+            .as_ref()
+            .context("At least one EVM network configuration required")?
+        {
             for contract in network.contracts.clone() {
                 //Add values for local contract
                 match contract.config {

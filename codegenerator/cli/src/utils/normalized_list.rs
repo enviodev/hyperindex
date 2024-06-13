@@ -22,12 +22,17 @@ type OptSingleOrList<T> = Option<SingleOrList<T>>;
 #[serde(from = "OptSingleOrList<T>")]
 pub struct NormalizedList<T: Clone>(Vec<T>);
 
+impl<T: Clone> NormalizedList<T> {
+    pub fn is_empty(&self) -> bool {
+        self.0.len() == 0
+    }
+}
+
 impl<T: Clone> From<OptSingleOrList<T>> for NormalizedList<T> {
     fn from(single_or_list: OptSingleOrList<T>) -> Self {
         NormalizedList(single_or_list.map_or_else(|| vec![], |v| v.into()))
     }
 }
-
 impl<T: Clone> From<NormalizedList<T>> for Vec<T> {
     fn from(normalized_list: NormalizedList<T>) -> Self {
         normalized_list.0
@@ -36,6 +41,11 @@ impl<T: Clone> From<NormalizedList<T>> for Vec<T> {
 impl<T: Clone> From<Vec<T>> for NormalizedList<T> {
     fn from(v: Vec<T>) -> Self {
         NormalizedList(v)
+    }
+}
+impl<T: Clone> From<T> for NormalizedList<T> {
+    fn from(v: T) -> Self {
+        NormalizedList(vec![v])
     }
 }
 

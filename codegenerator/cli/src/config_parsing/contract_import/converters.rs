@@ -3,7 +3,10 @@ use crate::{
     cli_args::init_config::Language,
     config_parsing::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
-        human_config::{self, GlobalContractConfig, HumanConfig, RpcConfig, SyncSourceConfig},
+        human_config::{
+            evm::{ContractConfig, EventConfig, Network},
+            GlobalContract, HumanConfig, NetworkContract, RpcConfig, SyncSourceConfig,
+        },
     },
     evm::address::Address,
     init_config::InitConfig,
@@ -122,21 +125,21 @@ type NetworkId = u64;
 type RpcUrl = String;
 
 #[derive(Clone, Debug)]
-pub enum Network {
+pub enum NetworkKind {
     Supported(HypersyncNetwork),
     Unsupported(NetworkId, RpcUrl),
 }
 
-impl Network {
+impl NetworkKind {
     pub fn get_network_id(&self) -> NetworkId {
         match self {
-            Network::Supported(n) => n.clone() as u64,
-            Network::Unsupported(n, _) => *n,
+            Self::Supported(n) => n.clone() as u64,
+            Self::Unsupported(n, _) => *n,
         }
     }
 }
 
-impl Display for Network {
+impl Display for NetworkKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
             Self::Supported(n) => write!(f, "{}", n),
@@ -147,19 +150,19 @@ impl Display for Network {
 
 #[derive(Clone, Debug)]
 pub struct ContractImportNetworkSelection {
-    pub network: Network,
+    pub network: NetworkKind,
     pub addresses: Vec<Address>,
 }
 
 impl ContractImportNetworkSelection {
-    pub fn new(network: Network, address: Address) -> Self {
+    pub fn new(network: NetworkKind, address: Address) -> Self {
         Self {
             network,
             addresses: vec![address],
         }
     }
 
-    pub fn new_without_addresses(network: Network) -> Self {
+    pub fn new_without_addresses(network: NetworkKind) -> Self {
         Self {
             network,
             addresses: vec![],
@@ -177,17 +180,18 @@ impl ContractImportNetworkSelection {
 type ContractName = String;
 impl AutoConfigSelection {
     pub fn to_human_config(self: &Self, init_config: &InitConfig) -> Result<HumanConfig> {
-        let mut networks_map: HashMap<u64, human_config::evm::Network> = HashMap::new();
-        let mut global_contracts: HashMap<ContractName, GlobalContractConfig> = HashMap::new();
+        let mut networks_map: HashMap<u64, Network> = HashMap::new();
+        let mut global_contracts: HashMap<ContractName, GlobalContract<ContractConfig>> =
+            HashMap::new();
 
         for selected_contract in self.selected_contracts.clone() {
             let is_multi_chain_contract = selected_contract.networks.len() > 1;
 
-            let events: Vec<human_config::evm::EventConfig> = selected_contract
+            let events: Vec<EventConfig> = selected_contract
                 .events
                 .into_iter()
-                .map(|event| human_config::evm::EventConfig {
-                    event: human_config::evm::EventConfig::event_string_from_abi_event(&event),
+                .map(|event| EventConfig {
+                    event: EventConfig::event_string_from_abi_event(&event),
                     required_entities: None,
                     is_async: None,
                 })
@@ -198,11 +202,13 @@ impl AutoConfigSelection {
             let config = if is_multi_chain_contract {
                 //Add the contract to global contract config and return none for local contract
                 //config
-                let global_contract = GlobalContractConfig {
+                let global_contract = GlobalContract {
                     name: selected_contract.name.clone(),
-                    abi_file_path: None,
-                    handler,
-                    events,
+                    config: ContractConfig {
+                        abi_file_path: None,
+                        handler,
+                        events,
+                    },
                 };
 
                 unique_hashmap::try_insert(
@@ -218,7 +224,7 @@ impl AutoConfigSelection {
                 None
             } else {
                 //Return some for local contract config
-                Some(human_config::evm::ContractConfig {
+                Some(ContractConfig {
                     abi_file_path: None,
                     handler,
                     events,
@@ -237,8 +243,8 @@ impl AutoConfigSelection {
                     .entry(selected_network.network.get_network_id())
                     .or_insert({
                         let sync_source = match &selected_network.network {
-                            Network::Supported(_) => None,
-                            Network::Unsupported(_, url) => {
+                            NetworkKind::Supported(_) => None,
+                            NetworkKind::Unsupported(_, url) => {
                                 Some(SyncSourceConfig::RpcConfig(RpcConfig {
                                     url: url.clone(),
                                     unstable__sync_config: None,
@@ -246,7 +252,7 @@ impl AutoConfigSelection {
                             }
                         };
 
-                        human_config::evm::Network {
+                        Network {
                             id: selected_network.network.get_network_id(),
                             sync_source,
                             start_block: 0,
@@ -256,7 +262,7 @@ impl AutoConfigSelection {
                         }
                     });
 
-                let contract = human_config::evm::NetworkContract {
+                let contract = NetworkContract {
                     name: selected_contract.name.clone(),
                     address,
                     config: config.clone(),
@@ -275,18 +281,17 @@ impl AutoConfigSelection {
             values => Some(values),
         };
 
-        let networks = networks_map.into_values().sorted_by_key(|v| v.id).collect();
-
         Ok(HumanConfig {
             name: init_config.name.clone(),
             description: None,
             schema: None,
             contracts,
-            networks,
+            networks: Some(networks_map.into_values().sorted_by_key(|v| v.id).collect()),
             unordered_multichain_mode: None,
             event_decoder: None,
             rollback_on_reorg: None,
             save_full_history: None,
+            fuel: None,
         })
     }
 }

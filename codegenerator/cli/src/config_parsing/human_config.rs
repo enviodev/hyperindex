@@ -1,21 +1,22 @@
 use super::validation;
-use crate::constants::links;
+use crate::{constants::links, utils::normalized_list::NormalizedList};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 type NetworkId = u64;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub struct HumanConfig {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub contracts: Option<Vec<GlobalContractConfig>>,
+    pub contracts: Option<Vec<GlobalContract<evm::ContractConfig>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub schema: Option<String>,
-    pub networks: Vec<evm::Network>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub networks: Option<Vec<evm::Network>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unordered_multichain_mode: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -24,6 +25,25 @@ pub struct HumanConfig {
     pub rollback_on_reorg: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub save_full_history: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fuel: Option<fuel::Config>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct GlobalContract<T> {
+    pub name: String,
+    #[serde(flatten)]
+    pub config: T,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct NetworkContract<T> {
+    pub name: String,
+    pub address: NormalizedList<String>,
+    #[serde(flatten)]
+    //If this is "None" it should be expected that
+    //there is a global config for the contract
+    pub config: Option<T>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
@@ -31,15 +51,6 @@ pub struct HumanConfig {
 pub enum EventDecoder {
     Viem,
     HypersyncClient,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct GlobalContractConfig {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub abi_file_path: Option<String>,
-    pub handler: String,
-    pub events: Vec<evm::EventConfig>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -55,39 +66,8 @@ pub enum SyncSourceConfig {
     HypersyncConfig(HypersyncConfig),
 }
 
-pub mod fuel {
-    use super::NetworkId;
-    use crate::utils::normalized_list::NormalizedList;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    pub struct Network {
-        pub id: NetworkId,
-        pub start_block: i32,
-        pub end_block: Option<i32>,
-        pub contracts: Vec<NetworkContract>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    pub struct NetworkContract {
-        pub name: String,
-        pub address: NormalizedList<String>,
-        pub abi_file_path: String,
-        pub handler: String,
-        pub events: Vec<EventConfig>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    #[serde(rename_all = "camelCase")]
-    pub struct EventConfig {
-        pub name: String,
-        pub log_id: NormalizedList<String>,
-    }
-}
-
 pub mod evm {
-    use super::{NetworkId, RequiredEntity, SyncSourceConfig};
-    use crate::utils::normalized_list::NormalizedList;
+    use super::{NetworkContract, NetworkId, RequiredEntity, SyncSourceConfig};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -98,18 +78,9 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub confirmed_block_threshold: Option<i32>,
         pub start_block: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub end_block: Option<i32>,
-        pub contracts: Vec<NetworkContract>,
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    pub struct NetworkContract {
-        pub name: String,
-        pub address: NormalizedList<String>,
-        #[serde(flatten)]
-        //If this is "None" it should be expected that
-        //there is a global config for the contract
-        pub config: Option<ContractConfig>,
+        pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -154,6 +125,43 @@ pub mod evm {
                 },
             )
         }
+    }
+}
+
+pub mod fuel {
+    use super::{GlobalContract, NetworkContract, NetworkId};
+    use crate::utils::normalized_list::NormalizedList;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    pub struct Config {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
+        pub networks: Vec<Network>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    pub struct Network {
+        pub id: NetworkId,
+        pub start_block: i32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub end_block: Option<i32>,
+        pub contracts: Vec<NetworkContract<ContractConfig>>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    pub struct ContractConfig {
+        pub abi_file_path: String,
+        pub handler: String,
+        pub events: Vec<EventConfig>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[serde(rename_all = "camelCase")]
+    pub struct EventConfig {
+        pub name: String,
+        #[serde(skip_serializing_if = "NormalizedList::is_empty")]
+        pub log_id: NormalizedList<String>,
     }
 }
 
@@ -228,12 +236,13 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::{
-        config_parsing::human_config::EventDecoder, utils::normalized_list::NormalizedList,
+        config_parsing::human_config::{fuel, EventDecoder},
+        utils::normalized_list::NormalizedList,
     };
 
     use super::{
-        evm::{ContractConfig, Network, NetworkContract},
-        HumanConfig,
+        evm::{ContractConfig, Network},
+        HumanConfig, NetworkContract,
     };
     use serde_json::json;
 
@@ -246,7 +255,7 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 events: []
     "#;
 
-        let deserialized: NetworkContract = serde_yaml::from_str(yaml).unwrap();
+        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
         let expected = NetworkContract {
             name: "Contract1".to_string(),
             address: NormalizedList::from(vec![
@@ -270,7 +279,7 @@ handler: ./src/EventHandler.js
 events: []
     "#;
 
-        let deserialized: NetworkContract = serde_yaml::from_str(yaml).unwrap();
+        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
         let expected = NetworkContract {
             name: "Contract1".to_string(),
             address: vec![].into(),
@@ -293,7 +302,7 @@ address: "0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"
 events: []
     "#;
 
-        let deserialized: NetworkContract = serde_yaml::from_str(yaml).unwrap();
+        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
         let expected = NetworkContract {
             name: "Contract1".to_string(),
             address: vec!["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC".to_string()].into(),
@@ -314,7 +323,7 @@ name: Contract1
 address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
     "#;
 
-        let deserialized: NetworkContract = serde_yaml::from_str(yaml).unwrap();
+        let deserialized: NetworkContract<ContractConfig> = serde_yaml::from_str(yaml).unwrap();
         let expected = NetworkContract {
             name: "Contract1".to_string(),
             address: NormalizedList::from(vec![
@@ -369,11 +378,13 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        println!("{:?}", cfg.networks[0].contracts[0]);
+        let evm_network = cfg.networks.unwrap();
 
-        assert!(cfg.networks[0].contracts[0].config.is_some());
-        assert!(cfg.networks[0].contracts[1].config.is_some());
-        assert_eq!(cfg.networks[0].contracts[1].address, None.into());
+        println!("{:?}", evm_network[0].contracts[0]);
+
+        assert!(evm_network[0].contracts[0].config.is_some());
+        assert!(evm_network[0].contracts[1].config.is_some());
+        assert_eq!(evm_network[0].contracts[1].address, None.into());
     }
 
     #[test]
@@ -385,8 +396,70 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        assert!(cfg.networks[0].contracts[0].config.is_some());
-        assert!(cfg.networks[1].contracts[0].config.is_none());
+        assert!(cfg.networks.clone().unwrap()[0].contracts[0]
+            .config
+            .is_some());
+        assert!(cfg.networks.clone().unwrap()[1].contracts[0]
+            .config
+            .is_none());
+    }
+
+    #[test]
+    fn deserializes_fuel_config() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test/configs/fuel-config.yaml");
+
+        let file_str = std::fs::read_to_string(config_path).unwrap();
+
+        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
+
+        let expected_cfg = HumanConfig {
+            name: "Fuel indexer".to_string(),
+            description: None,
+            contracts: None,
+            schema: None,
+            unordered_multichain_mode: None,
+            event_decoder: None,
+            rollback_on_reorg: None,
+            save_full_history: None,
+            networks: None,
+            fuel: Some(fuel::Config {
+                contracts: None,
+                networks: vec![fuel::Network {
+                    id: 0,
+                    start_block: 0,
+                    end_block: None,
+                    contracts: vec![NetworkContract {
+                        name: "OrderBook".to_string(),
+                        address:
+                            "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
+                                .to_string()
+                                .into(),
+                        config: Some(fuel::ContractConfig {
+                            abi_file_path: "./abis/spark-orderbook.json".to_string(),
+                            handler: "./src/OrderBookHandlers.ts".to_string(),
+                            events: vec![
+                                fuel::EventConfig {
+                                    name: "OrderChangeEvent".to_string(),
+                                    log_id: None.into(),
+                                },
+                                fuel::EventConfig {
+                                    name: "MarketCreateEvent".to_string(),
+                                    log_id: None.into(),
+                                },
+                                fuel::EventConfig {
+                                    name: "TradeEvent".to_string(),
+                                    log_id: None.into(),
+                                },
+                            ],
+                        }),
+                    }],
+                }],
+            }),
+        };
+
+        // deserializes fuel config
+        assert_eq!(cfg, expected_cfg);
     }
 
     #[test]
