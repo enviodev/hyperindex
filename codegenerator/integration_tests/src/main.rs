@@ -1,11 +1,9 @@
 mod hypersync_health;
 use envio::{
-    clap_definitions::{
-        EvmTemplateArgs, FuelInitFlow, FuelTemplateArgs, InitArgs, InitFlow, ProjectPaths,
-    },
+    clap_definitions::{self, InitArgs, InitFlow, ProjectPaths},
     constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
     executor::init::run_init_args,
-    init_config::{EvmTemplate, FuelTemplate, Language},
+    init_config::{self, Language},
 };
 use std::{fs, io, path::Path, time::Duration};
 use strum::IntoEnumIterator;
@@ -71,24 +69,26 @@ impl InitCombo {
 fn generate_init_args_combinations() -> Vec<InitCombo> {
     Language::iter()
         .flat_map(|l| {
-            EvmTemplate::iter()
+            init_config::evm::Template::iter()
                 .map(|t| {
                     InitCombo::new(
                         format!("evm_{t}"),
                         l.clone(),
-                        InitFlow::Template(EvmTemplateArgs {
+                        InitFlow::Template(clap_definitions::evm::TemplateArgs {
                             template: Some(t.clone()),
                         }),
                     )
                 })
-                .chain(FuelTemplate::iter().map(|t| {
+                .chain(init_config::fuel::Template::iter().map(|t| {
                     InitCombo::new(
                         format!("fuel_{t}"),
                         l.clone(),
                         InitFlow::Fuel {
-                            init_flow: Some(FuelInitFlow::Template(FuelTemplateArgs {
-                                template: Some(t.clone()),
-                            })),
+                            init_flow: Some(clap_definitions::fuel::InitFlow::Template(
+                                clap_definitions::fuel::TemplateArgs {
+                                    template: Some(t.clone()),
+                                },
+                            )),
                         },
                     )
                 }))
