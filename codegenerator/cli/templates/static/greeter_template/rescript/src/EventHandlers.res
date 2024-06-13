@@ -5,7 +5,7 @@ Registers a handler that handles any values from the
 NewGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Handlers.GreeterContract.NewGreeting.handler(async ({event, context}) => {
+Handlers.Greeter.NewGreeting.handler(async ({event, context}) => {
   //The id for the "User" entity
   let userId = event.params.user->Ethers.ethAddressToString
   //The greeting string that was added.
@@ -47,7 +47,7 @@ Registers a handler that handles any values from the
 ClearGreeting event on the Greeter contract and index these values into
 the DB.
 */
-Handlers.GreeterContract.ClearGreeting.handler(async ({event, context}) => {
+Handlers.Greeter.ClearGreeting.handler(async ({event, context}) => {
   //The id for the "User" entity
   let userId = event.params.user->Ethers.ethAddressToString
   //The optional User entity that may exist already at "userId"

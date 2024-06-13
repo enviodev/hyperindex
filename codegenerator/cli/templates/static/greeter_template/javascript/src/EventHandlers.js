@@ -1,11 +1,11 @@
-const { GreeterContract } = require("generated");
+const { Greeter } = require("generated");
 
 /**
 Registers a handler that handles any values from the
 NewGreeting event on the Greeter contract and index these values into
 the DB.
 */
-GreeterContract.NewGreeting.handler(async ({ event, context }) => {
+Greeter.NewGreeting.handler(async ({ event, context }) => {
   //The id for the User entity
   const userId = event.params.user;
   //The greeting string that was added.
@@ -45,7 +45,7 @@ Registers a handler that handles any values from the
 ClearGreeting event on the Greeter contract and index these values into
 the DB.
 */
-GreeterContract.ClearGreeting.handler(async ({ event, context }) => {
+Greeter.ClearGreeting.handler(async ({ event, context }) => {
   //The id for the "User" entity derived from params of the ClearGreeting event
   const userId = event.params.user;
   //The optional user entity that may exist already at "userId"
