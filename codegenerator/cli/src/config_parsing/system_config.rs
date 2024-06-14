@@ -1,7 +1,13 @@
 use super::{
     chain_helpers::get_confirmed_block_threshold_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
-    human_config::{self, EventDecoder, HumanConfig},
+    human_config::{
+        self,
+        evm::{
+            EventConfig, EventDecoder, HumanConfig, HypersyncConfig as HumanHypersyncConfig,
+            Network as HumanNetwork, RpcConfig as HumanRpcConfig, SyncSourceConfig,
+        },
+    },
     hypersync_endpoints,
     validation::validate_names_not_reserved,
 };
@@ -153,19 +159,6 @@ impl SystemConfig {
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
-        if human_cfg.fuel.is_some() {
-            Err(anyhow!("Running envio with Fuel configuration is not supported by the version. Please install envio@fuel instead."))?;
-        }
-        let evm_networks = match human_cfg.networks {
-            Some(n) => n,
-            None => vec![],
-        };
-        if evm_networks.is_empty() {
-            Err(anyhow!(
-                "At least one EVM network configuration is required."
-            ))?;
-        }
-
         let mut networks: NetworkMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
@@ -201,7 +194,7 @@ impl SystemConfig {
             }
         }
 
-        for network in evm_networks {
+        for network in human_cfg.networks {
             for contract in network.contracts.clone() {
                 //Add values for local contract
                 match contract.config {
@@ -355,7 +348,7 @@ pub enum SyncSource {
 }
 
 impl SyncSource {
-    fn from_human_config(network: human_config::evm::Network) -> Result<Self> {
+    fn from_human_config(network: HumanNetwork) -> Result<Self> {
         match network.sync_source {
             None => {
                 let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id.clone())
@@ -365,7 +358,7 @@ impl SyncSource {
                     endpoint_url: defualt_hypersync_endpoint,
                 }))
             }
-            Some(human_config::SyncSourceConfig::RpcConfig(human_config::RpcConfig {
+            Some(SyncSourceConfig::RpcConfig(HumanRpcConfig {
                 url,
                 unstable__sync_config,
             })) => Ok(Self::RpcConfig(RpcConfig {
@@ -394,9 +387,9 @@ impl SyncSource {
                     },
                 },
             })),
-            Some(human_config::SyncSourceConfig::HypersyncConfig(
-                human_config::HypersyncConfig { endpoint_url },
-            )) => Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url })),
+            Some(SyncSourceConfig::HypersyncConfig(HumanHypersyncConfig { endpoint_url })) => {
+                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url }))
+            }
         }
     }
 }
@@ -604,7 +597,7 @@ impl Event {
     }
 
     pub fn try_from_config_event(
-        human_cfg_event: human_config::evm::EventConfig,
+        human_cfg_event: EventConfig,
         opt_abi: &Option<EvmAbi>,
         schema: &Schema,
     ) -> Result<Self> {

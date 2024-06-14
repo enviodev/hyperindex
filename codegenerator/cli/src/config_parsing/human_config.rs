@@ -6,29 +6,6 @@ use std::path::PathBuf;
 
 type NetworkId = u64;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
-pub struct HumanConfig {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contracts: Option<Vec<GlobalContract<evm::ContractConfig>>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub networks: Option<Vec<evm::Network>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unordered_multichain_mode: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub event_decoder: Option<EventDecoder>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rollback_on_reorg: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub save_full_history: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fuel: Option<fuel::Config>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct GlobalContract<T> {
     pub name: String,
@@ -46,29 +23,81 @@ pub struct NetworkContract<T> {
     pub config: Option<T>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(rename_all = "kebab-case")]
-pub enum EventDecoder {
-    Viem,
-    HypersyncClient,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct HypersyncConfig {
-    #[serde(alias = "url")]
-    pub endpoint_url: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum SyncSourceConfig {
-    RpcConfig(RpcConfig),
-    HypersyncConfig(HypersyncConfig),
-}
-
 pub mod evm {
-    use super::{NetworkContract, NetworkId, RequiredEntity, SyncSourceConfig};
+    use super::{GlobalContract, NetworkContract, NetworkId, RequiredEntity};
     use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    pub struct HumanConfig {
+        pub name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub description: Option<String>,
+        pub ecosystem: Option<EcosystemTag>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub schema: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
+        pub networks: Vec<Network>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub unordered_multichain_mode: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub event_decoder: Option<EventDecoder>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub rollback_on_reorg: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub save_full_history: Option<bool>,
+    }
+
+    // Workaround for https://github.com/serde-rs/serde/issues/2231
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "lowercase")]
+    pub enum EcosystemTag {
+        Evm,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+    #[serde(rename_all = "kebab-case")]
+    pub enum EventDecoder {
+        Viem,
+        HypersyncClient,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    pub struct HypersyncConfig {
+        #[serde(alias = "url")]
+        pub endpoint_url: String,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+    pub struct SyncConfigUnstable {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub initial_block_interval: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub backoff_multiplicative: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub acceleration_additive: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub interval_ceiling: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub backoff_millis: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub query_timeout_millis: Option<u32>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
+    pub struct RpcConfig {
+        pub url: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub unstable__sync_config: Option<SyncConfigUnstable>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[serde(rename_all = "snake_case")]
+    pub enum SyncSourceConfig {
+        RpcConfig(RpcConfig),
+        HypersyncConfig(HypersyncConfig),
+    }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
     pub struct Network {
@@ -134,10 +163,23 @@ pub mod fuel {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    pub struct Config {
+    pub struct HumanConfig {
+        pub name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub description: Option<String>,
+        pub ecosystem: EcosystemTag,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         pub networks: Vec<Network>,
+    }
+
+    // Workaround for https://github.com/serde-rs/serde/issues/2231
+    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "lowercase")]
+    pub enum EcosystemTag {
+        Fuel,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -165,30 +207,6 @@ pub mod fuel {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-pub struct SyncConfigUnstable {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub initial_block_interval: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub backoff_multiplicative: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub acceleration_additive: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub interval_ceiling: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub backoff_millis: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub query_timeout_millis: Option<u32>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
-pub struct RpcConfig {
-    pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub unstable__sync_config: Option<SyncConfigUnstable>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RequiredEntity {
@@ -209,7 +227,7 @@ fn strip_to_letters(string: &str) -> String {
     pg_friendly_name
 }
 
-pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<HumanConfig> {
+pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<evm::HumanConfig> {
     let config = std::fs::read_to_string(config_path).context(format!(
         "EE104: Failed to resolve config path {0}. Make sure you're in the correct directory and \
          that a config file with the name {0} exists",
@@ -218,10 +236,11 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Hum
             .unwrap_or("unknown config file name path"),
     ))?;
 
-    let mut deserialized_yaml: HumanConfig = serde_yaml::from_str(&config).context(format!(
-        "EE105: Failed to deserialize config. Visit the docs for more information {}",
-        links::DOC_CONFIGURATION_FILE
-    ))?;
+    let mut deserialized_yaml: evm::HumanConfig =
+        serde_yaml::from_str(&config).context(format!(
+            "EE105: Failed to deserialize config. Visit the docs for more information {}",
+            links::DOC_CONFIGURATION_FILE
+        ))?;
 
     deserialized_yaml.name = strip_to_letters(&deserialized_yaml.name);
 
@@ -233,18 +252,13 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<Hum
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
-    use crate::{
-        config_parsing::human_config::{fuel, EventDecoder},
-        utils::normalized_list::NormalizedList,
-    };
-
     use super::{
-        evm::{ContractConfig, Network},
-        HumanConfig, NetworkContract,
+        evm::{ContractConfig, EventDecoder, HumanConfig, Network},
+        NetworkContract,
     };
+    use crate::{config_parsing::human_config::fuel, utils::normalized_list::NormalizedList};
     use serde_json::json;
+    use std::path::PathBuf;
 
     #[test]
     fn test_flatten_deserialize_local_contract() {
@@ -378,13 +392,11 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        let evm_network = cfg.networks.unwrap();
+        println!("{:?}", cfg.networks[0].contracts[0]);
 
-        println!("{:?}", evm_network[0].contracts[0]);
-
-        assert!(evm_network[0].contracts[0].config.is_some());
-        assert!(evm_network[0].contracts[1].config.is_some());
-        assert_eq!(evm_network[0].contracts[1].address, None.into());
+        assert!(cfg.networks[0].contracts[0].config.is_some());
+        assert!(cfg.networks[0].contracts[1].config.is_some());
+        assert_eq!(cfg.networks[0].contracts[1].address, None.into());
     }
 
     #[test]
@@ -396,12 +408,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        assert!(cfg.networks.clone().unwrap()[0].contracts[0]
-            .config
-            .is_some());
-        assert!(cfg.networks.clone().unwrap()[1].contracts[0]
-            .config
-            .is_none());
+        assert!(cfg.networks[0].contracts[0].config.is_some());
+        assert!(cfg.networks[1].contracts[0].config.is_none());
     }
 
     #[test]
@@ -411,55 +419,64 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
 
         let file_str = std::fs::read_to_string(config_path).unwrap();
 
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
+        let cfg: fuel::HumanConfig = serde_yaml::from_str(&file_str).unwrap();
 
-        let expected_cfg = HumanConfig {
+        let expected_cfg = fuel::HumanConfig {
             name: "Fuel indexer".to_string(),
             description: None,
-            contracts: None,
             schema: None,
-            unordered_multichain_mode: None,
-            event_decoder: None,
-            rollback_on_reorg: None,
-            save_full_history: None,
-            networks: None,
-            fuel: Some(fuel::Config {
-                contracts: None,
-                networks: vec![fuel::Network {
-                    id: 0,
-                    start_block: 0,
-                    end_block: None,
-                    contracts: vec![NetworkContract {
-                        name: "OrderBook".to_string(),
-                        address:
-                            "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
-                                .to_string()
-                                .into(),
-                        config: Some(fuel::ContractConfig {
-                            abi_file_path: "./abis/spark-orderbook.json".to_string(),
-                            handler: "./src/OrderBookHandlers.ts".to_string(),
-                            events: vec![
-                                fuel::EventConfig {
-                                    name: "OrderChangeEvent".to_string(),
-                                    log_id: None.into(),
-                                },
-                                fuel::EventConfig {
-                                    name: "MarketCreateEvent".to_string(),
-                                    log_id: None.into(),
-                                },
-                                fuel::EventConfig {
-                                    name: "TradeEvent".to_string(),
-                                    log_id: None.into(),
-                                },
-                            ],
-                        }),
-                    }],
+            ecosystem: fuel::EcosystemTag::Fuel,
+            contracts: None,
+            networks: vec![fuel::Network {
+                id: 0,
+                start_block: 0,
+                end_block: None,
+                contracts: vec![NetworkContract {
+                    name: "OrderBook".to_string(),
+                    address: "0x4a2ce054e3e94155f7092f7365b212f7f45105b74819c623744ebcc5d065c6ac"
+                        .to_string()
+                        .into(),
+                    config: Some(fuel::ContractConfig {
+                        abi_file_path: "./abis/spark-orderbook.json".to_string(),
+                        handler: "./src/OrderBookHandlers.ts".to_string(),
+                        events: vec![
+                            fuel::EventConfig {
+                                name: "OrderChangeEvent".to_string(),
+                                log_id: None.into(),
+                            },
+                            fuel::EventConfig {
+                                name: "MarketCreateEvent".to_string(),
+                                log_id: None.into(),
+                            },
+                            fuel::EventConfig {
+                                name: "TradeEvent".to_string(),
+                                log_id: None.into(),
+                            },
+                        ],
+                    }),
                 }],
-            }),
+            }],
         };
 
         // deserializes fuel config
         assert_eq!(cfg, expected_cfg);
+    }
+
+    #[test]
+    fn serializes_fuel_config() {
+        let cfg = fuel::HumanConfig {
+            name: "Fuel indexer".to_string(),
+            description: None,
+            schema: None,
+            ecosystem: fuel::EcosystemTag::Fuel,
+            contracts: None,
+            networks: vec![],
+        };
+
+        assert_eq!(
+            serde_yaml::to_string(&cfg).unwrap(),
+            "name: Fuel indexer\necosystem: fuel\nnetworks: []\n"
+        );
     }
 
     #[test]

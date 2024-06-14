@@ -3,8 +3,8 @@ use crate::{
     config_parsing::{
         chain_helpers::{self, GraphNetwork},
         human_config::{
-            evm::{ContractConfig, EventConfig, Network},
-            HumanConfig, NetworkContract,
+            evm::{ContractConfig, EventConfig, HumanConfig, Network},
+            NetworkContract,
         },
     },
     project_paths::handler_paths::DEFAULT_SCHEMA_PATH,
@@ -273,14 +273,14 @@ pub async fn generate_config_from_subgraph_id(
     let mut config = HumanConfig {
         name: manifest.data_sources[0].name.clone(),
         description: manifest.description,
+        ecosystem: None,
         schema: None,
         contracts: None,
-        networks: None,
+        networks: vec![],
         unordered_multichain_mode: None,
         event_decoder: None,
         rollback_on_reorg: None,
         save_full_history: None,
-        fuel: None,
     };
     let mut networks: Vec<Network> = vec![];
 
@@ -390,7 +390,7 @@ pub async fn generate_config_from_subgraph_id(
         // Pushing network to config
         networks.push(network);
     }
-    config.networks = Some(networks);
+    config.networks = networks;
 
     // Convert config to YAML file
     let yaml_string = serde_yaml::to_string(&config).unwrap();

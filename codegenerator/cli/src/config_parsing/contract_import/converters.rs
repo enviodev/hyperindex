@@ -4,8 +4,8 @@ use crate::{
     config_parsing::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
         human_config::{
-            evm::{ContractConfig, EventConfig, Network},
-            GlobalContract, HumanConfig, NetworkContract, RpcConfig, SyncSourceConfig,
+            evm::{ContractConfig, EventConfig, HumanConfig, Network, RpcConfig, SyncSourceConfig},
+            GlobalContract, NetworkContract,
         },
     },
     evm::address::Address,
@@ -284,14 +284,14 @@ impl AutoConfigSelection {
         Ok(HumanConfig {
             name: init_config.name.clone(),
             description: None,
+            ecosystem: None,
             schema: None,
             contracts,
-            networks: Some(networks_map.into_values().sorted_by_key(|v| v.id).collect()),
+            networks: networks_map.into_values().sorted_by_key(|v| v.id).collect(),
             unordered_multichain_mode: None,
             event_decoder: None,
             rollback_on_reorg: None,
             save_full_history: None,
-            fuel: None,
         })
     }
 }

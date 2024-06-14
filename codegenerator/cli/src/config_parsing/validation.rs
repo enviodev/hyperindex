@@ -1,9 +1,9 @@
-use super::human_config::{HumanConfig, SyncSourceConfig};
+use super::human_config::evm::{HumanConfig, SyncSourceConfig};
 use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
 };
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use regex::Regex;
 use std::{collections::HashSet, path::Path};
 
@@ -110,11 +110,7 @@ pub fn validate_deserialized_config_yaml(
         }
     }
 
-    for network in deserialized_yaml
-        .networks
-        .as_ref()
-        .context("At least one EVM network configuration required")?
-    {
+    for network in &deserialized_yaml.networks {
         if let Some(SyncSourceConfig::RpcConfig(rpc_config)) = &network.sync_source {
             if !validate_rpc_url(&rpc_config.url) {
                 return Err(anyhow!("EE109: The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")));

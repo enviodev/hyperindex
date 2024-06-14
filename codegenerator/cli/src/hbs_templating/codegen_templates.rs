@@ -7,7 +7,7 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
-        human_config::EventDecoder,
+        human_config::evm::EventDecoder,
         postgres_types,
         system_config::{self, RpcConfig, SystemConfig},
     },
