@@ -1,5 +1,5 @@
 import assert from "assert";
-import { TestHelpers, AccountEntity } from "generated";
+import { TestHelpers, Account } from "generated";
 const { MockDb, ERC20, Addresses } = TestHelpers;
 
 describe("Transfers", () => {
@@ -12,7 +12,7 @@ describe("Transfers", () => {
     const userAddress2 = Addresses.mockAddresses[1];
 
     //Make a mock entity to set the initial state of the mock db
-    const mockAccountEntity: AccountEntity = {
+    const mockAccountEntity: Account = {
       id: userAddress1,
       balance: 5n,
     };

@@ -1,4 +1,4 @@
-import { ERC20, AccountEntity, ApprovalEntity } from "generated";
+import { ERC20, Account, Approval } from "generated";
 
 ERC20.Approval.handler(async ({ event, context }) => {
   //  getting the owner Account entity
@@ -8,7 +8,7 @@ ERC20.Approval.handler(async ({ event, context }) => {
     // Usually an account that is being approved already has/has had a balance, but it is possible they haven't.
 
     // create the account
-    let accountObject: AccountEntity = {
+    let accountObject: Account = {
       id: event.params.owner.toString(),
       balance: 0n,
     };
@@ -18,7 +18,7 @@ ERC20.Approval.handler(async ({ event, context }) => {
   let approvalId =
     event.params.owner.toString() + "-" + event.params.spender.toString();
 
-  let approvalObject: ApprovalEntity = {
+  let approvalObject: Approval = {
     id: approvalId,
     amount: event.params.value,
     owner_id: event.params.owner.toString(),
@@ -35,7 +35,7 @@ ERC20.Transfer.handler(async ({ event, context }) => {
   if (senderAccount === undefined) {
     // create the account
     // This is likely only ever going to be the zero address in the case of the first mint
-    let accountObject: AccountEntity = {
+    let accountObject: Account = {
       id: event.params.from.toString(),
       balance: 0n - event.params.value,
     };
@@ -43,7 +43,7 @@ ERC20.Transfer.handler(async ({ event, context }) => {
     context.Account.set(accountObject);
   } else {
     // subtract the balance from the existing users balance
-    let accountObject: AccountEntity = {
+    let accountObject: Account = {
       id: senderAccount.id,
       balance: senderAccount.balance - event.params.value,
     };
@@ -54,14 +54,14 @@ ERC20.Transfer.handler(async ({ event, context }) => {
 
   if (receiverAccount === undefined) {
     // create new account
-    let accountObject: AccountEntity = {
+    let accountObject: Account = {
       id: event.params.to.toString(),
       balance: event.params.value,
     };
     context.Account.set(accountObject);
   } else {
     // update existing account
-    let accountObject: AccountEntity = {
+    let accountObject: Account = {
       id: receiverAccount.id,
       balance: receiverAccount.balance + event.params.value,
     };

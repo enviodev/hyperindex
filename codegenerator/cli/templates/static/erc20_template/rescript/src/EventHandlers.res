@@ -5,20 +5,20 @@ Handlers.ERC20.Approval.handler(async ({event, context}) => {
 
   if(ownerAccount->Belt.Option.isNone)
   {
-    // setting accountEntity object
-    let accountObject: accountEntity = {
+    // setting Entities.Account.t object
+    let accountObject: Entities.Account.t = {
       id: event.params.owner->Ethers.ethAddressToString,
       balance: Ethers.BigInt.fromInt(0),
     }
 
-    // setting the accountEntity with the new transfer field value
+    // setting the account-entity with the new transfer field value
     context.account.set(accountObject)
   }
 
   let approvalId =
     event.params.owner->Ethers.ethAddressToString ++ "-" ++ event.params.spender->Ethers.ethAddressToString;
 
-  let approvalObject: approvalEntity = {
+  let approvalObject: Entities.Approval.t = {
     id: approvalId,
     amount: event.params.value,
     owner_id: event.params.owner->Ethers.ethAddressToString,
@@ -36,7 +36,7 @@ Handlers.ERC20.Transfer.handler(async ({event, context}) => {
   switch senderAccount {
   | Some(existingSenderAccount) => {
       // subtract the balance from the existing users balance
-      let accountObject: accountEntity = {
+      let accountObject: Entities.Account.t = {
         id: existingSenderAccount.id,        
         balance: existingSenderAccount.balance->Ethers.BigInt.sub(event.params.value),
       }
@@ -46,12 +46,12 @@ Handlers.ERC20.Transfer.handler(async ({event, context}) => {
   | None => {
       // create the account
       // This is likely only ever going to be the zero address in the case of the first mint
-      let accountObject: accountEntity = {
+      let accountObject: Entities.Account.t = {
         id: event.params.from->Ethers.ethAddressToString,
         balance: Ethers.BigInt.fromInt(0)->Ethers.BigInt.sub(event.params.value),
       }
 
-      // setting the accountEntity with the new transfer field value
+      // setting the account-entity with the new transfer field value
       context.account.set(accountObject)
     }
   }
@@ -61,7 +61,7 @@ Handlers.ERC20.Transfer.handler(async ({event, context}) => {
   switch receiverAccount {
   | Some(existingReceiverAccount) => {
       // update existing account's added balance
-      let accountObject: accountEntity = {
+      let accountObject: Entities.Account.t = {
         id: existingReceiverAccount.id,        
         balance: existingReceiverAccount.balance->Ethers.BigInt.add(event.params.value),
       }
@@ -71,7 +71,7 @@ Handlers.ERC20.Transfer.handler(async ({event, context}) => {
 
   | None => {
       // create new account
-      let accountObject: accountEntity = {
+      let accountObject: Entities.Account.t = {
         id: event.params.to->Ethers.ethAddressToString,            
         balance: event.params.value,
       }

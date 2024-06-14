@@ -1,5 +1,5 @@
 import assert from "assert";
-import { TestHelpers, UserEntity } from "generated";
+import { TestHelpers, User } from "generated";
 const { MockDb, Greeter, Addresses } = TestHelpers;
 
 describe("Greeter template tests", () => {
@@ -24,7 +24,7 @@ describe("Greeter template tests", () => {
     });
 
     // Expected entity that should be created
-    const expectedUserEntity: UserEntity = {
+    const expectedUserEntity: User = {
       id: userAddress,
       latestGreeting: greeting,
       numberOfGreetings: 1,

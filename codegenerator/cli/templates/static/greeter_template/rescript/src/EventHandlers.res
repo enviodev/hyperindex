@@ -16,7 +16,7 @@ Handlers.Greeter.NewGreeting.handler(async ({event, context}) => {
   let maybeCurrentUserEntity = await context.user.get(userId)
 
   //Construct the userEntity that is to be set in the DB
-  let userEntity: userEntity = switch maybeCurrentUserEntity {
+  let userEntity: Entities.User.t = switch maybeCurrentUserEntity {
   //In the case there is an existing "User" entity, update its
   //latestGreeting value, increment the numberOfGreetings and append latestGreeting
   //to the array of greetings

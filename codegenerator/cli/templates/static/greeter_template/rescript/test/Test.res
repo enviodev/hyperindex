@@ -24,7 +24,7 @@ describe("Greeter template tests", () => {
     })
 
     // Expected entity that should be created
-    let expectedUserEntity: Types.userEntity = {
+    let expectedUserEntity: Entities.User.t = {
       id: userAddress->Ethers.ethAddressToString,
       latestGreeting: greeting,
       numberOfGreetings: 1,

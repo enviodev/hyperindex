@@ -1,4 +1,4 @@
-import { Greeter, UserEntity } from "generated";
+import { Greeter, User } from "generated";
 
 /**
 Registers a handler that handles any values from the
@@ -16,7 +16,7 @@ Greeter.NewGreeting.handler(async ({ event, context }) => {
   const currentUserEntity = await context.User.get(userId);
 
   //Construct the userEntity that is to be set in the DB
-  const userEntity: UserEntity = currentUserEntity
+  const userEntity: User = currentUserEntity
     ? //In the case there is an existing "User" entity, update its
     //latestGreeting value, increment the numberOfGreetings and append latestGreeting
     //to the array of greetings

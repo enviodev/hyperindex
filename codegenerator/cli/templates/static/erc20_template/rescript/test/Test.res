@@ -13,7 +13,7 @@ describe("Transfers", () => {
     let userAddress2 = Ethers.Addresses.mockAddresses[1]->Option.getUnsafe
 
     //Make a mock entity to set the initial state of the mock db
-    let mockAccountEntity: Types.accountEntity = {
+    let mockAccountEntity: Entities.Account.t = {
       id: userAddress1->Ethers.ethAddressToString,
       balance: Ethers.BigInt.fromInt(5),
     }
