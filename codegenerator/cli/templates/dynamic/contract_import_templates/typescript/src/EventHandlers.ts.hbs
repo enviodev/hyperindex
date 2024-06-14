@@ -9,12 +9,12 @@ import {
     {{contract.name.capitalized}}_{{event.name.capitalized}},
   {{/each}}
 {{/each}}
-EventsSummaryEntity
+EventsSummary
 } from "generated";
 
 export const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 
-const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
+const INITIAL_EVENTS_SUMMARY: EventsSummary = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
@@ -29,7 +29,7 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
     }}.handler(async ({ event, context }) => {
   const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
+  const currentSummaryEntity: EventsSummary =
     summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {

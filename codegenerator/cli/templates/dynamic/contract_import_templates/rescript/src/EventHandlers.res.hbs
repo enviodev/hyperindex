@@ -2,7 +2,7 @@ let globalEventsSummaryKey = "GlobalEventsSummary"
 
 module BigInt = Ethers.BigInt
 
-let initialEventsSummary: Types.eventsSummaryEntity = {
+let initialEventsSummary: Entities.EventsSummary.t = {
   id: globalEventsSummaryKey,
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}

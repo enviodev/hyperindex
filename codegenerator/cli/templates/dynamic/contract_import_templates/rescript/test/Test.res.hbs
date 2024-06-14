@@ -7,7 +7,7 @@ let globalEventsSummaryKey = "GlobalEventsSummary"
 
 module BigInt = Ethers.BigInt
 
-let mockEventsSummaryEntity: Types.eventsSummaryEntity = {
+let mockEventsSummaryEntity: Entities.EventsSummary.t = {
   id: globalEventsSummaryKey,
   {{#each imported_contracts as | contract |}}
     {{#each contract.codegen_events as | event |}}
@@ -72,14 +72,14 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
     )
   })
 
-  RescriptMocha.Promise.it("EventsSummaryEntity is updated correctly", () => {
+  RescriptMocha.Promise.it("EventsSummary Entity is updated correctly", () => {
     let mockDbUpdatedPromise = await mockDbUpdatedPromise
     // Getting the actual entity from the mock database
     let actualEventsSummaryEntity =
       mockDbUpdated.entities.eventsSummary.get(globalEventsSummaryKey)->Option.getExn
 
     // Creating the expected entity
-    let expectedEventsSummaryEntity: Types.eventsSummaryEntity = {
+    let expectedEventsSummaryEntity: Entities.EventsSummary.t = {
       ...mockEventsSummaryEntity,
       {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: mockEventsSummaryEntity.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Count->BigInt.add(BigInt.fromInt(1)),
     }
