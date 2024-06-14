@@ -132,18 +132,25 @@ impl ContractImportSelection {
 
 type NetworkId = u64;
 type RpcUrl = String;
+type StartBlock = u64;
 
 #[derive(Clone, Debug)]
 pub enum Network {
     Supported(HypersyncNetwork),
-    Unsupported(NetworkId, RpcUrl),
+    Unsupported(NetworkId, RpcUrl, StartBlock),
 }
 
 impl Network {
     pub fn get_network_id(&self) -> NetworkId {
         match self {
             Network::Supported(n) => n.clone() as u64,
-            Network::Unsupported(n, _) => *n,
+            Network::Unsupported(n, _, _) => *n,
+        }
+    }
+    pub fn get_start_block(&self) -> StartBlock {
+        match self {
+            Network::Unsupported(_, _, start_block) => *start_block,
+            Network::Supported(_) => 0,
         }
     }
 }
@@ -152,7 +159,7 @@ impl Display for Network {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
             Self::Supported(n) => write!(f, "{}", n),
-            Self::Unsupported(n, _) => write!(f, "{}", n),
+            Self::Unsupported(n, _, _) => write!(f, "{}", n),
         }
     }
 }
@@ -251,7 +258,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                     .or_insert({
                         let sync_source = match &selected_network.network {
                             Network::Supported(_) => None,
-                            Network::Unsupported(_, url) => {
+                            Network::Unsupported(_, url, _) => {
                                 Some(SyncSourceConfig::RpcConfig(RpcConfig {
                                     url: url.clone(),
                                     unstable__sync_config: None,
@@ -262,7 +269,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                         human_config::Network {
                             id: selected_network.network.get_network_id(),
                             sync_source,
-                            start_block: 0,
+                            start_block: selected_network.network.get_start_block() as i32,
                             end_block: None,
                             confirmed_block_threshold: None,
                             contracts: Vec::new(),
