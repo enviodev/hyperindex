@@ -2,19 +2,13 @@
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
 
-import {
-  SwapContractContract_Swap_loader,
-  SwapContractContract_Swap_handler,
-} from "../generated/src/Handlers.gen";
+import { SwapContract } from "generated";
 
-SwapContractContract_Swap_loader(({ event, context }) => { });
-
-SwapContractContract_Swap_handler(({ event, context }) => {
-
+SwapContract.Swap.handler(async ({ event, context }) => {
   context.EventTracker.set({
     id: "eventTracker",
-    count: 1
-  })
+    count: 1,
+  });
 
   context.Swap.set({
     id: event.transactionHash + event.logIndex,

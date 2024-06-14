@@ -15,5 +15,8 @@
   "dependencies": {
     "ts-node": "^10.9.1",
     "envio": "latest"
+  },
+  "optionalDependencies": {
+    "generated": "./generated"
   }
 }
