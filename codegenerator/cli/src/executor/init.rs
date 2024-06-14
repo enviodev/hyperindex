@@ -1,7 +1,7 @@
 use crate::{
     cli_args::{
         clap_definitions::{InitArgs, ProjectPaths},
-        init_config::{Ecosystem, Language},
+        init_config::{self, Ecosystem, Language},
         interactive_init::prompt_missing_init_args,
     },
     commands,
@@ -13,7 +13,6 @@ use crate::{
         contract_import_templates, hbs_dir_generator::HandleBarsDirGenerator,
         init_templates::InitTemplates,
     },
-    init_config,
     project_paths::ParsedProjectPaths,
     template_dirs::TemplateDirs,
     utils::file_system,
