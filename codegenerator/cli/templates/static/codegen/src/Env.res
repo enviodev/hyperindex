@@ -15,13 +15,13 @@
         S.literal(#uinfo),
         S.literal(#uwarn),
         S.literal(#uerror),
-        S.literal("")->S.variant((. _) => default),
-        S.literal(None)->S.variant((. _) => default),
       ]),
+      ~fallback=default
     )
 )
 // resets the timestampCaughtUpToHeadOrEndblock after a restart when true
-let updateSyncTimeOnRestart = envSafe->EnvSafe.get(. "UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
+let updateSyncTimeOnRestart =
+  envSafe->EnvSafe.get(. "UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
 let maxEventFetchedQueueSize = envSafe->EnvSafe.get(. "MAX_QUEUE_SIZE", S.int, ~fallback=100_000)
 let maxProcessBatchSize = envSafe->EnvSafe.get(. "MAX_BATCH_SIZE", S.int, ~fallback=5_000)
 
@@ -51,10 +51,8 @@ let logStrategy = envSafe->EnvSafe.get(.
     S.literal(ConsoleRaw),
     S.literal(ConsolePretty),
     S.literal(Both),
-    // The default value to pretty print to the console only.
-    S.literal("")->S.variant((. _) => ConsolePretty),
-    S.literal(None)->S.variant((. _) => ConsolePretty),
   ]),
+  ~fallback=ConsolePretty,
 )
 
 module Db = {
@@ -65,10 +63,10 @@ module Db = {
   let database = envSafe->EnvSafe.get(. "ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev")
   let ssl = envSafe->EnvSafe.get(.
     "ENVIO_PG_SSL_MODE",
-    S.bool,
+    Postgres.sslOptionsSchema,
     //this is a dev fallback option for local deployments, shouldn't run in the prod env
     //the SSL modes should be provided as string otherwise as 'require' | 'allow' | 'prefer' | 'verify-full'
-    ~devFallback=false,
+    ~devFallback=Bool(false),
   )
 }
 

@@ -13,6 +13,54 @@ type connectionConfig = {
   applicationName?: string, // Default application_name (default: 'postgres.js')
   // Other connection parameters, see https://www.postgresql.org/docs/current/runtime-config-client.html
 }
+type streamDuplex
+type buffer
+type secureContext
+
+type onread = {
+  buffer: Js.Nullable.t<array<int>> => array<int>,
+  callback: (int, array<int>) => unit,
+}
+
+type tlsConnectOptions = {
+  enableTrace?: bool,
+  host?: string /* Default: "localhost" */,
+  port?: int,
+  path?: string,
+  socket?: streamDuplex,
+  allowHalfOpen?: bool /* Default: false */,
+  rejectUnauthorized?: bool /* Default: true */,
+  pskCallback?: unit => unit,
+  @as("ALPNProtocols") alpnProtocols?: array<string>, //| array<Buffer> | array<typedArray> | array<DataView> | Buffer | typedArray | DataView,
+  servername?: string,
+  checkServerIdentity?: 'a. (string, 'a) => option<Js.Exn.t>,
+  session?: buffer,
+  minDHSize?: int /* Default: 1024 */,
+  highWaterMark?: int /* Default: 16 * 1024 */,
+  secureContext?: secureContext,
+  onread?: onread,
+  /* Additional properties from tls.createSecureContext() and socket.connect() */
+  // [key: string]: Js.Json.t,
+}
+
+@unboxed
+type sslOptions =
+  | Bool(bool)
+  | TLSConnectOptions(tlsConnectOptions)
+  | @as("require") Require
+  | @as("allow") Allow
+  | @as("prefer") Prefer
+  | @as("verify-full") VerifyFull
+
+let sslOptionsSchema: S.schema<sslOptions> = S.union([
+  S.literal(Bool(true)),
+  S.literal(Bool(false)),
+  S.literal(Require),
+  S.literal(Allow),
+  S.literal(Prefer),
+  S.literal(VerifyFull),
+  //No schema created for tlsConnectOptions obj
+])
 
 type poolConfig = {
   host?: string, // Postgres ip address[es] or domain name[s] (default: '')
@@ -21,7 +69,7 @@ type poolConfig = {
   database?: string, // Name of database to connect to (default: '')
   username?: string, // Username of database user (default: '')
   password?: string, // Password of database user (default: '')
-  ssl?: bool, // true, prefer, require, tls.connect options (default: false)
+  ssl?: sslOptions, // true, prefer, require, tls.connect options (default: false)
   max?: int, // Max number of connections (default: 10)
   maxLifetime?: option<int>, // Max lifetime in seconds (more info below) (default: null)
   idleTimeout?: int, // Idle connection timeout in seconds (default: 0)
