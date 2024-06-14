@@ -114,6 +114,10 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 .context("Failed generating subgraph migration templates for event handlers.")?;
         }
 
+        Ecosystem::Fuel {
+            init_flow: init_config::fuel::InitFlow::ContractImport(_),
+        } => todo!("Contract import initialization for Flow is not implemented"),
+
         Ecosystem::Evm {
             init_flow: init_config::evm::InitFlow::ContractImport(auto_config_selection),
         } => {

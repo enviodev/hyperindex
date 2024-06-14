@@ -1,4 +1,5 @@
-mod contract_import_prompts;
+mod evm_prompts;
+mod fuel_prompts;
 mod inquire_helpers;
 pub mod validation;
 
@@ -6,7 +7,7 @@ use std::fmt::Display;
 
 use super::{
     clap_definitions::{self, InitArgs, InitFlow, ProjectPaths},
-    init_config::{evm, fuel, Ecosystem, InitConfig, Language},
+    init_config::{evm, Ecosystem, InitConfig, Language},
 };
 use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use anyhow::{Context, Result};
@@ -58,29 +59,16 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
     };
 
     let initialization = match init_flow {
-        InitFlow::Fuel { init_flow } => {
-            let clap_definitions::fuel::InitFlow::Template(clap_definitions::fuel::TemplateArgs {
-                template,
-            }) = match init_flow {
-                Some(f) => f,
-                None => {
-                    let flow_option = clap_definitions::fuel::InitFlow::iter().collect();
-                    Select::new("Choose an initialization option", flow_option)
-                        .prompt()
-                        .context("Failed prompting for Fuel initialization option")?
-                }
-            };
-            let chosen_template = match template {
-                Some(template) => template,
-                None => {
-                    let options = fuel::Template::iter().collect();
-                    prompt_template(options)?
-                }
-            };
-            Ecosystem::Fuel {
-                init_flow: fuel::InitFlow::Template(chosen_template),
-            }
-        }
+        InitFlow::Fuel {
+            init_flow: maybe_init_flow,
+        } => match fuel_prompts::prompt_init_flow_missing(maybe_init_flow)? {
+            clap_definitions::fuel::InitFlow::Template(args) => Ecosystem::Fuel {
+                init_flow: fuel_prompts::prompt_template_init_flow(args)?,
+            },
+            // clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
+            //     init_flow: fuel_prompts::prompt_contract_import_init_flow(args)?,
+            // },
+        },
         InitFlow::Template(args) => {
             let chosen_template = match args.template {
                 Some(template) => template,

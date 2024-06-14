@@ -33,9 +33,23 @@ pub mod fuel {
         Greeter,
     }
 
+    #[derive(Clone, Debug)]
+    pub struct EventSelection {
+        pub name: String,
+        pub log_id: Option<Vec<String>>,
+    }
+
+    #[derive(Clone, Debug)]
+    pub struct ContractImportSelection {
+        pub name: String,
+        pub abi_file_path: String,
+        pub events: Vec<EventSelection>,
+    }
+
     #[derive(Clone, Debug, Display)]
     pub enum InitFlow {
         Template(Template),
+        ContractImport(Vec<ContractImportSelection>),
     }
 }
 
