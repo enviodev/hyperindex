@@ -1,41 +1,13 @@
-let globalEventsSummaryKey = "GlobalEventsSummary"
-
-module BigInt = Ethers.BigInt
-
-let initialEventsSummary: Types.eventsSummaryEntity = {
-  id: globalEventsSummaryKey,
+/*
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
+ */
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-    {{contract.name.uncapitalized}}_{{event.name.capitalized
-    }}Count: BigInt.fromInt(0),
-  {{/each}}
-{{/each}}
-}
-
-{{#each imported_contracts as |contract|}}
-  {{#each contract.imported_events as |event|}}
-    Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized
-    }}.loader(({event, context}) => {
-  context.eventsSummary.load(globalEventsSummaryKey)
-})
 
 Handlers.{{contract.name.capitalized
     }}Contract.{{event.name.capitalized
     }}.handler(({event, context}) => {
-  let summary = context.eventsSummary.get(globalEventsSummaryKey)
-
-  let currentSummaryEntity = summary->Belt.Option.getWithDefault(initialEventsSummary)
-
-  let nextSummaryEntity = {
-    ...currentSummaryEntity,
-    {{contract.name.uncapitalized}}_{{event.name.capitalized
-    }}Count: currentSummaryEntity.{{contract.name.uncapitalized
-    }}_{{event.name.capitalized
-    }}Count->BigInt.add(BigInt.fromInt(1)),
-  }
-
-  let {{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}Entity: Types.{{contract.name.uncapitalized
+  let entity: Types.{{contract.name.uncapitalized
     }}_{{event.name.capitalized
     }}Entity = {
     id: event.transactionHash ++ event.logIndex->Belt.Int.toString,
@@ -52,13 +24,10 @@ Handlers.{{contract.name.capitalized
       {{/if}}
       ,
     {{/each}}
-    eventsSummary: globalEventsSummaryKey,
   }
 
-  context.eventsSummary.set(nextSummaryEntity)
   context.{{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}.set({{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}Entity)
+    }}_{{event.name.capitalized}}.set(entity)
 })
   {{/each}}
 {{/each}}

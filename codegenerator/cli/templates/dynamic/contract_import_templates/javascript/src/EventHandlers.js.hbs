@@ -1,51 +1,16 @@
 /*
- *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
-  const {
+const {
 {{#each imported_contracts as |contract|}}
  {{contract.name.capitalized}}Contract,
 {{/each}}
 } = require("generated");
-
-const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
-
-module.exports = {
-  GLOBAL_EVENTS_SUMMARY_KEY,
-};
-
-const INITIAL_EVENTS_SUMMARY = {
-  id: GLOBAL_EVENTS_SUMMARY_KEY,
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-    {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: BigInt(0),
-  {{/each}}
-{{/each}}
-};
 
-{{#each imported_contracts as |contract|}}
-  {{#each contract.imported_events as |event|}}
-    {{contract.name.capitalized}}Contract.{{event.name.capitalized
-    }}.loader(({event, context}) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
-
-    {{contract.name.capitalized}}Contract.{{event.name.capitalized
-    }}.handler(({event, context}) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
-
-  const currentSummaryEntity = summary ?? INITIAL_EVENTS_SUMMARY;
-
-  const nextSummaryEntity = {
-    ...currentSummaryEntity,
-    {{contract.name.uncapitalized}}_{{event.name.capitalized
-    }}Count: currentSummaryEntity.{{contract.name.uncapitalized
-    }}_{{event.name.capitalized
-    }}Count + BigInt(1),
-  };
-
-  const {{contract.name.uncapitalized
-    }}_{{event.name.capitalized
-    }}Entity = {
+{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler(({event, context}) => {
+  const entity = {
     id: event.transactionHash + event.logIndex.toString(),
     {{#each event.params as |param|}}
       {{param.entity_key.uncapitalized
@@ -58,13 +23,10 @@ const INITIAL_EVENTS_SUMMARY = {
       {{/if}}
       ,
     {{/each}}
-    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
   };
 
-  context.EventsSummary.set(nextSummaryEntity);
   context.{{contract.name.capitalized
-    }}_{{event.name.capitalized}}.set({{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}Entity);
+    }}_{{event.name.capitalized}}.set(entity);
 });
   {{/each}}
 {{/each}}
