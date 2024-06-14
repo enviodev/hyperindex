@@ -1,4 +1,4 @@
-use crate::cli_args::init_config::{EvmTemplate, FuelTemplate, Language};
+use crate::cli_args::init_config::{evm, fuel, Language};
 use anyhow::{anyhow, Context, Result};
 use include_dir::{include_dir, Dir, DirEntry};
 use pathdiff::diff_paths;
@@ -12,20 +12,20 @@ pub trait Template: Display {
     fn to_dir_name(self: &Self) -> String;
 }
 
-impl Template for EvmTemplate {
+impl Template for evm::Template {
     fn to_dir_name(self: &Self) -> String {
         match self {
-            EvmTemplate::Greeter => "greeter",
-            EvmTemplate::Erc20 => "erc20",
+            evm::Template::Greeter => "greeter",
+            evm::Template::Erc20 => "erc20",
         }
         .to_string()
     }
 }
 
-impl Template for FuelTemplate {
+impl Template for fuel::Template {
     fn to_dir_name(self: &Self) -> String {
         match self {
-            FuelTemplate::Greeter => "greeteronfuel",
+            fuel::Template::Greeter => "greeteronfuel",
         }
         .to_string()
     }
@@ -381,7 +381,7 @@ impl<'a> TemplateDirs<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::cli_args::init_config::{EvmTemplate, FuelTemplate};
+    use crate::cli_args::init_config::{evm, fuel};
 
     use super::*;
     use strum::IntoEnumIterator;
@@ -403,7 +403,7 @@ mod test {
     fn all_init_templates_exist() {
         let template_dirs = TemplateDirs::new();
 
-        for template in EvmTemplate::iter() {
+        for template in evm::Template::iter() {
             for lang in Language::iter() {
                 template_dirs
                     .get_template_lang_dir(&template, &lang)
@@ -413,7 +413,7 @@ mod test {
                 .get_template_shared_dir(&template)
                 .expect("static templte shared");
         }
-        for template in FuelTemplate::iter() {
+        for template in fuel::Template::iter() {
             for lang in Language::iter() {
                 template_dirs
                     .get_template_lang_dir(&template, &lang)
@@ -435,14 +435,14 @@ mod test {
         let temp_dir =
             TempDir::new("init_extract_lang_test").expect("Failed creating tempdir init template");
 
-        for template in EvmTemplate::iter() {
+        for template in evm::Template::iter() {
             for lang in Language::iter() {
                 template_dirs
                     .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))
                     .expect("static lang");
             }
         }
-        for template in FuelTemplate::iter() {
+        for template in fuel::Template::iter() {
             for lang in Language::iter() {
                 template_dirs
                     .get_and_extract_template(&template, &lang, &(PathBuf::from(temp_dir.path())))

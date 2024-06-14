@@ -35,7 +35,7 @@ pub async fn fetch_contract_auto_selection_from_etherscan(
     let events = contract_data.abi.events().cloned().collect();
 
     let network_selection = ContractImportNetworkSelection::new(
-        converters::Network::Supported(supported_network),
+        converters::NetworkKind::Supported(supported_network),
         contract_address,
     );
 

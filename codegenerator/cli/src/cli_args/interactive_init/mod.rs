@@ -1,4 +1,5 @@
-mod contract_import_prompts;
+mod evm_prompts;
+mod fuel_prompts;
 mod inquire_helpers;
 pub mod validation;
 
@@ -6,9 +7,7 @@ use std::fmt::Display;
 
 use super::{
     clap_definitions::{self, InitArgs, InitFlow, ProjectPaths},
-    init_config::{
-        Ecosystem, EvmInitFlow, EvmTemplate, FuelInitFlow, FuelTemplate, InitConfig, Language,
-    },
+    init_config::{evm, Ecosystem, InitConfig, Language},
 };
 use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use anyhow::{Context, Result};
@@ -32,11 +31,7 @@ fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
         .context("Prompting user for template selection")
 }
 
-async fn prompt_ecosystem(
-    cli_init_flow: Option<InitFlow>,
-    project_name: String,
-    language: Language,
-) -> Result<Ecosystem> {
+async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> {
     let init_flow = match cli_init_flow {
         Some(v) => v,
         None => {
@@ -64,39 +59,26 @@ async fn prompt_ecosystem(
     };
 
     let initialization = match init_flow {
-        InitFlow::Fuel { init_flow } => {
-            let clap_definitions::FuelInitFlow::Template(clap_definitions::FuelTemplateArgs {
-                template,
-            }) = match init_flow {
-                Some(f) => f,
-                None => {
-                    let flow_option = clap_definitions::FuelInitFlow::iter().collect();
-                    Select::new("Choose an initialization option", flow_option)
-                        .prompt()
-                        .context("Failed prompting for Fuel initialization option")?
-                }
-            };
-            let chosen_template = match template {
-                Some(template) => template,
-                None => {
-                    let options = FuelTemplate::iter().collect();
-                    prompt_template(options)?
-                }
-            };
-            Ecosystem::Fuel {
-                init_flow: FuelInitFlow::Template(chosen_template),
-            }
-        }
+        InitFlow::Fuel {
+            init_flow: maybe_init_flow,
+        } => match fuel_prompts::prompt_init_flow_missing(maybe_init_flow)? {
+            clap_definitions::fuel::InitFlow::Template(args) => Ecosystem::Fuel {
+                init_flow: fuel_prompts::prompt_template_init_flow(args)?,
+            },
+            // clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
+            //     init_flow: fuel_prompts::prompt_contract_import_init_flow(args)?,
+            // },
+        },
         InitFlow::Template(args) => {
             let chosen_template = match args.template {
                 Some(template) => template,
                 None => {
-                    let options = EvmTemplate::iter().collect();
+                    let options = evm::Template::iter().collect();
                     prompt_template(options)?
                 }
             };
             Ecosystem::Evm {
-                init_flow: EvmInitFlow::Template(chosen_template),
+                init_flow: evm::InitFlow::Template(chosen_template),
             }
         }
         InitFlow::SubgraphMigration(args) => {
@@ -107,17 +89,17 @@ async fn prompt_ecosystem(
                     .context("Prompting user for subgraph id")?,
             };
             Ecosystem::Evm {
-                init_flow: EvmInitFlow::SubgraphID(input_subgraph_id),
+                init_flow: evm::InitFlow::SubgraphID(input_subgraph_id),
             }
         }
 
         InitFlow::ContractImport(args) => {
             let auto_config_selection = args
-                .get_auto_config_selection(project_name, language)
+                .get_auto_config_selection()
                 .await
                 .context("Failed getting AutoConfigSelection selection")?;
             Ecosystem::Evm {
-                init_flow: EvmInitFlow::ContractImportWithArgs(auto_config_selection),
+                init_flow: evm::InitFlow::ContractImport(auto_config_selection),
             }
         }
     };
@@ -171,7 +153,7 @@ pub async fn prompt_missing_init_args(
         }
     };
 
-    let ecosystem = prompt_ecosystem(init_args.init_commands, name.clone(), language.clone())
+    let ecosystem = prompt_ecosystem(init_args.init_commands)
         .await
         .context("Failed getting template")?;
 

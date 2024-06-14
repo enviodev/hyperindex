@@ -1,4 +1,4 @@
-use super::human_config::{HumanConfig, SyncSourceConfig};
+use super::human_config::evm::{HumanConfig, SyncSourceConfig};
 use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
@@ -129,7 +129,7 @@ pub fn validate_deserialized_config_yaml(
         }
 
         for contract in &network.contracts {
-            if let Some(_) = contract.local_contract_config.as_ref() {
+            if let Some(_) = contract.config.as_ref() {
                 contract_names.push(contract.name.clone());
             }
 

@@ -1,7 +1,7 @@
 use crate::{
     cli_args::{
         clap_definitions::{InitArgs, ProjectPaths},
-        init_config::{Ecosystem, EvmInitFlow, FuelInitFlow, Language},
+        init_config::{self, Ecosystem, Language},
         interactive_init::prompt_missing_init_args,
     },
     commands,
@@ -45,7 +45,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
     match &init_config.ecosystem {
         Ecosystem::Fuel {
-            init_flow: FuelInitFlow::Template(template),
+            init_flow: init_config::fuel::InitFlow::Template(template),
         } => {
             template_dirs
                 .get_and_extract_template(
@@ -59,7 +59,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 ))?;
         }
         Ecosystem::Evm {
-            init_flow: EvmInitFlow::Template(template),
+            init_flow: init_config::evm::InitFlow::Template(template),
         } => {
             template_dirs
                 .get_and_extract_template(
@@ -73,7 +73,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 ))?;
         }
         Ecosystem::Evm {
-            init_flow: EvmInitFlow::SubgraphID(cid),
+            init_flow: init_config::evm::InitFlow::SubgraphID(cid),
         } => {
             template_dirs
                 .get_and_extract_blank_template(
@@ -95,7 +95,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             .context("Failed generating config from subgraph")?;
 
             let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
-                &yaml_config,
+                yaml_config,
                 Schema::empty(),
                 &parsed_project_paths,
             )
@@ -113,12 +113,15 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 .context("Failed generating subgraph migration templates for event handlers.")?;
         }
 
+        Ecosystem::Fuel {
+            init_flow: init_config::fuel::InitFlow::ContractImport(_),
+        } => todo!("Contract import initialization for Flow is not implemented"),
+
         Ecosystem::Evm {
-            init_flow: EvmInitFlow::ContractImportWithArgs(auto_config_selection),
+            init_flow: init_config::evm::InitFlow::ContractImport(auto_config_selection),
         } => {
             let yaml_config = auto_config_selection
-                .clone()
-                .try_into()
+                .to_human_config(&init_config)
                 .context("Failed to converting auto config selection into config.yaml")?;
 
             let serialized_config =
@@ -135,7 +138,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             //Use an empty schema config to generate auto_schema_handler_template
             //After it's been generated, the schema exists and codegen can parse it/use it
             let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
-                &yaml_config,
+                yaml_config,
                 Schema::empty(),
                 &parsed_project_paths,
             )
@@ -168,7 +171,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     }
 
     let envio_version = match init_config.ecosystem {
-        Ecosystem::Fuel { .. } => "1.1.2-fuel".to_string(),
+        Ecosystem::Fuel { .. } => "1.1.4-fuel".to_string(),
         Ecosystem::Evm { .. } => {
             let crate_version = env!("CARGO_PKG_VERSION");
             if is_valid_release_version_number(crate_version) {
@@ -212,7 +215,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
                     .context("Failed deserializing config")?;
 
-            let config = SystemConfig::parse_from_human_config(&yaml_config, &parsed_project_paths)
+            let config = SystemConfig::parse_from_human_config(yaml_config, &parsed_project_paths)
                 .context("Failed parsing config")?;
 
             commands::codegen::run_codegen(&config, &parsed_project_paths).await?;

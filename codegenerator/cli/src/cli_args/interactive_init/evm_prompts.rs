@@ -1,6 +1,6 @@
 use super::{
-    clap_definitions::{
-        EvmContractImportArgs, EvmLocalImportArgs, EvmLocalOrExplorerImport, ExplorerImportArgs,
+    clap_definitions::evm::{
+        ContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
     },
     inquire_helpers::FilePathCompleter,
     validation::{
@@ -9,14 +9,14 @@ use super::{
     },
 };
 use crate::{
-    cli_args::{init_config::Language, interactive_init::validation::filter_duplicate_events},
+    cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::{
         chain_helpers::{HypersyncNetwork, Network, NetworkWithExplorer},
         contract_import::converters::{
             self, AutoConfigError, AutoConfigSelection, ContractImportNetworkSelection,
             ContractImportSelection,
         },
-        human_config::ConfigEvent,
+        human_config::evm::EventConfig,
     },
     evm::address::Address,
 };
@@ -50,7 +50,7 @@ struct DisplayEventWrapper(ethers::abi::Event);
 
 impl Display for DisplayEventWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", ConfigEvent::event_string_from_abi_event(&self.0))
+        write!(f, "{}", EventConfig::event_string_from_abi_event(&self.0))
     }
 }
 
@@ -204,7 +204,7 @@ impl AutoConfigSelection {
         if add_new_contract_option == AddNewContractOption::AddContract {
             //Import a new contract
             let (contract_import_selection, add_new_contract_option) =
-                EvmContractImportArgs::default()
+                ContractImportArgs::default()
                     .get_contract_import_selection()
                     .await
                     .context("Failed getting new contract import selection")?;
@@ -246,20 +246,15 @@ impl AutoConfigSelection {
     }
 }
 
-impl EvmContractImportArgs {
+impl ContractImportArgs {
     ///Constructs AutoConfigSelection vial cli args and prompts
-    pub async fn get_auto_config_selection(
-        &self,
-        project_name: String,
-        language: Language,
-    ) -> Result<AutoConfigSelection> {
+    pub async fn get_auto_config_selection(&self) -> Result<AutoConfigSelection> {
         let (contract_import_selection, add_new_contract_option) = self
             .get_contract_import_selection()
             .await
             .context("Failed getting ContractImportSelection")?;
 
-        let auto_config_selection =
-            AutoConfigSelection::new(project_name, language, contract_import_selection);
+        let auto_config_selection = AutoConfigSelection::new(contract_import_selection);
 
         let auto_config_selection = if !self.single_contract {
             auto_config_selection
@@ -280,11 +275,11 @@ impl EvmContractImportArgs {
         //Construct ContractImportSelection via explorer or local import
         let (contract_import_selection, add_new_contract_option) =
             match &self.get_local_or_explorer()? {
-                EvmLocalOrExplorerImport::Explorer(explorer_import_args) => self
+                LocalOrExplorerImport::Explorer(explorer_import_args) => self
                     .get_contract_import_selection_from_explore_import_args(explorer_import_args)
                     .await
                     .context("Failed getting ContractImportSelection from explorer")?,
-                EvmLocalOrExplorerImport::Local(local_import_args) => self
+                LocalOrExplorerImport::Local(local_import_args) => self
                     .get_contract_import_selection_from_local_import_args(local_import_args)
                     .await
                     .context("Failed getting ContractImportSelection from local")?,
@@ -307,7 +302,7 @@ impl EvmContractImportArgs {
     //network/contract config
     async fn get_contract_import_selection_from_local_import_args(
         &self,
-        local_import_args: &EvmLocalImportArgs,
+        local_import_args: &LocalImportArgs,
     ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         let parsed_abi = local_import_args
             .get_parsed_abi()
@@ -414,11 +409,11 @@ impl EvmContractImportArgs {
 
     ///Takes either the "local" or "explorer" subcommand from the cli args
     ///or prompts for a choice from the user
-    fn get_local_or_explorer(&self) -> Result<EvmLocalOrExplorerImport> {
+    fn get_local_or_explorer(&self) -> Result<LocalOrExplorerImport> {
         match &self.local_or_explorer {
             Some(v) => Ok(v.clone()),
             None => {
-                let options = EvmLocalOrExplorerImport::iter().collect();
+                let options = LocalOrExplorerImport::iter().collect();
 
                 Select::new(
                     "Would you like to import from a block explorer or a local abi?",
@@ -439,7 +434,7 @@ impl EvmContractImportArgs {
 fn prompt_for_network_id(
     opt_rpc_url: &Option<String>,
     already_selected_ids: Vec<u64>,
-) -> Result<converters::Network> {
+) -> Result<converters::NetworkKind> {
     //The first option of the list, funnels the user to enter a u64
     let enter_id = "<Enter Network Id>";
 
@@ -480,7 +475,7 @@ fn prompt_for_network_id(
         //If a supported network choice was selected. We should be able to
         //parse it back to a supported network since it was serialized as a
         //string
-        choice => converters::Network::Supported(
+        choice => converters::NetworkKind::Supported(
             HypersyncNetwork::from_str(&choice)
                 .context("Unexpected input, not a supported network.")?,
         ),
@@ -495,18 +490,18 @@ fn prompt_for_network_id(
 fn get_converter_network_u64(
     network_id: u64,
     rpc_url: &Option<String>,
-) -> Result<converters::Network> {
+) -> Result<converters::NetworkKind> {
     let maybe_supported_network =
         Network::from_network_id(network_id).and_then(|n| Ok(HypersyncNetwork::try_from(n)?));
 
     let network = match maybe_supported_network {
-        Ok(s) => converters::Network::Supported(s),
+        Ok(s) => converters::NetworkKind::Supported(s),
         Err(_) => {
             let rpc_url = match rpc_url {
                 Some(r) => r.clone(),
                 None => prompt_for_rpc_url()?,
             };
-            converters::Network::Unsupported(network_id, rpc_url)
+            converters::NetworkKind::Unsupported(network_id, rpc_url)
         }
     };
 
@@ -553,7 +548,7 @@ impl ExplorerImportArgs {
     }
 }
 
-impl EvmLocalImportArgs {
+impl LocalImportArgs {
     fn parse_contract_abi(abi_path: PathBuf) -> anyhow::Result<ethers::abi::Contract> {
         let abi_file = std::fs::read_to_string(&abi_path).context(format!(
             "Failed to read abi file at {:?}, relative to the current directory {:?}",
@@ -613,7 +608,7 @@ impl EvmLocalImportArgs {
 
     ///Gets the network from from cli args or prompts for
     ///a network
-    fn get_network(&self) -> Result<converters::Network> {
+    fn get_network(&self) -> Result<converters::NetworkKind> {
         match &self.blockchain {
             Some(b) => {
                 let network_id: u64 = (b.clone()).into();

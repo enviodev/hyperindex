@@ -1,10 +1,10 @@
 use crate::{
     cli_args::init_config::Language,
     config_parsing::{
-        chain_helpers::{GraphNetwork, Network},
+        chain_helpers::{self, GraphNetwork},
         human_config::{
-            ConfigEvent, HumanConfig, LocalContractConfig, Network as ConfigNetwork,
-            NetworkContractConfig,
+            evm::{ContractConfig, EventConfig, HumanConfig, Network},
+            NetworkContract,
         },
     },
     project_paths::handler_paths::DEFAULT_SCHEMA_PATH,
@@ -273,6 +273,7 @@ pub async fn generate_config_from_subgraph_id(
     let mut config = HumanConfig {
         name: manifest.data_sources[0].name.clone(),
         description: manifest.description,
+        ecosystem: None,
         schema: None,
         contracts: None,
         networks: vec![],
@@ -281,6 +282,7 @@ pub async fn generate_config_from_subgraph_id(
         rollback_on_reorg: None,
         save_full_history: None,
     };
+    let mut networks: Vec<Network> = vec![];
 
     //Allow schema and abis to be fetched on different threads
     let mut join_set = JoinSet::new();
@@ -300,8 +302,8 @@ pub async fn generate_config_from_subgraph_id(
 
     for (graph_network, contracts) in &network_hashmap {
         // Create network object to be populated
-        let mut network = ConfigNetwork {
-            id: Network::from(*graph_network).get_network_id(),
+        let mut network = Network {
+            id: chain_helpers::Network::from(*graph_network).get_network_id(),
             // TODO: update to the final rpc url
             sync_source: None,
             start_block: 0,
@@ -339,7 +341,7 @@ pub async fn generate_config_from_subgraph_id(
                                 .chars()
                                 .take(start)
                                 .collect::<String>();
-                            let event = ConfigEvent {
+                            let event = EventConfig {
                                 event: event_name.to_string(),
                                 required_entities: Some(vec![]),
                                 is_async: None,
@@ -349,10 +351,10 @@ pub async fn generate_config_from_subgraph_id(
                         })
                         .collect::<anyhow::Result<Vec<_>>>()?;
 
-                    let contract = NetworkContractConfig {
+                    let contract = NetworkContract {
                         name: data_source.name.to_string(),
                         address: vec![data_source.source.address.to_string()].into(),
-                        local_contract_config: Some(LocalContractConfig {
+                        config: Some(ContractConfig {
                             abi_file_path: Some(format!("abis/{}.json", data_source.name)),
                             handler: get_event_handler_directory(language),
                             events,
@@ -384,9 +386,12 @@ pub async fn generate_config_from_subgraph_id(
                 }
             };
         }
+
         // Pushing network to config
-        config.networks.push(network);
+        networks.push(network);
     }
+    config.networks = networks;
+
     // Convert config to YAML file
     let yaml_string = serde_yaml::to_string(&config).unwrap();
 

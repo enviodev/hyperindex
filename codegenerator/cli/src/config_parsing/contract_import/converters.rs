@@ -4,14 +4,15 @@ use crate::{
     config_parsing::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
         human_config::{
-            self, ConfigEvent, GlobalContractConfig, HumanConfig, LocalContractConfig, RpcConfig,
-            SyncSourceConfig,
+            evm::{ContractConfig, EventConfig, HumanConfig, Network, RpcConfig, SyncSourceConfig},
+            GlobalContract, NetworkContract,
         },
     },
     evm::address::Address,
+    init_config::InitConfig,
     utils::unique_hashmap,
 };
-use anyhow::Context;
+use anyhow::{Context, Result};
 use itertools::{self, Itertools};
 use std::{
     collections::HashMap,
@@ -24,9 +25,7 @@ use thiserror;
 ///abis etc.
 #[derive(Clone, Debug)]
 pub struct AutoConfigSelection {
-    pub project_name: String,
     selected_contracts: Vec<ContractImportSelection>,
-    language: Language,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -36,14 +35,8 @@ pub enum AutoConfigError {
 }
 
 impl AutoConfigSelection {
-    pub fn new(
-        project_name: String,
-        language: Language,
-        selected_contract: ContractImportSelection,
-    ) -> Self {
+    pub fn new(selected_contract: ContractImportSelection) -> Self {
         Self {
-            project_name,
-            language,
             selected_contracts: vec![selected_contract],
         }
     }
@@ -73,8 +66,6 @@ impl AutoConfigSelection {
     }
 
     pub async fn from_etherscan(
-        project_name: String,
-        language: Language,
         network: &NetworkWithExplorer,
         address: Address,
     ) -> anyhow::Result<Self> {
@@ -82,7 +73,7 @@ impl AutoConfigSelection {
             .await
             .context("Failed fetching selected contract")?;
 
-        Ok(Self::new(project_name, language, selected_contract))
+        Ok(Self::new(selected_contract))
     }
 }
 
@@ -134,21 +125,21 @@ type NetworkId = u64;
 type RpcUrl = String;
 
 #[derive(Clone, Debug)]
-pub enum Network {
+pub enum NetworkKind {
     Supported(HypersyncNetwork),
     Unsupported(NetworkId, RpcUrl),
 }
 
-impl Network {
+impl NetworkKind {
     pub fn get_network_id(&self) -> NetworkId {
         match self {
-            Network::Supported(n) => n.clone() as u64,
-            Network::Unsupported(n, _) => *n,
+            Self::Supported(n) => n.clone() as u64,
+            Self::Unsupported(n, _) => *n,
         }
     }
 }
 
-impl Display for Network {
+impl Display for NetworkKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
             Self::Supported(n) => write!(f, "{}", n),
@@ -159,19 +150,19 @@ impl Display for Network {
 
 #[derive(Clone, Debug)]
 pub struct ContractImportNetworkSelection {
-    pub network: Network,
+    pub network: NetworkKind,
     pub addresses: Vec<Address>,
 }
 
 impl ContractImportNetworkSelection {
-    pub fn new(network: Network, address: Address) -> Self {
+    pub fn new(network: NetworkKind, address: Address) -> Self {
         Self {
             network,
             addresses: vec![address],
         }
     }
 
-    pub fn new_without_addresses(network: Network) -> Self {
+    pub fn new_without_addresses(network: NetworkKind) -> Self {
         Self {
             network,
             addresses: vec![],
@@ -187,35 +178,37 @@ impl ContractImportNetworkSelection {
 
 ///Converts the selection object into a human config
 type ContractName = String;
-impl TryFrom<AutoConfigSelection> for HumanConfig {
-    type Error = anyhow::Error;
-    fn try_from(selection: AutoConfigSelection) -> Result<Self, Self::Error> {
-        let mut networks_map: HashMap<u64, human_config::Network> = HashMap::new();
-        let mut global_contracts: HashMap<ContractName, GlobalContractConfig> = HashMap::new();
+impl AutoConfigSelection {
+    pub fn to_human_config(self: &Self, init_config: &InitConfig) -> Result<HumanConfig> {
+        let mut networks_map: HashMap<u64, Network> = HashMap::new();
+        let mut global_contracts: HashMap<ContractName, GlobalContract<ContractConfig>> =
+            HashMap::new();
 
-        for selected_contract in selection.selected_contracts {
+        for selected_contract in self.selected_contracts.clone() {
             let is_multi_chain_contract = selected_contract.networks.len() > 1;
 
-            let events: Vec<ConfigEvent> = selected_contract
+            let events: Vec<EventConfig> = selected_contract
                 .events
                 .into_iter()
-                .map(|event| human_config::ConfigEvent {
-                    event: ConfigEvent::event_string_from_abi_event(&event),
+                .map(|event| EventConfig {
+                    event: EventConfig::event_string_from_abi_event(&event),
                     required_entities: None,
                     is_async: None,
                 })
                 .collect();
 
-            let handler = get_event_handler_directory(&selection.language);
+            let handler = get_event_handler_directory(&init_config.language);
 
-            let local_contract_config = if is_multi_chain_contract {
+            let config = if is_multi_chain_contract {
                 //Add the contract to global contract config and return none for local contract
                 //config
-                let global_contract = GlobalContractConfig {
+                let global_contract = GlobalContract {
                     name: selected_contract.name.clone(),
-                    abi_file_path: None,
-                    handler,
-                    events,
+                    config: ContractConfig {
+                        abi_file_path: None,
+                        handler,
+                        events,
+                    },
                 };
 
                 unique_hashmap::try_insert(
@@ -231,7 +224,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                 None
             } else {
                 //Return some for local contract config
-                Some(LocalContractConfig {
+                Some(ContractConfig {
                     abi_file_path: None,
                     handler,
                     events,
@@ -250,8 +243,8 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                     .entry(selected_network.network.get_network_id())
                     .or_insert({
                         let sync_source = match &selected_network.network {
-                            Network::Supported(_) => None,
-                            Network::Unsupported(_, url) => {
+                            NetworkKind::Supported(_) => None,
+                            NetworkKind::Unsupported(_, url) => {
                                 Some(SyncSourceConfig::RpcConfig(RpcConfig {
                                     url: url.clone(),
                                     unstable__sync_config: None,
@@ -259,7 +252,7 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                             }
                         };
 
-                        human_config::Network {
+                        Network {
                             id: selected_network.network.get_network_id(),
                             sync_source,
                             start_block: 0,
@@ -269,10 +262,10 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
                         }
                     });
 
-                let contract = human_config::NetworkContractConfig {
+                let contract = NetworkContract {
                     name: selected_contract.name.clone(),
                     address,
-                    local_contract_config: local_contract_config.clone(),
+                    config: config.clone(),
                 };
 
                 network.contracts.push(contract);
@@ -288,14 +281,13 @@ impl TryFrom<AutoConfigSelection> for HumanConfig {
             values => Some(values),
         };
 
-        let networks = networks_map.into_values().sorted_by_key(|v| v.id).collect();
-
         Ok(HumanConfig {
-            name: selection.project_name,
+            name: init_config.name.clone(),
             description: None,
+            ecosystem: None,
             schema: None,
             contracts,
-            networks,
+            networks: networks_map.into_values().sorted_by_key(|v| v.id).collect(),
             unordered_multichain_mode: None,
             event_decoder: None,
             rollback_on_reorg: None,

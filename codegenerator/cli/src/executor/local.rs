@@ -26,7 +26,7 @@ pub async fn run_local(
                 let yaml_config = human_config::deserialize_config_from_yaml(&project_paths.config)
                     .context("Failed deserializing config")?;
 
-                let config = SystemConfig::parse_from_human_config(&yaml_config, &project_paths)
+                let config = SystemConfig::parse_from_human_config(yaml_config, &project_paths)
                     .context("Failed parsing config")?;
 
                 let persisted_state = PersistedState::get_current_state(&config)

@@ -1,11 +1,6 @@
-use crate::{
-    config_parsing::chain_helpers::{Network, NetworkWithExplorer},
-    constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH},
-    evm, fuel,
-};
-use anyhow::Context;
+use crate::constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH};
+
 use clap::{Args, Parser, Subcommand};
-use std::str::FromStr;
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
@@ -98,8 +93,6 @@ pub enum DbMigrateSubcommands {
     Setup,
 }
 
-type SubgraphMigrationID = String;
-
 #[derive(Args, Debug, Clone)]
 pub struct InitArgs {
     ///The name of your project
@@ -121,178 +114,198 @@ pub struct InitArgs {
 pub enum InitFlow {
     ///Initialize Evm indexer from an example template
     #[subenum(EvmInitFlowInteractive)]
-    Template(EvmTemplateArgs),
+    Template(evm::TemplateArgs),
     ///Initialize Evm indexer by importing config from a contract for a given chain
     #[subenum(EvmInitFlowInteractive)]
     #[strum(serialize = "Contract Import")]
-    ContractImport(EvmContractImportArgs),
+    ContractImport(evm::ContractImportArgs),
     ///Initialize Evm indexer by migrating config from an existing subgraph
     #[clap(hide = true)] //hiding for now until this is more stable
     #[strum(serialize = "Subgraph Migration (Experimental)")]
-    SubgraphMigration(SubgraphMigrationArgs),
+    SubgraphMigration(evm::SubgraphMigrationArgs),
     ///Initialization option for creating Fuel indexer
     Fuel {
         #[command(subcommand)]
-        init_flow: Option<FuelInitFlow>,
+        init_flow: Option<fuel::InitFlow>,
     },
 }
 
-#[derive(Args, Debug, Default, Clone)]
-pub struct EvmContractImportArgs {
-    ///Choose to import a contract from a local abi or
-    ///using get values from an explorer using a contract address
-    #[command(subcommand)]
-    pub local_or_explorer: Option<EvmLocalOrExplorerImport>,
+pub mod evm {
+    use crate::{
+        config_parsing::chain_helpers::{Network, NetworkWithExplorer},
+        evm, init_config,
+    };
 
-    ///Contract address to generate the config from
-    #[arg(global = true, short, long)]
-    pub contract_address: Option<evm::address::Address>,
+    use anyhow::Context;
+    use clap::{Args, Subcommand};
+    use std::str::FromStr;
+    use strum::{Display, EnumIter, EnumString};
 
-    ///If selected, prompt will not ask for additional contracts/addresses/networks
-    #[arg(long, action)]
-    pub single_contract: bool,
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct ContractImportArgs {
+        ///Choose to import a contract from a local abi or
+        ///using get values from an explorer using a contract address
+        #[command(subcommand)]
+        pub local_or_explorer: Option<LocalOrExplorerImport>,
 
-    ///If selected, prompt will not ask to confirm selection of events on a contract
-    #[arg(long, action)]
-    pub all_events: bool,
-}
+        ///Contract address to generate the config from
+        #[arg(global = true, short, long)]
+        pub contract_address: Option<evm::address::Address>,
 
-#[derive(Args, Debug, Default, Clone)]
-pub struct EvmTemplateArgs {
-    ///Name of the template to be used in initialization
-    #[arg(short, long)]
-    #[clap(value_enum)]
-    pub template: Option<init_config::EvmTemplate>,
-}
+        ///If selected, prompt will not ask for additional contracts/addresses/networks
+        #[arg(long, action)]
+        pub single_contract: bool,
 
-#[derive(Args, Debug, Default, Clone)]
-pub struct SubgraphMigrationArgs {
-    ///Subgraph ID to start a migration from
-    #[arg(short, long)]
-    pub subgraph_id: Option<SubgraphMigrationID>,
-}
-
-#[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
-pub enum EvmLocalOrExplorerImport {
-    ///Initialize by pulling the contract ABI from a block explorer
-    #[strum(serialize = "Block Explorer")]
-    Explorer(ExplorerImportArgs),
-    ///Initialize from a local json ABI file
-    #[strum(serialize = "Local ABI")]
-    Local(EvmLocalImportArgs),
-}
-
-#[derive(Args, Debug, Default, Clone)]
-pub struct ExplorerImportArgs {
-    ///Network from which contract address should be fetched for migration
-    #[arg(short, long)]
-    pub blockchain: Option<NetworkWithExplorer>,
-}
-
-#[derive(Debug, Clone)]
-pub enum NetworkOrChainId {
-    NetworkName(Network),
-    ChainId(u64),
-}
-
-impl From<NetworkOrChainId> for u64 {
-    fn from(value: NetworkOrChainId) -> Self {
-        match value {
-            NetworkOrChainId::ChainId(val) => val,
-            NetworkOrChainId::NetworkName(name) => name as u64,
-        }
+        ///If selected, prompt will not ask to confirm selection of events on a contract
+        #[arg(long, action)]
+        pub all_events: bool,
     }
-}
 
-impl FromStr for NetworkOrChainId {
-    type Err = anyhow::Error;
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct TemplateArgs {
+        ///Name of the template to be used in initialization
+        #[arg(short, long)]
+        #[clap(value_enum)]
+        pub template: Option<init_config::evm::Template>,
+    }
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let res_network: Result<Network, _> = s.parse();
+    type SubgraphMigrationID = String;
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct SubgraphMigrationArgs {
+        ///Subgraph ID to start a migration from
+        #[arg(short, long)]
+        pub subgraph_id: Option<SubgraphMigrationID>,
+    }
 
-        match res_network {
-            Ok(n) => Ok(NetworkOrChainId::NetworkName(n)),
-            Err(_) => {
-                let chain_id: u64 = s.parse().context("Invalid network name or id")?;
-                Ok(NetworkOrChainId::ChainId(chain_id))
+    #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
+    pub enum LocalOrExplorerImport {
+        ///Initialize by pulling the contract ABI from a block explorer
+        #[strum(serialize = "Block Explorer")]
+        Explorer(ExplorerImportArgs),
+        ///Initialize from a local json ABI file
+        #[strum(serialize = "Local ABI")]
+        Local(LocalImportArgs),
+    }
+
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct ExplorerImportArgs {
+        ///Network from which contract address should be fetched for migration
+        #[arg(short, long)]
+        pub blockchain: Option<NetworkWithExplorer>,
+    }
+
+    #[derive(Debug, Clone)]
+    pub enum NetworkOrChainId {
+        NetworkName(Network),
+        ChainId(u64),
+    }
+
+    impl From<NetworkOrChainId> for u64 {
+        fn from(value: NetworkOrChainId) -> Self {
+            match value {
+                NetworkOrChainId::ChainId(val) => val,
+                NetworkOrChainId::NetworkName(name) => name as u64,
             }
         }
     }
+
+    impl FromStr for NetworkOrChainId {
+        type Err = anyhow::Error;
+
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
+            let res_network: Result<Network, _> = s.parse();
+
+            match res_network {
+                Ok(n) => Ok(NetworkOrChainId::NetworkName(n)),
+                Err(_) => {
+                    let chain_id: u64 = s.parse().context("Invalid network name or id")?;
+                    Ok(NetworkOrChainId::ChainId(chain_id))
+                }
+            }
+        }
+    }
+
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct LocalImportArgs {
+        ///The path to a json abi file
+        #[arg(short, long)]
+        pub abi_file: Option<String>,
+        ///The name of the contract
+        #[arg(long)]
+        pub contract_name: Option<String>,
+
+        ///Network from which contract address should be fetched for migration
+        #[arg(short, long)]
+        pub blockchain: Option<NetworkOrChainId>,
+
+        ///The rpc url to use if the network id used is unsupported by our hypersync
+        #[arg(short, long)]
+        pub rpc_url: Option<String>,
+    }
 }
 
-#[derive(Args, Debug, Default, Clone)]
-pub struct EvmLocalImportArgs {
-    ///The path to a json abi file
-    #[arg(short, long)]
-    pub abi_file: Option<String>,
-    ///The name of the contract
-    #[arg(long)]
-    pub contract_name: Option<String>,
+pub mod fuel {
+    use clap::{Args, Subcommand};
+    use strum::{Display, EnumIter, EnumString};
 
-    ///Network from which contract address should be fetched for migration
-    #[arg(short, long)]
-    pub blockchain: Option<NetworkOrChainId>,
+    use crate::{fuel, init_config};
 
-    ///The rpc url to use if the network id used is unsupported by our hypersync
-    #[arg(short, long)]
-    pub rpc_url: Option<String>,
-}
+    #[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
+    pub enum InitFlow {
+        ///Initialize Fuel indexer from an example template
+        Template(TemplateArgs),
+        // ///Initialize Fuel indexer by importing config from a contract for a given chain
+        // #[strum(serialize = "Contract Import")]
+        // ContractImport(ContractImportArgs),
+    }
 
-#[derive(Subcommand, Debug, EnumIter, Display, EnumString, Clone)]
-pub enum FuelInitFlow {
-    ///Initialize Fuel indexer from an example template
-    Template(FuelTemplateArgs),
-    // ///Initialize Fuel indexer by importing config from a contract for a given chain
-    // #[strum(serialize = "Contract Import")]
-    // ContractImport(FuelContractImportArgs),
-}
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct ContractImportArgs {
+        ///Choose to import a contract from a local abi or
+        ///using get values from an explorer using a contract address
+        #[command(subcommand)]
+        pub local_or_explorer: Option<LocalOrExplorerImport>,
 
-#[derive(Args, Debug, Default, Clone)]
-pub struct FuelContractImportArgs {
-    ///Choose to import a contract from a local abi or
-    ///using get values from an explorer using a contract address
-    #[command(subcommand)]
-    pub local_or_explorer: Option<FuelLocalOrExplorerImport>,
+        ///Contract address to generate the config from
+        #[arg(global = true, short, long)]
+        pub contract_address: Option<fuel::address::Address>,
 
-    ///Contract address to generate the config from
-    #[arg(global = true, short, long)]
-    pub contract_address: Option<fuel::address::Address>,
+        ///If selected, prompt will not ask for additional contracts/addresses/networks
+        #[arg(long, action)]
+        pub single_contract: bool,
 
-    ///If selected, prompt will not ask for additional contracts/addresses/networks
-    #[arg(long, action)]
-    pub single_contract: bool,
+        ///If selected, prompt will not ask to confirm selection of events on a contract
+        #[arg(long, action)]
+        pub all_events: bool,
+    }
 
-    ///If selected, prompt will not ask to confirm selection of events on a contract
-    #[arg(long, action)]
-    pub all_events: bool,
-}
+    #[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
+    pub enum LocalOrExplorerImport {
+        // Not supported https://forum.fuel.network/t/get-abi-by-contract-address/5535
+        // ///Initialize by pulling the contract ABI from a block explorer
+        // #[strum(serialize = "Block Explorer")]
+        // Explorer(ExplorerImportArgs),
+        // ----
+        ///Initialize from a local json ABI file
+        #[strum(serialize = "Local ABI")]
+        Local(LocalImportArgs),
+    }
 
-#[derive(Subcommand, Debug, EnumIter, EnumString, Display, Clone)]
-pub enum FuelLocalOrExplorerImport {
-    // Not supported https://forum.fuel.network/t/get-abi-by-contract-address/5535
-    // ///Initialize by pulling the contract ABI from a block explorer
-    // #[strum(serialize = "Block Explorer")]
-    // Explorer(ExplorerImportArgs),
-    // ----
-    ///Initialize from a local json ABI file
-    #[strum(serialize = "Local ABI")]
-    Local(FuelLocalImportArgs),
-}
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct LocalImportArgs {
+        ///The path to a json abi file
+        #[arg(short, long)]
+        pub abi_file: Option<String>,
+        ///The name of the contract
+        #[arg(long)]
+        pub contract_name: Option<String>,
+    }
 
-#[derive(Args, Debug, Default, Clone)]
-pub struct FuelLocalImportArgs {
-    ///The path to a json abi file
-    #[arg(short, long)]
-    pub abi_file: Option<String>,
-    ///The name of the contract
-    #[arg(long)]
-    pub contract_name: Option<String>,
-}
-
-#[derive(Args, Debug, Default, Clone)]
-pub struct FuelTemplateArgs {
-    ///Name of the template to be used in initialization
-    #[arg(short, long)]
-    #[clap(value_enum)]
-    pub template: Option<init_config::FuelTemplate>,
+    #[derive(Args, Debug, Default, Clone)]
+    pub struct TemplateArgs {
+        ///Name of the template to be used in initialization
+        #[arg(short, long)]
+        #[clap(value_enum)]
+        pub template: Option<init_config::fuel::Template>,
+    }
 }

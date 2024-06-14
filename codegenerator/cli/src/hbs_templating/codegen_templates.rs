@@ -7,7 +7,7 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
-        human_config::EventDecoder,
+        human_config::evm::EventDecoder,
         postgres_types,
         system_config::{self, RpcConfig, SystemConfig},
     },
@@ -851,7 +851,7 @@ mod test {
         let yaml_config = human_config::deserialize_config_from_yaml(&project_paths.config)
             .expect("Config should be deserializeable");
 
-        let config = SystemConfig::parse_from_human_config(&yaml_config, &project_paths)
+        let config = SystemConfig::parse_from_human_config(yaml_config, &project_paths)
             .expect("Deserialized yml config should be parseable");
 
         let project_template = super::ProjectTemplate::from_config(&config, &project_paths)
