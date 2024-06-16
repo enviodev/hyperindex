@@ -334,31 +334,29 @@ impl Network {
 
 pub enum BlockExplorerApi {
     DefaultEthers {
-        api_key: String,
+        api_key: Option<String>,
     },
     Custom {
         //eg. "https://gnosisscan.io/"
         base_url: String,
         //eg. "https://api.gnosisscan.io/api/"
         api_url: String,
-        api_key: String,
+        api_key: Option<String>,
     },
 }
 
 impl BlockExplorerApi {
-    pub fn default_ethers(api_key: &str) -> Self {
-        Self::DefaultEthers {
-            api_key: api_key.to_string(),
-        }
+    pub fn default_ethers(api_key: Option<String>) -> Self {
+        Self::DefaultEthers { api_key: api_key }
     }
 
-    fn custom(base_url: &str, api_url: &str, api_key: &str) -> Self {
+    fn custom(base_url: &str, api_url: &str, maybe_api_key: Option<String>) -> Self {
         let base_url = format!("https://{}/", base_url);
         let api_url = format!("https://{}/api/", api_url);
         Self::Custom {
             base_url,
             api_url,
-            api_key: api_key.to_string(),
+            api_key: maybe_api_key,
         }
     }
 }
@@ -499,11 +497,16 @@ impl NetworkWithExplorer {
             ],
         };
 
-        // Retrieving the index of the api_key to be used based on the rate_limit_retry_count
-        let api_key_index = rate_limit_retry_count % api_keys.len();
-
         // Selecting the api_key to be used based on the index
-        let api_key = api_keys[api_key_index];
+        let api_key: Option<String> = if rate_limit_retry_count == 0 {
+            // If it is the first try, don't use any api key (usually it isn't required unless api
+            // is hit frequently).
+            None
+        } else {
+            // Retrieving the index of the api_key to be used based on the rate_limit_retry_count
+            let api_key_index = rate_limit_retry_count % api_keys.len();
+            Some(api_keys[api_key_index].to_string())
+        };
 
         //Define all custom block explorer definitions at the top otherwise default with ethers api
         match self {
@@ -559,7 +562,9 @@ pub fn get_etherscan_client(
             let ethers_chain = ethers::types::Chain::try_from(chain_id)
                 .context("Failed converting network with explorer id to ethers chain")?;
 
-            etherscan::Client::new(ethers_chain, api_key)
+            // The api doesn't allow not passing in an api key, but a
+            // blank string is allowed
+            etherscan::Client::new(ethers_chain, api_key.unwrap_or("".to_string()))
                 .context("Failed creating client for network")?
         }
 
@@ -567,20 +572,25 @@ pub fn get_etherscan_client(
             base_url,
             api_url,
             api_key,
-        } => etherscan::Client::builder()
-            .with_url(&base_url)
-            .context(format!(
-                "Failed building custom client at base url {}",
-                base_url
-            ))?
-            .with_api_url(&api_url)
-            .context(format!(
-                "Failed building custom client at api url {}",
-                api_url
-            ))?
-            .with_api_key(api_key)
-            .build()
-            .context("Failed build custom client")?,
+        } => {
+            let mut builder = etherscan::Client::builder()
+                .with_url(&base_url)
+                .context(format!(
+                    "Failed building custom client at base url {}",
+                    base_url
+                ))?
+                .with_api_url(&api_url)
+                .context(format!(
+                    "Failed building custom client at api url {}",
+                    api_url
+                ))?;
+
+            if let Some(key) = api_key {
+                builder = builder.with_api_key(&key);
+            }
+
+            builder.build().context("Failed build custom client")?
+        }
     };
 
     Ok(client)
