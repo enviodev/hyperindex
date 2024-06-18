@@ -4,7 +4,9 @@ use crate::{
         TemplateArgs,
     },
     fuel::abi::Abi,
-    init_config::fuel::{ContractImportSelection, EventSelection, InitFlow, Template},
+    init_config::fuel::{
+        ContractImportSelection, InitFlow, SelectedContract, SelectedEvent, Template,
+    },
 };
 use anyhow::{Context, Result};
 use inquire::{validator::Validation, Select};
@@ -71,11 +73,11 @@ fn get_contract_name(local_import_args: &LocalImportArgs) -> Result<String> {
     }
 }
 
-//Constructs ContractImportSelection via local prompt. Uses abis and manual
+//Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
 async fn get_contract_import_selection_from_local_import_args(
     local_import_args: &LocalImportArgs,
-) -> Result<ContractImportSelection> {
+) -> Result<SelectedContract> {
     let abi_path_string =
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
     let abi = Abi::parse(&abi_path_string).context("Failed parsing Fuel ABI")?;
@@ -83,8 +85,8 @@ async fn get_contract_import_selection_from_local_import_args(
     let events = abi
         .get_logs()
         .iter()
-        .map(|log| EventSelection {
-            name: format!("Log_{}", log.id), // TODO: Nice name
+        .map(|log| SelectedEvent {
+            name: format!("Log_{}", log.id), // TODO: Use types for suggested event names
             log_id: Some(vec![log.id.clone()]),
         })
         .collect();
@@ -93,7 +95,7 @@ async fn get_contract_import_selection_from_local_import_args(
 
     let address = prompt_contract_address(None)?;
 
-    Ok(ContractImportSelection {
+    Ok(SelectedContract {
         name,
         address,
         abi,
@@ -110,5 +112,7 @@ pub async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Resul
                 .context("Failed getting local contract selection")?
         }
     };
-    Ok(InitFlow::ContractImport(vec![contract_import_selection]))
+    Ok(InitFlow::ContractImport(ContractImportSelection {
+        contracts: vec![contract_import_selection],
+    }))
 }

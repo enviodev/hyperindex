@@ -6,7 +6,9 @@ use crate::{
     },
     commands,
     config_parsing::{
-        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id, human_config,
+        entity_parsing::Schema,
+        graph_migration::generate_config_from_subgraph_id,
+        human_config::{self},
         system_config::SystemConfig,
     },
     hbs_templating::{
@@ -114,8 +116,57 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         }
 
         Ecosystem::Fuel {
-            init_flow: init_config::fuel::InitFlow::ContractImport(_),
-        } => todo!("Contract import initialization for Flow is not implemented"),
+            init_flow: init_config::fuel::InitFlow::ContractImport(contract_import_selection),
+        } => {
+            let yaml_config = contract_import_selection.to_human_config(&init_config);
+
+            let serialized_config =
+                serde_yaml::to_string(&yaml_config).context("Failed serializing config")?;
+
+            // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
+            file_system::write_file_string_to_system(
+                serialized_config,
+                parsed_project_paths.project_root.join("config.yaml"),
+            )
+            .await
+            .context("failed writing imported config.yaml")?;
+
+            // FIXME: This is a hack until system config supports Fuel ecosystem
+            let evm_yaml_config = contract_import_selection.to_evm_human_config(&init_config);
+
+            //Use an empty schema config to generate auto_schema_handler_template
+            //After it's been generated, the schema exists and codegen can parse it/use it
+            let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
+                evm_yaml_config,
+                Schema::empty(),
+                &parsed_project_paths,
+            )
+            .context("Failed parsing config")?;
+
+            let auto_schema_handler_template =
+                contract_import_templates::AutoSchemaHandlerTemplate::try_from(parsed_config)
+                    .context("Failed converting config to auto auto_schema_handler_template")?;
+
+            template_dirs
+                .get_and_extract_blank_template(
+                    &init_config.language,
+                    &parsed_project_paths.project_root,
+                )
+                .context(format!(
+                    "Failed initializing blank template for Contract Import with language {} at \
+                     path {:?}",
+                    &init_config.language, &parsed_project_paths.project_root,
+                ))?;
+
+            auto_schema_handler_template
+                .generate_contract_import_templates(
+                    &init_config.language,
+                    &parsed_project_paths.project_root,
+                )
+                .context(
+                    "Failed generating contract import templates for schema and event handlers.",
+                )?;
+        }
 
         Ecosystem::Evm {
             init_flow: init_config::evm::InitFlow::ContractImport(auto_config_selection),

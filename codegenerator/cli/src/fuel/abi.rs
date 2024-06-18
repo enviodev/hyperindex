@@ -22,7 +22,7 @@ pub struct FuelLog {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Abi {
-    pub path: PathBuf,
+    pub path: String,
     pub raw: String,
     program: ProgramABI,
     logs: HashMap<String, FuelLog>,
@@ -308,7 +308,7 @@ impl Abi {
             abi_file_path
         ))?;
         Ok(Self {
-            path,
+            path: abi_file_path.clone(),
             raw,
             program,
             logs,

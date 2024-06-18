@@ -1,6 +1,5 @@
 use super::etherscan_helpers::fetch_contract_auto_selection_from_etherscan;
 use crate::{
-    cli_args::init_config::Language,
     config_parsing::{
         chain_helpers::{HypersyncNetwork, NetworkWithExplorer},
         human_config::{
@@ -197,7 +196,7 @@ impl AutoConfigSelection {
                 })
                 .collect();
 
-            let handler = get_event_handler_directory(&init_config.language);
+            let handler = init_config.language.get_event_handler_directory();
 
             let config = if is_multi_chain_contract {
                 //Add the contract to global contract config and return none for local contract
@@ -293,14 +292,5 @@ impl AutoConfigSelection {
             rollback_on_reorg: None,
             save_full_history: None,
         })
-    }
-}
-
-// Logic to get the event handler directory based on the language
-fn get_event_handler_directory(language: &Language) -> String {
-    match language {
-        Language::ReScript => "./src/EventHandlers.bs.js".to_string(),
-        Language::TypeScript => "src/EventHandlers.ts".to_string(),
-        Language::JavaScript => "./src/EventHandlers.js".to_string(),
     }
 }
