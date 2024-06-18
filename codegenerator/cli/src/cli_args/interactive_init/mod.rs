@@ -11,12 +11,14 @@ use super::{
 };
 use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use anyhow::{Context, Result};
-use inquire::{Select, Text};
+use inquire::{validator::Validation, CustomType, Select, Text};
+use inquire_helpers::FilePathCompleter;
 use std::str::FromStr;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
-    contains_no_whitespace_validator, is_directory_new_validator, is_not_empty_string_validator,
-    is_valid_foldername_inquire_validator,
+    contains_no_whitespace_validator, first_char_is_alphabet_validator, is_directory_new_validator,
+    is_not_empty_string_validator, is_only_alpha_numeric_characters_validator,
+    is_valid_foldername_inquire_validator, UniqueValueValidator,
 };
 
 #[derive(Clone, Debug, Display, PartialEq, EnumIter)]
@@ -29,6 +31,42 @@ fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
     Select::new("Which template would you like to use?", options)
         .prompt()
         .context("Prompting user for template selection")
+}
+
+fn prompt_abi_file_path(abi_validator: fn(abi_file_path: &str) -> Validation) -> Result<String> {
+    Text::new("What is the path to your json abi file?")
+        //Auto completes path for user with tab/selection
+        .with_autocomplete(FilePathCompleter::default())
+        //Tries to parse the abi to ensure its valid and doesn't
+        //crash the prompt if not. Simply asks for a valid abi
+        .with_validator(move |path: &str| Ok(abi_validator(path)))
+        .prompt()
+        .context("Failed during prompt for abi file path")
+}
+
+fn prompt_contract_name() -> Result<String> {
+    Text::new("What is the name of this contract?")
+        .with_validator(contains_no_whitespace_validator)
+        .with_validator(is_only_alpha_numeric_characters_validator)
+        .with_validator(first_char_is_alphabet_validator)
+        .prompt()
+        .context("Failed during contract name prompt")
+}
+
+fn prompt_contract_address<T: Clone + FromStr + Display + PartialEq + 'static>(
+    selected: Option<&Vec<T>>,
+) -> Result<T> {
+    let mut prompter = CustomType::<T>::new("What is the address of the contract?")
+        .with_help_message("Use the proxy address if your abi is a proxy implementation")
+        .with_error_message(
+            "Please input a valid contract address (should be a hexadecimal starting with (0x))",
+        );
+    if let Some(selected) = selected {
+        prompter = prompter.with_validator(UniqueValueValidator::new(selected.clone()))
+    }
+    prompter
+        .prompt()
+        .context("Failed during contract address prompt")
 }
 
 async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> {
@@ -65,9 +103,9 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
             clap_definitions::fuel::InitFlow::Template(args) => Ecosystem::Fuel {
                 init_flow: fuel_prompts::prompt_template_init_flow(args)?,
             },
-            // clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
-            //     init_flow: fuel_prompts::prompt_contract_import_init_flow(args)?,
-            // },
+            clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
+                init_flow: fuel_prompts::prompt_contract_import_init_flow(args).await?,
+            },
         },
         InitFlow::Template(args) => {
             let chosen_template = match args.template {

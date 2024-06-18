@@ -2,11 +2,8 @@ use super::{
     clap_definitions::evm::{
         ContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
     },
-    inquire_helpers::FilePathCompleter,
-    validation::{
-        contains_no_whitespace_validator, first_char_is_alphabet_validator,
-        is_only_alpha_numeric_characters_validator, UniqueValueValidator,
-    },
+    prompt_abi_file_path, prompt_contract_address, prompt_contract_name,
+    validation::UniqueValueValidator,
 };
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
@@ -22,27 +19,10 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
-use inquire::{validator::Validation, CustomType, CustomUserError, MultiSelect, Select, Text};
+use inquire::{validator::Validation, CustomType, MultiSelect, Select, Text};
 use std::{env, fmt::Display, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
-
-///Returns the prompter which can call .prompt() to action, or add validators/other
-///properties
-fn contract_address_prompter() -> CustomType<'static, Address> {
-    CustomType::<Address>::new("What is the address of the contract?")
-        .with_help_message("Use the proxy address if your abi is a proxy implementation")
-        .with_error_message(
-            "Please input a valid contract address (should be a hexadecimal starting with (0x))",
-        )
-}
-
-///Immediately calls the prompter
-fn contract_address_prompt() -> Result<Address> {
-    contract_address_prompter()
-        .prompt()
-        .context("Prompting user for contract address")
-}
 
 ///Used a wrapper to implement own Display (Display formats to a string of the
 ///human readable event signature)
@@ -141,9 +121,7 @@ impl ContractImportNetworkSelection {
         };
 
         if selected_option == AddNewContractOption::AddAddress {
-            let address = contract_address_prompter()
-                .with_validator(UniqueValueValidator::new(self.addresses.clone()))
-                .prompt()
+            let address = prompt_contract_address(Some(&self.addresses))
                 .context("Failed prompting user for new address")?;
             let updated_selection = self.add_address(address);
 
@@ -274,7 +252,7 @@ impl ContractImportArgs {
     ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         //Construct ContractImportSelection via explorer or local import
         let (contract_import_selection, add_new_contract_option) =
-            match &self.get_local_or_explorer()? {
+            match &self.get_local_or_explorer_import()? {
                 LocalOrExplorerImport::Explorer(explorer_import_args) => self
                     .get_contract_import_selection_from_explore_import_args(explorer_import_args)
                     .await
@@ -282,7 +260,7 @@ impl ContractImportArgs {
                 LocalOrExplorerImport::Local(local_import_args) => self
                     .get_contract_import_selection_from_local_import_args(local_import_args)
                     .await
-                    .context("Failed getting ContractImportSelection from local")?,
+                    .context("Failed getting local contract selection")?,
             };
 
         //If --single-contract flag was not passed in, prompt to ask the user
@@ -305,7 +283,7 @@ impl ContractImportArgs {
         local_import_args: &LocalImportArgs,
     ) -> Result<(ContractImportSelection, AddNewContractOption)> {
         let parsed_abi = local_import_args
-            .get_parsed_abi()
+            .get_abi()
             .context("Failed getting parsed abi")?;
         let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
 
@@ -403,13 +381,13 @@ impl ContractImportArgs {
     fn get_contract_address(&self) -> Result<Address> {
         match &self.contract_address {
             Some(c) => Ok(c.clone()),
-            None => contract_address_prompt(),
+            None => prompt_contract_address(None),
         }
     }
 
     ///Takes either the "local" or "explorer" subcommand from the cli args
     ///or prompts for a choice from the user
-    fn get_local_or_explorer(&self) -> Result<LocalOrExplorerImport> {
+    fn get_local_or_explorer_import(&self) -> Result<LocalOrExplorerImport> {
         match &self.local_or_explorer {
             Some(v) => Ok(v.clone()),
             None => {
@@ -565,37 +543,23 @@ impl LocalImportArgs {
         Ok(abi)
     }
 
-    fn is_abi_file_validator(abi_file_path: &str) -> Result<Validation, CustomUserError> {
-        let maybe_parsed_abi = Self::parse_contract_abi(PathBuf::from(abi_file_path));
-
-        match maybe_parsed_abi {
-            Ok(_) => Ok(Validation::Valid),
-            Err(e) => Ok(Validation::Invalid(e.into())),
-        }
-    }
-
     ///Internal function to get the abi path from the cli args or prompt for
     ///a file path to the abi
     fn get_abi_path_string(&self) -> Result<String> {
         match &self.abi_file {
-            Some(p) => Ok(p.to_owned()),
-            None => {
-                let abi_path = Text::new("What is the path to your json abi file?")
-                    //Auto completes path for user with tab/selection
-                    .with_autocomplete(FilePathCompleter::default())
-                    //Tries to parse the abi to ensure its valid and doesn't
-                    //crash the prompt if not. Simply asks for a valid abi
-                    .with_validator(Self::is_abi_file_validator)
-                    .prompt()
-                    .context("Failed during prompt for abi file path")?;
-
-                Ok(abi_path)
-            }
+            Some(p) => Ok(p.clone()),
+            None => prompt_abi_file_path(|path| {
+                let maybe_parsed_abi = Self::parse_contract_abi(PathBuf::from(path));
+                match maybe_parsed_abi {
+                    Ok(_) => Validation::Valid,
+                    Err(e) => Validation::Invalid(e.into()),
+                }
+            }),
         }
     }
 
     ///Get the file path for the abi and parse it into an abi
-    fn get_parsed_abi(&self) -> Result<ethers::abi::Abi> {
+    fn get_abi(&self) -> Result<ethers::abi::Abi> {
         let abi_path_string = self.get_abi_path_string()?;
 
         let mut parsed_abi = Self::parse_contract_abi(PathBuf::from(abi_path_string))
@@ -622,12 +586,7 @@ impl LocalImportArgs {
     fn get_contract_name(&self) -> Result<String> {
         match &self.contract_name {
             Some(n) => Ok(n.clone()),
-            None => Text::new("What is the name of this contract?")
-                .with_validator(contains_no_whitespace_validator)
-                .with_validator(is_only_alpha_numeric_characters_validator)
-                .with_validator(first_char_is_alphabet_validator)
-                .prompt()
-                .context("Failed during contract name prompt"),
+            None => prompt_contract_name(),
         }
     }
 }
