@@ -28,6 +28,8 @@ pub mod fuel {
     use serde::{Deserialize, Serialize};
     use strum::{Display, EnumIter, EnumString};
 
+    use crate::fuel::{abi::Abi, address::Address};
+
     #[derive(Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, Display)]
     pub enum Template {
         Greeter,
@@ -42,7 +44,8 @@ pub mod fuel {
     #[derive(Clone, Debug)]
     pub struct ContractImportSelection {
         pub name: String,
-        pub abi_file_path: String,
+        pub address: Address,
+        pub abi: Abi,
         pub events: Vec<EventSelection>,
     }
 
