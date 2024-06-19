@@ -104,8 +104,12 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             .context("Failed parsing config")?;
 
             let auto_schema_handler_template =
-                contract_import_templates::AutoSchemaHandlerTemplate::try_from(parsed_config)
-                    .context("Failed converting config to auto auto_schema_handler_template")?;
+                contract_import_templates::AutoSchemaHandlerTemplate::try_from(
+                    parsed_config,
+                    false,
+                    &init_config.language,
+                )
+                .context("Failed converting config to auto auto_schema_handler_template")?;
 
             auto_schema_handler_template
                 .generate_subgraph_migration_templates(
@@ -144,8 +148,12 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             .context("Failed parsing config")?;
 
             let auto_schema_handler_template =
-                contract_import_templates::AutoSchemaHandlerTemplate::try_from(parsed_config)
-                    .context("Failed converting config to auto auto_schema_handler_template")?;
+                contract_import_templates::AutoSchemaHandlerTemplate::try_from(
+                    parsed_config,
+                    true,
+                    &init_config.language,
+                )
+                .context("Failed converting config to auto auto_schema_handler_template")?;
 
             template_dirs
                 .get_and_extract_blank_template(
@@ -196,8 +204,12 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             .context("Failed parsing config")?;
 
             let auto_schema_handler_template =
-                contract_import_templates::AutoSchemaHandlerTemplate::try_from(parsed_config)
-                    .context("Failed converting config to auto auto_schema_handler_template")?;
+                contract_import_templates::AutoSchemaHandlerTemplate::try_from(
+                    parsed_config,
+                    false,
+                    &init_config.language,
+                )
+                .context("Failed converting config to auto auto_schema_handler_template")?;
 
             template_dirs
                 .get_and_extract_blank_template(
