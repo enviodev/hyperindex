@@ -361,6 +361,7 @@ impl Into<Entity> for Event {
 ///schema and handlers.
 #[derive(Serialize, Clone)]
 pub struct Param {
+    param_name: CapitalizedOptions,
     ///Event param name + index if its a tuple ie. myTupleParam_0_1 or just myRegularParam
     entity_key: CapitalizedOptions,
     ///Just the event param name accessible on the event type
@@ -375,6 +376,10 @@ pub struct Param {
 impl Param {
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
         Ok(Param {
+            param_name: flattened_event_param
+                .event_param
+                .name
+                .to_capitalized_options(),
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
             tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
