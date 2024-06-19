@@ -1,4 +1,4 @@
-use crate::capitalization::CapitalizedOptions;
+use crate::capitalization::{Capitalize, CapitalizedOptions};
 use core::fmt;
 use itertools::Itertools;
 use serde::Serialize;
@@ -260,7 +260,7 @@ impl RescriptTypeIdent {
             } => {
                 let params_joined = params
                     .iter()
-                    .map(|p| p.to_string().to_lowercase())
+                    .map(|p| p.to_string().uncapitalize())
                     .join(", ");
                 format!("{name}<{params_joined}>")
             }
