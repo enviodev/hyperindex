@@ -133,7 +133,21 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await
-            .context("failed writing imported config.yaml")?;
+            .context("Failed writing imported config.yaml")?;
+
+            for selected_contract in &contract_import_selection.contracts {
+                file_system::write_file_string_to_system(
+                    selected_contract.abi.raw.clone(),
+                    parsed_project_paths
+                        .project_root
+                        .join(selected_contract.get_vendored_abi_file_path()),
+                )
+                .await
+                .context(format!(
+                    "Failed vendoring ABI file for {} contract",
+                    selected_contract.name
+                ))?;
+            }
 
             // FIXME: This is a hack until system config supports Fuel ecosystem
             let evm_yaml_config = contract_import_selection.to_evm_human_config(&init_config);
