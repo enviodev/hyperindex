@@ -34,7 +34,6 @@ pub mod fuel {
             fuel::{ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network},
             NetworkContract,
         },
-        constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
         fuel::{abi::Abi, address::Address},
     };
 
@@ -57,6 +56,12 @@ pub mod fuel {
         pub address: Address,
         pub abi: Abi,
         pub events: Vec<SelectedEvent>,
+    }
+
+    impl SelectedContract {
+        pub fn get_vendored_abi_file_path(self: &Self) -> String {
+            format!("abis/{}-abi.json", self.name.to_lowercase())
+        }
     }
 
     #[derive(Clone, Debug)]
@@ -83,12 +88,7 @@ pub mod fuel {
                             name: selected_contract.name.clone(),
                             address: selected_contract.address.to_string().into(),
                             config: Some(ContractConfig {
-                                abi_file_path: match init_config.directory
-                                    == DEFAULT_PROJECT_ROOT_PATH
-                                {
-                                    true => selected_contract.abi.path.clone(),
-                                    false => format!("../{}", selected_contract.abi.path),
-                                },
+                                abi_file_path: selected_contract.get_vendored_abi_file_path(),
                                 handler: init_config.language.get_event_handler_directory(),
                                 events: selected_contract
                                     .events
