@@ -2,8 +2,9 @@ use super::{
     clap_definitions::evm::{
         ContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
     },
-    prompt_abi_file_path, prompt_contract_address, prompt_contract_name,
+    prompt_abi_file_path, prompt_contract_address, prompt_contract_name, prompt_events_selection,
     validation::UniqueValueValidator,
+    SelectItem,
 };
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
@@ -19,66 +20,22 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
-use inquire::{validator::Validation, CustomType, MultiSelect, Select, Text};
-use std::{env, fmt::Display, path::PathBuf, str::FromStr};
+use inquire::{validator::Validation, CustomType, Select, Text};
+use std::{env, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 
-///Used a wrapper to implement own Display (Display formats to a string of the
-///human readable event signature)
-struct DisplayEventWrapper(ethers::abi::Event);
-
-impl Display for DisplayEventWrapper {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", EventConfig::event_string_from_abi_event(&self.0))
-    }
-}
-
-///Convert to and from ethers Event
-impl From<ethers::abi::Event> for DisplayEventWrapper {
-    fn from(value: ethers::abi::Event) -> Self {
-        Self(value)
-    }
-}
-
-///Convert to and from ethers Event
-impl From<DisplayEventWrapper> for ethers::abi::Event {
-    fn from(value: DisplayEventWrapper) -> Self {
-        value.0
-    }
-}
-
-///Takes a vec of Events and sets up a multi selecet prompt
-///with all selected by default. Whatever is selected in the prompt
-///is returned
-fn prompt_for_event_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<ethers::abi::Event>> {
-    //Wrap events with Display wrapper
-    let wrapped_events: Vec<_> = events
-        .into_iter()
-        .map(|event| DisplayEventWrapper::from(event))
-        .collect();
-
-    //Collect all the indexes of the vector in another vector which will be used
-    //to preselect all events
-    let all_indexes_of_events = wrapped_events
-        .iter()
-        .enumerate()
-        .map(|(i, _)| i)
-        .collect::<Vec<usize>>();
-
-    //Prompt for selection with all events selected by default
-    let selected_wrapped_events =
-        MultiSelect::new("Which events would you like to index?", wrapped_events)
-            .with_default(&all_indexes_of_events)
-            .prompt()?;
-
-    //Unwrap the selected events and return
-    let selected_events = selected_wrapped_events
-        .into_iter()
-        .map(|w_event| w_event.into())
-        .collect();
-
-    Ok(selected_events)
+fn prompt_abi_events_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<ethers::abi::Event>> {
+    prompt_events_selection(
+        events
+            .into_iter()
+            .map(|abi_event| SelectItem {
+                display: EventConfig::event_string_from_abi_event(&abi_event),
+                item: abi_event,
+            })
+            .collect(),
+    )
+    .context("Failed selecting ABI events")
 }
 
 ///Represents the choice a user makes for adding values to
@@ -288,8 +245,7 @@ impl ContractImportArgs {
         let mut abi_events: Vec<ethers::abi::Event> = parsed_abi.events().cloned().collect();
 
         if !self.all_events {
-            abi_events =
-                prompt_for_event_selection(abi_events).context("Failed selecting events")?;
+            abi_events = prompt_abi_events_selection(abi_events)?;
         }
 
         let network = local_import_args
@@ -347,8 +303,7 @@ impl ContractImportArgs {
             networks,
             events,
         } = if !self.all_events {
-            let events = prompt_for_event_selection(contract_selection_from_etherscan.events)
-                .context("Failed selecting events")?;
+            let events = prompt_abi_events_selection(contract_selection_from_etherscan.events)?;
             ContractImportSelection {
                 events,
                 ..contract_selection_from_etherscan

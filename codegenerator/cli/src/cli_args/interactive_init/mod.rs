@@ -11,7 +11,7 @@ use super::{
 };
 use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
 use anyhow::{Context, Result};
-use inquire::{validator::Validation, CustomType, Select, Text};
+use inquire::{validator::Validation, CustomType, MultiSelect, Select, Text};
 use inquire_helpers::FilePathCompleter;
 use std::str::FromStr;
 use strum::{Display, EnumIter, IntoEnumIterator};
@@ -31,6 +31,43 @@ fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
     Select::new("Which template would you like to use?", options)
         .prompt()
         .context("Prompting user for template selection")
+}
+
+struct SelectItem<T> {
+    item: T,
+    display: String,
+}
+
+impl<T> Display for SelectItem<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.display)
+    }
+}
+
+///Takes a vec of Events and sets up a multi selecet prompt
+///with all selected by default. Whatever is selected in the prompt
+///is returned
+fn prompt_events_selection<T>(events: Vec<SelectItem<T>>) -> Result<Vec<T>> {
+    //Collect all the indexes of the vector in another vector which will be used
+    //to preselect all events
+    let all_indexes_of_events = events
+        .iter()
+        .enumerate()
+        .map(|(i, _)| i)
+        .collect::<Vec<usize>>();
+
+    //Prompt for selection with all events selected by default
+    let selected_wrapped_events = MultiSelect::new("Which events would you like to index?", events)
+        .with_default(&all_indexes_of_events)
+        .prompt()?;
+
+    //Unwrap the selected events and return
+    let selected_events = selected_wrapped_events
+        .into_iter()
+        .map(|w_event| w_event.item)
+        .collect();
+
+    Ok(selected_events)
 }
 
 fn prompt_abi_file_path(abi_validator: fn(abi_file_path: &str) -> Validation) -> Result<String> {
