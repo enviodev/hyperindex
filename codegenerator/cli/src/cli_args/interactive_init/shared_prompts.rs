@@ -1,10 +1,6 @@
 use std::fmt::Display;
 
-use crate::init_config::{evm, Ecosystem};
-
 use super::{
-    clap_definitions::{self, InitFlow},
-    fuel_prompts,
     inquire_helpers::FilePathCompleter,
     validation::{
         contains_no_whitespace_validator, first_char_is_alphabet_validator,
@@ -16,13 +12,7 @@ use anyhow::{Context, Result};
 use inquire::{validator::Validation, CustomType, MultiSelect, Select, Text};
 
 use std::str::FromStr;
-use strum::{Display, EnumIter, IntoEnumIterator};
-
-#[derive(Clone, Debug, Display, PartialEq, EnumIter)]
-pub enum EcosystemOption {
-    Evm,
-    Fuel,
-}
+use strum::{EnumIter, IntoEnumIterator};
 
 pub fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
     Select::new("Which template would you like to use?", options)
@@ -105,78 +95,78 @@ pub fn prompt_contract_address<T: Clone + FromStr + Display + PartialEq + 'stati
         .context("Failed during contract address prompt")
 }
 
-pub async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> {
-    let init_flow = match cli_init_flow {
-        Some(v) => v,
-        None => {
-            let ecosystem_options = EcosystemOption::iter().collect();
+///Represents the choice a user makes for adding values to
+///their auto config selection
+#[derive(strum_macros::Display, EnumIter, Default, PartialEq)]
+pub enum AddNewContractOption {
+    #[default]
+    #[strum(serialize = "I'm finished")]
+    Finished,
+    #[strum(serialize = "Add a new address for same contract on same network")]
+    AddAddress,
+    #[strum(serialize = "Add a new network for same contract")]
+    AddNetwork,
+    #[strum(serialize = "Add a new contract (with a different ABI)")]
+    AddContract,
+}
 
-            let ecosystem_option = Select::new("Choose blockchain ecosystem", ecosystem_options)
-                .prompt()
-                .context("Failed prompting for blockchain ecosystem")?;
+pub fn prompt_add_new_contract_option(
+    contract_name: &String,
+    network: &String,
+    can_add_network: bool,
+) -> Result<AddNewContractOption> {
+    let mut options = AddNewContractOption::iter().collect::<Vec<_>>();
+    if !can_add_network {
+        options = options
+            .into_iter()
+            .filter(|o| o != &AddNewContractOption::AddNetwork)
+            .collect();
+    }
+    let help_message = format!(
+        "Current contract: {}, on network: {}",
+        contract_name, network
+    );
+    Select::new("Would you like to add another contract?", options)
+        .with_starting_cursor(0)
+        .with_help_message(&help_message)
+        .prompt()
+        .context("Failed prompting for add contract")
+}
 
-            match ecosystem_option {
-                EcosystemOption::Fuel => InitFlow::Fuel { init_flow: None },
-                EcosystemOption::Evm => {
-                    // Start prompt to ask the user which initialization option they want
-                    // Explicitelly build options, since we don't want to include graph migration and other ecosystem selection subcomands
-                    let user_response_options =
-                        clap_definitions::EvmInitFlowInteractive::iter().collect();
+pub trait Contract {
+    fn get_network_name(&self) -> String;
+    fn get_name(&self) -> String;
+}
 
-                    Select::new("Choose an initialization option", user_response_options)
-                        .prompt()
-                        .context("Failed prompting for Evm initialization option")?
-                        .into()
-                }
-            }
+pub fn prompt_to_continue_adding<T: Contract, AF, CF>(
+    contracts: &mut Vec<T>,
+    mut add_address: AF,
+    mut add_contract: CF,
+    can_add_network: bool,
+) -> Result<()>
+where
+    AF: FnMut(&mut T) -> Result<()>,
+    CF: FnMut() -> Result<T>,
+{
+    let active_contract = contracts
+        .last_mut()
+        .context("Failed to get the last selected contract")?;
+    let add_new_contract_option = prompt_add_new_contract_option(
+        &active_contract.get_name(),
+        &active_contract.get_network_name(),
+        can_add_network,
+    )?;
+    match add_new_contract_option {
+        AddNewContractOption::Finished => Ok(()),
+        AddNewContractOption::AddNetwork => todo!("Not implemented"),
+        AddNewContractOption::AddContract => {
+            let contract = add_contract()?;
+            contracts.push(contract);
+            prompt_to_continue_adding(contracts, add_address, add_contract, can_add_network)
         }
-    };
-
-    let initialization = match init_flow {
-        InitFlow::Fuel {
-            init_flow: maybe_init_flow,
-        } => match fuel_prompts::prompt_init_flow_missing(maybe_init_flow)? {
-            clap_definitions::fuel::InitFlow::Template(args) => Ecosystem::Fuel {
-                init_flow: fuel_prompts::prompt_template_init_flow(args)?,
-            },
-            clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
-                init_flow: fuel_prompts::prompt_contract_import_init_flow(args).await?,
-            },
-        },
-        InitFlow::Template(args) => {
-            let chosen_template = match args.template {
-                Some(template) => template,
-                None => {
-                    let options = evm::Template::iter().collect();
-                    prompt_template(options)?
-                }
-            };
-            Ecosystem::Evm {
-                init_flow: evm::InitFlow::Template(chosen_template),
-            }
+        AddNewContractOption::AddAddress => {
+            add_address(active_contract)?;
+            prompt_to_continue_adding(contracts, add_address, add_contract, can_add_network)
         }
-        InitFlow::SubgraphMigration(args) => {
-            let input_subgraph_id = match args.subgraph_id {
-                Some(id) => id,
-                None => Text::new("[BETA VERSION] What is the subgraph ID?")
-                    .prompt()
-                    .context("Prompting user for subgraph id")?,
-            };
-            Ecosystem::Evm {
-                init_flow: evm::InitFlow::SubgraphID(input_subgraph_id),
-            }
-        }
-
-        InitFlow::ContractImport(args) => {
-            let auto_config_selection = args
-                .get_auto_config_selection()
-                .await
-                .context("Failed getting AutoConfigSelection selection")?;
-            Ecosystem::Evm {
-                init_flow: evm::InitFlow::ContractImport(auto_config_selection),
-            }
-        }
-    };
-
-    Ok(initialization)
+    }
 }

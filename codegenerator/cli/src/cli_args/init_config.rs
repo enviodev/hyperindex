@@ -50,7 +50,7 @@ pub mod fuel {
     #[derive(Clone, Debug)]
     pub struct SelectedContract {
         pub name: String,
-        pub address: Address,
+        pub addresses: Vec<Address>,
         pub abi: Abi,
         pub selected_logs: Vec<FuelLog>,
     }
@@ -83,7 +83,12 @@ pub mod fuel {
                         .iter()
                         .map(|selected_contract| NetworkContract {
                             name: selected_contract.name.clone(),
-                            address: selected_contract.address.to_string().into(),
+                            address: selected_contract
+                                .addresses
+                                .iter()
+                                .map(|a| a.to_string())
+                                .collect::<Vec<String>>()
+                                .into(),
                             config: Some(ContractConfig {
                                 abi_file_path: selected_contract.get_vendored_abi_file_path(),
                                 handler: init_config.language.get_event_handler_directory(),
@@ -127,7 +132,12 @@ pub mod fuel {
                         .iter()
                         .map(|selected_contract| NetworkContract {
                             name: selected_contract.name.clone(),
-                            address: selected_contract.address.to_string().into(),
+                            address: selected_contract
+                                .addresses
+                                .iter()
+                                .map(|a| a.to_string())
+                                .collect::<Vec<String>>()
+                                .into(),
                             config: Some(human_config::evm::ContractConfig {
                                 abi_file_path: None,
                                 handler: init_config.language.get_event_handler_directory(),

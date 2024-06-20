@@ -3,8 +3,8 @@ use super::{
         ContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
     },
     shared_prompts::{
-        prompt_abi_file_path, prompt_contract_address, prompt_contract_name,
-        prompt_events_selection, SelectItem,
+        prompt_abi_file_path, prompt_add_new_contract_option, prompt_contract_address,
+        prompt_contract_name, prompt_events_selection, AddNewContractOption, SelectItem,
     },
     validation::UniqueValueValidator,
 };
@@ -25,7 +25,6 @@ use async_recursion::async_recursion;
 use inquire::{validator::Validation, CustomType, Select, Text};
 use std::{env, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
 
 fn prompt_abi_events_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<ethers::abi::Event>> {
     prompt_events_selection(
@@ -40,21 +39,6 @@ fn prompt_abi_events_selection(events: Vec<ethers::abi::Event>) -> Result<Vec<et
     .context("Failed selecting ABI events")
 }
 
-///Represents the choice a user makes for adding values to
-///their auto config selection
-#[derive(strum_macros::Display, EnumIter, Default, PartialEq)]
-enum AddNewContractOption {
-    #[default]
-    #[strum(serialize = "I'm finished")]
-    Finished,
-    #[strum(serialize = "Add a new address for same contract on same network")]
-    AddAddress,
-    #[strum(serialize = "Add a new network for same contract")]
-    AddNetwork,
-    #[strum(serialize = "Add a new contract (with a different ABI)")]
-    AddContract,
-}
-
 impl ContractImportNetworkSelection {
     ///Recursively asks to add an address to ContractImportNetworkSelection
     fn prompt_add_contract_address_to_network_selection(
@@ -65,18 +49,11 @@ impl ContractImportNetworkSelection {
     ) -> Result<(Self, AddNewContractOption)> {
         let selected_option = match preselected_add_new_contract_option {
             Some(preselected) => preselected,
-            None => {
-                let options = AddNewContractOption::iter().collect::<Vec<_>>();
-                let help_message = format!(
-                    "Current contract: {}, on network: {}",
-                    current_contract_name, self.network
-                );
-                Select::new("Would you like to add another contract?", options)
-                    .with_starting_cursor(0)
-                    .with_help_message(&help_message)
-                    .prompt()
-                    .context("Failed prompting for add contract")?
-            }
+            None => prompt_add_new_contract_option(
+                &current_contract_name.to_string(),
+                &self.network.to_string(),
+                true,
+            )?,
         };
 
         if selected_option == AddNewContractOption::AddAddress {
