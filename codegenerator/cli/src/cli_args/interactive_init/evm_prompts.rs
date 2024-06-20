@@ -2,9 +2,11 @@ use super::{
     clap_definitions::evm::{
         ContractImportArgs, ExplorerImportArgs, LocalImportArgs, LocalOrExplorerImport,
     },
-    prompt_abi_file_path, prompt_contract_address, prompt_contract_name, prompt_events_selection,
+    shared_prompts::{
+        prompt_abi_file_path, prompt_contract_address, prompt_contract_name,
+        prompt_events_selection, SelectItem,
+    },
     validation::UniqueValueValidator,
-    SelectItem,
 };
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
