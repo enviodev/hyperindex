@@ -8,15 +8,102 @@ use super::{
     clap_definitions::{self, InitArgs, ProjectPaths},
     init_config::{InitConfig, Language},
 };
-use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
+use crate::{
+    clap_definitions::InitFlow,
+    constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
+    init_config::{evm, Ecosystem},
+};
 use anyhow::{Context, Result};
 use inquire::{Select, Text};
+use shared_prompts::prompt_template;
 use std::str::FromStr;
-use strum::IntoEnumIterator;
+use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
     contains_no_whitespace_validator, is_directory_new_validator, is_not_empty_string_validator,
     is_valid_foldername_inquire_validator,
 };
+
+#[derive(Clone, Debug, Display, PartialEq, EnumIter)]
+enum EcosystemOption {
+    Evm,
+    Fuel,
+}
+
+async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> {
+    let init_flow = match cli_init_flow {
+        Some(v) => v,
+        None => {
+            let ecosystem_options = EcosystemOption::iter().collect();
+
+            let ecosystem_option = Select::new("Choose blockchain ecosystem", ecosystem_options)
+                .prompt()
+                .context("Failed prompting for blockchain ecosystem")?;
+
+            match ecosystem_option {
+                EcosystemOption::Fuel => InitFlow::Fuel { init_flow: None },
+                EcosystemOption::Evm => {
+                    // Start prompt to ask the user which initialization option they want
+                    // Explicitelly build options, since we don't want to include graph migration and other ecosystem selection subcomands
+                    let user_response_options =
+                        clap_definitions::EvmInitFlowInteractive::iter().collect();
+
+                    Select::new("Choose an initialization option", user_response_options)
+                        .prompt()
+                        .context("Failed prompting for Evm initialization option")?
+                        .into()
+                }
+            }
+        }
+    };
+
+    let initialization = match init_flow {
+        InitFlow::Fuel {
+            init_flow: maybe_init_flow,
+        } => match fuel_prompts::prompt_init_flow_missing(maybe_init_flow)? {
+            clap_definitions::fuel::InitFlow::Template(args) => Ecosystem::Fuel {
+                init_flow: fuel_prompts::prompt_template_init_flow(args)?,
+            },
+            clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
+                init_flow: fuel_prompts::prompt_contract_import_init_flow(args).await?,
+            },
+        },
+        InitFlow::Template(args) => {
+            let chosen_template = match args.template {
+                Some(template) => template,
+                None => {
+                    let options = evm::Template::iter().collect();
+                    prompt_template(options)?
+                }
+            };
+            Ecosystem::Evm {
+                init_flow: evm::InitFlow::Template(chosen_template),
+            }
+        }
+        InitFlow::SubgraphMigration(args) => {
+            let input_subgraph_id = match args.subgraph_id {
+                Some(id) => id,
+                None => Text::new("[BETA VERSION] What is the subgraph ID?")
+                    .prompt()
+                    .context("Prompting user for subgraph id")?,
+            };
+            Ecosystem::Evm {
+                init_flow: evm::InitFlow::SubgraphID(input_subgraph_id),
+            }
+        }
+
+        InitFlow::ContractImport(args) => {
+            let auto_config_selection = args
+                .get_auto_config_selection()
+                .await
+                .context("Failed getting AutoConfigSelection selection")?;
+            Ecosystem::Evm {
+                init_flow: evm::InitFlow::ContractImport(auto_config_selection),
+            }
+        }
+    };
+
+    Ok(initialization)
+}
 
 pub async fn prompt_missing_init_args(
     init_args: InitArgs,
@@ -64,7 +151,7 @@ pub async fn prompt_missing_init_args(
         }
     };
 
-    let ecosystem = shared_prompts::prompt_ecosystem(init_args.init_commands)
+    let ecosystem = prompt_ecosystem(init_args.init_commands)
         .await
         .context("Failed getting template")?;
 

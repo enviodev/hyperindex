@@ -12,7 +12,7 @@ use strum::IntoEnumIterator;
 
 use super::shared_prompts::{
     prompt_abi_file_path, prompt_contract_address, prompt_contract_name, prompt_events_selection,
-    prompt_template, SelectItem,
+    prompt_template, prompt_to_continue_adding, Contract, SelectItem,
 };
 
 pub fn prompt_init_flow_missing(maybe_init_flow: Option<ClapInitFlow>) -> Result<ClapInitFlow> {
@@ -86,9 +86,19 @@ fn prompt_logs_selection(logs: Vec<FuelLog>) -> Result<Vec<FuelLog>> {
     .context("Failed selecting ABI events")
 }
 
+impl Contract for SelectedContract {
+    fn get_network_name(&self) -> String {
+        "Fuel".to_string()
+    }
+
+    fn get_name(&self) -> String {
+        self.name.clone()
+    }
+}
+
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
-async fn get_contract_import_selection(args: ContractImportArgs) -> Result<SelectedContract> {
+fn get_contract_import_selection(args: ContractImportArgs) -> Result<SelectedContract> {
     let local_or_explorer_import = get_local_or_explorer_import(&args);
     let local_import_args = match local_or_explorer_import {
         LocalOrExplorerImport::Local(local_import_args) => local_import_args,
@@ -105,20 +115,38 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 
     let name = get_contract_name(&local_import_args).context("Failed getting contract name")?;
 
-    let address = prompt_contract_address(None)?;
+    let addresses = vec![prompt_contract_address(None)?];
 
     Ok(SelectedContract {
         name,
-        address,
+        addresses,
         abi,
         selected_logs,
     })
 }
 
+//Constructs SelectedContract via local prompt. Uses abis and manual
+//network/contract config
+fn prompt_selected_contracts(args: ContractImportArgs) -> Result<Vec<SelectedContract>> {
+    let should_prompt_to_continue_adding = !args.single_contract.clone();
+    let first_contract = get_contract_import_selection(args)?;
+    let mut contracts = vec![first_contract];
+
+    if should_prompt_to_continue_adding {
+        let add_address = |contract: &mut SelectedContract| {
+            let address = prompt_contract_address(Some(&contract.addresses))?;
+            contract.addresses.push(address);
+            Ok(())
+        };
+        let add_contract = || get_contract_import_selection(ContractImportArgs::default());
+        prompt_to_continue_adding(&mut contracts, add_address, add_contract, false)?
+    }
+
+    Ok(contracts)
+}
+
 pub async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Result<InitFlow> {
     Ok(InitFlow::ContractImport(ContractImportSelection {
-        contracts: vec![get_contract_import_selection(args)
-            .await
-            .context("Failed getting contract selection")?],
+        contracts: prompt_selected_contracts(args).context("Failed getting contract selection")?,
     }))
 }
