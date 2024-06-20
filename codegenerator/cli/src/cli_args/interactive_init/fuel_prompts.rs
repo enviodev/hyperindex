@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use inquire::{validator::Validation, Select};
 use strum::IntoEnumIterator;
 
-use super::{
+use super::shared_prompts::{
     prompt_abi_file_path, prompt_contract_address, prompt_contract_name, prompt_events_selection,
     prompt_template, SelectItem,
 };
