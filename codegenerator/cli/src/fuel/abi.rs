@@ -12,12 +12,44 @@ use crate::rescript_types::{
 pub struct FuelType {
     pub id: usize,
     pub rescript_type_decl: RescriptTypeDecl,
+    abi_type_field: String,
+}
+
+impl FuelType {
+    fn get_event_name(self: &Self) -> String {
+        match self.abi_type_field.as_str() {
+            "()" => "UnitLog",
+            "bool" => "BoolLog",
+            "u8" => "U8Log",
+            "u16" => "U16Log",
+            "u32" => "U32Log",
+            "u64" => "U64Log",
+            "u128" => "U128Log",
+            "raw untyped ptr" => "RawUntypedPtrLog",
+            "b256" => "B256Log",
+            "address" => "AddressLog",
+            "Vec" => "VecLog",
+            type_field if type_field.starts_with("str[") => "StrLog",
+            "enum Option" => "OptionLog",
+            type_field if type_field.starts_with("struct ") => type_field
+                .strip_prefix("struct ")
+                .unwrap_or_else(|| "StructLog"),
+            type_field if type_field.starts_with("enum ") => type_field
+                .strip_prefix("enum ")
+                .unwrap_or_else(|| "EnumLog"),
+            type_field if type_field.starts_with("(_,") => "TupleLog",
+            type_field if type_field.starts_with("[_;") => "ArrayLog",
+            _ => "UnknownLog",
+        }
+        .to_string()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FuelLog {
     pub id: String,
     pub logged_type: FuelType,
+    pub event_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -248,6 +280,7 @@ impl Abi {
 
                 Ok(Some(FuelType {
                     id: abi_type_decl.type_id,
+                    abi_type_field: abi_type_decl.type_field.clone(),
                     rescript_type_decl: RescriptTypeDecl::new(name, type_expr?, type_params),
                 }))
             })
@@ -268,16 +301,32 @@ impl Abi {
         types: &HashMap<usize, FuelType>,
     ) -> Result<HashMap<String, FuelLog>> {
         let mut logs_map: HashMap<String, FuelLog> = HashMap::new();
+        let mut names_count: HashMap<String, u8> = HashMap::new();
 
         if let Some(logged_types) = &program.logged_types {
             for logged_type in logged_types.iter() {
                 let id = logged_type.log_id.clone();
                 let type_id = logged_type.application.type_id;
                 let logged_type = types.get(&type_id).context("Failed to get logged type")?;
+
+                let event_name = {
+                    // Since Event name doesn't consider the type children, there might be duplications.
+                    // Prevent it by adding a postfix when an even_name appears more than one time
+                    let mut event_name = logged_type.get_event_name();
+                    let event_name_count = names_count.get(&event_name).unwrap_or(&1);
+                    let event_name_count = event_name_count + 1;
+                    if event_name_count > 2 {
+                        event_name = format!("{event_name}{event_name_count}")
+                    }
+                    names_count.insert(event_name.clone(), event_name_count);
+                    event_name
+                };
+
                 logs_map.insert(
                     id.clone(),
                     FuelLog {
                         id,
+                        event_name: event_name,
                         logged_type: logged_type.clone(),
                     },
                 );

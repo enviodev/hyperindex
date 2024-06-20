@@ -4,9 +4,7 @@ use crate::{
         TemplateArgs,
     },
     fuel::abi::Abi,
-    init_config::fuel::{
-        ContractImportSelection, InitFlow, SelectedContract, SelectedEvent, Template,
-    },
+    init_config::fuel::{ContractImportSelection, InitFlow, SelectedContract, Template},
 };
 use anyhow::{Context, Result};
 use inquire::{validator::Validation, Select};
@@ -82,14 +80,7 @@ async fn get_contract_import_selection_from_local_import_args(
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
     let abi = Abi::parse(&abi_path_string).context("Failed parsing Fuel ABI")?;
 
-    let events = abi
-        .get_logs()
-        .iter()
-        .map(|log| SelectedEvent {
-            name: format!("Log_{}", log.id), // TODO: Use types for suggested event names
-            log_id: Some(vec![log.id.clone()]),
-        })
-        .collect();
+    let selected_logs = abi.get_logs();
 
     let name = get_contract_name(local_import_args).context("Failed getting contract name")?;
 
@@ -99,7 +90,7 @@ async fn get_contract_import_selection_from_local_import_args(
         name,
         address,
         abi,
-        events,
+        selected_logs,
     })
 }
 

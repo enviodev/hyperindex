@@ -34,7 +34,10 @@ pub mod fuel {
             fuel::{ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network},
             NetworkContract,
         },
-        fuel::{abi::Abi, address::Address},
+        fuel::{
+            abi::{Abi, FuelLog},
+            address::Address,
+        },
     };
 
     use super::InitConfig;
@@ -45,17 +48,11 @@ pub mod fuel {
     }
 
     #[derive(Clone, Debug)]
-    pub struct SelectedEvent {
-        pub name: String,
-        pub log_id: Option<Vec<String>>,
-    }
-
-    #[derive(Clone, Debug)]
     pub struct SelectedContract {
         pub name: String,
         pub address: Address,
         pub abi: Abi,
-        pub events: Vec<SelectedEvent>,
+        pub selected_logs: Vec<FuelLog>,
     }
 
     impl SelectedContract {
@@ -91,14 +88,11 @@ pub mod fuel {
                                 abi_file_path: selected_contract.get_vendored_abi_file_path(),
                                 handler: init_config.language.get_event_handler_directory(),
                                 events: selected_contract
-                                    .events
+                                    .selected_logs
                                     .iter()
-                                    .map(|selected_event| EventConfig {
-                                        name: selected_event.name.clone(),
-                                        log_id: match &selected_event.log_id {
-                                            None => None.into(),
-                                            Some(vec) => vec.clone().into(),
-                                        },
+                                    .map(|selected_log| EventConfig {
+                                        name: selected_log.event_name.clone(),
+                                        log_id: selected_log.id.clone().into(),
                                     })
                                     .collect(),
                             }),
@@ -138,10 +132,10 @@ pub mod fuel {
                                 abi_file_path: None,
                                 handler: init_config.language.get_event_handler_directory(),
                                 events: selected_contract
-                                    .events
+                                    .selected_logs
                                     .iter()
-                                    .map(|selected_event| human_config::evm::EventConfig {
-                                        event: format!("{}()", selected_event.name),
+                                    .map(|selected_log| human_config::evm::EventConfig {
+                                        event: format!("{}()", selected_log.event_name),
                                         is_async: None,
                                         required_entities: None,
                                     })
