@@ -105,7 +105,6 @@ async fn fetch_get_source_code_result_from_block_explorer(
 ) -> anyhow::Result<etherscan::contract::Metadata> {
     //todo make retryable
     let mut refetch_delay = Duration::from_secs(2);
-    let mut rate_limit_retry_count = 0;
 
     let fail_if_maximum_is_exceeded =
         |current_refetch_delay: Duration, e: EtherscanError| -> anyhow::Result<()> {
@@ -125,7 +124,7 @@ async fn fetch_get_source_code_result_from_block_explorer(
         };
 
     let contract_metadata: ContractMetadata = loop {
-        let client = chain_helpers::get_etherscan_client(network, rate_limit_retry_count)
+        let client = chain_helpers::get_etherscan_client(network)
             .context("Making client for getting source code")?;
 
         match client.contract_source_code(address.clone()).await {
@@ -133,10 +132,17 @@ async fn fetch_get_source_code_result_from_block_explorer(
                 break Ok::<_, anyhow::Error>(res);
             }
             Err(e) => {
-                // In this case, increment the key index to use the next API key
-                // replace 3 with the number of API keys constant
                 if let EtherscanError::RateLimitExceeded = e {
-                    rate_limit_retry_count += 1;
+                    eprintln!(
+                      "Rate limit hit. Retrying in {} seconds. You can try use your own API key by setting the {} environment variable if you are being rate limited or blocked.",
+                      refetch_delay.as_secs(),
+                      network.get_env_token_name()
+                  );
+                                      fail_if_maximum_is_exceeded(refetch_delay, EtherscanError::RateLimitExceeded)?;
+
+
+
+                                     
                 } else {
                     let retry_err = match e {
                         //In these cases, return ok(err) if it should be retried
@@ -167,9 +173,9 @@ async fn fetch_get_source_code_result_from_block_explorer(
                         | EtherscanError::PageNotFound => Err(e),
                     }?;
                     fail_if_maximum_is_exceeded(refetch_delay, retry_err)?;
-                    tokio::time::sleep(refetch_delay).await;
-                    refetch_delay *= 2;
-                }
+                  }
+                  tokio::time::sleep(refetch_delay).await;
+                  refetch_delay *= 2;
             }
         }
     }
