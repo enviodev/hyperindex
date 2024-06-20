@@ -3,14 +3,17 @@ use crate::{
         ContractImportArgs, InitFlow as ClapInitFlow, LocalImportArgs, LocalOrExplorerImport,
         TemplateArgs,
     },
-    fuel::abi::Abi,
+    fuel::abi::{Abi, FuelLog},
     init_config::fuel::{ContractImportSelection, InitFlow, SelectedContract, Template},
 };
 use anyhow::{Context, Result};
 use inquire::{validator::Validation, Select};
 use strum::IntoEnumIterator;
 
-use super::{prompt_abi_file_path, prompt_contract_address, prompt_contract_name, prompt_template};
+use super::{
+    prompt_abi_file_path, prompt_contract_address, prompt_contract_name, prompt_events_selection,
+    prompt_template, SelectItem,
+};
 
 pub fn prompt_init_flow_missing(maybe_init_flow: Option<ClapInitFlow>) -> Result<ClapInitFlow> {
     let init_flow = match maybe_init_flow {
@@ -38,9 +41,9 @@ pub fn prompt_template_init_flow(args: TemplateArgs) -> Result<InitFlow> {
 
 ///Takes either the "local" or "explorer" subcommand from the cli args
 ///or prompts for a choice from the user (not supported by Fuel yet)
-fn get_local_or_explorer_import(args: ContractImportArgs) -> LocalOrExplorerImport {
-    match args.local_or_explorer {
-        Some(v) => v,
+fn get_local_or_explorer_import(args: &ContractImportArgs) -> LocalOrExplorerImport {
+    match &args.local_or_explorer {
+        Some(v) => v.clone(),
         None => LocalOrExplorerImport::Local(LocalImportArgs {
             abi_file: None,
             contract_name: None,
@@ -71,18 +74,36 @@ fn get_contract_name(local_import_args: &LocalImportArgs) -> Result<String> {
     }
 }
 
+fn prompt_logs_selection(logs: Vec<FuelLog>) -> Result<Vec<FuelLog>> {
+    prompt_events_selection(
+        logs.into_iter()
+            .map(|log| SelectItem {
+                display: log.event_name.clone(),
+                item: log,
+            })
+            .collect(),
+    )
+    .context("Failed selecting ABI events")
+}
+
 //Constructs SelectedContract via local prompt. Uses abis and manual
 //network/contract config
-async fn get_contract_import_selection_from_local_import_args(
-    local_import_args: &LocalImportArgs,
-) -> Result<SelectedContract> {
+async fn get_contract_import_selection(args: ContractImportArgs) -> Result<SelectedContract> {
+    let local_or_explorer_import = get_local_or_explorer_import(&args);
+    let local_import_args = match local_or_explorer_import {
+        LocalOrExplorerImport::Local(local_import_args) => local_import_args,
+    };
+
     let abi_path_string =
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
     let abi = Abi::parse(&abi_path_string).context("Failed parsing Fuel ABI")?;
 
-    let selected_logs = abi.get_logs();
+    let mut selected_logs = abi.get_logs();
+    if !args.all_events {
+        selected_logs = prompt_logs_selection(selected_logs)?;
+    }
 
-    let name = get_contract_name(local_import_args).context("Failed getting contract name")?;
+    let name = get_contract_name(&local_import_args).context("Failed getting contract name")?;
 
     let address = prompt_contract_address(None)?;
 
@@ -95,15 +116,9 @@ async fn get_contract_import_selection_from_local_import_args(
 }
 
 pub async fn prompt_contract_import_init_flow(args: ContractImportArgs) -> Result<InitFlow> {
-    let local_or_explorer_import = get_local_or_explorer_import(args);
-    let contract_import_selection = match local_or_explorer_import {
-        LocalOrExplorerImport::Local(local_import_args) => {
-            get_contract_import_selection_from_local_import_args(&local_import_args)
-                .await
-                .context("Failed getting local contract selection")?
-        }
-    };
     Ok(InitFlow::ContractImport(ContractImportSelection {
-        contracts: vec![contract_import_selection],
+        contracts: vec![get_contract_import_selection(args)
+            .await
+            .context("Failed getting contract selection")?],
     }))
 }
