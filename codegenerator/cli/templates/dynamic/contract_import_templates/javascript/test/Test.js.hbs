@@ -2,7 +2,7 @@
 {{#with imported_contracts.[0] as | contract |}}
 const assert = require("assert");
 const { TestHelpers } = require("generated");
-const { MockDb, {{contract.name.capitalized}}, Addresses } = TestHelpers;
+const { MockDb, {{contract.name.capitalized}} } = TestHelpers;
 {{/with}}
 
 {{#with imported_contracts.[0] as | contract |}}
