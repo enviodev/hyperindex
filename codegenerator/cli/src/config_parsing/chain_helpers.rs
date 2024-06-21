@@ -4,7 +4,6 @@ use anyhow::anyhow;
 use anyhow::Context;
 use clap::ValueEnum;
 use ethers::etherscan;
-use ethers::types::Block;
 use serde::{Deserialize, Serialize};
 use strum::FromRepr;
 use strum_macros::{Display, EnumIter, EnumString};
