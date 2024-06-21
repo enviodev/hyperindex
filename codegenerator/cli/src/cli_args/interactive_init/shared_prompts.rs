@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, future::Future};
 
 use super::{
     inquire_helpers::FilePathCompleter,
@@ -9,6 +9,7 @@ use super::{
 };
 
 use anyhow::{Context, Result};
+use async_recursion::async_recursion;
 use inquire::{validator::Validation, CustomType, MultiSelect, Select, Text};
 
 use std::str::FromStr;
@@ -98,7 +99,7 @@ pub fn prompt_contract_address<T: Clone + FromStr + Display + PartialEq + 'stati
 ///Represents the choice a user makes for adding values to
 ///their auto config selection
 #[derive(strum_macros::Display, EnumIter, Default, PartialEq)]
-pub enum AddNewContractOption {
+enum AddNewContractOption {
     #[default]
     #[strum(serialize = "I'm finished")]
     Finished,
@@ -110,7 +111,7 @@ pub enum AddNewContractOption {
     AddContract,
 }
 
-pub fn prompt_add_new_contract_option(
+fn prompt_add_new_contract_option(
     contract_name: &String,
     network: &String,
     can_add_network: bool,
@@ -134,39 +135,68 @@ pub fn prompt_add_new_contract_option(
 }
 
 pub trait Contract {
-    fn get_network_name(&self) -> String;
+    fn get_network_name(&self) -> Result<String>;
     fn get_name(&self) -> String;
+    fn add_address(&mut self) -> Result<()>;
+    fn add_network(&mut self) -> Result<()>;
 }
 
-pub fn prompt_to_continue_adding<T: Contract, AF, CF>(
+#[derive(thiserror::Error, Debug)]
+enum AutoConfigError {
+    #[error("Contract with the name '{}' already selected", .name)]
+    ContractNameExists { name: String },
+}
+
+#[async_recursion]
+pub async fn prompt_to_continue_adding<T, CF, CFut>(
     contracts: &mut Vec<T>,
-    mut add_address: AF,
     mut add_contract: CF,
     can_add_network: bool,
 ) -> Result<()>
 where
-    AF: FnMut(&mut T) -> Result<()>,
-    CF: FnMut() -> Result<T>,
+    T: Contract + Send,
+    CF: FnMut() -> CFut + Send,
+    CFut: Future<Output = Result<T>> + Send,
 {
     let active_contract = contracts
         .last_mut()
         .context("Failed to get the last selected contract")?;
     let add_new_contract_option = prompt_add_new_contract_option(
         &active_contract.get_name(),
-        &active_contract.get_network_name(),
+        &active_contract.get_network_name()?,
         can_add_network,
     )?;
     match add_new_contract_option {
         AddNewContractOption::Finished => Ok(()),
-        AddNewContractOption::AddNetwork => todo!("Not implemented"),
-        AddNewContractOption::AddContract => {
-            let contract = add_contract()?;
-            contracts.push(contract);
-            prompt_to_continue_adding(contracts, add_address, add_contract, can_add_network)
-        }
         AddNewContractOption::AddAddress => {
-            add_address(active_contract)?;
-            prompt_to_continue_adding(contracts, add_address, add_contract, can_add_network)
+            active_contract.add_address()?;
+            prompt_to_continue_adding(contracts, add_contract, can_add_network).await
+        }
+        AddNewContractOption::AddNetwork => {
+            active_contract.add_network()?;
+            prompt_to_continue_adding(contracts, add_contract, can_add_network).await
+        }
+        AddNewContractOption::AddContract => {
+            let contract = add_contract().await?;
+            let contract_name_lower = contract.get_name().to_lowercase();
+            let contract_name_exists = contracts
+                .iter()
+                .find(|c| &c.get_name().to_lowercase() == &contract_name_lower)
+                .is_some();
+
+            if contract_name_exists {
+                //TODO: Handle more cases gracefully like:
+                // - contract + event is exact match, in which case it should just merge networks and
+                // addresses
+                // - Contract has some matching addresses to another contract but all different events
+                // - Contract has some matching events as another contract?
+                Err(AutoConfigError::ContractNameExists {
+                    name: contract.get_name(),
+                })?
+            } else {
+                contracts.push(contract);
+                prompt_to_continue_adding(contracts, add_contract, can_add_network).await
+            }
         }
     }
 }

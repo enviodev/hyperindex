@@ -91,15 +91,9 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
             }
         }
 
-        InitFlow::ContractImport(args) => {
-            let auto_config_selection = args
-                .get_auto_config_selection()
-                .await
-                .context("Failed getting AutoConfigSelection selection")?;
-            Ecosystem::Evm {
-                init_flow: evm::InitFlow::ContractImport(auto_config_selection),
-            }
-        }
+        InitFlow::ContractImport(args) => Ecosystem::Evm {
+            init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
+        },
     };
 
     Ok(initialization)
