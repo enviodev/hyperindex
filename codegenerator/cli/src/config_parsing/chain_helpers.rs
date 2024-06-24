@@ -100,7 +100,7 @@ pub enum Network {
     Celo = 42220,
     #[subenum(GraphNetwork)]
     Fuji = 43113,
-    #[subenum(HypersyncNetwork, GraphNetwork)]
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
     #[subenum(GraphNetwork)]
     CeloAlfajores = 44787,
@@ -384,6 +384,23 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::BlastSepolia => {
                 BlockExplorerApi::custom("blastscan.io", "api-testnet.blastscan.io")
             }
+            NetworkWithExplorer::Avalanche => BlockExplorerApi::custom(
+                "avalanche.routescan.io",
+                "api.routescan.io/v2/network/mainnet/evm/43114/etherscan",
+            ),
+            //// Having issues getting blockscout to work.
+            // NetworkWithExplorer::Aurora => BlockExplorerApi::custom(
+            //     "explorer.mainnet.aurora.dev",
+            //     "explorer.mainnet.aurora.dev/api",
+            //      /// also tried some variations: explorer.mainnet.aurora.dev/api/v2
+            // ),
+            // NetworkWithExplorer::Lukso => BlockExplorerApi::custom(
+            //     "explorer.execution.mainnet.lukso.network",
+            //     "explorer.execution.mainnet.lukso.network/api",
+            // /// Also tried some variations:
+            //   blockscout.com/lukso/l14
+            //
+            // ),
             _ => BlockExplorerApi::DefaultEthers,
         }
     }
