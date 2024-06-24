@@ -1,68 +1,33 @@
 /*
- *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
+ * Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features
  */
 import {
 {{#each imported_contracts as |contract|}}
   {{contract.name.capitalized}},
   {{#each contract.imported_events as |event|}}
-    {{!--These are the entity types--}}
-    {{contract.name.capitalized}}_{{event.name.capitalized}},
+  {{!--These are the entity types--}}
+  {{contract.name.capitalized}}_{{event.name.capitalized}},
   {{/each}}
 {{/each}}
-EventsSummary
 } from "generated";
-
-export const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
-
-const INITIAL_EVENTS_SUMMARY: EventsSummary = {
-  id: GLOBAL_EVENTS_SUMMARY_KEY,
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
-    {{contract.name.uncapitalized}}_{{event.name.capitalized}}Count: BigInt(0),
-  {{/each}}
-{{/each}}
-};
 
-{{#each imported_contracts as |contract|}}
-  {{#each contract.imported_events as |event|}}
-    {{contract.name.capitalized}}.{{event.name.capitalized
-    }}.handler(async ({ event, context }) => {
-  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
-
-  const currentSummaryEntity: EventsSummary =
-    summary ?? INITIAL_EVENTS_SUMMARY;
-
-  const nextSummaryEntity = {
-    ...currentSummaryEntity,
-    {{contract.name.uncapitalized}}_{{event.name.capitalized
-    }}Count: currentSummaryEntity.{{contract.name.uncapitalized
-    }}_{{event.name.capitalized
-    }}Count + BigInt(1),
-  };
-
-  const {{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}: {{contract.name.capitalized
-    }}_{{event.name.capitalized
-    }} = {
-    id: event.transactionHash + event.logIndex.toString(),
+{{contract.name.capitalized}}.{{event.name.capitalized}}.handler(async ({ event, context }) => {
+  const entity: {{contract.name.capitalized}}_{{event.name.capitalized}} = {
+    id: {{event.entity_id_from_event_code}},
     {{#each event.params as |param|}}
-      {{param.entity_key.uncapitalized
-      }}: event.params.{{param.event_key.uncapitalized}}{{#if
-        param.tuple_param_accessor_indexes
-      }}
-        {{#each param.tuple_param_accessor_indexes as |index|}}
-          [{{index}}]
-        {{/each}}
-      {{/if}}
-      ,
+    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if
+      param.tuple_param_accessor_indexes
+    }}
+      {{#each param.tuple_param_accessor_indexes as |index|}}
+        [{{index}}]
+      {{/each}}
+    {{/if}},
     {{/each}}
-    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
   };
 
-  context.EventsSummary.set(nextSummaryEntity);
-  context.{{contract.name.capitalized
-    }}_{{event.name.capitalized}}.set({{contract.name.uncapitalized
-    }}_{{event.name.capitalized}});
+  context.{{contract.name.capitalized}}_{{event.name.capitalized}}.set(entity);
 });
 
   {{/each}}

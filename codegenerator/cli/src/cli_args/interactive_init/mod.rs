@@ -1,17 +1,21 @@
 mod evm_prompts;
 mod fuel_prompts;
 mod inquire_helpers;
+mod shared_prompts;
 pub mod validation;
 
-use std::fmt::Display;
-
 use super::{
-    clap_definitions::{self, InitArgs, InitFlow, ProjectPaths},
-    init_config::{evm, Ecosystem, InitConfig, Language},
+    clap_definitions::{self, InitArgs, ProjectPaths},
+    init_config::{InitConfig, Language},
 };
-use crate::constants::project_paths::DEFAULT_PROJECT_ROOT_PATH;
+use crate::{
+    clap_definitions::InitFlow,
+    constants::project_paths::DEFAULT_PROJECT_ROOT_PATH,
+    init_config::{evm, Ecosystem},
+};
 use anyhow::{Context, Result};
 use inquire::{Select, Text};
+use shared_prompts::prompt_template;
 use std::str::FromStr;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
@@ -20,15 +24,9 @@ use validation::{
 };
 
 #[derive(Clone, Debug, Display, PartialEq, EnumIter)]
-pub enum EcosystemOption {
+enum EcosystemOption {
     Evm,
     Fuel,
-}
-
-fn prompt_template<T: Display>(options: Vec<T>) -> Result<T> {
-    Select::new("Which template would you like to use?", options)
-        .prompt()
-        .context("Prompting user for template selection")
 }
 
 async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> {
@@ -65,9 +63,9 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
             clap_definitions::fuel::InitFlow::Template(args) => Ecosystem::Fuel {
                 init_flow: fuel_prompts::prompt_template_init_flow(args)?,
             },
-            // clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
-            //     init_flow: fuel_prompts::prompt_contract_import_init_flow(args)?,
-            // },
+            clap_definitions::fuel::InitFlow::ContractImport(args) => Ecosystem::Fuel {
+                init_flow: fuel_prompts::prompt_contract_import_init_flow(args).await?,
+            },
         },
         InitFlow::Template(args) => {
             let chosen_template = match args.template {
@@ -93,15 +91,9 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
             }
         }
 
-        InitFlow::ContractImport(args) => {
-            let auto_config_selection = args
-                .get_auto_config_selection()
-                .await
-                .context("Failed getting AutoConfigSelection selection")?;
-            Ecosystem::Evm {
-                init_flow: evm::InitFlow::ContractImport(auto_config_selection),
-            }
-        }
+        InitFlow::ContractImport(args) => Ecosystem::Evm {
+            init_flow: evm_prompts::prompt_contract_import_init_flow(args).await?,
+        },
     };
 
     Ok(initialization)

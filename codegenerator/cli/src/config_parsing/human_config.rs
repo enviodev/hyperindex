@@ -32,6 +32,7 @@ pub mod evm {
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub description: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub ecosystem: Option<EcosystemTag>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub schema: Option<String>,
@@ -124,8 +125,6 @@ pub mod evm {
     #[serde(rename_all = "camelCase")]
     pub struct EventConfig {
         pub event: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub is_async: Option<bool>,
     }
 
     impl EventConfig {
@@ -157,7 +156,6 @@ pub mod evm {
 
 pub mod fuel {
     use super::{GlobalContract, NetworkContract, NetworkId};
-    use crate::utils::normalized_list::NormalizedList;
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -200,8 +198,8 @@ pub mod fuel {
     #[serde(rename_all = "camelCase")]
     pub struct EventConfig {
         pub name: String,
-        #[serde(skip_serializing_if = "NormalizedList::is_empty")]
-        pub log_id: NormalizedList<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub log_id: Option<String>,
     }
 }
 

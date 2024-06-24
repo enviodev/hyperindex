@@ -191,7 +191,7 @@ type eventBatchQueueItem = {
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
-  event: event,
+  event,
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events

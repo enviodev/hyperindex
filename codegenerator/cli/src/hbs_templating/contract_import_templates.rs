@@ -187,7 +187,6 @@ mod nested_params {
     }
 }
 
-use super::codegen_templates::EventTemplate;
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
     capitalization::{Capitalize, CapitalizedOptions},
@@ -230,25 +229,18 @@ impl TryInto<Schema> for AutoSchemaHandlerTemplate {
 pub struct Contract {
     name: CapitalizedOptions,
     imported_events: Vec<Event>,
-    codegen_events: Vec<EventTemplate>,
 }
 
 impl Contract {
-    fn from_config_contract(contract: &system_config::Contract) -> Result<Self> {
+    fn from_config_contract(
+        contract: &system_config::Contract,
+        is_fuel: bool,
+        language: &Language,
+    ) -> Result<Self> {
         let imported_events = contract
             .events
             .iter()
-            .map(|event| Event::from_config_event(event))
-            .collect::<Result<_>>()
-            .context(format!(
-                "Failed getting events for contract {}",
-                contract.name
-            ))?;
-
-        let codegen_events = contract
-            .events
-            .iter()
-            .map(|event| EventTemplate::from_config_event(event, &contract.name.to_string()))
+            .map(|event| Event::from_config_event(event, &contract, is_fuel, &language))
             .collect::<Result<_>>()
             .context(format!(
                 "Failed getting events for contract {}",
@@ -258,7 +250,6 @@ impl Contract {
         Ok(Contract {
             name: contract.name.to_capitalized_options(),
             imported_events,
-            codegen_events,
         })
     }
 }
@@ -274,22 +265,78 @@ impl TryInto<Schema> for Contract {
 #[derive(Serialize)]
 pub struct Event {
     name: CapitalizedOptions,
+    entity_id_from_event_code: String,
+    create_mock_code: String,
     params: Vec<Param>,
 }
 
 impl Event {
-    fn from_config_event(e: &system_config::Event) -> Result<Self> {
-        let params = flatten_event_inputs(e.get_event().inputs.clone())
+    fn get_entity_id_code(event_var_name: String, is_fuel: bool, language: &Language) -> String {
+        let to_string_code = match language {
+            Language::ReScript => "->Belt.Int.toString",
+            Language::TypeScript => "",
+            Language::JavaScript => "",
+        }
+        .to_string();
+        match is_fuel {
+            true => format!(
+                "`${{{event_var_name}.transactionId}}_${{{event_var_name}.receiptIndex{}}}`",
+                to_string_code
+            ),
+            false => format!(
+                "`${{{event_var_name}.transactionHash}}_${{{event_var_name}.logIndex{}}}`",
+                to_string_code
+            ),
+        }
+    }
+
+    fn get_create_mock_code(
+        event: &system_config::Event,
+        contract: &system_config::Contract,
+        is_fuel: bool,
+        language: &Language,
+    ) -> String {
+        let event_module = format!(
+            "{}.{}",
+            contract.name.capitalize(),
+            event.get_event().name.capitalize()
+        );
+        match is_fuel {
+            true => {
+              let data_code =  match language {
+                Language::ReScript => "%raw(`{}`)",
+                Language::TypeScript => "{}",
+                Language::JavaScript => "{}",
+              };
+              format!("{event_module}.mock({{data: {data_code} /* It mocks event fields with default values, so you only need to provide data */}})")}, // FIXME: Generate default data
+            false => format!("{event_module}.createMockEvent({{/* It mocks event fields with default values. You can overwrite them if you need */}})"),
+        }
+    }
+
+    fn from_config_event(
+        event: &system_config::Event,
+        contract: &system_config::Contract,
+        is_fuel: bool,
+        language: &Language,
+    ) -> Result<Self> {
+        let abi_event = event.get_event();
+        let params = flatten_event_inputs(abi_event.inputs.clone())
             .into_iter()
             .map(|input| Param::from_event_param(input))
             .collect::<Result<_>>()
             .context(format!(
                 "Failed getting params for event {}",
-                e.get_event().name
+                abi_event.name
             ))?;
 
         Ok(Event {
-            name: e.get_event().name.to_capitalized_options(),
+            name: abi_event.name.to_capitalized_options(),
+            entity_id_from_event_code: Event::get_entity_id_code(
+                "event".to_string(),
+                is_fuel,
+                &language,
+            ),
+            create_mock_code: Event::get_create_mock_code(&event, &contract, is_fuel, &language),
             params,
         })
     }
@@ -312,8 +359,9 @@ impl Into<Entity> for Event {
 
 ///Param is used both in the context of an entity and an event for the generating
 ///schema and handlers.
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct Param {
+    param_name: CapitalizedOptions,
     ///Event param name + index if its a tuple ie. myTupleParam_0_1 or just myRegularParam
     entity_key: CapitalizedOptions,
     ///Just the event param name accessible on the event type
@@ -328,6 +376,10 @@ pub struct Param {
 impl Param {
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
         Ok(Param {
+            param_name: flattened_event_param
+                .event_param
+                .name
+                .to_capitalized_options(),
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
             tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
@@ -348,11 +400,11 @@ impl Into<Field> for Param {
 }
 
 impl AutoSchemaHandlerTemplate {
-    pub fn try_from(config: SystemConfig) -> Result<Self> {
+    pub fn try_from(config: SystemConfig, is_fuel: bool, language: &Language) -> Result<Self> {
         let imported_contracts = config
             .get_contracts()
             .iter()
-            .map(|contract| Contract::from_config_contract(contract))
+            .map(|contract| Contract::from_config_contract(contract, is_fuel, &language))
             .collect::<Result<_>>()?;
         Ok(AutoSchemaHandlerTemplate { imported_contracts })
     }

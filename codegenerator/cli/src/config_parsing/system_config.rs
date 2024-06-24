@@ -585,9 +585,10 @@ impl Event {
     ) -> Result<Self> {
         let event = Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
 
-        let is_async = human_cfg_event.is_async.unwrap_or_else(|| false);
-
-        Ok(Event { event, is_async })
+        Ok(Event {
+            event,
+            is_async: false,
+        })
     }
 
     pub fn get_event(&self) -> &EthAbiEvent {
