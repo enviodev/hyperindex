@@ -12,6 +12,8 @@ This document contains the help content for the `envio` command-line program.
 * [`envio init contract-import local`↴](#envio-init-contract-import-local)
 * [`envio init fuel`↴](#envio-init-fuel)
 * [`envio init fuel template`↴](#envio-init-fuel-template)
+* [`envio init fuel contract-import`↴](#envio-init-fuel-contract-import)
+* [`envio init fuel contract-import local`↴](#envio-init-fuel-contract-import-local)
 * [`envio dev`↴](#envio-dev)
 * [`envio stop`↴](#envio-stop)
 * [`envio codegen`↴](#envio-codegen)
@@ -145,6 +147,7 @@ Initialization option for creating Fuel indexer
 ###### **Subcommands:**
 
 * `template` — Initialize Fuel indexer from an example template
+* `contract-import` — Initialize Fuel indexer by importing config from a contract for a given chain
 
 
 
@@ -160,6 +163,37 @@ Initialize Fuel indexer from an example template
 
   Possible values: `greeter`
 
+
+
+
+## `envio init fuel contract-import`
+
+Initialize Fuel indexer by importing config from a contract for a given chain
+
+**Usage:** `envio init fuel contract-import [OPTIONS] [COMMAND]`
+
+###### **Subcommands:**
+
+* `local` — Initialize from a local json ABI file
+
+###### **Options:**
+
+* `-c`, `--contract-address <CONTRACT_ADDRESS>` — Contract address to generate the config from
+* `--single-contract` — If selected, prompt will not ask for additional contracts/addresses/networks
+* `--all-events` — If selected, prompt will not ask to confirm selection of events on a contract
+
+
+
+## `envio init fuel contract-import local`
+
+Initialize from a local json ABI file
+
+**Usage:** `envio init fuel contract-import local [OPTIONS]`
+
+###### **Options:**
+
+* `-a`, `--abi-file <ABI_FILE>` — The path to a json abi file
+* `--contract-name <CONTRACT_NAME>` — The name of the contract
 
 
 

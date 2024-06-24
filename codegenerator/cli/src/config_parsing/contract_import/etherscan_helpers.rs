@@ -1,4 +1,4 @@
-use super::converters::{self, ContractImportNetworkSelection, ContractImportSelection};
+use super::converters::{self, ContractImportNetworkSelection, SelectedContract};
 use crate::{
     cli_args::interactive_init::validation::filter_duplicate_events,
     config_parsing::chain_helpers::{self, NetworkWithExplorer},
@@ -17,7 +17,7 @@ use tokio::time::Duration;
 pub async fn fetch_contract_auto_selection_from_etherscan(
     contract_address: Address,
     network: &NetworkWithExplorer,
-) -> Result<ContractImportSelection> {
+) -> Result<SelectedContract> {
     let supported_network: chain_helpers::HypersyncNetwork =
         chain_helpers::Network::from(network.clone())
             .try_into()
@@ -39,7 +39,7 @@ pub async fn fetch_contract_auto_selection_from_etherscan(
         contract_address,
     );
 
-    Ok(ContractImportSelection::new(
+    Ok(SelectedContract::new(
         contract_data.name,
         network_selection,
         events,

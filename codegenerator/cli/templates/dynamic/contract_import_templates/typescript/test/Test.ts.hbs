@@ -1,57 +1,40 @@
 {{#with imported_contracts.[0] as | contract |}}
-    {{#with contract.codegen_events.[0] as | event |}}
+    {{#with contract.imported_events.[0] as | event |}}
 import assert from "assert";
 import { 
   TestHelpers,
   {{contract.name.capitalized}}_{{event.name.capitalized}}Entity
 } from "generated";
-const { MockDb, {{contract.name.capitalized}}, Addresses } = TestHelpers;
+const { MockDb, {{contract.name.capitalized}} } = TestHelpers;
     {{/with}}
 {{/with}}
 
 {{#with imported_contracts.[0] as | contract |}}
-    {{#with contract.codegen_events.[0] as | event |}}
+    {{#with contract.imported_events.[0] as | event |}}
 describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} event tests", () => {
   // Create mock db
   const mockDb = MockDb.createMockDb();
 
-  // Creating mock {{contract.name.capitalized}} contract {{event.name.capitalized}} event
-  const mock{{contract.name.capitalized}}{{event.name.capitalized}}Event = {{contract.name.capitalized}}.{{event.name.capitalized}}.createMockEvent({
-    {{#each event.params as | param |}}
-    {{param.param_name.uncapitalized}}: {{param.default_value_non_rescript}},
-    {{/each}}
-    mockEventData: {
-      chainId: 1,
-      blockNumber: 0,
-      blockTimestamp: 0,
-      blockHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
-      srcAddress: Addresses.defaultAddress,
-      transactionHash: "0x0000000000000000000000000000000000000000000000000000000000000000",
-      transactionIndex: 0,
-      logIndex: 0,
-    },
-  });
+  // Creating mock for {{contract.name.capitalized}} contract {{event.name.capitalized}} event
+  const event = {{event.create_mock_code}};
 
   // Processing the event
   const mockDbUpdated = {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
-    event: mock{{contract.name.capitalized}}{{event.name.capitalized}}Event,
+    event,
     mockDb,
   });
 
   it("{{contract.name.capitalized}}_{{event.name.capitalized}}Entity is created correctly", () => {
     // Getting the actual entity from the mock database
     let actual{{contract.name.capitalized}}{{event.name.capitalized}}Entity = mockDbUpdated.entities.{{contract.name.capitalized}}_{{event.name.capitalized}}.get(
-      mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.transactionHash +
-        mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.logIndex.toString()
+      {{event.entity_id_from_event_code}}
     );
 
     // Creating the expected entity
     const expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity: {{contract.name.capitalized}}_{{event.name.capitalized}}Entity = {
-      id:
-        mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.transactionHash +
-        mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.logIndex.toString(),
+      id: {{event.entity_id_from_event_code}},
       {{#each event.params as |param|}}
-      {{param.param_name.uncapitalized}}: mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.params.{{param.param_name.uncapitalized}},
+      {{param.param_name.uncapitalized}}: event.params.{{param.param_name.uncapitalized}},
       {{/each}}
     };
     // Asserting that the entity in the mock database is the same as the expected entity

@@ -41,6 +41,8 @@ sqlx = { version = "0.7.2", features = [
   "postgres",
 ] }
 thiserror = "1.0.50"
+fuel-abi-types = "0.5.2"
+
 [dev-dependencies]
 tempdir = "0.3"
 paste = "1.0.12"

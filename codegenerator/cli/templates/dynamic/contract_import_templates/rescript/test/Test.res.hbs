@@ -4,31 +4,16 @@ open Belt
 open TestHelpers
 
 {{#with imported_contracts.[0] as | contract |}}
-    {{#with contract.codegen_events.[0] as | event |}}
+    {{#with contract.imported_events.[0] as | event |}}
 describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} event tests", () => {
   // Create mock db
   let mockDb = MockDb.createMockDb()
 
-  // Creating mock {{contract.name.capitalized}} contract {{event.name.capitalized}} event
-  let mock{{contract.name.capitalized}}{{event.name.capitalized}}Event = {{contract.name.capitalized}}.{{event.name.capitalized}}.createMockEvent({
-    {{#each event.params as | param |}}
-    {{param.param_name.uncapitalized}}: {{param.default_value_rescript}},
-    {{/each}}
-    mockEventData: {
-      chainId: 1,
-      blockNumber: 0,
-      blockTimestamp: 0,
-      blockHash: Ethers.Constants.zeroHash,
-      srcAddress: Addresses.defaultAddress,
-      transactionHash: Ethers.Constants.zeroHash,
-      transactionIndex: 0,
-      logIndex: 0,
-    },
-  })
+  let event = {{event.create_mock_code}};
 
   // Processing the event
   let mockDbUpdated = {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
-    event: mock{{contract.name.capitalized}}{{event.name.capitalized}}Event,
+    event,
     mockDb,
   })
 
@@ -36,14 +21,14 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
     // Getting the actual entity from the mock database
     let actual{{contract.name.capitalized}}{{event.name.capitalized}}Entity =
       mockDbUpdated.entities.{{contract.name.uncapitalized}}_{{event.name.capitalized}}.get(
-        mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.transactionHash ++ mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.logIndex->Belt.Int.toString,
+        {{event.entity_id_from_event_code}},
       )->Option.getExn
 
     // Creating the expected entity
     let expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity: Types.{{contract.name.uncapitalized}}_{{event.name.capitalized}}Entity = {
-      id: mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.transactionHash ++ mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.logIndex->Belt.Int.toString,
+      id: {{event.entity_id_from_event_code}},
       {{#each event.params as |param|}}
-      {{param.param_name.uncapitalized}}: mock{{contract.name.capitalized}}{{event.name.capitalized}}Event.params.{{param.param_name.uncapitalized}}{{#if param.is_eth_address}}->Ethers.ethAddressToString{{/if}},
+      {{param.param_name.uncapitalized}}: event.params.{{param.param_name.uncapitalized}}{{#if param.is_eth_address}}->Ethers.ethAddressToString{{/if}},
       {{/each}}
     }
     //Assert the expected {{contract.name.capitalized}} {{event.name.capitalized}} entity

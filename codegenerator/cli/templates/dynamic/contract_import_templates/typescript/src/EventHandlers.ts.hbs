@@ -14,7 +14,7 @@ import {
 
 {{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler(({ event, context }) => {
   const entity: {{contract.name.capitalized}}_{{event.name.capitalized}}Entity = {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: {{event.entity_id_from_event_code}},
     {{#each event.params as |param|}}
     {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if
       param.tuple_param_accessor_indexes

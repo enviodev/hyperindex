@@ -10,7 +10,7 @@ Handlers.{{contract.name.capitalized
   let entity: Types.{{contract.name.uncapitalized
     }}_{{event.name.capitalized
     }}Entity = {
-    id: event.transactionHash ++ event.logIndex->Belt.Int.toString,
+      id: {{event.entity_id_from_event_code}},
     {{#each event.params as |param|}}
       {{param.entity_key.uncapitalized
       }}: event.params.{{param.event_key.uncapitalized}}
