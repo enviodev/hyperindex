@@ -54,6 +54,7 @@ pub struct FuelLog {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Abi {
+    pub path_buf: PathBuf,
     pub path: String,
     pub raw: String,
     program: ProgramABI,
@@ -338,26 +339,28 @@ impl Abi {
         Ok(logs_map)
     }
 
-    pub fn parse(abi_file_path: &String) -> Result<Self> {
-        let path = PathBuf::from(abi_file_path);
-        let raw = fs::read_to_string(&path).context(format!(
-            "Failed to read Fuel ABI file at \"{}\"",
-            abi_file_path
-        ))?;
+    pub fn parse(path_buf: PathBuf) -> Result<Self> {
+        let path = path_buf
+            .to_str()
+            .context("The ABI file path is invalid Unicode")?
+            .to_string();
+        let raw = fs::read_to_string(&path_buf)
+            .context(format!("Failed to read Fuel ABI file at \"{}\"", path))?;
         let program = Self::decode_program(&raw).context(format!(
             "Failed to decode program of Fuel ABI file at \"{}\"",
-            abi_file_path
+            path
         ))?;
         let types = Self::decode_types(&program).context(format!(
             "Failed to decode types of Fuel ABI file at \"{}\"",
-            abi_file_path
+            path
         ))?;
         let logs = Self::decode_logs(&program, &types).context(format!(
             "Failed to decode logs of Fuel ABI file at \"{}\"",
-            abi_file_path
+            path
         ))?;
         Ok(Self {
-            path: abi_file_path.clone(),
+            path,
+            path_buf,
             raw,
             program,
             logs,
