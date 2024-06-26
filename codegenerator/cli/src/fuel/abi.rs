@@ -12,7 +12,7 @@ use crate::rescript_types::{
 pub struct FuelType {
     pub id: usize,
     pub rescript_type_decl: RescriptTypeDecl,
-    abi_type_field: String,
+    pub abi_type_field: String,
 }
 
 impl FuelType {
@@ -29,6 +29,7 @@ impl FuelType {
             "b256" => "B256Log",
             "address" => "AddressLog",
             "Vec" => "VecLog",
+            "str" => "StrLog",
             type_field if type_field.starts_with("str[") => "StrLog",
             "enum Option" => "OptionLog",
             type_field if type_field.starts_with("struct ") => type_field
@@ -50,6 +51,7 @@ pub struct FuelLog {
     pub id: String,
     pub logged_type: FuelType,
     pub event_name: String,
+    pub data_type: RescriptTypeIdent,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -101,7 +103,10 @@ impl Abi {
 
         let get_unknown_res_type_ident = |type_field: &str| {
             println!("Unhandled type_field \"{}\" in abi", type_field);
-            RescriptTypeIdent::NamedType("unknown".to_string())
+            RescriptTypeIdent::TypeApplication {
+                name: "unknown".to_string(),
+                type_params: vec![],
+            }
         };
 
         let get_unknown_res_type_expr =
@@ -150,7 +155,10 @@ impl Abi {
                                 None => generic_param_name_map.get(&comp.type_id).cloned().map_or(
                                     //If the type_id is not a defined generic type it is
                                     //a named type
-                                    RescriptTypeIdent::NamedType(type_ident_name),
+                                    RescriptTypeIdent::TypeApplication {
+                                      name: type_ident_name,
+                                      type_params: vec![]
+                                    },
                                     //if the type_id is in the generic_param_name_map
                                     //it is a generic param
                                     |generic_name| RescriptTypeIdent::GenericParam(generic_name),
@@ -163,9 +171,10 @@ impl Abi {
                                             generic_param_name_map.get(&ta.type_id).cloned().map_or(
                                                 //If the type_id is not a defined generic type it is
                                                 //a named type
-                                                RescriptTypeIdent::NamedType(mk_type_id_name(
-                                                    &ta.type_id,
-                                                )),
+                                                RescriptTypeIdent::TypeApplication {
+                                                  name:mk_type_id_name(&ta.type_id),
+                                                  type_params: vec![]
+                                                },
                                                 //if the type_id is in the generic_param_name_map
                                                 //it is a generic param
                                                 |generic_name| {
@@ -174,7 +183,7 @@ impl Abi {
                                             )
                                         })
                                         .collect();
-                                    RescriptTypeIdent::Generic {
+                                    RescriptTypeIdent::TypeApplication {
                                         name: type_ident_name,
                                         type_params,
                                     }
@@ -196,6 +205,7 @@ impl Abi {
                         "u8" | "u16" | "u32" => Int.to_ok_expr(),
                         "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.to_ok_expr(),
                         "b256" | "address" => String.to_ok_expr(),
+                        "str" => String.to_ok_expr(),
                         type_field if type_field.starts_with("str[") => String.to_ok_expr(),
                         "struct Vec" => Array(Box::new(GenericParam(
                             get_first_type_param()
@@ -212,8 +222,7 @@ impl Abi {
                         type_field if type_field.starts_with("struct ") => {
                             let record_fields = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for \
-                                   {type_field}",
+                                    "Failed getting name and identifier from components for {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(name, type_ident)| {
@@ -225,8 +234,7 @@ impl Abi {
                         type_field if type_field.starts_with("enum ") => {
                             let constructors = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for \
-                                   {type_field}",
+                                    "Failed getting name and identifier from components for {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(name, type_ident)| {
@@ -238,8 +246,7 @@ impl Abi {
                         type_field if type_field.starts_with("(_,") => {
                             let tuple_types = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for \
-                                   tuple {type_field}",
+                                    "Failed getting name and identifier from components for tuple {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(_name, type_ident)| type_ident)
@@ -248,8 +255,14 @@ impl Abi {
                             RescriptTypeIdent::Tuple(tuple_types).to_ok_expr()
                         }
                         type_field if type_field.starts_with("[_;") => {
-                            //TODO handle fixed array
-                            Ok(get_unknown_res_type_expr(type_field))
+                            let components = get_components_name_and_type_ident().context(format!(
+                              "Failed getting name and identifier from components for {type_field}",
+                            ))?;
+                            let element_name_and_type_ident = components.first().ok_or(anyhow!("Missing array element type component"))?;
+                            Array(Box::new(
+                                element_name_and_type_ident.1.clone(),
+                            ))
+                            .to_ok_expr()
                         }
                         type_field => {
                             //Unknown
@@ -297,6 +310,25 @@ impl Abi {
         Ok(types_map)
     }
 
+    fn get_type_application(
+        abi_application: &fuel_abi_types::abi::program::TypeApplication,
+        types: &HashMap<usize, FuelType>,
+    ) -> Result<RescriptTypeIdent> {
+        let fuel_type = types
+            .get(&abi_application.type_id)
+            .context("Failed to get logged type")?;
+        Ok(RescriptTypeIdent::TypeApplication {
+            name: fuel_type.rescript_type_decl.name.clone(),
+            type_params: match &abi_application.type_arguments {
+                Some(vec) => vec
+                    .iter()
+                    .map(|a| Self::get_type_application(a, types))
+                    .collect::<Result<Vec<_>>>()?,
+                None => vec![],
+            },
+        })
+    }
+
     fn decode_logs(
         program: &ProgramABI,
         types: &HashMap<usize, FuelType>,
@@ -305,9 +337,9 @@ impl Abi {
         let mut names_count: HashMap<String, u8> = HashMap::new();
 
         if let Some(logged_types) = &program.logged_types {
-            for logged_type in logged_types.iter() {
-                let id = logged_type.log_id.clone();
-                let type_id = logged_type.application.type_id;
+            for abi_log in logged_types.iter() {
+                let id = abi_log.log_id.clone();
+                let type_id = abi_log.application.type_id;
                 let logged_type = types.get(&type_id).context("Failed to get logged type")?;
 
                 let event_name = {
@@ -328,6 +360,7 @@ impl Abi {
                     FuelLog {
                         id,
                         event_name: event_name,
+                        data_type: Self::get_type_application(&abi_log.application, types)?,
                         logged_type: logged_type.clone(),
                     },
                 );
@@ -395,18 +428,12 @@ impl Abi {
         }
     }
 
-    pub fn get_log_ids_by_type(&self, type_id: usize) -> Vec<String> {
+    pub fn get_log_by_type(&self, type_id: usize) -> Result<FuelLog> {
         self.logs
             .values()
-            .filter_map(|log| {
-                if log.logged_type.id == type_id {
-                    Some(log.id.clone())
-                } else {
-                    None
-                }
-            })
-            .sorted()
-            .collect()
+            .find(|&log| log.logged_type.id == type_id)
+            .cloned()
+            .ok_or(anyhow!("Failed to find log by type id {type_id}"))
     }
 
     pub fn get_logs(&self) -> Vec<FuelLog> {
