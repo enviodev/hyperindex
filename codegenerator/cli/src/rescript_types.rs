@@ -1,4 +1,5 @@
 use crate::capitalization::{Capitalize, CapitalizedOptions};
+use anyhow::{anyhow, Result};
 use core::fmt;
 use itertools::Itertools;
 use serde::Serialize;
@@ -8,7 +9,7 @@ pub struct RescriptTypeDeclMulti(Vec<RescriptTypeDecl>);
 
 impl RescriptTypeDeclMulti {
     pub fn new(type_declarations: Vec<RescriptTypeDecl>) -> Self {
-        //TODO: validation
+        // TODO: validation
         //no duplicates,
         //all named types accounted for? (maybe don't want this)
         //at least 1 decl
@@ -51,7 +52,7 @@ pub struct RescriptTypeDecl {
 
 impl RescriptTypeDecl {
     pub fn new(name: String, type_expr: RescriptTypeExpr, parameters: Vec<String>) -> Self {
-        //TODO: name validation
+        // TODO: name validation
         //validate unique parameters
         Self {
             name,
@@ -95,6 +96,20 @@ impl RescriptTypeDecl {
             self.to_string_no_type_keyword(),
         )
     }
+
+    pub fn to_usage(&self, arguments: Vec<String>) -> Result<String> {
+        if self.parameters.len() != arguments.len() {
+            Err(anyhow!("Failed to use type {}. The number of arguments is different from number of parameters.", self.name))?
+        }
+        let arguments_code = if arguments.is_empty() {
+            "".to_string()
+        } else {
+            // Lowercase generic params because of the issue https://github.com/rescript-lang/rescript-compiler/issues/6759
+            let args_joined = arguments.join(", ");
+            format!("<{args_joined}>")
+        };
+        Ok(format!("{}{arguments_code}", &self.name))
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -133,7 +148,7 @@ pub struct RescriptRecordField {
 
 impl RescriptRecordField {
     pub fn new(name: String, type_ident: RescriptTypeIdent) -> Self {
-        //TODO: validate name and add as_name if reserved
+        // TODO: validate name and add as_name if reserved
         Self {
             name,
             as_name: None,
@@ -159,7 +174,7 @@ pub struct RescriptVariantConstr {
 
 impl RescriptVariantConstr {
     pub fn new(name: String, payload: RescriptTypeIdent) -> Self {
-        //TODO: validate uppercase name
+        // TODO: validate uppercase name
         Self { name, payload }
     }
 }
@@ -182,9 +197,8 @@ pub enum RescriptTypeIdent {
     //but it can be inlined and can contain inline tuples in it's parameters
     //so it's best suited here for its purpose
     Tuple(Vec<RescriptTypeIdent>),
-    NamedType(String),
     GenericParam(String),
-    Generic {
+    TypeApplication {
         name: String,
         type_params: Vec<RescriptTypeIdent>,
     },
@@ -251,18 +265,21 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::SchemaEnum(enum_name) => {
                 format!("Enums.{}", &enum_name.uncapitalized)
             }
-            RescriptTypeIdent::NamedType(name) => name.clone(),
             // Lowercase generic params because of the issue https://github.com/rescript-lang/rescript-compiler/issues/6759
             RescriptTypeIdent::GenericParam(name) => format!("'{}", name.to_lowercase()),
-            RescriptTypeIdent::Generic {
+            RescriptTypeIdent::TypeApplication {
                 name,
                 type_params: params,
             } => {
-                let params_joined = params
-                    .iter()
-                    .map(|p| p.to_string().uncapitalize())
-                    .join(", ");
-                format!("{name}<{params_joined}>")
+                if params.is_empty() {
+                    name.clone()
+                } else {
+                    let params_joined = params
+                        .iter()
+                        .map(|p| p.to_string().uncapitalize())
+                        .join(", ");
+                    format!("{name}<{params_joined}>")
+                }
             }
         }
     }
@@ -297,11 +314,14 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::SchemaEnum(enum_name) => {
                 format!("Enums.{}Schema", &enum_name.uncapitalized)
             }
-            //TODO: ensure these are defined
-            RescriptTypeIdent::NamedType(name) | RescriptTypeIdent::GenericParam(name) => {
+            // TODO: ensure these are defined
+            RescriptTypeIdent::GenericParam(name) => {
                 format!("{name}Schema")
             }
-            RescriptTypeIdent::Generic {
+            RescriptTypeIdent::TypeApplication { name, type_params } if type_params.is_empty() => {
+                format!("{name}Schema")
+            }
+            RescriptTypeIdent::TypeApplication {
                 name,
                 type_params: params,
             } => {
@@ -335,7 +355,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "()".to_string(),
             RescriptTypeIdent::Int => "0".to_string(),
             RescriptTypeIdent::Float => "0.0".to_string(),
-            RescriptTypeIdent::BigInt => "Ethers.BigInt.zero".to_string(), //TODO: Migrate to RescriptCore on ReScript migration
+            RescriptTypeIdent::BigInt => "Ethers.BigInt.zero".to_string(), // TODO: Migrate to RescriptCore on ReScript migration
             RescriptTypeIdent::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
             RescriptTypeIdent::String => "\"foo\"".to_string(),
             RescriptTypeIdent::ID => "\"my_id\"".to_string(),
@@ -354,11 +374,14 @@ impl RescriptTypeIdent {
 
                 format!("({})", inner_types_str)
             }
-            //TODO: ensure these are defined
-            RescriptTypeIdent::NamedType(name) | RescriptTypeIdent::GenericParam(name) => {
+            // TODO: ensure these are defined
+            RescriptTypeIdent::GenericParam(name) => {
                 format!("{name}Default")
             }
-            RescriptTypeIdent::Generic {
+            RescriptTypeIdent::TypeApplication { name, type_params } if type_params.is_empty() => {
+                format!("{name}Default")
+            }
+            RescriptTypeIdent::TypeApplication {
                 name,
                 type_params: params,
             } => {
@@ -411,11 +434,14 @@ impl RescriptTypeIdent {
                     .join(", ");
                 format!("[{}]", inner_types_str)
             }
-            //Todo ensure these are defined
-            RescriptTypeIdent::NamedType(name) | RescriptTypeIdent::GenericParam(name) => {
+            // TODO: ensure these are defined
+            RescriptTypeIdent::GenericParam(name) => {
                 format!("{name}Default")
             }
-            RescriptTypeIdent::Generic {
+            RescriptTypeIdent::TypeApplication { name, type_params } if type_params.is_empty() => {
+                format!("{name}Default")
+            }
+            RescriptTypeIdent::TypeApplication {
                 name,
                 type_params: params,
             } => {
@@ -468,6 +494,8 @@ impl Serialize for RescriptTypeIdent {
 
 #[cfg(test)]
 mod tests {
+    use std::vec;
+
     use super::*;
     use pretty_assertions::assert_eq;
 
@@ -488,9 +516,10 @@ mod tests {
     fn type_decl_to_string_named_ident() {
         let type_decl = RescriptTypeDecl {
             name: "myAlias".to_string(),
-            type_expr: RescriptTypeExpr::Identifier(RescriptTypeIdent::NamedType(
-                "myCustomType".to_string(),
-            )),
+            type_expr: RescriptTypeExpr::Identifier(RescriptTypeIdent::TypeApplication {
+                name: "myCustomType".to_string(),
+                type_params: vec![],
+            }),
             parameters: vec![],
         };
 
@@ -507,7 +536,10 @@ mod tests {
                 RescriptRecordField {
                     name: "reservedWord_".to_string(),
                     as_name: Some("reservedWord".to_string()),
-                    type_ident: RescriptTypeIdent::NamedType("myCustomType".to_string()),
+                    type_ident: RescriptTypeIdent::TypeApplication {
+                        name: "myCustomType".to_string(),
+                        type_params: vec![],
+                    },
                 },
                 RescriptRecordField::new(
                     "myOptBool".to_string(),
@@ -529,7 +561,10 @@ mod tests {
             RescriptTypeExpr::Record(vec![
                 RescriptRecordField::new(
                     "fieldA".to_string(),
-                    RescriptTypeIdent::NamedType("myCustomType".to_string()),
+                    RescriptTypeIdent::TypeApplication {
+                        name: "myCustomType".to_string(),
+                        type_params: vec![],
+                    },
                 ),
                 RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
             ]),
@@ -553,14 +588,17 @@ mod tests {
 
     #[test]
     fn type_decl_to_string_record_generic() {
-        let my_custom_type_ident = RescriptTypeIdent::NamedType("myCustomType".to_string());
+        let my_custom_type_ident = RescriptTypeIdent::TypeApplication {
+            name: "myCustomType".to_string(),
+            type_params: vec![],
+        };
         let type_decl = RescriptTypeDecl::new(
             "myRecord".to_string(),
             RescriptTypeExpr::Record(vec![
                 RescriptRecordField::new("fieldA".to_string(), my_custom_type_ident.clone()),
                 RescriptRecordField::new(
                     "fieldB".to_string(),
-                    RescriptTypeIdent::Generic {
+                    RescriptTypeIdent::TypeApplication {
                         name: "myGenericType".to_string(),
                         type_params: vec![
                             my_custom_type_ident.clone(),
@@ -583,14 +621,17 @@ mod tests {
 
     #[test]
     fn type_decl_to_string_variant() {
-        let my_custom_type_ident = RescriptTypeIdent::NamedType("myCustomType".to_string());
+        let my_custom_type_ident = RescriptTypeIdent::TypeApplication {
+            name: "myCustomType".to_string(),
+            type_params: vec![],
+        };
         let type_decl = RescriptTypeDecl::new(
             "myVariant".to_string(),
             RescriptTypeExpr::Variant(vec![
                 RescriptVariantConstr::new("ConstrA".to_string(), my_custom_type_ident.clone()),
                 RescriptVariantConstr::new(
                     "ConstrB".to_string(),
-                    RescriptTypeIdent::Generic {
+                    RescriptTypeIdent::TypeApplication {
                         name: "myGenericType".to_string(),
                         type_params: vec![
                             my_custom_type_ident.clone(),
@@ -613,7 +654,10 @@ mod tests {
 
     #[test]
     fn type_decl_multi_variant_to_string() {
-        let my_custom_type_ident = RescriptTypeIdent::NamedType("myCustomType".to_string());
+        let my_custom_type_ident = RescriptTypeIdent::TypeApplication {
+            name: "myCustomType".to_string(),
+            type_params: vec![],
+        };
         let type_decl_1 = RescriptTypeDecl::new(
             "myVariant".to_string(),
             RescriptTypeExpr::Variant(vec![
