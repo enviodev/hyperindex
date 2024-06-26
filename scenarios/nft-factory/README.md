@@ -15,8 +15,7 @@ name: Gravatar
 description: Gravatar for Ethereum
 networks:
   - id: 137
-    rpc_config: 
-      https://polygon-rpc.com
+    rpc_config: https://polygon-rpc.com
     start_block: 34316032
     contracts:
       - name: Gravatar
@@ -86,7 +85,7 @@ The required functions to be registered are:
 
 ```rescript
 Handlers.GravatarContract.registerUpdatedGravatarLoadEntities((event, contextUpdator) => {
-  contextUpdator.gravatar.gravatarWithChangesLoad(event.params.id->Ethers.BigInt.toString)
+  contextUpdator.gravatar.gravatarWithChangesLoad(event.params.id->BigInt.toString)
 })
 ```
 
@@ -115,7 +114,7 @@ Handlers.GravatarContract.registerUpdatedGravatarHandler((event, context) => {
     )
 
   let gravatar: gravatarEntity = {
-    id: event.params.id->Ethers.BigInt.toString,
+    id: event.params.id->BigInt.toString,
     owner: event.params.owner->Ethers.ethAddressToString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
@@ -169,6 +168,3 @@ pnpm run build
 pnpm run watch
 
 ```
-
-
-

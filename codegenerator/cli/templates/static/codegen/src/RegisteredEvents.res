@@ -28,8 +28,8 @@ type registeredEvent<'eventArgs, 'loaderReturn> = {
 }
 
 type t = {
-  loaderHandlers: Js.Dict.t<registeredLoaderHandler<unknown, unknown>>,
-  contractRegisters: Js.Dict.t<contractRegister<unknown>>,
+  loaderHandlers: dict<registeredLoaderHandler<unknown, unknown>>,
+  contractRegisters: dict<contractRegister<unknown>>,
 }
 
 let make = () => {

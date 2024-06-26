@@ -3,11 +3,11 @@ open Types
 Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
   let gravatarSize: Enums.GravatarSize.t = SMALL
   let gravatarObject: gravatar = {
-    id: event.params.id->Ethers.BigInt.toString,
+    id: event.params.id->BigInt.toString,
     owner_id: event.params.owner->Ethers.ethAddressToString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
-    updatesCount: Ethers.BigInt.fromInt(1),
+    updatesCount: BigInt.fromInt(1),
     size: gravatarSize,
   }
 
@@ -16,7 +16,7 @@ Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
 
 Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
   loader: ({event, context}) => {
-    context.gravatar.get(event.params.id->Ethers.BigInt.toString)
+    context.gravatar.get(event.params.id->BigInt.toString)
   },
   handler: async ({event, context, loaderReturn}) => {
     /// Some examples of user logging
@@ -57,13 +57,13 @@ Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
     )
 
     let updatesCount =
-      loaderReturn->Belt.Option.mapWithDefault(Ethers.BigInt.fromInt(1), gravatar =>
-        gravatar.Entities.Gravatar.updatesCount->Ethers.BigInt.add(Ethers.BigInt.fromInt(1))
+      loaderReturn->Belt.Option.mapWithDefault(BigInt.fromInt(1), gravatar =>
+        gravatar.Entities.Gravatar.updatesCount->BigInt.add(BigInt.fromInt(1))
       )
 
     let gravatarSize: Enums.GravatarSize.t = MEDIUM
     let gravatar: Entities.Gravatar.t = {
-      id: event.params.id->Ethers.BigInt.toString,
+      id: event.params.id->BigInt.toString,
       owner_id: event.params.owner->Ethers.ethAddressToString,
       displayName: event.params.displayName,
       imageUrl: event.params.imageUrl,
@@ -71,7 +71,7 @@ Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
       size: gravatarSize,
     }
 
-    if event.params.id->Ethers.BigInt.toString == "1001" {
+    if event.params.id->BigInt.toString == "1001" {
       context.log.info("id matched, deleting gravatar 1004")
       context.gravatar.deleteUnsafe("1004")
     }

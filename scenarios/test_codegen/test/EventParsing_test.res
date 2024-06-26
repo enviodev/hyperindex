@@ -4,7 +4,7 @@ open Mocha
 describe("Parsing Raw Events", () => {
   it("Parses a raw event entity into a batch queue item", () => {
     let params: Types.Gravatar.NewGravatar.eventArgs = {
-      id: 1->Ethers.BigInt.fromInt,
+      id: 1->BigInt.fromInt,
       owner: "0xc944E90C64B2c07662A292be6244BDf05Cda44a7"->Ethers.getAddressFromStringUnsafe,
       displayName: "Testname",
       imageUrl: "myurl.com",

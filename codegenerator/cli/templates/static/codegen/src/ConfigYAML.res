@@ -15,7 +15,7 @@ type configYaml = {
   syncSource: aliasSyncSource,
   startBlock: int,
   confirmedBlockThreshold: int,
-  contracts: Js.Dict.t<contract>,
+  contracts: dict<contract>,
 }
 
 let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig => {

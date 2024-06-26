@@ -34,7 +34,7 @@ open Belt
 /**
 A raw js binding to allow deleting from a dict. Used in store delete operation
 */
-let deleteDictKey: (Js.Dict.t<'a>, string) => unit = %raw(`
+let deleteDictKey: (dict<'a>, string) => unit = %raw(`
     function(dict, key) {
       delete dict[key]
     }

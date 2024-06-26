@@ -17,7 +17,7 @@ module Mock = {
   let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
-    value: value->Ethers.BigInt.fromInt,
+    value: value->BigInt.fromInt,
   }
 
   let makeDeleteUserMock = (~user): Types.ERC20Factory.DeleteUser.eventArgs => {

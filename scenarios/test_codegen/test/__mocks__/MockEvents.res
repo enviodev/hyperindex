@@ -1,53 +1,53 @@
 let newGravatar1: Types.Gravatar.NewGravatar.eventArgs = {
-  id: 1001->Ethers.BigInt.fromInt,
+  id: 1001->BigInt.fromInt,
   owner: "0x1230000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "gravatar1",
   imageUrl: "https://gravatar1.com",
 }
 
 let newGravatar2: Types.Gravatar.NewGravatar.eventArgs = {
-  id: 1002->Ethers.BigInt.fromInt,
+  id: 1002->BigInt.fromInt,
   owner: "0x4560000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "gravatar2",
   imageUrl: "https://gravatar2.com",
 }
 
 let newGravatar3: Types.Gravatar.NewGravatar.eventArgs = {
-  id: 1003->Ethers.BigInt.fromInt,
+  id: 1003->BigInt.fromInt,
   owner: "0x7890000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "gravatar3",
   imageUrl: "https://gravatar3.com",
 }
 
 let newGravatar4_deleted: Types.Gravatar.NewGravatar.eventArgs = {
-  id: 1004->Ethers.BigInt.fromInt,
+  id: 1004->BigInt.fromInt,
   owner: "0x9990000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "gravatar4_deleted",
   imageUrl: "https://gravatar4.com",
 }
 
 let setGravatar1: Types.Gravatar.UpdatedGravatar.eventArgs = {
-  id: 1001->Ethers.BigInt.fromInt,
+  id: 1001->BigInt.fromInt,
   owner: "0x1230000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update1",
   imageUrl: "https://gravatar1.com",
 }
 
 let setGravatar2: Types.Gravatar.UpdatedGravatar.eventArgs = {
-  id: 1002->Ethers.BigInt.fromInt,
+  id: 1002->BigInt.fromInt,
   owner: "0x4560000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update2",
   imageUrl: "https://gravatar2.com",
 }
 
 let setGravatar3: Types.Gravatar.UpdatedGravatar.eventArgs = {
-  id: 1003->Ethers.BigInt.fromInt,
+  id: 1003->BigInt.fromInt,
   owner: "0x7890000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update3",
   imageUrl: "https://gravatar3.com",
 }
 let setGravatar4: Types.Gravatar.UpdatedGravatar.eventArgs = {
-  id: 1004->Ethers.BigInt.fromInt,
+  id: 1004->BigInt.fromInt,
   owner: "0x9990000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update4",
   imageUrl: "https://gravatar4.com",

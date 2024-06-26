@@ -11,8 +11,6 @@ module Misc = {
   }
 }
 
-module BigInt = BigInt
-
 type abi
 
 let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Obj.magic
@@ -232,11 +230,11 @@ module JsonRpcProvider = {
   external getBlockNumber: t => promise<int> = "getBlockNumber"
 
   type block = {
-    _difficulty: BigInt.t,
+    _difficulty: bigint,
     difficulty: int,
     extraData: ethAddress,
-    gasLimit: BigInt.t,
-    gasUsed: BigInt.t,
+    gasLimit: bigint,
+    gasUsed: bigint,
     hash: string,
     miner: ethAddress,
     nonce: int,

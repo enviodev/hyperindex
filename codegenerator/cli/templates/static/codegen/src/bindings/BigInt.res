@@ -1,5 +1,5 @@
 @genType.import(("./OpaqueTypes.ts", "GenericBigInt"))
-type t
+type t = bigint
 
 module Misc = {
   let unsafeToOption: (unit => 'a) => option<'a> = unsafeFunc => {

@@ -4,21 +4,20 @@
 let pageLimitSize = 50_000
 
 module PreviousDynamicContractAddresses: {
-  type registration = {address: Ethers.ethAddress, eventId: Ethers.BigInt.t}
+  type registration = {address: Ethers.ethAddress, eventId: bigint}
   type matchingRegistration = SameOrLater(registration) | Earlier(registration)
   type t
   let make: unit => t
   let add: (t, registration) => unit
-  let getRegistration: (t, Ethers.ethAddress, Ethers.BigInt.t) => option<matchingRegistration>
+  let getRegistration: (t, Ethers.ethAddress, bigint) => option<matchingRegistration>
   let getUnusedContractRegistrations: (t, ContractAddressingMap.mapping) => array<Ethers.ethAddress>
 } = {
-  type registration = {address: Ethers.ethAddress, eventId: Ethers.BigInt.t}
-  type t = Js.Dict.t<registration>
+  type registration = {address: Ethers.ethAddress, eventId: bigint}
+  type t = dict<registration>
 
   let make = () => Js.Dict.empty()
 
   let ethAddressToString = Ethers.ethAddressToString
-  module BigInt = Ethers.BigInt
 
   let add = (self: t, registration: registration) =>
     self->Js.Dict.set(registration.address->ethAddressToString, registration)
@@ -29,11 +28,11 @@ module PreviousDynamicContractAddresses: {
 
   type matchingRegistration = SameOrLater(registration) | Earlier(registration)
 
-  let getRegistration = (self: t, address, eventId: BigInt.t) => {
+  let getRegistration = (self: t, address, eventId: bigint) => {
     self
     ->get(address)
     ->Belt.Option.map(reg => {
-      reg.eventId->Ethers.BigInt.gte(eventId) ? SameOrLater(reg) : Earlier(reg)
+      reg.eventId->BigInt.gte(eventId) ? SameOrLater(reg) : Earlier(reg)
     })
   }
 
@@ -57,7 +56,7 @@ module PreviousDynamicContractAddresses: {
 
 type rec t = {
   mutable latestFetchedBlockTimestamp: int,
-  mutable latestFetchedEventId: promise<Ethers.BigInt.t>,
+  mutable latestFetchedEventId: promise<bigint>,
   chain: ChainMap.Chain.t,
   newRangeQueriedCallBacks: SDSL.Queue.t<unit => unit>,
   previousDynamicContractAddresses: PreviousDynamicContractAddresses.t,
@@ -103,7 +102,7 @@ let make = (~caughtUpToHeadHook=?, ~contractAddressMapping=?, chainConfig: Confi
   contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
   {
     latestFetchedBlockTimestamp: 0,
-    latestFetchedEventId: Ethers.BigInt.fromInt(0)->Promise.resolve,
+    latestFetchedEventId: BigInt.fromInt(0)->Promise.resolve,
     chain: chainConfig.chain,
     newRangeQueriedCallBacks: SDSL.Queue.make(),
     contractAddressMapping,
@@ -123,7 +122,7 @@ let startWorker = async (
   //ignore these two values
   let _ = (startBlock, logger, checkHasReorgOccurred)
 
-  let eventIdRef = ref(0->Ethers.BigInt.fromInt)
+  let eventIdRef = ref(0->BigInt.fromInt)
 
   let hasMoreRawEvents = ref(true)
 
@@ -182,9 +181,9 @@ let startWorker = async (
       latestEventIdResolve(lastFetchedEventId)
       hasMoreRawEvents := false
     | Some(item) =>
-      let lastEventId = item.eventId->Ethers.BigInt.fromStringUnsafe
+      let lastEventId = item.eventId->BigInt.fromStringUnsafe
       latestEventIdResolve(lastEventId)
-      eventIdRef := lastEventId->Ethers.BigInt.add(1->Ethers.BigInt.fromInt)
+      eventIdRef := lastEventId->BigInt.add(1->BigInt.fromInt)
       self.latestFetchedBlockTimestamp = item.blockTimestamp
     }
   }
@@ -339,11 +338,11 @@ let addDynamicContractAndFetchMissingEvents = async (
   //Recursively collect all existing raw events in relation to dynamic contracts
   let rec getExistingFromRawEvents: (
     ~queueItems: array<Types.eventBatchQueueItem>=?,
-    ~fromEventId: Ethers.BigInt.t,
+    ~fromEventId: bigint,
     unit,
   ) => promise<array<Types.eventBatchQueueItem>> = async (
     ~queueItems: option<array<Types.eventBatchQueueItem>>=?,
-    ~fromEventId: Ethers.BigInt.t,
+    ~fromEventId: bigint,
     (),
   ) => {
     let page = await getPageFromRawEvents(~fromEventId)
