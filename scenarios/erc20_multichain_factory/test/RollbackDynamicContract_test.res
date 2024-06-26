@@ -20,13 +20,13 @@ module Mock = {
 3b register contract (dynamic query should action from 3, where parent hash is block 2 not 3)
 ensure that this doesn't trigger a reorg
 */
-  let makeTransferMock = (~from, ~to, ~value): Types.ERC20Contract.TransferEvent.eventArgs => {
+  let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
     value: value->Ethers.BigInt.fromInt,
   }
 
-  let makeTokenCreatedMock = (~token): Types.ERC20FactoryContract.TokenCreatedEvent.eventArgs => {
+  let makeTokenCreatedMock = (~token): Types.ERC20Factory.TokenCreated.eventArgs => {
     token: token,
   }
 

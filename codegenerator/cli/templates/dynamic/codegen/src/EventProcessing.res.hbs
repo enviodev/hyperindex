@@ -32,12 +32,128 @@ module EventsProcessed = {
   }
 }
 
+type dynamicContractRegistration = {
+  registeringEventBlockNumber: int,
+  registeringEventLogIndex: int,
+  registeringEventChain: ChainMap.Chain.t,
+  dynamicContracts: array<TablesStatic.DynamicContractRegistry.t>,
+}
+
+type dynamicContractRegistrations = {
+  //Its better to apply these in reverse so that we register them with
+  //the fetcher from latest to earliest. That way there are less recursions
+  registrationsReversed: list<dynamicContractRegistration>,
+  unprocessedBatchReversed: list<Types.eventBatchQueueItem>,
+}
+
+let addToDynamicContractRegistrations = (
+  eventBatchQueueItem: Types.eventBatchQueueItem,
+  ~dynamicContracts,
+  ~registeringEventBlockNumber,
+  ~registeringEventLogIndex,
+  ~registrationsReversed,
+  ~unprocessedBatchReversed,
+) => {
+  //If there are any dynamic contract registrations, put this item in the unprocessedBatch flagged
+  //with "hasRegisteredDynamicContracts" and return the same list of entitiesToLoad without the
+  //current item
+  let unprocessedBatchReversed = unprocessedBatchReversed->List.add({
+    ...eventBatchQueueItem,
+    hasRegisteredDynamicContracts: true,
+  })
+
+  let dynamicContractRegistration = {
+    dynamicContracts,
+    registeringEventBlockNumber,
+    registeringEventLogIndex,
+    registeringEventChain: eventBatchQueueItem.chain,
+  }
+  {
+    unprocessedBatchReversed,
+    registrationsReversed: registrationsReversed->List.add(dynamicContractRegistration),
+  }
+}
+
+let runEventContractRegister = (
+  contractRegister: RegisteredEvents.args<_> => unit,
+  ~event,
+  ~eventName,
+  ~eventBatchQueueItem: Types.eventBatchQueueItem,
+  ~logger,
+  ~checkContractIsRegistered,
+  ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
+  ~inMemoryStore,
+) => {
+  let {chain} = eventBatchQueueItem
+  let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName)
+
+  switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore)) {
+  | exception exn =>
+    exn
+    ->ErrorHandling.make(
+      ~msg="Event pre loader failed, please fix the error to keep the indexer running smoothly",
+      ~logger=contextEnv.logger,
+    )
+    ->Error
+  | () =>
+    let dynamicContracts =
+      contextEnv
+      ->ContextEnv.getAddedDynamicContractRegistrations
+      ->Array.keep(({contractAddress, contractType}) =>
+        !checkContractIsRegistered(~chain, ~contractAddress, ~contractName=contractType)
+      )
+
+    let addToDynamicContractRegistrations =
+      eventBatchQueueItem->addToDynamicContractRegistrations(
+        ~registeringEventBlockNumber=event.blockNumber,
+        ~registeringEventLogIndex=event.logIndex,
+      )
+
+    let val = switch (dynamicContracts, dynamicContractRegistrations) {
+    | ([], dynamicContractRegistrations) => dynamicContractRegistrations
+    | (dynamicContracts, Some({registrationsReversed, unprocessedBatchReversed})) =>
+      addToDynamicContractRegistrations(
+        ~dynamicContracts,
+        ~registrationsReversed,
+        ~unprocessedBatchReversed,
+      )->Some
+    | (dynamicContracts, None) =>
+      addToDynamicContractRegistrations(
+        ~dynamicContracts,
+        ~registrationsReversed=list{},
+        ~unprocessedBatchReversed=list{},
+      )->Some
+    }
+
+    val->Ok
+  }
+}
+
+let runEventLoader = async (
+  ~contextEnv,
+  ~handler: RegisteredEvents.registeredLoaderHandler<_>,
+  ~loadLayer,
+) => {
+  let {loader} = handler
+
+  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~loadLayer)) {
+  | exception exn =>
+    exn
+    ->ErrorHandling.make(
+      ~msg="Event pre loader failed, please fix the error to keep the indexer running smoothly",
+      ~logger=contextEnv.logger,
+    )
+    ->Error
+  | loadReturn => loadReturn->Ok
+  }
+}
+
 let addEventToRawEvents = (
   event: Types.eventLog<'a>,
-  ~inMemoryStore: IO.InMemoryStore.t,
+  ~inMemoryStore: InMemoryStore.t,
   ~chainId,
   ~eventArgsSchema: S.t<'a>,
-  ~eventName: Types.eventName,
+  ~eventName: Enums.EventType.t,
 ) => {
   let {
     blockNumber,
@@ -50,7 +166,7 @@ let addEventToRawEvents = (
   } = event
 
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
-  let rawEvent: Types.rawEventsEntity = {
+  let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
     eventId: eventId->Ethers.BigInt.toString,
     blockNumber,
@@ -60,7 +176,7 @@ let addEventToRawEvents = (
     srcAddress,
     blockHash,
     blockTimestamp,
-    eventType: eventName->S.serializeOrRaiseWith(Types.eventNameSchema),
+    eventType: eventName,
     params: switch event.params->S.serializeToJsonStringWith(. eventArgsSchema) {
     | Ok(jsonString) => jsonString
     | Error(e) => S.Error.raise(e)
@@ -69,21 +185,18 @@ let addEventToRawEvents = (
 
   let eventIdStr = eventId->Ethers.BigInt.toString
 
-  inMemoryStore.rawEvents->IO.InMemoryStore.RawEvents.set(
-    ~key={chainId, eventId: eventIdStr},
-    ~entity=rawEvent
-  )
+  inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
 }
 
 let updateEventSyncState = (
   event: Types.eventLog<'a>,
   ~chainId,
-  ~inMemoryStore: IO.InMemoryStore.t,
+  ~inMemoryStore: InMemoryStore.t,
 ) => {
   let {blockNumber, logIndex, transactionIndex, blockTimestamp} = event
-  let _ = inMemoryStore.eventSyncState->IO.InMemoryStore.EventSyncState.set(
-    ~key=chainId,
-    ~entity={
+  let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
+    chainId,
+    {
       chainId,
       blockTimestamp,
       blockNumber,
@@ -93,333 +206,269 @@ let updateEventSyncState = (
   )
 }
 
-/** Function composer for handling an event*/
-let handleEvent = (
-  ~inMemoryStore,
-  ~chainId,
-  ~eventArgsSchema,
-  ~context: Context.genericContextCreatorFunctions<'b, 'c, 'd>,
-  ~handlerWithContextGetter: Handlers.handlerWithContextGetterSyncAsync<'a, 'b, 'c, 'd>,
-  ~event,
-  ~eventName,
-  ~cb,
-  ~latestProcessedBlocks: EventsProcessed.t,
-  ~chain,
-) => {
-  event->updateEventSyncState(~chainId, ~inMemoryStore)
-
-  event->addEventToRawEvents(~inMemoryStore, ~chainId, ~eventArgsSchema, ~eventName)
-
-  let makeErr = ErrorHandling.make(
-    ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
-    ~logger=context.logger,
-  )
-
-  let latestProcessedBlocks =
-    latestProcessedBlocks->EventsProcessed.updateEventsProcessed(
-      ~chain,
-      ~blockNumber=event.blockNumber,
-    )
-
-  switch handlerWithContextGetter {
-  | Sync({handler, contextGetter}) =>
-    //Call the context getter here, ensures no stale values in the context
-    //Since loaders and previous handlers have already run
-    let handlerContext = contextGetter(context)
-    switch handler({event, context: handlerContext}) {
-    | exception exn => Error(makeErr(exn))
-    | () => Ok(latestProcessedBlocks)
-    }->cb
-  | Async({handler, contextGetter}) =>
-    //Call the context getter here, ensures no stale values in the context
-    //Since loaders and previous handlers have already run
-    let handlerContext = contextGetter(context)
-    handler({event, context: handlerContext})
-    ->Promise.thenResolve(_ => cb(Ok(latestProcessedBlocks)))
-    ->Promise.catch(exn => {
-      cb(Error(makeErr(exn)))
-      Promise.resolve()
-    })
-    ->ignore
-  }
-}
-
-let eventRouter = (
-  item: Context.eventRouterEventAndContext,
-  ~inMemoryStore,
-  ~cb,
-  ~latestProcessedBlocks: EventsProcessed.t,
-) => {
-  let {event, chainId} = item
-  let chain = chainId->ChainMap.Chain.fromChainId->Utils.unwrapResultExn
-
-  switch event {
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(
-      event,
-      context,
-    ) => handleEvent(
-      ~event,
-      ~eventName={{event.event_type.full}},
-      ~eventArgsSchema=Types.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.eventArgsSchema,
-      ~handlerWithContextGetter=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getHandler(),
-      ~chainId,
-      ~inMemoryStore,
-      ~cb,
-      ~context,
-      ~latestProcessedBlocks,
-      ~chain,
-    )
-
-{{/each}}
-{{/each}}
-  }
-}
-
 let readEntity = (entityMod, id) => Entities.batchRead(DbFunctions.sql, [id], ~entityMod)
-
-let asyncGetters: Context.entityGetters = {
+let asyncGetters: ContextEnv.asyncGetters = {
 {{#each entities as | entity |}}
- get{{entity.name.capitalized}}: readEntity(module(Entities.{{entity.name.capitalized}}), ...),
+ get{{entity.name.capitalized}}: readEntity(module(Entities.{{entity.name.capitalized}})),
 {{/each}}
 }
 
-type dynamicContractRegistration = {
-  registeringEventBlockNumber: int,
-  registeringEventLogIndex: int,
-  registeringEventChain: ChainMap.Chain.t,
-  dynamicContracts: array<Types.dynamicContractRegistryEntity>,
-}
-
-type dynamicContractRegistrations = {
-  //Its better to apply these in reverse so that we register them with
-  //the fetcher from latest to earliest. That way there are less recursions
-  registrationsReversed: list<dynamicContractRegistration>,
-  unprocessedBatchReversed: list<Types.eventBatchQueueItem>,
-  //Once a single registration happens, the rest of the batches
-  //loaders should be run on an isolated in memory store so that
-  //they don't affect state of the batch that will be processed
-  inMemoryStore: IO.InMemoryStore.t,
-}
-
-type loadResponse<'a> = {
-  val: 'a,
-  dynamicContractRegistrations: option<dynamicContractRegistrations>,
-}
-
-type getReadEntitiesRes = loadResponse<
-  array<(array<Types.entityRead>, Context.eventRouterEventAndContext)>,
->
-
-/**
-Composer for getting entitiesToLoad and dynamicContractRegistrations for a given event
-*/
-let composeGetReadEntity = (
-  ~event: Types.eventLog<_>,
-  ~contextCreator,
+let runEventHandler = (
+  type eventArgs,
+  //Injection params for testing framework
+  ~executeLoadLayer=LoadLayer.executeLoadLayer,
+  ~asyncGetters=asyncGetters,
+  //Required params
+  ~eventMod: module(Types.Event with type eventArgs = eventArgs),
+  ~handler,
   ~inMemoryStore,
   ~logger,
-  ~asyncGetters,
-  ~getLoader: unit => Handlers.loader<_>,
-  ~item: Types.eventBatchQueueItem,
-  ~entitiesToLoad,
-  ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
-  ~eventWithContextAccessor,
-  ~checkContractIsRegistered,
-): result<getReadEntitiesRes, ErrorHandling.t> => {
-  let {chain} = item
-  let chainId = chain->ChainMap.Chain.toChainId
-  //If there are dynamic contracts, context loader should use the cloned in memory store
-  //Otherwise we can use the passed in one
-  let inMemoryStore =
-    dynamicContractRegistrations->Option.mapWithDefault(inMemoryStore, d => d.inMemoryStore)
+  ~chain,
+  ~latestProcessedBlocks,
+  event,
+) => {
+  open ErrorHandling.ResultPropogateEnv
+  runAsyncEnv(async () => {
+    let module(Event) = eventMod
+    let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName=Event.eventName)
+    let loadLayer = LoadLayer.make()
 
-  let contextHelper: Context.genericContextCreatorFunctions<_> = contextCreator(
-    ~inMemoryStore,
-    ~chainId,
-    ~event,
-    ~logger,
-    ~asyncGetters,
-  )
+    let loaderReturnUnawaited = runEventLoader(~contextEnv, ~handler, ~loadLayer)
 
-  let context = contextHelper.getLoaderContext()
-
-  let loader = getLoader()
-
-  switch loader({event, context}) {
-  | exception exn =>
-    let errorHandler =
-      exn->ErrorHandling.make(
-        ~msg="Event Loader failed, please fix the error to keep the indexer running smoothly",
-        ~logger=contextHelper.logger,
+    switch await loadLayer->executeLoadLayer(~inMemoryStore) {
+    | exception exn =>
+      exn
+      ->ErrorHandling.make(
+        ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
+        ~logger,
       )
-    Error(errorHandler)
-  | () =>
-    let dynamicContracts = if item.hasRegisteredDynamicContracts->Option.getWithDefault(false) {
+      ->Error
+      ->propogate
+    | () => ()
+    }
+
+    let loaderReturn = await loaderReturnUnawaited->propogateAsync
+
+    switch await handler.handler(
+      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters),
+    ) {
+    | exception exn =>
+      exn
+      ->ErrorHandling.make(
+        ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
+        ~logger=contextEnv.logger,
+      )
+      ->Error
+      ->propogate
+    | () =>
+      let {chainId} = event
+
+      event->updateEventSyncState(~chainId, ~inMemoryStore)
+      event->addEventToRawEvents(
+        ~inMemoryStore,
+        ~chainId,
+        ~eventArgsSchema=Event.eventArgsSchema,
+        ~eventName=Event.eventName,
+      )
+      latestProcessedBlocks
+      ->EventsProcessed.updateEventsProcessed(~chain, ~blockNumber=event.blockNumber)
+      ->Ok
+    }
+  })
+}
+
+let getHandlerRunner = (
+  type eventArgs,
+  event: Types.eventLog<eventArgs>,
+  eventMod: module(Types.Event with type eventArgs = eventArgs),
+  ~latestProcessedBlocks,
+  ~inMemoryStore,
+  ~logger,
+  ~chain,
+  ~registeredEvents,
+) => {
+  let module(Event) = eventMod
+  switch registeredEvents
+  ->RegisteredEvents.get(Event.eventName)
+  ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler) {
+  | Some(handler) =>
+    event->runEventHandler(
+      ~handler,
+      ~latestProcessedBlocks,
+      ~inMemoryStore,
+      ~logger,
+      ~chain,
+      ~eventMod,
+    )
+  | None => Ok(latestProcessedBlocks)->Promise.resolve
+  }
+}
+
+let addToUnprocessedBatch = (
+  eventBatchQueueItem: Types.eventBatchQueueItem,
+  dynamicContractRegistrations,
+) => {
+  {
+    ...dynamicContractRegistrations,
+    unprocessedBatchReversed: dynamicContractRegistrations.unprocessedBatchReversed->List.add(
+      eventBatchQueueItem,
+    ),
+  }
+}
+
+let rec registerDynamicContracts = (
+  ~registeredEvents: RegisteredEvents.t,
+  ~checkContractIsRegistered,
+  ~logger,
+  ~eventsBeforeDynamicRegistrations=[],
+  ~dynamicContractRegistrations: option<dynamicContractRegistrations>=None,
+  ~inMemoryStore,
+  eventBatch: list<Types.eventBatchQueueItem>,
+) => {
+  switch eventBatch {
+  | list{} => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
+  | list{eventBatchQueueItem, ...tail} =>
+    let dynamicContractRegistrationsResult = if (
+      eventBatchQueueItem.hasRegisteredDynamicContracts->Option.getWithDefault(false)
+    ) {
       //If an item has already been registered, it would have been
       //put back on the arbitrary events queue and is now being reprocessed
-      []
+      dynamicContractRegistrations
+      ->Option.map(addToUnprocessedBatch(eventBatchQueueItem))
+      ->Ok
     } else {
-      contextHelper.getAddedDynamicContractRegistrations()->Array.keep(({
-        contractAddress,
-        contractType,
-      }) => {
-        !checkContractIsRegistered(~chain, ~contractAddress, ~contractName=contractType)
-      })
+      let runEventContractRegister = (eventName, event) =>
+        switch registeredEvents
+        ->RegisteredEvents.get(eventName)
+        ->Option.flatMap(v => v.contractRegister) {
+        | Some(handler) =>
+          handler->runEventContractRegister(
+            ~event,
+            ~logger,
+            ~checkContractIsRegistered,
+            ~eventBatchQueueItem,
+            ~dynamicContractRegistrations,
+            ~eventName,
+            ~inMemoryStore,
+          )
+        | None =>
+          dynamicContractRegistrations
+          ->Option.map(addToUnprocessedBatch(eventBatchQueueItem))
+          ->Ok
+        }
+
+      open Enums.EventType
+      switch eventBatchQueueItem.event {
+      {{#each codegen_contracts as | contract |}}
+      {{#each contract.codegen_events as | event |}}
+      | {{event.event_type.full}}(event) => runEventContractRegister({{event.event_type.full}}, event)
+      {{/each}}
+      {{/each}}
+      }
     }
 
-    let addToDynamicContractRegistrations = (
-      ~registrationsReversed,
-      ~unprocessedBatchReversed,
-      ~inMemoryStore,
-    ) => {
-      //If there are any dynamic contract registrations, put this item in the unprocessedBatch flagged
-      //with "hasRegisteredDynamicContracts" and return the same list of entitiesToLoad without the
-      //current item
-      let unprocessedBatchReversed = list{
-        {...item, hasRegisteredDynamicContracts: true},
-        ...unprocessedBatchReversed,
+    switch dynamicContractRegistrationsResult {
+    | Ok(dynamicContractRegistrations) =>
+      if dynamicContractRegistrations->Option.isNone {
+        //Mutate for performance (could otherwise use concat?)
+        eventsBeforeDynamicRegistrations->Js.Array2.push(eventBatchQueueItem)->ignore
       }
-
-      let dynamicContractRegistration = {
-        dynamicContracts,
-        registeringEventBlockNumber: event.blockNumber,
-        registeringEventLogIndex: event.logIndex,
-        registeringEventChain: chain,
-      }
-      let dynamicContractRegistrations = {
-        unprocessedBatchReversed,
-        registrationsReversed: list{dynamicContractRegistration, ...registrationsReversed},
-        inMemoryStore,
-      }->Some
-      {val: entitiesToLoad, dynamicContractRegistrations}
+      tail->registerDynamicContracts(
+        ~registeredEvents,
+        ~checkContractIsRegistered,
+        ~logger,
+        ~eventsBeforeDynamicRegistrations,
+        ~dynamicContractRegistrations,
+        ~inMemoryStore,
+      )
+    | Error(e) => Error(e)
     }
-
-    switch dynamicContractRegistrations {
-    | None =>
-      if dynamicContracts->Array.length > 0 {
-        //Clone the inMemoryStore
-        let inMemoryStoreDeepClone = inMemoryStore->IO.InMemoryStore.clone
-
-        addToDynamicContractRegistrations(
-          ~registrationsReversed=list{},
-          ~unprocessedBatchReversed=list{},
-          ~inMemoryStore=inMemoryStoreDeepClone,
-        )
-      } else {
-        //If there are no dynamic contract registrations, get the entities to load and
-        //return a context with the event for the handlers
-        let entitiesToLoad = entitiesToLoad->Array.concat([
-          (
-            contextHelper.getEntitiesToLoad(),
-            (
-              {
-                chainId,
-                event: eventWithContextAccessor(event, contextHelper),
-              }: Context.eventRouterEventAndContext
-            ),
-          ),
-        ])
-
-        {val: entitiesToLoad, dynamicContractRegistrations: None}
-      }
-    | Some({unprocessedBatchReversed, registrationsReversed, inMemoryStore}) =>
-      if dynamicContracts->Array.length > 0 {
-        addToDynamicContractRegistrations(
-          ~registrationsReversed,
-          ~unprocessedBatchReversed,
-          ~inMemoryStore,
-        )
-      } else {
-        let unprocessedBatchReversed = list{item, ...unprocessedBatchReversed}
-
-        let dynamicContractRegistrations = {
-          unprocessedBatchReversed,
-          registrationsReversed,
-          inMemoryStore,
-        }->Some
-        {val: entitiesToLoad, dynamicContractRegistrations}
-      }
-    }->Ok
   }
 }
 
-let rec getReadEntities = (
+let runLoaders = (
+  eventBatch: array<Types.eventBatchQueueItem>,
+  ~registeredEvents: RegisteredEvents.t,
   ~inMemoryStore,
   ~logger,
-  ~entitiesToLoad=[],
-  ~checkContractIsRegistered,
-  ~dynamicContractRegistrations=None,
-  eventBatch: list<Types.eventBatchQueueItem>,
-): result<getReadEntitiesRes, ErrorHandling.t> => {
-  switch eventBatch {
-  | list{} => {val: entitiesToLoad, dynamicContractRegistrations}->Ok
-  | list{item, ...tail} => {
-      let composer = composeGetReadEntity(
-        ~entitiesToLoad,
-        ~asyncGetters,
-        ~inMemoryStore,
-        ~logger,
-        ~item,
-        ~checkContractIsRegistered,
-        ~dynamicContractRegistrations,
-      )
+) => {
+  open ErrorHandling.ResultPropogateEnv
+  runAsyncEnv(async () => {
+    let loadLayer = LoadLayer.make()
 
-      let res = switch item.event {
-    {{#each codegen_contracts as | contract |}}
-    {{#each contract.codegen_events as | event |}}
-      | {{contract.name.capitalized}}Contract_{{event.name.capitalized}}(event) =>
-        composer(
-          ~event,
-          ~contextCreator=Context.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}Event.contextCreator,
-          ~getLoader=Handlers.{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.getLoader,
-          ~eventWithContextAccessor=(
-            event,
-            context,
-          ) => Context.{{contract.name.capitalized}}Contract_{{event.name.capitalized}}WithContext(event, context),
+    let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, event}) => {
+      let load = (event, eventName) =>
+        registeredEvents
+        ->RegisteredEvents.get(eventName)
+        ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
+        ->Option.map(
+          handler => {
+            let contextEnv = ContextEnv.make(~chain, ~eventName, ~event, ~logger)
+            runEventLoader(~contextEnv, ~handler, ~loadLayer)
+          },
         )
-    {{/each}}
-    {{/each}}
-      }
 
-      //else keep getting read entities from batch
-      switch res {
-      | Error(e) => Error(e)
-      | Ok(res) =>
-        tail->getReadEntities(
-          ~inMemoryStore,
-          ~logger,
-          ~entitiesToLoad=res.val,
-          ~checkContractIsRegistered,
-          ~dynamicContractRegistrations=res.dynamicContractRegistrations,
-        )
+      switch event {
+      {{#each codegen_contracts as | contract |}}
+      {{#each contract.codegen_events as | event |}}
+      | {{event.event_type.full}}(event) => event->load({{event.event_type.full}})
+      {{/each}}
+      {{/each}}
       }
+    })
+
+    switch await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore) {
+    | exception exn =>
+      exn
+      ->ErrorHandling.make(~msg="Load layer failed during execution", ~logger)
+      ->Error
+      ->propogate
+    | () => ()
     }
-  }
+
+    let loaderReturns = await loaderReturnsUnawaited->Promise.all
+    //We don't actually need these returns here but errors will be propogated
+    //here
+    let _unusedReturns = loaderReturns->Utils.mapArrayOfResults->propogate
+    Ok()
+  })
 }
 
-let loadReadEntities = async (
+let runHandlers = (
+  eventBatch: array<Types.eventBatchQueueItem>,
+  ~registeredEvents,
   ~inMemoryStore,
-  ~eventBatch: list<Types.eventBatchQueueItem>,
-  ~checkContractIsRegistered,
-  ~logger: Pino.t,
-): result<loadResponse<array<Context.eventRouterEventAndContext>>, ErrorHandling.t> => {
-  switch eventBatch->getReadEntities(~inMemoryStore, ~logger, ~checkContractIsRegistered) {
-  | Ok({val: entitiesToLoad, dynamicContractRegistrations}) =>
-    let (readEntitiesGrouped, contexts): (
-      array<array<Types.entityRead>>,
-      array<Context.eventRouterEventAndContext>,
-    ) =
-      entitiesToLoad->Array.unzip
+  ~latestProcessedBlocks,
+  ~logger,
+) => {
+  open ErrorHandling.ResultPropogateEnv
+  let latestProcessedBlocks = ref(latestProcessedBlocks)
+  runAsyncEnv(async () => {
+    for i in 0 to eventBatch->Array.length - 1 {
+      let {event, chain} = eventBatch[i]->Option.getUnsafe
 
-    let readEntities = readEntitiesGrouped->Belt.Array.concatMany
+      let runHandler = getHandlerRunner(
+        ~inMemoryStore,
+        ~logger,
+        ~chain,
+        ~latestProcessedBlocks=latestProcessedBlocks.contents,
+        ~registeredEvents,
+      )
 
-    await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=readEntities)
-
-    {val: contexts, dynamicContractRegistrations}->Ok
-  | Error(e) => Error(e)
-  }
+      latestProcessedBlocks :=
+        switch event {
+        {{#each codegen_contracts as | contract |}}
+        {{#each contract.codegen_events as | event |}}
+        | {{event.event_type.full}}(event) =>
+          await event
+          ->runHandler(module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}))
+          ->propogateAsync
+        {{/each}}
+        {{/each}}
+        }
+    }
+    Ok(latestProcessedBlocks.contents)
+  })
 }
 
 let registerProcessEventBatchMetrics = (
@@ -438,65 +487,77 @@ let registerProcessEventBatchMetrics = (
   })
 
   Prometheus.incrementLoadEntityDurationCounter(~duration=loadDuration)
-
   Prometheus.incrementEventRouterDurationCounter(~duration=handlerDuration)
-
   Prometheus.incrementExecuteBatchDurationCounter(~duration=dbWriteDuration)
-
   Prometheus.incrementEventsProcessedCounter(~number=batchSize)
 }
 
-let processEventBatch = async (
+type batchProcessed = {
+  latestProcessedBlocks: EventsProcessed.t,
+  dynamicContractRegistrations: option<dynamicContractRegistrations>,
+}
+let processEventBatch = (
   ~eventBatch: list<Types.eventBatchQueueItem>,
-  ~inMemoryStore: IO.InMemoryStore.t,
+  ~inMemoryStore: InMemoryStore.t,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
+  ~registeredEvents: RegisteredEvents.t,
 ) => {
   let logger = Logging.createChild(
     ~params={
       "context": "batch",
+      "batch-size": eventBatch->List.length,
+      "first-event-timestamp": eventBatch->List.head->Option.map(v => v.timestamp),
     },
   )
 
   let timeRef = Hrtime.makeTimer()
 
-  switch await loadReadEntities(~inMemoryStore, ~eventBatch, ~logger, ~checkContractIsRegistered) {
-  | Ok({val: eventBatchAndContext, dynamicContractRegistrations}) =>
+  open ErrorHandling.ResultPropogateEnv
+  runAsyncEnv(async () => {
+    //Register all the dynamic contracts in this batch,
+    //only continue processing events before the first dynamic contract registration
+    let (
+      eventsBeforeDynamicRegistrations: array<Types.eventBatchQueueItem>,
+      dynamicContractRegistrations,
+    ) =
+      eventBatch
+      ->registerDynamicContracts(
+        ~registeredEvents,
+        ~checkContractIsRegistered,
+        ~logger,
+        ~inMemoryStore,
+      )
+      ->propogate
+
+    await eventsBeforeDynamicRegistrations
+    ->runLoaders(~registeredEvents, ~inMemoryStore, ~logger)
+    ->propogateAsync
+
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-    switch await eventBatchAndContext->Belt.Array.reduce(
-      Promise.resolve(Ok(latestProcessedBlocks)),
-      async (previousPromise, event) => {
-        switch await previousPromise {
-        | Error(e) => Error(e)
-        | Ok(latestProcessedBlocks) =>
-          await Promise.make((resolve, _reject) =>
-            event->eventRouter(~inMemoryStore, ~cb=res => resolve(. res), ~latestProcessedBlocks)
-          )
-        }
-      },
-    ) {
-    | Ok(latestProcessedBlocks) =>
-      let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
-      switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore) {
-      | exception exn =>
-        exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error
-      | () =>
-        let elapsedTimeAfterDbWrite =
-          timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    let latestProcessedBlocks =
+      await eventsBeforeDynamicRegistrations
+      ->runHandlers(~registeredEvents, ~inMemoryStore, ~latestProcessedBlocks, ~logger)
+      ->propogateAsync
 
-        registerProcessEventBatchMetrics(
-          ~logger,
-          ~batchSize=eventBatchAndContext->Array.length,
-          ~loadDuration=elapsedAfterLoad,
-          ~handlerDuration=elapsedTimeAfterProcess - elapsedAfterLoad,
-          ~dbWriteDuration=elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
-        )
+    let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
-        {val: latestProcessedBlocks, dynamicContractRegistrations}->Ok
-      }
-    | Error(e) => Error(e)
+    switch await DbFunctions.sql->IO.executeBatch(~inMemoryStore) {
+    | exception exn =>
+      exn->ErrorHandling.make(~msg="Failed writing batch to database", ~logger)->Error->propogate
+    | () => ()
     }
-  | Error(e) => Error(e)
-  }
+
+    let elapsedTimeAfterDbWrite = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
+    registerProcessEventBatchMetrics(
+      ~logger,
+      ~batchSize=eventsBeforeDynamicRegistrations->Array.length,
+      ~loadDuration=elapsedAfterLoad,
+      ~handlerDuration=elapsedTimeAfterProcess - elapsedAfterLoad,
+      ~dbWriteDuration=elapsedTimeAfterDbWrite - elapsedTimeAfterProcess,
+    )
+
+    Ok({latestProcessedBlocks, dynamicContractRegistrations})
+  })
 }

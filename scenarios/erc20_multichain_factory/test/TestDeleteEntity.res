@@ -14,13 +14,13 @@ module Mock = {
   Block creates a user
   Block that removes a user
 */
-  let makeTransferMock = (~from, ~to, ~value): Types.ERC20Contract.TransferEvent.eventArgs => {
+  let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
     value: value->Ethers.BigInt.fromInt,
   }
 
-  let makeDeleteUserMock = (~user): Types.ERC20FactoryContract.DeleteUserEvent.eventArgs => {
+  let makeDeleteUserMock = (~user): Types.ERC20Factory.DeleteUser.eventArgs => {
     user: user,
   }
 
@@ -121,25 +121,6 @@ describe("Unsafe delete test", () => {
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
     let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks)
-
-    //helpers
-    let getChainFetcher = chain => {
-      let state = gsManager->GlobalStateManager.getState
-      state.chainManager.chainFetchers->ChainMap.get(chain)
-    }
-
-    let getFetchState = chain => {
-      let cf = chain->getChainFetcher
-      cf.fetchState
-    }
-
-    let getQueueSize = chain => {
-      chain->getFetchState->FetchState.queueSize
-    }
-
-    let getTokenBalance = chain => {
-      Sql.getAccountTokenBalance(~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain))
-    }
 
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions

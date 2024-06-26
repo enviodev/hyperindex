@@ -7,7 +7,7 @@ let {
   before: before_promise,
 } = module(RescriptMocha.Promise)
 
-let eventMock1: Types.event = GravatarContract_NewGravatar({
+let eventMock1: Types.event = Gravatar_NewGravatar({
   blockNumber: 1,
   chainId: 54321,
   blockHash: "0xdef",
@@ -29,7 +29,7 @@ let qItemMock1: Types.eventBatchQueueItem = {
   event: eventMock1,
 }
 
-let eventMock2: Types.event = GravatarContract_NewGravatar({
+let eventMock2: Types.event = Gravatar_NewGravatar({
   blockNumber: 2,
   chainId: 54321,
   blockHash: "0xabc",

@@ -3,29 +3,27 @@
  */
 const {
 {{#each imported_contracts as |contract|}}
- {{contract.name.capitalized}}Contract,
+ {{contract.name.capitalized}},
 {{/each}}
 } = require("generated");
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
 
-{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler(({event, context}) => {
+{{contract.name.capitalized}}.{{event.name.capitalized}}.handler(async ({event, context}) => {
   const entity = {
     id: {{event.entity_id_from_event_code}},
     {{#each event.params as |param|}}
-      {{param.entity_key.uncapitalized
-      }}: event.params.{{param.event_key.uncapitalized}}{{#if
-        param.tuple_param_accessor_indexes
-      }}
-        {{#each param.tuple_param_accessor_indexes as |index|}}
-          [{{index}}]
-        {{/each}}
-      {{/if}}
-      ,
+    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if param.tuple_param_accessor_indexes}}
+      {{#each param.tuple_param_accessor_indexes as |index|}}
+        [{{index}}]
+      {{/each}}
+    {{/if ~}}
+    ,
     {{/each}}
   };
 
   context.{{contract.name.capitalized}}_{{event.name.capitalized}}.set(entity);
 });
+
   {{/each}}
 {{/each}}

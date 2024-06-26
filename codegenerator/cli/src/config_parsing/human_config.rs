@@ -24,7 +24,7 @@ pub struct NetworkContract<T> {
 }
 
 pub mod evm {
-    use super::{GlobalContract, NetworkContract, NetworkId, RequiredEntity};
+    use super::{GlobalContract, NetworkContract, NetworkId};
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
@@ -125,10 +125,6 @@ pub mod evm {
     #[serde(rename_all = "camelCase")]
     pub struct EventConfig {
         pub event: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub is_async: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub required_entities: Option<Vec<RequiredEntity>>,
     }
 
     impl EventConfig {
@@ -205,16 +201,6 @@ pub mod fuel {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub log_id: Option<String>,
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RequiredEntity {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub labels: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub array_labels: Option<Vec<String>>,
 }
 
 fn strip_to_letters(string: &str) -> String {

@@ -1,0 +1,222 @@
+open Types
+
+module EntityIdsMap = {
+  type t = Js.Dict.t<Set.t<Types.id>>
+
+  let makeEmptyEntityIdsMap = (): t => {
+    Entities.allTables->Belt.Array.map(table => (table.tableName, Set.make()))->Js.Dict.fromArray
+  }
+
+  let addId = (entityIdsMap: t, ~entityName: Enums.EntityType.t, ~entityId) => {
+    switch entityIdsMap->Js.Dict.get((entityName :> string)) {
+    | Some(ids) => ids->Set.add(entityId)->ignore
+    | None =>
+      //unexpected
+      let newSet = Set.make()
+      newSet->Set.add(entityId)->ignore
+      entityIdsMap->Js.Dict.set((entityName :> string), newSet)
+    }
+  }
+
+  let hasId = (entityIdsMap: t, ~entityName: Enums.EntityType.t, ~entityId) => {
+    switch entityIdsMap->Js.Dict.get((entityName :> string)) {
+    | Some(ids) => ids->Set.has(entityId)
+    | None => false //unexpected
+    }
+  }
+}
+
+/**
+The context holds all the state for a given events loader and handler.
+*/
+type t<'eventArgs> = {
+  logger: Pino.t,
+  chain: ChainMap.Chain.t,
+  addedDynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+  entityIdsMap: EntityIdsMap.t,
+  event: Types.eventLog<'eventArgs>,
+}
+
+let getUserLogger = (logger): Logs.userLogger => {
+  info: (message: string) => logger->Logging.uinfo(message),
+  debug: (message: string) => logger->Logging.udebug(message),
+  warn: (message: string) => logger->Logging.uwarn(message),
+  error: (message: string) => logger->Logging.uerror(message),
+  errorWithExn: (exn: option<Js.Exn.t>, message: string) =>
+    logger->Logging.uerrorWithExn(exn, message),
+}
+
+let makeEventIdentifier = (event: Types.eventLog<'a>): Types.eventIdentifier => {
+  chainId: event.chainId,
+  blockTimestamp: event.blockTimestamp,
+  blockNumber: event.blockNumber,
+  logIndex: event.logIndex,
+}
+
+let getEventId = (event: Types.eventLog<'a>) => {
+  EventUtils.packEventIndex(~blockNumber=event.blockNumber, ~logIndex=event.logIndex)
+}
+
+let make = (
+  ~chain,
+  ~event: Types.eventLog<'eventArgs>,
+  ~eventName: Enums.EventType.t,
+  ~logger,
+) => {
+  let {blockNumber, logIndex, transactionHash} = event
+  let logger = logger->Logging.createChildFrom(
+    ~logger=_,
+    ~params={
+      "context": (eventName :> string),
+      "chainId": chain->ChainMap.Chain.toChainId,
+      "block": blockNumber,
+      "logIndex": logIndex,
+      "txHash": transactionHash,
+    },
+  )
+
+  {
+    event,
+    logger,
+    chain,
+    addedDynamicContractRegistrations: [],
+    entityIdsMap: EntityIdsMap.makeEmptyEntityIdsMap(),
+  }
+}
+
+let getAddedDynamicContractRegistrations = (contextEnv: t<'eventArgs>) =>
+  contextEnv.addedDynamicContractRegistrations
+
+let makeDynamicContractRegisterFn = (
+  ~contextEnv: t<'eventArgs>,
+  ~contractName,
+  ~inMemoryStore,
+  contractAddress: Ethers.ethAddress,
+) => {
+  let {event, chain, addedDynamicContractRegistrations} = contextEnv
+
+  let eventId = event->getEventId
+  let chainId = chain->ChainMap.Chain.toChainId
+  let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
+    chainId,
+    eventId,
+    blockTimestamp: event.blockTimestamp,
+    contractAddress,
+    contractType: contractName,
+  }
+
+  addedDynamicContractRegistrations->Js.Array2.push(dynamicContractRegistration)->ignore
+
+  inMemoryStore.InMemoryStore.dynamicContractRegistry->InMemoryTable.set(
+    {chainId, contractAddress},
+    dynamicContractRegistration,
+  )
+}
+
+let makeLoader = (loadLayerRef, ~entityIdsMap, ~entityName, entityId) => {
+  entityIdsMap->EntityIdsMap.addId(~entityId, ~entityName)
+  Promise.make((resolve, _reject) => {
+    loadLayerRef.contents->LoadLayer.LoadActionMap.add(~entityId, ~resolve)
+  })
+}
+
+let makeEntityHandlerContext = (
+  type entity,
+  ~eventIdentifier,
+  ~inMemTable: InMemoryTable.Entity.t<entity>, //TODO: store and store functions should be passed in via module
+  ~entityIdsMap: EntityIdsMap.t,
+  ~entityMod: module(Entities.Entity with type t = entity),
+  ~asyncGetter,
+  ~getKey,
+): entityHandlerContext<entity> => {
+  let module(EntityMod) = entityMod
+  {
+    set: entity => {
+      inMemTable->InMemoryTable.Entity.set(
+        Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=getKey(entity)),
+      )
+    },
+    deleteUnsafe: entityId => {
+      inMemTable->InMemoryTable.Entity.set(
+        Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
+      )
+    },
+    get: async entityId => {
+      if entityIdsMap->EntityIdsMap.hasId(~entityName=EntityMod.name, ~entityId) {
+        inMemTable->InMemoryTable.Entity.get(entityId)
+      } else {
+        // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
+        switch inMemTable->InMemoryTable.Entity.get(entityId) {
+        | Some(entity) => Some(entity)
+        | None =>
+          let entities = await asyncGetter(entityId)
+
+          let optEntity = entities->Belt.Array.get(0)
+          inMemTable->InMemoryTable.Entity.initValue(~key=entityId, ~entity=optEntity)
+
+          optEntity
+        }
+      }
+    },
+  }
+}
+
+let getContractRegisterContext = (contextEnv, ~inMemoryStore) => {
+  //TODO only add contracts we've registered for the event in the config
+  {{#each codegen_contracts as |contract| }}
+  add{{contract.name.capitalized}}:  makeDynamicContractRegisterFn(~contextEnv, ~inMemoryStore, ~contractName={{contract.name.capitalized}}),
+  {{/each}}
+}
+
+let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loaderContext => {
+  let {entityIdsMap, logger} = contextEnv
+  {
+    log: logger->getUserLogger,
+    {{#each entities as | entity |}}
+    {{entity.name.uncapitalized}}: {
+      get: makeLoader(loadLayer.{{entity.name.uncapitalized}}, ~entityName={{entity.name.capitalized}},  ~entityIdsMap),
+    },
+    {{/each}}
+  }
+}
+
+type asyncGetters = {
+{{#each entities as | entity |}}
+ get{{entity.name.capitalized}}: Types.id => promise<array<Entities.{{entity.name.capitalized}}.t>>,
+{{/each}}
+}
+
+let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~asyncGetters) => {
+  let {entityIdsMap, event, logger} = context
+
+  let eventIdentifier = event->makeEventIdentifier
+  {
+    log: logger->getUserLogger,
+    {{#each entities as | entity |}}
+    {{entity.name.uncapitalized}}: makeEntityHandlerContext(
+      ~eventIdentifier,
+      ~entityIdsMap,
+      ~asyncGetter=asyncGetters.get{{entity.name.capitalized}},
+      ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
+      ~entityMod=module(Entities.{{entity.name.capitalized}}),
+      ~getKey=entity => entity.id,
+    ),
+    {{/each}}
+  }
+}
+
+let getContractRegisterArgs = (contextEnv, ~inMemoryStore) => {
+  RegisteredEvents.event: contextEnv.event,
+  context: contextEnv->getContractRegisterContext(~inMemoryStore),
+}
+
+let getLoaderArgs = (contextEnv, ~loadLayer) => {
+  RegisteredEvents.event: contextEnv.event,
+  context: contextEnv->getLoaderContext(~loadLayer),
+}
+
+let getHandlerArgs = (contextEnv, ~asyncGetters, ~inMemoryStore, ~loaderReturn) => {
+  RegisteredEvents.event: contextEnv.event,
+  context: contextEnv->getHandlerContext(~asyncGetters, ~inMemoryStore),
+  loaderReturn,
+}

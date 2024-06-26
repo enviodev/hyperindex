@@ -1,12 +1,9 @@
 use super::{
     chain_helpers::get_confirmed_block_threshold_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
-    human_config::{
-        self,
-        evm::{
-            EventConfig, EventDecoder, HumanConfig, HypersyncConfig as HumanHypersyncConfig,
-            Network as HumanNetwork, RpcConfig as HumanRpcConfig, SyncSourceConfig,
-        },
+    human_config::evm::{
+        EventConfig, EventDecoder, HumanConfig, HypersyncConfig as HumanHypersyncConfig,
+        Network as HumanNetwork, RpcConfig as HumanRpcConfig, SyncSourceConfig,
     },
     hypersync_endpoints,
     validation::validate_names_not_reserved,
@@ -17,8 +14,6 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam, HumanReadableParser};
-
-use itertools::Itertools;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -173,7 +168,7 @@ impl SystemConfig {
                     .events
                     .iter()
                     .cloned()
-                    .map(|e| Event::try_from_config_event(e, &abi_from_file, &schema))
+                    .map(|e| Event::try_from_config_event(e, &abi_from_file))
                     .collect::<Result<Vec<_>>>()
                     .context(format!(
                         "Failed parsing abi types for events in global contract {}",
@@ -207,20 +202,22 @@ impl SystemConfig {
                             .events
                             .iter()
                             .cloned()
-                            .map(|e| Event::try_from_config_event(e, &abi_from_file, &schema))
+                            .map(|e| Event::try_from_config_event(e, &abi_from_file))
                             .collect::<Result<Vec<_>>>()?;
 
                         let contract =
                             Contract::new(contract.name, l_contract.handler, events, abi_from_file)
                                 .context(format!(
-                            "Failed parsing locally defined network contract at network id {}",
-                            network.id
-                        ))?;
+                                    "Failed parsing locally defined network contract at network \
+                                     id {}",
+                                    network.id
+                                ))?;
 
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
                             .context(format!(
-                                "Failed inserting locally defined network contract at network id {}",
+                                "Failed inserting locally defined network contract at network id \
+                                 {}",
                                 network.id,
                             ))?;
                     }
@@ -493,7 +490,6 @@ impl Contract {
         let mut events_abi = ethers::abi::Contract::default();
 
         let mut event_names = Vec::new();
-        let mut entity_and_label_names = Vec::new();
         for event in &events {
             events_abi
                 .events
@@ -502,18 +498,6 @@ impl Contract {
                 .push(event.get_event().clone());
 
             event_names.push(event.event.0.name.clone());
-
-            for entity in &event.required_entities {
-                entity_and_label_names.push(entity.name.clone());
-                if let Some(labels) = &entity.labels {
-                    entity_and_label_names.extend(labels.clone());
-                }
-                if let Some(array_labels) = &entity.array_labels {
-                    entity_and_label_names.extend(array_labels.clone());
-                }
-            }
-            // Checking that entity names do not include any reserved words
-            validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
         }
         // Checking that event names do not include any reserved words
         validate_names_not_reserved(&event_names, "Events".to_string())?;
@@ -557,7 +541,6 @@ impl Contract {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     event: NormalizedEthAbiEvent,
-    pub required_entities: Vec<human_config::RequiredEntity>,
     pub is_async: bool,
 }
 
@@ -568,7 +551,7 @@ impl Event {
                 Ok(event) => Ok(event),
                 Err(err) => Err(anyhow!(
                     "EE103: Unable to parse event signature {} due to the following error: {}. \
-                   Please refer to our docs on how to correctly define a human readable ABI.",
+                     Please refer to our docs on how to correctly define a human readable ABI.",
                     sig,
                     err
                 )),
@@ -599,30 +582,12 @@ impl Event {
     pub fn try_from_config_event(
         human_cfg_event: EventConfig,
         opt_abi: &Option<EvmAbi>,
-        schema: &Schema,
     ) -> Result<Self> {
         let event = Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
 
-        let required_entities = human_cfg_event.required_entities.unwrap_or_else(|| {
-            // If no required entities are specified, we assume all entities are required
-            schema
-                .entities
-                .values()
-                .sorted_by_key(|v| &v.name)
-                .cloned()
-                .map(|entity| human_config::RequiredEntity {
-                    name: entity.name,
-                    labels: None,
-                    array_labels: None,
-                })
-                .collect()
-        });
-        let is_async = human_cfg_event.is_async.unwrap_or_else(|| false);
-
         Ok(Event {
             event,
-            required_entities,
-            is_async,
+            is_async: false,
         })
     }
 
@@ -655,22 +620,6 @@ impl From<EthAbiEvent> for NormalizedEthAbiEvent {
         };
 
         NormalizedEthAbiEvent(event)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct RequiredEntity {
-    pub name: String,
-    pub labels: Vec<String>,
-    pub array_labels: Vec<String>,
-}
-impl From<human_config::RequiredEntity> for RequiredEntity {
-    fn from(r: human_config::RequiredEntity) -> Self {
-        RequiredEntity {
-            name: r.name,
-            labels: r.labels.unwrap_or_else(|| vec![]),
-            array_labels: r.array_labels.unwrap_or_else(|| vec![]),
-        }
     }
 }
 
@@ -822,7 +771,9 @@ mod test {
             Event::get_abi_event(&event_string, &None)
                 .unwrap_err()
                 .to_string(),
-            "EE103: Unable to parse event signature event MyEvent(uint69 myArg) due to the following error: UnrecognisedToken 14:20 `uint69`. Please refer to our docs on how to correctly define a human readable ABI."
+            "EE103: Unable to parse event signature event MyEvent(uint69 myArg) due to the \
+             following error: UnrecognisedToken 14:20 `uint69`. Please refer to our docs on how \
+             to correctly define a human readable ABI."
         );
     }
 

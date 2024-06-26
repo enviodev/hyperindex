@@ -38,6 +38,7 @@ type NftCollection {
 }
 
 type Token
+  @index(fields: ["db_write_timestamp"])
   @index(fields: ["id", "tokenId"])
   @index(fields: ["tokenId", "collection"]) {
   id: ID!

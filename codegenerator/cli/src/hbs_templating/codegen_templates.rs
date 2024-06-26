@@ -155,15 +155,6 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
             filtered_is_derived_from,
         }
     }
-
-    #[cfg(test)]
-    pub fn empty() -> Self {
-        FilteredTemplateLists {
-            all: Vec::new(),
-            filtered_not_derived_from: Vec::new(),
-            filtered_is_derived_from: Vec::new(),
-        }
-    }
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -354,43 +345,6 @@ impl HasName for EntityRecordTypeTemplate {
     }
 }
 
-#[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct RequiredEntityEntityFieldTemplate {
-    pub field_name: CapitalizedOptions,
-    pub type_name: CapitalizedOptions,
-    pub is_optional: bool,
-    pub is_array: bool,
-    pub is_derived_from: bool,
-    pub is_indexed: bool,
-}
-
-impl RequiredEntityEntityFieldTemplate {
-    fn from_config_entity(field: &Field, entity: &Entity) -> Self {
-        RequiredEntityEntityFieldTemplate {
-            field_name: field.name.to_capitalized_options(),
-            type_name: entity.name.to_capitalized_options(),
-            is_optional: field.field_type.is_optional(),
-            is_array: field.field_type.is_array(),
-            is_derived_from: field.field_type.is_derived_from(),
-            is_indexed: field.is_indexed_field(entity),
-        }
-    }
-}
-
-impl HasIsDerivedFrom for RequiredEntityEntityFieldTemplate {
-    fn get_is_derived_from(&self) -> bool {
-        self.is_derived_from
-    }
-}
-
-#[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct RequiredEntityTemplate {
-    pub name: CapitalizedOptions,
-    pub labels: Option<Vec<String>>,
-    pub array_labels: Option<Vec<String>>,
-    pub entity_fields_of_required_entity: FilteredTemplateLists<RequiredEntityEntityFieldTemplate>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct EventType {
     //Contract name and event name joined with a '_'
@@ -429,7 +383,6 @@ pub struct EventTemplate {
     pub params: Vec<EventParamTypeTemplate>,
     pub indexed_params: Vec<EventParamTypeTemplate>,
     pub body_params: Vec<EventParamTypeTemplate>,
-    pub required_entities: Vec<RequiredEntityTemplate>,
     pub is_async: bool,
     pub topic0: String,
 }
@@ -437,7 +390,6 @@ pub struct EventTemplate {
 impl EventTemplate {
     pub fn from_config_event(
         config_event: &system_config::Event,
-        config: &SystemConfig,
         contract_name: &String,
     ) -> Result<Self> {
         let name = config_event
@@ -477,67 +429,6 @@ impl EventTemplate {
             .cloned()
             .collect();
 
-        let all_entity_names = config.get_entity_names();
-
-        let required_entities = config_event
-            .required_entities
-            .iter()
-            .map(|required_entity| {
-                let entity = config
-                    .get_entity(&required_entity.name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        // Look to see if there is a key that is similar in the keys of `entity_fields_of_required_entity_map`.
-                        // It is similar if the lower case of the key is the same as the lowercase
-                        // of the required_entity.name.
-                        let required_entity_name_lower = required_entity.name.to_lowercase();
-                        // NOTE: this is a very primative similarity metric. We could use something
-                        // like the Levenshtein distance or something more 'fuzzy'. The https://docs.rs/strsim/latest/strsim/
-                        // crate looks great for this!
-                        let key_that_is_similar = all_entity_names
-                            .iter()
-                            .find(|&key| key.to_lowercase() == required_entity_name_lower);
-
-                        match key_that_is_similar {
-                            Some(similar_key) => anyhow!(
-                                "Required entity with name {} not found in Schema - did you mean \
-                                 '{}'? Note, capitalization matters.",
-                                &required_entity.name,
-                                similar_key
-                            ),
-                            None => anyhow!(
-                                "Required entity with name {} not found in Schema. Note, \
-                                 capitalization matters.",
-                                &required_entity.name
-                            ),
-                        }
-                    })
-                    .context("Validating 'requiredEntity' fields in config.")?;
-
-                let required_entity_entity_field_templates = entity
-                    .get_related_entities(&config.schema)
-                    .context(format!(
-                        "Failed retrieving related entities of required entity {}",
-                        entity.name
-                    ))?
-                    .iter()
-                    .map(|(field, related_entity)| {
-                        RequiredEntityEntityFieldTemplate::from_config_entity(field, related_entity)
-                    })
-                    .collect();
-
-                let entity_fields_of_required_entity =
-                    FilteredTemplateLists::new(required_entity_entity_field_templates);
-
-                Ok(RequiredEntityTemplate {
-                    name: required_entity.name.to_capitalized_options(),
-                    labels: required_entity.labels.clone(),
-                    array_labels: required_entity.array_labels.clone(),
-                    entity_fields_of_required_entity,
-                })
-            })
-            .collect::<Result<_>>()?;
-
         let topic0 = event_selector(&config_event.get_event());
 
         Ok(EventTemplate {
@@ -547,7 +438,6 @@ impl EventTemplate {
                 config_event.get_event().name.clone(),
             ),
             params,
-            required_entities,
             is_async: config_event.is_async,
             body_params,
             indexed_params,
@@ -574,7 +464,6 @@ impl ContractTemplate {
     fn from_config_contract(
         contract: &system_config::Contract,
         project_paths: &ParsedProjectPaths,
-        config: &SystemConfig,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
         let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
@@ -582,7 +471,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, config, &contract.name))
+            .map(|event| EventTemplate::from_config_event(event, &contract.name))
             .collect::<Result<_>>()?;
         Ok(ContractTemplate {
             name,
@@ -737,9 +626,7 @@ impl ProjectTemplate {
         let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
-            .map(|cfg_contract| {
-                ContractTemplate::from_config_contract(cfg_contract, project_paths, cfg)
-            })
+            .map(|cfg_contract| ContractTemplate::from_config_contract(cfg_contract, project_paths))
             .collect::<Result<_>>()
             .context("Failed generating contract template types")?;
 
@@ -1082,10 +969,7 @@ mod test {
         }
     }
 
-    fn make_expected_event_template(
-        topic0: String,
-        required_entity: RequiredEntityTemplate,
-    ) -> EventTemplate {
+    fn make_expected_event_template(topic0: String) -> EventTemplate {
         let params = vec![
             EventParamTypeTemplate::new("id", RESCRIPT_BIG_INT_TYPE),
             EventParamTypeTemplate::new("owner", RESCRIPT_ADDRESS_TYPE),
@@ -1103,7 +987,6 @@ mod test {
             body_params: params.clone(),
             params,
             indexed_params: vec![],
-            required_entities: vec![required_entity],
             is_async: false,
         }
     }
@@ -1115,15 +998,8 @@ mod test {
         let new_gavatar_event_template =
             project_template.codegen_contracts[0].codegen_events[0].clone();
 
-        let expected_event_template = make_expected_event_template(
-            new_gavatar_event_template.topic0.clone(),
-            RequiredEntityTemplate {
-                name: "EmptyEntity".to_string().to_capitalized_options(),
-                labels: None,
-                array_labels: None,
-                entity_fields_of_required_entity: FilteredTemplateLists::empty(),
-            },
-        );
+        let expected_event_template =
+            make_expected_event_template(new_gavatar_event_template.topic0.clone());
 
         assert_eq!(expected_event_template, new_gavatar_event_template);
     }
@@ -1133,15 +1009,8 @@ mod test {
         let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
 
         let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
-        let expected_event_template = make_expected_event_template(
-            new_gavatar_event_template.topic0.clone(),
-            RequiredEntityTemplate {
-                name: String::from("Gravatar").to_capitalized_options(),
-                labels: Some(vec![String::from("gravatarWithChanges")]),
-                array_labels: None,
-                entity_fields_of_required_entity: FilteredTemplateLists::empty(),
-            },
-        );
+        let expected_event_template =
+            make_expected_event_template(new_gavatar_event_template.topic0.clone());
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }

@@ -4,7 +4,7 @@ open Belt
 open TestHelpers
 
 describe("Transfers", () => {
-  it("Transfer subtracts the from account balance and adds to the to account balance", () => {
+  RescriptMocha.Promise.it("Transfer subtracts the from account balance and adds to the to account balance", async () => {
     //Instantiate a mock DB
     let mockDbEmpty = MockDb.createMockDb()
 
@@ -13,7 +13,7 @@ describe("Transfers", () => {
     let userAddress2 = Ethers.Addresses.mockAddresses[1]->Option.getUnsafe
 
     //Make a mock entity to set the initial state of the mock db
-    let mockAccountEntity: Types.accountEntity = {
+    let mockAccountEntity: Entities.Account.t = {
       id: userAddress1->Ethers.ethAddressToString,
       balance: Ethers.BigInt.fromInt(5),
     }
@@ -33,7 +33,7 @@ describe("Transfers", () => {
     //Process the mockEvent
     //Note: processEvent functions do not mutate the mockDb, they return a new
     //mockDb with with modified state
-    let mockDbAfterTransfer = ERC20.Transfer.processEvent({
+    let mockDbAfterTransfer = await ERC20.Transfer.processEvent({
       event: mockTransfer,
       mockDb,
     })

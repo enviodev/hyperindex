@@ -11,9 +11,9 @@ module Gravatar = {
   )
 
   module NewGravatar = {
-    let accessor = v => Types.GravatarContract_NewGravatar(v)
-    let schema = Types.GravatarContract.NewGravatarEvent.eventArgsSchema
-    let eventName = Types.Gravatar_NewGravatar
+    let accessor = v => Types.Gravatar_NewGravatar(v)
+    let schema = Types.Gravatar.NewGravatar.eventArgsSchema
+    let eventName = Enums.EventType.Gravatar_NewGravatar
     let mkEventConstr = makeEventConstructorWithDefaultSrcAddress(
       ~accessor,
       ~schema,
@@ -23,9 +23,9 @@ module Gravatar = {
   }
 
   module UpdatedGravatar = {
-    let accessor = v => Types.GravatarContract_UpdatedGravatar(v)
-    let schema = Types.GravatarContract.UpdatedGravatarEvent.eventArgsSchema
-    let eventName = Types.Gravatar_UpdatedGravatar
+    let accessor = v => Types.Gravatar_UpdatedGravatar(v)
+    let schema = Types.Gravatar.UpdatedGravatar.eventArgsSchema
+    let eventName = Enums.EventType.Gravatar_UpdatedGravatar
     let mkEventConstr = makeEventConstructorWithDefaultSrcAddress(
       ~accessor,
       ~schema,

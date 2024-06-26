@@ -1,0 +1,124 @@
+open Belt
+
+module LoadActionMap = {
+  type loadAction<'entity> = {resolve: (. option<'entity>) => unit}
+
+  type key = string
+  type value<'entity> = array<loadAction<'entity>>
+  type t<'entity> = Js.Dict.t<value<'entity>>
+  let empty: unit => t<'entity> = Js.Dict.empty
+  let getIds = (map: t<'entity>) => map->Js.Dict.keys
+  let entries: t<'entity> => array<(key, value<'entity>)> = Js.Dict.entries
+
+  let add = (map: t<'entity>, ~entityId, ~resolve) => {
+    let loadCallback = {
+      resolve: resolve,
+    }
+    switch map->Js.Dict.get(entityId) {
+    | None => map->Js.Dict.set(entityId, [loadCallback])
+    | Some(existingCallbacks) => existingCallbacks->Js.Array2.push(loadCallback)->ignore
+    }
+  }
+
+  let get: (t<'entity>, 'entity) => option<value<'entity>> = (map, entity) =>
+    map->Js.Dict.get(Obj.magic(entity)["id"])
+
+  let deleteKeyUnsafe: (t<'entity>, string) => unit = %raw(`
+    function(dict, key) {
+      delete dict[key];
+    }
+    `)
+}
+
+type t = {
+  {{#each entities as | entity |}}
+  {{entity.name.uncapitalized}}: ref<LoadActionMap.t<Entities.{{entity.name.capitalized}}.t>>,
+  {{/each}}
+}
+
+let make = () => {
+  {{#each entities as | entity |}}
+  {{entity.name.uncapitalized}}: ref(LoadActionMap.empty()),
+  {{/each}}
+}
+
+type hasLoadActions = | @as(true) SomeLoadActions | @as(false) NoLoadActions
+let toBool = hasLoadActions =>
+  switch hasLoadActions {
+  | SomeLoadActions => true
+  | NoLoadActions => false
+  }
+
+let executeLoadActionMap = (
+  loadActionMapRef: ref<LoadActionMap.t<'entity>>,
+  ~batchLoadIds: array<Types.id> => promise<array<'entity>>,
+  ~inMemTable: InMemoryTable.Entity.t<'entity>,
+) => {
+  let loadActionMap = loadActionMapRef.contents
+
+  let entityLoadIds = loadActionMap->LoadActionMap.getIds
+
+  //Only perform operations if there are any values
+  if entityLoadIds->Array.length > 0 {
+    loadActionMapRef := LoadActionMap.empty()
+
+    //filter out ids that don't already exist in the in memory store
+    let idsNotInMemory =
+      entityLoadIds->Array.keep(id => inMemTable->InMemoryTable.Entity.get(id)->Option.isNone)
+
+    //load in values that don't exist in the inMemoryStore
+    idsNotInMemory
+    ->batchLoadIds
+    ->Promise.thenResolve(res => {
+      res->Array.forEach(entity => {
+        //Set the entity in the in memory store
+        inMemTable->InMemoryTable.Entity.initValue(
+          ~allowOverWriteEntity=false,
+          ~key=Obj.magic(entity)["id"],
+          ~entity=Some(entity),
+        )
+      })
+
+      //Iterate through the map and resolve the load actions for each entity
+      loadActionMap
+      ->LoadActionMap.entries
+      ->Array.forEach(((entityId, loadActions)) => {
+        loadActions->Array.forEach(
+          ({resolve}) => {
+            switch inMemTable->InMemoryTable.Entity.get(entityId) {
+            | Some(entity) => resolve(Some(entity))
+            | None => resolve(None)
+            }
+          },
+        )
+      })
+
+      SomeLoadActions
+    })
+  } else {
+    //in this case there are no more load actions to be performed on this entity
+    //for the given loader batch
+    Promise.resolve(NoLoadActions)
+  }
+}
+
+let executeLoadLayer = async (loadLayer, ~inMemoryStore: InMemoryStore.t) => {
+  let hasLoadActions = ref(true)
+
+  while hasLoadActions.contents {
+    let hasLoadActionsAll = await [
+      //each of the entities in the load layer
+      {{#each entities as | entity |}}
+      loadLayer.{{entity.name.uncapitalized}}->executeLoadActionMap(
+        ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
+        ~batchLoadIds=Entities.batchRead(DbFunctions.sql, ~entityMod=module(Entities.{{entity.name.capitalized}})),
+      ),
+      {{/each}}
+    ]->Promise.all
+
+    hasLoadActions :=
+      hasLoadActionsAll->Array.reduce(false, (accum, entityHasLoadActions) => {
+        accum || entityHasLoadActions->toBool
+      })
+  }
+}

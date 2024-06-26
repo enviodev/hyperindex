@@ -334,7 +334,10 @@ impl Entity {
             .map(|multi_field_index| {
                 multi_field_index
                     .validate_no_duplicates(&fields)?
-                    .validate_field_name_exists(&fields)?
+                    .validate_field_name_exists_or_is_allowed(
+                        &fields,
+                        &vec!["db_write_timestamp".to_string()],
+                    )?
                     .validate_no_index_on_derived_field(&fields)?
                     .validate_no_index_on_id_field()
             })
@@ -446,7 +449,7 @@ impl Entity {
         &'a self,
         schema: &'a Schema,
     ) -> anyhow::Result<Vec<(&'a Field, &'a Self)>> {
-        let required_entities_with_field = self
+        let related_entities_with_field = self
             .get_fields()
             .into_iter()
             .filter_map(|field| {
@@ -465,7 +468,7 @@ impl Entity {
             })
             .collect::<anyhow::Result<_>>()?;
 
-        Ok(required_entities_with_field)
+        Ok(related_entities_with_field)
     }
 
     /// Validate each field type in an the given entity
@@ -719,12 +722,16 @@ impl MultiFieldIndex {
         }
     }
 
-    fn validate_field_name_exists(self, fields: &HashMap<String, Field>) -> anyhow::Result<Self> {
+    fn validate_field_name_exists_or_is_allowed(
+        self,
+        fields: &HashMap<String, Field>,
+        allowed_names: &Vec<String>,
+    ) -> anyhow::Result<Self> {
         for field_name in &self.0 {
-            if let None = fields.get(field_name) {
+            if !fields.contains_key(field_name) && !allowed_names.contains(field_name) {
                 return Err(anyhow!(
                     "Index error: Field '{}' does not exist in entity, please remove it from the \
-                     `@index` directive.",
+                 `@index` directive.",
                     field_name,
                 ));
             }
@@ -856,7 +863,7 @@ impl RescriptType {
                     .join(", ");
                 format!("({})", inner_types_str)
             }
-            RescriptType::EnumVariant(enum_name) => format!("Enums.{}", &enum_name.uncapitalized),
+            RescriptType::EnumVariant(enum_name) => format!("Enums.{}.t", &enum_name.capitalized),
         }
     }
 
@@ -888,7 +895,7 @@ impl RescriptType {
                 format!("S.tuple((. s) => ({}))", inner_str)
             }
             RescriptType::EnumVariant(enum_name) => {
-                format!("Enums.{}Schema", &enum_name.uncapitalized)
+                format!("Enums.{}.schema", &enum_name.capitalized)
             }
         }
     }
@@ -906,7 +913,7 @@ impl RescriptType {
             RescriptType::Array(_) => "[]".to_string(),
             RescriptType::Option(_) => "None".to_string(),
             RescriptType::EnumVariant(enum_name) => {
-                format!("Enums.{}Default", &enum_name.uncapitalized)
+                format!("Enums.{}.default", &enum_name.capitalized)
             }
             RescriptType::Tuple(inner_types) => {
                 let inner_types_str = inner_types
@@ -1702,7 +1709,7 @@ type TestEntity {
 
         assert_eq!(
             rescript_type.to_string(),
-            "option<Enums.testEnum>".to_owned()
+            "option<Enums.TestEnum.t>".to_owned()
         );
     }
 

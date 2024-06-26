@@ -1,4 +1,4 @@
-let gravatarEntity0_delete: Types.gravatarEntity = {
+let gravatarEntity0_delete: Entities.Gravatar.t = {
   id: "1000",
   owner_id: "0x123",
   displayName: "gravatar1",
@@ -7,7 +7,7 @@ let gravatarEntity0_delete: Types.gravatarEntity = {
   size: LARGE,
 }
 
-let gravatarEntity1: Types.gravatarEntity = {
+let gravatarEntity1: Entities.Gravatar.t = {
   id: "1001",
   owner_id: "0x123",
   displayName: "gravatar1",
@@ -16,7 +16,7 @@ let gravatarEntity1: Types.gravatarEntity = {
   size: LARGE,
 }
 
-let gravatarEntity2: Types.gravatarEntity = {
+let gravatarEntity2: Entities.Gravatar.t = {
   id: "1002",
   owner_id: "0x678",
   displayName: "gravatar2",
@@ -44,6 +44,7 @@ let makeDefaultSet = (
   Types.Updated({
     initial: Unknown,
     latest: Set(entity)->Types.mkEntityUpdate(
+      ~entityId=Obj.magic(entity)["id"],
       ~eventIdentifier={
         chainId,
         blockTimestamp,

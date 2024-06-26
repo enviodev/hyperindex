@@ -1,0 +1,54 @@
+open Belt
+
+@genType 
+type rawEventsKey = {
+  chainId: int,
+  eventId: string,
+}
+
+let hashRawEventsKey = (key: rawEventsKey) =>
+  EventUtils.getEventIdKeyString(~chainId=key.chainId, ~eventId=key.eventId)
+
+@genType 
+type dynamicContractRegistryKey = {
+  chainId: int,
+  contractAddress: Ethers.ethAddress,
+}
+
+let hashDynamicContractRegistryKey = ({chainId, contractAddress}) =>
+  EventUtils.getContractAddressKeyString(~chainId, ~contractAddress)
+
+type t = {
+  eventSyncState: InMemoryTable.t<int, TablesStatic.EventSyncState.t>,
+  rawEvents: InMemoryTable.t<rawEventsKey, TablesStatic.RawEvents.t>,
+  dynamicContractRegistry: InMemoryTable.t<
+    dynamicContractRegistryKey,
+    TablesStatic.DynamicContractRegistry.t,
+  >,
+  {{#each entities as |entity|}}
+  {{entity.name.uncapitalized}}: InMemoryTable.Entity.t<Entities.{{entity.name.capitalized}}.t>,
+  {{/each}}
+  rollBackEventIdentifier: option<Types.eventIdentifier>,
+}
+
+let makeWithRollBackEventIdentifier = (rollBackEventIdentifier): t => {
+  eventSyncState: InMemoryTable.make(~hash=Int.toString),
+  rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
+  dynamicContractRegistry: InMemoryTable.make(~hash=hashDynamicContractRegistryKey),
+  {{#each entities as |entity|}}
+  {{entity.name.uncapitalized}}: InMemoryTable.Entity.make(),
+  {{/each}}
+  rollBackEventIdentifier,
+}
+
+let make = () => makeWithRollBackEventIdentifier(None)
+
+let clone = (self: t) => {
+  eventSyncState: self.eventSyncState->InMemoryTable.clone,
+  rawEvents: self.rawEvents->InMemoryTable.clone,
+  dynamicContractRegistry: self.dynamicContractRegistry->InMemoryTable.clone,
+  {{#each entities as |entity|}}
+  {{entity.name.uncapitalized}}: self.{{entity.name.uncapitalized}}->InMemoryTable.clone,
+  {{/each}}
+  rollBackEventIdentifier: self.rollBackEventIdentifier->InMemoryTable.structuredClone,
+}

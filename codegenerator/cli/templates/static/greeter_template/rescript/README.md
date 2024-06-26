@@ -4,7 +4,7 @@ The following files are required to use the Indexer:
 
 - Configuration (defaults to `config.yaml`)
 - GraphQL Schema (defaults to `schema.graphql`)
-- Event Handlers (defaults to `src/EventHandlers.res`) 
+- Event Handlers (defaults to `src/EventHandlers.res`)
 
 These files are auto-generated according to the Greeter template by running `envio init` command.
 
@@ -17,7 +17,7 @@ name: greeter_indexer
 description: Greeter indexer
 networks:
   - id: 1337
-    rpc_config: 
+    rpc_config:
       url: http://localhost:8545
     start_block: 0
     contracts:
@@ -36,7 +36,6 @@ networks:
               - name: "Greeting"
                 labels:
                   - "greetingWithChanges"
-
 ```
 
 **Field Descriptions**
@@ -46,7 +45,7 @@ networks:
 - `networks` - Configuration of the blockchain networks that the project is deployed on
   - `id` - Chain identifier of the network
 - `rpc_config` - RPC Config that will be used to subscribe to blockchain data on this network
-    - `url` -  URL of the RPC endpoint
+  - `url` - URL of the RPC endpoint
   - `start_block` - Initial block from which the indexer will start listening for events
   - `contracts` - Configuration for each contract deployed on the network
     - `name` - User-defined contract name
@@ -71,28 +70,30 @@ type Greeting @entity {
   latestGreeting: String!
   numberOfGreetings: Int!
 }
-
 ```
 
 ## Writing Event Handlers
 
 Once the configuration and graphQL schema files are in place, run
+
 ```bash
 envio codegen
-``` 
+```
+
 in the project directory.
 
-The entity and event types will then be available in the handler files. 
+The entity and event types will then be available in the handler files.
 
 A user can specify a specific handler file per contract that processes events emitted by that contract.
 Each event handler requires two functions to be registered in order to enable full functionality within the indexer.
+
 1. An `<event>LoadEntities` function
 2. An `<event>Handler` function
 
 ### Example of registering a `loadEntities` function for the `NewGreeting` event from the above example config:
 
 ```rescript
-Handlers.GreeterContract.registerNewGreetingLoadEntities((~event, ~context) => {
+Handlers.Greeter.registerNewGreetingLoadEntities((~event, ~context) => {
   context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
 })
 ```
@@ -108,15 +109,15 @@ events:
           - "greetingWithChanges"
 ```
 
-- The register function `registerNewGreetingLoadEntities` follows a naming convention for all events: `register<EventName>LoadEntities`. 
-- Within the function that is being registered the user must define the criteria for loading the `greetingWithChanges` entity which corresponds to the label defined in the config. 
+- The register function `registerNewGreetingLoadEntities` follows a naming convention for all events: `register<EventName>LoadEntities`.
+- Within the function that is being registered the user must define the criteria for loading the `greetingWithChanges` entity which corresponds to the label defined in the config.
 - This is made available to the user through the load entity context defined as `contextUpdator`.
 - In the case of the above example the `greetingWithChanges` loads a `Greeting` entity that corresponds to the id received from the event.
 
 ### Example of registering a `Handler` function for the `NewGreeting` event and using the loaded entity `greetingWithChanges`:
 
 ```rescript
-Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
+Handlers.Greeter.registerNewGreetingHandler((~event, ~context) => {
   let currentGreeterOpt = context.greeting.greetingWithChanges()
 
   switch currentGreeterOpt {
@@ -143,11 +144,11 @@ Handlers.GreeterContract.registerNewGreetingHandler((~event, ~context) => {
 ```
 
 - The handler functions also follow a naming convention for all events in the form of: `register<EventName>Handler`.
-- Once the user has defined their `loadEntities` function, they are then able to retrieve the loaded entity information via the labels defined in the `config.yaml` file. 
-- In the above example, if a `Greeting` entity is found matching the load criteria in the `loadEntities` function, it will be available via `greetingWithChanges`. 
-- This is made available to the user through the handler context defined simply as `context`. 
+- Once the user has defined their `loadEntities` function, they are then able to retrieve the loaded entity information via the labels defined in the `config.yaml` file.
+- In the above example, if a `Greeting` entity is found matching the load criteria in the `loadEntities` function, it will be available via `greetingWithChanges`.
+- This is made available to the user through the handler context defined simply as `context`.
 - This `context` is the gateway by which the user can interact with the indexer and the underlying database.
-- The user can then modify this retrieved entity and subsequently update the `Greeting` entity in the database. 
+- The user can then modify this retrieved entity and subsequently update the `Greeting` entity in the database.
 - This is done via the `context` using the update function (`context.greeter.update(greetingObject)`).
 - The user has access to a `greetingEntity` type that has all the fields defined in the schema.
 

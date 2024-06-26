@@ -35,7 +35,7 @@ pub mod rescript {
     use std::path::PathBuf;
 
     pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript", "clean", "-with-deps"];
+        let args = vec!["rescript", "clean"];
         execute_command("pnpm", args, path).await
     }
 
@@ -44,7 +44,7 @@ pub mod rescript {
         execute_command("pnpm", args, path).await
     }
     pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript", "build", "-with-deps"];
+        let args = vec!["rescript"];
         execute_command("pnpm", args, path).await
     }
 }
@@ -226,7 +226,10 @@ pub mod start {
                 "Indexer has failed to run. Please see error logs for more details"
             ));
         }
-        println!("\nIndexer has successfully finished processing all events on all chains. Exiting process.");
+        println!(
+            "\nIndexer has successfully finished processing all events on all chains. Exiting \
+             process."
+        );
         Ok(())
     }
 }

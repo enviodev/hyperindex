@@ -1,7 +1,7 @@
 open Belt
 
 type chain = ChainMap.Chain.t
-type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(IO.InMemoryStore.t)
+type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
 type t = {
   chainManager: ChainManager.t,
@@ -54,7 +54,7 @@ type shouldExit = ExitWithSuccess | NoExit
 type action =
   | BlockRangeResponse(chain, blockRangeFetchResponse)
   | SetFetchStateCurrentBlockHeight(chain, int)
-  | EventBatchProcessed(EventProcessing.loadResponse<EventProcessing.EventsProcessed.t>)
+  | EventBatchProcessed(EventProcessing.batchProcessed)
   | SetCurrentlyProcessing(bool)
   | SetCurrentlyFetchingBatch(chain, bool)
   | SetFetchState(chain, FetchState.t)
@@ -62,7 +62,7 @@ type action =
   | SetSyncedChains
   | SuccessExit
   | ErrorExit(ErrorHandling.t)
-  | SetRollbackState(IO.InMemoryStore.t, ChainManager.t)
+  | SetRollbackState(InMemoryStore.t, ChainManager.t)
   | ResetRollbackState
 
 type queryChain = CheckAllChains | Chain(chain)
@@ -416,7 +416,7 @@ let actionReducer = (state: t, action: action) => {
     state->handleSetCurrentBlockHeight(~chain, ~currentBlockHeight)
   | BlockRangeResponse(chain, response) => state->handleBlockRangeResponse(~chain, ~response)
   | EventBatchProcessed({
-      val,
+      latestProcessedBlocks,
       dynamicContractRegistrations: Some({registrationsReversed, unprocessedBatchReversed}),
     }) =>
     let updatedArbQueue =
@@ -441,7 +441,7 @@ let actionReducer = (state: t, action: action) => {
 
       let contractAddressMapping =
         dynamicContracts
-        ->Array.map(d => (d.contractAddress, d.contractType))
+        ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
         ->ContractAddressingMap.fromArray
 
       let currentChainFetcher =
@@ -527,11 +527,11 @@ let actionReducer = (state: t, action: action) => {
 
       Prometheus.setFetchedEventsUntilHeight(~blockNumber=highestFetchedBlockOnChain, ~chain)
     })
-    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks=val)
+    let nextState = updateLatestProcessedBlocks(~state=nextState, ~latestProcessedBlocks)
     (nextState, nextTasks)
 
-  | EventBatchProcessed({val, dynamicContractRegistrations: None}) => (
-      updateLatestProcessedBlocks(~state, ~latestProcessedBlocks=val),
+  | EventBatchProcessed({latestProcessedBlocks, dynamicContractRegistrations: None}) => (
+      updateLatestProcessedBlocks(~state, ~latestProcessedBlocks),
       [UpdateChainMetaDataAndCheckForExit(NoExit), ProcessEventBatch],
     )
   | SetCurrentlyProcessing(currentlyProcessingBatch) => ({...state, currentlyProcessingBatch}, [])
@@ -711,6 +711,7 @@ let injectedTaskReducer = async (
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation,
+  ~registeredEvents,
   //required args
   state: t,
   task: task,
@@ -785,11 +786,15 @@ let injectedTaskReducer = async (
         dispatchAction(UpdateQueues(fetchStatesMap, arbitraryEventQueue))
 
         // This function is used to ensure that registering an alreday existing contract as a dynamic contract can't cause issues.
-        let checkContractIsRegistered = (~chain, ~contractAddress, ~contractName) => {
+        let checkContractIsRegistered = (
+          ~chain,
+          ~contractAddress,
+          ~contractName: Enums.ContractType.t,
+        ) => {
           let fetchState = fetchStatesMap->ChainMap.get(chain)
           fetchState->FetchState.checkContainsRegisteredContractAddress(
             ~contractAddress,
-            ~contractName,
+            ~contractName=(contractName :> string),
           )
         }
 
@@ -808,12 +813,13 @@ let injectedTaskReducer = async (
           None
         }
 
-        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(IO.InMemoryStore.make())
+        let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
         switch await EventProcessing.processEventBatch(
           ~eventBatch=batch,
           ~inMemoryStore,
           ~checkContractIsRegistered,
           ~latestProcessedBlocks,
+          ~registeredEvents,
         ) {
         | exception exn =>
           //All casese should be handled/caught before this with better user messaging.
@@ -906,4 +912,5 @@ let taskReducer = injectedTaskReducer(
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
+  ~registeredEvents=RegisteredEvents.global,
 )
