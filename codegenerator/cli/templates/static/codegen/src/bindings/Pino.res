@@ -60,7 +60,7 @@ module Transport = {
     target?: string,
     targets?: array<transportTarget>,
     options?: optionsObject,
-    levels?: Js.Dict.t<int>,
+    levels?: dict<int>,
     level?: logLevel,
   }
   @module("pino")
@@ -82,7 +82,7 @@ type serializers = {err: Js.Json.t => Js.Json.t}
 type options = {
   name?: string,
   level?: logLevel,
-  customLevels?: Js.Dict.t<int>,
+  customLevels?: dict<int>,
   useOnlyCustomLevels?: bool,
   depthLimit?: int,
   edgeLimit?: int,
@@ -158,7 +158,7 @@ module MultiStreamLogger = {
 
   let make = (
     ~userLogLevel: logLevel,
-    ~customLevels: Js.Dict.t<int>,
+    ~customLevels: dict<int>,
     ~logFile: option<string>,
     ~options: option<options>,
     ~defaultFileLogLevel,

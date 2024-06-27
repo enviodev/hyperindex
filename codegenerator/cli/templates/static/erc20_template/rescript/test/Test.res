@@ -15,7 +15,7 @@ describe("Transfers", () => {
     //Make a mock entity to set the initial state of the mock db
     let mockAccountEntity: Entities.Account.t = {
       id: userAddress1->Ethers.ethAddressToString,
-      balance: Ethers.BigInt.fromInt(5),
+      balance: BigInt.fromInt(5),
     }
 
     //Set an initial state for the user
@@ -27,7 +27,7 @@ describe("Transfers", () => {
     let mockTransfer = ERC20.Transfer.createMockEvent({
       from: userAddress1,
       to: userAddress2,
-      value: Ethers.BigInt.fromInt(3),
+      value: BigInt.fromInt(3),
     })
 
     //Process the mockEvent
@@ -46,7 +46,7 @@ describe("Transfers", () => {
 
     //Assert the expected balance
     Assert.equal(
-      Some(Ethers.BigInt.fromInt(2)),
+      Some(BigInt.fromInt(2)),
       account1Balance,
       ~message="Should have subtracted transfer amount 3 from userAddress1 balance 5",
     )
@@ -58,7 +58,7 @@ describe("Transfers", () => {
       )
     //Assert the expected balance
     Assert.equal(
-      Some(Ethers.BigInt.fromInt(3)),
+      Some(BigInt.fromInt(3)),
       account2Balance,
       ~message="Should have added transfer amount 3 to userAddress2 balance 0",
     )

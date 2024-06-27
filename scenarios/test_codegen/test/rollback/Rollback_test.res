@@ -283,8 +283,8 @@ describe("Single Chain Simple Rollback", () => {
 
     let gravatars = await getAllGravatars()
 
-    let toBigInt = Ethers.BigInt.fromInt
-    let toString = Ethers.BigInt.toString
+    let toBigInt = BigInt.fromInt
+    let toString = BigInt.toString
 
     let expectedGravatars: array<Entities.Gravatar.t> = [
       {

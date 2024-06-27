@@ -100,7 +100,7 @@ describe_skip("E2E Db check", () => {
           owner_id: "0x1230000000000000000000000000000000000000",
           displayName: "update1",
           imageUrl: "https://gravatar1.com",
-          updatesCount: Ethers.BigInt.fromInt(2),
+          updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
         },
         {
@@ -108,7 +108,7 @@ describe_skip("E2E Db check", () => {
           owner_id: "0x4560000000000000000000000000000000000000",
           displayName: "update2",
           imageUrl: "https://gravatar2.com",
-          updatesCount: Ethers.BigInt.fromInt(2),
+          updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
         },
         {
@@ -116,7 +116,7 @@ describe_skip("E2E Db check", () => {
           owner_id: "0x7890000000000000000000000000000000000000",
           displayName: "update3",
           imageUrl: "https://gravatar3.com",
-          updatesCount: Ethers.BigInt.fromInt(2),
+          updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
         },
       ],

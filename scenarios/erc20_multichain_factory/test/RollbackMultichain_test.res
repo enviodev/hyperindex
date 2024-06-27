@@ -39,7 +39,7 @@ module Mock = {
   let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
-    value: value->Ethers.BigInt.fromInt,
+    value: value->BigInt.fromInt,
   }
 
   let mintAddress = Ethers.Constants.zeroAddress
@@ -319,7 +319,7 @@ describe("Multichain rollback test", () => {
         ~message=`Query ${queryName} should have returned ${totalQueueSize->Int.toString} events`,
       )
 
-      let toBigInt = Ethers.BigInt.fromInt
+      let toBigInt = BigInt.fromInt
       let optIntToString = optInt =>
         switch optInt {
         | Some(n) => `Some(${n->Int.toString})`
@@ -339,7 +339,7 @@ describe("Multichain rollback test", () => {
           expectedBalance->Option.map(toBigInt),
           balance,
           ~message=`Chain ${chain->ChainMap.Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
-            ->Option.flatMap(Ethers.BigInt.toInt)
+            ->Option.flatMap(BigInt.toInt)
             ->optIntToString}`,
         )
       }

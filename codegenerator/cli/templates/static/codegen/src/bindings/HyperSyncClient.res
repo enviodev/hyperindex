@@ -121,15 +121,15 @@ module ResponseTypes = {
     stateRoot?: string,
     receiptsRoot?: string,
     miner?: unchecksummedEthAddress,
-    difficulty?: Ethers.BigInt.t, //nullable
-    totalDifficulty?: Ethers.BigInt.t, //nullable
+    difficulty?: bigint, //nullable
+    totalDifficulty?: bigint, //nullable
     extraData?: string,
-    size?: Ethers.BigInt.t,
-    gasLimit?: Ethers.BigInt.t,
-    gasUsed?: Ethers.BigInt.t,
+    size?: bigint,
+    gasLimit?: bigint,
+    gasUsed?: bigint,
     timestamp?: int,
     uncles?: string, //nullable
-    baseFeePerGas?: Ethers.BigInt.t, //nullable
+    baseFeePerGas?: bigint, //nullable
   }
 
   //Note all fields marked as "nullable" are not explicitly null since
@@ -139,23 +139,23 @@ module ResponseTypes = {
     blockHash?: string,
     blockNumber?: int,
     from?: unchecksummedEthAddress, //nullable
-    gas?: Ethers.BigInt.t,
-    gasPrice?: Ethers.BigInt.t, //nullable
+    gas?: bigint,
+    gasPrice?: bigint, //nullable
     hash?: string,
     input?: string,
     nonce?: int,
     to?: unchecksummedEthAddress, //nullable
     @as("transactionIndex") transactionIndex?: int,
-    value?: Ethers.BigInt.t,
+    value?: bigint,
     v?: string, //nullable
     r?: string, //nullable
     s?: string, //nullable
-    maxPriorityFeePerGas?: Ethers.BigInt.t, //nullable
-    maxFeePerGas?: Ethers.BigInt.t, //nullable
+    maxPriorityFeePerGas?: bigint, //nullable
+    maxFeePerGas?: bigint, //nullable
     chainId?: int, //nullable
-    cumulativeGasUsed?: Ethers.BigInt.t,
-    effectiveGasPrice?: Ethers.BigInt.t,
-    gasUsed?: Ethers.BigInt.t,
+    cumulativeGasUsed?: bigint,
+    effectiveGasPrice?: bigint,
+    gasUsed?: bigint,
     contractAddress?: unchecksummedEthAddress, //nullable
     logsBoom?: string,
     type_?: int, //nullable
@@ -238,7 +238,7 @@ let make = (cfg: cfg) => {
 let sendEventsReq = Internal.sendEventsReq
 
 module Decoder = {
-  type abiMapping = Js.Dict.t<Ethers.abi>
+  type abiMapping = dict<Ethers.abi>
 
   type constructor
   @module("@envio-dev/hypersync-client") external constructor: constructor = "Decoder"

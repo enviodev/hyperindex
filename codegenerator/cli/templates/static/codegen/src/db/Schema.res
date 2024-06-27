@@ -1,5 +1,5 @@
 open Belt
-type t = Js.Dict.t<Table.table>
+type t = dict<Table.table>
 
 let make = (tables: array<Table.table>) => {
   tables->Array.map(table => (table.tableName, table))->Js.Dict.fromArray

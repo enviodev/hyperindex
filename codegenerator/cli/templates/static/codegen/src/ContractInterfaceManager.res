@@ -10,7 +10,7 @@ type interfaceAndAbi = {
 }
 type t = {
   contractAddressMapping: ContractAddressingMap.mapping,
-  contractNameInterfaceMapping: Js.Dict.t<interfaceAndAbi>,
+  contractNameInterfaceMapping: dict<interfaceAndAbi>,
 }
 
 let make = (

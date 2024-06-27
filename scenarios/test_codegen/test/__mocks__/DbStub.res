@@ -1,6 +1,6 @@
-let deleteDictKey = (_dict: Js.Dict.t<'a>, _key: string) => %raw(`delete _dict[_key]`)
+let deleteDictKey = (_dict: dict<'a>, _key: string) => %raw(`delete _dict[_key]`)
 
-let databaseDict: Js.Dict.t<Entities.Gravatar.t> = Js.Dict.empty()
+let databaseDict: dict<Entities.Gravatar.t> = Js.Dict.empty()
 
 let getGravatarDb = (~id: string) => {
   Js.Dict.get(databaseDict, id)

@@ -41,7 +41,7 @@ let createNewAccountWithZeroBalance = (
   // setting the accountEntity with the new transfer field value
   setAccount(accountObject)
 
-  let accountToken = makeAccountToken(~account_id, ~tokenAddress, ~balance=Ethers.BigInt.fromInt(0))
+  let accountToken = makeAccountToken(~account_id, ~tokenAddress, ~balance=BigInt.fromInt(0))
 
   setAccountToken(accountToken)
 
@@ -84,8 +84,8 @@ let manipulateAccountTokenBalance = (fn, accountToken: AccountToken.t, amount): 
   {...accountToken, balance: accountToken.balance->fn(amount)}
 }
 
-let addToBalance = manipulateAccountTokenBalance(Ethers.BigInt.add)
-let subFromBalance = manipulateAccountTokenBalance(Ethers.BigInt.sub)
+let addToBalance = manipulateAccountTokenBalance(BigInt.add)
+let subFromBalance = manipulateAccountTokenBalance(BigInt.sub)
 
 let manipulateAccountBalance = (
   optAccountToken,

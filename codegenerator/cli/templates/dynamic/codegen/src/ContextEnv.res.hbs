@@ -1,7 +1,7 @@
 open Types
 
 module EntityIdsMap = {
-  type t = Js.Dict.t<Set.t<Types.id>>
+  type t = dict<Set.t<Types.id>>
 
   let makeEmptyEntityIdsMap = (): t => {
     Entities.allTables->Belt.Array.map(table => (table.tableName, Set.make()))->Js.Dict.fromArray

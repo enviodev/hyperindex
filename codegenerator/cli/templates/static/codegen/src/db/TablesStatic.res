@@ -145,7 +145,7 @@ module DynamicContractRegistry = {
   @genType
   type t = {
     @as("chain_id") chainId: int,
-    @as("event_id") eventId: Ethers.BigInt.t,
+    @as("event_id") eventId: bigint,
     @as("block_timestamp") blockTimestamp: int,
     @as("contract_address") contractAddress: Ethers.ethAddress,
     @as("contract_type") contractType: Enums.ContractType.t,

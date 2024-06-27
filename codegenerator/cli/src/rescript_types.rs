@@ -243,7 +243,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "unit".to_string(),
             RescriptTypeIdent::Int => "int".to_string(),
             RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.t".to_string(),
-            RescriptTypeIdent::BigInt => "Ethers.BigInt.t".to_string(),
+            RescriptTypeIdent::BigInt => "bigint".to_string(),
             RescriptTypeIdent::Address => "Ethers.ethAddress".to_string(),
             RescriptTypeIdent::String => "string".to_string(),
             RescriptTypeIdent::ID => "id".to_string(),
@@ -289,7 +289,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "S.unit".to_string(),
             RescriptTypeIdent::Int => "S.int".to_string(),
             RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.schema".to_string(),
-            RescriptTypeIdent::BigInt => "Ethers.BigInt.schema".to_string(),
+            RescriptTypeIdent::BigInt => "BigInt.schema".to_string(),
             RescriptTypeIdent::Address => "Ethers.ethAddressSchema".to_string(),
             RescriptTypeIdent::String => "S.string".to_string(),
             RescriptTypeIdent::ID => "S.string".to_string(),
@@ -355,7 +355,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "()".to_string(),
             RescriptTypeIdent::Int => "0".to_string(),
             RescriptTypeIdent::Float => "0.0".to_string(),
-            RescriptTypeIdent::BigInt => "Ethers.BigInt.zero".to_string(), // TODO: Migrate to RescriptCore on ReScript migration
+            RescriptTypeIdent::BigInt => "BigInt.zero".to_string(), // TODO: Migrate to RescriptCore on ReScript migration
             RescriptTypeIdent::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
             RescriptTypeIdent::String => "\"foo\"".to_string(),
             RescriptTypeIdent::ID => "\"my_id\"".to_string(),

@@ -7,8 +7,8 @@ exception UndefinedContractAddress(Ethers.ethAddress)
 // protecting static addresses from de-registration.
 
 type mapping = {
-  nameByAddress: Js.Dict.t<contractName>,
-  addressesByName: Js.Dict.t<Belt.Set.String.t>,
+  nameByAddress: dict<contractName>,
+  addressesByName: dict<Belt.Set.String.t>,
 }
 
 let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {

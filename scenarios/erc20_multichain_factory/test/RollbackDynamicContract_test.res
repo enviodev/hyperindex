@@ -23,7 +23,7 @@ ensure that this doesn't trigger a reorg
   let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
-    value: value->Ethers.BigInt.fromInt,
+    value: value->BigInt.fromInt,
   }
 
   let makeTokenCreatedMock = (~token): Types.ERC20Factory.TokenCreated.eventArgs => {
@@ -216,7 +216,7 @@ describe("Dynamic contract rollback test", () => {
         ~message=`Query ${queryName} should have returned ${totalQueueSize->Int.toString} events`,
       )
 
-      let toBigInt = Ethers.BigInt.fromInt
+      let toBigInt = BigInt.fromInt
       let optIntToString = optInt =>
         switch optInt {
         | Some(n) => `Some(${n->Int.toString})`
@@ -236,7 +236,7 @@ describe("Dynamic contract rollback test", () => {
           balance,
           expectedBalance->Option.map(toBigInt),
           ~message=`Chain ${chain->ChainMap.Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
-            ->Option.flatMap(Ethers.BigInt.toInt)
+            ->Option.flatMap(BigInt.toInt)
             ->optIntToString}`,
         )
       }

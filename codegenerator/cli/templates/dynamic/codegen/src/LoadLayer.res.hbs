@@ -5,7 +5,7 @@ module LoadActionMap = {
 
   type key = string
   type value<'entity> = array<loadAction<'entity>>
-  type t<'entity> = Js.Dict.t<value<'entity>>
+  type t<'entity> = dict<value<'entity>>
   let empty: unit => t<'entity> = Js.Dict.empty
   let getIds = (map: t<'entity>) => map->Js.Dict.keys
   let entries: t<'entity> => array<(key, value<'entity>)> = Js.Dict.entries

@@ -168,7 +168,7 @@ let addEventToRawEvents = (
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
-    eventId: eventId->Ethers.BigInt.toString,
+    eventId: eventId->BigInt.toString,
     blockNumber,
     logIndex,
     transactionIndex,
@@ -183,7 +183,7 @@ let addEventToRawEvents = (
     },
   }
 
-  let eventIdStr = eventId->Ethers.BigInt.toString
+  let eventIdStr = eventId->BigInt.toString
 
   inMemoryStore.rawEvents->InMemoryTable.set({chainId, eventId: eventIdStr}, rawEvent)
 }

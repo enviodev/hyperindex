@@ -1,7 +1,7 @@
 open Belt
 
 type t<'key, 'val> = {
-  dict: Js.Dict.t<'val>,
+  dict: dict<'val>,
   hash: 'key => string,
 }
 

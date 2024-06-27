@@ -76,7 +76,7 @@ let getExn = (queryResponse: queryResponse<'a>) =>
 //Ideally client should be passed in as a param to the functions but
 //we are still sharing the same signature with eth archive query builder
 module CachedClients = {
-  let cache: Js.Dict.t<HyperSyncClient.t> = Js.Dict.empty()
+  let cache: dict<HyperSyncClient.t> = Js.Dict.empty()
 
   let getClient = url => {
     switch cache->Js.Dict.get(url) {
@@ -296,7 +296,7 @@ module BlockData = {
             block => {
               switch block {
               | {number: blockNumber, timestamp, hash: blockHash} =>
-                let blockTimestamp = timestamp->Ethers.BigInt.toInt->Belt.Option.getExn
+                let blockTimestamp = timestamp->BigInt.toInt->Belt.Option.getExn
                 Ok(
                   (
                     {
