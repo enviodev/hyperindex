@@ -121,15 +121,15 @@ module ResponseTypes = {
     stateRoot?: string,
     receiptsRoot?: string,
     miner?: unchecksummedEthAddress,
-    difficulty?: Ethers.BigInt.t, //nullable
-    totalDifficulty?: Ethers.BigInt.t, //nullable
+    difficulty?: BigInt.t, //nullable
+    totalDifficulty?: BigInt.t, //nullable
     extraData?: string,
-    size?: Ethers.BigInt.t,
-    gasLimit?: Ethers.BigInt.t,
-    gasUsed?: Ethers.BigInt.t,
+    size?: BigInt.t,
+    gasLimit?: BigInt.t,
+    gasUsed?: BigInt.t,
     timestamp?: int,
     uncles?: string, //nullable
-    baseFeePerGas?: Ethers.BigInt.t, //nullable
+    baseFeePerGas?: BigInt.t, //nullable
   }
 
   //Note all fields marked as "nullable" are not explicitly null since
@@ -139,23 +139,23 @@ module ResponseTypes = {
     blockHash?: string,
     blockNumber?: int,
     from?: unchecksummedEthAddress, //nullable
-    gas?: Ethers.BigInt.t,
-    gasPrice?: Ethers.BigInt.t, //nullable
+    gas?: BigInt.t,
+    gasPrice?: BigInt.t, //nullable
     hash?: string,
     input?: string,
     nonce?: int,
     to?: unchecksummedEthAddress, //nullable
     @as("transactionIndex") transactionIndex?: int,
-    value?: Ethers.BigInt.t,
+    value?: BigInt.t,
     v?: string, //nullable
     r?: string, //nullable
     s?: string, //nullable
-    maxPriorityFeePerGas?: Ethers.BigInt.t, //nullable
-    maxFeePerGas?: Ethers.BigInt.t, //nullable
+    maxPriorityFeePerGas?: BigInt.t, //nullable
+    maxFeePerGas?: BigInt.t, //nullable
     chainId?: int, //nullable
-    cumulativeGasUsed?: Ethers.BigInt.t,
-    effectiveGasPrice?: Ethers.BigInt.t,
-    gasUsed?: Ethers.BigInt.t,
+    cumulativeGasUsed?: BigInt.t,
+    effectiveGasPrice?: BigInt.t,
+    gasUsed?: BigInt.t,
     contractAddress?: unchecksummedEthAddress, //nullable
     logsBoom?: string,
     type_?: int, //nullable

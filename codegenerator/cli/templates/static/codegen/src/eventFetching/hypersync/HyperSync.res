@@ -296,7 +296,7 @@ module BlockData = {
             block => {
               switch block {
               | {number: blockNumber, timestamp, hash: blockHash} =>
-                let blockTimestamp = timestamp->Ethers.BigInt.toInt->Belt.Option.getExn
+                let blockTimestamp = timestamp->BigInt.toInt->Belt.Option.getExn
                 Ok(
                   (
                     {

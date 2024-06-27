@@ -11,8 +11,6 @@ module Misc = {
   }
 }
 
-module BigInt = BigInt
-
 type abi
 
 let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Obj.magic

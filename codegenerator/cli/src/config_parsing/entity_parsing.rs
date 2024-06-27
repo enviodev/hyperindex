@@ -843,7 +843,7 @@ impl RescriptType {
         match self {
             RescriptType::Int => "int".to_string(),
             RescriptType::Float => "GqlDbCustomTypes.Float.t".to_string(),
-            RescriptType::BigInt => "Ethers.BigInt.t".to_string(),
+            RescriptType::BigInt => "BigInt.t".to_string(),
             RescriptType::BigDecimal => "BigDecimal.t".to_string(),
             RescriptType::Address => "Ethers.ethAddress".to_string(),
             RescriptType::String => "string".to_string(),
@@ -871,7 +871,7 @@ impl RescriptType {
         match self {
             RescriptType::Int => "S.int".to_string(),
             RescriptType::Float => "GqlDbCustomTypes.Float.schema".to_string(),
-            RescriptType::BigInt => "Ethers.BigInt.schema".to_string(),
+            RescriptType::BigInt => "BigInt.schema".to_string(),
             RescriptType::BigDecimal => "BigDecimal.schema".to_string(),
             RescriptType::Address => "Ethers.ethAddressSchema".to_string(),
             RescriptType::String => "S.string".to_string(),
@@ -904,7 +904,7 @@ impl RescriptType {
         match self {
             RescriptType::Int => "0".to_string(),
             RescriptType::Float => "0.0".to_string(),
-            RescriptType::BigInt => "Ethers.BigInt.zero".to_string(), //TODO: Migrate to RescriptCore on ReScript migration
+            RescriptType::BigInt => "BigInt.zero".to_string(), //TODO: Migrate to RescriptCore on ReScript migration
             RescriptType::BigDecimal => "BigDecimal.zero".to_string(),
             RescriptType::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
             RescriptType::String => "\"foo\"".to_string(),

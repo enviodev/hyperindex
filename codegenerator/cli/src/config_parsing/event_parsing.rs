@@ -110,7 +110,7 @@ mod tests {
 
         assert_eq!(
             parsed_rescript_string.to_string(),
-            String::from("(string, Ethers.BigInt.t)")
+            String::from("(string, BigInt.t)")
         )
     }
 
@@ -136,10 +136,7 @@ mod tests {
             user_address_res_type.to_string(),
             "Ethers.ethAddress".to_string()
         );
-        assert_eq!(
-            amount_uint256_res_type.to_string(),
-            "Ethers.BigInt.t".to_string()
-        );
+        assert_eq!(amount_uint256_res_type.to_string(), "BigInt.t".to_string());
         assert_eq!(
             tuple_bool_string_res_type.to_string(),
             "(bool, Ethers.ethAddress)".to_string()
@@ -152,7 +149,7 @@ mod tests {
         );
         assert_eq!(
             amount_uint256_res_type.get_default_value_rescript(),
-            "Ethers.BigInt.zero".to_string()
+            "BigInt.zero".to_string()
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),

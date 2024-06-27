@@ -126,7 +126,7 @@ module RawEvents = {
   external getRawEventsPageGtOrEqEventId: (
     Postgres.sql,
     ~chainId: chainId,
-    ~eventId: Ethers.BigInt.t,
+    ~eventId: BigInt.t,
     ~limit: int,
     ~contractAddresses: array<Ethers.ethAddress>,
   ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageGtOrEqEventId"
@@ -135,8 +135,8 @@ module RawEvents = {
   external getRawEventsPageWithinEventIdRangeInclusive: (
     Postgres.sql,
     ~chainId: chainId,
-    ~fromEventIdInclusive: Ethers.BigInt.t,
-    ~toEventIdInclusive: Ethers.BigInt.t,
+    ~fromEventIdInclusive: BigInt.t,
+    ~toEventIdInclusive: BigInt.t,
     ~limit: int,
     ~contractAddresses: array<Ethers.ethAddress>,
   ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageWithinEventIdRangeInclusive"
@@ -184,13 +184,13 @@ module DynamicContractRegistry = {
   type contractTypeAndAddress = {
     @as("contract_address") contractAddress: Ethers.ethAddress,
     @as("contract_type") contractType: string,
-    @as("event_id") eventId: Ethers.BigInt.t,
+    @as("event_id") eventId: BigInt.t,
   }
 
   let contractTypeAndAddressSchema = S.object((. s) => {
     contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
     contractType: s.field("contract_type", S.string),
-    eventId: s.field("event_id", Ethers.BigInt.schema),
+    eventId: s.field("event_id", BigInt.schema),
   })
 
   let contractTypeAndAddressArraySchema = S.array(contractTypeAndAddressSchema)
