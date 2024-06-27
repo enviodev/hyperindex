@@ -44,7 +44,7 @@ module {{entity.name.capitalized}} = {
     {{/each}}
   }
 
-  let schema = S.object((. s) => {
+  let schema = S.object(s => {
     {{#each entity.params as | param |}}
     {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", {{param.type_rescript_schema}}),{{/unless}}
     {{/each}}
@@ -98,7 +98,7 @@ type entity =
   | {{entity.name.capitalized}}({{entity.name.capitalized}}.t)
 {{/each}}
 
-let makeGetter = (schema, accessor, json) => json->S.parseWith(. schema)->Belt.Result.map(accessor)
+let makeGetter = (schema, accessor) => json => json->S.parseWith(schema)->Belt.Result.map(accessor)
 
 let getEntityParamsDecoder = (entityName: Enums.EntityType.t) =>
   switch entityName {

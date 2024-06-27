@@ -22,7 +22,7 @@ module Crypto = {
     ->digest(Hex)
     ->pad
 
-  let hashKeccak256String = hashKeccak256(~toString=Obj.magic)
+  let hashKeccak256String = hashKeccak256(~toString=X.magic)
   let hashKeccak256Int = hashKeccak256(~toString=Int.toString)
   let anyToString = a => a->Js.Json.stringifyAny->Option.getExn
   let hashKeccak256Any = hashKeccak256(~toString=anyToString)
@@ -282,9 +282,9 @@ module Make = (Indexer: Indexer.S) => {
       fromBlockQueried: query.fromBlock,
       heighestQueriedBlockNumber: heighstBlock.blockNumber,
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
-      stats: "NO_STATS"->Obj.magic,
+      stats: "NO_STATS"->X.magic,
       fetchStateRegisterId: query.fetchStateRegisterId,
-      worker: HyperSync(self->Obj.magic),
+      worker: HyperSync(self->X.magic),
     }
   }
 

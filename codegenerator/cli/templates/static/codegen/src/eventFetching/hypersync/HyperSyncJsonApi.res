@@ -148,7 +148,7 @@ module QueryTypes = {
     log?: logFieldSelection,
   }
 
-  let fieldSelectionSchema = S.object((. s) => {
+  let fieldSelectionSchema = S.object(s => {
     block: ?s.field("block", S.option(blockFieldSelectionSchema)),
     transaction: ?s.field("transaction", S.option(transactionFieldSelectionSchema)),
     log: ?s.field("log", S.option(logFieldSelectionSchema)),
@@ -159,7 +159,7 @@ module QueryTypes = {
     topics: array<array<Ethers.EventFilter.topic>>,
   }
 
-  let logParamsSchema = S.object((. s) => {
+  let logParamsSchema = S.object(s => {
     address: ?s.field("address", S.option(S.array(Ethers.ethAddressSchema))),
     topics: s.field("topics", S.array(S.array(S.string))),
   })
@@ -170,7 +170,7 @@ module QueryTypes = {
     sighash?: array<string>,
   }
 
-  let transactionParamsSchema = S.object((. s) => {
+  let transactionParamsSchema = S.object(s => {
     from: ?s.field("from", S.option(S.array(Ethers.ethAddressSchema))),
     to: ?s.field("to", S.option(S.array(Ethers.ethAddressSchema))),
     sighash: ?s.field("sighash", S.option(S.array(S.string))),
@@ -186,7 +186,7 @@ module QueryTypes = {
     includeAllBlocks?: bool,
   }
 
-  let postQueryBodySchema = S.object((. s) => {
+  let postQueryBodySchema = S.object(s => {
     fromBlock: s.field("from_block", S.int),
     toBlockExclusive: ?s.field("to_block", S.option(S.int)),
     logs: ?s.field("logs", S.option(S.array(logParamsSchema))),
@@ -220,7 +220,7 @@ module ResponseTypes = {
     baseFeePerGas?: option<bigint>,
   }
 
-  let blockDataSchema = S.object((. s) => {
+  let blockDataSchema = S.object(s => {
     number: ?s.field("number", S.option(S.int)),
     hash: ?s.field("hash", S.option(S.string)),
     parentHash: ?s.field("parent_hash", S.option(S.string)),
@@ -271,7 +271,7 @@ module ResponseTypes = {
     sighash?: option<string>,
   }
 
-  let transactionDataSchema = S.object((. s) => {
+  let transactionDataSchema = S.object(s => {
     blockHash: ?s.field("block_hash", S.option(S.string)),
     blockNumber: ?s.field("block_number", S.option(S.int)),
     from: ?s.field("from", S.option(S.null(S.string))),
@@ -318,7 +318,7 @@ module ResponseTypes = {
     topic3?: option<Ethers.EventFilter.topic>,
   }
 
-  let logDataSchema = S.object((. s) => {
+  let logDataSchema = S.object(s => {
     removed: ?s.field("removed", S.option(S.null(S.bool))),
     index: ?s.field("log_index", S.option(S.int)),
     transactionIndex: ?s.field("transaction_index", S.option(S.int)),
@@ -339,7 +339,7 @@ module ResponseTypes = {
     logs?: array<logData>,
   }
 
-  let dataSchema = S.object((. s) => {
+  let dataSchema = S.object(s => {
     blocks: ?s.field("blocks", S.array(blockDataSchema)->S.option),
     transactions: ?s.field("transactions", S.array(transactionDataSchema)->S.option),
     logs: ?s.field("logs", S.array(logDataSchema)->S.option),
@@ -352,7 +352,7 @@ module ResponseTypes = {
     totalTime: int,
   }
 
-  let queryResponseSchema = S.object((. s) => {
+  let queryResponseSchema = S.object(s => {
     data: s.field("data", S.array(dataSchema)),
     archiveHeight: s.field("archive_height", S.int),
     nextBlock: s.field("next_block", S.int),
@@ -373,7 +373,7 @@ let executeHyperSyncQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBod
 }
 
 let getArchiveHeight = {
-  let responseSchema = S.object((. s) => s.field("height", S.int))
+  let responseSchema = S.object(s => s.field("height", S.int))
 
   async (~serverUrl): result<int, QueryHelpers.queryError> => {
     await QueryHelpers.executeFetchRequest(

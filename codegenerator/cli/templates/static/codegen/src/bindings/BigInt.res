@@ -46,7 +46,7 @@ let zero = fromInt(0)
 let schema =
   S.string
   ->S.setName("BigInt")
-  ->S.transform((. s) => {
+  ->S.transform(s => {
     parser: (. string) =>
       switch string->fromString {
       | Some(bigInt) => bigInt

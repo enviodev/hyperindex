@@ -1,7 +1,6 @@
 {
   "name": "greeter",
   "version": "0.1.0",
-  "uncurried": false,
   "sources": [
     {
       "dir": "src",
@@ -25,7 +24,5 @@
     "@ryyppy/rescript-promise",
     "rescript-mocha"
   ],
-  "pinned-dependencies": [
-    "generated"
-  ]
+  "pinned-dependencies": ["generated"]
 }

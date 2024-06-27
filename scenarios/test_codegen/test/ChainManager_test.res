@@ -62,7 +62,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           chain,
           blockNumber: currentBlockNumber.contents,
           logIndex,
-          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Obj.magic,
+          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->X.magic,
         }
 
         allEvents->Js.Array2.push(batchItem)->ignore
@@ -117,10 +117,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       isFetchingAtHead: false,
       fetchState: fetchState.contents,
       logger: Logging.logger,
-      chainConfig: "TODO"->Obj.magic,
+      chainConfig: "TODO"->X.magic,
       // This is quite a hack - but it works!
       chainWorker: Config.Rpc(
-        (1, {"latestFetchedBlockTimestamp": currentTime.contents})->Obj.magic,
+        (1, {"latestFetchedBlockTimestamp": currentTime.contents})->X.magic,
       ),
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
@@ -161,7 +161,7 @@ describe("ChainManager", () => {
           chain: Chain_1,
           blockNumber: 0,
           logIndex: 0,
-          event: `mock initial event`->Obj.magic,
+          event: `mock initial event`->X.magic,
         }
 
         let numberOfMockEventsReadFromQueues = ref(0)
@@ -220,7 +220,7 @@ describe("ChainManager", () => {
             //       Assert.equal(
             //         current.logIndex > previous.logIndex,
             //         true,
-            //         ~message=`Incorrect log index, the offending event pair: ${current.event->Obj.magic} - ${previous.event->Obj.magic}`,
+            //         ~message=`Incorrect log index, the offending event pair: ${current.event->X.magic} - ${previous.event->X.magic}`,
             //       )
             //       current
             //     },
@@ -288,7 +288,7 @@ describe("determineNextEvent", () => {
         chain,
         blockNumber: 987654,
         logIndex: 123456,
-        event: "SINGLE TEST EVENT"->Obj.magic,
+        event: "SINGLE TEST EVENT"->X.magic,
       }
     }
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {

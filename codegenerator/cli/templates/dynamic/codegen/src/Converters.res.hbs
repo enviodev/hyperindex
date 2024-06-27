@@ -16,7 +16,7 @@ module {{contract.name.capitalized}} = {
   module {{event.name.capitalized}} = {
     let convertViemDecodedEvent: Viem.decodedEvent<'a> => Viem.decodedEvent<
       Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs,
-    > = Obj.magic
+    > = X.magic
 
     {{#unless event.params}}
     @warning("-27")
@@ -75,7 +75,7 @@ module {{contract.name.capitalized}} = {
         Array.concat(decodedEvent.indexed, decodedEvent.body)->Array.map(
           HyperSyncClient.Decoder.toUnderlying,
         )
-      Array.zip(fields, values)->Js.Dict.fromArray->Obj.magic
+      Array.zip(fields, values)->Js.Dict.fromArray->X.magic
       {{else}}
         ()
       {{/if}}

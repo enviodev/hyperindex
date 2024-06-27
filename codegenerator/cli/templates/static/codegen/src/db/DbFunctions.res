@@ -187,7 +187,7 @@ module DynamicContractRegistry = {
     @as("event_id") eventId: bigint,
   }
 
-  let contractTypeAndAddressSchema = S.object((. s) => {
+  let contractTypeAndAddressSchema = S.object(s => {
     contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
     contractType: s.field("contract_type", S.string),
     eventId: s.field("event_id", BigInt.schema),
@@ -231,7 +231,7 @@ type entityHistoryItem = {
   entity_id: string,
 }
 
-let entityHistoryItemSchema = S.object((. s) => {
+let entityHistoryItemSchema = S.object(s => {
   block_timestamp: s.field("block_timestamp", S.int),
   chain_id: s.field("chain_id", S.int),
   block_number: s.field("block_number", S.int),
@@ -289,7 +289,7 @@ module EntityHistory = {
     val: option<Js.Json.t>,
   }
 
-  let rollbackDiffResponseRawSchema = S.object((. s) => {
+  let rollbackDiffResponseRawSchema = S.object(s => {
     entity_type: s.field("entity_type", Enums.EntityType.schema),
     entity_id: s.field("entity_id", S.string),
     chain_id: s.field("chain_id", S.null(S.int)),
@@ -312,7 +312,7 @@ module EntityHistory = {
 
   let rollbackDiffResponse_decode = (json: Js.Json.t) => {
     json
-    ->S.parseWith(. rollbackDiffResponseRawSchema)
+    ->S.parseWith(rollbackDiffResponseRawSchema)
     ->Belt.Result.flatMap(raw => {
       switch raw {
       | {
@@ -323,9 +323,7 @@ module EntityHistory = {
           log_index: Some(logIndex),
           entity_type,
         } =>
-        entity_type
-        ->Entities.getEntityParamsDecoder(val)
-        ->Belt.Result.map(entity => {
+        Entities.getEntityParamsDecoder(entity_type)(val)->Belt.Result.map(entity => {
           let eventIdentifier: Types.eventIdentifier = {
             chainId,
             blockTimestamp,

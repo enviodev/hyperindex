@@ -159,7 +159,7 @@ module {{contract.name.capitalized}} = {
 
     let eventArgsSchema = 
       {{#if event.params}}
-      S.object((. s) => {
+      S.object(s => {
       {{#each event.params as | param |}}
         {{param.param_name.uncapitalized}}: s.field("{{param.param_name.uncapitalized}}", {{param.type_rescript_schema}}),
       {{/each}}

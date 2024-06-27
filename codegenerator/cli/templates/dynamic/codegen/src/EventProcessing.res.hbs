@@ -107,6 +107,7 @@ let runEventContractRegister = (
       eventBatchQueueItem->addToDynamicContractRegistrations(
         ~registeringEventBlockNumber=event.blockNumber,
         ~registeringEventLogIndex=event.logIndex,
+        ...
       )
 
     let val = switch (dynamicContracts, dynamicContractRegistrations) {
@@ -177,7 +178,7 @@ let addEventToRawEvents = (
     blockHash,
     blockTimestamp,
     eventType: eventName,
-    params: switch event.params->S.serializeToJsonStringWith(. eventArgsSchema) {
+    params: switch event.params->S.serializeToJsonStringWith(eventArgsSchema) {
     | Ok(jsonString) => jsonString
     | Error(e) => S.Error.raise(e)
     },
@@ -206,10 +207,10 @@ let updateEventSyncState = (
   )
 }
 
-let readEntity = (entityMod, id) => Entities.batchRead(DbFunctions.sql, [id], ~entityMod)
+let readEntity = (~entityMod) => id => Entities.batchRead(~entityMod)(DbFunctions.sql, [id])
 let asyncGetters: ContextEnv.asyncGetters = {
 {{#each entities as | entity |}}
- get{{entity.name.capitalized}}: readEntity(module(Entities.{{entity.name.capitalized}})),
+ get{{entity.name.capitalized}}: readEntity(~entityMod=module(Entities.{{entity.name.capitalized}})),
 {{/each}}
 }
 
@@ -334,7 +335,9 @@ let rec registerDynamicContracts = (
       //If an item has already been registered, it would have been
       //put back on the arbitrary events queue and is now being reprocessed
       dynamicContractRegistrations
-      ->Option.map(addToUnprocessedBatch(eventBatchQueueItem))
+      ->Option.map(dynamicContractRegistrations =>
+        addToUnprocessedBatch(eventBatchQueueItem, dynamicContractRegistrations)
+      )
       ->Ok
     } else {
       let runEventContractRegister = (eventName, event) =>
@@ -353,7 +356,9 @@ let rec registerDynamicContracts = (
           )
         | None =>
           dynamicContractRegistrations
-          ->Option.map(addToUnprocessedBatch(eventBatchQueueItem))
+          ->Option.map(dynamicContractRegistrations =>
+            addToUnprocessedBatch(eventBatchQueueItem, dynamicContractRegistrations)
+          )
           ->Ok
         }
 
@@ -453,6 +458,7 @@ let runHandlers = (
         ~chain,
         ~latestProcessedBlocks=latestProcessedBlocks.contents,
         ~registeredEvents,
+        ...
       )
 
       latestProcessedBlocks :=

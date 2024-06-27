@@ -13,7 +13,7 @@ type blockNumberAndTimestamp = {
 
 module DynamicContractsMap = {
   //mapping of address to dynamicContractId
-  module IdCmp = Belt.Id.MakeComparable({
+  module IdCmp = Belt.Id.MakeComparableU({
     type t = dynamicContractId
     let toCmp = (dynamicContractId: dynamicContractId) => (
       dynamicContractId.blockNumber,
@@ -27,7 +27,7 @@ module DynamicContractsMap = {
   let empty: t = Belt.Map.make(~id=module(IdCmp))
 
   let add = (self, id, addressesArr: array<Ethers.ethAddress>) => {
-    self->Belt.Map.set(id, addressesArr->Obj.magic->Belt.Set.String.fromArray)
+    self->Belt.Map.set(id, addressesArr->X.magic->Belt.Set.String.fromArray)
   }
 
   let addAddress = (self: t, id, address: Ethers.ethAddress) => {
@@ -132,7 +132,8 @@ Merges two event queues on a single event fetcher
 
 Pass the shorter list into A for better performance
 */
-let mergeSortedEventList = mergeSortedList(~cmp=eventCmp)
+let mergeSortedEventList =
+  mergeSortedList(~cmp=eventCmp, ...)
 
 /**
 Merges a node into its next registered branch. Combines contract address mappings and queues
@@ -205,7 +206,7 @@ let updateRegister = (self: t, ~latestFetchedBlock, ~newFetchedEvents) => {
 /**
 Links next register to a dynamic contract register
 */
-let addNextRegister = (~register: t, ~dynamicContractId, nextRegister: t) => {
+let addNextRegister = (nextRegister: t, ~register: t, ~dynamicContractId) => {
   ...register,
   registerType: DynamicContractRegister(dynamicContractId, nextRegister),
 }
@@ -230,7 +231,7 @@ let rec updateInternal = (~id, ~latestFetchedBlock, ~newFetchedEvents, register:
   | (DynamicContractRegister(dynamicContractId, nextRegistered), id) =>
     nextRegistered
     ->updateInternal(~newFetchedEvents, ~id, ~latestFetchedBlock)
-    ->Result.map(addNextRegister(~register, ~dynamicContractId))
+    ->Result.map(s => s->addNextRegister(~register, ~dynamicContractId))
   | (RootRegister(_), DynamicContract(_)) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 }
@@ -515,7 +516,7 @@ let rec popQItemAtRegisterId = (self: t, ~id) =>
   | DynamicContractRegister(dynamicContractId, nextRegister) =>
     nextRegister
     ->popQItemAtRegisterId(~id)
-    ->Result.map(getRegisterWithNextResponse(self, ~dynamicContractId))
+    ->Result.map(getRegisterWithNextResponse(self, ~dynamicContractId, ...))
   | RootRegister(_) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 
@@ -545,7 +546,7 @@ let makeInternal = (~registerType, ~contractAddressMapping, ~dynamicContracts, ~
 /**
 Instantiates a fetch state with root register
 */
-let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}))
+let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}), ...)
 
 /**
 Inserts a dynamic contract register to the head of a given
@@ -594,11 +595,13 @@ let rec registerDynamicContract = (
   ~contractAddressMapping,
 ) => {
   let latestFetchedBlockNumber = registeringEventBlockNumber - 1
-  let addToHead = addNewRegisterToHead(
-    ~contractAddressMapping,
-    ~registeringEventLogIndex,
-    ~registeringEventBlockNumber,
-  )
+  let addToHead =
+    addNewRegisterToHead(
+      ~contractAddressMapping,
+      ~registeringEventLogIndex,
+      ~registeringEventBlockNumber,
+      ...
+    )
 
   switch register.registerType {
   | RootRegister(_) => register->addToHead
@@ -627,7 +630,8 @@ let rec queueSizeInternal = (self: t, ~accum) => {
 /**
 Calculates the cummulative queue sizes in all registers
 */
-let queueSize = queueSizeInternal(~accum=0)
+let queueSize =
+  queueSizeInternal(~accum=0, ...)
 
 /**
 Check the max queue size of the tip of the tree.
@@ -718,7 +722,8 @@ let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
     }
   //Case 3 Root register that has fetched further than the confirmed valid block number
   //Should prune its queue and set its latest fetched block data to the latest known confirmed block
-  | RootRegister(_) => {
+  | RootRegister(_) =>
+    {
       ...self,
       fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
       latestFetchedBlock: lastKnownValidBlock,
