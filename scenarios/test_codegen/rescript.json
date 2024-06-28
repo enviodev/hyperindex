@@ -36,9 +36,8 @@
     "rescript-mocha",
     "rescript-nodejs",
     "rescript-schema",
+    "@dzakh/rescript-ava",
     "helpers"
   ],
-  "bsc-flags": [
-    "-open RescriptSchema"
-  ]
+  "bsc-flags": ["-open RescriptSchema"]
 }

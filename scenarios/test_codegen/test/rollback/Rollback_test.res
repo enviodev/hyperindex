@@ -1,12 +1,5 @@
 open Belt
-open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
+open Ava
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
@@ -154,241 +147,241 @@ let setupDb = async (~shouldDropRawEvents) => {
   let _exitCodeUp = await runUpMigrations(~shouldExit=false)
 }
 
-describe("Single Chain Simple Rollback", () => {
-  it_promise("Detects reorgs and actions a rollback", async () => {
-    let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
-    let initState = GlobalState.make(~chainManager)
-    let gsManager = initState->GlobalStateManager.make
-    let chain = ChainMap.Chain.Chain_1337
-    let getState = () => gsManager->GlobalStateManager.getState
-    let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
+// Single Chain Simple Rollback
 
-    open Stubs
-    let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
-    let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
-    tasks := []
+asyncTest("Detects reorgs and actions a rollback", async (. t) => {
+  let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
+  let initState = GlobalState.make(~chainManager)
+  let gsManager = initState->GlobalStateManager.make
+  let chain = ChainMap.Chain.Chain_1337
+  let getState = () => gsManager->GlobalStateManager.getState
+  let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
-    await dispatchTaskInitalChain(NextQuery(Chain(chain)))
+  open Stubs
+  let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
+  let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg)
+  let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
+  tasks := []
 
-    Assert.deep_equal(
-      tasks.contents,
-      [NextQuery(Chain(chain))],
-      ~message="should only be one task of next query now that currentBlockHeight is set",
-    )
+  await dispatchTaskInitalChain(NextQuery(Chain(chain)))
 
-    await dispatchAllTasksInitalChain()
-    let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
+  t->Assert.deepEqual(.
+    tasks.contents,
+    [NextQuery(Chain(chain))],
+    ~message="should only be one task of next query now that currentBlockHeight is set",
+  )
 
-    Assert.deep_equal(
-      tasks.contents,
-      [
-        UpdateEndOfBlockRangeScannedData({
-          blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
-          chain: Chain_1337,
-          nextEndOfBlockRangeScannedData: {
-            blockHash: block2.blockHash,
-            blockNumber: block2.blockNumber,
-            blockTimestamp: block2.blockTimestamp,
-            chainId: 1337,
-          },
-        }),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        NextQuery(Chain(chain)),
-      ],
-      ~message="should successfully have actioned batch",
-    )
+  await dispatchAllTasksInitalChain()
+  let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
 
-    Assert.equal(
-      getChainFetcher().fetchState->FetchState.queueSize,
-      3,
-      ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
-    )
+  t->Assert.deepEqual(.
+    tasks.contents,
+    [
+      UpdateEndOfBlockRangeScannedData({
+        blockNumberThreshold: -198,
+        blockTimestampThreshold: 50,
+        chain: Chain_1337,
+        nextEndOfBlockRangeScannedData: {
+          blockHash: block2.blockHash,
+          blockNumber: block2.blockNumber,
+          blockTimestamp: block2.blockTimestamp,
+          chainId: 1337,
+        },
+      }),
+      UpdateChainMetaDataAndCheckForExit(NoExit),
+      ProcessEventBatch,
+      NextQuery(Chain(chain)),
+    ],
+    ~message="should successfully have actioned batch",
+  )
 
-    tasks := []
-    await dispatchTaskReorgChain(NextQuery(Chain(chain)))
-    Assert.deep_equal(
-      tasks.contents,
-      [Rollback],
-      ~message="should detect rollback with reorg chain",
-    )
-  })
+  t->Assert.deepEqual(.
+    getChainFetcher().fetchState->FetchState.queueSize,
+    3,
+    ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
+  )
 
-  it_promise("Successfully rolls back single chain indexer to expected values", async () => {
-    await setupDb(~shouldDropRawEvents=true)
+  tasks := []
+  await dispatchTaskReorgChain(NextQuery(Chain(chain)))
+  t->Assert.deepEqual(.
+    tasks.contents,
+    [Rollback],
+    ~message="should detect rollback with reorg chain",
+  )
+})
 
-    let chainManager = {
-      ...ChainManager.makeFromConfig(~configs=Config.config),
-      isUnorderedMultichainMode: true,
-    }
-    let initState = GlobalState.make(~chainManager)
-    let gsManager = initState->GlobalStateManager.make
-    let chain = ChainMap.Chain.Chain_1337
-    let getState = () => gsManager->GlobalStateManager.getState
-    let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
+Only.asyncTest("Successfully rolls back single chain indexer to expected values", async (. t) => {
+  await setupDb(~shouldDropRawEvents=true)
 
-    open Stubs
-    let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
-    let dispatchAllTasksReorgChain = () => dispatchAllTasks(gsManager, Mock.mockChainDataReorg)
-    tasks := []
+  let chainManager = {
+    ...ChainManager.makeFromConfig(~configs=Config.config),
+    isUnorderedMultichainMode: true,
+  }
+  let initState = GlobalState.make(~chainManager)
+  let gsManager = initState->GlobalStateManager.make
+  let chain = ChainMap.Chain.Chain_1337
+  let getState = () => gsManager->GlobalStateManager.getState
+  let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
-    await dispatchTaskInitalChain(NextQuery(Chain(chain)))
+  open Stubs
+  let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
+  let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
+  let dispatchAllTasksReorgChain = () => dispatchAllTasks(gsManager, Mock.mockChainDataReorg)
+  tasks := []
 
-    Assert.deep_equal(
-      tasks.contents,
-      [NextQuery(Chain(chain))],
-      ~message="should only be one task of next query now that currentBlockHeight is set",
-    )
+  await dispatchTaskInitalChain(NextQuery(Chain(chain)))
 
-    await dispatchAllTasksInitalChain()
+  t->Assert.deepEqual(.
+    tasks.contents,
+    [NextQuery(Chain(chain))],
+    ~message="should only be one task of next query now that currentBlockHeight is set",
+  )
 
-    let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
-    Assert.deep_equal(
-      tasks.contents,
-      [
-        UpdateEndOfBlockRangeScannedData({
-          blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
-          chain: Chain_1337,
-          nextEndOfBlockRangeScannedData: {
-            blockHash: block2.blockHash,
-            blockNumber: block2.blockNumber,
-            blockTimestamp: block2.blockTimestamp,
-            chainId: 1337,
-          },
-        }),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        NextQuery(Chain(chain)),
-      ],
-      ~message="should successfully have processed batch",
-    )
+  await dispatchAllTasksInitalChain()
 
-    Assert.equal(
-      getChainFetcher().fetchState->FetchState.queueSize,
-      3,
-      ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
-    )
+  let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
+  t->Assert.deepEqual(.
+    tasks.contents,
+    [
+      UpdateEndOfBlockRangeScannedData({
+        blockNumberThreshold: -198,
+        blockTimestampThreshold: 50,
+        chain: Chain_1337,
+        nextEndOfBlockRangeScannedData: {
+          blockHash: block2.blockHash,
+          blockNumber: block2.blockNumber,
+          blockTimestamp: block2.blockTimestamp,
+          chainId: 1337,
+        },
+      }),
+      UpdateChainMetaDataAndCheckForExit(NoExit),
+      ProcessEventBatch,
+      NextQuery(Chain(chain)),
+    ],
+    ~message="should successfully have processed batch",
+  )
 
-    await dispatchAllTasksReorgChain()
+  t->Assert.deepEqual(.
+    getChainFetcher().fetchState->FetchState.queueSize,
+    3,
+    ~message="should have 3 events on the queue from the first 3 blocks of inital chainData",
+  )
 
-    let getAllGravatars = async () =>
-      (await Sql.getAllRowsInTable("Gravatar"))
-      ->Array.map(S.parseWith(_, Entities.Gravatar.schema))
-      ->Utils.mapArrayOfResults
-      ->Result.getExn
+  await dispatchAllTasksReorgChain()
 
-    let gravatars = await getAllGravatars()
+  let getAllGravatars = async () =>
+    (await Sql.getAllRowsInTable("Gravatar"))
+    ->Array.map(S.parseWith(_, Entities.Gravatar.schema))
+    ->Utils.mapArrayOfResults
+    ->Result.getExn
 
-    let toBigInt = BigInt.fromInt
-    let toString = BigInt.toString
+  let gravatars = await getAllGravatars()
 
-    let expectedGravatars: array<Entities.Gravatar.t> = [
-      {
-        displayName: MockEvents.setGravatar1.displayName,
-        id: MockEvents.setGravatar1.id->toString,
-        imageUrl: MockEvents.setGravatar1.imageUrl,
-        owner_id: MockEvents.setGravatar1.owner->Obj.magic,
-        size: MEDIUM,
-        updatesCount: 2->toBigInt,
-      },
-      {
-        displayName: MockEvents.newGravatar2.displayName,
-        id: MockEvents.newGravatar2.id->toString,
-        imageUrl: MockEvents.newGravatar2.imageUrl,
-        owner_id: MockEvents.newGravatar2.owner->Obj.magic,
-        size: SMALL,
-        updatesCount: 1->toBigInt,
-      },
-    ]
+  let toBigInt = BigInt.fromInt
+  let toString = BigInt.toString
 
-    Assert.deep_equal(
-      gravatars,
-      expectedGravatars,
-      ~message="2 Gravatars should have been set and the first one updated in the first 3 events",
-    )
+  let expectedGravatars: array<Entities.Gravatar.t> = [
+    {
+      displayName: MockEvents.setGravatar1.displayName,
+      id: MockEvents.setGravatar1.id->toString,
+      imageUrl: MockEvents.setGravatar1.imageUrl,
+      owner_id: MockEvents.setGravatar1.owner->Obj.magic,
+      size: MEDIUM,
+      updatesCount: 2->toBigInt,
+    },
+    {
+      displayName: MockEvents.newGravatar2.displayName,
+      id: MockEvents.newGravatar2.id->toString,
+      imageUrl: MockEvents.newGravatar2.imageUrl,
+      owner_id: MockEvents.newGravatar2.owner->Obj.magic,
+      size: SMALL,
+      updatesCount: 1->toBigInt,
+    },
+  ]
 
-    Assert.deep_equal(
-      tasks.contents,
-      [
-        GlobalState.NextQuery(CheckAllChains),
-        Rollback,
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-      ],
-      ~message="should detect rollback with reorg chain",
-    )
+  t->Assert.deepEqual(.
+    gravatars,
+    expectedGravatars,
+    ~message="2 Gravatars should have been set and the first one updated in the first 3 events",
+  )
 
-    //Substitute check all chains for given chain
-    replaceNexQueryCheckAllChainsWithGivenChain(chain)
+  t->Assert.deepEqual(.
+    tasks.contents,
+    [
+      GlobalState.NextQuery(CheckAllChains),
+      Rollback,
+      UpdateChainMetaDataAndCheckForExit(NoExit),
+      ProcessEventBatch,
+    ],
+    ~message="should detect rollback with reorg chain",
+  )
 
-    await dispatchAllTasksReorgChain()
+  //Substitute check all chains for given chain
+  replaceNexQueryCheckAllChainsWithGivenChain(chain)
 
-    Assert.deep_equal(
-      tasks.contents,
-      [GlobalState.NextQuery(CheckAllChains), ProcessEventBatch],
-      ~message="Rollback should have actioned, and now next queries and process event batch should action",
-    )
+  await dispatchAllTasksReorgChain()
 
-    //Substitute check all chains for given chain
-    replaceNexQueryCheckAllChainsWithGivenChain(chain)
-    await dispatchAllTasksReorgChain()
+  t->Assert.deepEqual(.
+    tasks.contents,
+    [GlobalState.NextQuery(CheckAllChains), ProcessEventBatch],
+    ~message="Rollback should have actioned, and now next queries and process event batch should action",
+  )
 
-    let block2 =
-      Mock.mockChainDataReorg
-      ->MockChainData.getBlock(~blockNumber=2)
-      ->Option.getUnsafe
-    Assert.deep_equal(
-      tasks.contents,
-      [
-        GlobalState.UpdateEndOfBlockRangeScannedData({
-          blockNumberThreshold: -198,
-          blockTimestampThreshold: 50,
-          chain: Chain_1337,
-          nextEndOfBlockRangeScannedData: {
-            blockHash: block2.blockHash,
-            blockNumber: block2.blockNumber,
-            blockTimestamp: block2.blockTimestamp,
-            chainId: 1337,
-          },
-        }),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-        NextQuery(Chain(chain)),
-        NextQuery(CheckAllChains),
-        UpdateChainMetaDataAndCheckForExit(NoExit),
-        ProcessEventBatch,
-      ],
-      ~message="Query should have returned with batch to process",
-    )
+  //Substitute check all chains for given chain
+  replaceNexQueryCheckAllChainsWithGivenChain(chain)
+  await dispatchAllTasksReorgChain()
 
-    let expectedGravatars: array<Entities.Gravatar.t> = [
-      {
-        displayName: MockEvents.newGravatar1.displayName,
-        id: MockEvents.newGravatar1.id->toString,
-        imageUrl: MockEvents.newGravatar1.imageUrl,
-        owner_id: MockEvents.newGravatar1.owner->Obj.magic,
-        size: SMALL,
-        updatesCount: 1->toBigInt,
-      },
-      {
-        displayName: MockEvents.setGravatar2.displayName,
-        id: MockEvents.setGravatar2.id->toString,
-        imageUrl: MockEvents.setGravatar2.imageUrl,
-        owner_id: MockEvents.setGravatar2.owner->Obj.magic,
-        size: MEDIUM,
-        updatesCount: 2->toBigInt,
-      },
-    ]
+  let block2 =
+    Mock.mockChainDataReorg
+    ->MockChainData.getBlock(~blockNumber=2)
+    ->Option.getUnsafe
+  t->Assert.deepEqual(.
+    tasks.contents,
+    [
+      GlobalState.UpdateEndOfBlockRangeScannedData({
+        blockNumberThreshold: -198,
+        blockTimestampThreshold: 50,
+        chain: Chain_1337,
+        nextEndOfBlockRangeScannedData: {
+          blockHash: block2.blockHash,
+          blockNumber: block2.blockNumber,
+          blockTimestamp: block2.blockTimestamp,
+          chainId: 1337,
+        },
+      }),
+      UpdateChainMetaDataAndCheckForExit(NoExit),
+      ProcessEventBatch,
+      NextQuery(Chain(chain)),
+      NextQuery(CheckAllChains),
+      UpdateChainMetaDataAndCheckForExit(NoExit),
+      ProcessEventBatch,
+    ],
+    ~message="Query should have returned with batch to process",
+  )
 
-    let gravatars = await getAllGravatars()
-    Assert.deep_equal(
-      expectedGravatars,
-      gravatars,
-      ~message="First gravatar should roll back and change and second should have received an update",
-    )
-  })
+  let expectedGravatars: array<Entities.Gravatar.t> = [
+    {
+      displayName: MockEvents.newGravatar1.displayName,
+      id: MockEvents.newGravatar1.id->toString,
+      imageUrl: MockEvents.newGravatar1.imageUrl,
+      owner_id: MockEvents.newGravatar1.owner->Obj.magic,
+      size: SMALL,
+      updatesCount: 1->toBigInt,
+    },
+    {
+      displayName: MockEvents.setGravatar2.displayName,
+      id: MockEvents.setGravatar2.id->toString,
+      imageUrl: MockEvents.setGravatar2.imageUrl,
+      owner_id: MockEvents.setGravatar2.owner->Obj.magic,
+      size: MEDIUM,
+      updatesCount: 2->toBigInt,
+    },
+  ]
+
+  let gravatars = await getAllGravatars()
+  t->Assert.deepEqual(.
+    expectedGravatars,
+    gravatars,
+    ~message="First gravatar should roll back and change and second should have received an update",
+  )
 })

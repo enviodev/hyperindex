@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@types/node": "^18.16.1",
-    "typescript": "^5.0.4",
+    "typescript": "5.2.2",
     "rescript": "^10.1.2"
   },
   "dependencies": {

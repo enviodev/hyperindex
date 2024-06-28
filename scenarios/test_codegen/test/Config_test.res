@@ -1,5 +1,4 @@
-open RescriptMocha
-open Mocha
+open Ava
 
 let configPathString = "./config.yaml"
 
@@ -28,46 +27,44 @@ let generatedSyncConfig = switch generatedChainConfig.syncSource {
 | _ => Js.Exn.raiseError("Expected an rpc config")
 }
 
-describe("Sync Config Test", () => {
-  it("initial_block_interval", () => {
-    Assert.deep_equal(
-      firstNetworkConfig.rpc_config.unstable__sync_config.initial_block_interval,
-      generatedSyncConfig.initialBlockInterval,
-    )
-  })
-  it("backoff_multiplicative", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deep_equal(
-      firstNetworkConfig.rpc_config.unstable__sync_config.backoff_multiplicative,
-      generatedSyncConfig.backoffMultiplicative,
-    )
-  })
-  it("acceleration_additive", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deep_equal(
-      firstNetworkConfig.rpc_config.unstable__sync_config.acceleration_additive,
-      generatedSyncConfig.accelerationAdditive,
-    )
-  })
-  it("interval_ceiling", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deep_equal(
-      firstNetworkConfig.rpc_config.unstable__sync_config.interval_ceiling,
-      generatedSyncConfig.intervalCeiling,
-    )
-  })
-  it("backoff_millis", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deep_equal(
-      firstNetworkConfig.rpc_config.unstable__sync_config.backoff_millis,
-      generatedSyncConfig.backoffMillis,
-    )
-  })
-  it("query_timeout_millis", () => {
-    let firstNetworkConfig = configYaml.networks[0]
-    Assert.deep_equal(
-      firstNetworkConfig.rpc_config.unstable__sync_config.query_timeout_millis,
-      generatedSyncConfig.queryTimeoutMillis,
-    )
-  })
+test("Sync Config Test: initial_block_interval", (. t) => {
+  t->Assert.deepEqual(.
+    firstNetworkConfig.rpc_config.unstable__sync_config.initial_block_interval,
+    generatedSyncConfig.initialBlockInterval,
+  )
+})
+test("Sync Config Test: backoff_multiplicative", (. t) => {
+  let firstNetworkConfig = configYaml.networks[0]
+  t->Assert.deepEqual(.
+    firstNetworkConfig.rpc_config.unstable__sync_config.backoff_multiplicative,
+    generatedSyncConfig.backoffMultiplicative,
+  )
+})
+test("Sync Config Test: acceleration_additive", (. t) => {
+  let firstNetworkConfig = configYaml.networks[0]
+  t->Assert.deepEqual(.
+    firstNetworkConfig.rpc_config.unstable__sync_config.acceleration_additive,
+    generatedSyncConfig.accelerationAdditive,
+  )
+})
+test("Sync Config Test: interval_ceiling", (. t) => {
+  let firstNetworkConfig = configYaml.networks[0]
+  t->Assert.deepEqual(.
+    firstNetworkConfig.rpc_config.unstable__sync_config.interval_ceiling,
+    generatedSyncConfig.intervalCeiling,
+  )
+})
+test("Sync Config Test: backoff_millis", (. t) => {
+  let firstNetworkConfig = configYaml.networks[0]
+  t->Assert.deepEqual(.
+    firstNetworkConfig.rpc_config.unstable__sync_config.backoff_millis,
+    generatedSyncConfig.backoffMillis,
+  )
+})
+test("Sync Config Test: query_timeout_millis", (. t) => {
+  let firstNetworkConfig = configYaml.networks[0]
+  t->Assert.deepEqual(.
+    firstNetworkConfig.rpc_config.unstable__sync_config.query_timeout_millis,
+    generatedSyncConfig.queryTimeoutMillis,
+  )
 })

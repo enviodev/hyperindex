@@ -1,99 +1,97 @@
-import { expect } from 'chai';
-import { BigDecimal } from 'generated';
+import test from "ava";
+import { BigDecimal } from "generated";
 
-describe('BigDecimal', () => {
-  it('should create BigDecimal from BigInt', () => {
-    const bigDecimal = new BigDecimal(123456789123456n as any); // The upstream types don't accept BigInt, but the code does work correctly.
-    expect(bigDecimal.toString()).to.equal('123456789123456');
-  });
+test("Should create BigDecimal from BigInt", (t) => {
+  const bigDecimal = new BigDecimal(123456789123456n as any); // The upstream types don't accept BigInt, but the code does work correctly.
+  t.deepEqual(bigDecimal.toString(), "123456789123456");
+});
 
-  it('should create BigDecimal from float', () => {
-    const bigDecimal = new BigDecimal(123.456);
-    expect(bigDecimal.toString()).to.equal('123.456');
-  });
+test("Should create BigDecimal from float", (t) => {
+  const bigDecimal = new BigDecimal(123.456);
+  t.deepEqual(bigDecimal.toString(), "123.456");
+});
 
-  it('should create BigDecimal from int', () => {
-    const bigDecimal = new BigDecimal(123);
-    expect(bigDecimal.toString()).to.equal('123');
-  });
+test("Should create BigDecimal from int", (t) => {
+  const bigDecimal = new BigDecimal(123);
+  t.deepEqual(bigDecimal.toString(), "123");
+});
 
-  it('should create BigDecimal from string (unsafe)', () => {
-    const bigDecimal = new BigDecimal('123.456');
-    expect(bigDecimal.toString()).to.equal('123.456');
-  });
+test("Should create BigDecimal from string (unsafe)", (t) => {
+  const bigDecimal = new BigDecimal("123.456");
+  t.deepEqual(bigDecimal.toString(), "123.456");
+});
 
-  it('should convert BigDecimal to string', () => {
-    const bigDecimal = new BigDecimal(123.456);
-    expect(bigDecimal.toString()).to.equal('123.456');
-  });
+test("Should convert BigDecimal to string", (t) => {
+  const bigDecimal = new BigDecimal(123.456);
+  t.deepEqual(bigDecimal.toString(), "123.456");
+});
 
-  it('should convert BigDecimal to fixed string', () => {
-    const bigDecimal = new BigDecimal(123.456);
-    expect(bigDecimal.toFixed(2)).to.equal('123.46'); // Rounding may vary
-  });
+test("Should convert BigDecimal to fixed string", (t) => {
+  const bigDecimal = new BigDecimal(123.456);
+  t.deepEqual(bigDecimal.toFixed(2), "123.46"); // Rounding may vary
+});
 
-  it('should convert BigDecimal to int', () => {
-    const bigDecimal = new BigDecimal(123.456);
-    expect(bigDecimal.toFixed(0)).to.equal("123");
-  });
+test("Should convert BigDecimal to int", (t) => {
+  const bigDecimal = new BigDecimal(123.456);
+  t.deepEqual(bigDecimal.toFixed(0), "123");
+});
 
-  it('should perform addition', () => {
-    const a = new BigDecimal(10);
-    const b = new BigDecimal(20);
-    const result = a.plus(b);
-    expect(result.toString()).to.equal('30');
-  });
+test("Should perform addition", (t) => {
+  const a = new BigDecimal(10);
+  const b = new BigDecimal(20);
+  const result = a.plus(b);
+  t.deepEqual(result.toString(), "30");
+});
 
-  it('should perform subtraction', () => {
-    const a = new BigDecimal(20);
-    const b = new BigDecimal(10);
-    const result = a.minus(b);
-    expect(result.toString()).to.equal('10');
-  });
+test("Should perform subtraction", (t) => {
+  const a = new BigDecimal(20);
+  const b = new BigDecimal(10);
+  const result = a.minus(b);
+  t.deepEqual(result.toString(), "10");
+});
 
-  it('should perform multiplication', () => {
-    const a = new BigDecimal(2);
-    const b = new BigDecimal(3);
-    const result = a.times(b);
-    expect(result.toString()).to.equal('6');
-  });
+test("Should perform multiplication", (t) => {
+  const a = new BigDecimal(2);
+  const b = new BigDecimal(3);
+  const result = a.times(b);
+  t.deepEqual(result.toString(), "6");
+});
 
-  it('should perform division', () => {
-    const a = new BigDecimal(6);
-    const b = new BigDecimal(2);
-    const result = a.div(b);
-    expect(result.toString()).to.equal('3');
-  });
+test("Should perform division", (t) => {
+  const a = new BigDecimal(6);
+  const b = new BigDecimal(2);
+  const result = a.div(b);
+  t.deepEqual(result.toString(), "3");
+});
 
-  it('should check equality', () => {
-    const a = new BigDecimal(10);
-    const b = new BigDecimal(10);
-    expect(a.isEqualTo(b)).to.be.true;
-  });
+test("Should check equality", (t) => {
+  const a = new BigDecimal(10);
+  const b = new BigDecimal(10);
+  t.true(a.isEqualTo(b));
+});
 
-  it('should check greater than', () => {
-    const a = new BigDecimal(20);
-    const b = new BigDecimal(10);
-    expect(a.gt(b)).to.be.true;
-  });
+test("Should check greater than", (t) => {
+  const a = new BigDecimal(20);
+  const b = new BigDecimal(10);
+  t.true(a.gt(b));
+});
 
-  it('should check greater than or equal', () => {
-    const a = new BigDecimal(20);
-    const b = new BigDecimal(10);
-    expect(a.gte(b)).to.be.true;
-    expect(a.gte(a)).to.be.true;
-  });
+test("Should check greater than or equal", (t) => {
+  const a = new BigDecimal(20);
+  const b = new BigDecimal(10);
+  t.true(a.gte(b));
+  t.true(a.gte(a));
+});
 
-  it('should check less than', () => {
-    const a = new BigDecimal(10);
-    const b = new BigDecimal(20);
-    expect(a.lt(b)).to.be.true;
-  });
+test("Should check less than", (t) => {
+  const a = new BigDecimal(10);
+  const b = new BigDecimal(20);
+  t.true(a.lt(b));
+});
 
-  it('should check less than or equal', () => {
-    const a = new BigDecimal(10);
-    const b = new BigDecimal(20);
-    expect(a.lte(b)).to.be.true;
-    expect(a.lte(a)).to.be.true;
-  });
+test("Should check less than or equal", (t) => {
+  const a = new BigDecimal(10);
+  const b = new BigDecimal(20);
+  t.true(a.lte(b));
+  t.true(a.lte(a));
 });

@@ -1,11 +1,4 @@
-open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
+open Ava
 
 let eventMock1: Types.event = Gravatar_NewGravatar({
   blockNumber: 1,
@@ -51,69 +44,65 @@ let qItemMock2: Types.eventBatchQueueItem = {
   event: eventMock1,
 }
 
-describe("Chain Event Queue", () => {
-  it_promise("Awaits item to be pushed to queue before resolveing", async () => {
-    let q = ChainEventQueue.make(~maxQueueSize=100)
+asyncTest("Awaits item to be pushed to queue before resolveing", async (. t) => {
+  let q = ChainEventQueue.make(~maxQueueSize=100)
 
-    let itemPromise = q->ChainEventQueue.popSingleAndAwaitItem
+  let itemPromise = q->ChainEventQueue.popSingleAndAwaitItem
 
-    //pop backlog callbacks should have 1 item in the queue since we are
-    //waiting for an item to pop
-    Assert.equal(q.popBacklogCallbacks->SDSL.Queue.size, 1)
+  //pop backlog callbacks should have 1 item in the queue since we are
+  //waiting for an item to pop
+  t->Assert.deepEqual(. q.popBacklogCallbacks->SDSL.Queue.size, 1)
 
-    await q->ChainEventQueue.awaitQueueSpaceAndPushItem(qItemMock1)
+  await q->ChainEventQueue.awaitQueueSpaceAndPushItem(qItemMock1)
 
-    //Pop backlog callbacks should have 0 in the queue since pushing an item
-    //should have remove/run that awaiting callback
-    Assert.equal(q.popBacklogCallbacks->SDSL.Queue.size, 0)
-    let poppedItem = await itemPromise
+  //Pop backlog callbacks should have 0 in the queue since pushing an item
+  //should have remove/run that awaiting callback
+  t->Assert.deepEqual(. q.popBacklogCallbacks->SDSL.Queue.size, 0)
+  let poppedItem = await itemPromise
 
-    Assert.deep_equal(~message="Poped item not the same", qItemMock1, poppedItem)
-    Assert.equal(q.queue->SDSL.Queue.size, 0)
-  })
+  t->Assert.deepEqual(. ~message="Poped item not the same", qItemMock1, poppedItem)
+  t->Assert.deepEqual(. q.queue->SDSL.Queue.size, 0)
+})
 
-  it_promise("Awaits space on the queue before pushing", async () => {
-    let hasResolvedPromise = ref(false)
-    //Make a queue with small max size
-    let q = ChainEventQueue.make(~maxQueueSize=1)
-    //Fill the queue to max size
-    await q->ChainEventQueue.awaitQueueSpaceAndPushItem(qItemMock1)
-    //Try push an item to the queu
-    let nextIemPromise =
-      q
-      ->ChainEventQueue.awaitQueueSpaceAndPushItem(qItemMock2)
-      ->Js.Promise2.then(
-        a => {
-          hasResolvedPromise := true
-          a->Js.Promise2.resolve
-        },
-      )
-    //Assert that the item is not on the queue
-    Assert.deep_equal(q->ChainEventQueue.peekFront, Some(qItemMock1))
-    Assert.equal(
-      q.queue->SDSL.Queue.size,
-      1,
-      ~message="queue should start with a size of 1 even though 2 items have been pushed to it",
-    )
+asyncTest("Awaits space on the queue before pushing", async (. t) => {
+  let hasResolvedPromise = ref(false)
+  //Make a queue with small max size
+  let q = ChainEventQueue.make(~maxQueueSize=1)
+  //Fill the queue to max size
+  await q->ChainEventQueue.awaitQueueSpaceAndPushItem(qItemMock1)
+  //Try push an item to the queu
+  let nextIemPromise =
+    q
+    ->ChainEventQueue.awaitQueueSpaceAndPushItem(qItemMock2)
+    ->Js.Promise2.then(a => {
+      hasResolvedPromise := true
+      a->Js.Promise2.resolve
+    })
+  //Assert that the item is not on the queue
+  t->Assert.deepEqual(. q->ChainEventQueue.peekFront, Some(qItemMock1))
+  t->Assert.deepEqual(.
+    q.queue->SDSL.Queue.size,
+    1,
+    ~message="queue should start with a size of 1 even though 2 items have been pushed to it",
+  )
 
-    //Pop an item off
-    Assert.equal(hasResolvedPromise.contents, false)
-    Assert.equal(q.pushBacklogCallbacks->SDSL.Queue.size, 1)
+  //Pop an item off
+  t->Assert.deepEqual(. hasResolvedPromise.contents, false)
+  t->Assert.deepEqual(. q.pushBacklogCallbacks->SDSL.Queue.size, 1)
 
-    let popedValue1 = q->ChainEventQueue.popSingle
-    Assert.deep_equal(popedValue1, Some(qItemMock1))
-    Assert.equal(q.pushBacklogCallbacks->SDSL.Queue.size, 0)
+  let popedValue1 = q->ChainEventQueue.popSingle
+  t->Assert.deepEqual(. popedValue1, Some(qItemMock1))
+  t->Assert.deepEqual(. q.pushBacklogCallbacks->SDSL.Queue.size, 0)
 
-    await nextIemPromise
+  await nextIemPromise
 
-    Assert.equal(
-      q.queue->SDSL.Queue.size,
-      1,
-      ~message="The queue should stay at size 1 because it should immediately get the new value",
-    )
+  t->Assert.deepEqual(.
+    q.queue->SDSL.Queue.size,
+    1,
+    ~message="The queue should stay at size 1 because it should immediately get the new value",
+  )
 
-    //assert that the front of the queue is the new item
-    let popedValue2 = q->ChainEventQueue.popSingle
-    Assert.deep_equal(popedValue2, Some(qItemMock2))
-  })
+  //assert that the front of the queue is the new item
+  let popedValue2 = q->ChainEventQueue.popSingle
+  t->Assert.deepEqual(. popedValue2, Some(qItemMock2))
 })

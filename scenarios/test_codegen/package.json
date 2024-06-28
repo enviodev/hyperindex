@@ -12,7 +12,7 @@
     "res:build": "rescript",
     "res:start": "node generated/src/Index.bs.js",
     "res:watch": "rescript -w",
-    "test": "rescript && pnpm mocha",
+    "test": "rescript && ava",
     "test-coverage": "rescript && nyc mocha",
     "test:log": "DEBUG=true npm test",
     "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
@@ -28,6 +28,7 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@dzakh/rescript-ava": "3.0.0",
     "@glennsl/rescript-fetch": "0.2.0",
     "@glennsl/rescript-jest": "^0.9.2",
     "@nomiclabs/hardhat-ethers": "^3.0.0-beta.0",
@@ -38,6 +39,7 @@
     "@types/chai-as-promised": "^7.1.5",
     "@types/mocha": "^10.0.1",
     "@types/node": "^18.16.1",
+    "ava": "5.2.0",
     "chai": "^4.3.7",
     "chai-as-promised": "^7.1.1",
     "ethers": "^6.4.0",
@@ -46,7 +48,7 @@
     "nyc": "^15.1.0",
     "rescript": "11.1.0",
     "rescript-express": "0.4.1",
-    "rescript-mocha": "^0.9.0",
+    "rescript-mocha": "^0.10.0",
     "rescript-schema": "6.4.0",
     "sinon": "^15.0.4",
     "ts-node": "^10.9.1"
@@ -57,9 +59,23 @@
     "hardhat-abi-exporter": "^2.10.1",
     "helpers": "workspace:*",
     "rescript-nodejs": "16.0.0",
-    "typescript": "^5.0.4"
+    "tsimp": "2.0.11",
+    "typescript": "5.2.2"
   },
   "optionalDependencies": {
     "generated": "./generated"
+  },
+  "ava": {
+    "extensions": {
+      "js": true,
+      "ts": "module"
+    },
+    "files": [
+      "test/**/Rollback_test.bs.js"
+    ],
+    "concurrency": 1,
+    "nodeArguments": [
+      "--import=tsimp/import"
+    ]
   }
 }
