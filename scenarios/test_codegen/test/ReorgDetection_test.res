@@ -1,5 +1,5 @@
 open RescriptMocha
-open Mocha
+
 open Belt
 open ReorgDetection
 
@@ -23,7 +23,7 @@ describe("Validate reorg detection functions", () => {
   let lastBlockScannedHashes = lastBlockScannedHashesArr->intoLastBlockScannedHashesHelper
 
   it("Get Latest and Add Latest Work", () => {
-    Assert.deep_equal(
+    Assert.deepEqual(
       Some({blockNumber: 500, blockHash: "0x5432", blockTimestamp: 5432}),
       lastBlockScannedHashes->LastBlockScannedHashes.getLatestLastBlockData,
     )
@@ -39,14 +39,14 @@ describe("Validate reorg detection functions", () => {
         ~lastBlockScannedData=nextLastBlockScanned,
       )
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       Some(nextLastBlockScanned),
       lastBlockScannedHashes->LastBlockScannedHashes.getLatestLastBlockData,
     )
   })
 
   it("Earliest timestamp in threshold works as expected", () => {
-    Assert.deep_equal(
+    Assert.deepEqual(
       Some(789),
       lastBlockScannedHashes->LastBlockScannedHashes.getEarlistTimestampInThreshold(
         ~currentHeight=500,
@@ -60,7 +60,7 @@ describe("Validate reorg detection functions", () => {
 
     let expected = [(300, "0x789", 789), (500, "0x5432", 5432)]->intoLastBlockScannedHashesHelper
 
-    Assert.deep_equal(expected, pruned, ~message="Should prune up to the block threshold")
+    Assert.deepEqual(expected, pruned, ~message="Should prune up to the block threshold")
 
     let prunedWithMinTimestamp =
       lastBlockScannedHashes->LastBlockScannedHashes.pruneStaleBlockData(
@@ -74,7 +74,7 @@ describe("Validate reorg detection functions", () => {
         (500, "0x5432", 5432),
       ]->intoLastBlockScannedHashesHelper
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       expected,
       prunedWithMinTimestamp,
       ~message="Should keep one range end before the earliestMultiChainTimestampInThreshold",
@@ -103,6 +103,6 @@ describe("Validate reorg detection functions", () => {
 
     let expected = [(1, "0x123", 123), (50, "0x456", 456)]->intoLastBlockScannedHashesHelper
 
-    Assert.deep_equal(expected, rolledBack, ~message="Should prune up to the block threshold")
+    Assert.deepEqual(expected, rolledBack, ~message="Should prune up to the block threshold")
   })
 })

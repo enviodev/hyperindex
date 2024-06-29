@@ -1,5 +1,5 @@
 open RescriptMocha
-open Mocha
+
 open Belt
 open TestHelpers
 
@@ -12,7 +12,7 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
   // Creating mock for {{contract.name.capitalized}} contract {{event.name.capitalized}} event
   let event = {{event.create_mock_code}};
 
-  RescriptMocha.Promise.it("{{contract.name.capitalized}}_{{event.name.capitalized}} is created correctly", async () => {
+  Async.it("{{contract.name.capitalized}}_{{event.name.capitalized}} is created correctly", async () => {
     // Processing the event
     let mockDbUpdated = await {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
       event,
@@ -33,7 +33,7 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
       {{/each}}
     }
     //Assert the expected {{contract.name.capitalized}} {{event.name.capitalized}} entity
-    Assert.deep_equal(
+    Assert.deepEqual(
       actual{{contract.name.capitalized}}{{event.name.capitalized}},
       expected{{contract.name.capitalized}}{{event.name.capitalized}},
       ~message="Actual {{contract.name.capitalized}}_{{event.name.capitalized}} should be the same as the expected {{contract.name.capitalized}}_{{event.name.capitalized}}",

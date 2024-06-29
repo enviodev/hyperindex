@@ -1,12 +1,5 @@
 open Belt
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
@@ -82,7 +75,7 @@ module Stubs = {
   }
 
   //Stub for getting block hashes instead of the worker
-  let getBlockHashes = async (mockChainData, _chainFetcher, ~blockNumbers) =>
+  let getBlockHashes = mockChainData => _chainFetcher => async (~blockNumbers) =>
     mockChainData->MockChainData.getBlockHashes(~blockNumbers)->Ok
 
   //Hold next tasks temporarily here so they do not get actioned off automatically
@@ -111,13 +104,15 @@ module Stubs = {
 
   let dispatchTask = (gsManager, mockChainData, task) => {
     GlobalState.injectedTaskReducer(
-      ~executeNextQuery=executeNextQueryWithMockChainData(mockChainData),
+      ~executeNextQuery=executeNextQueryWithMockChainData(mockChainData, ...),
       ~waitForNewBlock,
-      ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(
-        ~getBlockHashes=getBlockHashes(mockChainData),
-      ),
-      ~dispatchAction=dispatchAction(gsManager),
+      ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
+        chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
+          ~getBlockHashes=getBlockHashes(mockChainData),
+        ),
       ~registeredEvents=RegisteredEvents.global,
+    )(
+      ~dispatchAction=action => dispatchAction(gsManager, action),
       gsManager->GlobalStateManager.getState,
       task,
     )
@@ -142,7 +137,7 @@ Exposing
   @send
   external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
 
-  let query = unsafe(DbFunctions.sql)
+  let query = unsafe(DbFunctions.sql, _)
 
   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 }
@@ -155,7 +150,7 @@ let setupDb = async (~shouldDropRawEvents) => {
 }
 
 describe("Single Chain Simple Rollback", () => {
-  it_promise("Detects reorgs and actions a rollback", async () => {
+  Async.it("Detects reorgs and actions a rollback", async () => {
     let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
@@ -164,14 +159,14 @@ describe("Single Chain Simple Rollback", () => {
     let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
     open Stubs
-    let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
-    let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
+    let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
+    let dispatchTaskReorgChain = dispatchTask(gsManager, Mock.mockChainDataReorg, ...)
+    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData, ...)
     tasks := []
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       tasks.contents,
       [NextQuery(Chain(chain))],
       ~message="should only be one task of next query now that currentBlockHeight is set",
@@ -180,7 +175,7 @@ describe("Single Chain Simple Rollback", () => {
     await dispatchAllTasksInitalChain()
     let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       tasks.contents,
       [
         UpdateEndOfBlockRangeScannedData({
@@ -209,14 +204,10 @@ describe("Single Chain Simple Rollback", () => {
 
     tasks := []
     await dispatchTaskReorgChain(NextQuery(Chain(chain)))
-    Assert.deep_equal(
-      tasks.contents,
-      [Rollback],
-      ~message="should detect rollback with reorg chain",
-    )
+    Assert.deepEqual(tasks.contents, [Rollback], ~message="should detect rollback with reorg chain")
   })
 
-  it_promise("Successfully rolls back single chain indexer to expected values", async () => {
+  Async.it("Successfully rolls back single chain indexer to expected values", async () => {
     await setupDb(~shouldDropRawEvents=true)
 
     let chainManager = {
@@ -230,14 +221,14 @@ describe("Single Chain Simple Rollback", () => {
     let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
     open Stubs
-    let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData)
-    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData)
-    let dispatchAllTasksReorgChain = () => dispatchAllTasks(gsManager, Mock.mockChainDataReorg)
+    let dispatchTaskInitalChain = dispatchTask(gsManager, Mock.mockChainData, ...)
+    let dispatchAllTasksInitalChain = () => dispatchAllTasks(gsManager, Mock.mockChainData, ...)
+    let dispatchAllTasksReorgChain = () => dispatchAllTasks(gsManager, Mock.mockChainDataReorg, ...)
     tasks := []
 
     await dispatchTaskInitalChain(NextQuery(Chain(chain)))
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       tasks.contents,
       [NextQuery(Chain(chain))],
       ~message="should only be one task of next query now that currentBlockHeight is set",
@@ -246,7 +237,7 @@ describe("Single Chain Simple Rollback", () => {
     await dispatchAllTasksInitalChain()
 
     let block2 = Mock.mockChainData->MockChainData.getBlock(~blockNumber=2)->Option.getUnsafe
-    Assert.deep_equal(
+    Assert.deepEqual(
       tasks.contents,
       [
         UpdateEndOfBlockRangeScannedData({
@@ -305,13 +296,13 @@ describe("Single Chain Simple Rollback", () => {
       },
     ]
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       gravatars,
       expectedGravatars,
       ~message="2 Gravatars should have been set and the first one updated in the first 3 events",
     )
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       tasks.contents,
       [
         GlobalState.NextQuery(CheckAllChains),
@@ -327,7 +318,7 @@ describe("Single Chain Simple Rollback", () => {
 
     await dispatchAllTasksReorgChain()
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       tasks.contents,
       [GlobalState.NextQuery(CheckAllChains), ProcessEventBatch],
       ~message="Rollback should have actioned, and now next queries and process event batch should action",
@@ -341,7 +332,7 @@ describe("Single Chain Simple Rollback", () => {
       Mock.mockChainDataReorg
       ->MockChainData.getBlock(~blockNumber=2)
       ->Option.getUnsafe
-    Assert.deep_equal(
+    Assert.deepEqual(
       tasks.contents,
       [
         GlobalState.UpdateEndOfBlockRangeScannedData({
@@ -385,7 +376,7 @@ describe("Single Chain Simple Rollback", () => {
     ]
 
     let gravatars = await getAllGravatars()
-    Assert.deep_equal(
+    Assert.deepEqual(
       expectedGravatars,
       gravatars,
       ~message="First gravatar should roll back and change and second should have received an update",

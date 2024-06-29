@@ -1,11 +1,4 @@
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
 
 let eventMock1: Types.event = Gravatar_NewGravatar({
   blockNumber: 1,
@@ -52,7 +45,7 @@ let qItemMock2: Types.eventBatchQueueItem = {
 }
 
 describe("Chain Event Queue", () => {
-  it_promise("Awaits item to be pushed to queue before resolveing", async () => {
+  Async.it("Awaits item to be pushed to queue before resolveing", async () => {
     let q = ChainEventQueue.make(~maxQueueSize=100)
 
     let itemPromise = q->ChainEventQueue.popSingleAndAwaitItem
@@ -68,11 +61,11 @@ describe("Chain Event Queue", () => {
     Assert.equal(q.popBacklogCallbacks->SDSL.Queue.size, 0)
     let poppedItem = await itemPromise
 
-    Assert.deep_equal(~message="Poped item not the same", qItemMock1, poppedItem)
+    Assert.deepEqual(~message="Poped item not the same", qItemMock1, poppedItem)
     Assert.equal(q.queue->SDSL.Queue.size, 0)
   })
 
-  it_promise("Awaits space on the queue before pushing", async () => {
+  Async.it("Awaits space on the queue before pushing", async () => {
     let hasResolvedPromise = ref(false)
     //Make a queue with small max size
     let q = ChainEventQueue.make(~maxQueueSize=1)
@@ -89,7 +82,7 @@ describe("Chain Event Queue", () => {
         },
       )
     //Assert that the item is not on the queue
-    Assert.deep_equal(q->ChainEventQueue.peekFront, Some(qItemMock1))
+    Assert.deepEqual(q->ChainEventQueue.peekFront, Some(qItemMock1))
     Assert.equal(
       q.queue->SDSL.Queue.size,
       1,
@@ -101,7 +94,7 @@ describe("Chain Event Queue", () => {
     Assert.equal(q.pushBacklogCallbacks->SDSL.Queue.size, 1)
 
     let popedValue1 = q->ChainEventQueue.popSingle
-    Assert.deep_equal(popedValue1, Some(qItemMock1))
+    Assert.deepEqual(popedValue1, Some(qItemMock1))
     Assert.equal(q.pushBacklogCallbacks->SDSL.Queue.size, 0)
 
     await nextIemPromise
@@ -114,6 +107,6 @@ describe("Chain Event Queue", () => {
 
     //assert that the front of the queue is the new item
     let popedValue2 = q->ChainEventQueue.popSingle
-    Assert.deep_equal(popedValue2, Some(qItemMock2))
+    Assert.deepEqual(popedValue2, Some(qItemMock2))
   })
 })

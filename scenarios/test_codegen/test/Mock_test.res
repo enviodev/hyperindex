@@ -1,17 +1,10 @@
 open Belt
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_skip: it_skip_promise,
-  before: before_promise,
-  after: after_promise,
-} = module(RescriptMocha.Promise)
 
 let inMemoryStore = InMemoryStore.make()
 
 describe("E2E Mock Event Batch", () => {
-  before_promise(async () => {
+  Async.before(async () => {
     RegisterHandlers.registerAllHandlers()
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
@@ -60,13 +53,12 @@ describe("E2E Mock Event Batch", () => {
 // NOTE: skipping this test for now since there seems to be some invalid DB state. Need to investigate again.
 // TODO: add a similar kind of test back again.
 describe_skip("E2E Db check", () => {
-  before_promise(async () => {
+  Async.before(async () => {
     await DbHelpers.runUpDownMigration()
 
     RegisterHandlers.registerAllHandlers()
 
-    let _ = await Entities.batchSet(
-      ~entityMod=module(Entities.Gravatar),
+    let _ = await Entities.batchSet(~entityMod=module(Entities.Gravatar))(
       Migrations.sql,
       [MockEntities.gravatarEntity1, MockEntities.gravatarEntity2],
     )
@@ -76,13 +68,14 @@ describe_skip("E2E Db check", () => {
       false
     }
 
-    await EventProcessing.processEventBatch(
+    let _ = await EventProcessing.processEventBatch(
       ~inMemoryStore,
       ~eventBatch=MockEvents.eventBatchItems->List.fromArray,
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
       ~registeredEvents=RegisteredEvents.global,
     )
+
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
@@ -92,7 +85,7 @@ describe_skip("E2E Db check", () => {
   it("Validate inmemory store state", () => {
     let gravatars = inMemoryStore.gravatar->InMemoryTable.Entity.values
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       gravatars,
       [
         {

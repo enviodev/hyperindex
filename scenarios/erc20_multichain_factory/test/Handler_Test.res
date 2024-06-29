@@ -1,16 +1,9 @@
 open RescriptMocha
-open Mocha
 open Belt
 open TestHelpers
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
 
 describe("Transfers", () => {
-  it_promise(
+  Async.it(
     "Transfer subtracts the from account balance and adds to the to account balance",
     async () => {
       //Get mock addresses from helpers
@@ -82,7 +75,7 @@ describe("Transfers", () => {
     },
   )
 
-  it_promise("Deletes Account", async () => {
+  Async.it("Deletes Account", async () => {
     //Get mock addresses from helpers
     let userAddress1 = Ethers.Addresses.mockAddresses[0]->Option.getUnsafe
 

@@ -32,7 +32,6 @@
     "@rescript/react",
     "generated",
     "@ryyppy/rescript-promise",
-    "rescript-mocha",
     "rescript-nodejs",
     "rescript-schema",
     "helpers"

@@ -1,12 +1,5 @@
 open Belt
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
   let allEvents = []
@@ -26,11 +19,10 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       Belt.Int.fromFloat(Js.Math.random() *. float_of_int(max - min + 1) +. float_of_int(min))
     }
 
-    let fetcherStateInit: FetchState.t = FetchState.makeRoot(
+    let fetcherStateInit: FetchState.t = FetchState.makeRoot(~endBlock=None)(
       ~contractAddressMapping=ContractAddressingMap.make(),
       ~dynamicContracts=FetchState.DynamicContractsMap.empty,
       ~startBlock=0,
-      ~endBlock=None,
     )
 
     let fetchState = ref(fetcherStateInit)
@@ -119,9 +111,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       logger: Logging.logger,
       chainConfig: "TODO"->X.magic,
       // This is quite a hack - but it works!
-      chainWorker: Config.Rpc(
-        (1, {"latestFetchedBlockTimestamp": currentTime.contents})->X.magic,
-      ),
+      chainWorker: Config.Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->X.magic),
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
@@ -276,9 +266,11 @@ describe("determineNextEvent", () => {
   describe("optimistic-unordered-mode", () => {
     let determineNextEvent_unordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
       ~isUnorderedMultichainMode=true,
+      _,
     )
     let determineNextEvent_ordered = ChainManager.ExposedForTesting_Hidden.createDetermineNextEventFunction(
       ~isUnorderedMultichainMode=false,
+      _,
     )
 
     let makeNoItem = timestamp => FetchState.NoItem({blockTimestamp: timestamp, blockNumber: 0})
@@ -325,7 +317,7 @@ describe("determineNextEvent", () => {
         let {earliestEventResponse: {earliestQueueItem}} =
           determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
-        Assert.deep_equal(
+        Assert.deepEqual(
           earliestQueueItem,
           Item(singleItem),
           ~message="Should have taken the single item",
@@ -334,7 +326,7 @@ describe("determineNextEvent", () => {
         let {earliestEventResponse: {earliestQueueItem}} =
           determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
-        Assert.deep_equal(
+        Assert.deepEqual(
           earliestQueueItem,
           earliestItem,
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
@@ -381,7 +373,7 @@ describe("determineNextEvent", () => {
         let {earliestEventResponse: {earliestQueueItem}} =
           determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
-        Assert.deep_equal(
+        Assert.deepEqual(
           earliestQueueItem,
           Item(singleItem),
           ~message="Should have taken the single item",
@@ -390,7 +382,7 @@ describe("determineNextEvent", () => {
         let {earliestEventResponse: {earliestQueueItem}} =
           determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
-        Assert.deep_equal(
+        Assert.deepEqual(
           earliestQueueItem,
           makeNoItem(earliestItemTimestamp),
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",

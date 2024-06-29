@@ -1,18 +1,18 @@
 open RescriptMocha
-module MochaPromise = RescriptMocha.Promise
-open Mocha
 
 describe("E2E Integration Test", () => {
-  MochaPromise.before(async () => {
-    await DbHelpers.runUpDownMigration()
+  Async.before(() => {
+    DbHelpers.runUpDownMigration()
   })
 
-  MochaPromise.after(async () => {
+  Async.after(() => {
     // It is probably overkill that we are running these 'after' also
-    await DbHelpers.runUpDownMigration()
+    DbHelpers.runUpDownMigration()
   })
 
-  MochaPromise.it("Complete E2E", ~timeout=5 * 1000, async () => {
+  Async.it("Complete E2E", async () => {
+    This.timeout(5 * 1000)
+
     let contracts = await SetupRpcNode.deployContracts()
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
     let provider = Hardhat.hardhatProvider
