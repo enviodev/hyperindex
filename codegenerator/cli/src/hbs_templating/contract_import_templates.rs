@@ -195,6 +195,7 @@ use crate::{
         entity_parsing::{Entity, Field, FieldType, Schema},
         system_config::{self, SystemConfig},
     },
+    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     template_dirs::TemplateDirs,
 };
 use anyhow::{Context, Result};
@@ -361,7 +362,8 @@ impl Into<Entity> for Event {
 ///schema and handlers.
 #[derive(Serialize, Clone)]
 pub struct Param {
-    param_name: CapitalizedOptions,
+    res_name: String,
+    js_name: String,
     ///Event param name + index if its a tuple ie. myTupleParam_0_1 or just myRegularParam
     entity_key: CapitalizedOptions,
     ///Just the event param name accessible on the event type
@@ -374,12 +376,21 @@ pub struct Param {
 }
 
 impl Param {
+    fn make_res_name(js_name: &String) -> String {
+        let uncapitalized = js_name.uncapitalize();
+        if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
+            format!("{}_", uncapitalized)
+        } else {
+            uncapitalized
+        }
+    }
+
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
+        let js_name = flattened_event_param.event_param.name.to_string();
+        let res_name = Self::make_res_name(&js_name);
         Ok(Param {
-            param_name: flattened_event_param
-                .event_param
-                .name
-                .to_capitalized_options(),
+            res_name,
+            js_name,
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
             tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,

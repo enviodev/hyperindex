@@ -11,6 +11,7 @@ use crate::{
         postgres_types,
         system_config::{self, RpcConfig, SystemConfig},
     },
+    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
         handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
@@ -24,15 +25,25 @@ use pathdiff::diff_paths;
 use serde::Deserialize;
 use serde::Serialize;
 
+fn make_res_name(js_name: &String) -> String {
+    let uncapitalized = js_name.uncapitalize();
+    if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
+        format!("{}_", uncapitalized)
+    } else {
+        uncapitalized
+    }
+}
+
 pub trait HasName {
     fn set_name(&mut self, name: CapitalizedOptions);
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
-    pub param_name: CapitalizedOptions,
-    pub type_rescript: String,
-    pub type_rescript_schema: String,
+    pub res_name: String,
+    pub js_name: String,
+    pub res_type: String,
+    pub res_schema_code: String,
     pub default_value_rescript: String,
     pub default_value_non_rescript: String,
     pub is_eth_address: bool,
@@ -160,8 +171,8 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
-    pub type_rescript: RescriptType,
-    pub type_rescript_schema: String,
+    pub res_type: RescriptType,
+    pub res_schema_code: String,
     pub type_pg: String,
     pub is_entity_field: bool,
     ///Used in template to tell whether it is a field looked up from another table or a value in
@@ -178,7 +189,7 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, entity: &Entity, config: &SystemConfig) -> Result<Self> {
-        let type_rescript: RescriptType = field
+        let res_type: RescriptType = field
             .field_type
             .to_rescript_type(&config.schema)
             .context("Failed getting rescript type")?
@@ -198,8 +209,8 @@ impl EntityParamTypeTemplate {
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            type_rescript_schema: type_rescript.to_rescript_schema(),
-            type_rescript,
+            res_schema_code: res_type.to_rescript_schema(),
+            res_type,
             is_derived_from,
             type_pg,
             is_entity_field,
@@ -299,9 +310,9 @@ impl EntityRecordTypeTemplate {
                 params: multi_field_index
                     .get_field_names()
                     .iter()
-                    .map(|param_name| {
+                    .map(|res_name| {
                         params_lookup
-                            .get(param_name)
+                            .get(res_name)
                             .cloned()
                             .expect("param name should be in lookup")
                     })
@@ -402,17 +413,18 @@ impl EventTemplate {
             .inputs
             .iter()
             .map(|input| {
-                let type_rescript = abi_to_rescript_type(&input.into());
-
+                let res_type = abi_to_rescript_type(&input.into());
+                let js_name = input.name.to_string();
                 EventParamTypeTemplate {
-                    param_name: input.name.to_capitalized_options(),
-                    default_value_rescript: type_rescript.get_default_value_rescript(),
-                    default_value_non_rescript: type_rescript.get_default_value_non_rescript(),
-                    type_rescript: type_rescript.to_string(),
-                    type_rescript_schema: type_rescript.to_rescript_schema(),
-                    is_eth_address: type_rescript == RescriptType::Address,
+                    res_name: make_res_name(&js_name),
+                    js_name,
+                    default_value_rescript: res_type.get_default_value_rescript(),
+                    default_value_non_rescript: res_type.get_default_value_non_rescript(),
+                    res_type: res_type.to_string(),
+                    res_schema_code: res_type.to_rescript_schema(),
+                    is_eth_address: res_type == RescriptType::Address,
                     is_indexed: input.indexed,
-                    type_rescript_skar_decoded_param: type_rescript.to_string_decoded_skar(),
+                    type_rescript_skar_decoded_param: res_type.to_string_decoded_skar(),
                 }
             })
             .collect::<Vec<_>>();
@@ -955,11 +967,13 @@ mod test {
     const RESCRIPT_STRING_TYPE: RescriptType = RescriptType::String;
 
     impl EventParamTypeTemplate {
-        fn new(param_name: &str, res_type: RescriptType) -> Self {
+        fn new(name: &str, res_type: RescriptType) -> Self {
+            let js_name = name.to_string();
             Self {
-                param_name: param_name.to_string().to_capitalized_options(),
-                type_rescript: res_type.to_string(),
-                type_rescript_schema: res_type.to_rescript_schema(),
+                res_name: make_res_name(&js_name),
+                js_name,
+                res_type: res_type.to_string(),
+                res_schema_code: res_type.to_rescript_schema(),
                 default_value_rescript: res_type.get_default_value_rescript(),
                 default_value_non_rescript: res_type.get_default_value_non_rescript(),
                 is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,

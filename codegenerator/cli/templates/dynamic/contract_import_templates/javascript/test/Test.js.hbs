@@ -28,10 +28,9 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
 
     // Creating the expected entity
     const expected{{contract.name.capitalized}}{{event.name.capitalized}} = {
-      id:
-        {{event.entity_id_from_event_code}},
+      id:{{event.entity_id_from_event_code}},
       {{#each event.params as |param|}}
-      {{param.param_name.uncapitalized}}: event.params.{{param.param_name.uncapitalized}},
+      {{param.js_name}}: event.params.{{param.js_name}},
       {{/each}}
     };
     // Asserting that the entity in the mock database is the same as the expected entity
