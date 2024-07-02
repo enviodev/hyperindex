@@ -93,7 +93,7 @@ let makeStoreOperatorEntity = (
 ): storeOperations<Types.id, 'entity> => {
   let {get, values, set} = module(InMemoryTable.Entity)
 
-  let get = inMemoryStore->getStore->get
+  let get = get(inMemoryStore->getStore, _)
 
   let getAll = () =>
     inMemoryStore
@@ -136,7 +136,7 @@ let makeStoreOperatorMeta = (
 ): storeOperations<'key, 'value> => {
   let {get, values, set} = module(InMemoryTable)
 
-  let get = inMemoryStore->getStore->get
+  let get = get(inMemoryStore->getStore, _)
   // unit => array<StoreState.value>
   let getAll = () => inMemoryStore->getStore->values->Array.map(row => row)
 
@@ -232,7 +232,7 @@ let cloneMockDb = (self: t) => {
   clonedInternalDb->makeWithInMemoryStore
 }
 
-let batchRead = (entity: entityStoreOperations<'entity>, ids) =>
+let batchRead = (entity: entityStoreOperations<'entity>) => ids =>
   ids->Array.keepMap(id => entity.get(id))->Promise.resolve
 
 /**

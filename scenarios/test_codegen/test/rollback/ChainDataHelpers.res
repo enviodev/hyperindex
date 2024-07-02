@@ -8,6 +8,7 @@ module Gravatar = {
 
   let makeEventConstructorWithDefaultSrcAddress = MockChainData.makeEventConstructor(
     ~srcAddress=defaultAddress,
+    ...
   )
 
   module NewGravatar = {
@@ -19,6 +20,7 @@ module Gravatar = {
       ~schema,
       ~eventName,
       ~params=_,
+      ...
     )
   }
 
@@ -31,6 +33,7 @@ module Gravatar = {
       ~schema,
       ~eventName,
       ~params=_,
+      ...
     )
   }
 }

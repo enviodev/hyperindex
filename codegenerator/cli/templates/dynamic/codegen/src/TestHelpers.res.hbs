@@ -150,7 +150,7 @@ module EventFunctions = {
       switch registeredEvent.loaderHandler {
       | Some(handler) =>
         switch await event->EventProcessing.runEventHandler(
-          ~executeLoadLayer=TestHelpers_MockDb.executeMockDbLoadLayer(mockDbClone),
+          ~executeLoadLayer=TestHelpers_MockDb.executeMockDbLoadLayer(mockDbClone, ...),
           ~inMemoryStore,
           ~handler,
           ~eventMod,

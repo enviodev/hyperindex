@@ -1,9 +1,8 @@
 open RescriptMocha
-open Mocha
 open Belt
 
 describe("Greeter template tests", () => {
-  RescriptMocha.Promise.it("A NewGreeting event creates a User entity", async () => {
+  Async.it("A NewGreeting event creates a User entity", async () => {
     // Initializing the mock database
     let mockDbInitial = TestHelpers.MockDb.createMockDb()
 
@@ -36,10 +35,10 @@ describe("Greeter template tests", () => {
       updatedMockDb.entities.user.get(userAddress->Ethers.ethAddressToString)->Option.getExn
 
     // Asserting that the entity in the mock database is the same as the expected entity
-    Assert.deep_equal(expectedUserEntity, actualUserEntity)
+    Assert.deepEqual(expectedUserEntity, actualUserEntity)
   })
 
-  RescriptMocha.Promise.it(
+  Async.it(
     "2 Greetings from the same users results in that user having a greeter count of 2",
     async () => {
       // Initializing the mock database
@@ -85,7 +84,7 @@ describe("Greeter template tests", () => {
     },
   )
 
-  RescriptMocha.Promise.it(
+  Async.it(
     "2 Greetings from the same users results in the latest greeting being the greeting from the second event",
     async () => {
       // Initializing the mock database

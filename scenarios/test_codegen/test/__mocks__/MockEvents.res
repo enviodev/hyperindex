@@ -199,7 +199,7 @@ let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem 
 })
 
 let inMemoryStoreMock = InMemoryStore.make()
-let makeContext = event => ContextEnv.make(~logger=Logging.logger, ~chain=Chain_1, ~event)
+let makeContext = event => ContextEnv.make(~logger=Logging.logger, ~chain=Chain_1, ~event, ...)
 
 let mockNewGravatarContext = makeContext(newGravatarLog1)
 let mockUpdateGravatarContext = makeContext(setGravatarLog1)

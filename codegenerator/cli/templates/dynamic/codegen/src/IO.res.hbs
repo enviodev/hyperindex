@@ -89,12 +89,12 @@ let executeSetEntityWithHistory = (
       ~entityHistoriesToSet=Belt.Array.concatMany(entityHistoryItemsToSet),
     ),
     if entitiesToSet->Array.length > 0 {
-      sql->Entities.batchSet(entitiesToSet, ~entityMod)
+      sql->Entities.batchSet(~entityMod)(entitiesToSet)
     } else {
       Promise.resolve()
     },
     if idsToDelete->Array.length > 0 {
-      sql->Entities.batchDelete(idsToDelete, ~entityMod)
+      sql->Entities.batchDelete(~entityMod)(idsToDelete)
     } else {
       Promise.resolve()
     },
@@ -128,9 +128,9 @@ let executeDbFunctionsEntity = (
 
   let promises =
     (
-      entitiesToSet->Array.length > 0 ? [sql->Entities.batchSet(entitiesToSet, ~entityMod)] : []
+      entitiesToSet->Array.length > 0 ? [sql->Entities.batchSet(~entityMod)(entitiesToSet)] : []
     )->Belt.Array.concat(
-      idsToDelete->Array.length > 0 ? [sql->Entities.batchDelete(idsToDelete, ~entityMod)] : [],
+      idsToDelete->Array.length > 0 ? [sql->Entities.batchDelete(~entityMod)(idsToDelete)] : [],
     )
 
   promises->Promise.all->Promise.thenResolve(_ => ())
@@ -142,22 +142,26 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
     : executeDbFunctionsEntity
 
   let setEventSyncState = executeSet(
+    _,
     ~dbFunction=DbFunctions.EventSyncState.batchSet,
     ~items=inMemoryStore.eventSyncState->InMemoryTable.values,
   )
 
   let setRawEvents = executeSet(
+    _,
     ~dbFunction=DbFunctions.RawEvents.batchSet,
     ~items=inMemoryStore.rawEvents->InMemoryTable.values,
   )
 
   let setDynamicContracts = executeSet(
+    _,
     ~dbFunction=DbFunctions.DynamicContractRegistry.batchSet,
     ~items=inMemoryStore.dynamicContractRegistry->InMemoryTable.values,
   )
 
   {{#each entities as | entity |}}
   let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
+    _,
     ~entityMod=module(Entities.{{entity.name.capitalized}}),
     ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryTable.values,
   )
@@ -172,7 +176,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
       DbFunctions.EntityHistory.deleteAllEntityHistoryAfterEventIdentifier,
       DbFunctions.RawEvents.deleteAllRawEventsAfterEventIdentifier,
       DbFunctions.DynamicContractRegistry.deleteAllDynamicContractRegistrationsAfterEventIdentifier,
-    ]->Belt.Array.map(fn => fn(~eventIdentifier))
+    ]->Belt.Array.map(fn => fn(_, ~eventIdentifier))
   | None => []
   }
 

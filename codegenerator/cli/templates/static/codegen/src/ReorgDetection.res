@@ -95,8 +95,11 @@ module LastBlockScannedHashes: {
     lastBlockScannedDataList,
   }
 
-  let makeWithData = lastBlockScannedDataListArr =>
-    lastBlockScannedDataListArr->Belt.List.fromArray->Belt.List.reverse->makeWithDataInternal
+  let makeWithData = (lastBlockScannedDataListArr, ~confirmedBlockThreshold) =>
+    lastBlockScannedDataListArr
+    ->Belt.List.fromArray
+    ->Belt.List.reverse
+    ->makeWithDataInternal(~confirmedBlockThreshold)
   //Instantiates empty LastBlockHashes
   let empty = (~confirmedBlockThreshold) => makeWithDataInternal(list{}, ~confirmedBlockThreshold)
 
@@ -213,10 +216,10 @@ module LastBlockScannedHashes: {
     }
   }
   and pruneEarliestBlockData = (
+    lastBlockScannedDataListReversed: list<blockData>,
     ~currentHeight,
     ~earliestMultiChainTimestampInThreshold,
     ~confirmedBlockThreshold,
-    lastBlockScannedDataListReversed: list<blockData>,
   ) => {
     switch lastBlockScannedDataListReversed {
     | list{earliestLastBlockData, ...tail} =>
@@ -298,7 +301,7 @@ module LastBlockScannedHashes: {
 
     lastBlockScannedDataList
     ->rollBackToValidHashInternal(~latestBlockHashes)
-    ->Belt.Result.map(makeWithDataInternal(~confirmedBlockThreshold))
+    ->Belt.Result.map(list => list->makeWithDataInternal(~confirmedBlockThreshold))
   }
 
   let rec rollBackToBlockTimestampLteInternal = (

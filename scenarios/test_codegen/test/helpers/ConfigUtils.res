@@ -16,7 +16,7 @@ let loadConfigYaml = (~codegenConfigPath: string) => {
       | Some(m) => raise(ConfigFileNotFound("config file not found: " ++ m))
       | None => ()
       }
-      Obj.magic()
+      X.magic()
     }
   }
 }

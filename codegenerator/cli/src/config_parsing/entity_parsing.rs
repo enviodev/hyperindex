@@ -892,7 +892,7 @@ impl RescriptType {
                     })
                     .collect::<Vec<String>>()
                     .join(", ");
-                format!("S.tuple((. s) => ({}))", inner_str)
+                format!("S.tuple(s => ({}))", inner_str)
             }
             RescriptType::EnumVariant(enum_name) => {
                 format!("Enums.{}.schema", &enum_name.capitalized)

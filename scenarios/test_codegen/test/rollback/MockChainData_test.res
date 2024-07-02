@@ -1,6 +1,6 @@
 open Belt
 open RescriptMocha
-open Mocha
+
 
 describe("Check that MockChainData works as expected", () => {
   let mockChainDataInit = MockChainData.make(

@@ -16,14 +16,11 @@ module ERC20 = {
     let accessor = v => Types.ERC20_Transfer(v)
     let schema = Types.ERC20.Transfer.eventArgsSchema
     let eventName = ERC20_Transfer
-    let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
-      ~accessor,
-      ~schema,
-      ~eventName,
-    )
+    let mkEventConstrWithParamsAndAddress =
+      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
   }
 }
 
@@ -36,28 +33,22 @@ module ERC20Factory = {
     let schema = Types.ERC20Factory.TokenCreated.eventArgsSchema
     let eventName = ERC20Factory_TokenCreated
 
-    let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
-      ~accessor,
-      ~schema,
-      ~eventName,
-    )
+    let mkEventConstrWithParamsAndAddress =
+      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
   }
   module DeleteUser = {
     let accessor = v => Types.ERC20Factory_DeleteUser(v)
     let schema = Types.ERC20Factory.DeleteUser.eventArgsSchema
     let eventName = ERC20Factory_DeleteUser
 
-    let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
-      ~accessor,
-      ~schema,
-      ~eventName,
-    )
+    let mkEventConstrWithParamsAndAddress =
+      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
   }
 }
 
@@ -74,7 +65,7 @@ module Stubs = {
     gsManager,
   }
   let getTasks = ({tasks}) => tasks.contents
-  let getMockChainData = ({mockChainDataMap}) => mockChainDataMap->ChainMap.get
+  let getMockChainData = ({mockChainDataMap}, chain) => mockChainDataMap->ChainMap.get(chain)
 
   //Stub executeNextQuery with mock data
   let makeExecuteNextQuery = async (
@@ -100,7 +91,7 @@ module Stubs = {
     }
 
   //Stub for getting block hashes instead of the worker
-  let makeGetBlockHashes = async (stubData, sourceWorker, ~blockNumbers) => {
+  let makeGetBlockHashes = stubData => sourceWorker => async (~blockNumbers) => {
     let chain = sourceWorker->getChainFromWorker
     stubData->getMockChainData(chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
@@ -140,13 +131,15 @@ module Stubs = {
 
   let makeDispatchTask = (stubData: t, task) => {
     GlobalState.injectedTaskReducer(
-      ~executeNextQuery=makeExecuteNextQuery(stubData),
-      ~waitForNewBlock=makeWaitForNewBlock(stubData),
+      ~executeNextQuery=makeExecuteNextQuery(stubData, ...),
+      ~waitForNewBlock=makeWaitForNewBlock(stubData, ...),
       ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(
         ~getBlockHashes=makeGetBlockHashes(stubData),
+        _,
       ),
-      ~dispatchAction=makeDispatchAction(stubData),
       ~registeredEvents=RegisteredEvents.global,
+    )(
+      ~dispatchAction=makeDispatchAction(stubData, _),
       stubData.gsManager->GlobalStateManager.getState,
       task,
     )

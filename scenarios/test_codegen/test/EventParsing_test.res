@@ -1,5 +1,5 @@
 open RescriptMocha
-open Mocha
+
 
 describe("Parsing Raw Events", () => {
   it("Parses a raw event entity into a batch queue item", () => {
@@ -66,6 +66,6 @@ describe("Parsing Raw Events", () => {
       }),
     }
 
-    Assert.deep_strict_equal(parsedEvent, expectedParseResult)
+    Assert.deepStrictEqual(parsedEvent, expectedParseResult)
   })
 })

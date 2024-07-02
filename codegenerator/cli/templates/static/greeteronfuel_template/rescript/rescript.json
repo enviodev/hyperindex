@@ -1,7 +1,6 @@
 {
   "name": "greeter",
   "version": "0.1.0",
-  "uncurried": false,
   "sources": [
     {
       "dir": "src",
@@ -20,10 +19,6 @@
     "version": 4
   },
   "suffix": ".bs.js",
-  "bs-dependencies": [
-    "generated",
-    "@ryyppy/rescript-promise",
-    "rescript-mocha"
-  ],
+  "bs-dependencies": ["generated", "@ryyppy/rescript-promise"],
   "pinned-dependencies": ["generated"]
 }

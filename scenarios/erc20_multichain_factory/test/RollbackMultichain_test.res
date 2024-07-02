@@ -1,12 +1,5 @@
 open Belt
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
 
 module Mock = {
   /*
@@ -82,7 +75,7 @@ module Mock = {
     )
 
     open ChainDataHelpers.ERC20
-    let mkTransferEventConstr = Transfer.mkEventConstr(~chain)
+    let mkTransferEventConstr = Transfer.mkEventConstr(~chain, ...)
 
     let b0 = []
     //balances: u1=0 | u2=0
@@ -106,10 +99,8 @@ module Mock = {
     let blocksInitial = blocksBase->Array.concat([b4, b5, b6])
     let blocksReorg = blocksBase->Array.concat([rollbackB4, b5, b6])
 
-    let applyBlocks = addBlocksOfTransferEvents(
-      ~mockChainData=mockChainDataEmpty,
-      ~mkTransferEventConstr,
-    )
+    let applyBlocks =
+      addBlocksOfTransferEvents(~mockChainData=mockChainDataEmpty, ~mkTransferEventConstr, ...)
 
     let mockChainDataInitial = blocksInitial->applyBlocks
     let mockChainDataReorg = blocksReorg->applyBlocks
@@ -126,7 +117,7 @@ module Mock = {
       ~blockTimestampInterval=16,
     )
     open ChainDataHelpers.ERC20
-    let mkTransferEventConstr = Transfer.mkEventConstr(~chain)
+    let mkTransferEventConstr = Transfer.mkEventConstr(~chain, ...)
     let b0 = []
     //balances: u1=0 | u2=0
     let b1 = [mint50ToUser1]
@@ -148,10 +139,8 @@ module Mock = {
 
     let blocks = [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]
 
-    let applyBlocks = addBlocksOfTransferEvents(
-      ~mockChainData=mockChainDataEmpty,
-      ~mkTransferEventConstr,
-    )
+    let applyBlocks =
+      addBlocksOfTransferEvents(~mockChainData=mockChainDataEmpty, ~mkTransferEventConstr, ...)
 
     let mockChainData = blocks->applyBlocks
   }
@@ -198,7 +187,7 @@ module Sql = {
   @send
   external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
 
-  let query = unsafe(DbFunctions.sql)
+  let query = unsafe(DbFunctions.sql, _)
 
   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 
@@ -226,11 +215,11 @@ let setupDb = async (~shouldDropRawEvents) => {
 }
 
 describe("Multichain rollback test", () => {
-  before_promise(() => {
+  Async.before(() => {
     //Provision the db
     DbHelpers.runUpDownMigration()
   })
-  it_promise("Multichain indexer should rollback and not reprocess any events", async () => {
+  Async.it("Multichain indexer should rollback and not reprocess any events", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
@@ -243,7 +232,7 @@ describe("Multichain rollback test", () => {
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
-    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks)
+    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
 
     //helpers
     let getState = () => {
@@ -267,8 +256,11 @@ describe("Multichain rollback test", () => {
       chain->getFetchState->FetchState.getLatestFullyFetchedBlock
     }
 
-    let getTokenBalance = chain => {
-      Sql.getAccountTokenBalance(~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain))
+    let getTokenBalance = (~accountAddress) => chain => {
+      Sql.getAccountTokenBalance(
+        ~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain),
+        ~accountAddress,
+      )
     }
 
     let getUser1Balance = getTokenBalance(~accountAddress=Mock.userAddress1)
@@ -279,14 +271,14 @@ describe("Multichain rollback test", () => {
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions
     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMapInitial)
-    let dispatchTask = stubDataInitial->Stubs.makeDispatchTask
+    let dispatchTask = Stubs.makeDispatchTask(stubDataInitial, _)
     let dispatchAllTasks = () => stubDataInitial->Stubs.dispatchAllTasks
 
     //Dispatch first task of next query all chains
     //First query will just get the height
     await dispatchTask(NextQuery(CheckAllChains))
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       [GlobalState.NextQuery(Chain(Chain_1)), NextQuery(Chain(Chain_137))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
@@ -326,16 +318,16 @@ describe("Multichain rollback test", () => {
         | None => "None"
         }
 
-      let getBalanceFn = user =>
+      let getBalanceFn = (chain, user) =>
         switch user {
-        | 1 => getUser1Balance
-        | 2 => getUser2Balance
+        | 1 => chain->getUser1Balance
+        | 2 => chain->getUser2Balance
         | user => Js.Exn.raiseError(`Invalid user num ${user->Int.toString}`)
         }
 
       let assertBalance = async (~chain, ~expectedBalance, ~user) => {
-        let balance = await getBalanceFn(user, chain)
-        Assert.deep_equal(
+        let balance = await getBalanceFn(chain, user)
+        Assert.deepEqual(
           expectedBalance->Option.map(toBigInt),
           balance,
           ~message=`Chain ${chain->ChainMap.Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
@@ -364,7 +356,7 @@ describe("Multichain rollback test", () => {
 
     //Make the first queries (A)
     await dispatchAllTasks()
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
@@ -417,7 +409,7 @@ describe("Multichain rollback test", () => {
       ~chain2User1Balance=Some(50),
       ~chain2User2Balance=Some(100),
     )
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
@@ -457,7 +449,7 @@ describe("Multichain rollback test", () => {
     //And make queries (C)
     await dispatchAllTasks()
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
@@ -511,7 +503,7 @@ describe("Multichain rollback test", () => {
     //Process batch 3 of events and make queries
     //Execute queries(D)
     await dispatchAllTasks()
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Rollback,
@@ -545,7 +537,7 @@ describe("Multichain rollback test", () => {
 
     //Action reorg
     await dispatchAllTasks()
-    Assert.deep_equal(
+    Assert.deepEqual(
       [GlobalState.NextQuery(CheckAllChains), ProcessEventBatch],
       stubDataReorg->Stubs.getTasks,
       ~message="Rollback should have actioned and next tasks are query and process batch",

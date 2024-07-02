@@ -36,10 +36,8 @@ module MakeManager = (S: State) => {
     }
   }
   and dispatchTask = (self, task: S.task) => Js.Global.setTimeout(() => {
-      S.taskReducer(
-        self.state,
-        task,
-        ~dispatchAction=dispatchAction(~stateId=self.state->S.getId, self),
+      S.taskReducer(self.state, task, ~dispatchAction=action =>
+        dispatchAction(~stateId=self.state->S.getId, self, action)
       )->ignore
     }, 0)->ignore
 

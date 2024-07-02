@@ -151,7 +151,7 @@ let fetchBlockRange = async (
   ~currentBlockHeight,
   ~setCurrentBlockHeight,
 ) => {
-  let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger)
+  let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
   try {
     let {chainConfig: {chain}, serverUrl} = self
     let {fetchStateRegisterId, fromBlock, contractAddressMapping, toBlock, ?eventFilters} = query
@@ -333,7 +333,7 @@ let fetchBlockRange = async (
     | Some(eventFilters) =>
       //In the case where there are filters, apply them and keep the events that
       //are needed
-      parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters))
+      parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters, ...))
     }
 
     let parsingTimeElapsed = parsingTimeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
@@ -344,7 +344,7 @@ let fetchBlockRange = async (
       lastBlockScannedData,
       firstBlockParentNumberAndHash: pageUnsafe.rollbackGuard->Option.map(v => {
         ReorgDetection.blockHash: v.firstParentHash,
-        blockNumber: v.firstBlockNumber - 1, 
+        blockNumber: v.firstBlockNumber - 1,
       }),
     }
 
@@ -375,5 +375,5 @@ let fetchBlockRange = async (
   }
 }
 
-let getBlockHashes = ({serverUrl}: t, ~blockNumbers) =>
+let getBlockHashes = ({serverUrl}: t) => (~blockNumbers) =>
   HyperSync.queryBlockDataMulti(~serverUrl, ~blockNumbers)->Promise.thenResolve(HyperSync.mapExn)

@@ -1,5 +1,5 @@
 open RescriptMocha
-open Mocha
+
 open ContractInterfaceManager
 
 describe("Test ContractInterfaceManager", () => {
@@ -85,13 +85,13 @@ describe("Test ContractInterfaceManager", () => {
 
     let {addresses: allAddresses, topics: allTopics} = combinedIM->getAllTopicsAndAddresses
 
-    Assert.deep_strict_equal(
+    Assert.deepStrictEqual(
       Belt.Array.concat(gravatarAddresses, nftFactoryAddresses),
       allAddresses,
       ~message="combined addresses should contain addresses of single ContractInterfaceManager",
     )
 
-    Assert.deep_strict_equal(
+    Assert.deepStrictEqual(
       Belt.Array.concat(gravatarTopics, nftFactoryTopics),
       allTopics,
       ~message="combined topics should contain addresses of single ContractInterfaceManager",

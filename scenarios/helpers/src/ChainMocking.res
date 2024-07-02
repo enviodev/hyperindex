@@ -22,10 +22,10 @@ module Crypto = {
     ->digest(Hex)
     ->pad
 
-  let hashKeccak256String = hashKeccak256(~toString=Obj.magic)
-  let hashKeccak256Int = hashKeccak256(~toString=Int.toString)
+  let hashKeccak256String = hashKeccak256(~toString=int => int->Obj.magic, _)
+  let hashKeccak256Int = hashKeccak256(~toString=int => int->Int.toString, _)
   let anyToString = a => a->Js.Json.stringifyAny->Option.getExn
-  let hashKeccak256Any = hashKeccak256(~toString=anyToString)
+  let hashKeccak256Any = hashKeccak256(~toString=anyToString, _)
   let hashKeccak256Compound = (previousHash, input) =>
     input->hashKeccak256(~toString=v => anyToString(v) ++ previousHash)
 }
@@ -117,6 +117,7 @@ module Make = (Indexer: Indexer.S) => {
       ~txTo,
       ~blockNumber,
       ~blockTimestamp,
+      ...
     )
 
     {transactionHash, makeEvent, logIndex, srcAddress, eventName}
@@ -265,7 +266,7 @@ module Make = (Indexer: Indexer.S) => {
     let parsedQueueItems = switch query.eventFilters {
     | None => parsedQueueItemsPreFilter
     | Some(eventFilters) =>
-      parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters))
+      parsedQueueItemsPreFilter->Array.keep(i => i->FetchState.applyFilters(~eventFilters))
     }
 
     {

@@ -1,7 +1,6 @@
 {
   "name": "gravatar",
   "version": "0.1.0",
-  "uncurried": false,
   "sources": [
     {
       "dir": "src",
@@ -33,12 +32,9 @@
     "@rescript/react",
     "generated",
     "@ryyppy/rescript-promise",
-    "rescript-mocha",
     "rescript-nodejs",
     "rescript-schema",
     "helpers"
   ],
-  "bsc-flags": [
-    "-open RescriptSchema"
-  ]
+  "bsc-flags": ["-open RescriptSchema"]
 }

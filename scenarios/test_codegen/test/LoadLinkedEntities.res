@@ -1,22 +1,20 @@
 open RescriptMocha
-module MochaPromise = RescriptMocha.Promise
-open Mocha
 
 /// NOTE: diagrams for these tests can be found here: https://www.figma.com/file/TrBPqQHYoJ8wg6e0kAynZo/Scenarios-to-test-Linked-Entities?type=whiteboard&node-id=0%3A1&t=CZAE4T4oY9PCbszw-1
 
 describe_skip("Linked Entity Loader Integration Test", () => {
   // TODO check if this test is relevent after v2 loader api
   ()
-  // MochaPromise.before(async () => {
+  // Async.before(async () => {
   //   DbHelpers.runUpDownMigration()
   // })
   //
-  // MochaPromise.after(async () => {
+  // Async.after(async () => {
   //   // It is probably overkill that we are running these 'after' also
   //   DbHelpers.runUpDownMigration()
   // })
   //
-  // MochaPromise.it_skip("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
+  // Async.it_skip("Test Linked Entity Loader Scenario 1", ~timeout=5 * 1000, async () => {
   //   let sql = DbFunctions.sql
   //   /// Setup DB
   //   let a1: Types.a = {optionalStringToTestLinkedEntities: None, id: "a1", b_id: "b1"}
@@ -59,7 +57,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //       "chainId": 1,
   //       "logIndex": 0,
   //       "blockTimestamp": 123,
-  //     }->Obj.magic,
+  //     }->X.magic,
   //     ~logger=Logging.logger,
   //     ~asyncGetters=EventProcessing.asyncGetters,
   //   )
@@ -76,25 +74,25 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //
   //   let testingA = handlerContext.a.all
   //
-  //   Assert.deep_equal(
+  //   Assert.deepEqual(
   //     testingA,
   //     [Some(a1), Some(a2), None],
   //     ~message="testingA should have correct items",
   //   )
   //
   //   let optA1 = testingA->Belt.Array.getUnsafe(0)
-  //   Assert.deep_equal(optA1, Some(a1), ~message="Incorrect entity loaded")
+  //   Assert.deepEqual(optA1, Some(a1), ~message="Incorrect entity loaded")
   //
   //   // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
   //   let b1 = handlerContext.a.getB(a1)
   //
-  //   Assert.deep_equal(b1.id, a1.b_id, ~message="b1.id should equal testingA.b_id")
+  //   Assert.deepEqual(b1.id, a1.b_id, ~message="b1.id should equal testingA.b_id")
   //
   //   let c1 = handlerContext.b.getC(b1)
   //   Assert.equal(c1->Belt.Option.map(c => c.id), b1.c_id, ~message="c1.id should equal b1.c_id")
   // })
   //
-  // MochaPromise.it("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
+  // Async.it("Test Linked Entity Loader Scenario 2", ~timeout=5 * 1000, async () => {
   //   let sql = DbFunctions.sql
   //
   //   /// Setup DB
@@ -122,7 +120,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //   let context = Context.Gravatar.TestEventEvent.contextCreator(
   //     ~inMemoryStore,
   //     ~chainId=123,
-  //     ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
+  //     ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->X.magic,
   //     ~logger=Logging.logger,
   //     ~asyncGetters=EventProcessing.asyncGetters,
   //   )
@@ -139,10 +137,10 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //
   //   let testingA = handlerContext.a.all
   //
-  //   Assert.deep_equal([Some(a1)], testingA, ~message="testingA should have correct entities")
+  //   Assert.deepEqual([Some(a1)], testingA, ~message="testingA should have correct entities")
   //
   //   let optA1 = testingA->Belt.Array.getUnsafe(0)
-  //   Assert.deep_equal(optA1, Some(a1), ~message="Incorrect entity loaded")
+  //   Assert.deepEqual(optA1, Some(a1), ~message="Incorrect entity loaded")
   //
   //   // TODO/NOTE: I want to re-work these linked entity loader functions to just have the values, rather than needing to call a function. Unfortunately challenging due to dynamic naturue.
   //   let b1 = handlerContext.a.getB(a1)
@@ -162,7 +160,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
 })
 
 describe("Async linked entity loaders", () => {
-  Promise.it("should update the big int to be the same ", async () => {
+  Async.it("should update the big int to be the same ", async () => {
     // Initializing values for mock db
     let messageFromC = "Hi there I was in C originally"
     // mockDbInitial->Testhelpers.MockDb.
@@ -210,7 +208,7 @@ describe("Async linked entity loaders", () => {
       updatedMockDb.entities.a.get(EventHandlers.aIdWithGrandChildC)->Belt.Option.flatMap(
         a => a.optionalStringToTestLinkedEntities,
       )
-    Assert.deep_equal(stringInAFromC, Some(messageFromC))
+    Assert.deepEqual(stringInAFromC, Some(messageFromC))
 
     // Expected string to be null still since no c grandchild.
     let optionalStringToTestLinkedEntitiesNoGrandchild =
@@ -218,6 +216,6 @@ describe("Async linked entity loaders", () => {
         a => a.optionalStringToTestLinkedEntities,
       )
     Js.log(optionalStringToTestLinkedEntitiesNoGrandchild)
-    Assert.deep_equal(optionalStringToTestLinkedEntitiesNoGrandchild, None)
+    Assert.deepEqual(optionalStringToTestLinkedEntitiesNoGrandchild, None)
   })
 })

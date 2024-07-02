@@ -44,7 +44,11 @@ let make = (
   }
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
 
-  let fetchState = FetchState.makeRoot(~contractAddressMapping, ~dynamicContracts, ~startBlock, ~endBlock)
+  let fetchState = FetchState.makeRoot(~endBlock)(
+    ~contractAddressMapping,
+    ~dynamicContracts,
+    ~startBlock,
+  )
 
   {
     logger,
@@ -148,11 +152,16 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     numEventsProcessed,
     timestampCaughtUpToHeadOrEndblock,
   ) = switch chainMetadata {
-  | Some({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed, timestampCaughtUpToHeadOrEndblock}) => (
+  | Some({
       firstEventBlockNumber,
       latestProcessedBlock,
       numEventsProcessed,
-      Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption
+      timestampCaughtUpToHeadOrEndblock,
+    }) => (
+      firstEventBlockNumber,
+      latestProcessedBlock,
+      numEventsProcessed,
+      Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
     )
   | None => (None, None, None, None)
   }
@@ -297,18 +306,17 @@ let rollbackLastBlockHashesToReorgLocation = async (
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
 
-  let blockNumbersAndHashes =
-    await chainFetcher.chainWorker
-    ->getBlockHashes(~blockNumbers)
-    ->Promise.thenResolve(res =>
-      switch res {
-      | Ok(v) => v
-      | Error(exn) =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
-        )
-      }
-    )
+  let blockNumbersAndHashes = await getBlockHashes(chainFetcher.chainWorker)(
+    ~blockNumbers,
+  )->Promise.thenResolve(res =>
+    switch res {
+    | Ok(v) => v
+    | Error(exn) =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~msg="Failed to fetch blockHashes for given blockNumbers during rollback",
+      )
+    }
+  )
 
   chainFetcher.lastBlockScannedHashes
   ->ReorgDetection.LastBlockScannedHashes.rollBackToValidHash(~blockNumbersAndHashes)

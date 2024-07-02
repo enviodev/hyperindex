@@ -1,12 +1,5 @@
 open Belt
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
 
 module Mock = {
   /*
@@ -69,10 +62,12 @@ ensure that this doesn't trigger a reorg
     let mkTransferEventConstr = Transfer.mkEventConstrWithParamsAndAddress(
       ~srcAddress=mockDyamicToken1,
       ~params=_,
+      ...
     )
     let mkTokenCreatedEventConstr = TokenCreated.mkEventConstrWithParamsAndAddress(
       ~srcAddress=factoryAddress1,
       ~params=_,
+      ...
     )
 
     let b0 = []
@@ -125,12 +120,12 @@ ensure that this doesn't trigger a reorg
 module Sql = RollbackMultichain_test.Sql
 
 describe("Dynamic contract rollback test", () => {
-  before_promise(() => {
+  Async.before(() => {
     //Provision the db
     DbHelpers.runUpDownMigration()
   })
 
-  it_promise("Dynamic contract should not trigger reorg", async () => {
+  Async.it("Dynamic contract should not trigger reorg", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
@@ -143,7 +138,7 @@ describe("Dynamic contract rollback test", () => {
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
-    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks)
+    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
 
     //helpers
     let getChainFetcher = chain => {
@@ -164,8 +159,11 @@ describe("Dynamic contract rollback test", () => {
       chain->getFetchState->FetchState.getLatestFullyFetchedBlock
     }
 
-    let getTokenBalance = chain => {
-      Sql.getAccountTokenBalance(~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain))
+    let getTokenBalance = (~accountAddress) => chain => {
+      Sql.getAccountTokenBalance(
+        ~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain),
+        ~accountAddress,
+      )
     }
 
     let getUser1Balance = getTokenBalance(~accountAddress=Mock.userAddress1)
@@ -176,14 +174,14 @@ describe("Dynamic contract rollback test", () => {
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions
     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMap)
-    let dispatchTask = stubDataInitial->Stubs.makeDispatchTask
+    let dispatchTask = Stubs.makeDispatchTask(stubDataInitial, _)
     let dispatchAllTasks = () => stubDataInitial->Stubs.dispatchAllTasks
 
     //Dispatch first task of next query all chains
     //First query will just get the height
     await dispatchTask(NextQuery(CheckAllChains))
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       [GlobalState.NextQuery(Chain(Chain_1)), NextQuery(Chain(Chain_137))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
@@ -223,16 +221,16 @@ describe("Dynamic contract rollback test", () => {
         | None => "None"
         }
 
-      let getBalanceFn = user =>
+      let getBalanceFn = (chain, user) =>
         switch user {
-        | 1 => getUser1Balance
-        | 2 => getUser2Balance
+        | 1 => chain->getUser1Balance
+        | 2 => chain->getUser2Balance
         | user => Js.Exn.raiseError(`Invalid user num ${user->Int.toString}`)
         }
 
       let assertBalance = async (~chain, ~expectedBalance, ~user) => {
-        let balance = await getBalanceFn(user, chain)
-        Assert.deep_equal(
+        let balance = await getBalanceFn(chain, user)
+        Assert.deepEqual(
           balance,
           expectedBalance->Option.map(toBigInt),
           ~message=`Chain ${chain->ChainMap.Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
@@ -261,7 +259,7 @@ describe("Dynamic contract rollback test", () => {
 
     //Make the first queries (A)
     await dispatchAllTasks()
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
@@ -314,7 +312,7 @@ describe("Dynamic contract rollback test", () => {
       ~chain2User1Balance=Some(50),
       ~chain2User2Balance=Some(100),
     )
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
@@ -359,12 +357,12 @@ describe("Dynamic contract rollback test", () => {
       | _ => raise(Not_found)
       }
 
-    Assert.deep_equal(FetchState.Root, getFetchStateRegisterId())
+    Assert.deepEqual(FetchState.Root, getFetchStateRegisterId())
     //Process batch 2 of events
     //And make queries (C)
     await dispatchAllTasks()
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
@@ -395,7 +393,7 @@ describe("Dynamic contract rollback test", () => {
       ~message="Next round of tasks after query C",
     )
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       FetchState.DynamicContract({blockNumber: 3, logIndex: 0}),
       getFetchStateRegisterId(),
     )
@@ -420,7 +418,7 @@ describe("Dynamic contract rollback test", () => {
     //Process batch 3 of events and make queries
     //Execute queries(D)
     await dispatchAllTasks()
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(

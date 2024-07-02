@@ -146,7 +146,7 @@ let fetchBlockRange = async (
     | Some(eventFilters) =>
       //In the case where there are filters, apply them and keep the events that
       //are needed
-      parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters))
+      parsedQueueItemsPreFilter->Array.keep(item => item->FetchState.applyFilters(~eventFilters))
     }
 
     let sc = rpcConfig.syncConfig
@@ -198,7 +198,7 @@ let fetchBlockRange = async (
   }
 }
 
-let getBlockHashes = (self: t, ~blockNumbers) => {
+let getBlockHashes = (self: t) => (~blockNumbers) => {
   blockNumbers
   ->Array.map(blockNum => self.blockLoader->LazyLoader.get(blockNum))
   ->Promise.all

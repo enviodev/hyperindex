@@ -1,12 +1,5 @@
 open Belt
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
 
 module Mock = {
   /*
@@ -49,10 +42,12 @@ module Mock = {
     let mkTransferEventConstr = Transfer.mkEventConstrWithParamsAndAddress(
       ~srcAddress=ChainDataHelpers.ERC20.getDefaultAddress(Chain_1),
       ~params=_,
+      ...
     )
     let mkDeletUserEventConstr = DeleteUser.mkEventConstrWithParamsAndAddress(
       ~srcAddress=factoryAddress1,
       ~params=_,
+      ...
     )
 
     let b0 = []
@@ -102,12 +97,12 @@ module Mock = {
 module Sql = RollbackMultichain_test.Sql
 
 describe("Unsafe delete test", () => {
-  before_promise(() => {
+  Async.before(() => {
     //Provision the db
     DbHelpers.runUpDownMigration()
   })
 
-  it_promise("Deletes account entity successfully", async () => {
+  Async.it("Deletes account entity successfully", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
@@ -120,19 +115,19 @@ describe("Unsafe delete test", () => {
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
-    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks)
+    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
 
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions
     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMap)
-    let dispatchTask = stubDataInitial->Stubs.makeDispatchTask
+    let dispatchTask = Stubs.makeDispatchTask(stubDataInitial, _)
     let dispatchAllTasks = () => stubDataInitial->Stubs.dispatchAllTasks
 
     //Dispatch first task of next query all chains
     //First query will just get the height
     await dispatchTask(NextQuery(CheckAllChains))
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       [GlobalState.NextQuery(Chain(Chain_1)), NextQuery(Chain(Chain_137))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",

@@ -6,7 +6,7 @@ module Float = {
   let schema =
     S.string
     ->S.setName("GqlDbCustomTypes.Float")
-    ->S.transform((. s) => {
+    ->S.transform(s => {
       parser: (. string) => {
         switch string->Belt.Float.fromString {
         | Some(db) => db

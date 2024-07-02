@@ -1,6 +1,5 @@
 {
   "name": "helpers",
-  "uncurried": false,
   "namespace": "Helpers",
   "sources": {
     "dir": "src",

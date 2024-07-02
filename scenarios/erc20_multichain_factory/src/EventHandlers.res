@@ -84,8 +84,8 @@ let manipulateAccountTokenBalance = (fn, accountToken: AccountToken.t, amount): 
   {...accountToken, balance: accountToken.balance->fn(amount)}
 }
 
-let addToBalance = manipulateAccountTokenBalance(BigInt.add)
-let subFromBalance = manipulateAccountTokenBalance(BigInt.sub)
+let addToBalance = manipulateAccountTokenBalance(BigInt.add, ...)
+let subFromBalance = manipulateAccountTokenBalance(BigInt.sub, ...)
 
 let manipulateAccountBalance = (
   optAccountToken,
@@ -124,12 +124,14 @@ Handlers.ERC20.Transfer.handlerWithLoader({
     let toAccount_id = to->Ethers.ethAddressToString
     let tokenAddress = srcAddress->Ethers.ethAddressToString
 
-    let manipulateAccountBalance = manipulateAccountBalance(
-      ~value,
-      ~tokenAddress,
-      ~setAccountToken=context.accountToken.set,
-      ~setAccount=context.account.set,
-    )
+    let manipulateAccountBalance =
+      manipulateAccountBalance(
+        ~value,
+        ~tokenAddress,
+        ~setAccountToken=context.accountToken.set,
+        ~setAccount=context.account.set,
+        ...
+      )
 
     senderAccountToken->manipulateAccountBalance(subFromBalance, ~account_id=fromAccount_id)
     receiverAccountToken->manipulateAccountBalance(addToBalance, ~account_id=toAccount_id)

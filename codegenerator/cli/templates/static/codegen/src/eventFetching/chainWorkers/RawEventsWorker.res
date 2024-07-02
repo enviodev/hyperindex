@@ -150,7 +150,7 @@ let startWorker = async (
 
     let parsedEventsUnsafe =
       page
-      ->Belt.Array.map(Converters.parseRawEvent(~chain=self.chain, ~txOrigin=None, ~txTo=None))
+      ->Belt.Array.map(Converters.parseRawEvent(~chain=self.chain, ~txOrigin=None, ~txTo=None, ...))
       ->Utils.mapArrayOfResults
       ->Belt.Result.getExn
 

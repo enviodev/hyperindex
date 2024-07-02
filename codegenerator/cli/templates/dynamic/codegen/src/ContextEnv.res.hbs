@@ -90,7 +90,8 @@ let getAddedDynamicContractRegistrations = (contextEnv: t<'eventArgs>) =>
 let makeDynamicContractRegisterFn = (
   ~contextEnv: t<'eventArgs>,
   ~contractName,
-  ~inMemoryStore,
+  ~inMemoryStore
+) => (
   contractAddress: Ethers.ethAddress,
 ) => {
   let {event, chain, addedDynamicContractRegistrations} = contextEnv
@@ -113,7 +114,7 @@ let makeDynamicContractRegisterFn = (
   )
 }
 
-let makeLoader = (loadLayerRef, ~entityIdsMap, ~entityName, entityId) => {
+let makeLoader = (loadLayerRef, ~entityIdsMap, ~entityName) => entityId => {
   entityIdsMap->EntityIdsMap.addId(~entityId, ~entityName)
   Promise.make((resolve, _reject) => {
     loadLayerRef.contents->LoadLayer.LoadActionMap.add(~entityId, ~resolve)
