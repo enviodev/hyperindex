@@ -310,9 +310,9 @@ impl EntityRecordTypeTemplate {
                 params: multi_field_index
                     .get_field_names()
                     .iter()
-                    .map(|res_name| {
+                    .map(|param_name| {
                         params_lookup
-                            .get(res_name)
+                            .get(param_name)
                             .cloned()
                             .expect("param name should be in lookup")
                     })
