@@ -7,7 +7,7 @@ type hyperSyncPage<'item> = {
 }
 
 type txMetadataType = {
-  txOrigin: option<Ethers.ethAddress>,
+  txFrom: option<Ethers.ethAddress>,
   txTo: option<Ethers.ethAddress>,
   maxFeePerGas: option<bigint>,
   maxPriorityFeePerGas: option<bigint>,
@@ -162,7 +162,7 @@ module LogsQuery = {
       }
 
       let txMetadataParams: option<txMetadataType> = event.transaction->Belt.Option.map(b => {
-        txOrigin: b.from->Belt.Option.flatMap(Ethers.getAddressFromString),
+        txFrom: b.from->Belt.Option.flatMap(Ethers.getAddressFromString),
         txTo: b.to->Belt.Option.flatMap(Ethers.getAddressFromString),
         maxFeePerGas: b.maxFeePerGas,
         maxPriorityFeePerGas: b.maxPriorityFeePerGas,

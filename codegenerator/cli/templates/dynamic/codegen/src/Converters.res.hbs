@@ -42,14 +42,16 @@ module {{contract.name.capitalized}} = {
       let eventLog: Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs> = {
         params,
         chainId,
-        txOrigin: txMetadataParams->Belt.Option.flatMap(tx => tx.txOrigin),
-        txTo: txMetadataParams->Belt.Option.flatMap(tx => tx.txTo),
-        txGasPrice: txMetadataParams->Belt.Option.flatMap(tx => tx.gasPrice),
-        txGasUsed: txMetadataParams->Belt.Option.flatMap(tx => tx.gasUsed),
-        txMaxFeePerGas: txMetadataParams->Belt.Option.flatMap(tx => tx.maxFeePerGas),
-        txMaxPriorityFeePerGas: txMetadataParams->Belt.Option.flatMap(tx =>
-          tx.maxPriorityFeePerGas
-        ),
+        tx: Some({
+          from: txMetadataParams->Belt.Option.flatMap(tx => tx.txFrom),
+          to: txMetadataParams->Belt.Option.flatMap(tx => tx.txTo),
+          gasPrice: txMetadataParams->Belt.Option.flatMap(tx => tx.gasPrice),
+          gasUsed: txMetadataParams->Belt.Option.flatMap(tx => tx.gasUsed),
+          maxFeePerGas: txMetadataParams->Belt.Option.flatMap(tx => tx.maxFeePerGas),
+          maxPriorityFeePerGas: txMetadataParams->Belt.Option.flatMap(tx =>
+            tx.maxPriorityFeePerGas
+          ),
+        }),
         blockNumber: log.blockNumber,
         blockTimestamp,
         blockHash: log.blockHash,
@@ -97,12 +99,16 @@ let makeEventLog = (
 ): Types.eventLog<'args> => {
   chainId,
   params,
-  txOrigin: txMetadataParams->Belt.Option.flatMap(tx => tx.txOrigin),
-  txTo: txMetadataParams->Belt.Option.flatMap(tx => tx.txTo),
-  txGasPrice: txMetadataParams->Belt.Option.flatMap(tx => tx.gasPrice),
-  txGasUsed: txMetadataParams->Belt.Option.flatMap(tx => tx.gasUsed),
-  txMaxFeePerGas: txMetadataParams->Belt.Option.flatMap(tx => tx.maxFeePerGas),
-  txMaxPriorityFeePerGas: txMetadataParams->Belt.Option.flatMap(tx => tx.maxPriorityFeePerGas),
+  tx: Some({
+    from: txMetadataParams->Belt.Option.flatMap(tx => tx.txFrom),
+    to: txMetadataParams->Belt.Option.flatMap(tx => tx.txTo),
+    gasPrice: txMetadataParams->Belt.Option.flatMap(tx => tx.gasPrice),
+    gasUsed: txMetadataParams->Belt.Option.flatMap(tx => tx.gasUsed),
+    maxFeePerGas: txMetadataParams->Belt.Option.flatMap(tx => tx.maxFeePerGas),
+    maxPriorityFeePerGas: txMetadataParams->Belt.Option.flatMap(tx =>
+      tx.maxPriorityFeePerGas
+    ),
+  }),
   blockNumber: log.blockNumber,
   blockTimestamp,
   blockHash: log.blockHash,
@@ -185,12 +191,7 @@ let decodeRawEventWith = (
   ->Belt.Result.map(params => {
     let event = {
       chainId: rawEvent.chainId,
-      txOrigin: None,
-      txTo: None,
-      txGasPrice: None,
-      txGasUsed: None,
-      txMaxFeePerGas: None,
-      txMaxPriorityFeePerGas: None,
+      tx: None,
       blockNumber: rawEvent.blockNumber,
       blockTimestamp: rawEvent.blockTimestamp,
       blockHash: rawEvent.blockHash,
