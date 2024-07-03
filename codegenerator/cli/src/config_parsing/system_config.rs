@@ -1,9 +1,9 @@
 use super::{
     chain_helpers::get_confirmed_block_threshold_from_id,
     entity_parsing::{Entity, GraphQLEnum, Schema},
-    human_config::evm::{
-        EventConfig, EventDecoder, HumanConfig, HypersyncConfig as HumanHypersyncConfig,
-        Network as HumanNetwork, RpcConfig as HumanRpcConfig, SyncSourceConfig,
+    human_config::{
+        self,
+        evm::{EventConfig, EventDecoder, HumanConfig, Network as HumanNetwork},
     },
     hypersync_endpoints,
     validation::validate_names_not_reserved,
@@ -344,21 +344,50 @@ pub enum SyncSource {
     HypersyncConfig(HypersyncConfig),
 }
 
+// Check if the given RPC URL is valid in terms of formatting.
+// For now, we only check if it starts with http:// or https://
+fn validate_url(url: &str) -> bool {
+    // Check URL format
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return false;
+    }
+    true
+}
+
 impl SyncSource {
     fn from_human_config(network: HumanNetwork) -> Result<Self> {
-        match network.sync_source {
-            None => {
+        match network {
+            human_config::evm::Network {
+                hypersync_config: Some(_),
+                rpc_config: Some(_),
+                ..
+            } => {
+                Err(anyhow!("EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file"))
+            }
+  
+            human_config::evm::Network {
+              hypersync_config: None,
+              rpc_config: None,
+                ..
+            } => {
                 let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id.clone())
                     .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
-
                 Ok(Self::HypersyncConfig(HypersyncConfig {
                     endpoint_url: defualt_hypersync_endpoint,
                 }))
             }
-            Some(SyncSourceConfig::RpcConfig(HumanRpcConfig {
+            human_config::evm::Network {
+              hypersync_config: None,
+              rpc_config: Some(human_config::evm::RpcConfig {
                 url,
-                unstable__sync_config,
-            })) => Ok(Self::RpcConfig(RpcConfig {
+                unstable__sync_config
+              }),
+              ..
+          } => {
+            if !validate_url(&url) {
+              return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+            }
+            Ok(Self::RpcConfig(RpcConfig {
                 url,
                 sync_config: match unstable__sync_config {
                     None => SyncConfig::default(),
@@ -383,9 +412,16 @@ impl SyncSource {
                             .unwrap_or_else(|| SyncConfig::default().query_timeout_millis),
                     },
                 },
-            })),
-            Some(SyncSourceConfig::HypersyncConfig(HumanHypersyncConfig { endpoint_url })) => {
-                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url }))
+            }))},
+            human_config::evm::Network {
+              hypersync_config: Some(human_config::evm::HypersyncConfig { url }),
+              rpc_config: None,
+              ..
+          } => {
+                if !validate_url(&url) {
+                  return Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url));
+                }
+                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: url }))
             }
         }
     }
@@ -786,5 +822,28 @@ mod test {
                 .to_string(),
             "No abi file provided for event MyEvent"
         );
+    }
+
+    #[test]
+    fn test_valid_urls() {
+        let valid_url_1 = "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
+        let valid_url_2 = "http://api.example.org:8080";
+        let valid_url_3 = "https://eth.com/rpc-endpoint";
+        let is_valid_url_1 = super::validate_url(valid_url_1);
+        let is_valid_url_2 = super::validate_url(valid_url_2);
+        let is_valid_url_3 = super::validate_url(valid_url_3);
+        assert!(is_valid_url_1);
+        assert!(is_valid_url_2);
+        assert!(is_valid_url_3);
+    }
+
+    #[test]
+    fn test_invalid_urls() {
+        let invalid_url_missing_slash = "http:/example.com";
+        let invalid_url_other_protocol = "ftp://example.com";
+        let is_invalid_missing_slash = super::validate_url(invalid_url_missing_slash);
+        let is_invalid_other_protocol = super::validate_url(invalid_url_other_protocol);
+        assert!(!is_invalid_missing_slash);
+        assert!(!is_invalid_other_protocol);
     }
 }

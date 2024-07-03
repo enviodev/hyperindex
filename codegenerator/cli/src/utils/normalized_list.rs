@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -21,6 +24,33 @@ type OptSingleOrList<T> = Option<SingleOrList<T>>;
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(from = "OptSingleOrList<T>")]
 pub struct NormalizedList<T: Clone>(Vec<T>);
+
+impl<T: Clone + JsonSchema> JsonSchema for NormalizedList<T> {
+    fn schema_name() -> Cow<'static, str> {
+        "NormalizedList".into()
+    }
+
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        let t_schema = T::json_schema(gen);
+        json_schema!({
+          "anyOf": [
+            t_schema,
+            {
+              "type": "array",
+              "items": t_schema
+            }
+          ]
+        })
+    }
+
+    fn always_inline_schema() -> bool {
+        true
+    }
+
+    fn _schemars_private_is_option() -> bool {
+        true
+    }
+}
 
 impl<T: Clone> NormalizedList<T> {
     pub fn is_empty(&self) -> bool {

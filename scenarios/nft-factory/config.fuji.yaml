@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/evm.schema.json
 name: nftindexerfuji
 description: NFT Factory
 networks:

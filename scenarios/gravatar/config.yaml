@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/evm.schema.json
 name: greetergravatar
 description: Gravatar for Ethereum
 networks:

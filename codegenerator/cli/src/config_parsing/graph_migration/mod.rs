@@ -304,8 +304,9 @@ pub async fn generate_config_from_subgraph_id(
         // Create network object to be populated
         let mut network = Network {
             id: chain_helpers::Network::from(*graph_network).get_network_id(),
+            hypersync_config: None,
             // TODO: update to the final rpc url
-            sync_source: None,
+            rpc_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: None,

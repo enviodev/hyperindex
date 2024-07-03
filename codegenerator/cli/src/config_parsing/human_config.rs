@@ -1,19 +1,20 @@
 use super::validation;
 use crate::{constants::links, utils::normalized_list::NormalizedList};
 use anyhow::Context;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 type NetworkId = u64;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 pub struct GlobalContract<T> {
     pub name: String,
     #[serde(flatten)]
     pub config: T,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 pub struct NetworkContract<T> {
     pub name: String,
     pub address: NormalizedList<String>,
@@ -25,19 +26,30 @@ pub struct NetworkContract<T> {
 
 pub mod evm {
     use super::{GlobalContract, NetworkContract, NetworkId};
+    use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[schemars(
+        title = "Envio Config Schema",
+        description = "Schema for a YAML config for an envio indexer"
+    )]
     pub struct HumanConfig {
+        #[schemars(description = "Name of the project")]
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Description of the project")]
         pub description: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub ecosystem: Option<EcosystemTag>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Custom path to config file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
+        #[schemars(
+            description = "Configuration of the blockchain networks that the project is deployed on"
+        )]
         pub networks: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub unordered_multichain_mode: Option<bool>,
@@ -50,26 +62,25 @@ pub mod evm {
     }
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase")]
     pub enum EcosystemTag {
         Evm,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     #[serde(rename_all = "kebab-case")]
     pub enum EventDecoder {
         Viem,
         HypersyncClient,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     pub struct HypersyncConfig {
-        #[serde(alias = "url")]
-        pub endpoint_url: String,
+        pub url: String,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     pub struct SyncConfigUnstable {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub initial_block_interval: Option<u32>,
@@ -85,7 +96,7 @@ pub mod evm {
         pub query_timeout_millis: Option<u32>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
     pub struct RpcConfig {
         pub url: String,
@@ -93,18 +104,13 @@ pub mod evm {
         pub unstable__sync_config: Option<SyncConfigUnstable>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    #[serde(rename_all = "snake_case")]
-    pub enum SyncSourceConfig {
-        RpcConfig(RpcConfig),
-        HypersyncConfig(HypersyncConfig),
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     pub struct Network {
         pub id: NetworkId,
-        #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        pub sync_source: Option<SyncSourceConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub rpc_config: Option<RpcConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub hypersync_config: Option<HypersyncConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub confirmed_block_threshold: Option<i32>,
         pub start_block: i32,
@@ -113,7 +119,7 @@ pub mod evm {
         pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     pub struct ContractConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub abi_file_path: Option<String>,
@@ -121,7 +127,7 @@ pub mod evm {
         pub events: Vec<EventConfig>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "camelCase")]
     pub struct EventConfig {
         pub event: String,
@@ -243,8 +249,26 @@ mod tests {
         NetworkContract,
     };
     use crate::{config_parsing::human_config::fuel, utils::normalized_list::NormalizedList};
+    use pretty_assertions::assert_eq;
+    use schemars::{schema_for, Schema};
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_evm_config_schema() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/evm.schema.json");
+        let npm_schema: Schema =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+
+        let actual_schema = schema_for!(HumanConfig);
+
+        // When the test is failing and you want to update the schema, uncomment this line
+        // and paste the output into the schema file at npm/envio/evm.schema.json
+        // println!("{}", serde_json::to_string_pretty(&actual_schema).unwrap());
+
+        assert_eq!(npm_schema, actual_schema);
+    }
 
     #[test]
     fn test_flatten_deserialize_local_contract() {
@@ -500,7 +524,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(
             Network {
                 id: 1,
-                sync_source: None,
+                hypersync_config: None,
+                rpc_config: None,
                 start_block: 2_000,
                 confirmed_block_threshold: None,
                 end_block: Some(2_000_000),

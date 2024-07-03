@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/evm.schema.json
 name: erc20indexer
 description: ERC-20 indexer
 rollback_on_reorg: true
