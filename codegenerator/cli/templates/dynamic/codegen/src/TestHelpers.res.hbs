@@ -242,13 +242,14 @@ module {{contract.name.capitalized}} = {
 
     @genType
     type createMockArgs = {
-    {{#each event.params as | param |}}
-    {{!--
-    TODO: handle potential namespace clash where "mockEventData" is
-    also the named key of an event argument
-    --}}
-      {{param.param_name.uncapitalized}}?: {{param.type_rescript}},
-    {{/each}}
+      {{#each event.params as | param |}}
+      {{!--
+      TODO: handle potential namespace clash where "mockEventData" is
+      also the named key of an event argument
+      --}}
+      @as("{{param.js_name}}")
+      {{param.res_name}}?: {{param.res_type}},
+      {{/each}}
       mockEventData?: EventFunctions.mockEventData,
     }
 
@@ -256,7 +257,7 @@ module {{contract.name.capitalized}} = {
     let createMockEvent = args => {
       let {
         {{#each event.params as | param |}}
-        ?{{param.param_name.uncapitalized}},
+        ?{{param.res_name}},
         {{/each}}
         ?mockEventData,
       } = args
@@ -265,7 +266,7 @@ module {{contract.name.capitalized}} = {
       {{#if event.params}}
       {
       {{#each event.params as | param |}}
-       {{param.param_name.uncapitalized}}: {{param.param_name.uncapitalized}}->Belt.Option.getWithDefault({{param.default_value_rescript}}),
+       {{param.res_name}}: {{param.res_name}}->Belt.Option.getWithDefault({{param.default_value_rescript}}),
       {{/each}}
       }
       {{else}}

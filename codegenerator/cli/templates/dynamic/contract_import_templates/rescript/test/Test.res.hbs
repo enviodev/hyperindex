@@ -29,7 +29,7 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
     let expected{{contract.name.capitalized}}{{event.name.capitalized}}: Types.{{contract.name.uncapitalized}}_{{event.name.capitalized}} = {
       id: {{event.entity_id_from_event_code}},
       {{#each event.params as |param|}}
-      {{param.param_name.uncapitalized}}: event.params.{{param.param_name.uncapitalized}}{{#if param.is_eth_address}}->Ethers.ethAddressToString{{/if}},
+      {{param.res_name}}: event.params.{{param.res_name}}{{#if param.is_eth_address}}->Ethers.ethAddressToString{{/if}},
       {{/each}}
     }
     //Assert the expected {{contract.name.capitalized}} {{event.name.capitalized}} entity

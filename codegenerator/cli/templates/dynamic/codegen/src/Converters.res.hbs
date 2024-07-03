@@ -33,7 +33,7 @@ module {{contract.name.capitalized}} = {
       {{#if event.params}}
       {
         {{#each event.params as | param |}}
-          {{param.param_name.uncapitalized}}: decodedEvent.args.{{param.param_name.uncapitalized}},
+        {{param.res_name}}: decodedEvent.args.{{param.res_name}},
         {{/each}}
       }
       {{else}}
@@ -62,22 +62,16 @@ module {{contract.name.capitalized}} = {
       {{#unless event.params[0]}}_{{/unless}}decodedEvent: HyperSyncClient.Decoder.decodedEvent,
     ): Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs => {
       {{#if event.params[0]}}{{!--Only create this body if there are params.  Otherwise its always unit--}}
-      open Belt
-      let fields = [
-        {{#each event.indexed_params as | param |}}
-          "{{param.param_name.uncapitalized}}",
+      {
+        {{#each event.indexed_params as | param index |}}
+        {{param.res_name}}: decodedEvent.indexed->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->X.magic,
         {{/each}}
-        {{#each event.body_params as | param |}}
-          "{{param.param_name.uncapitalized}}",
+        {{#each event.body_params as | param index |}}
+        {{param.res_name}}: decodedEvent.body->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->X.magic,
         {{/each}}
-      ]
-      let values =
-        Array.concat(decodedEvent.indexed, decodedEvent.body)->Array.map(
-          HyperSyncClient.Decoder.toUnderlying,
-        )
-      Array.zip(fields, values)->Js.Dict.fromArray->X.magic
+      }
       {{else}}
-        ()
+      ()
       {{/if}}
     }
   }
