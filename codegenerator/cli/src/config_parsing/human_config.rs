@@ -162,9 +162,10 @@ pub mod evm {
 
 pub mod fuel {
     use super::{GlobalContract, NetworkContract, NetworkId};
+    use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     pub struct HumanConfig {
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -178,13 +179,13 @@ pub mod fuel {
     }
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[serde(rename_all = "lowercase")]
     pub enum EcosystemTag {
         Fuel,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     pub struct Network {
         pub id: NetworkId,
         pub start_block: i32,
@@ -193,14 +194,14 @@ pub mod fuel {
         pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     pub struct ContractConfig {
         pub abi_file_path: String,
         pub handler: String,
         pub events: Vec<EventConfig>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "camelCase")]
     pub struct EventConfig {
         pub name: String,
@@ -265,6 +266,22 @@ mod tests {
 
         // When the test is failing and you want to update the schema, uncomment this line
         // and paste the output into the schema file at npm/envio/evm.schema.json
+        // println!("{}", serde_json::to_string_pretty(&actual_schema).unwrap());
+
+        assert_eq!(npm_schema, actual_schema);
+    }
+
+    #[test]
+    fn test_fuel_config_schema() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/fuel.schema.json");
+        let npm_schema: Schema =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+
+        let actual_schema = schema_for!(fuel::HumanConfig);
+
+        // When the test is failing and you want to update the schema, uncomment this line
+        // and paste the output into the schema file at npm/envio/fuel.schema.json
         // println!("{}", serde_json::to_string_pretty(&actual_schema).unwrap());
 
         assert_eq!(npm_schema, actual_schema);
