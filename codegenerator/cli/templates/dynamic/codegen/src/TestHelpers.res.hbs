@@ -185,8 +185,13 @@ module EventFunctions = {
     srcAddress?: Ethers.ethAddress,
     transactionHash?: string,
     transactionIndex?: int,
-    txOrigin?: option<Ethers.ethAddress>,
-    txTo?: option<Ethers.ethAddress>,
+    // Should these not be required? 🤔
+    txOrigin?: Ethers.ethAddress,
+    txTo?: Ethers.ethAddress,
+    txMaxFeePerGas?: bigint,
+    txMaxPriorityFeePerGas?: bigint,
+    txGasPrice?: bigint,
+    txGasUsed?: bigint,
     logIndex?: int,
   }
 
@@ -208,13 +213,21 @@ module EventFunctions = {
       ?logIndex,
       ?txOrigin,
       ?txTo,
+      ?txGasPrice,
+      ?txGasUsed,
+      ?txMaxFeePerGas,
+      ?txMaxPriorityFeePerGas,
     } =
       mockEventData->Belt.Option.getWithDefault({})
 
     {
       params,
-      txOrigin: txOrigin->Belt.Option.flatMap(i => i),
-      txTo: txTo->Belt.Option.flatMap(i => i),
+      txOrigin,
+      txTo,
+      txGasUsed,
+      txGasPrice,
+      txMaxFeePerGas,
+      txMaxPriorityFeePerGas,
       chainId: chainId->Belt.Option.getWithDefault(1),
       blockNumber: blockNumber->Belt.Option.getWithDefault(0),
       blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),

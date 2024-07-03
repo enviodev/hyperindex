@@ -275,8 +275,7 @@ let fetchBlockRange = async (
             ~log=item.log,
             ~blockTimestamp,
             ~chainId,
-            ~txOrigin=item.txOrigin,
-            ~txTo=item.txTo,
+            ~txMetadataParams=item.txMetadataParams,
           ) {
           | Ok(v) => v
           | Error(exn) =>
@@ -298,8 +297,7 @@ let fetchBlockRange = async (
           ~blockTimestamp=item.blockTimestamp,
           ~contractInterfaceManager,
           ~chainId,
-          ~txOrigin=item.txOrigin,
-          ~txTo=item.txTo,
+          ~txMetadataParams=item.txMetadataParams,
         ) {
         | Ok(parsed) =>
           (
@@ -377,3 +375,4 @@ let fetchBlockRange = async (
 
 let getBlockHashes = ({serverUrl}: t) => (~blockNumbers) =>
   HyperSync.queryBlockDataMulti(~serverUrl, ~blockNumbers)->Promise.thenResolve(HyperSync.mapExn)
+

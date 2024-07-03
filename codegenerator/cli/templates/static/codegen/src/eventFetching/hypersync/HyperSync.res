@@ -6,13 +6,20 @@ type hyperSyncPage<'item> = {
   events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
+type txMetadataType = {
+  txOrigin: option<Ethers.ethAddress>,
+  txTo: option<Ethers.ethAddress>,
+  maxFeePerGas: option<bigint>,
+  maxPriorityFeePerGas: option<bigint>,
+  gasPrice: option<bigint>,
+  gasUsed: option<bigint>,
+}
+
 type logsQueryPageItem = {
   log: Ethers.log,
   blockTimestamp: int,
-  txOrigin: option<Ethers.ethAddress>,
-  txTo: option<Ethers.ethAddress>,
+  txMetadataParams: option<txMetadataType>,
 }
-
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
 
 type missingParams = {
@@ -116,7 +123,9 @@ module LogsQuery = {
         Removed,
       ],
       block: [Number, Timestamp],
-      transaction: [From, To],
+      transaction: [
+        /* TODO: inclusion/exclusion of these fields should be based on config */
+        From, To, Gas, GasPrice, MaxFeePerGas, MaxPriorityFeePerGas],
     },
   }
 
@@ -152,17 +161,16 @@ module LogsQuery = {
         removed: log.removed,
       }
 
-      let txOrigin =
-        event.transaction
-        ->Belt.Option.flatMap(b => b.from)
-        ->Belt.Option.flatMap(Ethers.getAddressFromString)
+      let txMetadataParams: option<txMetadataType> = event.transaction->Belt.Option.map(b => {
+        txOrigin: b.from->Belt.Option.flatMap(Ethers.getAddressFromString),
+        txTo: b.to->Belt.Option.flatMap(Ethers.getAddressFromString),
+        maxFeePerGas: b.maxFeePerGas,
+        maxPriorityFeePerGas: b.maxPriorityFeePerGas,
+        gasPrice: b.gasPrice,
+        gasUsed: b.gasUsed,
+      })
 
-      let txTo =
-        event.transaction
-        ->Belt.Option.flatMap(b => b.to)
-        ->Belt.Option.flatMap(Ethers.getAddressFromString)
-
-      let pageItem: logsQueryPageItem = {log, blockTimestamp, txOrigin, txTo}
+      let pageItem: logsQueryPageItem = {log, blockTimestamp, txMetadataParams}
       pageItem
     | _ =>
       let missingParams =
@@ -344,7 +352,9 @@ module BlockData = {
 
     // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
     if res->Belt.Result.mapWithDefault(0, res => res.nextBlock) <= blockNumber {
-      logger->Logging.childWarn(`Block #${blockNumber->Belt.Int.toString} not found in hypersync. Retrying query in 100ms.`)
+      logger->Logging.childWarn(
+        `Block #${blockNumber->Belt.Int.toString} not found in hypersync. Retrying query in 100ms.`,
+      )
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
       await queryBlockData(~serverUrl, ~blockNumber)
     } else {
@@ -368,3 +378,4 @@ let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
 let queryBlockData = BlockData.queryBlockData
 let queryBlockDataMulti = BlockData.queryBlockDataMulti
+
