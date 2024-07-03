@@ -7,7 +7,7 @@ type hyperSyncPage<'item> = {
 }
 
 type txMetadataType = {
-  txOrigin: option<Ethers.ethAddress>,
+  txFrom: option<Ethers.ethAddress>,
   txTo: option<Ethers.ethAddress>,
   maxFeePerGas: option<bigint>,
   maxPriorityFeePerGas: option<bigint>,

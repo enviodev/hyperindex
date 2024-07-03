@@ -177,6 +177,15 @@ module EventFunctions = {
   Optional params for all additional data related to an eventLog
   */
   @genType
+  type mockEventTransactionData = {
+    from?: Ethers.ethAddress,
+    to?: Ethers.ethAddress,
+    maxFeePerGas?: bigint,
+    maxPriorityFeePerGas?: bigint,
+    gasPrice?: bigint,
+    gasUsed?: bigint,
+  }
+  @genType
   type mockEventData = {
     blockNumber?: int,
     blockTimestamp?: int,
@@ -185,13 +194,7 @@ module EventFunctions = {
     srcAddress?: Ethers.ethAddress,
     transactionHash?: string,
     transactionIndex?: int,
-    // Should these not be required? 🤔
-    txOrigin?: Ethers.ethAddress,
-    txTo?: Ethers.ethAddress,
-    txMaxFeePerGas?: bigint,
-    txMaxPriorityFeePerGas?: bigint,
-    txGasPrice?: bigint,
-    txGasUsed?: bigint,
+    tx?: mockEventTransactionData,
     logIndex?: int,
   }
 
@@ -211,23 +214,24 @@ module EventFunctions = {
       ?transactionHash,
       ?transactionIndex,
       ?logIndex,
-      ?txOrigin,
-      ?txTo,
-      ?txGasPrice,
-      ?txGasUsed,
-      ?txMaxFeePerGas,
-      ?txMaxPriorityFeePerGas,
+      ?tx,
     } =
       mockEventData->Belt.Option.getWithDefault({})
 
+    let tx: option<Types.transaction> = tx->Belt.Option.map((tx): Types.transaction => {
+      {
+        from: tx.from,
+        to: tx.to,
+        maxFeePerGas: tx.maxFeePerGas,
+        maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
+        gasPrice: tx.gasPrice,
+        gasUsed: tx.gasUsed,
+      }
+    })
+
     {
       params,
-      txOrigin,
-      txTo,
-      txGasUsed,
-      txGasPrice,
-      txMaxFeePerGas,
-      txMaxPriorityFeePerGas,
+      tx,
       chainId: chainId->Belt.Option.getWithDefault(1),
       blockNumber: blockNumber->Belt.Option.getWithDefault(0),
       blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),
