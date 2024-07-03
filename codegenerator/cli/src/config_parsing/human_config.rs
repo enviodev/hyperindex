@@ -55,6 +55,8 @@ pub struct NetworkContract<T> {
 }
 
 pub mod evm {
+    use std::fmt::Display;
+
     use super::{GlobalContract, NetworkContract, NetworkId};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -105,6 +107,16 @@ pub mod evm {
             description = "A flag to indicate if the indexer should save the full history of events. This is useful for debugging but will increase the size of the database (default: false)"
         )]
         pub save_full_history: Option<bool>,
+    }
+
+    impl Display for HumanConfig {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
+            )
+        }
     }
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231
@@ -207,6 +219,8 @@ pub mod evm {
 }
 
 pub mod fuel {
+    use std::fmt::Display;
+
     use super::{GlobalContract, NetworkContract, NetworkId};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
@@ -236,6 +250,16 @@ pub mod fuel {
             description = "Configuration of the blockchain networks that the project is deployed on."
         )]
         pub networks: Vec<Network>,
+    }
+
+    impl Display for HumanConfig {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "# yaml-language-server: $schema=./node_modules/envio/fuel.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
+            )
+        }
     }
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231

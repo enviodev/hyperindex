@@ -124,12 +124,9 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         } => {
             let yaml_config = contract_import_selection.to_human_config(&init_config);
 
-            let serialized_config =
-                serde_yaml::to_string(&yaml_config).context("Failed serializing config")?;
-
             // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             file_system::write_file_string_to_system(
-                serialized_config,
+                yaml_config.to_string(),
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await
@@ -197,12 +194,9 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                 .to_human_config(&init_config)
                 .context("Failed to converting auto config selection into config.yaml")?;
 
-            let serialized_config =
-                serde_yaml::to_string(&yaml_config).context("Failed serializing config")?;
-
-            //TODO: Allow parsed paths to not depend on a written config.yaml file in file system
+            // TODO: Allow parsed paths to not depend on a written config.yaml file in file system
             file_system::write_file_string_to_system(
-                serialized_config,
+                yaml_config.to_string(),
                 parsed_project_paths.project_root.join("config.yaml"),
             )
             .await
