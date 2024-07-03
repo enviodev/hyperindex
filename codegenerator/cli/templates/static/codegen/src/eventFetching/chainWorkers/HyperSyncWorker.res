@@ -154,7 +154,14 @@ let fetchBlockRange = async (
   let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
   try {
     let {chainConfig: {chain}, serverUrl} = self
-    let {fetchStateRegisterId, fromBlock, contractAddressMapping, toBlock, ?eventFilters} = query
+    let {
+      fetchStateRegisterId,
+      partitionId,
+      fromBlock,
+      contractAddressMapping,
+      toBlock,
+      ?eventFilters,
+    } = query
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
     //fetch batch
     let {page: pageUnsafe, contractInterfaceManager, pageFetchTime} =
@@ -368,6 +375,7 @@ let fetchBlockRange = async (
       reorgGuard,
       fromBlockQueried: fromBlock,
       fetchStateRegisterId,
+      partitionId,
       worker: HyperSync(self),
     }->Ok
   } catch {

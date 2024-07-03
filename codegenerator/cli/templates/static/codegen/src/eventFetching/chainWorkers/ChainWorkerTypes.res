@@ -34,5 +34,6 @@ type blockRangeFetchResponse<'a, 'b> = {
   latestFetchedBlockTimestamp: int,
   stats: blockRangeFetchStats,
   fetchStateRegisterId: FetchState.id,
+  partitionId: PartitionedFetchState.partitionIndex,
   worker: Config.source<'a, 'b>,
 }

@@ -44,6 +44,19 @@ module ContractType = {
     | @as("{{contract.name.capitalized}}") {{contract.name.capitalized}}
   {{/each}}
 
+  let schema = 
+    {{#if codegen_contracts.1}}
+    S.union([
+    {{#each codegen_contracts as | contract |}}
+      S.literal({{contract.name.capitalized}}), 
+    {{/each}}
+    ])
+    {{else}}
+    {{#each codegen_contracts as | contract |}}
+      S.literal({{contract.name.capitalized}})
+    {{/each}}
+    {{/if}}
+
   let name = "CONTRACT_TYPE"
   let variants = [
   {{#each codegen_contracts as | contract |}}

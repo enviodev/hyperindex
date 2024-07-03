@@ -57,6 +57,7 @@ module type S = {
     let applyFilters: (Types.eventBatchQueueItem, ~eventFilters: eventFilters) => bool
     type nextQuery = {
       fetchStateRegisterId: id,
+      partitionId: int,
       fromBlock: int,
       toBlock: int,
       contractAddressMapping: ContractAddressingMap.mapping,
@@ -137,6 +138,7 @@ param 'b for rpc
       latestFetchedBlockTimestamp: int,
       stats: blockRangeFetchStats,
       fetchStateRegisterId: FetchState.id,
+      partitionId: int,
       worker: Config.source<'a, 'b>,
     }
   }

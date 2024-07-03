@@ -254,7 +254,7 @@ describe("Multichain rollback test", () => {
     }
 
     let getLatestFetchedBlock = chain => {
-      chain->getFetchState->FetchState.getLatestFullyFetchedBlock
+      chain->getFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
     }
 
     let getTokenBalance = (~accountAddress) => chain => {
@@ -273,7 +273,7 @@ describe("Multichain rollback test", () => {
       ->ChainMap.values
       ->Array.reduce(
         0,
-        (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.queueSize,
+        (accum, chainFetcher) => accum + chainFetcher.fetchState->PartitionedFetchState.queueSize,
       )
     }
 

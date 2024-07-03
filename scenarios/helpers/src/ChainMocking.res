@@ -105,20 +105,21 @@ module Make = (Indexer: Indexer.S) => {
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
-    let makeEvent: makeEvent = eventConstructor(
-      ~accessor,
-      ~params,
-      ~transactionIndex,
-      ~logIndex,
-      ~transactionHash,
-      ~srcAddress,
-      ~chainId,
-      ~txOrigin,
-      ~txTo,
-      ~blockNumber,
-      ~blockTimestamp,
-      ...
-    )
+    let makeEvent: makeEvent =
+      eventConstructor(
+        ~accessor,
+        ~params,
+        ~transactionIndex,
+        ~logIndex,
+        ~transactionHash,
+        ~srcAddress,
+        ~chainId,
+        ~txOrigin,
+        ~txTo,
+        ~blockNumber,
+        ~blockTimestamp,
+        ...
+      )
 
     {transactionHash, makeEvent, logIndex, srcAddress, eventName}
   }
@@ -285,6 +286,7 @@ module Make = (Indexer: Indexer.S) => {
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: "NO_STATS"->Obj.magic,
       fetchStateRegisterId: query.fetchStateRegisterId,
+      partitionId: query.partitionId,
       worker: HyperSync(self->Obj.magic),
     }
   }

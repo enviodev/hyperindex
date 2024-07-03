@@ -123,4 +123,6 @@ let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Ethers.ethAdd
   ->fromArray
 }
 
-let isEmpty = (mapping: mapping) => mapping.nameByAddress->Js.Dict.keys->Belt.Array.length == 0
+let addressCount = (mapping: mapping) => mapping.nameByAddress->Js.Dict.keys->Belt.Array.length
+
+let isEmpty = (mapping: mapping) => mapping->addressCount == 0

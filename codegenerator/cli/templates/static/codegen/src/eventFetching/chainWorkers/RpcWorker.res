@@ -81,7 +81,14 @@ let fetchBlockRange = async (
 ) => {
   try {
     let {currentBlockInterval, blockLoader, chainConfig, rpcConfig} = self
-    let {fromBlock, toBlock, contractAddressMapping, fetchStateRegisterId, ?eventFilters} = query
+    let {
+      fromBlock,
+      toBlock,
+      contractAddressMapping,
+      fetchStateRegisterId,
+      partitionId,
+      ?eventFilters,
+    } = query
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
     let currentBlockHeight =
@@ -191,6 +198,7 @@ let fetchBlockRange = async (
       reorgGuard: reorgGuardStub,
       fromBlockQueried: fromBlock,
       fetchStateRegisterId,
+      partitionId,
       worker: Rpc(nextWorker),
     }->Ok
   } catch {
