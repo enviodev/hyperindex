@@ -178,21 +178,11 @@ module DynamicContractRegistry = {
   external readEntities: (
     Postgres.sql,
     array<dynamicContractRegistryRowId>,
-  ) => promise<array<TablesStatic.DynamicContractRegistry.t>> =
-    "readDynamicContractRegistryEntities"
+  ) => promise<array<Js.Json.t>> = "readDynamicContractRegistryEntities"
 
-  type contractTypeAndAddress = {
-    @as("contract_address") contractAddress: Ethers.ethAddress,
-    @as("contract_type") contractType: string,
-    @as("event_id") eventId: bigint,
-  }
+  type contractTypeAndAddress = TablesStatic.DynamicContractRegistry.t
 
-  let contractTypeAndAddressSchema = S.object(s => {
-    contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
-    contractType: s.field("contract_type", S.string),
-    eventId: s.field("event_id", BigInt.schema),
-  })
-
+  let contractTypeAndAddressSchema = TablesStatic.DynamicContractRegistry.schema
   let contractTypeAndAddressArraySchema = S.array(contractTypeAndAddressSchema)
 
   ///Returns an array with 1 block number (the highest processed on the given chainId)

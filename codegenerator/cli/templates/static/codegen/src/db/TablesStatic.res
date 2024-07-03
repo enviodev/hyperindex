@@ -151,6 +151,14 @@ module DynamicContractRegistry = {
     @as("contract_type") contractType: Enums.ContractType.t,
   }
 
+  let schema = S.object((. s) => {
+    chainId: s.field("chain_id", S.int),
+    eventId: s.field("event_id", BigInt.schema),
+    blockTimestamp: s.field("block_timestamp", S.int),
+    contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
+    contractType: s.field("contract_type", Enums.ContractType.schema),
+  })
+
   let table = mkTable(
     "dynamic_contract_registry",
     ~fields=[

@@ -110,7 +110,7 @@ describe("Unsafe delete test", () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
-      ...ChainManager.makeFromConfig(~config),
+      ...ChainManager.makeFromConfig(~config, ~maxAddrInPartition=Env.maxAddrInPartition),
       isUnorderedMultichainMode: true,
     }
 

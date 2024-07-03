@@ -1,7 +1,7 @@
 open Belt
 type t = {
   logger: Pino.t,
-  fetchState: FetchState.t,
+  fetchState: PartitionedFetchState.t,
   chainConfig: Config.chainConfig,
   chainWorker: SourceWorker.sourceWorker,
   //The latest known block of the chain
@@ -23,8 +23,8 @@ type t = {
 let make = (
   ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
-  ~contractAddressMapping,
-  ~dynamicContracts,
+  ~staticContracts,
+  ~dynamicContractRegistrations,
   ~startBlock,
   ~endBlock,
   ~firstEventBlockNumber,
@@ -34,6 +34,7 @@ let make = (
   ~numEventsProcessed,
   ~numBatchesFetched,
   ~eventFilters,
+  ~maxAddrInPartition,
 ): t => {
   let (endpointDescription, chainWorker) = switch chainConfig.syncSource {
   | HyperSync(serverUrl) => (
@@ -44,10 +45,13 @@ let make = (
   }
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
 
-  let fetchState = FetchState.makeRoot(~endBlock)(
-    ~contractAddressMapping,
-    ~dynamicContracts,
+  let fetchState = PartitionedFetchState.make(
+    ~maxAddrInPartition,
+    ~staticContracts,
+    ~dynamicContractRegistrations,
     ~startBlock,
+    ~endBlock,
+    ~logger,
   )
 
   {
@@ -68,22 +72,23 @@ let make = (
   }
 }
 
-let makeFromConfig = (chainConfig: Config.chainConfig) => {
-  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
-  let contractAddressMapping = {
-    let m = ContractAddressingMap.make()
-    //Add all contracts and addresses from config
-    //Dynamic contracts are checked in DB on start
-    m->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
-    m
-  }
+let getStaticContracts = (chainConfig: Config.chainConfig) => {
+  chainConfig.contracts->Belt.Array.flatMap(contract => {
+    contract.addresses->Belt.Array.map(address => {
+      (contract.name, address)
+    })
+  })
+}
 
+let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
+  let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
+  let staticContracts = chainConfig->getStaticContracts
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
     ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
   )
 
   make(
-    ~contractAddressMapping,
+    ~staticContracts,
     ~chainConfig,
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
@@ -95,22 +100,17 @@ let makeFromConfig = (chainConfig: Config.chainConfig) => {
     ~numBatchesFetched=0,
     ~logger,
     ~eventFilters=None,
-    ~dynamicContracts=FetchState.DynamicContractsMap.empty,
+    ~dynamicContractRegistrations=[],
+    ~maxAddrInPartition,
   )
 }
 
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (chainConfig: Config.chainConfig) => {
+let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
-  let contractAddressMapping = {
-    let m = ContractAddressingMap.make()
-    //Add all contracts and addresses from config
-    //Dynamic contracts are checked in DB on start
-    m->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
-    m
-  }
+  let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
   let latestProcessedBlock = await DbFunctions.EventSyncState.getLatestProcessedBlockNumber(
     ~chainId,
@@ -129,22 +129,6 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
       ~chainId,
       ~startBlock,
     )
-
-  let dynamicContracts =
-    dynamicContractRegistrations->Array.reduce(FetchState.DynamicContractsMap.empty, (
-      accum,
-      {contractType, contractAddress, eventId},
-    ) => {
-      //add address to contract address mapping
-      contractAddressMapping->ContractAddressingMap.addAddress(
-        ~name=contractType,
-        ~address=contractAddress,
-      )
-
-      let dynamicContractId = EventUtils.unpackEventIndex(eventId)
-
-      accum->FetchState.DynamicContractsMap.addAddress(dynamicContractId, contractAddress)
-    })
 
   let (
     firstEventBlockNumber,
@@ -187,8 +171,8 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
   let eventFilters = None
 
   make(
-    ~contractAddressMapping,
-    ~dynamicContracts,
+    ~staticContracts,
+    ~dynamicContractRegistrations,
     ~chainConfig,
     ~startBlock,
     ~endBlock=chainConfig.endBlock,
@@ -200,6 +184,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     ~numBatchesFetched=0,
     ~logger,
     ~eventFilters,
+    ~maxAddrInPartition,
   )
 }
 
@@ -227,7 +212,10 @@ let cleanUpEventFilters = (self: t) => {
   | Some(eventFilters) => {
       ...self,
       eventFilters: switch eventFilters->List.keep(eventFilter =>
-        eventFilter.isValid(~fetchState=self.fetchState, ~chain=self.chainConfig.chain)
+        self.fetchState->PartitionedFetchState.eventFilterIsValid(
+          ~eventFilter,
+          ~chain=self.chainConfig.chain,
+        )
       ) {
       | list{} => None
       | eventFilters => eventFilters->Some
@@ -249,7 +237,7 @@ let updateFetchState = (
   ~fetchedEvents,
 ) => {
   self.fetchState
-  ->FetchState.update(
+  ->PartitionedFetchState.update(
     ~id,
     ~latestFetchedBlock={
       blockNumber: latestFetchedBlockNumber,
@@ -276,7 +264,7 @@ let getNextQuery = (self: t) => {
   //is called but just ensure its cleaned before getting the next query
   let cleanedChainFetcher = self->cleanUpEventFilters
 
-  cleanedChainFetcher.fetchState->FetchState.getNextQuery(
+  cleanedChainFetcher.fetchState->PartitionedFetchState.getNextQuery(
     ~eventFilters=?cleanedChainFetcher.eventFilters,
     ~currentBlockHeight=cleanedChainFetcher.currentBlockHeight,
   )
@@ -340,6 +328,6 @@ let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
   {
     ...chainFetcher,
     lastBlockScannedHashes: rolledBackLastBlockData,
-    fetchState: chainFetcher.fetchState->FetchState.rollback(~lastKnownValidBlock),
+    fetchState: chainFetcher.fetchState->PartitionedFetchState.rollback(~lastKnownValidBlock),
   }
 }

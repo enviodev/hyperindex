@@ -156,7 +156,7 @@ describe("Dynamic contract rollback test", () => {
     }
 
     let getLatestFetchedBlock = chain => {
-      chain->getFetchState->FetchState.getLatestFullyFetchedBlock
+      chain->getFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
     }
 
     let getTokenBalance = (~accountAddress) => chain => {
@@ -175,7 +175,7 @@ describe("Dynamic contract rollback test", () => {
       ->ChainMap.values
       ->Array.reduce(
         0,
-        (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.queueSize,
+        (accum, chainFetcher) => accum + chainFetcher.fetchState->PartitionedFetchState.queueSize,
       )
     }
 
@@ -359,7 +359,7 @@ describe("Dynamic contract rollback test", () => {
 
     let getFetchStateRegisterId = () =>
       switch getFetchState(Mock.Chain1.chain)
-      ->FetchState.getNextQuery(~currentBlockHeight=6)
+      ->PartitionedFetchState.getNextQuery(~currentBlockHeight=6)
       ->Result.getExn {
       | (FetchState.NextQuery(q), _) => q.fetchStateRegisterId
       | _ => raise(Not_found)

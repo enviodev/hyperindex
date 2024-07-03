@@ -16,9 +16,8 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${
-        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`,
+      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+        }`,
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
@@ -138,7 +137,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -158,7 +157,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -415,7 +414,7 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (
   chainId,
   block_number,
 ) => sql`
-  SELECT c.contract_address, c.contract_type, c.event_id
+  SELECT c.contract_address, c.contract_type, c.event_id, c.chain_id, c.block_timestamp
   FROM "public"."dynamic_contract_registry" as c
   JOIN raw_events e ON c.chain_id = e.chain_id
   AND c.event_id = e.event_id
