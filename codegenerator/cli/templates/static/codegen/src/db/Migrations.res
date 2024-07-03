@@ -203,6 +203,15 @@ module EntityHistory = {
       `)
 
     let _ = await sql->unsafe(`
+CREATE OR REPLACE FUNCTION entity_type_to_int(entity_type ENTITY_TYPE)
+RETURNS integer AS $$
+BEGIN
+    RETURN (ARRAY_POSITION(ENUM_RANGE(NULL::ENTITY_TYPE), entity_type));
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+`)
+
+    let _ = await sql->unsafe(`
       CREATE OR REPLACE FUNCTION get_entity_history_filter(
           start_timestamp integer,
           start_chain_id integer,
@@ -218,7 +227,7 @@ module EntityHistory = {
           RETURN QUERY
           SELECT
               DISTINCT ON (coalesce(old.entity_id, new.entity_id))
-              coalesce(old.entity_id, new.entity_id) as entity_id,
+              coalesce(old.entity_id, new.entity_id) as relevant_entity_id,
               new.chain_id as chain_id,
               coalesce(old.params, 'null') as old_val,
               coalesce(new.params, 'null') as new_val,
@@ -226,7 +235,7 @@ module EntityHistory = {
               old.block_number as previous_block_number,
               new.log_index as log_index,
               old.log_index as previous_log_index,
-              new.entity_type as entity_type
+              entity_type_to_int(new.entity_type) as entity_type
           FROM
               entity_history old
               INNER JOIN entity_history next ON
@@ -328,6 +337,46 @@ module EntityHistory = {
       END;
       $$ LANGUAGE plpgsql STABLE;
 `)
+
+//     let _ = await sql->unsafe(`
+// CREATE OR REPLACE FUNCTION get_entity_history_filter_hasura(
+//     end_block integer,
+//     end_log_index integer,
+//     end_chain_id integer,
+//     end_timestamp integer,
+//     start_block integer,
+//     start_chain_id integer,
+//     start_log_index integer,
+//     start_timestamp integer
+// )
+// RETURNS SETOF entity_history_filter AS $$
+// BEGIN
+//     RETURN QUERY
+//     SELECT
+//         entity_id,
+//         chain_id,
+//         old_val,
+//         new_val,
+//         block_number,
+//         previous_block_number,
+//         log_index,
+//         previous_log_index,
+//         entity_type_to_int(entity_type) AS entity_type  -- Convert enum to integer
+//     FROM
+//         get_entity_history_filter(
+//             end_block,
+//             end_log_index,
+//             end_chain_id,
+//             end_timestamp,
+//             start_block,
+//             start_chain_id,
+//             start_log_index,
+//             start_timestamp
+//         );
+// END;
+// $$ LANGUAGE plpgsql STABLE;
+// `)
+
   }
 }
 

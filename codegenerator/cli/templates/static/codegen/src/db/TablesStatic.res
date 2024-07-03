@@ -218,16 +218,16 @@ module EntityHistoryFilter = {
     "entity_history_filter",
     ~fields=[
       // NULL for an `entity_id` means that the entity was deleted.
-      mkField("entity_id", Text, ~isPrimaryKey),
+      mkField("relevant_entity_id", Text, ~isPrimaryKey), // there is some obscure hasura error if named 'entity_id' that I don't know - so renamed field.
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("old_val", Json, ~isNullable),
       mkField("new_val", Json, ~isNullable),
       mkField("block_number", Integer, ~isPrimaryKey),
-      mkField("block_timestamp", Integer, ~isPrimaryKey),
+      // mkField("block_timestamp", Integer, ~isPrimaryKey), // not available - TODO: remove before merge once dev-mode is working.
       mkField("previous_block_number", Integer, ~isNullable),
       mkField("log_index", Integer, ~isPrimaryKey),
       mkField("previous_log_index", Integer, ~isNullable, ~isPrimaryKey),
-      mkField("entity_type", Enum(EntityType.enum.name), ~isPrimaryKey),
+      mkField("entity_type", Integer, ~isPrimaryKey),
     ],
   )
 }
