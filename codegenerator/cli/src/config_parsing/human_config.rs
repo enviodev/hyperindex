@@ -1,9 +1,9 @@
 use super::validation;
 use crate::{constants::links, utils::normalized_list::NormalizedList};
 use anyhow::Context;
-use schemars::JsonSchema;
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{borrow::Cow, path::PathBuf};
 
 type NetworkId = u64;
 
@@ -14,10 +14,40 @@ pub struct GlobalContract<T> {
     pub config: T,
 }
 
+pub type Addresses = NormalizedList<String>;
+
+impl JsonSchema for Addresses {
+    fn schema_name() -> Cow<'static, str> {
+        "Addresses".into()
+    }
+
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        let t_schema = json_schema!({
+          "anyOf": [
+            String::json_schema(gen),
+            usize::json_schema(gen),
+          ]
+        });
+        json_schema!({
+          "anyOf": [
+            t_schema,
+            {
+              "type": "array",
+              "items": t_schema
+            }
+          ]
+        })
+    }
+
+    fn _schemars_private_is_option() -> bool {
+        true
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 pub struct NetworkContract<T> {
     pub name: String,
-    pub address: NormalizedList<String>,
+    pub address: Addresses,
     #[serde(flatten)]
     //If this is "None" it should be expected that
     //there is a global config for the contract
@@ -41,23 +71,39 @@ pub mod evm {
         #[schemars(description = "Description of the project")]
         pub description: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: Option<EcosystemTag>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Custom path to config file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains."
+        )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed on"
+            description = "Configuration of the blockchain networks that the project is deployed on."
         )]
         pub networks: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "A flag to indicate if the indexer should use a single queue for all chains or a queue per chain (default: false)"
+        )]
         pub unordered_multichain_mode: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The event decoder to use for the indexer (default: hypersync-client)"
+        )]
         pub event_decoder: Option<EventDecoder>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "A flag to indicate if the indexer should rollback to the last known valid block on a reorg (default: false)"
+        )]
         pub rollback_on_reorg: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "A flag to indicate if the indexer should save the full history of events. This is useful for debugging but will increase the size of the database (default: false)"
+        )]
         pub save_full_history: Option<bool>,
     }
 
@@ -166,15 +212,29 @@ pub mod fuel {
     use serde::{Deserialize, Serialize};
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[schemars(
+        title = "Envio Config Schema",
+        description = "Schema for a YAML config for an envio indexer"
+    )]
     pub struct HumanConfig {
+        #[schemars(description = "Name of the project")]
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Description of the project")]
         pub description: Option<String>,
+        #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: EcosystemTag,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Custom path to config file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains."
+        )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
+        #[schemars(
+            description = "Configuration of the blockchain networks that the project is deployed on."
+        )]
         pub networks: Vec<Network>,
     }
 

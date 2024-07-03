@@ -9,12 +9,14 @@
       "type": ["string", "null"]
     },
     "contracts": {
+      "description": "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains.",
       "type": ["array", "null"],
       "items": {
         "$ref": "#/$defs/GlobalContract_for_ContractConfig"
       }
     },
     "ecosystem": {
+      "description": "Ecosystem of the project.",
       "anyOf": [
         {
           "$ref": "#/$defs/EcosystemTag"
@@ -25,6 +27,7 @@
       ]
     },
     "event_decoder": {
+      "description": "The event decoder to use for the indexer (default: hypersync-client)",
       "anyOf": [
         {
           "$ref": "#/$defs/EventDecoder"
@@ -39,16 +42,18 @@
       "type": "string"
     },
     "networks": {
-      "description": "Configuration of the blockchain networks that the project is deployed on",
+      "description": "Configuration of the blockchain networks that the project is deployed on.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/Network"
       }
     },
     "rollback_on_reorg": {
+      "description": "A flag to indicate if the indexer should rollback to the last known valid block on a reorg (default: false)",
       "type": ["boolean", "null"]
     },
     "save_full_history": {
+      "description": "A flag to indicate if the indexer should save the full history of events. This is useful for debugging but will increase the size of the database (default: false)",
       "type": ["boolean", "null"]
     },
     "schema": {
@@ -56,11 +61,43 @@
       "type": ["string", "null"]
     },
     "unordered_multichain_mode": {
+      "description": "A flag to indicate if the indexer should use a single queue for all chains or a queue per chain (default: false)",
       "type": ["boolean", "null"]
     }
   },
   "required": ["name", "networks"],
   "$defs": {
+    "Addresses": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
     "EcosystemTag": {
       "type": "string",
       "enum": ["evm"]
@@ -164,17 +201,7 @@
           "type": ["string", "null"]
         },
         "address": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          ]
+          "$ref": "#/$defs/Addresses"
         },
         "events": {
           "type": "array",
