@@ -747,27 +747,6 @@ mod test {
     }
 
     #[test]
-    fn check_config_with_multiple_sync_sources() {
-        let project_template = get_project_template_helper("invalid-multiple-sync-config6.yaml");
-
-        assert!(
-            project_template.chain_configs[0]
-                .network_config
-                .rpc_config
-                .is_none(),
-            "rpc config should have been none since it was defined second"
-        );
-
-        assert!(
-            project_template.chain_configs[0]
-                .network_config
-                .skar_server_url
-                .is_some(),
-            "skar config should be some since it was defined first"
-        );
-    }
-
-    #[test]
     fn chain_configs_parsed_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 

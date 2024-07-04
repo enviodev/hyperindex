@@ -661,9 +661,11 @@ impl From<EthAbiEvent> for NormalizedEthAbiEvent {
 
 #[cfg(test)]
 mod test {
+    use std::path::PathBuf;
+
     use super::SystemConfig;
     use crate::{
-        config_parsing::{self, entity_parsing::Schema, system_config::Event},
+        config_parsing::{self, entity_parsing::Schema, human_config::evm::HumanConfig, system_config::{Event, SyncSource}},
         project_paths::ParsedProjectPaths,
     };
     use ethers::abi::{Event as EthAbiEvent, EventParam, ParamType};
@@ -846,4 +848,25 @@ mod test {
         assert!(!is_invalid_missing_slash);
         assert!(!is_invalid_other_protocol);
     }
+
+    #[test]
+    fn deserializes_contract_config_with_multiple_sync_sources() {
+        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test/configs/invalid-multiple-sync-config6.yaml");
+
+        let file_str = std::fs::read_to_string(config_path).unwrap();
+
+        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
+
+        // Both hypersync and rpc config should be present
+        assert!(cfg.networks[0].rpc_config.is_some());
+        assert!(cfg.networks[0].hypersync_config.is_some());
+
+        let error = SyncSource::from_human_config(
+          cfg.networks[0].clone()
+        ).unwrap_err();
+
+        assert_eq!(error.to_string(), "EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file");
+    }
+
 }
