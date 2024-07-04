@@ -95,29 +95,33 @@ type inMemoryStoreRowEntity<'entityType> =
 //*************
 
 @genType
-type transaction = {
-  from: option<Ethers.ethAddress>,
-  to: option<Ethers.ethAddress>,
-  maxFeePerGas: option<bigint>,
-  maxPriorityFeePerGas: option<bigint>,
-  gasPrice: option<bigint>,
-  gasUsed: option<bigint>,
+type transactionFields = {
+  {{!-- Selectable fields --}}
+  {{#each field_selection.transaction_fields as | field |}}
+  {{field.name.camel}}: {{field.res_type}},
+  {{/each}}
+}
+
+@genType
+type blockFields = {
+  {{!-- Mandatory fields --}}
+  blockNumber: int,
+  blockTimestamp: int,
+  blockHash: string,
+  {{!-- Selectable fields --}}
+  {{#each field_selection.block_fields as | field |}}
+  {{field.name.camel}}: {{field.res_type}},
+  {{/each}}
 }
 
 @genType.as("EventLog")
 type eventLog<'a> = {
   params: 'a,
   chainId: int,
-  tx: option<transaction>,
   srcAddress: Ethers.ethAddress,
   logIndex: int,
-  // TODO: these fields should go inside the 'tx' or 'transaction' object as compulsory fields.
-  transactionHash: string,
-  transactionIndex: int,
-  // TODO: group this under a 'block' sub field (that can also have additional fields)
-  blockNumber: int,
-  blockTimestamp: int,
-  blockHash: string,
+  transaction: transactionFields,
+  block: blockFields, 
 }
 
 @genType
