@@ -39,7 +39,7 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
 }
 
 @genType
-let getConfigByChainId: int => configYaml = chainId =>
-  RegisterHandlers.getChain(
-    Belt.Result.getExn(ChainMap.Chain.fromChainId(chainId)),
-  )->mapChainConfigToConfigYaml
+let getConfigByChainId: int => configYaml = chainId => {
+  let config = Config.getConfig()
+  config.chainMap->ChainMap.get(ChainMap.Chain.fromChainId(chainId)->Belt.Result.getExn)->mapChainConfigToConfigYaml
+}

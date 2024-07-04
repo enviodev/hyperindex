@@ -32,20 +32,17 @@ let registerAllHandlers = () => {
 {{/each}}
 }
 
-
-let getChain = (chain: ChainMap.Chain.t) =>
-  switch chain {
+let networks = [
   {{#each chain_configs as | chain_config |}}
-  | Chain_{{chain_config.network_config.id}} => {
-      Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
-      syncSource: 
+  {
+    Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
+    syncSource: 
       {{#if chain_config.network_config.rpc_config}}
       Rpc({
         provider: Ethers.JsonRpcProvider.makeStatic(
-                  ~rpcUrl="{{chain_config.network_config.rpc_config.url}}",
-                  ~chainId={{chain_config.network_config.id}}
-                  ),
-
+          ~rpcUrl="{{chain_config.network_config.rpc_config.url}}",
+          ~chainId={{chain_config.network_config.id}}
+        ),
       {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
         syncConfig: Config.getSyncConfig({
           initialBlockInterval: {{sync_config.initial_block_interval}},
@@ -61,30 +58,30 @@ let getChain = (chain: ChainMap.Chain.t) =>
       {{#if chain_config.network_config.skar_server_url}}
       HyperSync("{{chain_config.network_config.skar_server_url}}"),
       {{/if}}
-      startBlock: {{chain_config.network_config.start_block}},
-      endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
-      chain: Chain_{{chain_config.network_config.id}},
-      contracts: [
-      {{#each chain_config.codegen_contracts as | contract |}}
-        {
-          name: "{{contract.name.capitalized}}",
-          abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
-          addresses: [
-            {{#each contract.addresses as | address |}}
-            "{{address}}"->Ethers.getAddressFromStringUnsafe,
-            {{/each}}
-            ],
-            events: [
-            {{#each contract.events as | event |}}
-            {{event.event_type.full}},
-            {{/each}}
-            ],
-        },
-      {{/each}}
-      ],
-    }
+    startBlock: {{chain_config.network_config.start_block}},
+    endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
+    chain: Chain_{{chain_config.network_config.id}},
+    contracts: [
+    {{#each chain_config.codegen_contracts as | contract |}}
+      {
+        name: "{{contract.name.capitalized}}",
+        abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
+        addresses: [
+          {{#each contract.addresses as | address |}}
+          "{{address}}"->Ethers.getAddressFromStringUnsafe,
+          {{/each}}
+          ],
+          events: [
+          {{#each contract.events as | event |}}
+          {{event.event_type.full}},
+          {{/each}}
+          ],
+      },
+    {{/each}}
+    ],
+  },
   {{/each}}
-  }
+]
 
 Config.setGenerated(
   Config.make(
@@ -92,6 +89,6 @@ Config.setGenerated(
     ~shouldSaveFullHistory={{should_save_full_history}},
     ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
     ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
-    ~chainMap=ChainMap.make(getChain),
+    ~networks,
   )
 )

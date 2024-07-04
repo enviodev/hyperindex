@@ -104,7 +104,7 @@ let make = (
   ~shouldSaveFullHistory=false,
   ~shouldUseHypersyncClientDecoder=true,
   ~isUnorderedMultichainMode=false,
-  ~chainMap,
+  ~networks=[],
 ) => {
   historyConfig: {
     rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
@@ -118,7 +118,9 @@ let make = (
       isUnorderedMultichainMode,
     ),
   ),
-  chainMap,
+  chainMap: networks->Js.Array2.map(n => {
+    (n.chain, n)
+  })->ChainMap.fromArray->Utils.unwrapResultExn,
 }
 
 %%private(let generatedConfigRef = ref(None))

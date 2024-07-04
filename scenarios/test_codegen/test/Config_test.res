@@ -1,6 +1,5 @@
 open RescriptMocha
 
-
 let configPathString = "./config.yaml"
 
 type sync_config = {
@@ -22,11 +21,26 @@ type config = {networks: array<network_conf>}
 let configYaml: config = ConfigUtils.loadConfigYaml(~codegenConfigPath=configPathString)
 let firstNetworkConfig = configYaml.networks[0]
 
-let generatedChainConfig = (Config.getConfig().chainMap)->ChainMap.get(Chain_1337)
+let generatedChainConfig = Config.getConfig().chainMap->ChainMap.get(Chain_1337)
 let generatedSyncConfig = switch generatedChainConfig.syncSource {
 | Rpc({syncConfig}) => syncConfig
 | _ => Js.Exn.raiseError("Expected an rpc config")
 }
+
+describe("getConfigByChainId Test", () => {
+  it_only("getConfigByChainId should return the correct config", () => {
+    let configYaml = ConfigYAML.getConfigByChainId(1)
+    Assert.deepEqual(
+      configYaml,
+      {
+        syncSource: HyperSync("https://eth.hypersync.xyz"),
+        startBlock: 1,
+        confirmedBlockThreshold: 200,
+        contracts: Js.Dict.empty(),
+      },
+    )
+  })
+})
 
 describe("Sync Config Test", () => {
   it("initial_block_interval", () => {
