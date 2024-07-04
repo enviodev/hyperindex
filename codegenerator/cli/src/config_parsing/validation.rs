@@ -1,4 +1,4 @@
-use super::human_config::evm::{HumanConfig, SyncSourceConfig};
+use super::human_config::evm::HumanConfig;
 use crate::constants::reserved_keywords::{
     ENVIO_INTERNAL_RESERVED_POSTGRES_TYPES, JAVASCRIPT_RESERVED_WORDS, RESCRIPT_RESERVED_WORDS,
     TYPESCRIPT_RESERVED_WORDS,
@@ -59,15 +59,6 @@ fn check_reserved_words(input_string: &str) -> Vec<String> {
 
     flagged_words
 }
-// Check if the given RPC URL is valid in terms of formatting.
-// For now, we only check if it starts with http:// or https://
-fn validate_rpc_url(url: &str) -> bool {
-    // Check URL format
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return false;
-    }
-    true
-}
 
 // Check if all names in the config file are valid.
 pub fn validate_names_not_reserved(
@@ -111,12 +102,6 @@ pub fn validate_deserialized_config_yaml(
     }
 
     for network in &deserialized_yaml.networks {
-        if let Some(SyncSourceConfig::RpcConfig(rpc_config)) = &network.sync_source {
-            if !validate_rpc_url(&rpc_config.url) {
-                return Err(anyhow!("EE109: The config file ({}) has RPC URL(s) in incorrect format. The RPC URLs need to start with either http:// or https://", &config_path.to_str().unwrap_or("unknown config file name path")));
-            }
-        }
-
         // validate endblock is a greater than the startblock
         if let Some(&network_endblock) = network.end_block.as_ref() {
             if network_endblock < network.start_block {
@@ -294,30 +279,6 @@ mod tests {
         let flagged_words = super::check_reserved_words(yaml_string);
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(flagged_words, empty_vec);
-    }
-
-    #[test]
-    fn test_valid_rpc_urls() {
-        let valid_rpc_url_1 =
-            "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
-        let valid_rpc_url_2 = "http://api.example.org:8080";
-        let valid_rpc_url_3 = "https://eth.com/rpc-endpoint";
-        let is_valid_url_1 = super::validate_rpc_url(valid_rpc_url_1);
-        let is_valid_url_2 = super::validate_rpc_url(valid_rpc_url_2);
-        let is_valid_url_3 = super::validate_rpc_url(valid_rpc_url_3);
-        assert!(is_valid_url_1);
-        assert!(is_valid_url_2);
-        assert!(is_valid_url_3);
-    }
-
-    #[test]
-    fn test_invalid_rpc_urls() {
-        let invalid_rpc_url_missing_slash = "http:/example.com";
-        let invalid_rpc_url_other_protocol = "ftp://example.com";
-        let is_invalid_missing_slash = super::validate_rpc_url(invalid_rpc_url_missing_slash);
-        let is_invalid_other_protocol = super::validate_rpc_url(invalid_rpc_url_other_protocol);
-        assert!(!is_invalid_missing_slash);
-        assert!(!is_invalid_other_protocol);
     }
 
     #[test]

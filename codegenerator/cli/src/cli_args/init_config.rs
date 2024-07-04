@@ -15,9 +15,7 @@ pub mod evm {
         config_parsing::{
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
-                evm::{
-                    ContractConfig, EventConfig, HumanConfig, Network, RpcConfig, SyncSourceConfig,
-                },
+                evm::{ContractConfig, EventConfig, HumanConfig, Network, RpcConfig},
                 GlobalContract, NetworkContract,
             },
         },
@@ -104,19 +102,18 @@ pub mod evm {
                     let network = networks_map
                         .entry(selected_network.network.get_network_id())
                         .or_insert({
-                            let sync_source = match &selected_network.network {
+                            let rpc_config = match &selected_network.network {
                                 NetworkKind::Supported(_) => None,
-                                NetworkKind::Unsupported(_, url) => {
-                                    Some(SyncSourceConfig::RpcConfig(RpcConfig {
-                                        url: url.clone(),
-                                        unstable__sync_config: None,
-                                    }))
-                                }
+                                NetworkKind::Unsupported(_, url) => Some(RpcConfig {
+                                    url: url.clone(),
+                                    unstable__sync_config: None,
+                                }),
                             };
 
                             Network {
                                 id: selected_network.network.get_network_id(),
-                                sync_source,
+                                hypersync_config: None,
+                                rpc_config,
                                 start_block: 0,
                                 end_block: None,
                                 confirmed_block_threshold: None,
@@ -267,7 +264,8 @@ pub mod fuel {
                 networks: vec![human_config::evm::Network {
                     id: 1,
                     start_block: 0,
-                    sync_source: None,
+                    hypersync_config: None,
+                    rpc_config: None,
                     confirmed_block_threshold: None,
                     end_block: None,
                     contracts: self

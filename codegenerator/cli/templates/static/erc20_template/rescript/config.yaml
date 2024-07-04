@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
 name: erc20indexer
 description: ERC-20 indexer
 networks:

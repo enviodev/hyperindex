@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../codegenerator/cli/npm/envio/evm.schema.json
 name: test_codegen
 description: Gravatar for Ethereum
 rollback_on_reorg: true

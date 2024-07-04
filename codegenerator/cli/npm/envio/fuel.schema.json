@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Envio Config Schema",
+  "description": "Schema for a YAML config for an envio indexer",
+  "type": "object",
+  "properties": {
+    "description": {
+      "description": "Description of the project",
+      "type": ["string", "null"]
+    },
+    "contracts": {
+      "description": "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains.",
+      "type": ["array", "null"],
+      "items": {
+        "$ref": "#/$defs/GlobalContract_for_ContractConfig"
+      }
+    },
+    "ecosystem": {
+      "description": "Ecosystem of the project.",
+      "$ref": "#/$defs/EcosystemTag"
+    },
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
+    "networks": {
+      "description": "Configuration of the blockchain networks that the project is deployed on.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Network"
+      }
+    },
+    "schema": {
+      "description": "Custom path to config file",
+      "type": ["string", "null"]
+    }
+  },
+  "required": ["name", "ecosystem", "networks"],
+  "$defs": {
+    "Addresses": {
+      "anyOf": [
+        {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          ]
+        },
+        {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "EcosystemTag": {
+      "type": "string",
+      "enum": ["fuel"]
+    },
+    "EventConfig": {
+      "type": "object",
+      "properties": {
+        "logId": {
+          "type": ["string", "null"]
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": ["name"]
+    },
+    "GlobalContract_for_ContractConfig": {
+      "type": "object",
+      "properties": {
+        "abi_file_path": {
+          "type": "string"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventConfig"
+          }
+        },
+        "handler": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": ["name", "abi_file_path", "handler", "events"]
+    },
+    "Network": {
+      "type": "object",
+      "properties": {
+        "contracts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NetworkContract_for_ContractConfig"
+          }
+        },
+        "end_block": {
+          "type": ["integer", "null"],
+          "format": "int32"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "start_block": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "required": ["id", "start_block", "contracts"]
+    },
+    "NetworkContract_for_ContractConfig": {
+      "type": "object",
+      "properties": {
+        "abi_file_path": {
+          "type": "string"
+        },
+        "address": {
+          "$ref": "#/$defs/Addresses"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventConfig"
+          }
+        },
+        "handler": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": ["name"]
+    }
+  }
+}

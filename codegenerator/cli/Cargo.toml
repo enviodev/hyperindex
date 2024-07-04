@@ -42,6 +42,7 @@ sqlx = { version = "0.7.2", features = [
 ] }
 thiserror = "1.0.50"
 fuel-abi-types = "0.5.2"
+schemars = { version = "1.0.0-alpha.2" }
 
 [dev-dependencies]
 tempdir = "0.3"
