@@ -135,6 +135,7 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     pub struct HypersyncConfig {
+        #[serde(alias = "endpoint_url")]
         pub url: String,
     }
 
