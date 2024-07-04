@@ -337,6 +337,10 @@ mod test {
 
         //current is trimmed because then print command
         //adds a line at the end of the md file
-        assert_eq!(md_current.trim(), md_output.trim());
+        assert_eq!(
+            md_current.trim(),
+            md_output.trim(),
+            "Please run 'make update-generated-docs'"
+        );
     }
 }
