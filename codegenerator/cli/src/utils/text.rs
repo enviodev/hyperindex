@@ -44,6 +44,7 @@ impl Capitalize for String {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CaseOptions {
     pub pascal: String,
     pub snake: String,

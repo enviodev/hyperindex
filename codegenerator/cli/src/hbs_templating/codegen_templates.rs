@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
+use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
@@ -17,7 +17,7 @@ use crate::{
         ParsedProjectPaths,
     },
     template_dirs::TemplateDirs,
-    utils::text::{Capitalize, CapitalizedOptions},
+    utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{Event, EventExt};
@@ -578,6 +578,54 @@ impl NetworkConfigTemplate {
 }
 
 #[derive(Serialize)]
+struct FieldSelection {
+    transaction_fields: Vec<SelectableField>,
+    block_fields: Vec<SelectableField>,
+}
+
+impl FieldSelection {
+    fn new(transaction_fields: Vec<SelectableField>, block_fields: Vec<SelectableField>) -> Self {
+        Self {
+            transaction_fields,
+            block_fields,
+        }
+    }
+
+    fn from_config_field_selection(cfg: &system_config::FieldSelection) -> Self {
+        Self::new(
+            cfg.transaction_fields
+                .iter()
+                .cloned()
+                .map(|field| SelectableField::from(field))
+                .collect(),
+            cfg.block_fields
+                .iter()
+                .cloned()
+                .map(|field| SelectableField::from(field))
+                .collect(),
+        )
+    }
+}
+
+#[derive(Serialize)]
+struct SelectableField {
+    name: CaseOptions,
+    res_type: RescriptType,
+}
+
+impl SelectableField {
+    fn from<T>(value: T) -> Self
+    where
+        T: Display + Into<RescriptType>,
+    {
+        Self {
+            name: value.to_string().into(),
+            res_type: value.into(),
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
@@ -593,6 +641,7 @@ pub struct ProjectTemplate {
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     has_multiple_events: bool,
+    field_selection: FieldSelection,
 }
 
 impl ProjectTemplate {
@@ -675,6 +724,8 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to diff generated to root path")?;
 
+        let field_selection = FieldSelection::from_config_field_selection(&cfg.field_selection);
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
@@ -690,6 +741,7 @@ impl ProjectTemplate {
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             has_multiple_events,
+            field_selection,
         })
     }
 }

@@ -55,8 +55,8 @@ pub struct NetworkContract<T> {
 }
 
 pub mod evm {
-
     use super::{GlobalContract, NetworkContract, NetworkId};
+    use crate::config_parsing::entity_parsing::RescriptType;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -142,7 +142,7 @@ pub mod evm {
         pub block_fields: Option<Vec<BlockField>>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Display, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
     #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub enum TransactionField {
         TransactionIndex,
@@ -170,8 +170,37 @@ pub mod evm {
         Sighash,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Display, JsonSchema)]
+    impl From<TransactionField> for RescriptType {
+        fn from(value: TransactionField) -> RescriptType {
+            match value {
+                TransactionField::TransactionIndex => RescriptType::Int,
+                TransactionField::Hash => RescriptType::String,
+                TransactionField::From => RescriptType::Address,
+                TransactionField::To => RescriptType::Address,
+                TransactionField::Gas => RescriptType::BigInt,
+                TransactionField::GasPrice => RescriptType::BigInt,
+                TransactionField::MaxPriorityFeePerGas => RescriptType::BigInt,
+                TransactionField::MaxFeePerGas => RescriptType::BigInt,
+                TransactionField::CumulativeGasUsed => RescriptType::BigInt,
+                TransactionField::EffectiveGasPrice => RescriptType::BigInt,
+                TransactionField::GasUsed => RescriptType::BigInt,
+                TransactionField::Input => RescriptType::String,
+                TransactionField::Nonce => RescriptType::Int,
+                TransactionField::Value => RescriptType::BigInt,
+                TransactionField::V => RescriptType::String,
+                TransactionField::R => RescriptType::String,
+                TransactionField::S => RescriptType::String,
+                TransactionField::ContractAddress => RescriptType::Address,
+                TransactionField::LogsBloom => RescriptType::String,
+                TransactionField::Type => RescriptType::Int,
+                TransactionField::Root => RescriptType::String,
+                TransactionField::Status => RescriptType::Int,
+                TransactionField::Sighash => RescriptType::String,
+            }
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
     #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub enum BlockField {
         Hash,
@@ -191,6 +220,30 @@ pub mod evm {
         GasUsed,
         Uncles,
         BaseFeePerGas,
+    }
+
+    impl From<BlockField> for RescriptType {
+        fn from(value: BlockField) -> RescriptType {
+            match value {
+                BlockField::Hash => RescriptType::String,
+                BlockField::ParentHash => RescriptType::String,
+                BlockField::Nonce => RescriptType::Int,
+                BlockField::Sha3Uncles => RescriptType::String,
+                BlockField::LogsBloom => RescriptType::String,
+                BlockField::TransactionsRoot => RescriptType::String,
+                BlockField::StateRoot => RescriptType::String,
+                BlockField::ReceiptsRoot => RescriptType::String,
+                BlockField::Miner => RescriptType::Address,
+                BlockField::Difficulty => RescriptType::BigInt,
+                BlockField::TotalDifficulty => RescriptType::BigInt,
+                BlockField::ExtraData => RescriptType::String,
+                BlockField::Size => RescriptType::BigInt,
+                BlockField::GasLimit => RescriptType::BigInt,
+                BlockField::GasUsed => RescriptType::BigInt,
+                BlockField::Uncles => RescriptType::String,
+                BlockField::BaseFeePerGas => RescriptType::BigInt,
+            }
+        }
     }
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231

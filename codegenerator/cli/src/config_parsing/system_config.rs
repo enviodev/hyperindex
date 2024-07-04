@@ -14,6 +14,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam, HumanReadableParser};
+use itertools::Itertools;
 use serde::Serialize;
 use std::{
     collections::{HashMap, HashSet},
@@ -42,6 +43,7 @@ pub struct SystemConfig {
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
     pub schema: Schema,
+    pub field_selection: FieldSelection,
 }
 
 //Getter methods for system config
@@ -142,7 +144,6 @@ impl SystemConfig {
             .collect::<Vec<_>>();
 
         filtered_unique_abi_files.sort();
-
         Ok(filtered_unique_abi_files)
     }
 }
@@ -260,6 +261,13 @@ impl SystemConfig {
                 .context("Failed inserting network at networks map")?;
         }
 
+        let field_selection =
+            human_cfg
+                .field_selection
+                .map_or(Ok(FieldSelection::empty()), |field_selection| {
+                    FieldSelection::try_from_config_field_selection(field_selection, &networks)
+                })?;
+
         Ok(SystemConfig {
             name: human_cfg.name.clone(),
             parsed_project_paths: project_paths.clone(),
@@ -277,6 +285,7 @@ impl SystemConfig {
             rollback_on_reorg: human_cfg.rollback_on_reorg.unwrap_or(false),
             save_full_history: human_cfg.save_full_history.unwrap_or(false),
             schema,
+            field_selection,
         })
     }
 
@@ -364,7 +373,6 @@ impl SyncSource {
             } => {
                 Err(anyhow!("EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file"))
             }
-  
             human_config::evm::Network {
               hypersync_config: None,
               rpc_config: None,
@@ -633,6 +641,70 @@ impl Event {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct FieldSelection {
+    pub transaction_fields: Vec<human_config::evm::TransactionField>,
+    pub block_fields: Vec<human_config::evm::BlockField>,
+}
+
+impl FieldSelection {
+    fn new(
+        transaction_fields: Vec<human_config::evm::TransactionField>,
+        block_fields: Vec<human_config::evm::BlockField>,
+    ) -> Self {
+        Self {
+            transaction_fields,
+            block_fields,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self::new(vec![], vec![])
+    }
+
+    pub fn try_from_config_field_selection(
+        field_selection_cfg: human_config::evm::FieldSelection,
+        network_map: &NetworkMap,
+    ) -> Result<Self> {
+        //validate transaction field selection with rpc
+        let has_rpc_sync_src = network_map
+            .values()
+            .sorted_by_key(|n| n.id)
+            .fold(false, |accum, n| {
+                accum || matches!(n.sync_source, SyncSource::RpcConfig(_))
+            });
+
+        let transaction_fields = field_selection_cfg.transaction_fields.unwrap_or(vec![]);
+        let block_fields = field_selection_cfg.block_fields.unwrap_or(vec![]);
+
+        //Validate no duplicates in field selection
+        let tx_duplicates: Vec<_> = transaction_fields.iter().duplicates().collect();
+
+        if !tx_duplicates.is_empty() {
+            return Err(anyhow!(
+                "transaction_fields selection contains the following duplicates: {}",
+                tx_duplicates.iter().join(", ")
+            ));
+        }
+
+        let block_duplicates: Vec<_> = block_fields.iter().duplicates().collect();
+
+        if !block_duplicates.is_empty() {
+            return Err(anyhow!(
+                "block_fields selection contains the following duplicates: {}",
+                block_duplicates.iter().join(", ")
+            ));
+        }
+
+        if has_rpc_sync_src {
+            //validate rpc fields
+            todo!("Implement validation for RPC field selection")
+        }
+
+        Ok(Self::new(transaction_fields, block_fields))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 struct NormalizedEthAbiEvent(EthAbiEvent);
 
 impl From<EthAbiEvent> for NormalizedEthAbiEvent {
@@ -665,7 +737,12 @@ mod test {
 
     use super::SystemConfig;
     use crate::{
-        config_parsing::{self, entity_parsing::Schema, human_config::evm::HumanConfig, system_config::{Event, SyncSource}},
+        config_parsing::{
+            self,
+            entity_parsing::Schema,
+            human_config::evm::HumanConfig,
+            system_config::{Event, SyncSource},
+        },
         project_paths::ParsedProjectPaths,
     };
     use ethers::abi::{Event as EthAbiEvent, EventParam, ParamType};
@@ -862,11 +939,8 @@ mod test {
         assert!(cfg.networks[0].rpc_config.is_some());
         assert!(cfg.networks[0].hypersync_config.is_some());
 
-        let error = SyncSource::from_human_config(
-          cfg.networks[0].clone()
-        ).unwrap_err();
+        let error = SyncSource::from_human_config(cfg.networks[0].clone()).unwrap_err();
 
         assert_eq!(error.to_string(), "EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file");
     }
-
 }
