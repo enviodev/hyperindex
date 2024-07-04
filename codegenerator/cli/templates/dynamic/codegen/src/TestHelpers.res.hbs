@@ -123,8 +123,8 @@ module EventFunctions = {
           ->Types.mkEventBatchQueueItem(
             ~chain,
             ~logIndex=event.logIndex,
-            ~timestamp=event.blockTimestamp,
-            ~blockNumber=event.blockNumber,
+            ~timestamp=event.block.timestamp,
+            ~blockNumber=event.block.number,
           ),
           ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
             false,
@@ -198,40 +198,19 @@ module EventFunctions = {
     ~params: 'eventParams,
     ~mockEventData: option<mockEventData>,
   ): Types.eventLog<'eventParams> => {
-    let {
-      ?blockNumber,
-      ?blockTimestamp,
-      ?blockHash,
-      ?srcAddress,
-      ?chainId,
-      ?transactionHash,
-      ?transactionIndex,
-      ?logIndex,
-      ?tx,
-    } =
+    let {?blockNumber, ?blockTimestamp, ?blockHash, ?srcAddress, ?chainId, ?logIndex} =
       mockEventData->Belt.Option.getWithDefault({})
-
-    let tx: option<Types.transaction> = tx->Belt.Option.map((tx): Types.transaction => {
-      {
-        from: tx.from,
-        to: tx.to,
-        maxFeePerGas: tx.maxFeePerGas,
-        maxPriorityFeePerGas: tx.maxPriorityFeePerGas,
-        gasPrice: tx.gasPrice,
-        gasUsed: tx.gasUsed,
-      }
-    })
 
     {
       params,
-      tx,
+      transaction: {}, //TODO!
       chainId: chainId->Belt.Option.getWithDefault(1),
-      blockNumber: blockNumber->Belt.Option.getWithDefault(0),
-      blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),
-      blockHash: blockHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
+      block: {
+        number: blockNumber->Belt.Option.getWithDefault(0),
+        timestamp: blockTimestamp->Belt.Option.getWithDefault(0),
+        hash: blockHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
+      },
       srcAddress: srcAddress->Belt.Option.getWithDefault(Addresses.defaultAddress),
-      transactionHash: transactionHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
-      transactionIndex: transactionIndex->Belt.Option.getWithDefault(0),
       logIndex: logIndex->Belt.Option.getWithDefault(0),
     }
   }

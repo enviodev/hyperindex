@@ -6,20 +6,12 @@ type hyperSyncPage<'item> = {
   events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
-type txMetadataType = {
-  txFrom: option<Ethers.ethAddress>,
-  txTo: option<Ethers.ethAddress>,
-  maxFeePerGas: option<bigint>,
-  maxPriorityFeePerGas: option<bigint>,
-  gasPrice: option<bigint>,
-  gasUsed: option<bigint>,
+type logsQueryPageItem = {
+  log: Types.log,
+  block: Types.blockFields,
+  transaction: Types.transactionFields,
 }
 
-type logsQueryPageItem = {
-  log: Ethers.log,
-  blockTimestamp: int,
-  txMetadataParams: option<txMetadataType>,
-}
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
 
 type missingParams = {
@@ -108,87 +100,52 @@ module LogsQuery = {
     toBlockExclusive: toBlockInclusive + 1,
     logs: addressesWithTopics,
     fieldSelection: {
-      log: [
-        Address,
-        BlockHash,
-        BlockNumber,
-        Data,
-        LogIndex,
-        TransactionHash,
-        TransactionIndex,
-        Topic0,
-        Topic1,
-        Topic2,
-        Topic3,
-        Removed,
-      ],
-      block: [Number, Timestamp],
-      transaction: [
-        /* TODO: inclusion/exclusion of these fields should be based on config */
-        From, To, Gas, GasPrice, MaxFeePerGas, MaxPriorityFeePerGas],
+      log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
+      block: Types.blockFieldsQuerySelection,
+      transaction: Types.transactionFieldsQuerySelection,
     },
   }
 
+  let getMissingFields = (fieldNames, returnedObj, ~prefix) => {
+    fieldNames->Belt.Array.keepMap(fieldName => {
+      returnedObj
+      ->(X.magic: 'a => Js.Dict.t<unknown>)
+      ->Js.Dict.get(fieldName)
+      ->Utils.optionMapNone(prefix ++ "." ++ fieldName)
+    })
+  }
+
   //Note this function can throw an error
-  let checkFields = (event: HyperSyncClient.ResponseTypes.event): logsQueryPageItem => {
-    let log = event.log
+  let convertEvent = (event: HyperSyncClient.ResponseTypes.event): logsQueryPageItem => {
+    let missingParams =
+      [
+        getMissingFields(Types.logFieldNames, event.log, ~prefix="log"),
+        getMissingFields(Types.blockFieldNames, event.block, ~prefix="block"),
+        getMissingFields(Types.transactionFieldNames, event.transaction, ~prefix="transaction"),
+      ]->Belt.Array.concatMany
 
-    switch event {
-    | {
-        block: {timestamp: blockTimestamp},
-        log: {
-          address,
-          blockHash,
-          blockNumber,
-          data,
-          index,
-          transactionHash,
-          transactionIndex,
-          topics,
-        },
-      } =>
-      let topics = topics->Belt.Array.keepMap(Js.Nullable.toOption)
-
-      let log: Ethers.log = {
-        data,
-        blockNumber,
-        blockHash,
-        address: Ethers.getAddressFromStringUnsafe(address),
-        transactionHash,
-        transactionIndex,
-        logIndex: index,
-        topics,
-        removed: log.removed,
-      }
-
-      let txMetadataParams: option<txMetadataType> = event.transaction->Belt.Option.map(b => {
-        txFrom: b.from->Belt.Option.flatMap(Ethers.getAddressFromString),
-        txTo: b.to->Belt.Option.flatMap(Ethers.getAddressFromString),
-        maxFeePerGas: b.maxFeePerGas,
-        maxPriorityFeePerGas: b.maxPriorityFeePerGas,
-        gasPrice: b.gasPrice,
-        gasUsed: b.gasUsed,
-      })
-
-      let pageItem: logsQueryPageItem = {log, blockTimestamp, txMetadataParams}
-      pageItem
-    | _ =>
-      let missingParams =
-        [
-          event.block->Belt.Option.flatMap(b => b.timestamp)->Utils.optionMapNone("log.timestamp"),
-          log.address->Utils.optionMapNone("log.address"),
-          log.blockHash->Utils.optionMapNone("log.blockHash-"),
-          log.blockNumber->Utils.optionMapNone("log.blockNumber"),
-          log.data->Utils.optionMapNone("log.data"),
-          log.index->Utils.optionMapNone("log.index"),
-          log.transactionHash->Utils.optionMapNone("log.transactionHash"),
-          log.transactionIndex->Utils.optionMapNone("log.transactionIndex"),
-        ]->Belt.Array.keepMap(v => v)
-
+    if missingParams->Belt.Array.length > 0 {
       UnexpectedMissingParamsExn({
         queryName: "queryLogsPage HyperSync",
         missingParams,
       })->raise
+    }
+
+    //Topics can be nullable and still need to be filtered
+    //Address is not yet checksummed (TODO this should be done in the client)
+    let logUnsanitized: Types.log = event.log->X.magic
+    let topics = event.log.topics->Belt.Option.getUnsafe->Belt.Array.keepMap(Js.Nullable.toOption)
+    let address = event.log.address->Belt.Option.getUnsafe->Viem.getAddressUnsafe
+    let log = {
+      ...logUnsanitized,
+      topics,
+      address,
+    }
+
+    {
+      log,
+      block: event.block->X.magic,
+      transaction: event.transaction->X.magic,
     }
   }
 
@@ -197,7 +154,7 @@ module LogsQuery = {
   > => {
     try {
       let {nextBlock, archiveHeight, rollbackGuard} = res
-      let items = res.events->Belt.Array.map(event => event->checkFields)
+      let items = res.events->Belt.Array.map(event => event->convertEvent)
       let page: logsQueryPage = {
         items,
         nextBlock,
@@ -378,4 +335,3 @@ let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
 let queryBlockData = BlockData.queryBlockData
 let queryBlockDataMulti = BlockData.queryBlockDataMulti
-

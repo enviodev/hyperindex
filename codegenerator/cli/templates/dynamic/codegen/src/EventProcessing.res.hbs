@@ -107,10 +107,12 @@ let runEventContractRegister = (
       )
 
     let addToDynamicContractRegistrations =
-      eventBatchQueueItem->addToDynamicContractRegistrations(
-        ~registeringEventBlockNumber=event.blockNumber,
-        ~registeringEventLogIndex=event.logIndex,
-        ...
+      eventBatchQueueItem->(
+        addToDynamicContractRegistrations(
+          ~registeringEventBlockNumber=event.block.number,
+          ~registeringEventLogIndex=event.logIndex,
+          ...
+        )
       )
 
     let val = switch (dynamicContracts, dynamicContractRegistrations) {
@@ -159,15 +161,13 @@ let addEventToRawEvents = (
   ~eventArgsSchema: S.t<'a>,
   ~eventName: Enums.EventType.t,
 ) => {
-  let {
-    blockNumber,
+    let {
+    block: {number: blockNumber, hash: blockHash, timestamp: blockTimestamp},
     logIndex,
-    transactionIndex,
-    transactionHash,
     srcAddress,
-    blockHash,
-    blockTimestamp,
   } = event
+
+  let (transactionIndex, transactionHash) = (0, "0xtest")
 
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let rawEvent: TablesStatic.RawEvents.t = {
@@ -197,7 +197,8 @@ let updateEventSyncState = (
   ~chainId,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
-  let {blockNumber, logIndex, transactionIndex, blockTimestamp} = event
+  let {logIndex, block: {number: blockNumber, timestamp: blockTimestamp}} = event
+  let transactionIndex = 0 //TODO!
   let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
     chainId,
     {
@@ -275,7 +276,7 @@ let runEventHandler = (
         ~eventName=Event.eventName,
       )
       latestProcessedBlocks
-      ->EventsProcessed.updateEventsProcessed(~chain, ~blockNumber=event.blockNumber)
+      ->EventsProcessed.updateEventsProcessed(~chain, ~blockNumber=event.block.number)
       ->Ok
     }
   })

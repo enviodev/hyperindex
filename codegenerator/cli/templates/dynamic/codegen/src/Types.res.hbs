@@ -93,6 +93,17 @@ type inMemoryStoreRowEntity<'entityType> =
 //*************
 //**CONTRACTS**
 //*************
+type address = Ethers.ethAddress
+
+type log = {
+  address: address,
+  data: string,
+  topics: array<Ethers.EventFilter.topic>,
+  logIndex: int,
+}
+
+let logFieldNames = ["address", "data", "topics", "logIndex"]
+
 
 @genType
 type transactionFields = {
@@ -102,17 +113,47 @@ type transactionFields = {
   {{/each}}
 }
 
+let transactionFieldsQuerySelection: HyperSyncClient.QueryTypes.transactionFieldSelection = [
+  {{#each field_selection.transaction_fields as | field |}}
+  {{field.name.pascal}},
+  {{/each}}
+]
+
+let transactionFieldNames: array<string> = [
+  {{#each field_selection.transaction_fields as | field |}}
+  "{{field.name.camel}}",
+  {{/each}}
+]
+
 @genType
 type blockFields = {
   {{!-- Mandatory fields --}}
-  blockNumber: int,
-  blockTimestamp: int,
-  blockHash: string,
+  number: int,
+  timestamp: int,
+  hash: string,
   {{!-- Selectable fields --}}
   {{#each field_selection.block_fields as | field |}}
   {{field.name.camel}}: {{field.res_type}},
   {{/each}}
 }
+
+let blockFieldsQuerySelection: HyperSyncClient.QueryTypes.blockFieldSelection = [
+  Number,
+  Timestamp,
+  Hash,
+  {{#each field_selection.block_fields as | field |}}
+  {{field.name.pascal}},
+  {{/each}}
+]
+
+let blockFieldNames: array<string> = [
+  "number",
+  "timestamp",
+  "hash",
+  {{#each field_selection.block_fields as | field |}}
+  "{{field.name.camel}}",
+  {{/each}}
+]
 
 @genType.as("EventLog")
 type eventLog<'a> = {

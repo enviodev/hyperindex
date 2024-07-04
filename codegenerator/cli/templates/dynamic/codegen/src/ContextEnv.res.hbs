@@ -48,31 +48,27 @@ let getUserLogger = (logger): Logs.userLogger => {
 
 let makeEventIdentifier = (event: Types.eventLog<'a>): Types.eventIdentifier => {
   chainId: event.chainId,
-  blockTimestamp: event.blockTimestamp,
-  blockNumber: event.blockNumber,
+  blockTimestamp: event.block.timestamp,
+  blockNumber: event.block.number,
   logIndex: event.logIndex,
 }
 
 let getEventId = (event: Types.eventLog<'a>) => {
-  EventUtils.packEventIndex(~blockNumber=event.blockNumber, ~logIndex=event.logIndex)
+  EventUtils.packEventIndex(~blockNumber=event.block.number, ~logIndex=event.logIndex)
 }
 
-let make = (
-  ~chain,
-  ~event: Types.eventLog<'eventArgs>,
-  ~eventName: Enums.EventType.t,
-  ~logger,
-) => {
-  let {blockNumber, logIndex, transactionHash} = event
-  let logger = logger->Logging.createChildFrom(
-    ~logger=_,
-    ~params={
-      "context": (eventName :> string),
-      "chainId": chain->ChainMap.Chain.toChainId,
-      "block": blockNumber,
-      "logIndex": logIndex,
-      "txHash": transactionHash,
-    },
+let make = (~chain, ~event: Types.eventLog<'eventArgs>, ~eventName: Enums.EventType.t, ~logger) => {
+  let {block, logIndex} = event
+  let logger = logger->(
+    Logging.createChildFrom(
+      ~logger=_,
+      ~params={
+        "context": (eventName :> string),
+        "chainId": chain->ChainMap.Chain.toChainId,
+        "block": block.number,
+        "logIndex": logIndex,
+      },
+    )
   )
 
   {
@@ -87,11 +83,7 @@ let make = (
 let getAddedDynamicContractRegistrations = (contextEnv: t<'eventArgs>) =>
   contextEnv.addedDynamicContractRegistrations
 
-let makeDynamicContractRegisterFn = (
-  ~contextEnv: t<'eventArgs>,
-  ~contractName,
-  ~inMemoryStore
-) => (
+let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, ~inMemoryStore) => (
   contractAddress: Ethers.ethAddress,
 ) => {
   let {event, chain, addedDynamicContractRegistrations} = contextEnv
@@ -101,7 +93,7 @@ let makeDynamicContractRegisterFn = (
   let dynamicContractRegistration: TablesStatic.DynamicContractRegistry.t = {
     chainId,
     eventId,
-    blockTimestamp: event.blockTimestamp,
+    blockTimestamp: event.block.timestamp,
     contractAddress,
     contractType: contractName,
   }
