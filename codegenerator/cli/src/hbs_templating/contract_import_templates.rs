@@ -304,13 +304,20 @@ impl Event {
         );
         match is_fuel {
             true => {
-              let data_code =  match language {
-                Language::ReScript => "%raw(`{}`)",
-                Language::TypeScript => "{}",
-                Language::JavaScript => "{}",
-              };
-              format!("{event_module}.mock({{data: {data_code} /* It mocks event fields with default values, so you only need to provide data */}})")}, // FIXME: Generate default data
-            false => format!("{event_module}.createMockEvent({{/* It mocks event fields with default values. You can overwrite them if you need */}})"),
+                let data_code = match language {
+                    Language::ReScript => "%raw(`{}`)",
+                    Language::TypeScript => "{}",
+                    Language::JavaScript => "{}",
+                };
+                format!(
+                    "{event_module}.mock({{data: {data_code} /* It mocks event fields with \
+                     default values, so you only need to provide data */}})"
+                )
+            } // FIXME: Generate default data
+            false => format!(
+                "{event_module}.createMockEvent({{/* It mocks event fields with default values. \
+                 You can overwrite them if you need */}})"
+            ),
         }
     }
 

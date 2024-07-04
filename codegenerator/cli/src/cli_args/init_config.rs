@@ -77,10 +77,10 @@ pub mod evm {
                         global_contract,
                     )
                     .context(format!(
-                    "Unexpected, failed to add global contract {}. Contract should have unique \
-                     names",
-                    selected_contract.name
-                ))?;
+                        "Unexpected, failed to add global contract {}. Contract should have \
+                         unique names",
+                        selected_contract.name
+                    ))?;
                     None
                 } else {
                     //Return some for local contract config
