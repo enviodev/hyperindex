@@ -189,7 +189,6 @@ mod nested_params {
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
     cli_args::init_config::Language,
     config_parsing::{
         entity_parsing::{Entity, Field, FieldType, Schema},
@@ -197,6 +196,7 @@ use crate::{
     },
     constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     template_dirs::TemplateDirs,
+    utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{Context, Result};
 use ethers::abi::ParamType;

@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
@@ -18,6 +17,7 @@ use crate::{
         ParsedProjectPaths,
     },
     template_dirs::TemplateDirs,
+    utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{Event, EventExt};
@@ -698,13 +698,13 @@ impl ProjectTemplate {
 mod test {
     use super::*;
     use crate::{
-        capitalization::Capitalize,
         config_parsing::{
             entity_parsing::RescriptType,
             human_config,
             system_config::{RpcConfig, SystemConfig},
         },
         project_paths::ParsedProjectPaths,
+        utils::text::Capitalize,
     };
     use pretty_assertions::assert_eq;
 
