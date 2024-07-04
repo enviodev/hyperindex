@@ -1,4 +1,5 @@
 use crate::{
+    clap_definitions::JsonSchema,
     cli_args::clap_definitions::{CommandLineArgs, CommandType},
     commands,
     config_parsing::{human_config, system_config::SystemConfig},
@@ -12,6 +13,7 @@ pub mod init;
 mod local;
 
 use anyhow::{Context, Result};
+use schemars::schema_for;
 
 pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
     let global_project_paths = command_line_args.project_paths;
@@ -93,9 +95,27 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
             local::run_local(&local_commands, &parsed_project_paths).await?;
         }
 
-        CommandType::PrintAllHelp {} => {
+        CommandType::PrintCliHelpMd => {
             clap_markdown::print_help_markdown::<CommandLineArgs>();
         }
+        CommandType::PrintConfigJsonSchema(json_schema) => match json_schema {
+            JsonSchema::Evm => {
+                let schema = schema_for!(human_config::evm::HumanConfig);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&schema)
+                        .context("Failed serializing evm json schema")?
+                );
+            }
+            JsonSchema::Fuel => {
+                let schema = schema_for!(human_config::fuel::HumanConfig);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&schema)
+                        .context("Failed serializing fuel json schema")?
+                );
+            }
+        },
     };
 
     Ok(())
