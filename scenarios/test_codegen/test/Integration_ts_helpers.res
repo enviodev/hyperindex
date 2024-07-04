@@ -57,11 +57,7 @@ let makeChainManager = (cfg: chainConfig): chainManager => {
   //   }
   // let configs = ChainMap.make(getConfig)
   let chainMap = [(cfg.chain, cfg)]->Belt.Map.fromArray(~id=module(ChainMap.Chain.ChainIdCmp))
-  ChainManager.makeFromConfig(~config={
-    ...Config.mock(),
-    isUnorderedMultichainMode: true,
-    chainMap: chainMap
-  })
+  ChainManager.makeFromConfig(~config=Config.make(~isUnorderedMultichainMode=true, ~chainMap))
 }
 
 @genType

@@ -86,10 +86,12 @@ let getChain = (chain: ChainMap.Chain.t) =>
   {{/each}}
   }
 
-Config.register(
-  ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
-  ~shouldSaveFullHistory={{should_save_full_history}},
-  ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
-  ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
-  ~getChain,
+Config.setGenerated(
+  Config.make(
+    ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
+    ~shouldSaveFullHistory={{should_save_full_history}},
+    ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
+    ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
+    ~chainMap=ChainMap.make(getChain),
+  )
 )
