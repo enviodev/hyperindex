@@ -17,7 +17,7 @@
     "helpers": "../helpers",
     "mocha": "10.2.0",
     "rescript": "11.1.0",
-    "rescript-schema": "6.4.0"
+    "rescript-schema": "7.0.1"
   },
   "optionalDependencies": {
     "generated": "./generated"

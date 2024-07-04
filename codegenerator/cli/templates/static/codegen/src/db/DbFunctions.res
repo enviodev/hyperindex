@@ -240,7 +240,7 @@ let entityHistoryItemSchema = S.object(s => {
   previous_chain_id: s.field("previous_chain_id", S.null(S.int)),
   previous_block_number: s.field("previous_block_number", S.null(S.int)),
   previous_log_index: s.field("previous_log_index", S.null(S.int)),
-  params: s.field("params", S.null(S.json)),
+  params: s.field("params", S.null(S.json(~validate=false))),
   entity_type: s.field("entity_type", S.string),
   entity_id: s.field("entity_id", S.string),
 })
@@ -296,7 +296,7 @@ module EntityHistory = {
     block_timestamp: s.field("block_timestamp", S.null(S.int)),
     block_number: s.field("block_number", S.null(S.int)),
     log_index: s.field("log_index", S.null(S.int)),
-    val: s.field("val", S.null(S.json)),
+    val: s.field("val", S.null(S.json(~validate=false))),
   })
 
   type previousEntity = {
