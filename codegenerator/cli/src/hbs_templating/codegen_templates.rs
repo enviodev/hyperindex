@@ -66,7 +66,6 @@ impl HasName for EventRecordTypeTemplate {
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,
-    pub has_multiple_params: bool,
 }
 
 impl GraphQlEnumTypeTemplate {
@@ -80,11 +79,9 @@ impl GraphQlEnumTypeTemplate {
                 "Failed templating gql enum fields of enum: {}",
                 gql_enum.name
             ))?;
-        let has_multiple_params = params.len() > 1;
         Ok(GraphQlEnumTypeTemplate {
             name: gql_enum.name.to_capitalized_options(),
             params,
-            has_multiple_params,
         })
     }
 }

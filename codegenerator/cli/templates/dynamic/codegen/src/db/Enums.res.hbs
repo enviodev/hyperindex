@@ -20,21 +20,13 @@ module EventType = {
   {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
     | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}} {{/each}}{{/each}}
 
-  let schema = {{#if has_multiple_events }}
-    S.union([
+  let schema = S.union([
     {{#each codegen_contracts as | contract |}}
     {{#each contract.codegen_events as | event |}}
-      S.literal({{event.event_type.full}}),
+    S.literal({{event.event_type.full}}),
     {{/each}}
     {{/each}}
-    ])
-  {{else}}
-    {{#each codegen_contracts as | contract |}}
-    {{#each contract.codegen_events as | event |}}
-      S.literal({{event.event_type.full}})
-    {{/each}}
-    {{/each}}
-  {{/if}}
+  ])
 
   let name = "EVENT_TYPE"
   let variants = [
@@ -68,19 +60,12 @@ module EntityType = {
     | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
   {{/each}}
 
-  let schema = 
-  {{#if entities.1}}
-  {{!-- If there are multiple entities --}}
-  S.union([
+  let schema = S.union([
   {{#each entities as | entity |}}
     S.literal({{entity.name.capitalized}}), 
   {{/each}}
   ])
-  {{else}}
-  {{#each entities as | entity |}}
-    S.literal({{entity.name.capitalized}})
-  {{/each}}
-  {{/if}}
+
   let name = "ENTITY_TYPE"
   let variants = [
   {{#each entities as | entity |}}
@@ -101,18 +86,11 @@ module {{enum.name.capitalized}} = {
 
 
   let default = {{enum.params.[0].capitalized}}
-  let schema: S.t<t> = 
-  {{#if enum.has_multiple_params}} 
-  S.union([
+  let schema: S.t<t> = S.union([
     {{#each enum.params as | param | }}
-      S.literal({{param.capitalized}}), 
+    S.literal({{param.capitalized}}), 
     {{/each}}
   ])
-  {{else}}
-    {{#each enum.params as | param | }}
-      S.literal({{param.capitalized}})
-    {{/each}}
-  {{/if}}
 
   let name = "{{enum.name.capitalized}}"
   let variants = [
