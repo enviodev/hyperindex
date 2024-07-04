@@ -55,11 +55,12 @@ pub struct NetworkContract<T> {
 }
 
 pub mod evm {
-    use std::fmt::Display;
 
     use super::{GlobalContract, NetworkContract, NetworkId};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
+    use std::fmt::Display;
+    use strum::Display;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
@@ -107,6 +108,11 @@ pub mod evm {
             description = "A flag to indicate if the indexer should save the full history of events. This is useful for debugging but will increase the size of the database (default: false)"
         )]
         pub save_full_history: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "An object representing additional fields to add to the event passed to handlers."
+        )]
+        pub field_selection: Option<FieldSelection>,
     }
 
     impl Display for HumanConfig {
@@ -117,6 +123,62 @@ pub mod evm {
                 serde_yaml::to_string(self).expect("Failed to serialize config")
             )
         }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    pub struct FieldSelection {
+        #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
+        transaction_fields: Option<Vec<TransactionField>>,
+        #[schemars(description = "Fields of a block to add to the event passed to handlers")]
+        block_fields: Option<Vec<TransactionField>>,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
+    pub enum TransactionField {
+        TransactionIndex,
+        Hash,
+        From,
+        To,
+        Gas,
+        GasPrice,
+        MaxPriorityFeePerGas,
+        MaxFeePerGas,
+        CumulativeGasUsed,
+        EffectiveGasPrice,
+        GasUsed,
+        Input,
+        Nonce,
+        Value,
+        V,
+        R,
+        S,
+        ContractAddress,
+        LogsBloom,
+        Type,
+        Root,
+        Status,
+        Sighash,
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
+    pub enum BlockField {
+        Hash,
+        ParentHash,
+        Nonce,
+        Sha3Uncles,
+        LogsBloom,
+        TransactionsRoot,
+        StateRoot,
+        ReceiptsRoot,
+        Miner,
+        Difficulty,
+        TotalDifficulty,
+        ExtraData,
+        Size,
+        GasLimit,
+        GasUsed,
+        Uncles,
+        BaseFeePerGas,
     }
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231

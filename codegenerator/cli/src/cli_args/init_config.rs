@@ -151,6 +151,7 @@ pub mod evm {
                 event_decoder: None,
                 rollback_on_reorg: None,
                 save_full_history: None,
+                field_selection: None,
             })
         }
     }
@@ -261,6 +262,7 @@ pub mod fuel {
                 rollback_on_reorg: None,
                 save_full_history: None,
                 contracts: None,
+                field_selection: None,
                 networks: vec![human_config::evm::Network {
                     id: 1,
                     start_block: 0,

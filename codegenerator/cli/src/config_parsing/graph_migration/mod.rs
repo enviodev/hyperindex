@@ -281,6 +281,7 @@ pub async fn generate_config_from_subgraph_id(
         event_decoder: None,
         rollback_on_reorg: None,
         save_full_history: None,
+        field_selection: None,
     };
     let mut networks: Vec<Network> = vec![];
 
