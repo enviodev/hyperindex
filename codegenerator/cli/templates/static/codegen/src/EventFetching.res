@@ -98,13 +98,13 @@ let convertLogs = (
       chain,
       blockNumber: log.blockNumber,
       logIndex: log.logIndex,
-      eventPromise: timestampPromise->Promise.thenResolve(blockTimestamp => {
+      eventPromise: blockPromise->Promise.thenResolve(block => {
         let parsed = Converters.parseEvent(
-          ~log,
-          ~blockTimestamp,
+          ~log=log->X.magic, //TODO legit conversion
+          ~block=block->X.magic, //TODO legit conversion
           ~contractInterfaceManager,
           ~chainId=chain->ChainMap.Chain.toChainId,
-          ~txMetadataParams=None,
+          ~transaction=X.magic(Js.null), //TODO legit conversion
         )
         switch parsed {
         | Error(exn) =>

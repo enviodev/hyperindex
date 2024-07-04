@@ -18,17 +18,23 @@ module type S = {
   module Types: {
     type eventName
     type event
-    type eventLog<'a> = {
-      params: 'a,
-      chainId: int,
-      txOrigin: option<Ethers.ethAddress>,
-      txTo: option<Ethers.ethAddress>,
+    type transactionFields = {
+      // transactionIndex: int,
+      // transactionHash: string
+    }
+
+    type blockFields = {
       blockNumber: int,
       blockTimestamp: int,
       blockHash: string,
+    }
+
+    type eventLog<'a> = {
+      params: 'a,
+      chainId: int,
+      transaction: transactionFields,
+      block: blockFields,
       srcAddress: Ethers.ethAddress,
-      transactionHash: string,
-      transactionIndex: int,
       logIndex: int,
     }
 

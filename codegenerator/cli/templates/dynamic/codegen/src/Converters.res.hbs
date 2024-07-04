@@ -23,10 +23,10 @@ module {{contract.name.capitalized}} = {
     {{/unless}}
     let convertLogViem = (
       decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs>,
-      ~log: Ethers.log,
-      ~blockTimestamp: int,
+      ~log: Types.log,
+      ~block,
+      ~transaction,
       ~chainId: int,
-      ~txMetadataParams: option<HyperSync.txMetadataType>,
     ) => {
       let params: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs = 
       {{#if event.params}}
@@ -42,22 +42,9 @@ module {{contract.name.capitalized}} = {
       let eventLog: Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs> = {
         params,
         chainId,
-        tx: Some({
-          from: txMetadataParams->Belt.Option.flatMap(tx => tx.txFrom),
-          to: txMetadataParams->Belt.Option.flatMap(tx => tx.txTo),
-          gasPrice: txMetadataParams->Belt.Option.flatMap(tx => tx.gasPrice),
-          gasUsed: txMetadataParams->Belt.Option.flatMap(tx => tx.gasUsed),
-          maxFeePerGas: txMetadataParams->Belt.Option.flatMap(tx => tx.maxFeePerGas),
-          maxPriorityFeePerGas: txMetadataParams->Belt.Option.flatMap(tx =>
-            tx.maxPriorityFeePerGas
-          ),
-        }),
-        blockNumber: log.blockNumber,
-        blockTimestamp,
-        blockHash: log.blockHash,
+        transaction,
+        block,
         srcAddress: log.address,
-        transactionHash: log.transactionHash,
-        transactionIndex: log.transactionIndex,
         logIndex: log.logIndex,
       }
 
@@ -92,39 +79,26 @@ exception UnregisteredContract(Ethers.ethAddress)
 
 let makeEventLog = (
   params: 'args,
-  ~log: Ethers.log,
-  ~blockTimestamp: int,
+  ~log: Types.log,
+  ~transaction,
+  ~block,
   ~chainId: int,
-  ~txMetadataParams: option<HyperSync.txMetadataType>,
 ): Types.eventLog<'args> => {
   chainId,
   params,
-  tx: Some({
-    from: txMetadataParams->Belt.Option.flatMap(tx => tx.txFrom),
-    to: txMetadataParams->Belt.Option.flatMap(tx => tx.txTo),
-    gasPrice: txMetadataParams->Belt.Option.flatMap(tx => tx.gasPrice),
-    gasUsed: txMetadataParams->Belt.Option.flatMap(tx => tx.gasUsed),
-    maxFeePerGas: txMetadataParams->Belt.Option.flatMap(tx => tx.maxFeePerGas),
-    maxPriorityFeePerGas: txMetadataParams->Belt.Option.flatMap(tx =>
-      tx.maxPriorityFeePerGas
-    ),
-  }),
-  blockNumber: log.blockNumber,
-  blockTimestamp,
-  blockHash: log.blockHash,
+  transaction,
+  block,
   srcAddress: log.address,
-  transactionHash: log.transactionHash,
-  transactionIndex: log.transactionIndex,
   logIndex: log.logIndex,
 }
 
 let convertDecodedEvent = (
   event: HyperSyncClient.Decoder.decodedEvent,
   ~contractInterfaceManager,
-  ~log: Ethers.log,
-  ~blockTimestamp,
+  ~log: Types.log,
+  ~block,
   ~chainId,
-  ~txMetadataParams: option<HyperSync.txMetadataType>,
+  ~transaction,
 ): result<Types.event, _> => {
   switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
     ~contractAddress=log.address,
@@ -137,7 +111,7 @@ let convertDecodedEvent = (
         | {{event.event_type.full}} =>
             event
             ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertDecodedEventParams
-            ->makeEventLog(~log, ~blockTimestamp, ~chainId, ~txMetadataParams)
+            ->makeEventLog(~log, ~transaction, ~block, ~chainId)
             ->Types.{{contract.name.capitalized}}_{{event.name.capitalized}}
       {{/each}}
      {{/each}}
@@ -146,10 +120,13 @@ let convertDecodedEvent = (
   }
 }
 
-let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txMetadataParams: option<HyperSync.txMetadataType>): Belt.Result.t<
-  Types.event,
-  _,
-> => {
+let parseEvent = (
+  ~log: Types.log,
+  ~block,
+  ~contractInterfaceManager,
+  ~chainId,
+  ~transaction,
+): Belt.Result.t<Types.event, _> => {
  let decodedEventResult = contractInterfaceManager->ContractInterfaceManager.parseLogViem(~log)
   switch decodedEventResult {
   | Error(e) =>
@@ -170,7 +147,7 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
         | {{event.event_type.full}} =>
             decodedEvent
             ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertViemDecodedEvent
-            ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertLogViem(~log, ~blockTimestamp, ~chainId, ~txMetadataParams)
+            ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertLogViem(~log, ~transaction, ~block, ~chainId)
       {{/each}}
      {{/each}}
       }
@@ -191,13 +168,13 @@ let decodeRawEventWith = (
   ->Belt.Result.map(params => {
     let event = {
       chainId: rawEvent.chainId,
-      tx: None,
-      blockNumber: rawEvent.blockNumber,
-      blockTimestamp: rawEvent.blockTimestamp,
-      blockHash: rawEvent.blockHash,
+      transaction: {}, //TODO!
+      block: {
+        number: rawEvent.blockNumber,
+        timestamp: rawEvent.blockTimestamp,
+        hash: rawEvent.blockHash,
+      },
       srcAddress: rawEvent.srcAddress,
-      transactionHash: rawEvent.transactionHash,
-      transactionIndex: rawEvent.transactionIndex,
       logIndex: rawEvent.logIndex,
       params,
     }->variantAccessor
@@ -214,11 +191,11 @@ let decodeRawEventWith = (
   })
 }
 
-
 let parseRawEvent = (rawEvent: TablesStatic.RawEvents.t, ~chain): result<
   Types.eventBatchQueueItem,
   S.error,
-> => {  switch rawEvent.eventType {
+> => {
+  switch rawEvent.eventType {
   {{#each codegen_contracts as |contract|}}
   {{#each contract.codegen_events as |event|}}
       | {{event.event_type.full}} =>

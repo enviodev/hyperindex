@@ -6,19 +6,10 @@ type hyperSyncPage<'item> = {
   events: array<HyperSyncClient.ResponseTypes.event>,
 }
 
-type txMetadataType = {
-  txFrom: option<Ethers.ethAddress>,
-  txTo: option<Ethers.ethAddress>,
-  maxFeePerGas: option<bigint>,
-  maxPriorityFeePerGas: option<bigint>,
-  gasPrice: option<bigint>,
-  gasUsed: option<bigint>,
-}
-
 type logsQueryPageItem = {
-  log: Ethers.log,
-  blockTimestamp: int,
-  txMetadataParams: option<txMetadataType>,
+  log: Types.log,
+  block: Types.blockFields,
+  transaction: Types.transactionFields,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
@@ -56,4 +47,3 @@ let queryBlockDataMulti: (
 
 let mapExn: queryResponse<'a> => result<'a, exn>
 let getExn: queryResponse<'a> => 'a
-
