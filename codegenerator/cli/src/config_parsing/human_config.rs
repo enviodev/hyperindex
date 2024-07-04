@@ -126,6 +126,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct FieldSelection {
         #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
         transaction_fields: Option<Vec<TransactionField>>,
@@ -134,7 +135,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
-    #[serde(rename_all = "snake_case")]
+    #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub enum TransactionField {
         TransactionIndex,
         Hash,
@@ -162,7 +163,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
-    #[serde(rename_all = "snake_case")]
+    #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub enum BlockField {
         Hash,
         ParentHash,
@@ -185,25 +186,27 @@ pub mod evm {
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-    #[serde(rename_all = "lowercase")]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
     pub enum EcosystemTag {
         Evm,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
-    #[serde(rename_all = "kebab-case")]
+    #[serde(rename_all = "kebab-case", deny_unknown_fields)]
     pub enum EventDecoder {
         Viem,
         HypersyncClient,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
         #[serde(alias = "endpoint_url")]
         pub url: String,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct SyncConfigUnstable {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub initial_block_interval: Option<u32>,
@@ -220,6 +223,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
     pub struct RpcConfig {
         pub url: String,
@@ -228,6 +232,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Network {
         pub id: NetworkId,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -243,6 +248,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct ContractConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub abi_file_path: Option<String>,
@@ -251,7 +257,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(rename_all = "camelCase")]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
         pub event: String,
     }
@@ -329,12 +335,13 @@ pub mod fuel {
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-    #[serde(rename_all = "lowercase")]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
     pub enum EcosystemTag {
         Fuel,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Network {
         pub id: NetworkId,
         pub start_block: i32,
@@ -344,6 +351,7 @@ pub mod fuel {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct ContractConfig {
         pub abi_file_path: String,
         pub handler: String,
@@ -351,7 +359,7 @@ pub mod fuel {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(rename_all = "camelCase")]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]

@@ -3,7 +3,6 @@ description: Gravatar for Ethereum
 networks:
   - id: 1
     hypersync_config:
-      worker_type: skar
       endpoint_url: https://myskar.com # RPC URL that will be used to subscribe to blockchain data on this network
     rpc_config:
       url: https://eth.com # RPC URL that will be used to subscribe to blockchain data on this network

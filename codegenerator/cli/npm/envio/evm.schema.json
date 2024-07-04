@@ -143,6 +143,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "event"
       ]
@@ -177,7 +178,8 @@
             "$ref": "#/$defs/TransactionField"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "GlobalContract_for_ContractConfig": {
       "type": "object",
@@ -201,6 +203,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "name",
         "handler",
@@ -214,6 +217,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "url"
       ]
@@ -271,6 +275,7 @@
           "format": "int32"
         }
       },
+      "additionalProperties": false,
       "required": [
         "id",
         "start_block",
@@ -302,6 +307,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "name"
       ]
@@ -323,6 +329,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "url"
       ]
@@ -377,7 +384,8 @@
           "format": "uint32",
           "minimum": 0
         }
-      }
+      },
+      "additionalProperties": false
     },
     "TransactionField": {
       "type": "string",
