@@ -349,11 +349,10 @@ mod tests {
 
         let actual_schema = schema_for!(HumanConfig);
 
-        // When the test is failing and you want to update the schema, uncomment this line
-        // and paste the output into the schema file at npm/envio/evm.schema.json
-        // println!("{}", serde_json::to_string_pretty(&actual_schema).unwrap());
-
-        assert_eq!(npm_schema, actual_schema);
+        assert_eq!(
+            npm_schema, actual_schema,
+            "Please run 'make update-generated-docs'"
+        );
     }
 
     #[test]
@@ -365,11 +364,10 @@ mod tests {
 
         let actual_schema = schema_for!(fuel::HumanConfig);
 
-        // When the test is failing and you want to update the schema, uncomment this line
-        // and paste the output into the schema file at npm/envio/fuel.schema.json
-        // println!("{}", serde_json::to_string_pretty(&actual_schema).unwrap());
-
-        assert_eq!(npm_schema, actual_schema);
+        assert_eq!(
+            npm_schema, actual_schema,
+            "Please run 'make update-generated-docs'"
+        );
     }
 
     #[test]
