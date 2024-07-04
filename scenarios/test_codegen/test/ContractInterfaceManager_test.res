@@ -5,7 +5,7 @@ open ContractInterfaceManager
 describe("Test ContractInterfaceManager", () => {
   it("Full config contractInterfaceManager gets all topics and addresses for filters", () => {
     let logger = Logging.logger
-    let chainConfig = Config.config->ChainMap.get(Chain_1337)
+    let chainConfig = (Config.getConfig().chainMap)->ChainMap.get(Chain_1337)
     let contractAddressMapping = ContractAddressingMap.make()
     contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
 
@@ -27,7 +27,7 @@ describe("Test ContractInterfaceManager", () => {
   })
 
   it("Single address config gets all topics and addresses for filters", () => {
-    let chainConfig = Config.config->ChainMap.get(Chain_1337)
+    let chainConfig = (Config.getConfig().chainMap)->ChainMap.get(Chain_1337)
     let contractAddress =
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe
 
@@ -57,7 +57,7 @@ describe("Test ContractInterfaceManager", () => {
   })
 
   it("Combined Interface Manager matches the values from single Interface Managers", () => {
-    let chainConfig = Config.config->ChainMap.get(Chain_1337)
+    let chainConfig = (Config.getConfig().chainMap)->ChainMap.get(Chain_1337)
     let gravatarAddress =
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe
 

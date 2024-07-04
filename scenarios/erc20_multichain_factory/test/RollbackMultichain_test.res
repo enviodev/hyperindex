@@ -64,7 +64,7 @@ module Mock = {
   module Chain1 = {
     let chain = ChainMap.Chain.Chain_1
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=Config.config->ChainMap.get(chain),
+      ~chainConfig=(Config.getConfig().chainMap)->ChainMap.get(chain),
       ~maxBlocksReturned=2,
       ~blockTimestampInterval=25,
     )
@@ -112,7 +112,7 @@ module Mock = {
       ChainDataHelpers.ERC20.contractName,
     )
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=Config.config->ChainMap.get(chain),
+      ~chainConfig=(Config.getConfig().chainMap)->ChainMap.get(chain),
       ~maxBlocksReturned=3,
       ~blockTimestampInterval=16,
     )
@@ -223,7 +223,9 @@ describe("Multichain rollback test", () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
-      ...ChainManager.makeFromConfig(~configs=Config.config),
+      ...ChainManager.makeFromConfig(
+        ~config=Config.getConfig(),
+      ),
       isUnorderedMultichainMode: true,
     }
 

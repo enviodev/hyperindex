@@ -129,7 +129,7 @@ describe("Dynamic contract rollback test", () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
-      ...ChainManager.makeFromConfig(~configs=Config.config),
+      ...ChainManager.makeFromConfig(~config=Config.getConfig()),
       isUnorderedMultichainMode: true,
     }
 

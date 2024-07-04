@@ -3,7 +3,7 @@ open RescriptMocha
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
-    ~chainConfig=Config.config->ChainMap.get(Chain_1337),
+    ~chainConfig=(Config.getConfig().chainMap)->ChainMap.get(Chain_1337),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )
@@ -151,7 +151,7 @@ let setupDb = async (~shouldDropRawEvents) => {
 
 describe("Single Chain Simple Rollback", () => {
   Async.it("Detects reorgs and actions a rollback", async () => {
-    let chainManager = ChainManager.makeFromConfig(~configs=Config.config)
+    let chainManager = ChainManager.makeFromConfig(~config=Config.getConfig())
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let chain = ChainMap.Chain.Chain_1337
@@ -211,7 +211,7 @@ describe("Single Chain Simple Rollback", () => {
     await setupDb(~shouldDropRawEvents=true)
 
     let chainManager = {
-      ...ChainManager.makeFromConfig(~configs=Config.config),
+      ...ChainManager.makeFromConfig(~config=Config.getConfig()),
       isUnorderedMultichainMode: true,
     }
     let initState = GlobalState.make(~chainManager)

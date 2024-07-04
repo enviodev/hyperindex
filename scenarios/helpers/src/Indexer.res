@@ -105,8 +105,6 @@ param 'b for rpc
       chain: ChainMap.Chain.t,
       contracts: array<contract>,
     }
-
-    type chainConfigs = ChainMap.t<chainConfig>
   }
 
   module ReorgDetection: {

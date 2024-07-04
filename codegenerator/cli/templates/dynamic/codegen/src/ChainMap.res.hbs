@@ -45,6 +45,8 @@ let make = (fn: Chain.t => 'a): t<'a> => {
   ->Map.fromArray(~id=module(Chain.ChainIdCmp))
 }
 
+let empty = () => []->Map.fromArray(~id=module(Chain.ChainIdCmp))
+
 exception NotAllChainsDefined
 let fromArray: array<(Chain.t, 'a)> => result<t<'a>, exn> = arr => {
   let map = arr->Map.fromArray(~id=module(Chain.ChainIdCmp))
