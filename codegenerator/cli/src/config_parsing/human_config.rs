@@ -134,6 +134,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
     pub enum TransactionField {
         TransactionIndex,
         Hash,
@@ -161,6 +162,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
     pub enum BlockField {
         Hash,
         ParentHash,

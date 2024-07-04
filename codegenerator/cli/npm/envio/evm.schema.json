@@ -43,6 +43,17 @@
         }
       ]
     },
+    "field_selection": {
+      "description": "An object representing additional fields to add to the event passed to handlers.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FieldSelection"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "name": {
       "description": "Name of the project",
       "type": "string"
@@ -142,6 +153,31 @@
         "viem",
         "hypersync-client"
       ]
+    },
+    "FieldSelection": {
+      "type": "object",
+      "properties": {
+        "block_fields": {
+          "description": "Fields of a block to add to the event passed to handlers",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/TransactionField"
+          }
+        },
+        "transaction_fields": {
+          "description": "Fields of a transaction to add to the event passed to handlers",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/TransactionField"
+          }
+        }
+      }
     },
     "GlobalContract_for_ContractConfig": {
       "type": "object",
@@ -342,6 +378,34 @@
           "minimum": 0
         }
       }
+    },
+    "TransactionField": {
+      "type": "string",
+      "enum": [
+        "transaction_index",
+        "hash",
+        "from",
+        "to",
+        "gas",
+        "gas_price",
+        "max_priority_fee_per_gas",
+        "max_fee_per_gas",
+        "cumulative_gas_used",
+        "effective_gas_price",
+        "gas_used",
+        "input",
+        "nonce",
+        "value",
+        "v",
+        "r",
+        "s",
+        "contract_address",
+        "logs_bloom",
+        "type",
+        "root",
+        "status",
+        "sighash"
+      ]
     }
   }
 }
