@@ -7,7 +7,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   let arbitraryEventPriorityQueue = ref(list{})
   let numberOfMockEventsCreated = ref(0)
 
-  let chainFetchers = Config.config->ChainMap.map(({chain}) => {
+  let chainFetchers = (Config.getConfig().chainMap)->ChainMap.map(({chain}) => {
     let getCurrentTimestamp = () => {
       let timestampMillis = Js.Date.now()
 

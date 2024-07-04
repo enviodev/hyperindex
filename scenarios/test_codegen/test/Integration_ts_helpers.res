@@ -53,12 +53,15 @@ let makeChainManager = (cfg: chainConfig): chainManager => {
   //   if chain == cfg.chain {
   //     cfg
   //   } else {
-  //     chain->Config.getConfig
+  //     chain->Config.getChain
   //   }
   // let configs = ChainMap.make(getConfig)
-  let configs = [(cfg.chain, cfg)]->Belt.Map.fromArray(~id=module(ChainMap.Chain.ChainIdCmp))
-  let cm = ChainManager.makeFromConfig(~configs)
-  {...cm, isUnorderedMultichainMode: true}
+  let chainMap = [(cfg.chain, cfg)]->Belt.Map.fromArray(~id=module(ChainMap.Chain.ChainIdCmp))
+  ChainManager.makeFromConfig(~config={
+    ...Config.mock(),
+    isUnorderedMultichainMode: true,
+    chainMap: chainMap
+  })
 }
 
 @genType

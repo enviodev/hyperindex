@@ -40,6 +40,6 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
 
 @genType
 let getConfigByChainId: int => configYaml = chainId =>
-  Config.getConfig(
+  RegisterHandlers.getChain(
     Belt.Result.getExn(ChainMap.Chain.fromChainId(chainId)),
   )->mapChainConfigToConfigYaml
