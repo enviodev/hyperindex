@@ -6,11 +6,17 @@
   "properties": {
     "description": {
       "description": "Description of the project",
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "contracts": {
       "description": "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains.",
-      "type": ["array", "null"],
+      "type": [
+        "array",
+        "null"
+      ],
       "items": {
         "$ref": "#/$defs/GlobalContract_for_ContractConfig"
       }
@@ -32,10 +38,17 @@
     },
     "schema": {
       "description": "Custom path to config file",
-      "type": ["string", "null"]
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
-  "required": ["name", "ecosystem", "networks"],
+  "required": [
+    "name",
+    "ecosystem",
+    "networks"
+  ],
   "$defs": {
     "Addresses": {
       "anyOf": [
@@ -70,19 +83,26 @@
     },
     "EcosystemTag": {
       "type": "string",
-      "enum": ["fuel"]
+      "enum": [
+        "fuel"
+      ]
     },
     "EventConfig": {
       "type": "object",
       "properties": {
         "logId": {
-          "type": ["string", "null"]
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "name": {
           "type": "string"
         }
       },
-      "required": ["name"]
+      "required": [
+        "name"
+      ]
     },
     "GlobalContract_for_ContractConfig": {
       "type": "object",
@@ -103,7 +123,12 @@
           "type": "string"
         }
       },
-      "required": ["name", "abi_file_path", "handler", "events"]
+      "required": [
+        "name",
+        "abi_file_path",
+        "handler",
+        "events"
+      ]
     },
     "Network": {
       "type": "object",
@@ -115,7 +140,10 @@
           }
         },
         "end_block": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "int32"
         },
         "id": {
@@ -128,7 +156,11 @@
           "format": "int32"
         }
       },
-      "required": ["id", "start_block", "contracts"]
+      "required": [
+        "id",
+        "start_block",
+        "contracts"
+      ]
     },
     "NetworkContract_for_ContractConfig": {
       "type": "object",
@@ -152,7 +184,9 @@
           "type": "string"
         }
       },
-      "required": ["name"]
+      "required": [
+        "name"
+      ]
     }
   }
 }
