@@ -6,9 +6,11 @@ use super::{
     },
 };
 use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
     hbs_templating::codegen_templates::DerivedFieldTemplate,
-    utils::unique_hashmap,
+    utils::{
+        text::{Capitalize, CapitalizedOptions},
+        unique_hashmap,
+    },
 };
 use anyhow::{anyhow, Context};
 use ethers::abi::ethabi::ParamType as EthAbiParamType;

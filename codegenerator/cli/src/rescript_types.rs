@@ -1,4 +1,4 @@
-use crate::capitalization::{Capitalize, CapitalizedOptions};
+use crate::utils::text::{Capitalize, CapitalizedOptions};
 use anyhow::{anyhow, Result};
 use core::fmt;
 use itertools::Itertools;
