@@ -139,7 +139,7 @@ pub mod evm {
         #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
         pub transaction_fields: Option<Vec<TransactionField>>,
         #[schemars(description = "Fields of a block to add to the event passed to handlers")]
-        pub block_fields: Option<Vec<TransactionField>>,
+        pub block_fields: Option<Vec<BlockField>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Display, JsonSchema)]
@@ -171,6 +171,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Display, JsonSchema)]
     #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub enum BlockField {
         Hash,

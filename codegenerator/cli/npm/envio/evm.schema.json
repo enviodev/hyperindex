@@ -130,6 +130,28 @@
         }
       ]
     },
+    "BlockField": {
+      "type": "string",
+      "enum": [
+        "hash",
+        "parent_hash",
+        "nonce",
+        "sha3_uncles",
+        "logs_bloom",
+        "transactions_root",
+        "state_root",
+        "receipts_root",
+        "miner",
+        "difficulty",
+        "total_difficulty",
+        "extra_data",
+        "size",
+        "gas_limit",
+        "gas_used",
+        "uncles",
+        "base_fee_per_gas"
+      ]
+    },
     "EcosystemTag": {
       "type": "string",
       "enum": [
@@ -165,7 +187,7 @@
             "null"
           ],
           "items": {
-            "$ref": "#/$defs/TransactionField"
+            "$ref": "#/$defs/BlockField"
           }
         },
         "transaction_fields": {
