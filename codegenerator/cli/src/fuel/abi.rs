@@ -156,8 +156,8 @@ impl Abi {
                                     //If the type_id is not a defined generic type it is
                                     //a named type
                                     RescriptTypeIdent::TypeApplication {
-                                      name: type_ident_name,
-                                      type_params: vec![]
+                                        name: type_ident_name,
+                                        type_params: vec![],
                                     },
                                     //if the type_id is in the generic_param_name_map
                                     //it is a generic param
@@ -172,8 +172,8 @@ impl Abi {
                                                 //If the type_id is not a defined generic type it is
                                                 //a named type
                                                 RescriptTypeIdent::TypeApplication {
-                                                  name:mk_type_id_name(&ta.type_id),
-                                                  type_params: vec![]
+                                                    name: mk_type_id_name(&ta.type_id),
+                                                    type_params: vec![],
                                                 },
                                                 //if the type_id is in the generic_param_name_map
                                                 //it is a generic param
@@ -222,7 +222,8 @@ impl Abi {
                         type_field if type_field.starts_with("struct ") => {
                             let record_fields = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for {type_field}",
+                                    "Failed getting name and identifier from components for \
+                                     {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(name, type_ident)| {
@@ -234,7 +235,8 @@ impl Abi {
                         type_field if type_field.starts_with("enum ") => {
                             let constructors = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for {type_field}",
+                                    "Failed getting name and identifier from components for \
+                                     {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(name, type_ident)| {
@@ -246,7 +248,8 @@ impl Abi {
                         type_field if type_field.starts_with("(_,") => {
                             let tuple_types = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for tuple {type_field}",
+                                    "Failed getting name and identifier from components for tuple \
+                                     {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(_name, type_ident)| type_ident)
@@ -255,14 +258,15 @@ impl Abi {
                             RescriptTypeIdent::Tuple(tuple_types).to_ok_expr()
                         }
                         type_field if type_field.starts_with("[_;") => {
-                            let components = get_components_name_and_type_ident().context(format!(
-                              "Failed getting name and identifier from components for {type_field}",
-                            ))?;
-                            let element_name_and_type_ident = components.first().ok_or(anyhow!("Missing array element type component"))?;
-                            Array(Box::new(
-                                element_name_and_type_ident.1.clone(),
-                            ))
-                            .to_ok_expr()
+                            let components =
+                                get_components_name_and_type_ident().context(format!(
+                                    "Failed getting name and identifier from components for \
+                                     {type_field}",
+                                ))?;
+                            let element_name_and_type_ident = components
+                                .first()
+                                .ok_or(anyhow!("Missing array element type component"))?;
+                            Array(Box::new(element_name_and_type_ident.1.clone())).to_ok_expr()
                         }
                         type_field => {
                             //Unknown
@@ -281,7 +285,7 @@ impl Abi {
                                     .get(tp)
                                     .ok_or(anyhow!(
                                         "param name for type_id {tp} should exist in \
-                                       generic_param_name_map"
+                                         generic_param_name_map"
                                     ))
                                     .cloned()
                             })

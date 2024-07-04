@@ -81,16 +81,20 @@ pub mod evm {
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains."
+            description = "Global contract definitions that must contain all definitions except \
+                           addresses. You can share a single handler/abi/event definitions for \
+                           contracts across multiple chains."
         )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed on."
+            description = "Configuration of the blockchain networks that the project is deployed \
+                           on."
         )]
         pub networks: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "A flag to indicate if the indexer should use a single queue for all chains or a queue per chain (default: false)"
+            description = "A flag to indicate if the indexer should use a single queue for all \
+                           chains or a queue per chain (default: false)"
         )]
         pub unordered_multichain_mode: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,17 +104,21 @@ pub mod evm {
         pub event_decoder: Option<EventDecoder>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "A flag to indicate if the indexer should rollback to the last known valid block on a reorg (default: false)"
+            description = "A flag to indicate if the indexer should rollback to the last known \
+                           valid block on a reorg (default: false)"
         )]
         pub rollback_on_reorg: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "A flag to indicate if the indexer should save the full history of events. This is useful for debugging but will increase the size of the database (default: false)"
+            description = "A flag to indicate if the indexer should save the full history of \
+                           events. This is useful for debugging but will increase the size of the \
+                           database (default: false)"
         )]
         pub save_full_history: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "An object representing additional fields to add to the event passed to handlers."
+            description = "An object representing additional fields to add to the event passed to \
+                           handlers."
         )]
         pub field_selection: Option<FieldSelection>,
     }
@@ -125,16 +133,16 @@ pub mod evm {
         }
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct FieldSelection {
         #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
-        transaction_fields: Option<Vec<TransactionField>>,
+        pub transaction_fields: Option<Vec<TransactionField>>,
         #[schemars(description = "Fields of a block to add to the event passed to handlers")]
-        block_fields: Option<Vec<TransactionField>>,
+        pub block_fields: Option<Vec<TransactionField>>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Display, JsonSchema)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, Display, JsonSchema)]
     #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub enum TransactionField {
         TransactionIndex,
@@ -314,11 +322,14 @@ pub mod fuel {
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains."
+            description = "Global contract definitions that must contain all definitions except \
+                           addresses. You can share a single handler/abi/event definitions for \
+                           contracts across multiple chains."
         )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed on."
+            description = "Configuration of the blockchain networks that the project is deployed \
+                           on."
         )]
         pub networks: Vec<Network>,
     }

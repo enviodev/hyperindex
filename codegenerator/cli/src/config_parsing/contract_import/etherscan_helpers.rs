@@ -134,15 +134,13 @@ async fn fetch_get_source_code_result_from_block_explorer(
             Err(e) => {
                 if let EtherscanError::RateLimitExceeded = e {
                     eprintln!(
-                      "Rate limit hit. Retrying in {} seconds. You can try use your own API key by setting the {} environment variable if you are being rate limited or blocked.",
-                      refetch_delay.as_secs(),
-                      network.get_env_token_name()
-                  );
-                                      fail_if_maximum_is_exceeded(refetch_delay, EtherscanError::RateLimitExceeded)?;
-
-
-
-                                     
+                        "Rate limit hit. Retrying in {} seconds. You can try use your own API key \
+                         by setting the {} environment variable if you are being rate limited or \
+                         blocked.",
+                        refetch_delay.as_secs(),
+                        network.get_env_token_name()
+                    );
+                    fail_if_maximum_is_exceeded(refetch_delay, EtherscanError::RateLimitExceeded)?;
                 } else {
                     let retry_err = match e {
                         //In these cases, return ok(err) if it should be retried
@@ -173,9 +171,9 @@ async fn fetch_get_source_code_result_from_block_explorer(
                         | EtherscanError::PageNotFound => Err(e),
                     }?;
                     fail_if_maximum_is_exceeded(refetch_delay, retry_err)?;
-                  }
-                  tokio::time::sleep(refetch_delay).await;
-                  refetch_delay *= 2;
+                }
+                tokio::time::sleep(refetch_delay).await;
+                refetch_delay *= 2;
             }
         }
     }

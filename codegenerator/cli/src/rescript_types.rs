@@ -37,7 +37,11 @@ impl RescriptTypeDeclMulti {
                         format!("{}{}", prefix, type_decl.to_string_no_type_keyword())
                     })
                     .join("\n ");
-                format!("/*Silence warning of label defined in multiple types*/\n@@warning(\"-30\")\n{}type rec {}\n@@warning(\"+30\")", tag_prefix, rec_expr)
+                format!(
+                    "/*Silence warning of label defined in multiple \
+                     types*/\n@@warning(\"-30\")\n{}type rec {}\n@@warning(\"+30\")",
+                    tag_prefix, rec_expr
+                )
             }
         }
     }
@@ -99,7 +103,11 @@ impl RescriptTypeDecl {
 
     pub fn to_usage(&self, arguments: Vec<String>) -> Result<String> {
         if self.parameters.len() != arguments.len() {
-            Err(anyhow!("Failed to use type {}. The number of arguments is different from number of parameters.", self.name))?
+            Err(anyhow!(
+                "Failed to use type {}. The number of arguments is different from number of \
+                 parameters.",
+                self.name
+            ))?
         }
         let arguments_code = if arguments.is_empty() {
             "".to_string()
@@ -579,7 +587,8 @@ mod tests {
 
         let type_decl_multi = RescriptTypeDeclMulti::new(vec![type_decl_1, type_decl_2]);
 
-        let expected = "/*Silence warning of label defined in multiple types*/\n@@warning(\"-30\")\ntype rec myRecord = {fieldA: myCustomType, \
+        let expected = "/*Silence warning of label defined in multiple \
+                        types*/\n@@warning(\"-30\")\ntype rec myRecord = {fieldA: myCustomType, \
                         fieldB: bool}\n and myCustomType = bool\n@@warning(\"+30\")"
             .to_string();
 
@@ -688,10 +697,11 @@ mod tests {
         let type_decl_multi =
             RescriptTypeDeclMulti::new(vec![type_decl_1, type_decl_2, type_decl_3]);
 
-        let expected = "/*Silence warning of label defined in multiple types*/\n@@warning(\"-30\")\n@tag(\"case\") type rec myVariant<'a> = | \
+        let expected = "/*Silence warning of label defined in multiple \
+                        types*/\n@@warning(\"-30\")\n@tag(\"case\") type rec myVariant<'a> = | \
                         ConstrA({payload: myCustomType}) | ConstrB({payload: 'a})\n and \
-                        myCustomType = bool\n @tag(\"case\") and myVariant2 = | \
-                        ConstrC({payload: bool})\n@@warning(\"+30\")"
+                        myCustomType = bool\n @tag(\"case\") and myVariant2 = | ConstrC({payload: \
+                        bool})\n@@warning(\"+30\")"
             .to_string();
 
         assert_eq!(type_decl_multi.to_string(), expected);
