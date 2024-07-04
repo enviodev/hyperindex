@@ -86,8 +86,8 @@ importers:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
       rescript-schema:
-        specifier: 6.4.0
-        version: 6.4.0(rescript@11.1.0)
+        specifier: 7.0.1
+        version: 7.0.1(rescript@11.1.0)
       sinon:
         specifier: ^15.0.4
         version: 15.2.0
@@ -101,8 +101,8 @@ importers:
         specifier: 11.1.0
         version: 11.1.0
       rescript-schema:
-        specifier: 6.4.0
-        version: 6.4.0(rescript@11.1.0)
+        specifier: 7.0.1
+        version: 7.0.1(rescript@11.1.0)
 
   contracts:
     dependencies:
@@ -194,14 +194,14 @@ importers:
         specifier: 11.1.0
         version: 11.1.0
       rescript-envsafe:
-        specifier: 4.0.0
-        version: 4.0.0(rescript-schema@6.4.0(rescript@11.1.0))(rescript@11.1.0)
+        specifier: 4.1.0
+        version: 4.1.0(rescript-schema@7.0.1(rescript@11.1.0))(rescript@11.1.0)
       rescript-express:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
       rescript-schema:
-        specifier: 6.4.0
-        version: 6.4.0(rescript@11.1.0)
+        specifier: 7.0.1
+        version: 7.0.1(rescript@11.1.0)
       viem:
         specifier: 1.16.6
         version: 1.16.6(typescript@5.4.5)
@@ -2948,11 +2948,11 @@ packages:
   requires-port@1.0.0:
     resolution: {integrity: sha512-KigOCHcocU3XODJxsu8i/j8T9tzT4adHiecwORRQ0ZZFcp7ahwXuRU1m+yuO90C5ZUyGeGfocHDI14M3L3yDAQ==}
 
-  rescript-envsafe@4.0.0:
-    resolution: {integrity: sha512-wekPTb1z2HpMfMiNP7MOCxFJCB9QTr3RMtUoaHNm9uV9d4S5nS7LDVmiak/d3cqFCT8nLjcdOS30CA/aU+E+Gg==}
+  rescript-envsafe@4.1.0:
+    resolution: {integrity: sha512-rndy9+OIR1bLynElbVmYJpX31cg/nn4xL4OfTotJFgJdJ1TIRmC7U7ZMuT5qZPb0NdR+YNO5/qh4E/4IH8j+HA==}
     peerDependencies:
       rescript: 11.x
-      rescript-schema: 6.x
+      rescript-schema: 6.x || 7.x
 
   rescript-express@0.4.1:
     resolution: {integrity: sha512-R+xAQKANfIFAIcxhQrkLn58IZQwhMZuQpVCH6UtTRNLWqlVtaogG9z4Rt0MQZgqYOjvrOtt51P0hOmYGg/90Fw==}
@@ -2962,8 +2962,8 @@ packages:
   rescript-nodejs@16.0.0:
     resolution: {integrity: sha512-1/SJmjH06xdeq1IFIIcKV6QKnidrav/gIc0Rw4GCUD0ceYPPZ5wDB51UFyk98in5N4gv8X/bTg6dVBMyRsC9tw==}
 
-  rescript-schema@6.4.0:
-    resolution: {integrity: sha512-rBHtZOEVskKKAf7jfJicuTA1xsQRu2qBdB73FVtPsUSmtgIYpGGKk4YSURQss7WYQEHRds+zPjFLJWzeAnwsLg==}
+  rescript-schema@7.0.1:
+    resolution: {integrity: sha512-iCcYsHO8owjlB5uWQ50tXQnMBwsNlsOUAPNGJ8tUxPn8bhq3TIVJLTAnnRDJxHuSZj7fj4nXltCjj2pr606tSA==}
     peerDependencies:
       rescript: 11.x
 
@@ -7288,10 +7288,10 @@ snapshots:
 
   requires-port@1.0.0: {}
 
-  rescript-envsafe@4.0.0(rescript-schema@6.4.0(rescript@11.1.0))(rescript@11.1.0):
+  rescript-envsafe@4.1.0(rescript-schema@7.0.1(rescript@11.1.0))(rescript@11.1.0):
     dependencies:
       rescript: 11.1.0
-      rescript-schema: 6.4.0(rescript@11.1.0)
+      rescript-schema: 7.0.1(rescript@11.1.0)
 
   rescript-express@0.4.1(express@4.19.2):
     dependencies:
@@ -7299,7 +7299,7 @@ snapshots:
 
   rescript-nodejs@16.0.0: {}
 
-  rescript-schema@6.4.0(rescript@11.1.0):
+  rescript-schema@7.0.1(rescript@11.1.0):
     dependencies:
       rescript: 11.1.0
 
