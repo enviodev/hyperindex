@@ -166,29 +166,51 @@ module EventFunctions = {
     }
   }
 
-  /**
-  Optional params for all additional data related to an eventLog
-  */
-  @genType
-  type mockEventTransactionData = {
-    from?: Ethers.ethAddress,
-    to?: Ethers.ethAddress,
-    maxFeePerGas?: bigint,
-    maxPriorityFeePerGas?: bigint,
-    gasPrice?: bigint,
-    gasUsed?: bigint,
+  module MockBlock = {
+    type t = {
+      {{!-- Mandatory fields --}}
+      number?: int,
+      timestamp?: int,
+      hash?: string,
+      {{!-- Selectable fields --}}
+      {{#each field_selection.block_fields as | field |}}
+      {{field.name.camel}}?: {{field.res_type}},
+      {{/each}}
+    }
+
+    let toBlock = (mock: t): Types.Block.t => {
+      {{!-- Mandatory fields --}}
+      number: mock.number->Option.getWithDefault(0),
+      timestamp: mock.timestamp->Option.getWithDefault(0),
+      hash: mock.hash->Option.getWithDefault("foo"),
+      {{!-- Selectable fields --}}
+      {{#each field_selection.block_fields as | field |}}
+      {{field.name.camel}}: mock.{{field.name.camel}}->Option.getWithDefault({{field.default_value_rescript}}),
+      {{/each}}
+    }
   }
+
+  module MockTransaction = {
+    type t = {
+      {{#each field_selection.transaction_fields as | field |}}
+      {{field.name.camel}}?: {{field.res_type}},
+      {{/each}}
+    }
+
+    let toTransaction = (mock: t): Types.Transaction.t => {
+      {{#each field_selection.transaction_fields as | field |}}
+      {{field.name.camel}}: mock.{{field.name.camel}}->Option.getWithDefault({{field.default_value_rescript}}),
+      {{/each}}
+    }
+  }
+
   @genType
   type mockEventData = {
-    blockNumber?: int,
-    blockTimestamp?: int,
-    blockHash?: string,
     chainId?: int,
     srcAddress?: Ethers.ethAddress,
-    transactionHash?: string,
-    transactionIndex?: int,
-    tx?: mockEventTransactionData,
     logIndex?: int,
+    block?: MockBlock.t,
+    transaction?: MockTransaction.t,
   }
 
   /**
@@ -198,10 +220,10 @@ module EventFunctions = {
     ~params: 'eventParams,
     ~mockEventData: option<mockEventData>,
   ): Types.eventLog<'eventParams> => {
-    let {?blockNumber, ?blockTimestamp, ?blockHash, ?srcAddress, ?chainId, ?logIndex} =
+    let {?block, ?transaction, ?srcAddress, ?chainId, ?logIndex} =
       mockEventData->Belt.Option.getWithDefault({})
-    let block = X.magic(Js.Nullable.null) //TODO!
-    let transaction = X.magic(Js.Nullable.null) //TODO!
+    let block = block->Belt.Option.getWithDefault({})->MockBlock.toBlock
+    let transaction = transaction->Belt.Option.getWithDefault({})->MockTransaction.toTransaction
     {
       params,
       transaction,
