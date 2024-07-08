@@ -611,6 +611,8 @@ impl FieldSelection {
 struct SelectableField {
     name: CaseOptions,
     res_type: RescriptType,
+    res_schema_code: String,
+    default_value_rescript: String,
 }
 
 impl SelectableField {
@@ -618,9 +620,13 @@ impl SelectableField {
     where
         T: Display + Into<RescriptType>,
     {
+        let name = value.to_string().into();
+        let res_type: RescriptType = value.into();
         Self {
-            name: value.to_string().into(),
-            res_type: value.into(),
+            name,
+            res_schema_code: res_type.to_rescript_schema(),
+            default_value_rescript: res_type.get_default_value_rescript(),
+            res_type,
         }
     }
 }
