@@ -133,7 +133,6 @@
     "BlockField": {
       "type": "string",
       "enum": [
-        "hash",
         "parent_hash",
         "nonce",
         "sha3_uncles",

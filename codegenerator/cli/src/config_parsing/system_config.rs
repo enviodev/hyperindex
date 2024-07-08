@@ -9,6 +9,7 @@ use super::{
     validation::validate_names_not_reserved,
 };
 use crate::{
+    config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
@@ -696,8 +697,31 @@ impl FieldSelection {
         }
 
         if has_rpc_sync_src {
-            //validate rpc fields
-            todo!("Implement validation for RPC field selection")
+            let invalid_rpc_tx_fields: Vec<_> = transaction_fields
+                .iter()
+                .cloned()
+                .filter(|field| RpcTransactionField::try_from(field.clone()).is_err())
+                .collect();
+
+            if !invalid_rpc_tx_fields.is_empty() {
+                return Err(anyhow!(
+                    "The following selected transaction_fields are unavailable for indexing via RPC: {}",
+                    invalid_rpc_tx_fields.iter().join(", ")
+                ));
+            }
+
+            let invalid_rpc_block_fields: Vec<_> = block_fields
+                .iter()
+                .cloned()
+                .filter(|field| RpcBlockField::try_from(field.clone()).is_err())
+                .collect();
+
+            if !invalid_rpc_block_fields.is_empty() {
+                return Err(anyhow!(
+                    "The following selected block_fields are unavailable for indexing via RPC: {}",
+                    invalid_rpc_block_fields.iter().join(", ")
+                ));
+            }
         }
 
         Ok(Self::new(transaction_fields, block_fields))
