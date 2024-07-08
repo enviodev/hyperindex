@@ -77,6 +77,35 @@ type eventBatchPromise = {
   eventPromise: promise<Types.event>,
 }
 
+//We aren't fetching transaction and field names don't line up with
+//the two available fields on a log. So create this function with runtime
+//exception that should be validated away in codegen
+type txFieldVal
+exception InvalidRpcTransactionField(string)
+let getTxFieldFromEthersLog = (log: Ethers.log, txField: string, ~logger): txFieldVal =>
+  switch txField {
+  | "hash" => log.transactionHash->X.magic
+  | "transactionIndex" => log.transactionIndex->X.magic
+  | field =>
+    InvalidRpcTransactionField(field)->ErrorHandling.mkLogAndRaise(
+      ~logger,
+      ~msg="An invalid transaction field was requested for RPC response",
+    )
+  }
+
+let transactionFieldsFromLog = (log, ~logger): Types.transactionFields => {
+  Types.transactionFieldNames
+  ->Belt.Array.map(name => (name, getTxFieldFromEthersLog(log, name, ~logger)))
+  ->Js.Dict.fromArray
+  ->(X.magic: Js.Dict.t<txFieldVal> => Types.transactionFields)
+}
+
+//Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
+let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.blockFields = X.magic
+
+//Types.log is a subset of Ethers.log so we can safely cast
+let ethersLogToLog: Ethers.log => Types.log = X.magic
+
 let convertLogs = (
   logs: array<Ethers.log>,
   ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
@@ -98,13 +127,13 @@ let convertLogs = (
       chain,
       blockNumber: log.blockNumber,
       logIndex: log.logIndex,
-      eventPromise: blockPromise->Promise.thenResolve(block => {
+      eventPromise: blockPromise->Promise.thenResolve(blockRes => {
         let parsed = Converters.parseEvent(
-          ~log=log->X.magic, //TODO legit conversion
-          ~block=block->X.magic, //TODO legit conversion
+          ~log=log->ethersLogToLog,
+          ~block=blockRes->blockFieldsFromBlock,
           ~contractInterfaceManager,
           ~chainId=chain->ChainMap.Chain.toChainId,
-          ~transaction=X.magic(Js.null), //TODO legit conversion
+          ~transaction=log->transactionFieldsFromLog(~logger),
         )
         switch parsed {
         | Error(exn) =>

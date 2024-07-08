@@ -166,14 +166,12 @@ let decodeRawEventWith = (
   rawEvent.params
   ->S.parseJsonStringWith(schema)
   ->Belt.Result.map(params => {
+    let block = X.magic(Js.Nullable.null) //TODO!
+    let transaction = X.magic(Js.Nullable.null) //TODO!
     let event = {
       chainId: rawEvent.chainId,
-      transaction: {}, //TODO!
-      block: {
-        number: rawEvent.blockNumber,
-        timestamp: rawEvent.blockTimestamp,
-        hash: rawEvent.blockHash,
-      },
+      transaction,
+      block,
       srcAddress: rawEvent.srcAddress,
       logIndex: rawEvent.logIndex,
       params,
