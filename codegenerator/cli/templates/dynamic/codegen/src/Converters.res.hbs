@@ -23,7 +23,7 @@ module {{contract.name.capitalized}} = {
     {{/unless}}
     let convertLogViem = (
       decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs>,
-      ~log: Types.log,
+      ~log: Types.Log.t,
       ~block,
       ~transaction,
       ~chainId: int,
@@ -79,7 +79,7 @@ exception UnregisteredContract(Ethers.ethAddress)
 
 let makeEventLog = (
   params: 'args,
-  ~log: Types.log,
+  ~log: Types.Log.t,
   ~transaction,
   ~block,
   ~chainId: int,
@@ -95,7 +95,7 @@ let makeEventLog = (
 let convertDecodedEvent = (
   event: HyperSyncClient.Decoder.decodedEvent,
   ~contractInterfaceManager,
-  ~log: Types.log,
+  ~log: Types.Log.t,
   ~block,
   ~chainId,
   ~transaction,
@@ -121,7 +121,7 @@ let convertDecodedEvent = (
 }
 
 let parseEvent = (
-  ~log: Types.log,
+  ~log: Types.Log.t,
   ~block,
   ~contractInterfaceManager,
   ~chainId,

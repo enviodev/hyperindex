@@ -7,9 +7,9 @@ type hyperSyncPage<'item> = {
 }
 
 type logsQueryPageItem = {
-  log: Types.log,
-  block: Types.blockFields,
-  transaction: Types.transactionFields,
+  log: Types.Log.t,
+  block: Types.Block.t,
+  transaction: Types.Transaction.t,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>

@@ -93,18 +93,18 @@ let getTxFieldFromEthersLog = (log: Ethers.log, txField: string, ~logger): txFie
     )
   }
 
-let transactionFieldsFromLog = (log, ~logger): Types.transactionFields => {
-  Types.transactionFieldNames
+let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
+  Types.Transaction.fieldNames
   ->Belt.Array.map(name => (name, getTxFieldFromEthersLog(log, name, ~logger)))
   ->Js.Dict.fromArray
-  ->(X.magic: Js.Dict.t<txFieldVal> => Types.transactionFields)
+  ->(X.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)
 }
 
 //Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
-let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.blockFields = X.magic
+let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = X.magic
 
 //Types.log is a subset of Ethers.log so we can safely cast
-let ethersLogToLog: Ethers.log => Types.log = X.magic
+let ethersLogToLog: Ethers.log => Types.Log.t = X.magic
 
 let convertLogs = (
   logs: array<Ethers.log>,
