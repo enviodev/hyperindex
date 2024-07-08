@@ -28,7 +28,7 @@ ensure that this doesn't trigger a reorg
   let userAddress2 = Ethers.Addresses.mockAddresses[2]->Option.getExn
 
   let mockDyamicToken1 = Ethers.Addresses.mockAddresses[3]->Option.getExn
-  let factoryAddress1 = ChainDataHelpers.ERC20Factory.getDefaultAddress({id: 1})
+  let factoryAddress1 = ChainDataHelpers.ERC20Factory.getDefaultAddress(MockConfig.chain1)
 
   let deployToken1 = makeTokenCreatedMock(~token=mockDyamicToken1)
 
@@ -88,8 +88,8 @@ ensure that this doesn't trigger a reorg
 
   let mockChainDataMap = ChainMap.make(~base=config.chainMap, chain =>
     switch chain {
-    | {id: 1} => Chain1.mockChainData
-    | {id: 137} => Chain2.mockChainData
+    | MockConfig.chain1 => Chain1.mockChainData
+    | MockConfig.chain137 => Chain2.mockChainData
     }
   )
 
@@ -183,7 +183,7 @@ describe("Dynamic contract rollback test", () => {
     await dispatchTask(NextQuery(CheckAllChains))
 
     Assert.deepEqual(
-      [GlobalState.NextQuery(Chain({id: 1})), NextQuery(Chain({id: 137}))],
+      [GlobalState.NextQuery(Chain(MockConfig.chain1)), NextQuery(Chain(MockConfig.chain137))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
@@ -200,12 +200,12 @@ describe("Dynamic contract rollback test", () => {
       ~chain2User2Balance,
     ) => {
       Assert.equal(
-        getLatestFetchedBlock({id: 1}).blockNumber,
+        getLatestFetchedBlock(MockConfig.chain1).blockNumber,
         chain1LatestFetchBlock,
         ~message=`Chain 1 should have fetched up to block ${chain1LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
-        getLatestFetchedBlock({id: 137}).blockNumber,
+        getLatestFetchedBlock(MockConfig.chain137).blockNumber,
         chain2LatestFetchBlock,
         ~message=`Chain 2 should have fetched up to block ${chain2LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
@@ -240,10 +240,10 @@ describe("Dynamic contract rollback test", () => {
         )
       }
       //Chain 1 balances
-      await assertBalance(~chain={id: 1}, ~user=1, ~expectedBalance=chain1User1Balance)
-      await assertBalance(~chain={id: 1}, ~user=2, ~expectedBalance=chain1User2Balance)
-      await assertBalance(~chain={id: 137}, ~user=1, ~expectedBalance=chain2User1Balance)
-      await assertBalance(~chain={id: 137}, ~user=2, ~expectedBalance=chain2User2Balance)
+      await assertBalance(~chain=MockConfig.chain1, ~user=1, ~expectedBalance=chain1User1Balance)
+      await assertBalance(~chain=MockConfig.chain1, ~user=2, ~expectedBalance=chain1User2Balance)
+      await assertBalance(~chain=MockConfig.chain137, ~user=1, ~expectedBalance=chain2User1Balance)
+      await assertBalance(~chain=MockConfig.chain137, ~user=2, ~expectedBalance=chain2User2Balance)
     }
 
     await makeAssertions(
@@ -264,24 +264,24 @@ describe("Dynamic contract rollback test", () => {
       [
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
-          ~chain={id: 1},
+          ~chain=MockConfig.chain1,
           ~blockNumberThreshold=-199,
           ~blockTimestampThreshold=25,
           ~blockNumber=1,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id: 1})),
+        NextQuery(Chain(MockConfig.chain1)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
-          ~chain={id: 137},
+          ~chain=MockConfig.chain137,
           ~blockNumberThreshold=-198,
           ~blockTimestampThreshold=25,
           ~blockNumber=2,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id: 137})),
+        NextQuery(Chain(MockConfig.chain137)),
       ],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have received a response and next tasks will be to process batch and next query",
@@ -318,24 +318,24 @@ describe("Dynamic contract rollback test", () => {
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
-          ~chain={id: 1},
+          ~chain=MockConfig.chain1,
           ~blockNumberThreshold=-197,
           ~blockTimestampThreshold=25,
           ~blockNumber=3,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id: 1})),
+        NextQuery(Chain(MockConfig.chain1)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
-          ~chain={id: 137},
+          ~chain=MockConfig.chain137,
           ~blockNumberThreshold=-195,
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id: 137})),
+        NextQuery(Chain(MockConfig.chain137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -351,7 +351,7 @@ describe("Dynamic contract rollback test", () => {
       ]
 
     let getFetchStateRegisterId = () =>
-      switch getFetchState({id: 1})
+      switch getFetchState(MockConfig.chain1)
       ->FetchState.getNextQuery(~currentBlockHeight=6)
       ->Result.getExn {
       | (FetchState.NextQuery(q), _) => q.fetchStateRegisterId
@@ -368,24 +368,24 @@ describe("Dynamic contract rollback test", () => {
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
-          ~chain={id: 1},
+          ~chain=MockConfig.chain1,
           ~blockNumberThreshold=-195,
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id: 1})),
+        NextQuery(Chain(MockConfig.chain1)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
-          ~chain={id: 137},
+          ~chain=MockConfig.chain137,
           ~blockNumberThreshold=-192,
           ~blockTimestampThreshold=25,
           ~blockNumber=8,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id: 137})),
+        NextQuery(Chain(MockConfig.chain137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
         NextQuery(CheckAllChains),
@@ -424,24 +424,24 @@ describe("Dynamic contract rollback test", () => {
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
-          ~chain={id: 1},
+          ~chain=MockConfig.chain1,
           ~blockNumberThreshold=-196,
           ~blockTimestampThreshold=25,
           ~blockNumber=4,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id: 1})),
+        NextQuery(Chain(MockConfig.chain1)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMap,
-          ~chain={id: 137},
+          ~chain=MockConfig.chain137,
           ~blockNumberThreshold=-191,
           ~blockTimestampThreshold=25,
           ~blockNumber=9,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id: 137})),
+        NextQuery(Chain(MockConfig.chain137)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],

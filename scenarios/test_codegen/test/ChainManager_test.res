@@ -149,7 +149,7 @@ describe("ChainManager", () => {
 
         let defaultFirstEvent: Types.eventBatchQueueItem = {
           timestamp: 0,
-          chain: {id: 1},
+          chain: MockConfig.chain1,
           blockNumber: 0,
           logIndex: 0,
           event: `mock initial event`->X.magic,
@@ -298,13 +298,12 @@ describe("determineNextEvent", () => {
     it(
       "should always take an event if there is one, even if other chains haven't caught up",
       () => {
-        let singleItem = makeMockQItem(654, {id: 137})
+        let singleItem = makeMockQItem(654, MockConfig.chain137)
         let earliestItem = makeNoItem(5) /* earlier timestamp than the test event */
 
-        let fetchStatesMap = ChainMap.make(
-          ~base=Config.getConfig().chainMap,
-          chain =>
-            switch chain.id {
+        let fetchStatesMap = Config.getConfig().chainMap->ChainMap.mapWithKey(
+          (chain, _) =>
+            switch chain->ChainMap.Chain.toChainId {
             | 1 =>
               makeMockFetchState(
                 ~latestFetchedBlockTimestamp=5,
@@ -340,12 +339,11 @@ describe("determineNextEvent", () => {
       () => {
         let earliestItemTimestamp = 653
         let singleItemTimestamp = 654
-        let singleItem = makeMockQItem(singleItemTimestamp, {id: 137})
+        let singleItem = makeMockQItem(singleItemTimestamp, MockConfig.chain137)
 
-        let fetchStatesMap = ChainMap.make(
-          ~base=Config.getConfig().chainMap,
-          chain =>
-            switch chain.id {
+        let fetchStatesMap = Config.getConfig().chainMap->ChainMap.mapWithKey(
+          (chain, _) =>
+            switch chain->ChainMap.Chain.toChainId {
             | 1 =>
               makeMockFetchState(
                 ~latestFetchedBlockTimestamp=earliestItemTimestamp,

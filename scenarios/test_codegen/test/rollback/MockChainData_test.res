@@ -3,7 +3,7 @@ open RescriptMocha
 
 describe("Check that MockChainData works as expected", () => {
   let mockChainDataInit = MockChainData.make(
-    ~chainConfig=Config.getConfig().chainMap->ChainMap.get({id: 1337}),
+    ~chainConfig=Config.getConfig().chainMap->ChainMap.get(MockConfig.chain1337),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )

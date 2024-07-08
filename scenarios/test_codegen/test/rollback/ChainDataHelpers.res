@@ -1,7 +1,7 @@
 open Belt
 module Gravatar = {
   let contractName = "Gravatar"
-  let chainConfig = Config.getConfig().chainMap->ChainMap.get({id: 1337})
+  let chainConfig = Config.getConfig().chainMap->ChainMap.get(MockConfig.chain1337)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
 

@@ -19,7 +19,7 @@ module Mock = {
 
   let mintAddress = Ethers.Constants.zeroAddress
   let userAddress1 = Ethers.Addresses.mockAddresses[1]->Option.getExn
-  let factoryAddress1 = ChainDataHelpers.ERC20Factory.getDefaultAddress({id: 1})
+  let factoryAddress1 = ChainDataHelpers.ERC20Factory.getDefaultAddress(MockConfig.chain1)
 
   let mint50ToUser1 = makeTransferMock(~from=mintAddress, ~to=userAddress1, ~value=50)
   let deleteUser1 = makeDeleteUserMock(~user=userAddress1)
@@ -40,7 +40,7 @@ module Mock = {
     open ChainDataHelpers.ERC20
     open ChainDataHelpers.ERC20Factory
     let mkTransferEventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=ChainDataHelpers.ERC20.getDefaultAddress({id: 1}),
+      ~srcAddress=ChainDataHelpers.ERC20.getDefaultAddress(MockConfig.chain1),
       ~params=_,
       ...
     )
@@ -65,8 +65,8 @@ module Mock = {
 
   let mockChainDataMap = ChainMap.make(~base=config.chainMap, chain =>
     switch chain {
-    | {id: 1} => Chain1.mockChainData
-    | {id: 137} => Chain2.mockChainDataEmpty
+    | MockConfig.chain1 => Chain1.mockChainData
+    | MockConfig.chain137 => Chain2.mockChainDataEmpty
     }
   )
 
@@ -128,7 +128,7 @@ describe("Unsafe delete test", () => {
     await dispatchTask(NextQuery(CheckAllChains))
 
     Assert.deepEqual(
-      [GlobalState.NextQuery(Chain({id: 1})), NextQuery(Chain({id: 137}))],
+      [GlobalState.NextQuery(Chain(MockConfig.chain1)), NextQuery(Chain(MockConfig.chain137))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )

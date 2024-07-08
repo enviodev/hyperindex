@@ -52,9 +52,7 @@ let registerContractHandlers = (
         {{/if}}
       startBlock: {{chain_config.network_config.start_block}},
       endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
-      chain: {
-        id: {{chain_config.network_config.id}},
-      },
+      chain: ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}}),
       contracts: [
       {{#each chain_config.codegen_contracts as | contract |}}
         {

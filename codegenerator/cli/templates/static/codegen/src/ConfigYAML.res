@@ -41,5 +41,5 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
 @genType
 let getConfigByChainId: int => configYaml = chainId => {
   let config = Config.getConfig()
-  config.chainMap->ChainMap.get(ChainMap.Chain.evm(chainId))->mapChainConfigToConfigYaml
+  config.chainMap->ChainMap.get(config->Config.getChain(~chainId))->mapChainConfigToConfigYaml
 }

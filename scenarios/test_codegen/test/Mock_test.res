@@ -25,7 +25,7 @@ describe("E2E Mock Event Batch", () => {
           ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
           ~inMemoryStore,
           ~logger=Logging.logger,
-          ~chain={id: 1},
+          ~chain=MockConfig.chain1,
           ~eventMod,
         )
       | None => Ok(EventProcessing.EventsProcessed.makeEmpty(~config))

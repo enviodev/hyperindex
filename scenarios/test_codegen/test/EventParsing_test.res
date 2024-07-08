@@ -18,7 +18,7 @@ describe("Parsing Raw Events", () => {
 
     let blockNumber = 11954567
     let timestamp = 1614631579
-    let chain = {ChainMap.Chain.id: 1337}
+    let chain = MockConfig.chain1337
     let chainId = chain->ChainMap.Chain.toChainId
     let logIndex = 71
     let blockHash = "0x826bdba07d8f295ef4a0a55c342b49d75699a7c2088a1afa8d71cd33b558fd71"

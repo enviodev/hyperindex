@@ -150,3 +150,10 @@ let shouldPruneHistory = config =>
   | {historyFlag: MinHistory} => true
   | _ => false
   }
+
+let getChain = (config, ~chainId) => {
+  let chain = ChainMap.Chain.makeUnsafe(~chainId)
+  config.chainMap->ChainMap.has(chain)
+    ? chain
+    : Js.Exn.raiseError("No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml")
+}
