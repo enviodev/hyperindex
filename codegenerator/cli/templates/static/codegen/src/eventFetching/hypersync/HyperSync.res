@@ -7,9 +7,9 @@ type hyperSyncPage<'item> = {
 }
 
 type logsQueryPageItem = {
-  log: Types.log,
-  block: Types.blockFields,
-  transaction: Types.transactionFields,
+  log: Types.Log.t,
+  block: Types.Block.t,
+  transaction: Types.Transaction.t,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
@@ -101,8 +101,8 @@ module LogsQuery = {
     logs: addressesWithTopics,
     fieldSelection: {
       log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
-      block: Types.blockFieldsQuerySelection,
-      transaction: Types.transactionFieldsQuerySelection,
+      block: Types.Block.querySelection,
+      transaction: Types.Transaction.querySelection,
     },
   }
 
@@ -119,9 +119,9 @@ module LogsQuery = {
   let convertEvent = (event: HyperSyncClient.ResponseTypes.event): logsQueryPageItem => {
     let missingParams =
       [
-        getMissingFields(Types.logFieldNames, event.log, ~prefix="log"),
-        getMissingFields(Types.blockFieldNames, event.block, ~prefix="block"),
-        getMissingFields(Types.transactionFieldNames, event.transaction, ~prefix="transaction"),
+        getMissingFields(Types.Log.fieldNames, event.log, ~prefix="log"),
+        getMissingFields(Types.Block.fieldNames, event.block, ~prefix="block"),
+        getMissingFields(Types.Transaction.fieldNames, event.transaction, ~prefix="transaction"),
       ]->Belt.Array.concatMany
 
     if missingParams->Belt.Array.length > 0 {
@@ -133,7 +133,7 @@ module LogsQuery = {
 
     //Topics can be nullable and still need to be filtered
     //Address is not yet checksummed (TODO this should be done in the client)
-    let logUnsanitized: Types.log = event.log->X.magic
+    let logUnsanitized: Types.Log.t = event.log->X.magic
     let topics = event.log.topics->Belt.Option.getUnsafe->Belt.Array.keepMap(Js.Nullable.toOption)
     let address = event.log.address->Belt.Option.getUnsafe->Viem.getAddressUnsafe
     let log = {
