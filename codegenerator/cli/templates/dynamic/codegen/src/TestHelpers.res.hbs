@@ -69,11 +69,15 @@ module EventFunctions = {
       // and it will default to the first chain in the config
       let chain = switch chainId {
         | Some(chainId) => {
-          chainId->ChainMap.Chain.fromChainId->Utils.unwrapResultExn
+          let chain = chainId->ChainMap.Chain.evm
+          if !(config.chainMap->ChainMap.has(chain)) {
+            Js.Exn.raiseError("No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml")
+          }
+          chain
         }
         | None => switch config.defaultChain {
           | Some(chainConfig) => chainConfig.chain
-          | None => Js.Exn.raiseError("No default chain Id found, please add at least 1 chain to your config.yaml.")
+          | None => Js.Exn.raiseError("No default chain Id found, please add at least 1 chain to your config.yaml")
         }
       }
 

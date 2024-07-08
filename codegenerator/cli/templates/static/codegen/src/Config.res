@@ -136,9 +136,6 @@ let getConfig = () =>
   }
 
 let setGenerated = (config: t) => {
-  if generatedConfigRef.contents !== None {
-    Js.Exn.raiseError("Generated config already registered")
-  }
   generatedConfigRef := Some(config)
 }
 

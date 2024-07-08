@@ -176,20 +176,18 @@ let eventBatch: array<Types.event> = [
   Gravatar_UpdatedGravatar(setGravatarLog4),
 ]
 
-let eventBatchChain = ChainMap.Chain.Chain_1337
-
 let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem => {
   switch e {
   | Gravatar_NewGravatar(el) => {
       timestamp: el.blockTimestamp,
-      chain: eventBatchChain,
+      chain: {id: 1337},
       blockNumber: el.blockNumber,
       logIndex: el.logIndex,
       event: e,
     }
   | Gravatar_UpdatedGravatar(el) => {
       timestamp: el.blockTimestamp,
-      chain: eventBatchChain,
+      chain: {id: 1337},
       blockNumber: el.blockNumber,
       logIndex: el.logIndex,
       event: e,
@@ -199,7 +197,7 @@ let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem 
 })
 
 let inMemoryStoreMock = InMemoryStore.make()
-let makeContext = event => ContextEnv.make(~logger=Logging.logger, ~chain=Chain_1, ~event, ...)
+let makeContext = event => ContextEnv.make(~logger=Logging.logger, ~chain={id: 1}, ~event, ...)
 
 let mockNewGravatarContext = makeContext(newGravatarLog1)
 let mockUpdateGravatarContext = makeContext(setGravatarLog1)

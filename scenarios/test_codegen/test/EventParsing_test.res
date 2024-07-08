@@ -1,6 +1,5 @@
 open RescriptMocha
 
-
 describe("Parsing Raw Events", () => {
   it("Parses a raw event entity into a batch queue item", () => {
     let params: Types.Gravatar.NewGravatar.eventArgs = {
@@ -10,7 +9,7 @@ describe("Parsing Raw Events", () => {
       imageUrl: "myurl.com",
     }
 
-    let paramsEncoded = switch params->S.serializeToJsonStringWith(.
+    let paramsEncoded = switch params->S.serializeToJsonStringWith(
       Types.Gravatar.NewGravatar.eventArgsSchema,
     ) {
     | Ok(p) => p
@@ -19,7 +18,7 @@ describe("Parsing Raw Events", () => {
 
     let blockNumber = 11954567
     let timestamp = 1614631579
-    let chain = ChainMap.Chain.Chain_1337
+    let chain = {ChainMap.Chain.id: 1337}
     let chainId = chain->ChainMap.Chain.toChainId
     let logIndex = 71
     let blockHash = "0x826bdba07d8f295ef4a0a55c342b49d75699a7c2088a1afa8d71cd33b558fd71"

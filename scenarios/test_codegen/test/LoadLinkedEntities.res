@@ -50,7 +50,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //
   //   let context = Context.make(
   //     ~inMemoryStore,
-  //     ~chain=Chain_1,
+  //     ~chain={id:1},
   //     ~event={
   //       "devMsg": "This is a placeholder event",
   //       "blockNumber": 456,

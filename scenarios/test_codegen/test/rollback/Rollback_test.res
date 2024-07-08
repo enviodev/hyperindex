@@ -3,7 +3,7 @@ open RescriptMocha
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
-    ~chainConfig=(Config.getConfig().chainMap)->ChainMap.get(Chain_1337),
+    ~chainConfig=Config.getConfig().chainMap->ChainMap.get({id: 1337}),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )
@@ -154,7 +154,7 @@ describe("Single Chain Simple Rollback", () => {
     let chainManager = ChainManager.makeFromConfig(~config=Config.getConfig())
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
-    let chain = ChainMap.Chain.Chain_1337
+    let chain = {ChainMap.Chain.id: 1337}
     let getState = () => gsManager->GlobalStateManager.getState
     let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
@@ -181,7 +181,7 @@ describe("Single Chain Simple Rollback", () => {
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
-          chain: Chain_1337,
+          chain: {id: 1337},
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
@@ -216,7 +216,7 @@ describe("Single Chain Simple Rollback", () => {
     }
     let initState = GlobalState.make(~chainManager)
     let gsManager = initState->GlobalStateManager.make
-    let chain = ChainMap.Chain.Chain_1337
+    let chain = {ChainMap.Chain.id: 1337}
     let getState = () => gsManager->GlobalStateManager.getState
     let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
@@ -243,7 +243,7 @@ describe("Single Chain Simple Rollback", () => {
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
-          chain: Chain_1337,
+          chain: {id: 1337},
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
@@ -338,7 +338,7 @@ describe("Single Chain Simple Rollback", () => {
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
-          chain: Chain_1337,
+          chain: {id: 1337},
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
