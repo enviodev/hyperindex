@@ -200,16 +200,13 @@ module EventFunctions = {
   ): Types.eventLog<'eventParams> => {
     let {?blockNumber, ?blockTimestamp, ?blockHash, ?srcAddress, ?chainId, ?logIndex} =
       mockEventData->Belt.Option.getWithDefault({})
-
+    let block = X.magic(Js.Nullable.null) //TODO!
+    let transaction = X.magic(Js.Nullable.null) //TODO!
     {
       params,
-      transaction: {}, //TODO!
+      transaction,
       chainId: chainId->Belt.Option.getWithDefault(1),
-      block: {
-        number: blockNumber->Belt.Option.getWithDefault(0),
-        timestamp: blockTimestamp->Belt.Option.getWithDefault(0),
-        hash: blockHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
-      },
+      block,
       srcAddress: srcAddress->Belt.Option.getWithDefault(Addresses.defaultAddress),
       logIndex: logIndex->Belt.Option.getWithDefault(0),
     }

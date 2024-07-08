@@ -2,6 +2,12 @@
 name: erc20indexer
 description: ERC-20 indexer
 rollback_on_reorg: true
+field_selection:
+  transaction_fields:
+    - hash
+    - transaction_index
+  block_fields:
+    - gas_used #just an example to test codegen
 contracts:
   - name: ERC20
     handler: src/EventHandlers.bs.js
