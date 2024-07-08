@@ -301,6 +301,7 @@ describe("determineNextEvent", () => {
         let earliestItem = makeNoItem(5) /* earlier timestamp than the test event */
 
         let fetchStatesMap = ChainMap.make(
+          ~base=Config.getConfig().chainMap,
           chain =>
             switch chain {
             | Chain_1 =>
@@ -341,6 +342,7 @@ describe("determineNextEvent", () => {
         let singleItem = makeMockQItem(singleItemTimestamp, Chain_137)
 
         let fetchStatesMap = ChainMap.make(
+          ~base=Config.getConfig().chainMap,
           chain =>
             switch chain {
             | Chain_1 =>

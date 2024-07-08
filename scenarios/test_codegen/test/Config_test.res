@@ -28,7 +28,7 @@ let generatedSyncConfig = switch generatedChainConfig.syncSource {
 }
 
 describe("getConfigByChainId Test", () => {
-  it_only("getConfigByChainId should return the correct config", () => {
+  it("getConfigByChainId should return the correct config", () => {
     let configYaml = ConfigYAML.getConfigByChainId(1)
     Assert.deepEqual(
       configYaml,

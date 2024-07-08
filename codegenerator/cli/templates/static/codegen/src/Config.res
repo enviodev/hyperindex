@@ -97,6 +97,7 @@ type t = {
   shouldUseHypersyncClientDecoder: bool,
   isUnorderedMultichainMode: bool,
   chainMap: ChainMap.t<chainConfig>,
+  defaultChain: option<chainConfig>,
 }
 
 let make = (
@@ -104,7 +105,7 @@ let make = (
   ~shouldSaveFullHistory=false,
   ~shouldUseHypersyncClientDecoder=true,
   ~isUnorderedMultichainMode=false,
-  ~networks=[],
+  ~chains=[],
 ) => {
   historyConfig: {
     rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
@@ -118,9 +119,12 @@ let make = (
       isUnorderedMultichainMode,
     ),
   ),
-  chainMap: networks->Js.Array2.map(n => {
+  chainMap: chains
+  ->Js.Array2.map(n => {
     (n.chain, n)
-  })->ChainMap.fromArray->Utils.unwrapResultExn,
+  })
+  ->ChainMap.fromArray,
+  defaultChain: chains->Belt.Array.get(0),
 }
 
 %%private(let generatedConfigRef = ref(None))

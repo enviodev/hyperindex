@@ -86,7 +86,7 @@ ensure that this doesn't trigger a reorg
   }
   module Chain2 = RollbackMultichain_test.Mock.Chain2
 
-  let mockChainDataMap = ChainMap.make(chain =>
+  let mockChainDataMap = ChainMap.make(~base=config.chainMap, chain =>
     switch chain {
     | Chain_1 => Chain1.mockChainData
     | Chain_137 => Chain2.mockChainData

@@ -1,5 +1,3 @@
-open Belt
-
 /***** TAKE NOTE ******
 This is a hack to get genType to work!
 
@@ -54,18 +52,6 @@ module EventFunctions = {
     chainId?: int,
   }
 
-
-  /**
-  The default chain ID to use (ethereum mainnet) if a user does not specify int the 
-  eventProcessor helper
-  */
-  let \"DEFAULT_CHAIN_ID" = try {
-    ChainMap.Chain.all->Array.getExn(0)->ChainMap.Chain.toChainId
-  } catch {
-  | _ =>
-    Js.Exn.raiseError("No default chain Id found, please add at least 1 chain to your config.yaml.")
-  }
-
   /**
   A function composer to help create individual processEvent functions
   */
@@ -77,21 +63,28 @@ module EventFunctions = {
     async ({event, mockDb, ?chainId}) => {
       let module(Event) = eventMod
       let {eventName} = module(Event)
-      RegisterHandlers.registerAllHandlers()
-      //The user can specify a chainId of an event or leave it off
-      //and it will default to "DEFAULT_CHAIN_ID"
-      let chainId = chainId->Option.getWithDefault(\"DEFAULT_CHAIN_ID")
+      let config = RegisterHandlers.registerAllHandlers()
+
+      // The user can specify a chainId of an event or leave it off
+      // and it will default to the first chain in the config
+      let chain = switch chainId {
+        | Some(chainId) => {
+          chainId->ChainMap.Chain.fromChainId->Utils.unwrapResultExn
+        }
+        | None => switch config.defaultChain {
+          | Some(chainConfig) => chainConfig.chain
+          | None => Js.Exn.raiseError("No default chain Id found, please add at least 1 chain to your config.yaml.")
+        }
+      }
 
       //Create an individual logging context for traceability
       let logger = Logging.createChild(
         ~params={
           "Context": `Test Processor for ${(eventName :> string)} Event`,
-          "Chain ID": chainId,
+          "Chain ID": chain->ChainMap.Chain.toChainId,
           "event": event,
         },
       )
-
-      let chain = chainId->ChainMap.Chain.fromChainId->Utils.unwrapResultExn
 
       //Deep copy the data in mockDb, mutate the clone and return the clone
       //So no side effects occur here and state can be compared between process
@@ -145,7 +138,7 @@ module EventFunctions = {
       | None => () //No need to run contract registration
       }
 
-      let latestProcessedBlocks = EventProcessing.EventsProcessed.makeEmpty()
+      let latestProcessedBlocks = EventProcessing.EventsProcessed.makeEmpty(~config)
 
       switch registeredEvent.loaderHandler {
       | Some(handler) =>

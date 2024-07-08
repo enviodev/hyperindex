@@ -39,25 +39,12 @@ module Chain = {
 
 type t<'a> = Belt.Map.t<Chain.ChainIdCmp.t, 'a, Chain.ChainIdCmp.identity>
 
-let make = (fn: Chain.t => 'a): t<'a> => {
-  Chain.all
-  ->Array.map(chainId => (chainId, chainId->fn))
-  ->Map.fromArray(~id=module(Chain.ChainIdCmp))
+let make = (~base, fn: Chain.t => 'a): t<'a> => {
+  base->Map.mapWithKey((chain, _) => fn(chain))
 }
 
-let empty = () => []->Map.fromArray(~id=module(Chain.ChainIdCmp))
-
-exception NotAllChainsDefined
-let fromArray: array<(Chain.t, 'a)> => result<t<'a>, exn> = arr => {
-  let map = arr->Map.fromArray(~id=module(Chain.ChainIdCmp))
-  let hasAllChains = Chain.all->Array.reduce(true, (accum, chain) => {
-    accum && map->Map.has(chain)
-  })
-  if hasAllChains {
-    Ok(map)
-  } else {
-    Error(NotAllChainsDefined)
-  }
+let fromArray: array<(Chain.t, 'a)> => t<'a> = arr => {
+  arr->Map.fromArray(~id=module(Chain.ChainIdCmp))
 }
 
 exception UnexpectedChainDoesNoteExist(int)

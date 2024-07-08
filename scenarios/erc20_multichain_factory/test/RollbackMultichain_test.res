@@ -145,14 +145,14 @@ module Mock = {
     let mockChainData = blocks->applyBlocks
   }
 
-  let mockChainDataMapInitial = ChainMap.make(chain =>
+  let mockChainDataMapInitial = ChainMap.make(~base=config.chainMap, chain =>
     switch chain {
     | Chain_1 => Chain1.mockChainDataInitial
     | Chain_137 => Chain2.mockChainData
     }
   )
 
-  let mockChainDataMapReorg = ChainMap.make(chain =>
+  let mockChainDataMapReorg = ChainMap.make(~base=config.chainMap, chain =>
     switch chain {
     | Chain_1 => Chain1.mockChainDataReorg
     | Chain_137 => Chain2.mockChainData

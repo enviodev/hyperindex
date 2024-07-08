@@ -49,14 +49,8 @@ type chainManager = ChainManager.t
 
 @genType
 let makeChainManager = (cfg: chainConfig): chainManager => {
-  // let getConfig = chain =>
-  //   if chain == cfg.chain {
-  //     cfg
-  //   } else {
-  //     chain->Config.getChain
-  //   }
-  // let configs = ChainMap.make(getConfig)
-  ChainManager.makeFromConfig(~config=Config.make(~isUnorderedMultichainMode=true, ~networks=[cfg]))
+  // FIXME: Should fork from the main ChainMap?
+  ChainManager.makeFromConfig(~config=Config.make(~isUnorderedMultichainMode=true, ~chains=[cfg]))
 }
 
 @genType

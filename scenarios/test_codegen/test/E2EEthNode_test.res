@@ -44,7 +44,7 @@ describe("E2E Integration Test", () => {
       ],
     }
 
-    RegisterHandlers.registerAllHandlers()
+    let _config = RegisterHandlers.registerAllHandlers()
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
