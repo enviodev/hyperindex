@@ -92,7 +92,6 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "chain_id",
     "block_number",
     "log_index",
-    "transaction_index",
     "block_timestamp",
   )}
     ON CONFLICT(chain_id) DO UPDATE
@@ -100,7 +99,6 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "chain_id" = EXCLUDED."chain_id",
     "block_number" = EXCLUDED."block_number",
     "log_index" = EXCLUDED."log_index",
-    "transaction_index" = EXCLUDED."transaction_index",
     "block_timestamp" = EXCLUDED."block_timestamp";
     `;
 };

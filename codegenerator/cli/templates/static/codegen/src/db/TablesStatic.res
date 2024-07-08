@@ -12,7 +12,6 @@ module EventSyncState = {
     @as("chain_id") chainId: int,
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
-    @as("transaction_index") transactionIndex: int,
     @as("block_timestamp") blockTimestamp: int,
   }
 
@@ -22,7 +21,6 @@ module EventSyncState = {
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("block_number", Integer),
       mkField("log_index", Integer),
-      mkField("transaction_index", Integer),
       mkField("block_timestamp", Integer),
     ],
   )
