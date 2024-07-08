@@ -61,6 +61,7 @@ pub mod evm {
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
     use strum::Display;
+    use subenum::subenum;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
@@ -142,10 +143,13 @@ pub mod evm {
         pub block_fields: Option<Vec<BlockField>>,
     }
 
+    #[subenum(RpcTransactionField)]
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
     #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub enum TransactionField {
+        #[subenum(RpcTransactionField)]
         TransactionIndex,
+        #[subenum(RpcTransactionField)]
         Hash,
         From,
         To,
@@ -200,32 +204,40 @@ pub mod evm {
         }
     }
 
+    #[subenum(RpcBlockField)]
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
     #[serde(rename_all = "snake_case", deny_unknown_fields)]
     pub enum BlockField {
-        Hash,
+        #[subenum(RpcBlockField)]
         ParentHash,
+        #[subenum(RpcBlockField)]
         Nonce,
         Sha3Uncles,
         LogsBloom,
         TransactionsRoot,
+        #[subenum(RpcBlockField)]
         StateRoot,
         ReceiptsRoot,
+        #[subenum(RpcBlockField)]
         Miner,
+        #[subenum(RpcBlockField)]
         Difficulty,
         TotalDifficulty,
+        #[subenum(RpcBlockField)]
         ExtraData,
         Size,
+        #[subenum(RpcBlockField)]
         GasLimit,
+        #[subenum(RpcBlockField)]
         GasUsed,
         Uncles,
+        #[subenum(RpcBlockField)]
         BaseFeePerGas,
     }
 
     impl From<BlockField> for RescriptType {
         fn from(value: BlockField) -> RescriptType {
             match value {
-                BlockField::Hash => RescriptType::String,
                 BlockField::ParentHash => RescriptType::String,
                 BlockField::Nonce => RescriptType::Int,
                 BlockField::Sha3Uncles => RescriptType::String,
