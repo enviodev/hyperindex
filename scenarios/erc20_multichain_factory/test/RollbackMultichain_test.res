@@ -29,6 +29,8 @@ module Mock = {
   | 144  |     | 9d
   | 150  |  6d |
  */
+  let config = Config.getConfig()
+
   let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
@@ -62,7 +64,7 @@ module Mock = {
     })
 
   module Chain1 = {
-    let chain = ChainMap.Chain.{id:1}
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
     let mockChainDataEmpty = MockChainData.make(
       ~chainConfig=Config.getConfig().chainMap->ChainMap.get(chain),
       ~maxBlocksReturned=2,
@@ -106,13 +108,13 @@ module Mock = {
     let mockChainDataReorg = blocksReorg->applyBlocks
   }
   module Chain2 = {
-    let chain = ChainMap.Chain.{id:137}
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=137)
     let defaultTokenAddress = ChainDataHelpers.getDefaultAddress(
       chain,
       ChainDataHelpers.ERC20.contractName,
     )
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=Config.getConfig().chainMap->ChainMap.get(chain),
+      ~chainConfig=config.chainMap->ChainMap.get(chain),
       ~maxBlocksReturned=3,
       ~blockTimestampInterval=16,
     )
@@ -145,17 +147,19 @@ module Mock = {
     let mockChainData = blocks->applyBlocks
   }
 
-  let mockChainDataMapInitial = ChainMap.make(~base=config.chainMap, chain =>
-    switch chain {
-    | {id:1} => Chain1.mockChainDataInitial
-    | {id:137} => Chain2.mockChainData
+  let mockChainDataMapInitial = config.chainMap->ChainMap.mapWithKey((chain, _) =>
+    switch chain->ChainMap.Chain.toChainId {
+    | 1 => Chain1.mockChainDataInitial
+    | 137 => Chain2.mockChainData
+    | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
 
-  let mockChainDataMapReorg = ChainMap.make(~base=config.chainMap, chain =>
-    switch chain {
-    | {id:1} => Chain1.mockChainDataReorg
-    | {id:137} => Chain2.mockChainData
+  let mockChainDataMapReorg = config.chainMap->ChainMap.mapWithKey((chain, _) =>
+    switch chain->ChainMap.Chain.toChainId {
+    | 1 => Chain1.mockChainDataReorg
+    | 137 => Chain2.mockChainData
+    | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
 
@@ -264,9 +268,11 @@ describe("Multichain rollback test", () => {
 
     let getTotalQueueSize = () => {
       let state = gsManager->GlobalStateManager.getState
-      state.chainManager.chainFetchers->ChainMap.reduce(
+      state.chainManager.chainFetchers
+      ->ChainMap.values
+      ->Array.reduce(
         0,
-        (accum, chainFetcher) => accum + chainFetcher->FetchState.queueSize,
+        (accum, chainFetcher) => accum + chainFetcher.fetchState->FetchState.queueSize,
       )
     }
 
@@ -281,7 +287,7 @@ describe("Multichain rollback test", () => {
     await dispatchTask(NextQuery(CheckAllChains))
 
     Assert.deepEqual(
-      [GlobalState.NextQuery(Chain({id:1})), NextQuery(Chain({id:137}))],
+      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
@@ -299,12 +305,12 @@ describe("Multichain rollback test", () => {
     ) => {
       Assert.equal(
         chain1LatestFetchBlock,
-        getLatestFetchedBlock({id:1}).blockNumber,
+        getLatestFetchedBlock(Mock.Chain1.chain).blockNumber,
         ~message=`Chain 1 should have fetched up to block ${chain1LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
         chain2LatestFetchBlock,
-        getLatestFetchedBlock({id:137}).blockNumber,
+        getLatestFetchedBlock(Mock.Chain2.chain).blockNumber,
         ~message=`Chain 2 should have fetched up to block ${chain2LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
@@ -338,10 +344,10 @@ describe("Multichain rollback test", () => {
         )
       }
       //Chain 1 balances
-      await assertBalance(~chain={id:1}, ~user=1, ~expectedBalance=chain1User1Balance)
-      await assertBalance(~chain={id:1}, ~user=2, ~expectedBalance=chain1User2Balance)
-      await assertBalance(~chain={id:137}, ~user=1, ~expectedBalance=chain2User1Balance)
-      await assertBalance(~chain={id:137}, ~user=2, ~expectedBalance=chain2User2Balance)
+      await assertBalance(~chain=Mock.Chain1.chain, ~user=1, ~expectedBalance=chain1User1Balance)
+      await assertBalance(~chain=Mock.Chain1.chain, ~user=2, ~expectedBalance=chain1User2Balance)
+      await assertBalance(~chain=Mock.Chain2.chain, ~user=1, ~expectedBalance=chain2User1Balance)
+      await assertBalance(~chain=Mock.Chain2.chain, ~user=2, ~expectedBalance=chain2User2Balance)
     }
 
     await makeAssertions(
@@ -362,24 +368,24 @@ describe("Multichain rollback test", () => {
       [
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain={id:1},
+          ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-199,
           ~blockTimestampThreshold=25,
           ~blockNumber=1,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id:1})),
+        NextQuery(Chain(Mock.Chain1.chain)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain={id:137},
+          ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-198,
           ~blockTimestampThreshold=25,
           ~blockNumber=2,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id:137})),
+        NextQuery(Chain(Mock.Chain2.chain)),
       ],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have received a response and next tasks will be to process batch and next query",
@@ -416,24 +422,24 @@ describe("Multichain rollback test", () => {
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain={id:1},
+          ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-197,
           ~blockTimestampThreshold=25,
           ~blockNumber=3,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id:1})),
+        NextQuery(Chain(Mock.Chain1.chain)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain={id:137},
+          ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-195,
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id:137})),
+        NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -456,24 +462,24 @@ describe("Multichain rollback test", () => {
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain={id:1},
+          ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-195,
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id:1})),
+        NextQuery(Chain(Mock.Chain1.chain)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain={id:137},
+          ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-192,
           ~blockTimestampThreshold=25,
           ~blockNumber=8,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id:137})),
+        NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -511,14 +517,14 @@ describe("Multichain rollback test", () => {
         Rollback,
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain={id:137},
+          ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-191,
           ~blockTimestampThreshold=25,
           ~blockNumber=9,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain({id:137})),
+        NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],

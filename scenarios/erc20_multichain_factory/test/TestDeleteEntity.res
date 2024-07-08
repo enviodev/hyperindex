@@ -7,6 +7,8 @@ module Mock = {
   Block creates a user
   Block that removes a user
 */
+  let config = Config.getConfig()
+
   let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
@@ -19,7 +21,6 @@ module Mock = {
 
   let mintAddress = Ethers.Constants.zeroAddress
   let userAddress1 = Ethers.Addresses.mockAddresses[1]->Option.getExn
-  let factoryAddress1 = ChainDataHelpers.ERC20Factory.getDefaultAddress(MockConfig.chain1)
 
   let mint50ToUser1 = makeTransferMock(~from=mintAddress, ~to=userAddress1, ~value=50)
   let deleteUser1 = makeDeleteUserMock(~user=userAddress1)
@@ -37,15 +38,17 @@ module Mock = {
   module Chain1 = {
     include RollbackMultichain_test.Mock.Chain1
 
+    let factoryAddress = ChainDataHelpers.ERC20Factory.getDefaultAddress(chain)
+
     open ChainDataHelpers.ERC20
     open ChainDataHelpers.ERC20Factory
     let mkTransferEventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=ChainDataHelpers.ERC20.getDefaultAddress(MockConfig.chain1),
+      ~srcAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain),
       ~params=_,
       ...
     )
     let mkDeletUserEventConstr = DeleteUser.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=factoryAddress1,
+      ~srcAddress=factoryAddress,
       ~params=_,
       ...
     )
@@ -63,10 +66,11 @@ module Mock = {
   }
   module Chain2 = RollbackMultichain_test.Mock.Chain2
 
-  let mockChainDataMap = ChainMap.make(~base=config.chainMap, chain =>
-    switch chain {
-    | MockConfig.chain1 => Chain1.mockChainData
-    | MockConfig.chain137 => Chain2.mockChainDataEmpty
+  let mockChainDataMap = config.chainMap->ChainMap.mapWithKey((chain, _) =>
+    switch chain->ChainMap.Chain.toChainId {
+    | 1 => Chain1.mockChainData
+    | 137 => Chain2.mockChainDataEmpty
+    | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
 
@@ -128,7 +132,7 @@ describe("Unsafe delete test", () => {
     await dispatchTask(NextQuery(CheckAllChains))
 
     Assert.deepEqual(
-      [GlobalState.NextQuery(Chain(MockConfig.chain1)), NextQuery(Chain(MockConfig.chain137))],
+      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
