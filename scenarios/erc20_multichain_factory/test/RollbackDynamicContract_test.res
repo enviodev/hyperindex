@@ -151,10 +151,6 @@ describe("Dynamic contract rollback test", () => {
       cf.fetchState
     }
 
-    let getQueueSize = chain => {
-      chain->getFetchState->FetchState.queueSize
-    }
-
     let getLatestFetchedBlock = chain => {
       chain->getFetchState->FetchState.getLatestFullyFetchedBlock
     }
@@ -169,8 +165,13 @@ describe("Dynamic contract rollback test", () => {
     let getUser1Balance = getTokenBalance(~accountAddress=Mock.userAddress1)
     let getUser2Balance = getTokenBalance(~accountAddress=Mock.userAddress2)
 
-    let getTotalQueueSize = () =>
-      ChainMap.Chain.all->Array.reduce(0, (accum, next) => accum + next->getQueueSize)
+    let getTotalQueueSize = () => {
+      let state = gsManager->GlobalStateManager.getState
+      state.chainManager.chainFetchers->ChainMap.reduce(
+        0,
+        (accum, chainFetcher) => accum + chainFetcher->FetchState.queueSize,
+      )
+    }
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions
     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMap)

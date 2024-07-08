@@ -6,12 +6,6 @@ module Chain = {
     | Chain_{{chain_config.network_config.id}}
   {{/each}}
 
-  let all = [
-  {{#each chain_configs as | chain_config |}}
-    Chain_{{chain_config.network_config.id}},
-  {{/each}}
-  ]
-
   let toChainId = chain =>
     switch chain {
     {{#each chain_configs as | chain_config |}}

@@ -64,7 +64,7 @@ module Mock = {
   module Chain1 = {
     let chain = ChainMap.Chain.Chain_1
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=(Config.getConfig().chainMap)->ChainMap.get(chain),
+      ~chainConfig=Config.getConfig().chainMap->ChainMap.get(chain),
       ~maxBlocksReturned=2,
       ~blockTimestampInterval=25,
     )
@@ -112,7 +112,7 @@ module Mock = {
       ChainDataHelpers.ERC20.contractName,
     )
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=(Config.getConfig().chainMap)->ChainMap.get(chain),
+      ~chainConfig=Config.getConfig().chainMap->ChainMap.get(chain),
       ~maxBlocksReturned=3,
       ~blockTimestampInterval=16,
     )
@@ -223,9 +223,7 @@ describe("Multichain rollback test", () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
-      ...ChainManager.makeFromConfig(
-        ~config=Config.getConfig(),
-      ),
+      ...ChainManager.makeFromConfig(~config=Config.getConfig()),
       isUnorderedMultichainMode: true,
     }
 
@@ -250,10 +248,6 @@ describe("Multichain rollback test", () => {
       cf.fetchState
     }
 
-    let getQueueSize = chain => {
-      chain->getFetchState->FetchState.queueSize
-    }
-
     let getLatestFetchedBlock = chain => {
       chain->getFetchState->FetchState.getLatestFullyFetchedBlock
     }
@@ -268,8 +262,14 @@ describe("Multichain rollback test", () => {
     let getUser1Balance = getTokenBalance(~accountAddress=Mock.userAddress1)
     let getUser2Balance = getTokenBalance(~accountAddress=Mock.userAddress2)
 
-    let getTotalQueueSize = () =>
-      ChainMap.Chain.all->Array.reduce(0, (accum, next) => accum + next->getQueueSize)
+    let getTotalQueueSize = () => {
+      let state = gsManager->GlobalStateManager.getState
+      state.chainManager.chainFetchers->ChainMap.reduce(
+        0,
+        (accum, chainFetcher) => accum + chainFetcher->FetchState.queueSize,
+      )
+    }
+
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions
     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMapInitial)
