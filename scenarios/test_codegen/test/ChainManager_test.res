@@ -58,6 +58,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           chain,
           blockNumber: currentBlockNumber.contents,
           logIndex,
+          eventMod: module(Types.Gravatar.EmptyEvent),
           event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
         }
 
@@ -158,6 +159,7 @@ describe("ChainManager", () => {
           chain: MockConfig.chain1,
           blockNumber: 0,
           logIndex: 0,
+          eventMod: module(Types.Gravatar.EmptyEvent),
           event: `mock initial event`->Utils.magic,
         }
 
@@ -287,6 +289,7 @@ describe("determineNextEvent", () => {
         chain,
         blockNumber: 987654,
         logIndex: 123456,
+        eventMod: module(Types.Gravatar.EmptyEvent),
         event: "SINGLE TEST EVENT"->Utils.magic,
       }
     }

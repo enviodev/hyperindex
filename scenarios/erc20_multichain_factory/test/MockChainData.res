@@ -6,6 +6,7 @@ module Indexer = {
   module ReorgDetection = ReorgDetection
   module FetchState = FetchState
   module ChainMap = ChainMap
+  module Enums = Enums
   module ContractAddressingMap = ContractAddressingMap
 }
 

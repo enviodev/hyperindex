@@ -183,6 +183,7 @@ let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem 
       chain: MockConfig.chain1337,
       blockNumber: el.blockNumber,
       logIndex: el.logIndex,
+      eventMod: module(Types.Gravatar.NewGravatar),
       event: e,
     }
   | Gravatar_UpdatedGravatar(el) => {
@@ -190,6 +191,7 @@ let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem 
       chain: MockConfig.chain1337,
       blockNumber: el.blockNumber,
       logIndex: el.logIndex,
+      eventMod: module(Types.Gravatar.UpdatedGravatar),
       event: e,
     }
   | _ => Js.Exn.raiseError("I couldn't figure out how to make this method polymorphic")

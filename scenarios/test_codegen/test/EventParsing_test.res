@@ -50,6 +50,7 @@ describe("Parsing Raw Events", () => {
       chain,
       blockNumber,
       logIndex,
+      eventMod: module(Types.Gravatar.NewGravatar),
       event: Types.Gravatar_NewGravatar({
         blockNumber,
         chainId,

@@ -173,13 +173,13 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
 let decodeRawEventWith = (
   type eventArgs,
   rawEvent: TablesStatic.RawEvents.t,
-  ~eventMod: module(Types.Event with type eventArgs = eventArgs),
+  ~eventMod: module(Types.Event),
   ~eventAccessor: Types.eventLog<eventArgs> => Types.event,
   ~chain,
   ~txOrigin: option<Ethers.ethAddress>,
   ~txTo: option<Ethers.ethAddress>,
 ): result<Types.eventBatchQueueItem, S.error> => {
-  let module(Event) = eventMod
+  let module(Event) = eventMod->(Utils.magic: module(Types.Event) => module(Types.Event with type eventArgs = eventArgs))
   rawEvent.params
   ->S.parseJsonStringWith(Event.eventArgsSchema)
   ->Belt.Result.map(params => {
@@ -194,17 +194,17 @@ let decodeRawEventWith = (
       transactionHash: rawEvent.transactionHash,
       transactionIndex: rawEvent.transactionIndex,
       logIndex: rawEvent.logIndex,
-      params: params,
+      params,
     }->eventAccessor
 
-    let queueItem = Types.mkEventBatchQueueItem(
+    let queueItem: Types.eventBatchQueueItem = {
       event,
-      ~eventMod,
-      ~timestamp=rawEvent.blockTimestamp,
-      ~chain,
-      ~blockNumber=rawEvent.blockNumber,
-      ~logIndex=rawEvent.logIndex,
-    )
+      eventMod,
+      timestamp: rawEvent.blockTimestamp,
+      chain,
+      blockNumber: rawEvent.blockNumber,
+      logIndex: rawEvent.logIndex,
+    }
 
     queueItem
   })

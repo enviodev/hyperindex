@@ -20,6 +20,7 @@ let qItemMock1: Types.eventBatchQueueItem = {
   blockNumber: 1,
   logIndex: 0,
   event: eventMock1,
+  eventMod: module(Types.Gravatar.NewGravatar),
 }
 
 let eventMock2: Types.event = Gravatar_NewGravatar({
@@ -42,6 +43,7 @@ let qItemMock2: Types.eventBatchQueueItem = {
   blockNumber: 2,
   logIndex: 1,
   event: eventMock1,
+  eventMod: module(Types.Gravatar.NewGravatar),
 }
 
 describe("Chain Event Queue", () => {

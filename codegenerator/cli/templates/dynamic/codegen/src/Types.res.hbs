@@ -186,6 +186,11 @@ type event =
 {{/each}}
 {{/each}}
 
+{{!-- FIXME: Instead of the hacky way to unwrap the event back to eventLog, add accessor to Event module and replace unwrapping with using accessor at the end of processing the event --}}
+let eventToLog = (event: event): eventLog<'a> => {
+  (event->Utils.magic)["_0"]->Utils.magic
+}
+
 @genType
 type chainId = int
 
@@ -200,22 +205,4 @@ type eventBatchQueueItem = {
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events
   hasRegisteredDynamicContracts?: bool,
-}
-
-let mkEventBatchQueueItem = (
-  event,
-  ~eventMod: module(Event with type eventArgs = 'a),
-  ~timestamp,
-  ~chain,
-  ~blockNumber,
-  ~logIndex,
-  ~hasRegisteredDynamicContracts=?,
-) => {
-  timestamp,
-  chain,
-  blockNumber,
-  logIndex,
-  event,
-  eventMod: eventMod->(Utils.magic: module(Event with type eventArgs = 'a) => module(Event)),
-  ?hasRegisteredDynamicContracts,
 }

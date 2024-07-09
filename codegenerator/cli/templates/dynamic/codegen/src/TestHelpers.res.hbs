@@ -56,9 +56,8 @@ module EventFunctions = {
   A function composer to help create individual processEvent functions
   */
   let makeEventProcessor = (
-    type eventArgs,
-    ~eventMod: module(Types.Event with type eventArgs = eventArgs),
-    ~eventAccessor: Types.eventLog<eventArgs> => Types.event,
+    ~eventMod: module(Types.Event),
+    ~eventAccessor: Types.eventLog<'eventArgs> => Types.event,
   ) => {
     async ({event, mockDb, ?chainId}) => {
       let module(Event) = eventMod
@@ -118,15 +117,14 @@ module EventFunctions = {
         switch contractRegister->EventProcessing.runEventContractRegister(
           ~logger,
           ~event,
-          ~eventBatchQueueItem=event
-          ->eventAccessor
-          ->Types.mkEventBatchQueueItem(
-            ~eventMod,
-            ~chain,
-            ~logIndex=event.logIndex,
-            ~timestamp=event.blockTimestamp,
-            ~blockNumber=event.blockNumber,
-          ),
+          ~eventBatchQueueItem={
+            event: event->eventAccessor,
+            eventMod,
+            chain,
+            logIndex: event.logIndex,
+            timestamp: event.blockTimestamp,
+            blockNumber: event.blockNumber,
+          },
           ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
             false,
           ~dynamicContractRegistrations=None,

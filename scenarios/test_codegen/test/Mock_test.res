@@ -10,11 +10,7 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     // EventProcessing.processEventBatch(MockEvents.eventBatch)
 
-    let runEventHandler = async (
-      type eventArgs,
-      event,
-      eventMod: module(Types.Event with type eventArgs = eventArgs),
-    ) => {
+    let runEventHandler = async (event, eventMod: module(Types.Event)) => {
       let module(Event) = eventMod
       switch RegisteredEvents.global
       ->RegisteredEvents.get(Event.eventName)

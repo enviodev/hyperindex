@@ -38,22 +38,23 @@ module type S = {
       logIndex: int,
     }
 
+    module type Event = {
+      let eventName: Enums.EventType.t
+      type eventArgs
+      let eventArgsSchema: RescriptSchema.S.t<eventArgs>
+    }
+
     type eventBatchQueueItem = {
       timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
       event: event,
+      eventMod: module(Event),
       //Default to false, if an event needs to
       //be reprocessed after it has loaded dynamic contracts
       //This gets set to true and does not try and reload events
       hasRegisteredDynamicContracts?: bool,
-    }
-
-    module type Event = {
-      let eventName: Enums.EventType.t
-      type eventArgs
-      let eventArgsSchema: RescriptSchema.S.t<eventArgs>
     }
   }
 

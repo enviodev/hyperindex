@@ -7,17 +7,13 @@ let getDefaultAddress = (chain, contractName) => {
   defaultAddress
 }
 
-open Enums.EventType
-
 module ERC20 = {
   let contractName = "ERC20"
   let getDefaultAddress = getDefaultAddress(_, contractName)
   module Transfer = {
     let accessor = v => Types.ERC20_Transfer(v)
-    let schema = Types.ERC20.Transfer.eventArgsSchema
-    let eventName = ERC20_Transfer
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
+      MockChainData.makeEventConstructor(~accessor, ~eventMod=module(Types.ERC20.Transfer), ...)
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
@@ -30,22 +26,18 @@ module ERC20Factory = {
 
   module TokenCreated = {
     let accessor = v => Types.ERC20Factory_TokenCreated(v)
-    let schema = Types.ERC20Factory.TokenCreated.eventArgsSchema
-    let eventName = ERC20Factory_TokenCreated
 
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
+      MockChainData.makeEventConstructor(~accessor, ~eventMod=module(Types.ERC20Factory.TokenCreated), ...)
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
   }
   module DeleteUser = {
     let accessor = v => Types.ERC20Factory_DeleteUser(v)
-    let schema = Types.ERC20Factory.DeleteUser.eventArgsSchema
-    let eventName = ERC20Factory_DeleteUser
 
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
+      MockChainData.makeEventConstructor(~accessor, ~eventMod=module(Types.ERC20Factory.DeleteUser), ...)
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
