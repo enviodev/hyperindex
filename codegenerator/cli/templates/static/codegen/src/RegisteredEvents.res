@@ -50,7 +50,7 @@ let addLoaderHandler = (
     registeredEvents.loaderHandlers->Js.Dict.set(
       key,
       args->(
-        X.magic: registeredLoaderHandler<'eventArgs, 'loadReturn> => registeredLoaderHandler<
+        Utils.magic: registeredLoaderHandler<'eventArgs, 'loadReturn> => registeredLoaderHandler<
           unknown,
           unknown,
         >
@@ -71,7 +71,7 @@ let addContractRegister = (
   } else {
     registeredEvents.contractRegisters->Js.Dict.set(
       key,
-      args->(X.magic: contractRegister<'eventArgs> => contractRegister<unknown>),
+      args->(Utils.magic: contractRegister<'eventArgs> => contractRegister<unknown>),
     )
   }
 }
@@ -84,7 +84,7 @@ let get = (registeredEvents: t, eventName: Types.eventName) => {
     registeredEvents.loaderHandlers
     ->Js.Dict.unsafeGet((eventName :> string))
     ->(
-      X.magic: registeredLoaderHandler<unknown, unknown> => option<
+      Utils.magic: registeredLoaderHandler<unknown, unknown> => option<
         registeredLoaderHandler<'eventArgs, 'loadReturn>,
       >
     )
@@ -92,7 +92,7 @@ let get = (registeredEvents: t, eventName: Types.eventName) => {
   let contractRegister =
     registeredEvents.contractRegisters
     ->Js.Dict.unsafeGet((eventName :> string))
-    ->(X.magic: contractRegister<unknown> => option<contractRegister<'eventArgs>>)
+    ->(Utils.magic: contractRegister<unknown> => option<contractRegister<'eventArgs>>)
 
   switch (registeredLoaderHandler, contractRegister) {
   | (None, None) =>

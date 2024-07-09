@@ -44,7 +44,7 @@ let makeDefaultSet = (
   Types.Updated({
     initial: Unknown,
     latest: Set(entity)->Types.mkEntityUpdate(
-      ~entityId=X.magic(entity)["id"],
+      ~entityId=Utils.magic(entity)["id"],
       ~eventIdentifier={
         chainId,
         blockTimestamp,

@@ -57,7 +57,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //       "chainId": 1,
   //       "logIndex": 0,
   //       "blockTimestamp": 123,
-  //     }->X.magic,
+  //     }->Utils.magic,
   //     ~logger=Logging.logger,
   //     ~asyncGetters=EventProcessing.asyncGetters,
   //   )
@@ -120,7 +120,7 @@ describe_skip("Linked Entity Loader Integration Test", () => {
   //   let context = Context.Gravatar.TestEventEvent.contextCreator(
   //     ~inMemoryStore,
   //     ~chainId=123,
-  //     ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->X.magic,
+  //     ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Utils.magic,
   //     ~logger=Logging.logger,
   //     ~asyncGetters=EventProcessing.asyncGetters,
   //   )

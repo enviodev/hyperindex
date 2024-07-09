@@ -34,7 +34,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
 
     let contextEnv = ContextEnv.make(
       ~eventName=Gravatar_EmptyEvent,
-      ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->X.magic,
+      ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Utils.magic,
       ~chain=MockConfig.chain1,
       ~logger=Logging.logger,
     )

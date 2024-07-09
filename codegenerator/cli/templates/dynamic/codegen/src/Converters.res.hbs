@@ -16,7 +16,7 @@ module {{contract.name.capitalized}} = {
   module {{event.name.capitalized}} = {
     let convertViemDecodedEvent: Viem.decodedEvent<'a> => Viem.decodedEvent<
       Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs,
-    > = X.magic
+    > = Utils.magic
 
     {{#unless event.params}}
     @warning("-27")
@@ -64,10 +64,10 @@ module {{contract.name.capitalized}} = {
       {{#if event.params[0]}}{{!--Only create this body if there are params.  Otherwise its always unit--}}
       {
         {{#each event.indexed_params as | param index |}}
-        {{param.res_name}}: decodedEvent.indexed->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->X.magic,
+        {{param.res_name}}: decodedEvent.indexed->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
         {{/each}}
         {{#each event.body_params as | param index |}}
-        {{param.res_name}}: decodedEvent.body->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->X.magic,
+        {{param.res_name}}: decodedEvent.body->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
         {{/each}}
       }
       {{else}}

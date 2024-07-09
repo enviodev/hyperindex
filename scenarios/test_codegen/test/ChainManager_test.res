@@ -55,7 +55,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           chain,
           blockNumber: currentBlockNumber.contents,
           logIndex,
-          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->X.magic,
+          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
         }
 
         allEvents->Js.Array2.push(batchItem)->ignore
@@ -110,9 +110,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       isFetchingAtHead: false,
       fetchState: fetchState.contents,
       logger: Logging.logger,
-      chainConfig: config.defaultChain->X.magic,
+      chainConfig: config.defaultChain->Utils.magic,
       // This is quite a hack - but it works!
-      chainWorker: Config.Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->X.magic),
+      chainWorker: Config.Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->Utils.magic),
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
@@ -152,7 +152,7 @@ describe("ChainManager", () => {
           chain: MockConfig.chain1,
           blockNumber: 0,
           logIndex: 0,
-          event: `mock initial event`->X.magic,
+          event: `mock initial event`->Utils.magic,
         }
 
         let numberOfMockEventsReadFromQueues = ref(0)
@@ -211,7 +211,7 @@ describe("ChainManager", () => {
             //       Assert.equal(
             //         current.logIndex > previous.logIndex,
             //         true,
-            //         ~message=`Incorrect log index, the offending event pair: ${current.event->X.magic} - ${previous.event->X.magic}`,
+            //         ~message=`Incorrect log index, the offending event pair: ${current.event->Utils.magic} - ${previous.event->Utils.magic}`,
             //       )
             //       current
             //     },
@@ -281,7 +281,7 @@ describe("determineNextEvent", () => {
         chain,
         blockNumber: 987654,
         logIndex: 123456,
-        event: "SINGLE TEST EVENT"->X.magic,
+        event: "SINGLE TEST EVENT"->Utils.magic,
       }
     }
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
