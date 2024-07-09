@@ -1,15 +1,13 @@
 open Belt
 
 module Chain = {
-  type t = {id: int}
+  type t = int
 
-  let toChainId = chain => chain.id
+  external toChainId: t => int = "%identity"
 
-  let toString = chain => chain.id->Int.toString
+  let toString = chainId => chainId->Int.toString
 
-  let makeUnsafe = (~chainId) => {
-    id: chainId,
-  }
+  let makeUnsafe = (~chainId) => chainId
 }
 
 module ChainIdCmp = Belt.Id.MakeComparableU({
@@ -19,7 +17,7 @@ module ChainIdCmp = Belt.Id.MakeComparableU({
 
 type t<'a> = Belt.Map.t<ChainIdCmp.t, 'a, ChainIdCmp.identity>
 
-let fromArray: array<(Chain.t, 'a)> => t<'a> = arr => {
+let fromArrayUnsafe: array<(Chain.t, 'a)> => t<'a> = arr => {
   arr->Map.fromArray(~id=module(ChainIdCmp))
 }
 

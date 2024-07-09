@@ -118,7 +118,7 @@ let makeFromDbState = async (~config: Config.t): t => {
     })
     ->Promise.all
 
-  let chainFetchers = ChainMap.fromArray(chainFetchersArr)
+  let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
   {
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,

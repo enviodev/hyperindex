@@ -1,14 +1,15 @@
 module Chain: {
   type t
 
+  external toChainId: t => int = "%identity"
+
   let toString: t => string
-  let toChainId: t => int
 
   let makeUnsafe: (~chainId: int) => t
 }
 
 type t<'a>
-let fromArray: array<(Chain.t, 'a)> => t<'a>
+let fromArrayUnsafe: array<(Chain.t, 'a)> => t<'a>
 let get: (t<'a>, Chain.t) => 'a
 let set: (t<'a>, Chain.t, 'a) => t<'a>
 let values: t<'a> => array<'a>

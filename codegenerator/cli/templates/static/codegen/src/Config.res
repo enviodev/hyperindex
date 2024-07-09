@@ -123,7 +123,7 @@ let make = (
   ->Js.Array2.map(n => {
     (n.chain, n)
   })
-  ->ChainMap.fromArray,
+  ->ChainMap.fromArrayUnsafe,
   defaultChain: chains->Belt.Array.get(0),
 }
 
