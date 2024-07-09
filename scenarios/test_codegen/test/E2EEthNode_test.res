@@ -48,7 +48,7 @@ describe("E2E Integration Test", () => {
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
-    let globalState: GlobalState.t = GlobalState.make(~chainManager)
+    let globalState = GlobalState.make(~chainManager)
 
     let gsManager = globalState->GlobalStateManager.make
 

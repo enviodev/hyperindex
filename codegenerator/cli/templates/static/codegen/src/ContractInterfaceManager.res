@@ -216,21 +216,6 @@ let getCombinedEthersFilter = (
 
 type parseError = ParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Ethers.ethAddress)
 
-let parseLogEthers = (self: t, ~log: Ethers.log) => {
-  let interfaceOpt =
-    self
-    ->getInterfaceByAddress(~contractAddress=log.address)
-    ->Belt.Option.map(mapping => mapping.interface)
-  switch interfaceOpt {
-  | None => Error(UndefinedInterface(log.address))
-  | Some(interface) =>
-    switch interface->Ethers.Interface.parseLog(~log) {
-    | Error(e) => Error(ParseError(e))
-    | Ok(v) => Ok(v)
-    }
-  }
-}
-
 let parseLogViem = (self: t, ~log: Ethers.log) => {
   let abiOpt =
     self

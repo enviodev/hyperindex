@@ -55,7 +55,7 @@ let makeChainManager = (cfg: chainConfig): chainManager => {
 
 @genType
 let startProcessing = (cfg: chainConfig, chainManager: chainManager) => {
-  let globalState: GlobalState.t = GlobalState.make(~chainManager)
+  let globalState = GlobalState.make(~chainManager)
 
   let gsManager = globalState->GlobalStateManager.make
 
