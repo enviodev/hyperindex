@@ -1,7 +1,7 @@
 open Belt
 open RescriptMocha
 
-let config = Config.getConfig()
+let config = Config.getGenerated()
 
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(

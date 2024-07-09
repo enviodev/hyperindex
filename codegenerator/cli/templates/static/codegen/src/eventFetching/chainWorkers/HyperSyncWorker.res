@@ -235,7 +235,7 @@ let fetchBlockRange = async (
     let parsingTimeRef = Hrtime.makeTimer()
 
     //Parse page items into queue items
-    let parsedQueueItemsPreFilter = if Config.getConfig().shouldUseHypersyncClientDecoder {
+    let parsedQueueItemsPreFilter = if Config.getGenerated().shouldUseHypersyncClientDecoder {
       //Currently there are still issues with decoder for some cases so
       //this can only be activated with a flag
       let decoder = switch contractInterfaceManager

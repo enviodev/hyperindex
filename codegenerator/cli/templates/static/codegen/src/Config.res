@@ -129,7 +129,7 @@ let make = (
 
 %%private(let generatedConfigRef = ref(None))
 
-let getConfig = () =>
+let getGenerated = () =>
   switch generatedConfigRef.contents {
   | Some(c) => c
   | None => Js.Exn.raiseError("Config not yet generated")

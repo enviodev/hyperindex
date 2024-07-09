@@ -56,7 +56,7 @@ module Entity = {
         history: [],
       })
     | Some(Updated(previous_values))
-      if !(Config.getConfig()->Config.shouldRollbackOnReorg) ||
+      if !(Config.getGenerated()->Config.shouldRollbackOnReorg) ||
       //Rollback initial state cases should not save history
       !previous_values.latest.shouldSaveHistory ||
       // This prevents two db actions in the same event on the same entity from being recorded to the history table.

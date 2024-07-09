@@ -21,15 +21,15 @@ type config = {networks: array<network_conf>}
 let configYaml: config = ConfigUtils.loadConfigYaml(~codegenConfigPath=configPathString)
 let firstNetworkConfig = configYaml.networks[0]
 
-let generatedChainConfig = Config.getConfig().chainMap->ChainMap.get(MockConfig.chain1337)
+let generatedChainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
 let generatedSyncConfig = switch generatedChainConfig.syncSource {
 | Rpc({syncConfig}) => syncConfig
 | _ => Js.Exn.raiseError("Expected an rpc config")
 }
 
-describe("getConfigByChainId Test", () => {
-  it("getConfigByChainId should return the correct config", () => {
-    let configYaml = ConfigYAML.getConfigByChainId(1)
+describe("getGeneratedByChainId Test", () => {
+  it("getGeneratedByChainId should return the correct config", () => {
+    let configYaml = ConfigYAML.getGeneratedByChainId(1)
     Assert.deepEqual(
       configYaml,
       {

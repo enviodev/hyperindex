@@ -2,7 +2,7 @@ open Belt
 open RescriptMocha
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
-  let config = Config.getConfig()
+  let config = Config.getGenerated()
   let allEvents = []
 
   let arbitraryEventPriorityQueue = ref(list{})
@@ -301,7 +301,7 @@ describe("determineNextEvent", () => {
         let singleItem = makeMockQItem(654, MockConfig.chain137)
         let earliestItem = makeNoItem(5) /* earlier timestamp than the test event */
 
-        let fetchStatesMap = Config.getConfig().chainMap->ChainMap.mapWithKey(
+        let fetchStatesMap = Config.getGenerated().chainMap->ChainMap.mapWithKey(
           (chain, _) =>
             switch chain->ChainMap.Chain.toChainId {
             | 1 =>
@@ -341,7 +341,7 @@ describe("determineNextEvent", () => {
         let singleItemTimestamp = 654
         let singleItem = makeMockQItem(singleItemTimestamp, MockConfig.chain137)
 
-        let fetchStatesMap = Config.getConfig().chainMap->ChainMap.mapWithKey(
+        let fetchStatesMap = Config.getGenerated().chainMap->ChainMap.mapWithKey(
           (chain, _) =>
             switch chain->ChainMap.Chain.toChainId {
             | 1 =>
