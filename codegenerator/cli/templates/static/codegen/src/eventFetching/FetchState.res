@@ -94,6 +94,7 @@ type rec t = {
   //Used to prune dynamic contract registrations in the event
   //of a rollback.
   dynamicContracts: DynamicContractsMap.t,
+  isFetchingAtHead: bool,
 }
 and register = RootRegister({endBlock: option<int>}) | DynamicContractRegister(dynamicContractId, t)
 
@@ -156,6 +157,7 @@ let mergeIntoNextRegistered = (self: t) => {
     )
 
     {
+      isFetchingAtHead: nextRegistered.isFetchingAtHead,
       registerType: nextRegistered.registerType,
       fetchedEventQueue,
       contractAddressMapping,
@@ -197,8 +199,9 @@ exception UnexpectedRegisterDoesNotExist(id)
 Updates a given register with new latest block values and new fetched
 events.
 */
-let updateRegister = (self: t, ~latestFetchedBlock, ~newFetchedEvents) => {
+let updateRegister = (self: t, ~latestFetchedBlock, ~newFetchedEvents, ~isFetchingAtHead) => {
   ...self,
+  isFetchingAtHead,
   latestFetchedBlock,
   fetchedEventQueue: List.concat(self.fetchedEventQueue, newFetchedEvents),
 }
@@ -215,22 +218,25 @@ let addNextRegister = (nextRegister: t, ~register: t, ~dynamicContractId) => {
 Updates node at the given id with the values passed.
 Errors if the node can't be found.
 */
-let rec updateInternal = (~id, ~latestFetchedBlock, ~newFetchedEvents, register: t): result<
-  t,
-  exn,
-> => {
+let rec updateInternal = (
+  ~id,
+  ~latestFetchedBlock,
+  ~newFetchedEvents,
+  ~isFetchingAtHead,
+  register: t,
+): result<t, exn> => {
   switch (register.registerType, id) {
   | (RootRegister(_), Root) =>
     register
-    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock)
+    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
     ->Ok
   | (DynamicContractRegister(id, _nextRegistered), DynamicContract(targetId)) if id == targetId =>
     register
-    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock)
+    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
     ->Ok
   | (DynamicContractRegister(dynamicContractId, nextRegistered), id) =>
     nextRegistered
-    ->updateInternal(~newFetchedEvents, ~id, ~latestFetchedBlock)
+    ->updateInternal(~newFetchedEvents, ~id, ~latestFetchedBlock, ~isFetchingAtHead)
     ->Result.map(s => s->addNextRegister(~register, ~dynamicContractId))
   | (RootRegister(_), DynamicContract(_)) => Error(UnexpectedRegisterDoesNotExist(id))
   }
@@ -261,10 +267,16 @@ let rec pruneAndMergeNextRegistered = (self: t) => {
 Updates node at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the node with given id cannot be found (unexpected)
 */
-let update = (self: t, ~id, ~latestFetchedBlock, ~fetchedEvents): result<t, exn> =>
+let update = (self: t, ~id, ~latestFetchedBlock, ~fetchedEvents, ~currentBlockHeight): result<
+  t,
+  exn,
+> => {
+  let isFetchingAtHead =
+    currentBlockHeight <= latestFetchedBlock.blockNumber ? true : self.isFetchingAtHead
   self
-  ->updateInternal(~id, ~latestFetchedBlock, ~newFetchedEvents=fetchedEvents)
+  ->updateInternal(~id, ~latestFetchedBlock, ~newFetchedEvents=fetchedEvents, ~isFetchingAtHead)
   ->Result.map(result => pruneAndMergeNextRegistered(result)->Option.getWithDefault(result))
+}
 
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
@@ -545,6 +557,7 @@ let makeInternal = (
   ~staticContracts,
   ~dynamicContractRegistrations: array<DbFunctions.DynamicContractRegistry.contractTypeAndAddress>,
   ~startBlock,
+  ~isFetchingAtHead,
   ~logger,
 ): t => {
   let contractAddressMapping = ContractAddressingMap.make()
@@ -578,6 +591,7 @@ let makeInternal = (
   })
 
   {
+    isFetchingAtHead,
     registerType,
     latestFetchedBlock: {
       blockTimestamp: 0,
@@ -617,6 +631,7 @@ let addNewRegisterToHead = (
     )
 
   {
+    isFetchingAtHead: false,
     registerType,
     latestFetchedBlock: {
       blockNumber: registeringEventBlockNumber - 1,
@@ -642,14 +657,15 @@ let rec registerDynamicContract = (
 ) => {
   let latestFetchedBlockNumber = registeringEventBlockNumber - 1
 
-  let addToHead = addNewRegisterToHead(
-    ~contractAddressMapping=dynamicContractRegistrations
-    ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
-    ->ContractAddressingMap.fromArray,
-    ~registeringEventLogIndex,
-    ~registeringEventBlockNumber,
+  let addToHead =
+    addNewRegisterToHead(
+      ~contractAddressMapping=dynamicContractRegistrations
+      ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
+      ->ContractAddressingMap.fromArray,
+      ~registeringEventLogIndex,
+      ~registeringEventBlockNumber,
       ...
-  )
+    )
 
   switch register.registerType {
   | RootRegister(_) => register->addToHead

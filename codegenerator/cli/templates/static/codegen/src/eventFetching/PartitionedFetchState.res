@@ -30,6 +30,7 @@ let make = (
         ~dynamicContractRegistrations,
         ~startBlock,
         ~logger,
+        ~isFetchingAtHead=false,
       ),
     }
   } else {
@@ -48,6 +49,7 @@ let make = (
             ~dynamicContractRegistrations=[],
             ~startBlock,
             ~logger,
+            ~isFetchingAtHead=false,
           ),
         )
     }
@@ -66,6 +68,7 @@ let make = (
           ),
           ~startBlock,
           ~logger,
+          ~isFetchingAtHead=false,
         ),
       )
 
@@ -84,6 +87,7 @@ let make = (
             ~dynamicContractRegistrations=dynamicContractRegistrationsChunk,
             ~startBlock,
             ~logger,
+            ~isFetchingAtHead=false,
           ),
         )
     }
@@ -98,6 +102,7 @@ let registerDynamicContracts = (
   ~registeringEventBlockNumber,
   ~registeringEventLogIndex,
   ~dynamicContractRegistrations,
+  ~isFetchingAtHead,
 ) => {
   let partitions = switch partitions {
   | list{head, ...tail} if head->FetchState.getNumContracts < maxAddrInPartition =>
@@ -114,6 +119,7 @@ let registerDynamicContracts = (
       ~logger,
       ~staticContracts=[],
       ~dynamicContractRegistrations,
+      ~isFetchingAtHead,
     )
     partitions->List.add(newPartition)
   }
@@ -132,11 +138,16 @@ exception UnexpectedPartitionDoesNotExist(partitionIndex)
 Updates partition at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the partition/node with given id cannot be found (unexpected)
 */
-let update = (self: t, ~id: id, ~latestFetchedBlock, ~fetchedEvents) => {
+let update = (self: t, ~id: id, ~latestFetchedBlock, ~fetchedEvents, ~currentBlockHeight) => {
   switch self.partitions->List.splitAt(id.partitionId) {
   | Some((left, list{head, ...tail})) =>
     head
-    ->FetchState.update(~id=id.fetchStateId, ~latestFetchedBlock, ~fetchedEvents)
+    ->FetchState.update(
+      ~id=id.fetchStateId,
+      ~latestFetchedBlock,
+      ~fetchedEvents,
+      ~currentBlockHeight,
+    )
     ->Result.map(updatedPartition => {
       ...self,
       partitions: list{...left, updatedPartition, ...tail},
@@ -254,5 +265,11 @@ let checkContainsRegisteredContractAddress = ({partitions}: t, ~contractAddress,
   partitions->List.reduce(false, (accum, partition) => {
     accum ||
     partition->FetchState.checkContainsRegisteredContractAddress(~contractAddress, ~contractName)
+  })
+}
+
+let isFetchingAtHead = ({partitions}: t) => {
+  partitions->List.reduce(true, (accum, partition) => {
+    accum && partition.isFetchingAtHead
   })
 }

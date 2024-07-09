@@ -77,6 +77,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 blockTimestamp: batchItem.timestamp,
               },
               ~fetchedEvents=list{batchItem},
+              ~currentBlockHeight=currentBlockNumber.contents,
             )
             ->Result.getExn
         | 2
@@ -94,6 +95,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                   blockTimestamp: batchItem.timestamp,
                 },
                 ~fetchedEvents=list{batchItem},
+                ~currentBlockHeight=currentBlockNumber.contents,
               )
               ->Result.getExn
           }
@@ -110,7 +112,6 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       latestProcessedBlock: None,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
-      isFetchingAtHead: false,
       fetchState: fetchState.contents,
       logger: Logging.logger,
       chainConfig: config.defaultChain->Utils.magic,
@@ -290,6 +291,7 @@ describe("determineNextEvent", () => {
       }
     }
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
+      isFetchingAtHead: false,
       registerType: RootRegister({endBlock: None}),
       latestFetchedBlock: {
         blockTimestamp: latestFetchedBlockTimestamp,

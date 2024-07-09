@@ -7,7 +7,6 @@ type t = {
   //The latest known block of the chain
   currentBlockHeight: int,
   isFetchingBatch: bool,
-  isFetchingAtHead: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
   firstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
@@ -61,7 +60,6 @@ let make = (
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     isFetchingBatch: false,
-    isFetchingAtHead: false,
     fetchState,
     firstEventBlockNumber,
     latestProcessedBlock,
@@ -235,6 +233,7 @@ let updateFetchState = (
   ~latestFetchedBlockTimestamp,
   ~latestFetchedBlockNumber,
   ~fetchedEvents,
+  ~currentBlockHeight,
 ) => {
   self.fetchState
   ->PartitionedFetchState.update(
@@ -244,6 +243,7 @@ let updateFetchState = (
       blockTimestamp: latestFetchedBlockTimestamp,
     },
     ~fetchedEvents,
+    ~currentBlockHeight,
   )
   ->Result.map(fetchState => {
     {...self, fetchState}->cleanUpEventFilters
@@ -331,3 +331,5 @@ let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
     fetchState: chainFetcher.fetchState->PartitionedFetchState.rollback(~lastKnownValidBlock),
   }
 }
+
+let isFetchingAtHead = (chainFetcher: t) => chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
