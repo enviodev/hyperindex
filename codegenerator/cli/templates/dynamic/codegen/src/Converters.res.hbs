@@ -1,9 +1,9 @@
 exception UndefinedEvent(string)
-let eventStringToEvent = (eventName: string, contractName: string): Types.eventName => {
+let selectEventMod = (eventName: string, contractName: string): module(Types.Event) => {
   switch (eventName, contractName) {
     {{#each codegen_contracts as |contract|}}
     {{#each contract.codegen_events as |event|}}
-    | ("{{event.name.capitalized}}", "{{contract.name.capitalized}}") => {{event.event_type.full}}
+    | ("{{event.name.capitalized}}", "{{contract.name.capitalized}}") => module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}})
     {{/each}}
     {{/each}}
     | _ => UndefinedEvent(eventName)->raise
@@ -112,13 +112,15 @@ let convertDecodedEvent = (
   ~chainId,
   ~txOrigin: option<Ethers.ethAddress>,
   ~txTo: option<Ethers.ethAddress>,
-): result<Types.event, _> => {
+): result<(Types.event, module(Types.Event)), _> => {
   switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
     ~contractAddress=log.address,
   ) {
   | None => Error(UnregisteredContract(log.address))
   | Some(contractName) =>
-    let event = switch Types.eventTopicToEventName(contractName, log.topics[0]) {
+    let eventMod = Types.eventTopicToEventMod(contractName, log.topics[0])
+    let module(Event) = eventMod
+    let event = switch Event.eventName {
       {{#each codegen_contracts as |contract|}}
       {{#each contract.codegen_events as |event|}}
         | {{event.event_type.full}} =>
@@ -129,15 +131,15 @@ let convertDecodedEvent = (
       {{/each}}
      {{/each}}
     }
-    Ok(event)
+    Ok((event, eventMod))
   }
 }
 
 let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin, ~txTo): Belt.Result.t<
-  Types.event,
+  (Types.event, module(Types.Event)),
   _,
 > => {
- let decodedEventResult = contractInterfaceManager->ContractInterfaceManager.parseLogViem(~log)
+  let decodedEventResult = contractInterfaceManager->ContractInterfaceManager.parseLogViem(~log)
   switch decodedEventResult {
   | Error(e) =>
     switch e {
@@ -151,32 +153,35 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
     ) {
     | None => Error(UnregisteredContract(log.address))
     | Some(contractName) =>
-      let event = switch eventStringToEvent(decodedEvent.eventName, contractName) {
+      let eventMod = selectEventMod(decodedEvent.eventName, contractName)
+      let module(Event) = eventMod
+      let event = switch Event.eventName {
       {{#each codegen_contracts as |contract|}}
       {{#each contract.codegen_events as |event|}}
         | {{event.event_type.full}} =>
-            decodedEvent
-            ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertViemDecodedEvent
-            ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertLogViem(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
+          decodedEvent
+          ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertViemDecodedEvent
+          ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertLogViem(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
       {{/each}}
-     {{/each}}
+      {{/each}}
       }
-
-      Ok(event)
+      Ok(event, eventMod)
     }
   }
 }
 
 let decodeRawEventWith = (
+  type eventArgs,
   rawEvent: TablesStatic.RawEvents.t,
-  ~schema: S.t<'a>,
-  ~variantAccessor: Types.eventLog<'a> => Types.event,
+  ~eventMod: module(Types.Event with type eventArgs = eventArgs),
+  ~eventAccessor: Types.eventLog<eventArgs> => Types.event,
   ~chain,
   ~txOrigin: option<Ethers.ethAddress>,
   ~txTo: option<Ethers.ethAddress>,
 ): result<Types.eventBatchQueueItem, S.error> => {
+  let module(Event) = eventMod
   rawEvent.params
-  ->S.parseJsonStringWith(schema)
+  ->S.parseJsonStringWith(Event.eventArgsSchema)
   ->Belt.Result.map(params => {
     let event = {
       chainId: rawEvent.chainId,
@@ -189,16 +194,17 @@ let decodeRawEventWith = (
       transactionHash: rawEvent.transactionHash,
       transactionIndex: rawEvent.transactionIndex,
       logIndex: rawEvent.logIndex,
-      params,
-    }->variantAccessor
+      params: params,
+    }->eventAccessor
 
-    let queueItem: Types.eventBatchQueueItem = {
-      timestamp: rawEvent.blockTimestamp,
-      chain,
-      blockNumber: rawEvent.blockNumber,
-      logIndex: rawEvent.logIndex,
+    let queueItem = Types.mkEventBatchQueueItem(
       event,
-    }
+      ~eventMod,
+      ~timestamp=rawEvent.blockTimestamp,
+      ~chain,
+      ~blockNumber=rawEvent.blockNumber,
+      ~logIndex=rawEvent.logIndex,
+    )
 
     queueItem
   })
@@ -214,10 +220,10 @@ let parseRawEvent = (
   switch rawEvent.eventType {
   {{#each codegen_contracts as |contract|}}
   {{#each contract.codegen_events as |event|}}
-      | {{event.event_type.full}} =>
+    | {{event.event_type.full}} =>
       rawEvent->decodeRawEventWith(
-        ~schema=Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgsSchema,
-        ~variantAccessor=event => Types.{{contract.name.capitalized}}_{{event.name.capitalized}}(event),
+        ~eventMod=module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
+        ~eventAccessor=event => Types.{{contract.name.capitalized}}_{{event.name.capitalized}}(event),
         ~chain,
         ~txOrigin,
         ~txTo,

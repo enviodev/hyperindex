@@ -121,6 +121,7 @@ module EventFunctions = {
           ~eventBatchQueueItem=event
           ->eventAccessor
           ->Types.mkEventBatchQueueItem(
+            ~eventMod,
             ~chain,
             ~logIndex=event.logIndex,
             ~timestamp=event.blockTimestamp,

@@ -270,12 +270,7 @@ let fetchBlockRange = async (
       ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
         let {blockTimestamp, log: {blockNumber, logIndex}} = item
         let chainId = chain->ChainMap.Chain.toChainId
-        {
-          timestamp: blockTimestamp,
-          chain,
-          blockNumber,
-          logIndex,
-          event: switch event
+        let (event, eventMod) = switch event
           ->Belt.Option.getExn
           ->Converters.convertDecodedEvent(
             ~contractInterfaceManager,
@@ -284,15 +279,23 @@ let fetchBlockRange = async (
             ~chainId,
             ~txOrigin=item.txOrigin,
             ~txTo=item.txTo,
-          ) {
-          | Ok(v) => v
-          | Error(exn) =>
-            let logger = Logging.createChildFrom(
-              ~logger,
-              ~params={"chainId": chainId, "blockNumber": blockNumber, "logIndex": logIndex},
-            )
-            exn->ErrorHandling.mkLogAndRaise(~msg="Failed to convert decoded event", ~logger)
-          },
+          )
+        {
+        | Ok(v) => v
+        | Error(exn) =>
+          let logger = Logging.createChildFrom(
+            ~logger,
+            ~params={"chainId": chainId, "blockNumber": blockNumber, "logIndex": logIndex},
+          )
+          exn->ErrorHandling.mkLogAndRaise(~msg="Failed to convert decoded event", ~logger)
+        }
+        {
+          timestamp: blockTimestamp,
+          chain,
+          blockNumber,
+          logIndex,
+          event,
+          eventMod,
         }
       })
     } else {
@@ -308,14 +311,15 @@ let fetchBlockRange = async (
           ~txOrigin=item.txOrigin,
           ~txTo=item.txTo,
         ) {
-        | Ok(parsed) =>
+        | Ok((event, eventMod)) =>
           (
             {
               timestamp: item.blockTimestamp,
               chain,
               blockNumber,
               logIndex,
-              event: parsed,
+              event,
+              eventMod,
             }: Types.eventBatchQueueItem
           )
 

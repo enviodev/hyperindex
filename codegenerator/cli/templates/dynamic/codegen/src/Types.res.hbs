@@ -122,17 +122,6 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{/each}}
 }
 
-exception UnknownEvent(string, string)
-let eventTopicToEventName = (contractName, topic0): Enums.EventType.t =>
-  switch (contractName, topic0) {
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  | ("{{contract.name.capitalized}}", "{{event.topic0}}") => {{event.event_type.full}}
-{{/each}}
-{{/each}}
-  | (contractName, topic0) => UnknownEvent(contractName, topic0)->raise
-  }
-
 module type Event = {
   let eventName: Enums.EventType.t
   type eventArgs
@@ -177,6 +166,19 @@ module {{contract.name.capitalized}} = {
 }
 
 {{/each}}
+
+exception UnknownEvent(string, string)
+let eventTopicToEventMod = (contractName, topic0): module(Event) => {
+  switch (contractName, topic0) {
+{{#each codegen_contracts as | contract |}}
+{{#each contract.codegen_events as | event |}}
+  | ("{{contract.name.capitalized}}", "{{event.topic0}}") => module({{contract.name.capitalized}}.{{event.name.capitalized}})
+{{/each}}
+{{/each}}
+  | (contractName, topic0) => UnknownEvent(contractName, topic0)->raise
+  }
+}
+
 type event =
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
@@ -193,6 +195,7 @@ type eventBatchQueueItem = {
   blockNumber: int,
   logIndex: int,
   event,
+  eventMod: module(Event),
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events
@@ -200,17 +203,19 @@ type eventBatchQueueItem = {
 }
 
 let mkEventBatchQueueItem = (
-  ~hasRegisteredDynamicContracts=?,
   event,
+  ~eventMod: module(Event with type eventArgs = 'a),
   ~timestamp,
   ~chain,
   ~blockNumber,
   ~logIndex,
+  ~hasRegisteredDynamicContracts=?,
 ) => {
   timestamp,
   chain,
   blockNumber,
   logIndex,
   event,
+  eventMod: eventMod->(Utils.magic: module(Event with type eventArgs = 'a) => module(Event)),
   ?hasRegisteredDynamicContracts,
 }

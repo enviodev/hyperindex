@@ -69,13 +69,15 @@ let makeCombinedEventFilterQuery = (
   })
 }
 
-type eventBatchPromise = {
-  timestampPromise: promise<int>,
+type eventBatch = {
+  timestamp: int,
   chain: ChainMap.Chain.t,
   blockNumber: int,
   logIndex: int,
-  eventPromise: promise<Types.event>,
+  event: Types.event,
+  eventMod: module(Types.Event),
 }
+type eventBatchPromise = promise<eventBatch>
 
 let convertLogs = (
   logs: array<Ethers.log>,
@@ -89,31 +91,29 @@ let convertLogs = (
     "numberLogs": logs->Belt.Array.length,
   })
 
-  logs->Belt.Array.map(log => {
-    let blockPromise = blockLoader->LazyLoader.get(log.blockNumber)
-    let timestampPromise = blockPromise->Promise.thenResolve(block => block.timestamp)
+  logs->Belt.Array.map(async log => {
+    let block = await blockLoader->LazyLoader.get(log.blockNumber)
+    let (event, eventMod) = switch Converters.parseEvent(
+      ~log,
+      ~blockTimestamp=block.timestamp,
+      ~contractInterfaceManager,
+      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~txOrigin=None,
+      ~txTo=None,
+    ) {
+      | Error(exn) =>
+        logger->Logging.childErrorWithExn(exn, "Failed to parse event from RPC. Double c")
+        exn->raise
+      | Ok(res) => res
+    }
 
     {
-      timestampPromise,
+      timestamp: block.timestamp,
       chain,
       blockNumber: log.blockNumber,
       logIndex: log.logIndex,
-      eventPromise: timestampPromise->Promise.thenResolve(blockTimestamp => {
-        let parsed = Converters.parseEvent(
-          ~log,
-          ~blockTimestamp,
-          ~contractInterfaceManager,
-          ~chainId=chain->ChainMap.Chain.toChainId,
-          ~txOrigin=None,
-          ~txTo=None,
-        )
-        switch parsed {
-        | Error(exn) =>
-          logger->Logging.childErrorWithExn(exn, "Failed to parse event from RPC. Double c")
-          exn->raise
-        | Ok(val) => val
-        }
-      }),
+      event,
+      eventMod,
     }
   })
 }
@@ -131,7 +131,6 @@ let queryEventsWithCombinedFilter = async (
   ~provider,
   ~chain,
   ~logger: Pino.t,
-  (),
 ): array<eventBatchPromise> => {
   let combinedFilterRes = await makeCombinedEventFilterQuery(
     ~provider,
@@ -200,7 +199,6 @@ let getContractEventsOnFilters = async (
           ~blockLoader,
           ~chain,
           ~logger,
-          (),
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))
 
       [queryTimoutPromise, eventsPromise]

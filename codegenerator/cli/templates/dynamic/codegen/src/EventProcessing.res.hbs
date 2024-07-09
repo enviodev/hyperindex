@@ -453,15 +453,16 @@ let runHandlers = (
   let latestProcessedBlocks = ref(latestProcessedBlocks)
   runAsyncEnv(async () => {
     for i in 0 to eventBatch->Array.length - 1 {
-      let {event, chain} = eventBatch[i]->Option.getUnsafe
+      let {event, chain} = eventBatch->Js.Array2.unsafe_get(i)
 
-      let runHandler = getHandlerRunner(
+      let runHandler = (event, eventMod) => getHandlerRunner(
         ~inMemoryStore,
         ~logger,
         ~chain,
         ~latestProcessedBlocks=latestProcessedBlocks.contents,
         ~registeredEvents,
-        ...
+        event,
+        eventMod,
       )
 
       latestProcessedBlocks :=

@@ -130,22 +130,24 @@ let fetchBlockRange = async (
       (),
     )
 
-    let parsedQueueItemsPreFilter =
-      await eventBatchPromises
-      ->Array.map(async ({
-        timestampPromise,
+    let eventBatches = await eventBatchPromises->Promise.all
+    let parsedQueueItemsPreFilter = eventBatches
+      ->Array.map(({
+        timestamp,
         chain,
         blockNumber,
         logIndex,
-        eventPromise,
+        event,
+        eventMod,
       }): Types.eventBatchQueueItem => {
-        timestamp: await timestampPromise,
+        timestamp,
         chain,
         blockNumber,
         logIndex,
-        event: await eventPromise,
+        event,
+        eventMod,
       })
-      ->Promise.all
+      
 
     let parsedQueueItems = switch eventFilters {
     //Most cases there are no filters so this will be passed throug
