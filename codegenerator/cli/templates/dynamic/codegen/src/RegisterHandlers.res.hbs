@@ -62,12 +62,12 @@ let registerContractHandlers = (
             {{#each contract.addresses as | address |}}
             "{{address}}"->Ethers.getAddressFromStringUnsafe,
             {{/each}}
-            ],
-            events: [
+          ],
+          events: [
             {{#each contract.events as | event |}}
-            {{event.event_type.full}},
+            module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
             {{/each}}
-            ],
+          ],
         },
       {{/each}}
       ],

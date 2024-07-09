@@ -15,8 +15,14 @@ module type S = {
     type t<'a>
   }
 
+  module Enums: {
+    module EventType: {
+      type t
+    }
+  }
+
   module Types: {
-    type eventName
+    type eventName = Enums.EventType.t
     type event
     type eventLog<'a> = {
       params: 'a,
@@ -42,6 +48,12 @@ module type S = {
       //be reprocessed after it has loaded dynamic contracts
       //This gets set to true and does not try and reload events
       hasRegisteredDynamicContracts?: bool,
+    }
+
+    module type Event = {
+      let eventName: Enums.EventType.t
+      type eventArgs
+      let eventArgsSchema: RescriptSchema.S.t<eventArgs>
     }
   }
 
@@ -70,7 +82,7 @@ module type S = {
       name: string,
       abi: Ethers.abi,
       addresses: array<Ethers.ethAddress>,
-      events: array<Types.eventName>,
+      events: array<module(Types.Event)>,
     }
 
     type syncConfig = {

@@ -260,7 +260,10 @@ module Make = (Indexer: Indexer.S) => {
         query.contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
           ~contractName=c.name,
         )
-      {addresses, eventNames: c.events}
+      {addresses, eventNames: c.events->Belt.Array.map(event => {
+        let module(Event) = event
+        Event.eventName
+      })}
     })
 
     let parsedQueueItemsPreFilter = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)

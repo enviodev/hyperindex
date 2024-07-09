@@ -1,4 +1,5 @@
 module Indexer = {
+  module Enums = Enums
   module Types = Types
   module Config = Config
   module Ethers = Ethers

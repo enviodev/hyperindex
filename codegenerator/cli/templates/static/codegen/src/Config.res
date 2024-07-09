@@ -2,7 +2,7 @@ type contract = {
   name: string,
   abi: Ethers.abi,
   addresses: array<Ethers.ethAddress>,
-  events: array<Types.eventName>,
+  events: array<module(Types.Event)>,
 }
 
 type syncConfig = {
