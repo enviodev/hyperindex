@@ -22,48 +22,37 @@ let registerContractHandlers = (
   }
 }
 
-let registerAllHandlers = () => {
-{{#each codegen_contracts as |contract|}}
-  registerContractHandlers(
-    ~contractName="{{contract.name.capitalized}}",
-    ~handlerPathRelativeToRoot="{{contract.handler.relative_to_project_root}}",
-    ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
-  )
-{{/each}}
-}
-
-
-let getChain = (chain: ChainMap.Chain.t) =>
-  switch chain {
-  {{#each chain_configs as | chain_config |}}
-  | Chain_{{chain_config.network_config.id}} => {
+// TODO: Start using only config returned by registerAllHandlers instead of Config.getGenerated and Config.setGenerated
+%%private(
+  let chains = [
+    {{#each chain_configs as | chain_config |}}
+    {
       Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
       syncSource: 
-      {{#if chain_config.network_config.rpc_config}}
-      Rpc({
-        provider: Ethers.JsonRpcProvider.makeStatic(
-                  ~rpcUrl="{{chain_config.network_config.rpc_config.url}}",
-                  ~chainId={{chain_config.network_config.id}}
-                  ),
-
-      {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
-        syncConfig: Config.getSyncConfig({
-          initialBlockInterval: {{sync_config.initial_block_interval}},
-          backoffMultiplicative: {{sync_config.backoff_multiplicative}},
-          accelerationAdditive: {{sync_config.acceleration_additive}},
-          intervalCeiling: {{sync_config.interval_ceiling}},
-          backoffMillis: {{sync_config.backoff_millis}},
-          queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+        {{#if chain_config.network_config.rpc_config}}
+        Rpc({
+          provider: Ethers.JsonRpcProvider.makeStatic(
+            ~rpcUrl="{{chain_config.network_config.rpc_config.url}}",
+            ~chainId={{chain_config.network_config.id}}
+          ),
+        {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
+          syncConfig: Config.getSyncConfig({
+            initialBlockInterval: {{sync_config.initial_block_interval}},
+            backoffMultiplicative: {{sync_config.backoff_multiplicative}},
+            accelerationAdditive: {{sync_config.acceleration_additive}},
+            intervalCeiling: {{sync_config.interval_ceiling}},
+            backoffMillis: {{sync_config.backoff_millis}},
+            queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+          }),
         }),
-      }),
-      {{/with}}
-      {{/if}}
-      {{#if chain_config.network_config.skar_server_url}}
-      HyperSync("{{chain_config.network_config.skar_server_url}}"),
-      {{/if}}
+        {{/with}}
+        {{/if}}
+        {{#if chain_config.network_config.skar_server_url}}
+        HyperSync("{{chain_config.network_config.skar_server_url}}"),
+        {{/if}}
       startBlock: {{chain_config.network_config.start_block}},
       endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
-      chain: Chain_{{chain_config.network_config.id}},
+      chain: ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}}),
       contracts: [
       {{#each chain_config.codegen_contracts as | contract |}}
         {
@@ -82,14 +71,27 @@ let getChain = (chain: ChainMap.Chain.t) =>
         },
       {{/each}}
       ],
-    }
-  {{/each}}
-  }
+    },
+    {{/each}}
+  ]
 
-Config.register(
-  ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
-  ~shouldSaveFullHistory={{should_save_full_history}},
-  ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
-  ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
-  ~getChain,
+  let config = Config.make(
+    ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
+    ~shouldSaveFullHistory={{should_save_full_history}},
+    ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
+    ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
+    ~chains,
+  )
+  Config.setGenerated(config)
 )
+
+let registerAllHandlers = () => {
+{{#each codegen_contracts as |contract|}}
+  registerContractHandlers(
+    ~contractName="{{contract.name.capitalized}}",
+    ~handlerPathRelativeToRoot="{{contract.handler.relative_to_project_root}}",
+    ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
+  )
+{{/each}}
+  config
+}

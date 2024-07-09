@@ -21,7 +21,7 @@ module LoadActionMap = {
   }
 
   let get: (t<'entity>, 'entity) => option<value<'entity>> = (map, entity) =>
-    map->Js.Dict.get(X.magic(entity)["id"])
+    map->Js.Dict.get(Utils.magic(entity)["id"])
 
   let deleteKeyUnsafe: (t<'entity>, string) => unit = %raw(`
     function(dict, key) {
@@ -74,7 +74,7 @@ let executeLoadActionMap = (
         //Set the entity in the in memory store
         inMemTable->InMemoryTable.Entity.initValue(
           ~allowOverWriteEntity=false,
-          ~key=X.magic(entity)["id"],
+          ~key=Utils.magic(entity)["id"],
           ~entity=Some(entity),
         )
       })

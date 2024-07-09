@@ -69,7 +69,7 @@ let createDerivedFromDbIndex = (~derivedFromField: Table.derivedFromField, ~sche
 let createEnumIfNotExists = (sql, enum: Enums.enumType<_>) => {
   open Belt
   let {variants, name} = enum
-  let mappedVariants = variants->Array.map(v => `'${v->X.magic}'`)->Js.Array2.joinWith(", ")
+  let mappedVariants = variants->Array.map(v => `'${v->Utils.magic}'`)->Js.Array2.joinWith(", ")
   let query = `
       DO $$ BEGIN
       IF NOT EXISTS(SELECT 1 FROM pg_type WHERE typname = '${name->Js.String2.toLowerCase}') THEN

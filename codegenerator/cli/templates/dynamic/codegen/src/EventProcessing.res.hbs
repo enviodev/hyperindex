@@ -7,8 +7,11 @@ module EventsProcessed = {
   }
   type t = ChainMap.t<eventsProcessed>
 
-  let makeEmpty = () => {
-    ChainMap.make(_ => {numEventsProcessed: 0, latestProcessedBlock: None})
+  let makeEmpty = (~config: Config.t) => {
+    config.chainMap->ChainMap.map(_ => {
+      numEventsProcessed: 0,
+      latestProcessedBlock: None
+    })
   }
 
   let allChainsEventsProcessedToEndblock = (chainFetchers: ChainMap.t<ChainFetcher.t>) => {

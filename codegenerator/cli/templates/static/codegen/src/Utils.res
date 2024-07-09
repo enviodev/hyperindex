@@ -1,3 +1,5 @@
+external magic: 'a => 'b = "%identity"
+
 @val external jsArrayCreate: int => array<'a> = "Array"
 
 /* Given a comaprator and two sorted lists, combine them into a single sorted list */

@@ -13,9 +13,9 @@ module Misc = {
 
 type abi
 
-let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->X.magic
+let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Utils.magic
 
-let makeAbi = (abi: Js.Json.t): abi => abi->X.magic
+let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
 
 @genType.import(("./OpaqueTypes.ts", "EthersAddress"))
 type ethAddress
@@ -34,7 +34,7 @@ external ethAddressToString: ethAddress => string = "%identity"
 let ethAddressToStringLower = (address: ethAddress): string =>
   address->ethAddressToString->Js.String2.toLowerCase
 
-let ethAddressSchema = S.string->S.setName("ethAddress")->(X.magic: S.t<string> => S.t<ethAddress>)
+let ethAddressSchema = S.string->S.setName("ethAddress")->(Utils.magic: S.t<string> => S.t<ethAddress>)
 
 type txHash = string
 
@@ -81,9 +81,9 @@ module BlockTag = {
 
   type blockTagVariant = Latest | Earliest | Pending | HexString(string) | BlockNumber(int)
 
-  let blockTagFromSemantic = (semanticTag: semanticTag): t => semanticTag->X.magic
-  let blockTagFromBlockNumber = (blockNumber: blockNumber): t => blockNumber->X.magic
-  let blockTagFromHexString = (hexString: hexString): t => hexString->X.magic
+  let blockTagFromSemantic = (semanticTag: semanticTag): t => semanticTag->Utils.magic
+  let blockTagFromBlockNumber = (blockNumber: blockNumber): t => blockNumber->Utils.magic
+  let blockTagFromHexString = (hexString: hexString): t => hexString->Utils.magic
 
   let blockTagFromVariant = variant =>
     switch variant {
@@ -114,7 +114,7 @@ module Filter = {
     toBlock: BlockTag.t,
   }
 
-  let filterFromRecord = (filterRecord: filterRecord): t => filterRecord->X.magic
+  let filterFromRecord = (filterRecord: filterRecord): t => filterRecord->Utils.magic
 }
 
 module CombinedFilter = {
@@ -150,7 +150,7 @@ module CombinedFilter = {
   }
 
   let combinedFilterToFilter = (combinedFilter: combinedFilterRecord): Filter.t =>
-    combinedFilter->X.magic
+    combinedFilter->Utils.magic
 }
 
 type log = {
@@ -171,7 +171,7 @@ type minimumParseableLogData = {topics: array<EventFilter.topic>, data: string}
 
 //Can safely convert from log to minimumParseableLogData since it contains
 //both data points required
-let logToMinimumParseableLogData: log => minimumParseableLogData = X.magic
+let logToMinimumParseableLogData: log => minimumParseableLogData = Utils.magic
 
 type logDescription<'a> = {
   args: 'a,

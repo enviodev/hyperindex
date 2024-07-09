@@ -1,3 +1,7 @@
+let chain1 = ChainMap.Chain.makeUnsafe(~chainId=1)
+let chain137 = ChainMap.Chain.makeUnsafe(~chainId=137)
+let chain1337 = ChainMap.Chain.makeUnsafe(~chainId=1337)
+
 let mockChainConfig: Config.chainConfig = {
   confirmedBlockThreshold: 200,
   syncSource: Rpc({
@@ -13,7 +17,7 @@ let mockChainConfig: Config.chainConfig = {
   }),
   startBlock: 1,
   endBlock: None,
-  chain: Chain_1337,
+  chain: chain1337,
   contracts: [
     {
       name: "Gravatar",

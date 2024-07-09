@@ -5,7 +5,7 @@ let inMemoryStore = InMemoryStore.make()
 
 describe("E2E Mock Event Batch", () => {
   Async.before(async () => {
-    RegisterHandlers.registerAllHandlers()
+    let config = RegisterHandlers.registerAllHandlers()
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     // EventProcessing.processEventBatch(MockEvents.eventBatch)
@@ -22,13 +22,13 @@ describe("E2E Mock Event Batch", () => {
       | Some(handler) =>
         await event->EventProcessing.runEventHandler(
           ~handler,
-          ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
+          ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
           ~inMemoryStore,
           ~logger=Logging.logger,
-          ~chain=Chain_1,
+          ~chain=MockConfig.chain1,
           ~eventMod,
         )
-      | None => Ok(EventProcessing.EventsProcessed.makeEmpty())
+      | None => Ok(EventProcessing.EventsProcessed.makeEmpty(~config))
       }
     }
 
@@ -56,7 +56,7 @@ describe_skip("E2E Db check", () => {
   Async.before(async () => {
     await DbHelpers.runUpDownMigration()
 
-    RegisterHandlers.registerAllHandlers()
+    let config = RegisterHandlers.registerAllHandlers()
 
     let _ = await Entities.batchSet(~entityMod=module(Entities.Gravatar))(
       Migrations.sql,
@@ -72,7 +72,7 @@ describe_skip("E2E Db check", () => {
       ~inMemoryStore,
       ~eventBatch=MockEvents.eventBatchItems->List.fromArray,
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
-      ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
+      ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       ~registeredEvents=RegisteredEvents.global,
     )
 

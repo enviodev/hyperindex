@@ -4,6 +4,7 @@ type chain = ChainMap.Chain.t
 type rollbackState = NoRollback | RollingBack(chain) | RollbackInMemStore(InMemoryStore.t)
 
 type t = {
+  config: Config.t,
   chainManager: ChainManager.t,
   currentlyProcessingBatch: bool,
   rollbackState: rollbackState,
@@ -16,12 +17,13 @@ type t = {
   id: int,
 }
 
-let make = (~chainManager) => {
+let make = (~config, ~chainManager) => {
+  config,
   currentlyProcessingBatch: false,
   chainManager,
   maxBatchSize: Env.maxProcessBatchSize,
   maxPerChainQueueSize: {
-    let numChains = (Config.getConfig().chainMap)->ChainMap.size
+    let numChains = config.chainMap->ChainMap.size
     Env.maxEventFetchedQueueSize / numChains
   },
   indexerStartTime: Js.Date.make(),
@@ -284,7 +286,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
       ~firstBlockParentNumberAndHash,
     )
 
-  if !hasReorgOccurred || !(Config.getConfig()->Config.shouldRollbackOnReorg) {
+  if !hasReorgOccurred || !(state.config->Config.shouldRollbackOnReorg) {
     if hasReorgOccurred {
       chainFetcher.logger->Logging.childWarn(
         "Reorg detected, not rolling back due to configuration",
@@ -352,7 +354,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: blockRangeFetchRespons
     )
 
     let updateEndOfBlockRangeScannedDataArr = //Only update endOfBlockRangeScannedData if rollbacks are enabled
-    Config.getConfig()->Config.shouldRollbackOnReorg
+    state.config->Config.shouldRollbackOnReorg
       ? [
           UpdateEndOfBlockRangeScannedData({
             chain,
@@ -740,7 +742,7 @@ let injectedTaskReducer = (
           ),
         ]->Array.concat(
           //only prune history if we are not saving full history
-          Config.getConfig()->Config.shouldPruneHistory
+          state.config->Config.shouldPruneHistory
             ? [
                 DbFunctions.EntityHistory.deleteAllEntityHistoryOnChainBeforeThreshold(
                   sql,

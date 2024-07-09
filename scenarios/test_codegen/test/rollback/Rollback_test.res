@@ -1,9 +1,11 @@
 open Belt
 open RescriptMocha
 
+let config = Config.getGenerated()
+
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
-    ~chainConfig=(Config.getConfig().chainMap)->ChainMap.get(Chain_1337),
+    ~chainConfig=config.chainMap->ChainMap.get(MockConfig.chain1337),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )
@@ -151,10 +153,10 @@ let setupDb = async (~shouldDropRawEvents) => {
 
 describe("Single Chain Simple Rollback", () => {
   Async.it("Detects reorgs and actions a rollback", async () => {
-    let chainManager = ChainManager.makeFromConfig(~config=Config.getConfig())
-    let initState = GlobalState.make(~chainManager)
+    let chainManager = ChainManager.makeFromConfig(~config)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
-    let chain = ChainMap.Chain.Chain_1337
+    let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState
     let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
@@ -181,7 +183,7 @@ describe("Single Chain Simple Rollback", () => {
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
-          chain: Chain_1337,
+          chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
@@ -211,12 +213,12 @@ describe("Single Chain Simple Rollback", () => {
     await setupDb(~shouldDropRawEvents=true)
 
     let chainManager = {
-      ...ChainManager.makeFromConfig(~config=Config.getConfig()),
+      ...ChainManager.makeFromConfig(~config),
       isUnorderedMultichainMode: true,
     }
-    let initState = GlobalState.make(~chainManager)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
-    let chain = ChainMap.Chain.Chain_1337
+    let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState
     let getChainFetcher = () => getState().chainManager.chainFetchers->ChainMap.get(chain)
 
@@ -243,7 +245,7 @@ describe("Single Chain Simple Rollback", () => {
         UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
-          chain: Chain_1337,
+          chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
@@ -282,7 +284,7 @@ describe("Single Chain Simple Rollback", () => {
         displayName: MockEvents.setGravatar1.displayName,
         id: MockEvents.setGravatar1.id->toString,
         imageUrl: MockEvents.setGravatar1.imageUrl,
-        owner_id: MockEvents.setGravatar1.owner->X.magic,
+        owner_id: MockEvents.setGravatar1.owner->Utils.magic,
         size: MEDIUM,
         updatesCount: 2->toBigInt,
       },
@@ -290,7 +292,7 @@ describe("Single Chain Simple Rollback", () => {
         displayName: MockEvents.newGravatar2.displayName,
         id: MockEvents.newGravatar2.id->toString,
         imageUrl: MockEvents.newGravatar2.imageUrl,
-        owner_id: MockEvents.newGravatar2.owner->X.magic,
+        owner_id: MockEvents.newGravatar2.owner->Utils.magic,
         size: SMALL,
         updatesCount: 1->toBigInt,
       },
@@ -338,7 +340,7 @@ describe("Single Chain Simple Rollback", () => {
         GlobalState.UpdateEndOfBlockRangeScannedData({
           blockNumberThreshold: -198,
           blockTimestampThreshold: 50,
-          chain: Chain_1337,
+          chain: MockConfig.chain1337,
           nextEndOfBlockRangeScannedData: {
             blockHash: block2.blockHash,
             blockNumber: block2.blockNumber,
@@ -361,7 +363,7 @@ describe("Single Chain Simple Rollback", () => {
         displayName: MockEvents.newGravatar1.displayName,
         id: MockEvents.newGravatar1.id->toString,
         imageUrl: MockEvents.newGravatar1.imageUrl,
-        owner_id: MockEvents.newGravatar1.owner->X.magic,
+        owner_id: MockEvents.newGravatar1.owner->Utils.magic,
         size: SMALL,
         updatesCount: 1->toBigInt,
       },
@@ -369,7 +371,7 @@ describe("Single Chain Simple Rollback", () => {
         displayName: MockEvents.setGravatar2.displayName,
         id: MockEvents.setGravatar2.id->toString,
         imageUrl: MockEvents.setGravatar2.imageUrl,
-        owner_id: MockEvents.setGravatar2.owner->X.magic,
+        owner_id: MockEvents.setGravatar2.owner->Utils.magic,
         size: MEDIUM,
         updatesCount: 2->toBigInt,
       },

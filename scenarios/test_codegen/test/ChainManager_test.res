@@ -2,12 +2,13 @@ open Belt
 open RescriptMocha
 
 let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) => {
+  let config = Config.getGenerated()
   let allEvents = []
 
   let arbitraryEventPriorityQueue = ref(list{})
   let numberOfMockEventsCreated = ref(0)
 
-  let chainFetchers = (Config.getConfig().chainMap)->ChainMap.map(({chain}) => {
+  let chainFetchers = config.chainMap->ChainMap.map(({chain}) => {
     let getCurrentTimestamp = () => {
       let timestampMillis = Js.Date.now()
 
@@ -54,7 +55,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
           chain,
           blockNumber: currentBlockNumber.contents,
           logIndex,
-          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->X.magic,
+          event: `mock event (chainId)${chain->ChainMap.Chain.toString} - (blockNumber)${currentBlockNumber.contents->string_of_int} - (logIndex)${logIndex->string_of_int} - (timestamp)${currentTime.contents->string_of_int}`->Utils.magic,
         }
 
         allEvents->Js.Array2.push(batchItem)->ignore
@@ -109,9 +110,9 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       isFetchingAtHead: false,
       fetchState: fetchState.contents,
       logger: Logging.logger,
-      chainConfig: "TODO"->X.magic,
+      chainConfig: config.defaultChain->Utils.magic,
       // This is quite a hack - but it works!
-      chainWorker: Config.Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->X.magic),
+      chainWorker: Config.Rpc((1, {"latestFetchedBlockTimestamp": currentTime.contents})->Utils.magic),
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),
@@ -148,10 +149,10 @@ describe("ChainManager", () => {
 
         let defaultFirstEvent: Types.eventBatchQueueItem = {
           timestamp: 0,
-          chain: Chain_1,
+          chain: MockConfig.chain1,
           blockNumber: 0,
           logIndex: 0,
-          event: `mock initial event`->X.magic,
+          event: `mock initial event`->Utils.magic,
         }
 
         let numberOfMockEventsReadFromQueues = ref(0)
@@ -210,7 +211,7 @@ describe("ChainManager", () => {
             //       Assert.equal(
             //         current.logIndex > previous.logIndex,
             //         true,
-            //         ~message=`Incorrect log index, the offending event pair: ${current.event->X.magic} - ${previous.event->X.magic}`,
+            //         ~message=`Incorrect log index, the offending event pair: ${current.event->Utils.magic} - ${previous.event->Utils.magic}`,
             //       )
             //       current
             //     },
@@ -280,7 +281,7 @@ describe("determineNextEvent", () => {
         chain,
         blockNumber: 987654,
         logIndex: 123456,
-        event: "SINGLE TEST EVENT"->X.magic,
+        event: "SINGLE TEST EVENT"->Utils.magic,
       }
     }
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
@@ -297,20 +298,20 @@ describe("determineNextEvent", () => {
     it(
       "should always take an event if there is one, even if other chains haven't caught up",
       () => {
-        let singleItem = makeMockQItem(654, Chain_137)
+        let singleItem = makeMockQItem(654, MockConfig.chain137)
         let earliestItem = makeNoItem(5) /* earlier timestamp than the test event */
 
-        let fetchStatesMap = ChainMap.make(
-          chain =>
-            switch chain {
-            | Chain_1 =>
+        let fetchStatesMap = Config.getGenerated().chainMap->ChainMap.mapWithKey(
+          (chain, _) =>
+            switch chain->ChainMap.Chain.toChainId {
+            | 1 =>
               makeMockFetchState(
                 ~latestFetchedBlockTimestamp=5,
                 ~item=None,
               ) /* earlier timestamp than the test event */
-            | Chain_137 =>
-              makeMockFetchState(~latestFetchedBlockTimestamp=5, ~item=Some(singleItem))
-            | Chain_1337 => makeMockFetchState(~latestFetchedBlockTimestamp=655, ~item=None)
+            | 137 => makeMockFetchState(~latestFetchedBlockTimestamp=5, ~item=Some(singleItem))
+            | 1337 => makeMockFetchState(~latestFetchedBlockTimestamp=655, ~item=None)
+            | _ => Js.Exn.raiseError("Unexpected chain")
             },
         )
 
@@ -338,36 +339,37 @@ describe("determineNextEvent", () => {
       () => {
         let earliestItemTimestamp = 653
         let singleItemTimestamp = 654
-        let singleItem = makeMockQItem(singleItemTimestamp, Chain_137)
+        let singleItem = makeMockQItem(singleItemTimestamp, MockConfig.chain137)
 
-        let fetchStatesMap = ChainMap.make(
-          chain =>
-            switch chain {
-            | Chain_1 =>
+        let fetchStatesMap = Config.getGenerated().chainMap->ChainMap.mapWithKey(
+          (chain, _) =>
+            switch chain->ChainMap.Chain.toChainId {
+            | 1 =>
               makeMockFetchState(
                 ~latestFetchedBlockTimestamp=earliestItemTimestamp,
                 ~item=None,
               ) /* earlier timestamp than the test event */
-            | Chain_137 =>
+            | 137 =>
               makeMockFetchState(
                 ~latestFetchedBlockTimestamp=singleItemTimestamp,
                 ~item=Some(singleItem),
               )
-            | Chain_1337 =>
+            | 1337 =>
               let higherTS = singleItemTimestamp + 1
               makeMockFetchState(
                 ~latestFetchedBlockTimestamp=higherTS,
                 ~item=Some(makeMockQItem(higherTS, chain)),
               )
+            | _ => Js.Exn.raiseError("Unexpected chain")
             },
         )
 
         // let example: array<ChainFetcher.eventQueuePeek> = [
         //   earliestItem,
-        //   NoItem(653 /* earlier timestamp than the test event */, Chain_1),
+        //   NoItem(653 /* earlier timestamp than the test event */, {id:1}),
         //   Item({...singleItem, timestamp: singleItem.timestamp + 1}),
         //   Item(singleItem),
-        //   NoItem(655 /* later timestamp than the test event */, Chain_1),
+        //   NoItem(655 /* later timestamp than the test event */, {id:1}),
         // ]
 
         let {earliestEventResponse: {earliestQueueItem}} =

@@ -93,62 +93,67 @@ type t = {
   ```yaml
   event_decoder: "viem" || "hypersync-client"
   ```
-  */
+ */
   shouldUseHypersyncClientDecoder: bool,
   isUnorderedMultichainMode: bool,
   chainMap: ChainMap.t<chainConfig>,
+  defaultChain: option<chainConfig>,
 }
 
-%%private(
-  let configRef = ref(None)
-)
-
-let getConfig = () => switch configRef.contents {
-  | Some(c) => c
-  | None => Js.Exn.raiseError("Config not yet loaded")
-}
-
-let register = (
-  ~shouldRollbackOnReorg,
-  ~shouldSaveFullHistory,
-  ~shouldUseHypersyncClientDecoder,
-  ~isUnorderedMultichainMode,
-  ~getChain,
+let make = (
+  ~shouldRollbackOnReorg=false,
+  ~shouldSaveFullHistory=false,
+  ~shouldUseHypersyncClientDecoder=true,
+  ~isUnorderedMultichainMode=false,
+  ~chains=[],
 ) => {
-  if configRef.contents !== None {
-    Js.Exn.raiseError("Config already registered")
-  }
-  configRef := Some({
-    historyConfig: {
-      rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
-      historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
-    },
-    shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(shouldUseHypersyncClientDecoder),
-    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
-      Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(isUnorderedMultichainMode),
+  historyConfig: {
+    rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
+    historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
+  },
+  shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
+    shouldUseHypersyncClientDecoder,
+  ),
+  isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
+    Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
+      isUnorderedMultichainMode,
     ),
-    chainMap: ChainMap.make(getChain),
+  ),
+  chainMap: chains
+  ->Js.Array2.map(n => {
+    (n.chain, n)
   })
+  ->ChainMap.fromArrayUnsafe,
+  defaultChain: chains->Belt.Array.get(0),
 }
 
-let mock = () => {
-  {
-    historyConfig: {
-      rollbackFlag: NoRollback,
-      historyFlag: MinHistory,
-    },
-    shouldUseHypersyncClientDecoder: true,
-    isUnorderedMultichainMode: false,
-    chainMap: ChainMap.empty(),
+%%private(let generatedConfigRef = ref(None))
+
+let getGenerated = () =>
+  switch generatedConfigRef.contents {
+  | Some(c) => c
+  | None => Js.Exn.raiseError("Config not yet generated")
   }
+
+let setGenerated = (config: t) => {
+  generatedConfigRef := Some(config)
 }
 
-let shouldRollbackOnReorg = config => switch config.historyConfig {
-| {rollbackFlag: RollbackOnReorg} => true
-| _ => false
-}
+let shouldRollbackOnReorg = config =>
+  switch config.historyConfig {
+  | {rollbackFlag: RollbackOnReorg} => true
+  | _ => false
+  }
 
-let shouldPruneHistory = config => switch config.historyConfig {
-| {historyFlag: MinHistory} => true
-| _ => false
+let shouldPruneHistory = config =>
+  switch config.historyConfig {
+  | {historyFlag: MinHistory} => true
+  | _ => false
+  }
+
+let getChain = (config, ~chainId) => {
+  let chain = ChainMap.Chain.makeUnsafe(~chainId)
+  config.chainMap->ChainMap.has(chain)
+    ? chain
+    : Js.Exn.raiseError("No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml")
 }

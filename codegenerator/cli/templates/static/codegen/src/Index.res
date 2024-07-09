@@ -151,12 +151,11 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
 
 let main = async () => {
   try {
-    RegisterHandlers.registerAllHandlers()
-    let config = Config.getConfig()
+    let config = RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
     let chainManager = await ChainManager.makeFromDbState(~config)
-    let globalState: GlobalState.t = GlobalState.make(~chainManager)
+    let globalState = GlobalState.make(~config, ~chainManager)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)

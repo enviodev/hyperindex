@@ -1,6 +1,8 @@
 open Belt
 open RescriptMocha
 
+let config = Config.getGenerated()
+
 module Mock = {
   /*
 
@@ -19,7 +21,6 @@ module Mock = {
 
   let mintAddress = Ethers.Constants.zeroAddress
   let userAddress1 = Ethers.Addresses.mockAddresses[1]->Option.getExn
-  let factoryAddress1 = ChainDataHelpers.ERC20Factory.getDefaultAddress(Chain_1)
 
   let mint50ToUser1 = makeTransferMock(~from=mintAddress, ~to=userAddress1, ~value=50)
   let deleteUser1 = makeDeleteUserMock(~user=userAddress1)
@@ -37,15 +38,17 @@ module Mock = {
   module Chain1 = {
     include RollbackMultichain_test.Mock.Chain1
 
+    let factoryAddress = ChainDataHelpers.ERC20Factory.getDefaultAddress(chain)
+
     open ChainDataHelpers.ERC20
     open ChainDataHelpers.ERC20Factory
     let mkTransferEventConstr = Transfer.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=ChainDataHelpers.ERC20.getDefaultAddress(Chain_1),
+      ~srcAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain),
       ~params=_,
       ...
     )
     let mkDeletUserEventConstr = DeleteUser.mkEventConstrWithParamsAndAddress(
-      ~srcAddress=factoryAddress1,
+      ~srcAddress=factoryAddress,
       ~params=_,
       ...
     )
@@ -63,10 +66,11 @@ module Mock = {
   }
   module Chain2 = RollbackMultichain_test.Mock.Chain2
 
-  let mockChainDataMap = ChainMap.make(chain =>
-    switch chain {
-    | Chain_1 => Chain1.mockChainData
-    | Chain_137 => Chain2.mockChainDataEmpty
+  let mockChainDataMap = config.chainMap->ChainMap.mapWithKey((chain, _) =>
+    switch chain->ChainMap.Chain.toChainId {
+    | 1 => Chain1.mockChainData
+    | 137 => Chain2.mockChainDataEmpty
+    | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
 
@@ -106,13 +110,13 @@ describe("Unsafe delete test", () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
-      ...ChainManager.makeFromConfig(~config=Config.getConfig()),
+      ...ChainManager.makeFromConfig(~config),
       isUnorderedMultichainMode: true,
     }
 
     //Setup initial state stub that will be used for both
     //initial chain data and reorg chain data
-    let initState = GlobalState.make(~chainManager)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
     let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
@@ -128,7 +132,7 @@ describe("Unsafe delete test", () => {
     await dispatchTask(NextQuery(CheckAllChains))
 
     Assert.deepEqual(
-      [GlobalState.NextQuery(Chain(Chain_1)), NextQuery(Chain(Chain_137))],
+      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )

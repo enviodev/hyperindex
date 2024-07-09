@@ -31,7 +31,7 @@ describe("E2E Integration Test", () => {
       }),
       startBlock: 0,
       endBlock: None,
-      chain: Chain_1337,
+      chain: MockConfig.chain1337,
       contracts: [
         {
           name: "GravatarRegistry",
@@ -44,11 +44,11 @@ describe("E2E Integration Test", () => {
       ],
     }
 
-    RegisterHandlers.registerAllHandlers()
+    let config = RegisterHandlers.registerAllHandlers()
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
-    let globalState: GlobalState.t = GlobalState.make(~chainManager)
+    let globalState = GlobalState.make(~config, ~chainManager)
 
     let gsManager = globalState->GlobalStateManager.make
 

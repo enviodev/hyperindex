@@ -26,7 +26,7 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     }),
     startBlock: 1,
     endBlock: None,
-    chain: Chain_1337,
+    chain: MockConfig.chain1337,
     contracts: [
       {
         name: "NftFactory",
@@ -49,24 +49,15 @@ type chainManager = ChainManager.t
 
 @genType
 let makeChainManager = (cfg: chainConfig): chainManager => {
-  // let getConfig = chain =>
-  //   if chain == cfg.chain {
-  //     cfg
-  //   } else {
-  //     chain->Config.getChain
-  //   }
-  // let configs = ChainMap.make(getConfig)
-  let chainMap = [(cfg.chain, cfg)]->Belt.Map.fromArray(~id=module(ChainMap.Chain.ChainIdCmp))
-  ChainManager.makeFromConfig(~config={
-    ...Config.mock(),
-    isUnorderedMultichainMode: true,
-    chainMap: chainMap
-  })
+  // FIXME: Should fork from the main ChainMap?
+  ChainManager.makeFromConfig(~config=Config.make(~isUnorderedMultichainMode=true, ~chains=[cfg]))
 }
 
 @genType
-let startProcessing = (cfg: chainConfig, chainManager: chainManager) => {
-  let globalState: GlobalState.t = GlobalState.make(~chainManager)
+let startProcessing = (config, cfg: chainConfig, chainManager: chainManager) => {
+  let globalState = GlobalState.make(~config=config->(
+    // Workaround for genType to treat the type as unknown, since we don't want to expose Config.t to TS users
+    Utils.magic: unknown => Config.t), ~chainManager)
 
   let gsManager = globalState->GlobalStateManager.make
 

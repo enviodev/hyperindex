@@ -1,15 +1,12 @@
 open Belt
 module Gravatar = {
   let contractName = "Gravatar"
-  let chain = ChainMap.Chain.Chain_1337
-  let chainConfig = (Config.getConfig().chainMap)->ChainMap.get(chain)
+  let chainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
 
-  let makeEventConstructorWithDefaultSrcAddress = MockChainData.makeEventConstructor(
-    ~srcAddress=defaultAddress,
-    ...
-  )
+  let makeEventConstructorWithDefaultSrcAddress =
+    MockChainData.makeEventConstructor(~srcAddress=defaultAddress, ...)
 
   module NewGravatar = {
     let accessor = v => Types.Gravatar_NewGravatar(v)

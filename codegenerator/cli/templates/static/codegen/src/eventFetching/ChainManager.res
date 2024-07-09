@@ -100,9 +100,7 @@ let determineNextEvent = (
   }
 }
 
-let makeFromConfig = (
-  ~config: Config.t,
-): t => {
+let makeFromConfig = (~config: Config.t): t => {
   let chainFetchers = config.chainMap->ChainMap.map(chain => chain->ChainFetcher.makeFromConfig)
   {
     chainFetchers,
@@ -111,9 +109,7 @@ let makeFromConfig = (
   }
 }
 
-let makeFromDbState = async (
-  ~config: Config.t,
-): t => {
+let makeFromDbState = async (~config: Config.t): t => {
   let chainFetchersArr =
     await config.chainMap
     ->ChainMap.entries
@@ -122,7 +118,7 @@ let makeFromDbState = async (
     })
     ->Promise.all
 
-  let chainFetchers = ChainMap.fromArray(chainFetchersArr)->Utils.unwrapResultExn //Can safely unwrap since it is being mapped from Config
+  let chainFetchers = ChainMap.fromArrayUnsafe(chainFetchersArr)
 
   {
     isUnorderedMultichainMode: config.isUnorderedMultichainMode,
