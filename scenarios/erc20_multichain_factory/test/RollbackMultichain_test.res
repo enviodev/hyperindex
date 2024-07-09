@@ -1,6 +1,8 @@
 open Belt
 open RescriptMocha
 
+let config = Config.getConfig()
+
 module Mock = {
   /*
   Chain 1 has 6 blocks in 25s intervals and getting batches of 2 blocks at a time
@@ -29,7 +31,6 @@ module Mock = {
   | 144  |     | 9d
   | 150  |  6d |
  */
-  let config = Config.getConfig()
 
   let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
@@ -66,7 +67,7 @@ module Mock = {
   module Chain1 = {
     let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=Config.getConfig().chainMap->ChainMap.get(chain),
+      ~chainConfig=config.chainMap->ChainMap.get(chain),
       ~maxBlocksReturned=2,
       ~blockTimestampInterval=25,
     )
@@ -227,13 +228,13 @@ describe("Multichain rollback test", () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
-      ...ChainManager.makeFromConfig(~config=Config.getConfig()),
+      ...ChainManager.makeFromConfig(~config),
       isUnorderedMultichainMode: true,
     }
 
     //Setup initial state stub that will be used for both
     //initial chain data and reorg chain data
-    let initState = GlobalState.make(~chainManager)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
     let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)

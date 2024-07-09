@@ -44,11 +44,11 @@ describe("E2E Integration Test", () => {
       ],
     }
 
-    let _config = RegisterHandlers.registerAllHandlers()
+    let config = RegisterHandlers.registerAllHandlers()
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
-    let globalState = GlobalState.make(~chainManager)
+    let globalState = GlobalState.make(~config, ~chainManager)
 
     let gsManager = globalState->GlobalStateManager.make
 

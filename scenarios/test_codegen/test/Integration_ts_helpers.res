@@ -54,8 +54,10 @@ let makeChainManager = (cfg: chainConfig): chainManager => {
 }
 
 @genType
-let startProcessing = (cfg: chainConfig, chainManager: chainManager) => {
-  let globalState = GlobalState.make(~chainManager)
+let startProcessing = (config, cfg: chainConfig, chainManager: chainManager) => {
+  let globalState = GlobalState.make(~config=config->(
+    // Workaround for genType to treat the type as unknown, since we don't want to expose Config.t to TS users
+    Utils.magic: unknown => Config.t), ~chainManager)
 
   let gsManager = globalState->GlobalStateManager.make
 

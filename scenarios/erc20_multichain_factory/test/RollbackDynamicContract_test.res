@@ -1,6 +1,8 @@
 open Belt
 open RescriptMocha
 
+let config = Config.getConfig()
+
 module Mock = {
   /*
 
@@ -13,8 +15,6 @@ module Mock = {
 3b register contract (dynamic query should action from 3, where parent hash is block 2 not 3)
 ensure that this doesn't trigger a reorg
 */
-  let config = Config.getConfig()
-
   let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
@@ -133,13 +133,13 @@ describe("Dynamic contract rollback test", () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
-      ...ChainManager.makeFromConfig(~config=Config.getConfig()),
+      ...ChainManager.makeFromConfig(~config),
       isUnorderedMultichainMode: true,
     }
 
     //Setup initial state stub that will be used for both
     //initial chain data and reorg chain data
-    let initState = GlobalState.make(~chainManager)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
     let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)

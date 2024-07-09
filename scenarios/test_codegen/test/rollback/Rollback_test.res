@@ -1,9 +1,11 @@
 open Belt
 open RescriptMocha
 
+let config = Config.getConfig()
+
 module Mock = {
   let mockChainDataEmpty = MockChainData.make(
-    ~chainConfig=Config.getConfig().chainMap->ChainMap.get(MockConfig.chain1337),
+    ~chainConfig=config.chainMap->ChainMap.get(MockConfig.chain1337),
     ~maxBlocksReturned=3,
     ~blockTimestampInterval=25,
   )
@@ -151,8 +153,8 @@ let setupDb = async (~shouldDropRawEvents) => {
 
 describe("Single Chain Simple Rollback", () => {
   Async.it("Detects reorgs and actions a rollback", async () => {
-    let chainManager = ChainManager.makeFromConfig(~config=Config.getConfig())
-    let initState = GlobalState.make(~chainManager)
+    let chainManager = ChainManager.makeFromConfig(~config)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState
@@ -211,10 +213,10 @@ describe("Single Chain Simple Rollback", () => {
     await setupDb(~shouldDropRawEvents=true)
 
     let chainManager = {
-      ...ChainManager.makeFromConfig(~config=Config.getConfig()),
+      ...ChainManager.makeFromConfig(~config),
       isUnorderedMultichainMode: true,
     }
-    let initState = GlobalState.make(~chainManager)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState
