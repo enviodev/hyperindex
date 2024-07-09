@@ -34,10 +34,6 @@ fn make_res_name(js_name: &String) -> String {
     }
 }
 
-pub trait HasName {
-    fn set_name(&mut self, name: CapitalizedOptions);
-}
-
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
     pub res_name: String,
@@ -55,11 +51,6 @@ pub struct EventParamTypeTemplate {
 pub struct EventRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EventParamTypeTemplate>,
-}
-impl HasName for EventRecordTypeTemplate {
-    fn set_name(&mut self, name: CapitalizedOptions) {
-        self.name = name;
-    }
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -344,12 +335,6 @@ impl EntityRecordTypeTemplate {
             relational_params,
             filtered_params,
         })
-    }
-}
-
-impl HasName for EntityRecordTypeTemplate {
-    fn set_name(&mut self, name: CapitalizedOptions) {
-        self.name = name;
     }
 }
 
