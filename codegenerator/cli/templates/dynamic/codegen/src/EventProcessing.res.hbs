@@ -161,30 +161,26 @@ let addEventToRawEvents = (
   ~eventArgsSchema: S.t<'a>,
   ~eventName: Enums.EventType.t,
 ) => {
-    let {
-    block: {number: blockNumber, hash: blockHash, timestamp: blockTimestamp},
-    logIndex,
-    srcAddress,
-  } = event
-
-  let (transactionIndex, transactionHash) = (0, "0xtest")
-
+  let {block, transaction, params, logIndex, srcAddress} = event
+  let {number: blockNumber, hash: blockHash, timestamp: blockTimestamp} = block
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+  let blockFields =
+    block->Types.Block.getSelectableFields->S.serializeOrRaiseWith(Types.Block.schema)
+  let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
+  let params = params->S.serializeOrRaiseWith(eventArgsSchema)
+
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
     eventId: eventId->BigInt.toString,
     blockNumber,
     logIndex,
-    transactionIndex,
-    transactionHash,
     srcAddress,
     blockHash,
     blockTimestamp,
     eventType: eventName,
-    params: switch event.params->S.serializeToJsonStringWith(eventArgsSchema) {
-    | Ok(jsonString) => jsonString
-    | Error(e) => S.Error.raise(e)
-    },
+    blockFields,
+    transactionFields,
+    params,
   }
 
   let eventIdStr = eventId->BigInt.toString

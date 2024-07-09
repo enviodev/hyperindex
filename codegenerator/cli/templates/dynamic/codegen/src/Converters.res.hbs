@@ -157,17 +157,33 @@ let parseEvent = (
   }
 }
 
+let blockFromRawEvent = (
+  _rawEvent: TablesStatic.RawEvents.t,
+  _selectableBlockFields: Types.Block.selectableFields,
+): Types.Block.t =>
+  %raw(`
+  {
+    number: _rawEvent.blockNumber,
+    timestamp: _rawEvent.blockTimestamp,
+    hash: _rawEvent.blockHash,
+    ..._selectableBlockFields
+  }
+`)
+
 let decodeRawEventWith = (
   rawEvent: TablesStatic.RawEvents.t,
   ~schema: S.t<'a>,
   ~variantAccessor: Types.eventLog<'a> => Types.event,
   ~chain,
 ): result<Types.eventBatchQueueItem, S.error> => {
-  rawEvent.params
-  ->S.parseJsonStringWith(schema)
-  ->Belt.Result.map(params => {
-    let block = X.magic(Js.Nullable.null) //TODO!
-    let transaction = X.magic(Js.Nullable.null) //TODO!
+  let parsedParams = rawEvent.params->S.parseWith(schema)
+  let parsedTransactionFields = rawEvent.transactionFields->S.parseWith(Types.Transaction.schema)
+  let parsedSelectableBlockFields = rawEvent.blockFields->S.parseWith(Types.Block.schema)
+
+  switch (parsedParams, parsedTransactionFields, parsedSelectableBlockFields) {
+  | (Ok(params), Ok(transaction), Ok(selectableBlockFields)) =>
+    let block = rawEvent->blockFromRawEvent(selectableBlockFields)
+
     let event = {
       chainId: rawEvent.chainId,
       transaction,
@@ -185,8 +201,9 @@ let decodeRawEventWith = (
       event,
     }
 
-    queueItem
-  })
+    Ok(queueItem)
+  | (Error(err), _, _) | (_, Error(err), _) | (_, _, Error(err)) => Error(err)
+  }
 }
 
 let parseRawEvent = (rawEvent: TablesStatic.RawEvents.t, ~chain): result<

@@ -115,6 +115,12 @@ module Transaction = {
     {{/each}}
   }
 
+  let schema: S.schema<t> = S.object(_s => {
+    {{#each field_selection.transaction_fields as | field |}}
+    {{field.name.camel}}: _s.field("{{field.name.camel}}", {{field.res_schema_code}}),
+    {{/each}}
+  })
+
   let querySelection: HyperSyncClient.QueryTypes.transactionFieldSelection = [
     {{#each field_selection.transaction_fields as | field |}}
     {{field.name.pascal}},
@@ -129,17 +135,37 @@ module Transaction = {
 }
 
 module Block = {
+  type selectableFields = {
+    {{!-- Selectable fields --}}
+    {{#each field_selection.block_fields as | field |}}
+    {{field.name.camel}}: {{field.res_type}},
+    {{/each}}
+  }
+
+  let schema: S.schema<selectableFields> = S.object(_s => {
+    {{#each field_selection.block_fields as | field |}}
+    {{field.name.camel}}: _s.field("{{field.name.camel}}", {{field.res_schema_code}}),
+    {{/each}}
+  })
+
   @genType
   type t = {
     {{!-- Mandatory fields --}}
     number: int,
     timestamp: int,
     hash: string,
-    {{!-- Selectable fields --}}
-    {{#each field_selection.block_fields as | field |}}
-    {{field.name.camel}}: {{field.res_type}},
-    {{/each}}
+    ...selectableFields,
   }
+
+  let getSelectableFields = ({
+    {{#each field_selection.block_fields as | field |}}
+    {{field.name.camel}},
+    {{/each}}
+    }: t): selectableFields => {
+    {{#each field_selection.block_fields as | field |}}
+    {{field.name.camel}}: {{field.name.camel}},
+    {{/each}}
+    }
 
   let querySelection: HyperSyncClient.QueryTypes.blockFieldSelection = [
     Number,
