@@ -1,17 +1,29 @@
 open RescriptMocha
 
+let block1: Types.Block.t = {
+  number: 1,
+  timestamp: 1,
+  hash: "deasne",
+}
+
+let tx1: Types.Transaction.t = {
+  hash: "0xaaa",
+  transactionIndex: 1,
+}
 let eventMock1: Types.event = Gravatar_NewGravatar({
-  blockNumber: 1,
+  block: {
+    number: 1,
+    hash: "0xdef",
+    timestamp: 1900000,
+  },
   chainId: 54321,
-  blockHash: "0xdef",
   logIndex: 0,
   params: MockEvents.newGravatar1,
-  blockTimestamp: 1900000,
   srcAddress: "0x1234512345123451234512345123451234512345"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xabc",
-  transactionIndex: 987,
-  txOrigin: None,
-  txTo: None,
+  transaction: {
+    hash: "0xabc",
+    transactionIndex: 987,
+  },
 })
 
 let qItemMock1: Types.eventBatchQueueItem = {
@@ -23,17 +35,19 @@ let qItemMock1: Types.eventBatchQueueItem = {
 }
 
 let eventMock2: Types.event = Gravatar_NewGravatar({
-  blockNumber: 2,
+  block: {
+    number: 2,
+    hash: "0xabc",
+    timestamp: 1900001,
+  },
   chainId: 54321,
-  blockHash: "0xabc",
   logIndex: 1,
   params: MockEvents.newGravatar2,
-  blockTimestamp: 1900001,
   srcAddress: "0x1234512345123451234512345123451234512346"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xdef",
-  transactionIndex: 988,
-  txOrigin: None,
-  txTo: None,
+  transaction: {
+    hash: "0xdef",
+    transactionIndex: 988,
+  },
 })
 
 let qItemMock2: Types.eventBatchQueueItem = {

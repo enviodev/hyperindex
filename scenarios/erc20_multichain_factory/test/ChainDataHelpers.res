@@ -9,6 +9,17 @@ let getDefaultAddress = (chain, contractName) => {
 
 open Enums.EventType
 
+let gAS_USED_DEFAULT = BigInt.zero
+let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash): Types.Block.t => {
+  number: blockNumber,
+  hash: blockHash,
+  timestamp: blockTimestamp,
+  gasUsed: gAS_USED_DEFAULT,
+}
+let makeTransaction = (~transactionIndex, ~transactionHash): Types.Transaction.t => {
+  transactionIndex,
+  hash: transactionHash,
+}
 module ERC20 = {
   let contractName = "ERC20"
   let getDefaultAddress = getDefaultAddress(_, contractName)
@@ -17,7 +28,14 @@ module ERC20 = {
     let schema = Types.ERC20.Transfer.eventArgsSchema
     let eventName = ERC20_Transfer
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
+      MockChainData.makeEventConstructor(
+        ~accessor,
+        ~schema,
+        ~eventName,
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
@@ -34,7 +52,14 @@ module ERC20Factory = {
     let eventName = ERC20Factory_TokenCreated
 
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
+      MockChainData.makeEventConstructor(
+        ~accessor,
+        ~schema,
+        ~eventName,
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
@@ -45,7 +70,14 @@ module ERC20Factory = {
     let eventName = ERC20Factory_DeleteUser
 
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~schema, ~eventName, ...)
+      MockChainData.makeEventConstructor(
+        ~accessor,
+        ~schema,
+        ~eventName,
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)

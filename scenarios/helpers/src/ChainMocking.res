@@ -44,26 +44,16 @@ module Make = (Indexer: Indexer.S) => {
     ~accessor,
     ~srcAddress,
     ~chainId,
-    ~txOrigin,
-    ~txTo,
-    ~blockNumber,
-    ~blockTimestamp,
-    ~blockHash,
-    ~transactionHash,
-    ~transactionIndex,
+    ~block,
+    ~transaction,
     ~logIndex,
   ): Types.event =>
     {
       Types.params,
       srcAddress,
       chainId,
-      txOrigin,
-      txTo,
-      blockNumber,
-      blockTimestamp,
-      blockHash,
-      transactionHash,
-      transactionIndex,
+      block,
+      transaction,
       logIndex,
     }->accessor
 
@@ -76,13 +66,12 @@ module Make = (Indexer: Indexer.S) => {
     srcAddress: Ethers.ethAddress,
     eventName: Types.eventName,
   }
+
   type composedEventConstructor = (
     ~chainId: int,
     ~blockTimestamp: int,
     ~blockNumber: int,
     ~transactionIndex: int,
-    ~txOrigin: option<Ethers.ethAddress>,
-    ~txTo: option<Ethers.ethAddress>,
     ~logIndex: int,
   ) => logConstructor
 
@@ -92,12 +81,19 @@ module Make = (Indexer: Indexer.S) => {
     ~schema,
     ~eventName,
     ~srcAddress,
+    ~makeBlock: (
+      ~blockNumber: int,
+      ~blockTimestamp: int,
+      ~blockHash: string,
+    ) => Indexer.Types.Block.t,
+    ~makeTransaction: (
+      ~transactionIndex: int,
+      ~transactionHash: string,
+    ) => Indexer.Types.Transaction.t,
     ~chainId,
-    ~blockTimestamp,
-    ~blockNumber,
+    ~blockTimestamp: int,
+    ~blockNumber: int,
     ~transactionIndex,
-    ~txOrigin,
-    ~txTo,
     ~logIndex,
   ) => {
     let transactionHash =
@@ -105,21 +101,18 @@ module Make = (Indexer: Indexer.S) => {
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
-    let makeEvent: makeEvent =
+    let makeEvent: makeEvent = (~blockHash) => {
+      let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
       eventConstructor(
-        ~accessor,
         ~params,
-        ~transactionIndex,
-        ~logIndex,
-        ~transactionHash,
+        ~accessor,
         ~srcAddress,
         ~chainId,
-        ~txOrigin,
-        ~txTo,
-        ~blockNumber,
-        ~blockTimestamp,
-        ...
+        ~block,
+        ~logIndex,
+        ~transaction=makeTransaction(~transactionIndex, ~transactionHash),
       )
+    }
 
     {transactionHash, makeEvent, logIndex, srcAddress, eventName}
   }
@@ -169,8 +162,6 @@ module Make = (Indexer: Indexer.S) => {
           ~transactionIndex=i,
           ~logIndex=i,
           ~chainId=self.chainConfig.chain->ChainMap.Chain.toChainId,
-          ~txOrigin=None,
-          ~txTo=None,
           ~blockNumber,
           ~blockTimestamp,
         )

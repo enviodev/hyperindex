@@ -3,6 +3,10 @@ name: test_codegen
 description: Gravatar for Ethereum
 rollback_on_reorg: true
 save_full_history: false
+field_selection:
+  transaction_fields:
+    - transaction_index
+    - hash
 networks:
   - id: 1337
     rpc_config:
