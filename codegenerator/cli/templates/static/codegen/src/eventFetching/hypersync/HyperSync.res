@@ -109,7 +109,7 @@ module LogsQuery = {
   let getMissingFields = (fieldNames, returnedObj, ~prefix) => {
     fieldNames->Belt.Array.keepMap(fieldName => {
       returnedObj
-      ->(X.magic: 'a => Js.Dict.t<unknown>)
+      ->(Utils.magic: 'a => Js.Dict.t<unknown>)
       ->Js.Dict.get(fieldName)
       ->Utils.optionMapNone(prefix ++ "." ++ fieldName)
     })
@@ -133,7 +133,7 @@ module LogsQuery = {
 
     //Topics can be nullable and still need to be filtered
     //Address is not yet checksummed (TODO this should be done in the client)
-    let logUnsanitized: Types.Log.t = event.log->X.magic
+    let logUnsanitized: Types.Log.t = event.log->Utils.magic
     let topics = event.log.topics->Belt.Option.getUnsafe->Belt.Array.keepMap(Js.Nullable.toOption)
     let address = event.log.address->Belt.Option.getUnsafe->Viem.getAddressUnsafe
     let log = {
@@ -144,8 +144,8 @@ module LogsQuery = {
 
     {
       log,
-      block: event.block->X.magic,
-      transaction: event.transaction->X.magic,
+      block: event.block->Utils.magic,
+      transaction: event.transaction->Utils.magic,
     }
   }
 

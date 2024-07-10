@@ -84,8 +84,8 @@ type txFieldVal
 exception InvalidRpcTransactionField(string)
 let getTxFieldFromEthersLog = (log: Ethers.log, txField: string, ~logger): txFieldVal =>
   switch txField {
-  | "hash" => log.transactionHash->X.magic
-  | "transactionIndex" => log.transactionIndex->X.magic
+  | "hash" => log.transactionHash->Utils.magic
+  | "transactionIndex" => log.transactionIndex->Utils.magic
   | field =>
     InvalidRpcTransactionField(field)->ErrorHandling.mkLogAndRaise(
       ~logger,
@@ -97,14 +97,14 @@ let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
   Types.Transaction.fieldNames
   ->Belt.Array.map(name => (name, getTxFieldFromEthersLog(log, name, ~logger)))
   ->Js.Dict.fromArray
-  ->(X.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)
+  ->(Utils.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)
 }
 
 //Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
-let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = X.magic
+let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = Utils.magic
 
 //Types.log is a subset of Ethers.log so we can safely cast
-let ethersLogToLog: Ethers.log => Types.Log.t = X.magic
+let ethersLogToLog: Ethers.log => Types.Log.t = Utils.magic
 
 let convertLogs = (
   logs: array<Ethers.log>,
