@@ -103,8 +103,13 @@ let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
 //Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
 let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = Utils.magic
 
-//Types.log is a subset of Ethers.log so we can safely cast
-let ethersLogToLog: Ethers.log => Types.Log.t = Utils.magic
+//Note ethers log is not a superset of log since logIndex is actually "index" with an @as alias
+let ethersLogToLog: Ethers.log => Types.Log.t = ({address, data, topics, logIndex}) => {
+  address,
+  data,
+  topics,
+  logIndex,
+}
 
 let convertLogs = (
   logs: array<Ethers.log>,

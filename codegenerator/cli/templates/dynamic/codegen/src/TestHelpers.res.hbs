@@ -167,6 +167,7 @@ module EventFunctions = {
   }
 
   module MockBlock = {
+    open Belt
     type t = {
       {{!-- Mandatory fields --}}
       number?: int,
@@ -191,6 +192,7 @@ module EventFunctions = {
   }
 
   module MockTransaction = {
+    open Belt
     type t = {
       {{#each field_selection.transaction_fields as | field |}}
       {{field.name.camel}}?: {{field.res_type}},
