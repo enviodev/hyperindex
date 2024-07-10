@@ -115,7 +115,7 @@ module Transaction = {
     {{/each}}
   }
 
-  let schema: S.schema<t> = S.object(_s => {
+  let schema: S.schema<t> = S.object((_s): t => {
     {{#each field_selection.transaction_fields as | field |}}
     {{field.name.camel}}: _s.field("{{field.name.camel}}", {{field.res_schema_code}}),
     {{/each}}
@@ -142,7 +142,7 @@ module Block = {
     {{/each}}
   }
 
-  let schema: S.schema<selectableFields> = S.object(_s => {
+  let schema: S.schema<selectableFields> = S.object((_s): selectableFields => {
     {{#each field_selection.block_fields as | field |}}
     {{field.name.camel}}: _s.field("{{field.name.camel}}", {{field.res_schema_code}}),
     {{/each}}

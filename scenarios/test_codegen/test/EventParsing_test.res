@@ -9,13 +9,7 @@ describe("Parsing Raw Events", () => {
       imageUrl: "myurl.com",
     }
 
-    let paramsEncoded = switch params->S.serializeToJsonStringWith(
-      Types.Gravatar.NewGravatar.eventArgsSchema,
-    ) {
-    | Ok(p) => p
-    | Error(e) => e->S.Error.raise
-    }
-
+    let paramsEncoded = params->S.serializeOrRaiseWith(Types.Gravatar.NewGravatar.eventArgsSchema)
     let blockNumber = 11954567
     let timestamp = 1614631579
     let chain = MockConfig.chain1337
@@ -25,25 +19,36 @@ describe("Parsing Raw Events", () => {
     let srcAddress = Ethers.getAddressFromStringUnsafe("0xc944E90C64B2c07662A292be6244BDf05Cda44a7")
     let transactionHash = "0x4637e2c771f4a3543a91add8d12d7d189cd98cc7ad36c39bc3ea5f57832e84d4"
     let transactionIndex = 66
-    let txOrigin = None
-    let txTo = None
 
-    let mockRawEventsEntity: TablesStatic.RawEvents.t = {
-      blockNumber,
-      blockTimestamp: timestamp,
-      chainId,
-      eventId: "783454502983",
-      transactionIndex,
-      logIndex,
-      transactionHash,
-      srcAddress,
-      eventType: Gravatar_NewGravatar,
-      blockHash,
-      params: paramsEncoded,
+    let block: Types.Block.t = {
+      number: blockNumber,
+      timestamp,
+      hash: blockHash,
     }
 
-    let parsedEvent =
-      mockRawEventsEntity->Converters.parseRawEvent(~chain, ~txOrigin, ~txTo)->Belt.Result.getExn
+    let blockFields = S.serializeOrRaiseWith(({}: Types.Block.selectableFields), Types.Block.schema)
+
+    let transaction: Types.Transaction.t = {
+      transactionIndex,
+      hash: transactionHash,
+    }
+    let transactionFields = S.serializeOrRaiseWith(transaction, Types.Transaction.schema)
+
+    let mockRawEventsEntity: TablesStatic.RawEvents.t = {
+      chainId,
+      eventId: "783454502983",
+      logIndex,
+      srcAddress,
+      eventType: Gravatar_NewGravatar,
+      params: paramsEncoded,
+      blockFields,
+      transactionFields,
+      blockNumber,
+      blockHash,
+      blockTimestamp: timestamp,
+    }
+
+    let parsedEvent = mockRawEventsEntity->Converters.parseRawEvent(~chain)->Belt.Result.getExn
 
     let expectedParseResult: Types.eventBatchQueueItem = {
       timestamp: 1614631579,
@@ -51,17 +56,12 @@ describe("Parsing Raw Events", () => {
       blockNumber,
       logIndex,
       event: Types.Gravatar_NewGravatar({
-        blockNumber,
+        block,
         chainId,
-        blockTimestamp: timestamp,
-        blockHash,
         srcAddress,
-        transactionHash,
-        transactionIndex,
+        transaction,
         logIndex,
         params,
-        txOrigin,
-        txTo,
       }),
     }
 

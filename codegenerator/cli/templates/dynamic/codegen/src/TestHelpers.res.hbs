@@ -197,9 +197,9 @@ module EventFunctions = {
       {{/each}}
     }
 
-    let toTransaction = (mock: t): Types.Transaction.t => {
+    let toTransaction = (_mock: t): Types.Transaction.t => {
       {{#each field_selection.transaction_fields as | field |}}
-      {{field.name.camel}}: mock.{{field.name.camel}}->Option.getWithDefault({{field.default_value_rescript}}),
+      {{field.name.camel}}: _mock.{{field.name.camel}}->Option.getWithDefault({{field.default_value_rescript}}),
       {{/each}}
     }
   }

@@ -18,24 +18,21 @@ module type S = {
   module Types: {
     type eventName
     type event
-    type transactionFields = {
-      // transactionIndex: int,
-      // transactionHash: string
+    module Transaction: {
+      type t
     }
 
-    type blockFields = {
-      blockNumber: int,
-      blockTimestamp: int,
-      blockHash: string,
+    module Block: {
+      type t
     }
 
     type eventLog<'a> = {
       params: 'a,
       chainId: int,
-      transaction: transactionFields,
-      block: blockFields,
       srcAddress: Ethers.ethAddress,
       logIndex: int,
+      transaction: Transaction.t,
+      block: Block.t,
     }
 
     type eventBatchQueueItem = {
