@@ -12,7 +12,6 @@ module EventSyncState = {
     @as("chain_id") chainId: int,
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
-    @as("transaction_index") transactionIndex: int,
     @as("block_timestamp") blockTimestamp: int,
   }
 
@@ -22,7 +21,6 @@ module EventSyncState = {
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("block_number", Integer),
       mkField("log_index", Integer),
-      mkField("transaction_index", Integer),
       mkField("block_timestamp", Integer),
     ],
   )
@@ -113,13 +111,13 @@ module RawEvents = {
     @as("event_id") eventId: string,
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
-    @as("transaction_index") transactionIndex: int,
-    @as("transaction_hash") transactionHash: string,
     @as("src_address") srcAddress: Ethers.ethAddress,
     @as("block_hash") blockHash: string,
     @as("block_timestamp") blockTimestamp: int,
     @as("event_type") eventType: Enums.EventType.t,
-    params: string,
+    @as("block_fields") blockFields: Js.Json.t,
+    @as("transaction_fields") transactionFields: Js.Json.t,
+    params: Js.Json.t,
   }
 
   let table = mkTable(
@@ -129,12 +127,12 @@ module RawEvents = {
       mkField("event_id", Numeric, ~isPrimaryKey),
       mkField("block_number", Integer),
       mkField("log_index", Integer),
-      mkField("transaction_index", Integer),
-      mkField("transaction_hash", Text),
       mkField("src_address", Text),
       mkField("block_hash", Text),
       mkField("block_timestamp", Integer),
       mkField("event_type", Enum(EventType.enum.name)),
+      mkField("block_fields", Json),
+      mkField("transaction_fields", Json),
       mkField("params", Json),
       mkField("db_write_timestamp", Timestamp, ~default="CURRENT_TIMESTAMP"),
     ],
@@ -250,3 +248,4 @@ let allTables: array<table> = [
   EntityHistory.table,
   EntityHistoryFilter.table,
 ]
+

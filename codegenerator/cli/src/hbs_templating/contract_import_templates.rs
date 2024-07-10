@@ -189,7 +189,6 @@ mod nested_params {
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
     cli_args::init_config::Language,
     config_parsing::{
         entity_parsing::{Entity, Field, FieldType, Schema},
@@ -197,6 +196,7 @@ use crate::{
     },
     constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     template_dirs::TemplateDirs,
+    utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{Context, Result};
 use ethers::abi::ParamType;
@@ -304,13 +304,20 @@ impl Event {
         );
         match is_fuel {
             true => {
-              let data_code =  match language {
-                Language::ReScript => "%raw(`{}`)",
-                Language::TypeScript => "{}",
-                Language::JavaScript => "{}",
-              };
-              format!("{event_module}.mock({{data: {data_code} /* It mocks event fields with default values, so you only need to provide data */}})")}, // FIXME: Generate default data
-            false => format!("{event_module}.createMockEvent({{/* It mocks event fields with default values. You can overwrite them if you need */}})"),
+                let data_code = match language {
+                    Language::ReScript => "%raw(`{}`)",
+                    Language::TypeScript => "{}",
+                    Language::JavaScript => "{}",
+                };
+                format!(
+                    "{event_module}.mock({{data: {data_code} /* It mocks event fields with \
+                     default values, so you only need to provide data */}})"
+                )
+            } // FIXME: Generate default data
+            false => format!(
+                "{event_module}.createMockEvent({{/* It mocks event fields with default values. \
+                 You can overwrite them if you need */}})"
+            ),
         }
     }
 

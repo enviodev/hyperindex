@@ -43,6 +43,17 @@
         }
       ]
     },
+    "field_selection": {
+      "description": "An object representing additional fields to add to the event passed to handlers.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FieldSelection"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "name": {
       "description": "Name of the project",
       "type": "string"
@@ -119,6 +130,27 @@
         }
       ]
     },
+    "BlockField": {
+      "type": "string",
+      "enum": [
+        "parent_hash",
+        "nonce",
+        "sha3_uncles",
+        "logs_bloom",
+        "transactions_root",
+        "state_root",
+        "receipts_root",
+        "miner",
+        "difficulty",
+        "total_difficulty",
+        "extra_data",
+        "size",
+        "gas_limit",
+        "gas_used",
+        "uncles",
+        "base_fee_per_gas"
+      ]
+    },
     "EcosystemTag": {
       "type": "string",
       "enum": [
@@ -132,6 +164,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "event"
       ]
@@ -142,6 +175,32 @@
         "viem",
         "hypersync-client"
       ]
+    },
+    "FieldSelection": {
+      "type": "object",
+      "properties": {
+        "block_fields": {
+          "description": "Fields of a block to add to the event passed to handlers",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/BlockField"
+          }
+        },
+        "transaction_fields": {
+          "description": "Fields of a transaction to add to the event passed to handlers",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/TransactionField"
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "GlobalContract_for_ContractConfig": {
       "type": "object",
@@ -165,6 +224,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "name",
         "handler",
@@ -178,6 +238,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "url"
       ]
@@ -235,6 +296,7 @@
           "format": "int32"
         }
       },
+      "additionalProperties": false,
       "required": [
         "id",
         "start_block",
@@ -266,6 +328,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "name"
       ]
@@ -287,6 +350,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "url"
       ]
@@ -341,7 +405,36 @@
           "format": "uint32",
           "minimum": 0
         }
-      }
+      },
+      "additionalProperties": false
+    },
+    "TransactionField": {
+      "type": "string",
+      "enum": [
+        "transaction_index",
+        "hash",
+        "from",
+        "to",
+        "gas",
+        "gas_price",
+        "max_priority_fee_per_gas",
+        "max_fee_per_gas",
+        "cumulative_gas_used",
+        "effective_gas_price",
+        "gas_used",
+        "input",
+        "nonce",
+        "value",
+        "v",
+        "r",
+        "s",
+        "contract_address",
+        "logs_bloom",
+        "type",
+        "root",
+        "status",
+        "sighash"
+      ]
     }
   }
 }

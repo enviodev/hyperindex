@@ -95,7 +95,7 @@ let runEventContractRegister = (
   | exception exn =>
     exn
     ->ErrorHandling.make(
-      ~msg="Event pre loader failed, please fix the error to keep the indexer running smoothly",
+      ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
       ~logger=contextEnv.logger,
     )
     ->Error
@@ -108,10 +108,12 @@ let runEventContractRegister = (
       )
 
     let addToDynamicContractRegistrations =
-      eventBatchQueueItem->addToDynamicContractRegistrations(
-        ~registeringEventBlockNumber=event.blockNumber,
-        ~registeringEventLogIndex=event.logIndex,
-        ...
+      eventBatchQueueItem->(
+        addToDynamicContractRegistrations(
+          ~registeringEventBlockNumber=event.block.number,
+          ~registeringEventLogIndex=event.logIndex,
+          ...
+        )
       )
 
     let val = switch (dynamicContracts, dynamicContractRegistrations) {
@@ -160,30 +162,27 @@ let addEventToRawEvents = (
   ~inMemoryStore: InMemoryStore.t,
   ~chainId,
 ) => {
-  let {
-    blockNumber,
-    logIndex,
-    transactionIndex,
-    transactionHash,
-    srcAddress,
-    blockHash,
-    blockTimestamp,
-  } = event
+  let {block, transaction, params, logIndex, srcAddress} = event
+  let {number: blockNumber, hash: blockHash, timestamp: blockTimestamp} = block
   let module(Event) = eventMod->(Utils.magic: module(Types.Event) => module(Types.Event with type eventArgs = eventArgs))
-
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
+  let blockFields =
+    block->Types.Block.getSelectableFields->S.serializeOrRaiseWith(Types.Block.schema)
+  let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
+  let params = params->S.serializeOrRaiseWith(Event.eventArgsSchema)
+
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
     eventId: eventId->BigInt.toString,
     blockNumber,
     logIndex,
-    transactionIndex,
-    transactionHash,
     srcAddress,
     blockHash,
     blockTimestamp,
+    blockFields,
+    transactionFields,
     eventType: Event.eventName,
-    params: event.params->S.serializeToJsonStringOrRaiseWith(Event.eventArgsSchema),
+    params,
   }
 
   let eventIdStr = eventId->BigInt.toString
@@ -196,7 +195,7 @@ let updateEventSyncState = (
   ~chainId,
   ~inMemoryStore: InMemoryStore.t,
 ) => {
-  let {blockNumber, logIndex, transactionIndex, blockTimestamp} = event
+  let {logIndex, block: {number: blockNumber, timestamp: blockTimestamp}} = event
   let _ = inMemoryStore.eventSyncState->InMemoryTable.set(
     chainId,
     {
@@ -204,7 +203,6 @@ let updateEventSyncState = (
       blockTimestamp,
       blockNumber,
       logIndex,
-      transactionIndex,
     },
   )
 }
@@ -265,7 +263,7 @@ let runEventHandler = (
         ~chainId,
       )
       latestProcessedBlocks
-      ->EventsProcessed.updateEventsProcessed(~chain, ~blockNumber=event.blockNumber)
+      ->EventsProcessed.updateEventsProcessed(~chain, ~blockNumber=event.block.number)
       ->Ok
     }
   })

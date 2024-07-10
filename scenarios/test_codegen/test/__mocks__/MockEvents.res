@@ -53,116 +53,87 @@ let setGravatar4: Types.Gravatar.UpdatedGravatar.eventArgs = {
   imageUrl: "https://gravatar4.com",
 }
 
+let block1: Types.Block.t = {
+  number: 1,
+  timestamp: 1,
+  hash: "deasne",
+}
+
+let tx1: Types.Transaction.t = {
+  hash: "0xaaa",
+  transactionIndex: 1,
+}
+
 let newGravatarLog1: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
   params: newGravatar1,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   // TODO: this should be an address type
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 11,
+  transaction: tx1,
+  block: block1,
 }
 
 let newGravatarLog2: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
   params: newGravatar2,
-  blockNumber: 1,
+  block: block1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
+  transaction: tx1,
   logIndex: 12,
 }
 
 let newGravatarLog3: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
   params: newGravatar3,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 13,
+  transaction: tx1,
+  block: block1,
 }
 
 let newGravatarLog4: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
   params: newGravatar4_deleted,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 13,
+  transaction: tx1,
+  block: block1,
 }
 
 let setGravatarLog1: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = {
   params: setGravatar1,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 14,
+  transaction: tx1,
+  block: block1,
 }
 
 let setGravatarLog2: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = {
   params: setGravatar2,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 15,
+  transaction: tx1,
+  block: block1,
 }
 
 let setGravatarLog3: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = {
   params: setGravatar3,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 16,
+  transaction: tx1,
+  block: block1,
 }
 let setGravatarLog4: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = {
   params: setGravatar4,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 17,
+  transaction: tx1,
+  block: block1,
 }
 
 let eventBatch: array<Types.event> = [
@@ -179,17 +150,17 @@ let eventBatch: array<Types.event> = [
 let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem => {
   switch e {
   | Gravatar_NewGravatar(el) => {
-      timestamp: el.blockTimestamp,
+      timestamp: el.block.timestamp,
       chain: MockConfig.chain1337,
-      blockNumber: el.blockNumber,
+      blockNumber: el.block.number,
       logIndex: el.logIndex,
       eventMod: module(Types.Gravatar.NewGravatar),
       event: e,
     }
   | Gravatar_UpdatedGravatar(el) => {
-      timestamp: el.blockTimestamp,
+      timestamp: el.block.timestamp,
       chain: MockConfig.chain1337,
-      blockNumber: el.blockNumber,
+      blockNumber: el.block.number,
       logIndex: el.logIndex,
       eventMod: module(Types.Gravatar.UpdatedGravatar),
       event: e,

@@ -7,10 +7,9 @@ type hyperSyncPage<'item> = {
 }
 
 type logsQueryPageItem = {
-  log: Ethers.log,
-  blockTimestamp: int,
-  txOrigin: option<Ethers.ethAddress>,
-  txTo: option<Ethers.ethAddress>,
+  log: Types.Log.t,
+  block: Types.Block.t,
+  transaction: Types.Transaction.t,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>
@@ -101,86 +100,52 @@ module LogsQuery = {
     toBlockExclusive: toBlockInclusive + 1,
     logs: addressesWithTopics,
     fieldSelection: {
-      log: [
-        Address,
-        BlockHash,
-        BlockNumber,
-        Data,
-        LogIndex,
-        TransactionHash,
-        TransactionIndex,
-        Topic0,
-        Topic1,
-        Topic2,
-        Topic3,
-        Removed,
-      ],
-      block: [Number, Timestamp],
-      transaction: [From, To],
+      log: [Address, Data, LogIndex, Topic0, Topic1, Topic2, Topic3],
+      block: Types.Block.querySelection,
+      transaction: Types.Transaction.querySelection,
     },
   }
 
+  let getMissingFields = (fieldNames, returnedObj, ~prefix) => {
+    fieldNames->Belt.Array.keepMap(fieldName => {
+      returnedObj
+      ->(Utils.magic: 'a => Js.Dict.t<unknown>)
+      ->Js.Dict.get(fieldName)
+      ->Utils.optionMapNone(prefix ++ "." ++ fieldName)
+    })
+  }
+
   //Note this function can throw an error
-  let checkFields = (event: HyperSyncClient.ResponseTypes.event): logsQueryPageItem => {
-    let log = event.log
+  let convertEvent = (event: HyperSyncClient.ResponseTypes.event): logsQueryPageItem => {
+    let missingParams =
+      [
+        getMissingFields(Types.Log.fieldNames, event.log, ~prefix="log"),
+        getMissingFields(Types.Block.fieldNames, event.block, ~prefix="block"),
+        getMissingFields(Types.Transaction.fieldNames, event.transaction, ~prefix="transaction"),
+      ]->Belt.Array.concatMany
 
-    switch event {
-    | {
-        block: {timestamp: blockTimestamp},
-        log: {
-          address,
-          blockHash,
-          blockNumber,
-          data,
-          index,
-          transactionHash,
-          transactionIndex,
-          topics,
-        },
-      } =>
-      let topics = topics->Belt.Array.keepMap(Js.Nullable.toOption)
-
-      let log: Ethers.log = {
-        data,
-        blockNumber,
-        blockHash,
-        address: Ethers.getAddressFromStringUnsafe(address),
-        transactionHash,
-        transactionIndex,
-        logIndex: index,
-        topics,
-        removed: log.removed,
-      }
-
-      let txOrigin =
-        event.transaction
-        ->Belt.Option.flatMap(b => b.from)
-        ->Belt.Option.flatMap(Ethers.getAddressFromString)
-
-      let txTo =
-        event.transaction
-        ->Belt.Option.flatMap(b => b.to)
-        ->Belt.Option.flatMap(Ethers.getAddressFromString)
-
-      let pageItem: logsQueryPageItem = {log, blockTimestamp, txOrigin, txTo}
-      pageItem
-    | _ =>
-      let missingParams =
-        [
-          event.block->Belt.Option.flatMap(b => b.timestamp)->Utils.optionMapNone("log.timestamp"),
-          log.address->Utils.optionMapNone("log.address"),
-          log.blockHash->Utils.optionMapNone("log.blockHash-"),
-          log.blockNumber->Utils.optionMapNone("log.blockNumber"),
-          log.data->Utils.optionMapNone("log.data"),
-          log.index->Utils.optionMapNone("log.index"),
-          log.transactionHash->Utils.optionMapNone("log.transactionHash"),
-          log.transactionIndex->Utils.optionMapNone("log.transactionIndex"),
-        ]->Belt.Array.keepMap(v => v)
-
+    if missingParams->Belt.Array.length > 0 {
       UnexpectedMissingParamsExn({
         queryName: "queryLogsPage HyperSync",
         missingParams,
       })->raise
+    }
+
+    //Topics can be nullable and still need to be filtered
+    //Address is not yet checksummed (TODO this should be done in the client)
+    let logUnsanitized: Types.Log.t = event.log->Utils.magic
+    let topics = event.log.topics->Belt.Option.getUnsafe->Belt.Array.keepMap(Js.Nullable.toOption)
+    let address = event.log.address->Belt.Option.getUnsafe->Viem.getAddressUnsafe
+    let log = {
+      ...logUnsanitized,
+      topics,
+      address,
+    }
+
+    {
+      log,
+      block: event.block->Utils.magic,
+      transaction: event.transaction->Utils.magic,
     }
   }
 
@@ -189,7 +154,7 @@ module LogsQuery = {
   > => {
     try {
       let {nextBlock, archiveHeight, rollbackGuard} = res
-      let items = res.events->Belt.Array.map(event => event->checkFields)
+      let items = res.events->Belt.Array.map(event => event->convertEvent)
       let page: logsQueryPage = {
         items,
         nextBlock,
@@ -344,7 +309,9 @@ module BlockData = {
 
     // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
     if res->Belt.Result.mapWithDefault(0, res => res.nextBlock) <= blockNumber {
-      logger->Logging.childWarn(`Block #${blockNumber->Belt.Int.toString} not found in hypersync. Retrying query in 100ms.`)
+      logger->Logging.childWarn(
+        `Block #${blockNumber->Belt.Int.toString} not found in hypersync. Retrying query in 100ms.`,
+      )
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
       await queryBlockData(~serverUrl, ~blockNumber)
     } else {

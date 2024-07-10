@@ -24,18 +24,21 @@ module type S = {
   module Types: {
     type eventName = Enums.EventType.t
     type event
+    module Transaction: {
+      type t
+    }
+
+    module Block: {
+      type t
+    }
+
     type eventLog<'a> = {
       params: 'a,
       chainId: int,
-      txOrigin: option<Ethers.ethAddress>,
-      txTo: option<Ethers.ethAddress>,
-      blockNumber: int,
-      blockTimestamp: int,
-      blockHash: string,
       srcAddress: Ethers.ethAddress,
-      transactionHash: string,
-      transactionIndex: int,
       logIndex: int,
+      transaction: Transaction.t,
+      block: Block.t,
     }
 
     module type Event = {

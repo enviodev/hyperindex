@@ -26,9 +26,9 @@ describe("Sql transaction tests", () => {
     };
 
     const transaction = sql.begin((sql) => [
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow)}`,
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow2)}`,
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow3)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow as any)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow2 as any)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow3 as any)}`,
     ]);
 
     await expect(transaction).to.eventually.be.fulfilled;
@@ -48,9 +48,9 @@ describe("Sql transaction tests", () => {
       event_type: "INVALID_EVENT_TYPE",
     };
     const transaction = sql.begin((sql) => [
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow)}`,
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow2)}`,
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow3)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow as any)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow2 as any)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow3 as any)}`,
     ]);
 
     await expect(transaction).to.eventually.be.rejected;

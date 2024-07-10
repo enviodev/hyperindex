@@ -20,31 +20,31 @@ Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
   },
   handler: async ({event, context, loaderReturn}) => {
     /// Some examples of user logging
-    context.log.debug(`We are processing the event, ${event.blockHash} (debug)`)
-    context.log.info(`We are processing the event, ${event.blockHash} (info)`)
-    context.log.warn(`We are processing the event, ${event.blockHash} (warn)`)
-    context.log.error(`We are processing the event, ${event.blockHash} (error)`)
+    context.log.debug(`We are processing the event, ${event.block.hash} (debug)`)
+    context.log.info(`We are processing the event, ${event.block.hash} (info)`)
+    context.log.warn(`We are processing the event, ${event.block.hash} (warn)`)
+    context.log.error(`We are processing the event, ${event.block.hash} (error)`)
 
     // Some examples of user logging not using strings
     context.log->Logs.debug({
       "msg": "We are processing the event",
       "type": "debug",
-      "data": {"blockHash": event.blockHash},
+      "data": {"blockHash": event.block.hash},
     })
     context.log->Logs.info({
       "msg": "We are processing the event",
       "type": "info",
-      "data": {"blockHash": event.blockHash},
+      "data": {"blockHash": event.block.hash},
     })
     context.log->Logs.warn({
       "msg": "We are processing the event",
       "type": "warn",
-      "data": {"blockHash": event.blockHash},
+      "data": {"blockHash": event.block.hash},
     })
     context.log->Logs.error({
       "msg": "We are processing the event",
       "type": "error",
-      "data": {"blockHash": event.blockHash},
+      "data": {"blockHash": event.block.hash},
     })
     exception ExampleException(string)
     context.log->Logs.errorWithExn(
@@ -52,7 +52,7 @@ Handlers.Gravatar.UpdatedGravatar.handlerWithLoader({
       {
         "msg": "We are processing the event",
         "type": "error",
-        "data": {"blockHash": event.blockHash},
+        "data": {"blockHash": event.block.hash},
       },
     )
 

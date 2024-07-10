@@ -55,11 +55,13 @@ pub struct NetworkContract<T> {
 }
 
 pub mod evm {
-    use std::fmt::Display;
-
     use super::{GlobalContract, NetworkContract, NetworkId};
+    use crate::config_parsing::entity_parsing::RescriptType;
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
+    use std::fmt::Display;
+    use strum::Display;
+    use subenum::subenum;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
     #[schemars(
@@ -80,16 +82,20 @@ pub mod evm {
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains."
+            description = "Global contract definitions that must contain all definitions except \
+                           addresses. You can share a single handler/abi/event definitions for \
+                           contracts across multiple chains."
         )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed on."
+            description = "Configuration of the blockchain networks that the project is deployed \
+                           on."
         )]
         pub networks: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "A flag to indicate if the indexer should use a single queue for all chains or a queue per chain (default: false)"
+            description = "A flag to indicate if the indexer should use a single queue for all \
+                           chains or a queue per chain (default: false)"
         )]
         pub unordered_multichain_mode: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,14 +105,23 @@ pub mod evm {
         pub event_decoder: Option<EventDecoder>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "A flag to indicate if the indexer should rollback to the last known valid block on a reorg (default: false)"
+            description = "A flag to indicate if the indexer should rollback to the last known \
+                           valid block on a reorg (default: false)"
         )]
         pub rollback_on_reorg: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "A flag to indicate if the indexer should save the full history of events. This is useful for debugging but will increase the size of the database (default: false)"
+            description = "A flag to indicate if the indexer should save the full history of \
+                           events. This is useful for debugging but will increase the size of the \
+                           database (default: false)"
         )]
         pub save_full_history: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "An object representing additional fields to add to the event passed to \
+                           handlers."
+        )]
+        pub field_selection: Option<FieldSelection>,
     }
 
     impl Display for HumanConfig {
@@ -119,27 +134,153 @@ pub mod evm {
         }
     }
 
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct FieldSelection {
+        #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
+        pub transaction_fields: Option<Vec<TransactionField>>,
+        #[schemars(description = "Fields of a block to add to the event passed to handlers")]
+        pub block_fields: Option<Vec<BlockField>>,
+    }
+
+    #[subenum(RpcTransactionField)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[serde(rename_all = "snake_case", deny_unknown_fields)]
+    pub enum TransactionField {
+        #[subenum(RpcTransactionField)]
+        TransactionIndex,
+        #[subenum(RpcTransactionField)]
+        Hash,
+        From,
+        To,
+        Gas,
+        GasPrice,
+        MaxPriorityFeePerGas,
+        MaxFeePerGas,
+        CumulativeGasUsed,
+        EffectiveGasPrice,
+        GasUsed,
+        Input,
+        Nonce,
+        Value,
+        V,
+        R,
+        S,
+        ContractAddress,
+        LogsBloom,
+        Type,
+        Root,
+        Status,
+        Sighash,
+    }
+
+    impl From<TransactionField> for RescriptType {
+        fn from(value: TransactionField) -> RescriptType {
+            match value {
+                TransactionField::TransactionIndex => RescriptType::Int,
+                TransactionField::Hash => RescriptType::String,
+                TransactionField::From => RescriptType::Address,
+                TransactionField::To => RescriptType::Address,
+                TransactionField::Gas => RescriptType::BigInt,
+                TransactionField::GasPrice => RescriptType::BigInt,
+                TransactionField::MaxPriorityFeePerGas => RescriptType::BigInt,
+                TransactionField::MaxFeePerGas => RescriptType::BigInt,
+                TransactionField::CumulativeGasUsed => RescriptType::BigInt,
+                TransactionField::EffectiveGasPrice => RescriptType::BigInt,
+                TransactionField::GasUsed => RescriptType::BigInt,
+                TransactionField::Input => RescriptType::String,
+                TransactionField::Nonce => RescriptType::Int,
+                TransactionField::Value => RescriptType::BigInt,
+                TransactionField::V => RescriptType::String,
+                TransactionField::R => RescriptType::String,
+                TransactionField::S => RescriptType::String,
+                TransactionField::ContractAddress => RescriptType::Address,
+                TransactionField::LogsBloom => RescriptType::String,
+                TransactionField::Type => RescriptType::Int,
+                TransactionField::Root => RescriptType::String,
+                TransactionField::Status => RescriptType::Int,
+                TransactionField::Sighash => RescriptType::String,
+            }
+        }
+    }
+
+    #[subenum(RpcBlockField)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[serde(rename_all = "snake_case", deny_unknown_fields)]
+    pub enum BlockField {
+        #[subenum(RpcBlockField)]
+        ParentHash,
+        #[subenum(RpcBlockField)]
+        Nonce,
+        Sha3Uncles,
+        LogsBloom,
+        TransactionsRoot,
+        #[subenum(RpcBlockField)]
+        StateRoot,
+        ReceiptsRoot,
+        #[subenum(RpcBlockField)]
+        Miner,
+        #[subenum(RpcBlockField)]
+        Difficulty,
+        TotalDifficulty,
+        #[subenum(RpcBlockField)]
+        ExtraData,
+        Size,
+        #[subenum(RpcBlockField)]
+        GasLimit,
+        #[subenum(RpcBlockField)]
+        GasUsed,
+        Uncles,
+        #[subenum(RpcBlockField)]
+        BaseFeePerGas,
+    }
+
+    impl From<BlockField> for RescriptType {
+        fn from(value: BlockField) -> RescriptType {
+            match value {
+                BlockField::ParentHash => RescriptType::String,
+                BlockField::Nonce => RescriptType::Int,
+                BlockField::Sha3Uncles => RescriptType::String,
+                BlockField::LogsBloom => RescriptType::String,
+                BlockField::TransactionsRoot => RescriptType::String,
+                BlockField::StateRoot => RescriptType::String,
+                BlockField::ReceiptsRoot => RescriptType::String,
+                BlockField::Miner => RescriptType::Address,
+                BlockField::Difficulty => RescriptType::BigInt,
+                BlockField::TotalDifficulty => RescriptType::BigInt,
+                BlockField::ExtraData => RescriptType::String,
+                BlockField::Size => RescriptType::BigInt,
+                BlockField::GasLimit => RescriptType::BigInt,
+                BlockField::GasUsed => RescriptType::BigInt,
+                BlockField::Uncles => RescriptType::String,
+                BlockField::BaseFeePerGas => RescriptType::BigInt,
+            }
+        }
+    }
+
     // Workaround for https://github.com/serde-rs/serde/issues/2231
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-    #[serde(rename_all = "lowercase")]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
     pub enum EcosystemTag {
         Evm,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
-    #[serde(rename_all = "kebab-case")]
+    #[serde(rename_all = "kebab-case", deny_unknown_fields)]
     pub enum EventDecoder {
         Viem,
         HypersyncClient,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
         #[serde(alias = "endpoint_url")]
         pub url: String,
     }
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct SyncConfigUnstable {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub initial_block_interval: Option<u32>,
@@ -156,6 +297,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
     pub struct RpcConfig {
         pub url: String,
@@ -164,6 +306,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Network {
         pub id: NetworkId,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,6 +322,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct ContractConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub abi_file_path: Option<String>,
@@ -187,7 +331,7 @@ pub mod evm {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(rename_all = "camelCase")]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
         pub event: String,
     }
@@ -244,11 +388,14 @@ pub mod fuel {
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains."
+            description = "Global contract definitions that must contain all definitions except \
+                           addresses. You can share a single handler/abi/event definitions for \
+                           contracts across multiple chains."
         )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
         #[schemars(
-            description = "Configuration of the blockchain networks that the project is deployed on."
+            description = "Configuration of the blockchain networks that the project is deployed \
+                           on."
         )]
         pub networks: Vec<Network>,
     }
@@ -265,12 +412,13 @@ pub mod fuel {
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231
     #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-    #[serde(rename_all = "lowercase")]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
     pub enum EcosystemTag {
         Fuel,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Network {
         pub id: NetworkId,
         pub start_block: i32,
@@ -280,6 +428,7 @@ pub mod fuel {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct ContractConfig {
         pub abi_file_path: String,
         pub handler: String,
@@ -287,7 +436,7 @@ pub mod fuel {
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-    #[serde(rename_all = "camelCase")]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]

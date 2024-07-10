@@ -6,9 +6,11 @@ use super::{
     },
 };
 use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
     hbs_templating::codegen_templates::DerivedFieldTemplate,
-    utils::unique_hashmap,
+    utils::{
+        text::{Capitalize, CapitalizedOptions},
+        unique_hashmap,
+    },
 };
 use anyhow::{anyhow, Context};
 use ethers::abi::ethabi::ParamType as EthAbiParamType;
@@ -731,7 +733,7 @@ impl MultiFieldIndex {
             if !fields.contains_key(field_name) && !allowed_names.contains(field_name) {
                 return Err(anyhow!(
                     "Index error: Field '{}' does not exist in entity, please remove it from the \
-                 `@index` directive.",
+                     `@index` directive.",
                     field_name,
                 ));
             }
@@ -931,10 +933,9 @@ impl RescriptType {
         match self {
             RescriptType::Int | RescriptType::Float => "0".to_string(),
             RescriptType::BigInt => "0n".to_string(),
-            RescriptType::BigDecimal => {
-                "// default value not required since BigDecimal doesn't exist on contracts for contract import"
-                    .to_string()
-            }
+            RescriptType::BigDecimal => "// default value not required since BigDecimal doesn't \
+                                         exist on contracts for contract import"
+                .to_string(),
             RescriptType::Address => "Addresses.defaultAddress".to_string(),
             RescriptType::String => "\"foo\"".to_string(),
             RescriptType::ID => "\"my_id\"".to_string(),

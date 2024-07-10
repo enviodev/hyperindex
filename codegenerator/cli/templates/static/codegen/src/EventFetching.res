@@ -79,6 +79,40 @@ type eventBatch = {
 }
 type eventBatchPromise = promise<eventBatch>
 
+//We aren't fetching transaction and field names don't line up with
+//the two available fields on a log. So create this function with runtime
+//exception that should be validated away in codegen
+type txFieldVal
+exception InvalidRpcTransactionField(string)
+let getTxFieldFromEthersLog = (log: Ethers.log, txField: string, ~logger): txFieldVal =>
+  switch txField {
+  | "hash" => log.transactionHash->Utils.magic
+  | "transactionIndex" => log.transactionIndex->Utils.magic
+  | field =>
+    InvalidRpcTransactionField(field)->ErrorHandling.mkLogAndRaise(
+      ~logger,
+      ~msg="An invalid transaction field was requested for RPC response",
+    )
+  }
+
+let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
+  Types.Transaction.fieldNames
+  ->Belt.Array.map(name => (name, getTxFieldFromEthersLog(log, name, ~logger)))
+  ->Js.Dict.fromArray
+  ->(Utils.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)
+}
+
+//Types.blockFields is a subset of  Ethers.JsonRpcProvider.block so we can safely cast
+let blockFieldsFromBlock: Ethers.JsonRpcProvider.block => Types.Block.t = Utils.magic
+
+//Note ethers log is not a superset of log since logIndex is actually "index" with an @as alias
+let ethersLogToLog: Ethers.log => Types.Log.t = ({address, data, topics, logIndex}) => {
+  address,
+  data,
+  topics,
+  logIndex,
+}
+
 let convertLogs = (
   logs: array<Ethers.log>,
   ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
@@ -92,14 +126,13 @@ let convertLogs = (
   })
 
   logs->Belt.Array.map(async log => {
-    let block = await blockLoader->LazyLoader.get(log.blockNumber)
+    let block = (await blockLoader->LazyLoader.get(log.blockNumber))->blockFieldsFromBlock
     let (event, eventMod) = switch Converters.parseEvent(
-      ~log,
-      ~blockTimestamp=block.timestamp,
+      ~log=log->ethersLogToLog,
+      ~block,
       ~contractInterfaceManager,
       ~chainId=chain->ChainMap.Chain.toChainId,
-      ~txOrigin=None,
-      ~txTo=None,
+      ~transaction=log->transactionFieldsFromLog(~logger),
     ) {
       | Error(exn) =>
         logger->Logging.childErrorWithExn(exn, "Failed to parse event from RPC. Double c")

@@ -77,10 +77,10 @@ pub mod evm {
                         global_contract,
                     )
                     .context(format!(
-                    "Unexpected, failed to add global contract {}. Contract should have unique \
-                     names",
-                    selected_contract.name
-                ))?;
+                        "Unexpected, failed to add global contract {}. Contract should have \
+                         unique names",
+                        selected_contract.name
+                    ))?;
                     None
                 } else {
                     //Return some for local contract config
@@ -151,6 +151,7 @@ pub mod evm {
                 event_decoder: None,
                 rollback_on_reorg: None,
                 save_full_history: None,
+                field_selection: None,
             })
         }
     }
@@ -261,6 +262,7 @@ pub mod fuel {
                 rollback_on_reorg: None,
                 save_full_history: None,
                 contracts: None,
+                field_selection: None,
                 networks: vec![human_config::evm::Network {
                     id: 1,
                     start_block: 0,

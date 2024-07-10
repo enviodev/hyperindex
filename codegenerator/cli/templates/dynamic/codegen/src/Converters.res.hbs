@@ -23,11 +23,10 @@ module {{contract.name.capitalized}} = {
     {{/unless}}
     let convertLogViem = (
       decodedEvent: Viem.decodedEvent<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs>,
-      ~log: Ethers.log,
-      ~blockTimestamp: int,
+      ~log: Types.Log.t,
+      ~block,
+      ~transaction,
       ~chainId: int,
-      ~txOrigin: option<Ethers.ethAddress>,
-      ~txTo: option<Ethers.ethAddress>,
     ) => {
       let params: Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs = 
       {{#if event.params}}
@@ -43,14 +42,9 @@ module {{contract.name.capitalized}} = {
       let eventLog: Types.eventLog<Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.eventArgs> = {
         params,
         chainId,
-        txOrigin,
-        txTo,
-        blockNumber: log.blockNumber,
-        blockTimestamp,
-        blockHash: log.blockHash,
+        transaction,
+        block,
         srcAddress: log.address,
-        transactionHash: log.transactionHash,
-        transactionIndex: log.transactionIndex,
         logIndex: log.logIndex,
       }
 
@@ -85,33 +79,26 @@ exception UnregisteredContract(Ethers.ethAddress)
 
 let makeEventLog = (
   params: 'args,
-  ~log: Ethers.log,
-  ~blockTimestamp: int,
+  ~log: Types.Log.t,
+  ~transaction,
+  ~block,
   ~chainId: int,
-  ~txOrigin: option<Ethers.ethAddress>,
-  ~txTo: option<Ethers.ethAddress>,
 ): Types.eventLog<'args> => {
   chainId,
   params,
-  txOrigin,
-  txTo,
-  blockNumber: log.blockNumber,
-  blockTimestamp,
-  blockHash: log.blockHash,
+  transaction,
+  block,
   srcAddress: log.address,
-  transactionHash: log.transactionHash,
-  transactionIndex: log.transactionIndex,
   logIndex: log.logIndex,
 }
 
 let convertDecodedEvent = (
   event: HyperSyncClient.Decoder.decodedEvent,
   ~contractInterfaceManager,
-  ~log: Ethers.log,
-  ~blockTimestamp,
+  ~log: Types.Log.t,
+  ~block,
   ~chainId,
-  ~txOrigin: option<Ethers.ethAddress>,
-  ~txTo: option<Ethers.ethAddress>,
+  ~transaction,
 ): result<(Types.event, module(Types.Event)), _> => {
   switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
     ~contractAddress=log.address,
@@ -126,20 +113,23 @@ let convertDecodedEvent = (
         | {{event.event_type.full}} =>
             event
             ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertDecodedEventParams
-            ->makeEventLog(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
+            ->makeEventLog(~log, ~transaction, ~block, ~chainId)
             ->Types.{{contract.name.capitalized}}_{{event.name.capitalized}}
       {{/each}}
-     {{/each}}
+      {{/each}}
     }
     Ok((event, eventMod))
   }
 }
 
-let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~txOrigin, ~txTo): Belt.Result.t<
-  (Types.event, module(Types.Event)),
-  _,
-> => {
-  let decodedEventResult = contractInterfaceManager->ContractInterfaceManager.parseLogViem(~log)
+let parseEvent = (
+  ~log: Types.Log.t,
+  ~block,
+  ~contractInterfaceManager,
+  ~chainId,
+  ~transaction,
+): result<(Types.event, module(Types.Event)), _> => {
+ let decodedEventResult = contractInterfaceManager->ContractInterfaceManager.parseLogViem(~log)
   switch decodedEventResult {
   | Error(e) =>
     switch e {
@@ -161,7 +151,7 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
         | {{event.event_type.full}} =>
           decodedEvent
           ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertViemDecodedEvent
-          ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertLogViem(~log, ~blockTimestamp, ~chainId, ~txOrigin, ~txTo)
+          ->{{contract.name.capitalized}}.{{event.name.capitalized}}.convertLogViem(~log, ~transaction, ~block, ~chainId)
       {{/each}}
       {{/each}}
       }
@@ -170,29 +160,40 @@ let parseEvent = (~log, ~blockTimestamp, ~contractInterfaceManager, ~chainId, ~t
   }
 }
 
+let blockFromRawEvent = (
+  _rawEvent: TablesStatic.RawEvents.t,
+  _selectableBlockFields: Types.Block.selectableFields,
+): Types.Block.t =>
+  %raw(`
+  {
+    number: _rawEvent.block_number,
+    timestamp: _rawEvent.block_timestamp,
+    hash: _rawEvent.block_hash,
+    ..._selectableBlockFields
+  }
+`)
+
 let decodeRawEventWith = (
   type eventArgs,
   rawEvent: TablesStatic.RawEvents.t,
   ~eventMod: module(Types.Event),
   ~eventAccessor: Types.eventLog<eventArgs> => Types.event,
   ~chain,
-  ~txOrigin: option<Ethers.ethAddress>,
-  ~txTo: option<Ethers.ethAddress>,
 ): result<Types.eventBatchQueueItem, S.error> => {
   let module(Event) = eventMod->(Utils.magic: module(Types.Event) => module(Types.Event with type eventArgs = eventArgs))
-  rawEvent.params
-  ->S.parseJsonStringWith(Event.eventArgsSchema)
-  ->Belt.Result.map(params => {
+  let parsedParams = rawEvent.params->S.parseWith(Event.eventArgsSchema)
+  let parsedTransactionFields = rawEvent.transactionFields->S.parseWith(Types.Transaction.schema)
+  let parsedSelectableBlockFields = rawEvent.blockFields->S.parseWith(Types.Block.schema)
+
+  switch (parsedParams, parsedTransactionFields, parsedSelectableBlockFields) {
+  | (Ok(params), Ok(transaction), Ok(selectableBlockFields)) =>
+    let block = rawEvent->blockFromRawEvent(selectableBlockFields)
+
     let event = {
       chainId: rawEvent.chainId,
-      txOrigin,
-      txTo,
-      blockNumber: rawEvent.blockNumber,
-      blockTimestamp: rawEvent.blockTimestamp,
-      blockHash: rawEvent.blockHash,
+      transaction,
+      block,
       srcAddress: rawEvent.srcAddress,
-      transactionHash: rawEvent.transactionHash,
-      transactionIndex: rawEvent.transactionIndex,
       logIndex: rawEvent.logIndex,
       params,
     }->eventAccessor
@@ -206,17 +207,15 @@ let decodeRawEventWith = (
       logIndex: rawEvent.logIndex,
     }
 
-    queueItem
-  })
+    Ok(queueItem)
+  | (Error(err), _, _) | (_, Error(err), _) | (_, _, Error(err)) => Error(err)
+  }
 }
 
-
-let parseRawEvent = (
-  rawEvent: TablesStatic.RawEvents.t,
-  ~chain,
-  ~txOrigin: option<Ethers.ethAddress>,
-  ~txTo: option<Ethers.ethAddress>,
-): result<Types.eventBatchQueueItem, S.error> => {
+let parseRawEvent = (rawEvent: TablesStatic.RawEvents.t, ~chain): result<
+  Types.eventBatchQueueItem,
+  S.error,
+> => {
   switch rawEvent.eventType {
   {{#each codegen_contracts as |contract|}}
   {{#each contract.codegen_events as |event|}}
@@ -225,8 +224,6 @@ let parseRawEvent = (
         ~eventMod=module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
         ~eventAccessor=event => Types.{{contract.name.capitalized}}_{{event.name.capitalized}}(event),
         ~chain,
-        ~txOrigin,
-        ~txTo,
       )
   {{/each}}
   {{/each}}

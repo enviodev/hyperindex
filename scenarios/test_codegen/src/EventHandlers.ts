@@ -9,6 +9,7 @@ import {
 const zeroAddress = "0x0000000000000000000000000000000000000000";
 
 NftFactory.SimpleNftCreated.contractRegister(({ event, context }) => {
+  console.log(event);
   context.addSimpleNft(event.params.contractAddress);
 });
 

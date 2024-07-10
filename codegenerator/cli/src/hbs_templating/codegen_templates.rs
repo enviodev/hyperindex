@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
+use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
         event_parsing::abi_to_rescript_type,
@@ -18,6 +17,7 @@ use crate::{
         ParsedProjectPaths,
     },
     template_dirs::TemplateDirs,
+    utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{Event, EventExt};
@@ -578,6 +578,60 @@ impl NetworkConfigTemplate {
 }
 
 #[derive(Serialize)]
+struct FieldSelection {
+    transaction_fields: Vec<SelectableField>,
+    block_fields: Vec<SelectableField>,
+}
+
+impl FieldSelection {
+    fn new(transaction_fields: Vec<SelectableField>, block_fields: Vec<SelectableField>) -> Self {
+        Self {
+            transaction_fields,
+            block_fields,
+        }
+    }
+
+    fn from_config_field_selection(cfg: &system_config::FieldSelection) -> Self {
+        Self::new(
+            cfg.transaction_fields
+                .iter()
+                .cloned()
+                .map(|field| SelectableField::from(field))
+                .collect(),
+            cfg.block_fields
+                .iter()
+                .cloned()
+                .map(|field| SelectableField::from(field))
+                .collect(),
+        )
+    }
+}
+
+#[derive(Serialize)]
+struct SelectableField {
+    name: CaseOptions,
+    res_type: RescriptType,
+    res_schema_code: String,
+    default_value_rescript: String,
+}
+
+impl SelectableField {
+    fn from<T>(value: T) -> Self
+    where
+        T: Display + Into<RescriptType>,
+    {
+        let name = value.to_string().into();
+        let res_type: RescriptType = value.into();
+        Self {
+            name,
+            res_schema_code: res_type.to_rescript_schema(),
+            default_value_rescript: res_type.get_default_value_rescript(),
+            res_type,
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
@@ -593,6 +647,7 @@ pub struct ProjectTemplate {
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     has_multiple_events: bool,
+    field_selection: FieldSelection,
 }
 
 impl ProjectTemplate {
@@ -675,6 +730,8 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to diff generated to root path")?;
 
+        let field_selection = FieldSelection::from_config_field_selection(&cfg.field_selection);
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
@@ -690,6 +747,7 @@ impl ProjectTemplate {
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             has_multiple_events,
+            field_selection,
         })
     }
 }
@@ -698,13 +756,13 @@ impl ProjectTemplate {
 mod test {
     use super::*;
     use crate::{
-        capitalization::Capitalize,
         config_parsing::{
             entity_parsing::RescriptType,
             human_config,
             system_config::{RpcConfig, SystemConfig},
         },
         project_paths::ParsedProjectPaths,
+        utils::text::Capitalize,
     };
     use pretty_assertions::assert_eq;
 

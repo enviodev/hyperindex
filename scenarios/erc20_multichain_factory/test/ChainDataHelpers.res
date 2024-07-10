@@ -7,13 +7,32 @@ let getDefaultAddress = (chain, contractName) => {
   defaultAddress
 }
 
+open Enums.EventType
+
+let gAS_USED_DEFAULT = BigInt.zero
+let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash): Types.Block.t => {
+  number: blockNumber,
+  hash: blockHash,
+  timestamp: blockTimestamp,
+  gasUsed: gAS_USED_DEFAULT,
+}
+let makeTransaction = (~transactionIndex, ~transactionHash): Types.Transaction.t => {
+  transactionIndex,
+  hash: transactionHash,
+}
 module ERC20 = {
   let contractName = "ERC20"
   let getDefaultAddress = getDefaultAddress(_, contractName)
   module Transfer = {
     let accessor = v => Types.ERC20_Transfer(v)
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~eventMod=module(Types.ERC20.Transfer), ...)
+      MockChainData.makeEventConstructor(
+        ~accessor,
+        ~eventMod=module(Types.ERC20.Transfer)
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
@@ -28,7 +47,13 @@ module ERC20Factory = {
     let accessor = v => Types.ERC20Factory_TokenCreated(v)
 
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~eventMod=module(Types.ERC20Factory.TokenCreated), ...)
+      MockChainData.makeEventConstructor(
+        ~accessor,
+        ~eventMod=module(Types.ERC20Factory.TokenCreated)
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
@@ -37,7 +62,13 @@ module ERC20Factory = {
     let accessor = v => Types.ERC20Factory_DeleteUser(v)
 
     let mkEventConstrWithParamsAndAddress =
-      MockChainData.makeEventConstructor(~accessor, ~eventMod=module(Types.ERC20Factory.DeleteUser), ...)
+      MockChainData.makeEventConstructor(
+        ~accessor,
+        ~eventMod=module(Types.ERC20Factory.DeleteUser)
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)

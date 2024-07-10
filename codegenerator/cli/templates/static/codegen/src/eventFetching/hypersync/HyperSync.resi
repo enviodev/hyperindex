@@ -7,10 +7,9 @@ type hyperSyncPage<'item> = {
 }
 
 type logsQueryPageItem = {
-  log: Ethers.log,
-  blockTimestamp: int,
-  txOrigin: option<Ethers.ethAddress>,
-  txTo: option<Ethers.ethAddress>,
+  log: Types.Log.t,
+  block: Types.Block.t,
+  transaction: Types.Transaction.t,
 }
 
 type logsQueryPage = hyperSyncPage<logsQueryPageItem>

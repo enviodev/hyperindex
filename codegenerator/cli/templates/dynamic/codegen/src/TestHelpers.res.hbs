@@ -122,8 +122,8 @@ module EventFunctions = {
             eventMod,
             chain,
             logIndex: event.logIndex,
-            timestamp: event.blockTimestamp,
-            blockNumber: event.blockNumber,
+            timestamp: event.block.timestamp,
+            blockNumber: event.block.number,
           },
           ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
             false,
@@ -164,21 +164,53 @@ module EventFunctions = {
     }
   }
 
-  /**
-  Optional params for all additional data related to an eventLog
-  */
+  module MockBlock = {
+    open Belt
+    type t = {
+      {{!-- Mandatory fields --}}
+      number?: int,
+      timestamp?: int,
+      hash?: string,
+      {{!-- Selectable fields --}}
+      {{#each field_selection.block_fields as | field |}}
+      {{field.name.camel}}?: {{field.res_type}},
+      {{/each}}
+    }
+
+    let toBlock = (mock: t): Types.Block.t => {
+      {{!-- Mandatory fields --}}
+      number: mock.number->Option.getWithDefault(0),
+      timestamp: mock.timestamp->Option.getWithDefault(0),
+      hash: mock.hash->Option.getWithDefault("foo"),
+      {{!-- Selectable fields --}}
+      {{#each field_selection.block_fields as | field |}}
+      {{field.name.camel}}: mock.{{field.name.camel}}->Option.getWithDefault({{field.default_value_rescript}}),
+      {{/each}}
+    }
+  }
+
+  module MockTransaction = {
+    open Belt
+    type t = {
+      {{#each field_selection.transaction_fields as | field |}}
+      {{field.name.camel}}?: {{field.res_type}},
+      {{/each}}
+    }
+
+    let toTransaction = (_mock: t): Types.Transaction.t => {
+      {{#each field_selection.transaction_fields as | field |}}
+      {{field.name.camel}}: _mock.{{field.name.camel}}->Option.getWithDefault({{field.default_value_rescript}}),
+      {{/each}}
+    }
+  }
+
   @genType
   type mockEventData = {
-    blockNumber?: int,
-    blockTimestamp?: int,
-    blockHash?: string,
     chainId?: int,
     srcAddress?: Ethers.ethAddress,
-    transactionHash?: string,
-    transactionIndex?: int,
-    txOrigin?: option<Ethers.ethAddress>,
-    txTo?: option<Ethers.ethAddress>,
     logIndex?: int,
+    block?: MockBlock.t,
+    transaction?: MockTransaction.t,
   }
 
   /**
@@ -188,31 +220,16 @@ module EventFunctions = {
     ~params: 'eventParams,
     ~mockEventData: option<mockEventData>,
   ): Types.eventLog<'eventParams> => {
-    let {
-      ?blockNumber,
-      ?blockTimestamp,
-      ?blockHash,
-      ?srcAddress,
-      ?chainId,
-      ?transactionHash,
-      ?transactionIndex,
-      ?logIndex,
-      ?txOrigin,
-      ?txTo,
-    } =
+    let {?block, ?transaction, ?srcAddress, ?chainId, ?logIndex} =
       mockEventData->Belt.Option.getWithDefault({})
-
+    let block = block->Belt.Option.getWithDefault({})->MockBlock.toBlock
+    let transaction = transaction->Belt.Option.getWithDefault({})->MockTransaction.toTransaction
     {
       params,
-      txOrigin: txOrigin->Belt.Option.flatMap(i => i),
-      txTo: txTo->Belt.Option.flatMap(i => i),
+      transaction,
       chainId: chainId->Belt.Option.getWithDefault(1),
-      blockNumber: blockNumber->Belt.Option.getWithDefault(0),
-      blockTimestamp: blockTimestamp->Belt.Option.getWithDefault(0),
-      blockHash: blockHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
+      block,
       srcAddress: srcAddress->Belt.Option.getWithDefault(Addresses.defaultAddress),
-      transactionHash: transactionHash->Belt.Option.getWithDefault(Ethers.Constants.zeroHash),
-      transactionIndex: transactionIndex->Belt.Option.getWithDefault(0),
       logIndex: logIndex->Belt.Option.getWithDefault(0),
     }
   }

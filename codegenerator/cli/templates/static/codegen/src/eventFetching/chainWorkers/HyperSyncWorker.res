@@ -203,15 +203,14 @@ let fetchBlockRange = async (
       //The optional block and timestamp of the last item returned by the query
       //(Optional in the case that there are no logs returned in the query)
       switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-      | Some({log: {blockNumber, blockHash}, blockTimestamp})
+      | Some({block}) if block.number == heighestBlockQueried =>
         //If the last log item in the current page is equal to the
         //heighest block acounted for in the query. Simply return this
         //value without making an extra query
-        if blockNumber == heighestBlockQueried =>
         {
-          ReorgDetection.blockNumber,
-          blockTimestamp,
-          blockHash,
+          ReorgDetection.blockNumber: block.number,
+          blockTimestamp: block.timestamp,
+          blockHash: block.hash,
         }->Promise.resolve
       //If it does not match it means that there were no matching logs in the last
       //block so we should fetch the block data
@@ -268,31 +267,30 @@ let fetchBlockRange = async (
       pageUnsafe.items
       ->Belt.Array.zip(parsedEvents)
       ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
-        let {blockTimestamp, log: {blockNumber, logIndex}} = item
+        let {block, transaction, log: {logIndex}} = item
         let chainId = chain->ChainMap.Chain.toChainId
         let (event, eventMod) = switch event
           ->Belt.Option.getExn
           ->Converters.convertDecodedEvent(
             ~contractInterfaceManager,
             ~log=item.log,
-            ~blockTimestamp,
+            ~block,
+            ~transaction,
             ~chainId,
-            ~txOrigin=item.txOrigin,
-            ~txTo=item.txTo,
           )
         {
         | Ok(v) => v
         | Error(exn) =>
           let logger = Logging.createChildFrom(
             ~logger,
-            ~params={"chainId": chainId, "blockNumber": blockNumber, "logIndex": logIndex},
+            ~params={"chainId": chainId, "blockNumber": block.number, "logIndex": logIndex},
           )
           exn->ErrorHandling.mkLogAndRaise(~msg="Failed to convert decoded event", ~logger)
         }
         {
-          timestamp: blockTimestamp,
+          timestamp: block.timestamp,
           chain,
-          blockNumber,
+          blockNumber: block.number,
           logIndex,
           event,
           eventMod,
@@ -301,22 +299,21 @@ let fetchBlockRange = async (
     } else {
       //Parse with viem -> slower than the HyperSyncClient
       pageUnsafe.items->Array.map(item => {
-        let {log: {blockNumber, logIndex}} = item
+        let {block, log: {logIndex}} = item
         let chainId = chain->ChainMap.Chain.toChainId
         switch Converters.parseEvent(
           ~log=item.log,
-          ~blockTimestamp=item.blockTimestamp,
+          ~transaction=item.transaction,
+          ~block=item.block,
           ~contractInterfaceManager,
           ~chainId,
-          ~txOrigin=item.txOrigin,
-          ~txTo=item.txTo,
         ) {
         | Ok((event, eventMod)) =>
           (
             {
-              timestamp: item.blockTimestamp,
+              timestamp: block.timestamp,
               chain,
-              blockNumber,
+              blockNumber: block.number,
               logIndex,
               event,
               eventMod,
@@ -326,7 +323,7 @@ let fetchBlockRange = async (
         | Error(exn) =>
           let params = {
             "chainId": chainId,
-            "blockNumber": blockNumber,
+            "blockNumber": block.number,
             "logIndex": logIndex,
           }
           let logger = Logging.createChildFrom(~logger, ~params)
