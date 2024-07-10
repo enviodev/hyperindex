@@ -158,7 +158,7 @@ let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem 
     }
   | Gravatar_UpdatedGravatar(el) => {
       timestamp: el.block.timestamp,
-      chain: eventBatchChain,
+      chain: MockConfig.chain1337,
       blockNumber: el.block.number,
       logIndex: el.logIndex,
       event: e,

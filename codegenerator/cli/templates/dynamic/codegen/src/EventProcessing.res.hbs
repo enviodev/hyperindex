@@ -94,7 +94,7 @@ let runEventContractRegister = (
   | exception exn =>
     exn
     ->ErrorHandling.make(
-      ~msg="Event pre loader failed, please fix the error to keep the indexer running smoothly",
+      ~msg="Event contractRegister failed, please fix the error to keep the indexer running smoothly",
       ~logger=contextEnv.logger,
     )
     ->Error

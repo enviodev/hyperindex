@@ -163,9 +163,9 @@ let blockFromRawEvent = (
 ): Types.Block.t =>
   %raw(`
   {
-    number: _rawEvent.blockNumber,
-    timestamp: _rawEvent.blockTimestamp,
-    hash: _rawEvent.blockHash,
+    number: _rawEvent.block_number,
+    timestamp: _rawEvent.block_timestamp,
+    hash: _rawEvent.block_hash,
     ..._selectableBlockFields
   }
 `)

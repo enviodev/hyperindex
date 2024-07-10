@@ -216,7 +216,7 @@ let getCombinedEthersFilter = (
 
 type parseError = ParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Ethers.ethAddress)
 
-let parseLogViem = (self: t, ~log: Ethers.log) => {
+let parseLogViem = (self: t, ~log: Types.Log.t) => {
   let abiOpt =
     self
     ->getInterfaceByAddress(~contractAddress=log.address)
