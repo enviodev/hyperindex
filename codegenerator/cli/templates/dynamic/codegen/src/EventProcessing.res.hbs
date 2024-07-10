@@ -80,14 +80,15 @@ let addToDynamicContractRegistrations = (
 let runEventContractRegister = (
   contractRegister: RegisteredEvents.args<_> => unit,
   ~event,
-  ~eventName,
   ~eventBatchQueueItem: Types.eventBatchQueueItem,
   ~logger,
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~inMemoryStore,
 ) => {
-  let {chain} = eventBatchQueueItem
+  let {chain, eventMod} = eventBatchQueueItem
+  let module(Event) = eventMod
+  let eventName = Event.eventName
   let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName)
 
   switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore)) {
@@ -338,18 +339,19 @@ let rec registerDynamicContracts = (
       )
       ->Ok
     } else {
-      let runEventContractRegister = (eventName, event) =>
-        switch registeredEvents
-        ->RegisteredEvents.get(eventName)
+      let {eventMod, event} = eventBatchQueueItem
+      let module(Event) = eventMod
+
+      switch registeredEvents
+        ->RegisteredEvents.get(Event.eventName)
         ->Option.flatMap(v => v.contractRegister) {
         | Some(handler) =>
           handler->runEventContractRegister(
-            ~event,
+            ~event=event->Types.eventToLog,
             ~logger,
             ~checkContractIsRegistered,
             ~eventBatchQueueItem,
             ~dynamicContractRegistrations,
-            ~eventName,
             ~inMemoryStore,
           )
         | None =>
@@ -359,15 +361,6 @@ let rec registerDynamicContracts = (
           )
           ->Ok
         }
-
-      open Enums.EventType
-      switch eventBatchQueueItem.event {
-      {{#each codegen_contracts as | contract |}}
-      {{#each contract.codegen_events as | event |}}
-      | {{event.event_type.full}}(event) => runEventContractRegister({{event.event_type.full}}, event)
-      {{/each}}
-      {{/each}}
-      }
     }
 
     switch dynamicContractRegistrationsResult {
@@ -399,25 +392,17 @@ let runLoaders = (
   runAsyncEnv(async () => {
     let loadLayer = LoadLayer.make()
 
-    let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, event}) => {
-      let load = (event, eventName) =>
-        registeredEvents
-        ->RegisteredEvents.get(eventName)
-        ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
-        ->Option.map(
-          handler => {
-            let contextEnv = ContextEnv.make(~chain, ~eventName, ~event, ~logger)
-            runEventLoader(~contextEnv, ~handler, ~loadLayer)
-          },
-        )
-
-      switch event {
-      {{#each codegen_contracts as | contract |}}
-      {{#each contract.codegen_events as | event |}}
-      | {{event.event_type.full}}(event) => event->load({{event.event_type.full}})
-      {{/each}}
-      {{/each}}
-      }
+    let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, eventMod, event}) => {
+      let module(Event) = eventMod
+      registeredEvents
+      ->RegisteredEvents.get(Event.eventName)
+      ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
+      ->Option.map(
+        handler => {
+          let contextEnv = ContextEnv.make(~chain, ~eventName=Event.eventName, ~event=event->Types.eventToLog, ~logger)
+          runEventLoader(~contextEnv, ~handler, ~loadLayer)
+        },
+      )
     })
 
     switch await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore) {
