@@ -187,6 +187,13 @@ type asyncGetters = {
 {{/each}}
 }
 
+let readEntity = (~entityMod) => id => Entities.batchRead(~entityMod)(DbFunctions.sql, [id])
+let asyncGetters: asyncGetters = {
+{{#each entities as | entity |}}
+ get{{entity.name.capitalized}}: readEntity(~entityMod=module(Entities.{{entity.name.capitalized}})),
+{{/each}}
+}
+
 let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~asyncGetters) => {
   let {entityIdsMap, event, logger} = context
 
@@ -216,7 +223,7 @@ let getLoaderArgs = (contextEnv, ~loadLayer) => {
   context: contextEnv->getLoaderContext(~loadLayer),
 }
 
-let getHandlerArgs = (contextEnv, ~asyncGetters, ~inMemoryStore, ~loaderReturn) => {
+let getHandlerArgs = (contextEnv, ~asyncGetters=asyncGetters, ~inMemoryStore, ~loaderReturn) => {
   RegisteredEvents.event: contextEnv.event,
   context: contextEnv->getHandlerContext(~asyncGetters, ~inMemoryStore),
   loaderReturn,

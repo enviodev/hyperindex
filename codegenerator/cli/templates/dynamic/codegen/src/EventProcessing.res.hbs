@@ -209,17 +209,10 @@ let updateEventSyncState = (
   )
 }
 
-let readEntity = (~entityMod) => id => Entities.batchRead(~entityMod)(DbFunctions.sql, [id])
-let asyncGetters: ContextEnv.asyncGetters = {
-{{#each entities as | entity |}}
- get{{entity.name.capitalized}}: readEntity(~entityMod=module(Entities.{{entity.name.capitalized}})),
-{{/each}}
-}
-
 let runEventHandler = (
   //Injection params for testing framework
   ~executeLoadLayer=LoadLayer.executeLoadLayer,
-  ~asyncGetters=asyncGetters,
+  ~asyncGetters=?,
   //Required params
   ~eventMod: module(Types.Event),
   ~handler,
@@ -252,7 +245,7 @@ let runEventHandler = (
     let loaderReturn = await loaderReturnUnawaited->propogateAsync
 
     switch await handler.handler(
-      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters),
+      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters?),
     ) {
     | exception exn =>
       exn
