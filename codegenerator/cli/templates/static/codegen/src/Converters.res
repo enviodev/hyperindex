@@ -7,14 +7,15 @@ let makeEventLog = (
   ~transaction,
   ~block,
   ~chainId: int,
-): Types.eventLog<Types.internalEventArgs> => {
-  chainId,
-  params,
-  transaction,
-  block,
-  srcAddress: log.address,
-  logIndex: log.logIndex,
-}->Types.eventToInternal
+): Types.eventLog<Types.internalEventArgs> =>
+  {
+    chainId,
+    params,
+    transaction,
+    block,
+    srcAddress: log.address,
+    logIndex: log.logIndex,
+  }->Types.eventToInternal
 
 let convertDecodedEvent = (
   event: HyperSyncClient.Decoder.decodedEvent,
@@ -23,7 +24,13 @@ let convertDecodedEvent = (
   ~block,
   ~chainId,
   ~transaction,
-): result<(Types.eventLog<Types.internalEventArgs>, module(Types.Event with type eventArgs = Types.internalEventArgs)), _> => {
+): result<
+  (
+    Types.eventLog<Types.internalEventArgs>,
+    module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ),
+  _,
+> => {
   switch contractInterfaceManager->ContractInterfaceManager.getContractNameFromAddress(
     ~contractAddress=log.address,
   ) {
@@ -31,7 +38,8 @@ let convertDecodedEvent = (
   | Some(contractName) =>
     let eventMod = Types.eventTopicToEventMod(contractName, log.topics[0])
     let module(Event) = eventMod
-    let event = event
+    let event =
+      event
       ->Event.convertDecodedEventParams
       ->makeEventLog(~log, ~transaction, ~block, ~chainId)
     Ok((event, eventMod))
@@ -44,8 +52,14 @@ let parseEvent = (
   ~contractInterfaceManager,
   ~chainId,
   ~transaction,
-): result<(Types.eventLog<Types.internalEventArgs>, module(Types.Event with type eventArgs = Types.internalEventArgs)), _> => {
- let decodedEventResult = contractInterfaceManager->ContractInterfaceManager.parseLogViem(~log)
+): result<
+  (
+    Types.eventLog<Types.internalEventArgs>,
+    module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ),
+  _,
+> => {
+  let decodedEventResult = contractInterfaceManager->ContractInterfaceManager.parseLogViem(~log)
   switch decodedEventResult {
   | Error(e) =>
     switch e {
@@ -120,8 +134,5 @@ let parseRawEvent = (rawEvent: TablesStatic.RawEvents.t, ~chain): result<
   S.error,
 > => {
   let eventMod = rawEvent.eventType->Types.eventTypeToEventMod
-  rawEvent->decodeRawEventWith(
-    ~eventMod,
-    ~chain,
-  )
+  rawEvent->decodeRawEventWith(~eventMod, ~chain)
 }
