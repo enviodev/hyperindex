@@ -1,9 +1,19 @@
 module type S = {
+  module Viem: {
+    type decodedEvent<'a>
+  }
+
   module Ethers: {
     type ethAddress
     type abi
     module JsonRpcProvider: {
       type t
+    }
+  }
+
+  module HyperSyncClient: {
+    module Decoder: {
+      type decodedEvent
     }
   }
 
@@ -33,6 +43,10 @@ module type S = {
       type t
     }
 
+    module Log: {
+      type t
+    }
+
     type eventLog<'a> = {
       params: 'a,
       chainId: int,
@@ -46,6 +60,14 @@ module type S = {
       let eventName: Enums.EventType.t
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.t<eventArgs>
+      let convertLogViem: (
+        Viem.decodedEvent<eventArgs>,
+        ~log: Log.t,
+        ~block: Block.t,
+        ~transaction: Transaction.t,
+        ~chainId: int,
+      ) => eventLog<eventArgs>
+      let convertDecodedEventParams: HyperSyncClient.Decoder.decodedEvent => eventArgs
     }
 
     type eventBatchQueueItem = {

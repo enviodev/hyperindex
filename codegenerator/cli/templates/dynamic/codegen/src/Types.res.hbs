@@ -93,11 +93,10 @@ type inMemoryStoreRowEntity<'entityType> =
 //*************
 //**CONTRACTS**
 //*************
-type address = Ethers.ethAddress
 
 module Log = {
   type t = {
-    address: address,
+    address: Address.t,
     data: string,
     topics: array<Ethers.EventFilter.topic>,
     logIndex: int,
@@ -213,6 +212,14 @@ module type Event = {
   let eventName: Enums.EventType.t
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
+  let convertLogViem: (
+    Viem.decodedEvent<eventArgs>,
+    ~log: Log.t,
+    ~block: Block.t,
+    ~transaction: Transaction.t,
+    ~chainId: int,
+  ) => eventLog<eventArgs>
+  let convertDecodedEventParams: HyperSyncClient.Decoder.decodedEvent => eventArgs
 }
 
 type internalEventArgs
@@ -251,6 +258,55 @@ module {{contract.name.capitalized}} = {
 
     @genType.as("{{contract.name.capitalized}}_{{event.name.capitalized}}_EventLog")
     type log = eventLog<eventArgs>
+
+    {{#unless event.params}}
+    @warning("-27")
+    {{/unless}}
+    let convertLogViem = (
+      decodedEvent: Viem.decodedEvent<eventArgs>,
+      ~log: Log.t,
+      ~block,
+      ~transaction,
+      ~chainId: int,
+    ): eventLog<eventArgs> => {
+      let params: eventArgs = 
+      {{#if event.params}}
+      {
+        {{#each event.params as | param |}}
+        {{param.res_name}}: decodedEvent.args.{{param.res_name}},
+        {{/each}}
+      }
+      {{else}}
+      ()
+      {{/if}}
+
+      {
+        params,
+        chainId,
+        transaction,
+        block,
+        srcAddress: log.address,
+        logIndex: log.logIndex,
+      }
+    }
+
+    let convertDecodedEventParams = ( 
+    {{!-- Add underscore if there are no params, to avoid compiler warning of unused argument --}}
+      {{#unless event.params[0]}}_{{/unless}}decodedEvent: HyperSyncClient.Decoder.decodedEvent,
+    ): eventArgs => {
+      {{#if event.params[0]}}{{!--Only create this body if there are params.  Otherwise its always unit--}}
+      {
+        {{#each event.indexed_params as | param index |}}
+        {{param.res_name}}: decodedEvent.indexed->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
+        {{/each}}
+        {{#each event.body_params as | param index |}}
+        {{param.res_name}}: decodedEvent.body->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
+        {{/each}}
+      }
+      {{else}}
+      ()
+      {{/if}}
+    }
   }
 
 {{/each}}
@@ -259,7 +315,7 @@ module {{contract.name.capitalized}} = {
 {{/each}}
 
 exception UnknownEvent(string, string)
-let eventTopicToEventMod = (contractName, topic0): module(Event with type eventArgs = internalEventArgs) => {
+let eventTopicToEventMod = (contractName, topic0) => {
   switch (contractName, topic0) {
 {{#each codegen_contracts as | contract |}}
 {{#each contract.codegen_events as | event |}}
@@ -267,6 +323,27 @@ let eventTopicToEventMod = (contractName, topic0): module(Event with type eventA
 {{/each}}
 {{/each}}
   | (contractName, topic0) => UnknownEvent(contractName, topic0)->raise
+  }
+}
+
+let eventNameToEventMod = (eventName, contractName) => {
+  switch (eventName, contractName) {
+    {{#each codegen_contracts as |contract|}}
+    {{#each contract.codegen_events as |event|}}
+    | ("{{event.name.capitalized}}", "{{contract.name.capitalized}}") => module({{contract.name.capitalized}}.{{event.name.capitalized}})->eventModToInternal
+    {{/each}}
+    {{/each}}
+    | (contractName, eventName) => UnknownEvent(contractName, eventName)->raise
+  }
+}
+
+let eventTypeToEventMod = (eventType: eventName) => {
+  switch eventType {
+  {{#each codegen_contracts as |contract|}}
+  {{#each contract.codegen_events as |event|}}
+    | {{event.event_type.full}} => module({{contract.name.capitalized}}.{{event.name.capitalized}})->eventModToInternal
+  {{/each}}
+  {{/each}}
   }
 }
 
