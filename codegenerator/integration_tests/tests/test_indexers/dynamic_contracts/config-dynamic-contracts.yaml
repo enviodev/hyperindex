@@ -1,4 +1,9 @@
+# yaml-language-server: $schema=../../../../cli/npm/envio/evm.schema.json
 name: kwenta-factory-example
+field_selection:
+  transaction_fields:
+    - hash
+    - transaction_index
 networks:
   - id: 10
     start_block: 4556306
