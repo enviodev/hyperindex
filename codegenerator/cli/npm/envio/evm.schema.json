@@ -94,6 +94,7 @@
       ]
     }
   },
+  "additionalProperties": false,
   "required": [
     "name",
     "networks"

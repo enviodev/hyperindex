@@ -8,6 +8,7 @@ use std::{borrow::Cow, path::PathBuf};
 type NetworkId = u64;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GlobalContract<T> {
     pub name: String,
     #[serde(flatten)]
@@ -45,6 +46,7 @@ impl JsonSchema for Addresses {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkContract<T> {
     pub name: String,
     pub address: Addresses,
@@ -68,6 +70,7 @@ pub mod evm {
         title = "Envio Config Schema",
         description = "Schema for a YAML config for an envio indexer"
     )]
+    #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
         #[schemars(description = "Name of the project")]
         pub name: String,
@@ -375,6 +378,7 @@ pub mod fuel {
         title = "Envio Config Schema",
         description = "Schema for a YAML config for an envio indexer"
     )]
+    #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
         #[schemars(description = "Name of the project")]
         pub name: String,

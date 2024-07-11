@@ -228,7 +228,8 @@ impl SystemConfig {
                         //there is no config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Expected a local network config definition or a global definition"
+                                "Failed to find contract '{}' in global contract config. If you don't use global contracts for multiple networks support, please specify events and handler for the contract.",
+                                contract.name
                             ))?;
                         }
                     }
