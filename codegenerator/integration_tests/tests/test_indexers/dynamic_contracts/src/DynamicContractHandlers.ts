@@ -43,7 +43,7 @@ FuturesMarket.CacheUpdated.handler(async ({ event, context }) => {
   };
 
   const futuresMarket_CacheUpdatedEntity: FuturesMarket_CacheUpdated = {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     name: event.params.name,
     destination: event.params.destination,
     eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
@@ -66,7 +66,7 @@ FuturesMarket.FundingRecomputed.handler(async ({ event, context }) => {
 
   const futuresMarket_FundingRecomputedEntity: FuturesMarket_FundingRecomputed =
   {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     funding: event.params.funding,
     index: event.params.index,
     timestamp: event.params.timestamp,
@@ -91,7 +91,7 @@ FuturesMarket.FuturesTracking.handler(async ({ event, context }) => {
   };
 
   const futuresMarket_FuturesTrackingEntity: FuturesMarket_FuturesTracking = {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     trackingCode: event.params.trackingCode,
     baseAsset: event.params.baseAsset,
     marketKey: event.params.marketKey,
@@ -119,7 +119,7 @@ FuturesMarket.MarginTransferred.handler(async ({ event, context }) => {
 
   const futuresMarket_MarginTransferredEntity: FuturesMarket_MarginTransferred =
   {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     account: event.params.account,
     marginDelta: event.params.marginDelta,
     eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
@@ -144,7 +144,7 @@ FuturesMarket.NextPriceOrderRemoved.handler(async ({ event, context }) => {
 
   const futuresMarket_NextPriceOrderRemovedEntity: FuturesMarket_NextPriceOrderRemoved =
   {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     account: event.params.account,
     currentRoundId: event.params.currentRoundId,
     sizeDelta: event.params.sizeDelta,
@@ -175,7 +175,7 @@ FuturesMarket.NextPriceOrderSubmitted.handler(async ({ event, context }) => {
 
   const futuresMarket_NextPriceOrderSubmittedEntity: FuturesMarket_NextPriceOrderSubmitted =
   {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     account: event.params.account,
     sizeDelta: event.params.sizeDelta,
     targetRoundId: event.params.targetRoundId,
@@ -204,7 +204,7 @@ FuturesMarket.PositionLiquidated.handler(async ({ event, context }) => {
 
   const futuresMarket_PositionLiquidatedEntity: FuturesMarket_PositionLiquidated =
   {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     event_id: event.params.id,
     account: event.params.account,
     liquidator: event.params.liquidator,
@@ -232,7 +232,7 @@ FuturesMarket.PositionModified.handler(async ({ event, context }) => {
   };
 
   const futuresMarket_PositionModifiedEntity: FuturesMarket_PositionModified = {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     event_id: event.params.id,
     account: event.params.account,
     margin: event.params.margin,
@@ -267,7 +267,7 @@ FuturesMarketManager.MarketAdded.handler(async ({ event, context }) => {
 
   const futuresMarketManager_MarketAddedEntity: FuturesMarketManager_MarketAdded =
   {
-    id: event.transactionHash + event.logIndex.toString(),
+    id: event.transaction.hash + event.logIndex.toString(),
     market: event.params.market,
     asset: event.params.asset,
     marketKey: event.params.marketKey,

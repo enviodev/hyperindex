@@ -11,7 +11,7 @@ SwapContract.Swap.handler(async ({ event, context }) => {
   });
 
   context.Swap.set({
-    id: event.transactionHash + event.logIndex,
+    id: event.transaction.hash + event.logIndex,
     recipient: event.params.recipient,
     sender: event.params.sender,
     amount0: event.params.amount0,
@@ -19,8 +19,8 @@ SwapContract.Swap.handler(async ({ event, context }) => {
     sqrtPriceX96: event.params.sqrtPriceX96,
     liquidity: event.params.liquidity,
     tick: event.params.tick,
-    blockNumber: event.blockNumber,
-    blockTimestamp: event.blockTimestamp,
-    transactionHash: event.transactionHash,
+    blockNumber: event.block.number,
+    blockTimestamp: event.block.timestamp,
+    transactionHash: event.transaction.hash,
   });
 });
