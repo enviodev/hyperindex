@@ -176,15 +176,3 @@ let makeContext = event =>
 
 let mockNewGravatarContext = makeContext(newGravatarLog1)
 let mockUpdateGravatarContext = makeContext(setGravatarLog1)
-// let eventBatch: array<Types.event> = [
-//   Types.Gravatar_NewGravatar(newGravatarLog1),
-//   Gravatar_NewGravatar(newGravatarLog2),
-//   Gravatar_NewGravatar(newGravatarLog3),
-//   Gravatar_NewGravatar(newGravatarLog4),
-//   Types.Gravatar_UpdatedGravatar(setGravatarLog1),
-//   Gravatar_UpdatedGravatar(setGravatarLog2),
-//   Gravatar_UpdatedGravatar(setGravatarLog3),
-//   Gravatar_UpdatedGravatar(setGravatarLog4),
-// ]
-
-let eventBatch: array<Types.eventLog<Types.internalEventArgs>> = []
