@@ -1,13 +1,11 @@
 open Belt
 
 let getDefaultAddress = (chain, contractName) => {
-  let chainConfig = (Config.getGenerated().chainMap)->ChainMap.get(chain)
+  let chainConfig = Config.getGenerated().chainMap->ChainMap.get(chain)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
   defaultAddress
 }
-
-open Enums.EventType
 
 let gAS_USED_DEFAULT = BigInt.zero
 let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash): Types.Block.t => {
@@ -28,7 +26,7 @@ module ERC20 = {
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
         ~accessor,
-        ~eventMod=module(Types.ERC20.Transfer)
+        ~eventMod=module(Types.ERC20.Transfer),
         ~makeBlock,
         ~makeTransaction,
         ...
@@ -49,7 +47,7 @@ module ERC20Factory = {
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
         ~accessor,
-        ~eventMod=module(Types.ERC20Factory.TokenCreated)
+        ~eventMod=module(Types.ERC20Factory.TokenCreated),
         ~makeBlock,
         ~makeTransaction,
         ...
@@ -64,7 +62,7 @@ module ERC20Factory = {
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
         ~accessor,
-        ~eventMod=module(Types.ERC20Factory.DeleteUser)
+        ~eventMod=module(Types.ERC20Factory.DeleteUser),
         ~makeBlock,
         ~makeTransaction,
         ...
