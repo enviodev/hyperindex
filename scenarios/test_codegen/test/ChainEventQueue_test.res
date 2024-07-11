@@ -10,7 +10,7 @@ let tx1: Types.Transaction.t = {
   hash: "0xaaa",
   transactionIndex: 1,
 }
-let eventMock1: Types.event = Gravatar_NewGravatar({
+let eventMock1: Types.eventLog<Types.internalEventArgs> = {
   block: {
     number: 1,
     hash: "0xdef",
@@ -24,7 +24,7 @@ let eventMock1: Types.event = Gravatar_NewGravatar({
     hash: "0xabc",
     transactionIndex: 987,
   },
-})
+}->Types.eventToInternal
 
 let qItemMock1: Types.eventBatchQueueItem = {
   timestamp: 0,
@@ -32,10 +32,10 @@ let qItemMock1: Types.eventBatchQueueItem = {
   blockNumber: 1,
   logIndex: 0,
   event: eventMock1,
-  eventMod: module(Types.Gravatar.NewGravatar),
+  eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
 }
 
-let eventMock2: Types.event = Gravatar_NewGravatar({
+let eventMock2: Types.eventLog<Types.internalEventArgs> = {
   block: {
     number: 2,
     hash: "0xabc",
@@ -49,7 +49,7 @@ let eventMock2: Types.event = Gravatar_NewGravatar({
     hash: "0xdef",
     transactionIndex: 988,
   },
-})
+}->Types.eventToInternal
 
 let qItemMock2: Types.eventBatchQueueItem = {
   timestamp: 1,
@@ -57,7 +57,7 @@ let qItemMock2: Types.eventBatchQueueItem = {
   blockNumber: 2,
   logIndex: 1,
   event: eventMock1,
-  eventMod: module(Types.Gravatar.NewGravatar),
+  eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
 }
 
 describe("Chain Event Queue", () => {

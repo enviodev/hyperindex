@@ -69,15 +69,7 @@ let makeCombinedEventFilterQuery = (
   })
 }
 
-type eventBatch = {
-  timestamp: int,
-  chain: ChainMap.Chain.t,
-  blockNumber: int,
-  logIndex: int,
-  event: Types.event,
-  eventMod: module(Types.Event),
-}
-type eventBatchPromise = promise<eventBatch>
+type eventBatchPromise = promise<Types.eventBatchQueueItem>
 
 //We aren't fetching transaction and field names don't line up with
 //the two available fields on a log. So create this function with runtime
@@ -125,7 +117,7 @@ let convertLogs = (
     "numberLogs": logs->Belt.Array.length,
   })
 
-  logs->Belt.Array.map(async log => {
+  logs->Belt.Array.map(async (log): Types.eventBatchQueueItem => {
     let block = (await blockLoader->LazyLoader.get(log.blockNumber))->blockFieldsFromBlock
     let (event, eventMod) = switch Converters.parseEvent(
       ~log=log->ethersLogToLog,
@@ -134,10 +126,10 @@ let convertLogs = (
       ~chainId=chain->ChainMap.Chain.toChainId,
       ~transaction=log->transactionFieldsFromLog(~logger),
     ) {
-      | Error(exn) =>
-        logger->Logging.childErrorWithExn(exn, "Failed to parse event from RPC. Double c")
-        exn->raise
-      | Ok(res) => res
+    | Error(exn) =>
+      logger->Logging.childErrorWithExn(exn, "Failed to parse event from RPC. Double c")
+      exn->raise
+    | Ok(res) => res
     }
 
     {

@@ -23,9 +23,7 @@ module Gravatar = {
     )
 
   module NewGravatar = {
-    let accessor = v => Types.Gravatar_NewGravatar(v)
     let mkEventConstr = makeEventConstructorWithDefaultSrcAddress(
-      ~accessor,
       ~eventMod=module(Types.Gravatar.NewGravatar),
       ~params=_,
       ...
@@ -33,9 +31,7 @@ module Gravatar = {
   }
 
   module UpdatedGravatar = {
-    let accessor = v => Types.Gravatar_UpdatedGravatar(v)
     let mkEventConstr = makeEventConstructorWithDefaultSrcAddress(
-      ~accessor,
       ~eventMod=module(Types.Gravatar.UpdatedGravatar),
       ~params=_,
       ...

@@ -23,7 +23,8 @@ module type S = {
 
   module Types: {
     type eventName = Enums.EventType.t
-    type event
+    type internalEventArgs
+
     module Transaction: {
       type t
     }
@@ -52,8 +53,8 @@ module type S = {
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
-      event: event,
-      eventMod: module(Event),
+      event: eventLog<internalEventArgs>,
+      eventMod: module(Event with type eventArgs = internalEventArgs),
       //Default to false, if an event needs to
       //be reprocessed after it has loaded dynamic contracts
       //This gets set to true and does not try and reload events

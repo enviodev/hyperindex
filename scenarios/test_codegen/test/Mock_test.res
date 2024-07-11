@@ -10,7 +10,8 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     // EventProcessing.processEventBatch(MockEvents.eventBatch)
 
-    let runEventHandler = async (event, eventMod: module(Types.Event)) => {
+    let runEventHandler = async (event: Types.eventLog<'a>, eventMod: module(Types.Event with type eventArgs = 'a)) => {
+      let eventMod = eventMod->Types.eventModToInternal
       let module(Event) = eventMod
       switch RegisteredEvents.global
       ->RegisteredEvents.get(Event.eventName)
@@ -28,16 +29,9 @@ describe("E2E Mock Event Batch", () => {
       }
     }
 
-    for i in 0 to MockEvents.eventBatch->Array.length - 1 {
-      let event = MockEvents.eventBatch[i]->Option.getUnsafe
-
-      let res = switch event {
-      | Gravatar_NewGravatar(event) =>
-        await event->runEventHandler(module(Types.Gravatar.NewGravatar))
-      | Gravatar_UpdatedGravatar(event) =>
-        await event->runEventHandler(module(Types.Gravatar.UpdatedGravatar))
-      | _ => Js.Exn.raiseError("Unhandled mock event")
-      }
+    for i in 0 to MockEvents.eventBatchItems->Array.length - 1 {
+      let batchItem = MockEvents.eventBatchItems->Js.Array2.unsafe_get(i)
+      let res = await batchItem.event->runEventHandler(batchItem.eventMod)
       switch res {
       | Error(e) => e->ErrorHandling.logAndRaise
       | Ok(_) => ()

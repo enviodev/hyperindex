@@ -56,10 +56,11 @@ module EventFunctions = {
   A function composer to help create individual processEvent functions
   */
   let makeEventProcessor = (
-    ~eventMod: module(Types.Event),
-    ~eventAccessor: Types.eventLog<'eventArgs> => Types.event,
+    ~eventMod: module(Types.Event with type eventArgs = 'eventArgs),
   ) => {
-    async ({event, mockDb, ?chainId}) => {
+    async (args) => {
+      let eventMod = eventMod->Types.eventModToInternal
+      let {event, mockDb, ?chainId} = args->(Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>)
       let module(Event) = eventMod
       let {eventName} = module(Event)
       let config = RegisterHandlers.registerAllHandlers()
@@ -118,7 +119,7 @@ module EventFunctions = {
           ~logger,
           ~event,
           ~eventBatchQueueItem={
-            event: event->eventAccessor,
+            event,
             eventMod,
             chain,
             logIndex: event.logIndex,
@@ -240,11 +241,8 @@ module EventFunctions = {
 module {{contract.name.capitalized}} = {
   {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
-    let eventAccessor = event => Types.{{contract.name.capitalized}}_{{event.name.capitalized}}(event)
-
     @genType
     let processEvent = EventFunctions.makeEventProcessor(
-      ~eventAccessor,
       ~eventMod=module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
     )
 

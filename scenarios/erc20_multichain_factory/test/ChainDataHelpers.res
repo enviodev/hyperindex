@@ -22,10 +22,8 @@ module ERC20 = {
   let contractName = "ERC20"
   let getDefaultAddress = getDefaultAddress(_, contractName)
   module Transfer = {
-    let accessor = v => Types.ERC20_Transfer(v)
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
-        ~accessor,
         ~eventMod=module(Types.ERC20.Transfer),
         ~makeBlock,
         ~makeTransaction,
@@ -42,11 +40,8 @@ module ERC20Factory = {
   let getDefaultAddress = getDefaultAddress(_, contractName)
 
   module TokenCreated = {
-    let accessor = v => Types.ERC20Factory_TokenCreated(v)
-
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
-        ~accessor,
         ~eventMod=module(Types.ERC20Factory.TokenCreated),
         ~makeBlock,
         ~makeTransaction,
@@ -57,11 +52,8 @@ module ERC20Factory = {
       mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
   }
   module DeleteUser = {
-    let accessor = v => Types.ERC20Factory_DeleteUser(v)
-
     let mkEventConstrWithParamsAndAddress =
       MockChainData.makeEventConstructor(
-        ~accessor,
         ~eventMod=module(Types.ERC20Factory.DeleteUser),
         ~makeBlock,
         ~makeTransaction,

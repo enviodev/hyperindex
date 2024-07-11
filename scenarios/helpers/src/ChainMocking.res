@@ -1,3 +1,7 @@
+module Utils = {
+  external magic: 'a => 'b = "%identity"
+}
+
 module Crypto = {
   type t
   @module external crypto: t = "crypto"
@@ -36,35 +40,17 @@ module Make = (Indexer: Indexer.S) => {
     eventBatchQueueItem: Types.eventBatchQueueItem,
     srcAddress: Ethers.ethAddress,
     transactionHash: string,
-    eventMod: module(Types.Event),
+    eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
   }
 
-  let eventConstructor = (
-    ~params,
-    ~accessor,
-    ~srcAddress,
-    ~chainId,
-    ~block,
-    ~transaction,
-    ~logIndex,
-  ): Types.event =>
-    {
-      Types.params,
-      srcAddress,
-      chainId,
-      block,
-      transaction,
-      logIndex,
-    }->accessor
-
-  type makeEvent = (~blockHash: string) => Types.event
+  type makeEvent = (~blockHash: string) => Types.eventLog<Types.internalEventArgs>
 
   type logConstructor = {
     transactionHash: string,
     makeEvent: makeEvent,
     logIndex: int,
     srcAddress: Ethers.ethAddress,
-    eventMod: module(Types.Event),
+    eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
   }
 
   type composedEventConstructor = (
@@ -77,9 +63,8 @@ module Make = (Indexer: Indexer.S) => {
 
   let makeEventConstructor = (
     type eventArgs,
-    ~accessor,
     ~params: eventArgs,
-    ~eventMod: module(Types.Event),
+    ~eventMod: module(Types.Event with type eventArgs = eventArgs),
     ~srcAddress,
     ~makeBlock: (
       ~blockNumber: int,
@@ -96,7 +81,7 @@ module Make = (Indexer: Indexer.S) => {
     ~transactionIndex,
     ~logIndex,
   ) => {
-    let module(Event: Types.Event with type eventArgs = eventArgs) = eventMod->Obj.magic
+    let module(Event) = eventMod
 
     let transactionHash =
       Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(Event.eventArgsSchema))
@@ -105,18 +90,27 @@ module Make = (Indexer: Indexer.S) => {
 
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
-      eventConstructor(
-        ~params,
-        ~accessor,
-        ~srcAddress,
-        ~chainId,
-        ~block,
-        ~logIndex,
-        ~transaction=makeTransaction(~transactionIndex, ~transactionHash),
-      )
+      {
+        params: params->(Utils.magic: eventArgs => Types.internalEventArgs),
+        srcAddress,
+        chainId,
+        block,
+        transaction: makeTransaction(~transactionIndex, ~transactionHash),
+        logIndex,
+      }
     }
 
-    {transactionHash, makeEvent, logIndex, srcAddress, eventMod}
+    {
+      transactionHash,
+      makeEvent,
+      logIndex,
+      srcAddress,
+      eventMod: eventMod->(
+        Utils.magic: module(Types.Event with type eventArgs = eventArgs) => module(Types.Event with
+          type eventArgs = Types.internalEventArgs
+        )
+      ),
+    }
   }
 
   type block = {
@@ -178,9 +172,8 @@ module Make = (Indexer: Indexer.S) => {
       transactionHash,
       eventMod,
     }): log => {
-      let event: Types.event = makeEvent(~blockHash)
       let log: Types.eventBatchQueueItem = {
-        event,
+        event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,
         timestamp: blockTimestamp,
         blockNumber,
