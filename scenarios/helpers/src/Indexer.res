@@ -1,9 +1,19 @@
 module type S = {
+  module Viem: {
+    type decodedEvent<'a>
+  }
+
   module Ethers: {
     type ethAddress
     type abi
     module JsonRpcProvider: {
       type t
+    }
+  }
+
+  module HyperSyncClient: {
+    module Decoder: {
+      type decodedEvent
     }
   }
 
@@ -15,14 +25,25 @@ module type S = {
     type t<'a>
   }
 
+  module Enums: {
+    module EventType: {
+      type t
+    }
+  }
+
   module Types: {
-    type eventName
-    type event
+    type eventName = Enums.EventType.t
+    type internalEventArgs
+
     module Transaction: {
       type t
     }
 
     module Block: {
+      type t
+    }
+
+    module Log: {
       type t
     }
 
@@ -35,12 +56,27 @@ module type S = {
       block: Block.t,
     }
 
+    module type Event = {
+      let eventName: Enums.EventType.t
+      type eventArgs
+      let eventArgsSchema: RescriptSchema.S.t<eventArgs>
+      let convertLogViem: (
+        Viem.decodedEvent<eventArgs>,
+        ~log: Log.t,
+        ~block: Block.t,
+        ~transaction: Transaction.t,
+        ~chainId: int,
+      ) => eventLog<eventArgs>
+      let convertDecodedEventParams: HyperSyncClient.Decoder.decodedEvent => eventArgs
+    }
+
     type eventBatchQueueItem = {
       timestamp: int,
       chain: ChainMap.Chain.t,
       blockNumber: int,
       logIndex: int,
-      event: event,
+      event: eventLog<internalEventArgs>,
+      eventMod: module(Event with type eventArgs = internalEventArgs),
       //Default to false, if an event needs to
       //be reprocessed after it has loaded dynamic contracts
       //This gets set to true and does not try and reload events
@@ -73,7 +109,7 @@ module type S = {
       name: string,
       abi: Ethers.abi,
       addresses: array<Ethers.ethAddress>,
-      events: array<Types.eventName>,
+      events: array<module(Types.Event)>,
     }
 
     type syncConfig = {

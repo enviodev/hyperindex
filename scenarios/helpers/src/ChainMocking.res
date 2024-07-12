@@ -1,3 +1,7 @@
+module Utils = {
+  external magic: 'a => 'b = "%identity"
+}
+
 module Crypto = {
   type t
   @module external crypto: t = "crypto"
@@ -36,35 +40,17 @@ module Make = (Indexer: Indexer.S) => {
     eventBatchQueueItem: Types.eventBatchQueueItem,
     srcAddress: Ethers.ethAddress,
     transactionHash: string,
-    eventName: Types.eventName,
+    eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
   }
 
-  let eventConstructor = (
-    ~params,
-    ~accessor,
-    ~srcAddress,
-    ~chainId,
-    ~block,
-    ~transaction,
-    ~logIndex,
-  ): Types.event =>
-    {
-      Types.params,
-      srcAddress,
-      chainId,
-      block,
-      transaction,
-      logIndex,
-    }->accessor
-
-  type makeEvent = (~blockHash: string) => Types.event
+  type makeEvent = (~blockHash: string) => Types.eventLog<Types.internalEventArgs>
 
   type logConstructor = {
     transactionHash: string,
     makeEvent: makeEvent,
     logIndex: int,
     srcAddress: Ethers.ethAddress,
-    eventName: Types.eventName,
+    eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
   }
 
   type composedEventConstructor = (
@@ -76,10 +62,9 @@ module Make = (Indexer: Indexer.S) => {
   ) => logConstructor
 
   let makeEventConstructor = (
-    ~accessor,
-    ~params,
-    ~schema,
-    ~eventName,
+    type eventArgs,
+    ~params: eventArgs,
+    ~eventMod: module(Types.Event with type eventArgs = eventArgs),
     ~srcAddress,
     ~makeBlock: (
       ~blockNumber: int,
@@ -96,25 +81,36 @@ module Make = (Indexer: Indexer.S) => {
     ~transactionIndex,
     ~logIndex,
   ) => {
+    let module(Event) = eventMod
+
     let transactionHash =
-      Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(schema))
+      Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(Event.eventArgsSchema))
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
     let makeEvent: makeEvent = (~blockHash) => {
       let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
-      eventConstructor(
-        ~params,
-        ~accessor,
-        ~srcAddress,
-        ~chainId,
-        ~block,
-        ~logIndex,
-        ~transaction=makeTransaction(~transactionIndex, ~transactionHash),
-      )
+      {
+        params: params->(Utils.magic: eventArgs => Types.internalEventArgs),
+        srcAddress,
+        chainId,
+        block,
+        transaction: makeTransaction(~transactionIndex, ~transactionHash),
+        logIndex,
+      }
     }
 
-    {transactionHash, makeEvent, logIndex, srcAddress, eventName}
+    {
+      transactionHash,
+      makeEvent,
+      logIndex,
+      srcAddress,
+      eventMod: eventMod->(
+        Utils.magic: module(Types.Event with type eventArgs = eventArgs) => module(Types.Event with
+          type eventArgs = Types.internalEventArgs
+        )
+      ),
+    }
   }
 
   type block = {
@@ -174,17 +170,17 @@ module Make = (Indexer: Indexer.S) => {
       logIndex,
       srcAddress,
       transactionHash,
-      eventName,
-    }) => {
-      let event: Types.event = makeEvent(~blockHash)
+      eventMod,
+    }): log => {
       let log: Types.eventBatchQueueItem = {
-        event,
+        event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,
         timestamp: blockTimestamp,
         blockNumber,
         logIndex,
+        eventMod,
       }
-      {eventBatchQueueItem: log, srcAddress, transactionHash, eventName}
+      {eventBatchQueueItem: log, srcAddress, transactionHash, eventMod}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -222,7 +218,11 @@ module Make = (Indexer: Indexer.S) => {
         let isLogInConfig = addressesAndEventNames->Array.reduce(
           false,
           (prev, {addresses, eventNames}) => {
-            prev || (addresses->arrayHas(l.srcAddress) && eventNames->arrayHas(l.eventName))
+            prev ||
+            (addresses->arrayHas(l.srcAddress) && {
+                let module(Event) = l.eventMod
+                eventNames->arrayHas(Event.eventName)
+              })
           },
         )
         if isLogInConfig {
@@ -251,7 +251,13 @@ module Make = (Indexer: Indexer.S) => {
         query.contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
           ~contractName=c.name,
         )
-      {addresses, eventNames: c.events}
+      {
+        addresses,
+        eventNames: c.events->Belt.Array.map(event => {
+          let module(Event) = event
+          Event.eventName
+        }),
+      }
     })
 
     let parsedQueueItemsPreFilter = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)

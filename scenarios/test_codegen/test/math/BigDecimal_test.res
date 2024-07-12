@@ -49,7 +49,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let handlerContext =
       contextEnv->ContextEnv.getHandlerContext(
         ~inMemoryStore,
-        ~asyncGetters=EventProcessing.asyncGetters,
+        ~asyncGetters=ContextEnv.asyncGetters,
       )
 
     switch await handlerContext.entityWithFields.get(testEntity1.id) {

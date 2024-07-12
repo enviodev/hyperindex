@@ -136,36 +136,39 @@ let setGravatarLog4: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = 
   block: block1,
 }
 
-let eventBatch: array<Types.event> = [
-  Gravatar_NewGravatar(newGravatarLog1),
-  Gravatar_NewGravatar(newGravatarLog2),
-  Gravatar_NewGravatar(newGravatarLog3),
-  Gravatar_NewGravatar(newGravatarLog4),
-  Gravatar_UpdatedGravatar(setGravatarLog1),
-  Gravatar_UpdatedGravatar(setGravatarLog2),
-  Gravatar_UpdatedGravatar(setGravatarLog3),
-  Gravatar_UpdatedGravatar(setGravatarLog4),
-]
-
-let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem => {
-  switch e {
-  | Gravatar_NewGravatar(el) => {
-      timestamp: el.block.timestamp,
-      chain: MockConfig.chain1337,
-      blockNumber: el.block.number,
-      logIndex: el.logIndex,
-      event: e,
-    }
-  | Gravatar_UpdatedGravatar(el) => {
-      timestamp: el.block.timestamp,
-      chain: MockConfig.chain1337,
-      blockNumber: el.block.number,
-      logIndex: el.logIndex,
-      event: e,
-    }
-  | _ => Js.Exn.raiseError("I couldn't figure out how to make this method polymorphic")
+let newGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs>): Types.eventBatchQueueItem => {
+  {
+    timestamp: event.block.timestamp,
+    chain: MockConfig.chain1337,
+    blockNumber: event.block.number,
+    logIndex: event.logIndex,
+    eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
+    event: event->Types.eventToInternal,
   }
-})
+}
+
+
+let updatedGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs>): Types.eventBatchQueueItem => {
+  {
+    timestamp: event.block.timestamp,
+    chain: MockConfig.chain1337,
+    blockNumber: event.block.number,
+    logIndex: event.logIndex,
+    eventMod: module(Types.Gravatar.UpdatedGravatar)->Types.eventModToInternal,
+    event: event->Types.eventToInternal,
+  }
+}
+
+let eventBatchItems = [
+  newGravatarLog1->newGravatarEventToBatchItem,
+  newGravatarLog2->newGravatarEventToBatchItem,
+  newGravatarLog3->newGravatarEventToBatchItem,
+  newGravatarLog4->newGravatarEventToBatchItem,
+  setGravatarLog1->updatedGravatarEventToBatchItem,
+  setGravatarLog2->updatedGravatarEventToBatchItem,
+  setGravatarLog3->updatedGravatarEventToBatchItem,
+  setGravatarLog4->updatedGravatarEventToBatchItem,
+]
 
 let inMemoryStoreMock = InMemoryStore.make()
 let makeContext = event =>
@@ -173,13 +176,3 @@ let makeContext = event =>
 
 let mockNewGravatarContext = makeContext(newGravatarLog1)
 let mockUpdateGravatarContext = makeContext(setGravatarLog1)
-let eventBatch: array<Types.event> = [
-  Types.Gravatar_NewGravatar(newGravatarLog1),
-  Gravatar_NewGravatar(newGravatarLog2),
-  Gravatar_NewGravatar(newGravatarLog3),
-  Gravatar_NewGravatar(newGravatarLog4),
-  Types.Gravatar_UpdatedGravatar(setGravatarLog1),
-  Gravatar_UpdatedGravatar(setGravatarLog2),
-  Gravatar_UpdatedGravatar(setGravatarLog3),
-  Gravatar_UpdatedGravatar(setGravatarLog4),
-]

@@ -23,19 +23,19 @@ let mockChainConfig: Config.chainConfig = {
       name: "Gravatar",
       abi: Abis.gravatarAbi->Ethers.makeAbi,
       addresses: ["0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe],
-      events: [Gravatar_TestEvent, Gravatar_NewGravatar, Gravatar_UpdatedGravatar],
+      events: [module(Types.Gravatar.TestEvent), module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
     },
     {
       name: "NftFactory",
       abi: Abis.nftFactoryAbi->Ethers.makeAbi,
       addresses: ["0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Ethers.getAddressFromStringUnsafe],
-      events: [NftFactory_SimpleNftCreated],
+      events: [module(Types.NftFactory.SimpleNftCreated)],
     },
     {
       name: "SimpleNft",
       abi: Abis.simpleNftAbi->Ethers.makeAbi,
       addresses: [],
-      events: [SimpleNft_Transfer],
+      events: [module(Types.SimpleNft.Transfer)],
     },
   ],
 }

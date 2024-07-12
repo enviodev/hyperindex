@@ -32,13 +32,13 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
         name: "NftFactory",
         abi: Abis.nftFactoryAbi->Ethers.makeAbi,
         addresses: [nftFactoryContractAddress],
-        events: [NftFactory_SimpleNftCreated],
+        events: [module(Types.NftFactory.SimpleNftCreated)],
       },
       {
         name: "SimpleNft",
         abi: Abis.simpleNftAbi->Ethers.makeAbi,
         addresses: [],
-        events: [SimpleNft_Transfer],
+        events: [module(Types.SimpleNft.Transfer)],
       },
     ],
   }

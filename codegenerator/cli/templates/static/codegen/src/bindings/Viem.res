@@ -22,7 +22,7 @@ let decodeEventLog: eventLog => result<
   | exn => Error(ParseError(exn))
   }
 
-@module("viem") external getAddressUnsafe: string => Types.address = "getAddress"
+@module("viem") external getAddressUnsafe: string => Address.t = "getAddress"
 
 let getAddress = s =>
   switch getAddressUnsafe(s) {

@@ -30,7 +30,10 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
           {
             abi: contract.abi,
             addresses: contract.addresses,
-            events: Belt.Array.map(contract.events, event => event->Types.eventNameToString),
+            events: contract.events->Belt.Array.map(event => {
+              let module(Event) = event
+              Event.eventName->Types.eventNameToString
+            }),
           },
         )
       }),

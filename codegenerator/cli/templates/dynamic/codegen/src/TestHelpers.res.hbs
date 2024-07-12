@@ -56,11 +56,11 @@ module EventFunctions = {
   A function composer to help create individual processEvent functions
   */
   let makeEventProcessor = (
-    type eventArgs,
-    ~eventMod: module(Types.Event with type eventArgs = eventArgs),
-    ~eventAccessor: Types.eventLog<eventArgs> => Types.event,
+    ~eventMod: module(Types.Event with type eventArgs = 'eventArgs),
   ) => {
-    async ({event, mockDb, ?chainId}) => {
+    async (args) => {
+      let eventMod = eventMod->Types.eventModToInternal
+      let {event, mockDb, ?chainId} = args->(Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>)
       let module(Event) = eventMod
       let {eventName} = module(Event)
       let config = RegisterHandlers.registerAllHandlers()
@@ -118,18 +118,17 @@ module EventFunctions = {
         switch contractRegister->EventProcessing.runEventContractRegister(
           ~logger,
           ~event,
-          ~eventBatchQueueItem=event
-          ->eventAccessor
-          ->Types.mkEventBatchQueueItem(
-            ~chain,
-            ~logIndex=event.logIndex,
-            ~timestamp=event.block.timestamp,
-            ~blockNumber=event.block.number,
-          ),
+          ~eventBatchQueueItem={
+            event,
+            eventMod,
+            chain,
+            logIndex: event.logIndex,
+            timestamp: event.block.timestamp,
+            blockNumber: event.block.number,
+          },
           ~checkContractIsRegistered=(~chain as _, ~contractAddress as _, ~contractName as _) =>
             false,
           ~dynamicContractRegistrations=None,
-          ~eventName,
           ~inMemoryStore,
         ) {
         | Ok(_) => ()
@@ -242,11 +241,8 @@ module EventFunctions = {
 module {{contract.name.capitalized}} = {
   {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
-    let eventAccessor = event => Types.{{contract.name.capitalized}}_{{event.name.capitalized}}(event)
-
     @genType
     let processEvent = EventFunctions.makeEventProcessor(
-      ~eventAccessor,
       ~eventMod=module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
     )
 

@@ -163,6 +163,7 @@ let startWorker = async (
         blockNumber: parsedEvent.blockNumber,
         logIndex: parsedEvent.logIndex,
         event: parsedEvent.event,
+        eventMod: parsedEvent.eventMod,
       }
 
       await fetchedEventQueue->ChainEventQueue.awaitQueueSpaceAndPushItem(queueItem)
@@ -362,6 +363,7 @@ let addDynamicContractAndFetchMissingEvents = async (
           blockNumber: parsedEvent.blockNumber,
           logIndex: parsedEvent.logIndex,
           event: parsedEvent.event,
+          eventMod: parsedEvent.eventMod,
         }
         queueItem
       })

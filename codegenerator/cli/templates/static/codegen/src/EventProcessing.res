@@ -10,7 +10,7 @@ module EventsProcessed = {
   let makeEmpty = (~config: Config.t) => {
     config.chainMap->ChainMap.map(_ => {
       numEventsProcessed: 0,
-      latestProcessedBlock: None
+      latestProcessedBlock: None,
     })
   }
 
@@ -80,14 +80,15 @@ let addToDynamicContractRegistrations = (
 let runEventContractRegister = (
   contractRegister: RegisteredEvents.args<_> => unit,
   ~event,
-  ~eventName,
   ~eventBatchQueueItem: Types.eventBatchQueueItem,
   ~logger,
   ~checkContractIsRegistered,
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>,
   ~inMemoryStore,
 ) => {
-  let {chain} = eventBatchQueueItem
+  let {chain, eventMod} = eventBatchQueueItem
+  let module(Event) = eventMod
+  let eventName = Event.eventName
   let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName)
 
   switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore)) {
@@ -155,19 +156,19 @@ let runEventLoader = async (
 }
 
 let addEventToRawEvents = (
-  event: Types.eventLog<'a>,
+  event: Types.eventLog<Types.internalEventArgs>,
+  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
   ~inMemoryStore: InMemoryStore.t,
   ~chainId,
-  ~eventArgsSchema: S.t<'a>,
-  ~eventName: Enums.EventType.t,
 ) => {
   let {block, transaction, params, logIndex, srcAddress} = event
   let {number: blockNumber, hash: blockHash, timestamp: blockTimestamp} = block
+  let module(Event) = eventMod
   let eventId = EventUtils.packEventIndex(~logIndex, ~blockNumber)
   let blockFields =
     block->Types.Block.getSelectableFields->S.serializeOrRaiseWith(Types.Block.schema)
   let transactionFields = transaction->S.serializeOrRaiseWith(Types.Transaction.schema)
-  let params = params->S.serializeOrRaiseWith(eventArgsSchema)
+  let params = params->S.serializeOrRaiseWith(Event.eventArgsSchema)
 
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
@@ -177,9 +178,9 @@ let addEventToRawEvents = (
     srcAddress,
     blockHash,
     blockTimestamp,
-    eventType: eventName,
     blockFields,
     transactionFields,
+    eventType: Event.eventName,
     params,
   }
 
@@ -205,20 +206,12 @@ let updateEventSyncState = (
   )
 }
 
-let readEntity = (~entityMod) => id => Entities.batchRead(~entityMod)(DbFunctions.sql, [id])
-let asyncGetters: ContextEnv.asyncGetters = {
-{{#each entities as | entity |}}
- get{{entity.name.capitalized}}: readEntity(~entityMod=module(Entities.{{entity.name.capitalized}})),
-{{/each}}
-}
-
 let runEventHandler = (
-  type eventArgs,
   //Injection params for testing framework
   ~executeLoadLayer=LoadLayer.executeLoadLayer,
-  ~asyncGetters=asyncGetters,
+  ~asyncGetters=?,
   //Required params
-  ~eventMod: module(Types.Event with type eventArgs = eventArgs),
+  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
   ~handler,
   ~inMemoryStore,
   ~logger,
@@ -249,7 +242,7 @@ let runEventHandler = (
     let loaderReturn = await loaderReturnUnawaited->propogateAsync
 
     switch await handler.handler(
-      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters),
+      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters?),
     ) {
     | exception exn =>
       exn
@@ -263,12 +256,7 @@ let runEventHandler = (
       let {chainId} = event
 
       event->updateEventSyncState(~chainId, ~inMemoryStore)
-      event->addEventToRawEvents(
-        ~inMemoryStore,
-        ~chainId,
-        ~eventArgsSchema=Event.eventArgsSchema,
-        ~eventName=Event.eventName,
-      )
+      event->addEventToRawEvents(~eventMod, ~inMemoryStore, ~chainId)
       latestProcessedBlocks
       ->EventsProcessed.updateEventsProcessed(~chain, ~blockNumber=event.block.number)
       ->Ok
@@ -276,10 +264,9 @@ let runEventHandler = (
   })
 }
 
-let getHandlerRunner = (
-  type eventArgs,
-  event: Types.eventLog<eventArgs>,
-  eventMod: module(Types.Event with type eventArgs = eventArgs),
+let runHandler = (
+  event: Types.eventLog<'eventArgs>,
+  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
   ~latestProcessedBlocks,
   ~inMemoryStore,
   ~logger,
@@ -338,35 +325,27 @@ let rec registerDynamicContracts = (
       )
       ->Ok
     } else {
-      let runEventContractRegister = (eventName, event) =>
-        switch registeredEvents
-        ->RegisteredEvents.get(eventName)
-        ->Option.flatMap(v => v.contractRegister) {
-        | Some(handler) =>
-          handler->runEventContractRegister(
-            ~event,
-            ~logger,
-            ~checkContractIsRegistered,
-            ~eventBatchQueueItem,
-            ~dynamicContractRegistrations,
-            ~eventName,
-            ~inMemoryStore,
-          )
-        | None =>
-          dynamicContractRegistrations
-          ->Option.map(dynamicContractRegistrations =>
-            addToUnprocessedBatch(eventBatchQueueItem, dynamicContractRegistrations)
-          )
-          ->Ok
-        }
+      let {eventMod, event} = eventBatchQueueItem
+      let module(Event) = eventMod
 
-      open Enums.EventType
-      switch eventBatchQueueItem.event {
-      {{#each codegen_contracts as | contract |}}
-      {{#each contract.codegen_events as | event |}}
-      | {{event.event_type.full}}(event) => runEventContractRegister({{event.event_type.full}}, event)
-      {{/each}}
-      {{/each}}
+      switch registeredEvents
+      ->RegisteredEvents.get(Event.eventName)
+      ->Option.flatMap(v => v.contractRegister) {
+      | Some(handler) =>
+        handler->runEventContractRegister(
+          ~event,
+          ~logger,
+          ~checkContractIsRegistered,
+          ~eventBatchQueueItem,
+          ~dynamicContractRegistrations,
+          ~inMemoryStore,
+        )
+      | None =>
+        dynamicContractRegistrations
+        ->Option.map(dynamicContractRegistrations =>
+          addToUnprocessedBatch(eventBatchQueueItem, dynamicContractRegistrations)
+        )
+        ->Ok
       }
     }
 
@@ -399,25 +378,17 @@ let runLoaders = (
   runAsyncEnv(async () => {
     let loadLayer = LoadLayer.make()
 
-    let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, event}) => {
-      let load = (event, eventName) =>
-        registeredEvents
-        ->RegisteredEvents.get(eventName)
-        ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
-        ->Option.map(
-          handler => {
-            let contextEnv = ContextEnv.make(~chain, ~eventName, ~event, ~logger)
-            runEventLoader(~contextEnv, ~handler, ~loadLayer)
-          },
-        )
-
-      switch event {
-      {{#each codegen_contracts as | contract |}}
-      {{#each contract.codegen_events as | event |}}
-      | {{event.event_type.full}}(event) => event->load({{event.event_type.full}})
-      {{/each}}
-      {{/each}}
-      }
+    let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, eventMod, event}) => {
+      let module(Event) = eventMod
+      registeredEvents
+      ->RegisteredEvents.get(Event.eventName)
+      ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
+      ->Option.map(
+        handler => {
+          let contextEnv = ContextEnv.make(~chain, ~eventName=Event.eventName, ~event, ~logger)
+          runEventLoader(~contextEnv, ~handler, ~loadLayer)
+        },
+      )
     })
 
     switch await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore) {
@@ -448,28 +419,18 @@ let runHandlers = (
   let latestProcessedBlocks = ref(latestProcessedBlocks)
   runAsyncEnv(async () => {
     for i in 0 to eventBatch->Array.length - 1 {
-      let {event, chain} = eventBatch[i]->Option.getUnsafe
-
-      let runHandler = getHandlerRunner(
-        ~inMemoryStore,
-        ~logger,
-        ~chain,
-        ~latestProcessedBlocks=latestProcessedBlocks.contents,
-        ~registeredEvents,
-        ...
-      )
+      let {event, eventMod, chain} = eventBatch->Js.Array2.unsafe_get(i)
 
       latestProcessedBlocks :=
-        switch event {
-        {{#each codegen_contracts as | contract |}}
-        {{#each contract.codegen_events as | event |}}
-        | {{event.event_type.full}}(event) =>
-          await event
-          ->runHandler(module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}))
-          ->propogateAsync
-        {{/each}}
-        {{/each}}
-        }
+        await runHandler(
+          event,
+          ~eventMod,
+          ~inMemoryStore,
+          ~logger,
+          ~chain,
+          ~latestProcessedBlocks=latestProcessedBlocks.contents,
+          ~registeredEvents,
+        )->propogateAsync
     }
     Ok(latestProcessedBlocks.contents)
   })

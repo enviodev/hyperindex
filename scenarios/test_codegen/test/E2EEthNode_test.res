@@ -39,7 +39,7 @@ describe("E2E Integration Test", () => {
           addresses: [
             "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
           ],
-          events: [Gravatar_NewGravatar, Gravatar_UpdatedGravatar],
+          events: [module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
         },
       ],
     }

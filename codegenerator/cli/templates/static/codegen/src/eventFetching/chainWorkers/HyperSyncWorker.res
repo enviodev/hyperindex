@@ -267,30 +267,33 @@ let fetchBlockRange = async (
       pageUnsafe.items
       ->Belt.Array.zip(parsedEvents)
       ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
-        let {block, log: {logIndex}} = item
+        let {block, transaction, log: {logIndex}} = item
         let chainId = chain->ChainMap.Chain.toChainId
+        let (event, eventMod) = switch event
+          ->Belt.Option.getExn
+          ->Converters.convertDecodedEvent(
+            ~contractInterfaceManager,
+            ~log=item.log,
+            ~block,
+            ~transaction,
+            ~chainId,
+          )
+        {
+        | Ok(v) => v
+        | Error(exn) =>
+          let logger = Logging.createChildFrom(
+            ~logger,
+            ~params={"chainId": chainId, "blockNumber": block.number, "logIndex": logIndex},
+          )
+          exn->ErrorHandling.mkLogAndRaise(~msg="Failed to convert decoded event", ~logger)
+        }
         {
           timestamp: block.timestamp,
           chain,
           blockNumber: block.number,
           logIndex,
-          event: switch event
-          ->Belt.Option.getExn
-          ->Converters.convertDecodedEvent(
-            ~contractInterfaceManager,
-            ~log=item.log,
-            ~block=item.block,
-            ~chainId,
-            ~transaction=item.transaction,
-          ) {
-          | Ok(v) => v
-          | Error(exn) =>
-            let logger = Logging.createChildFrom(
-              ~logger,
-              ~params={"chainId": chainId, "blockNumber": block.number, "logIndex": logIndex},
-            )
-            exn->ErrorHandling.mkLogAndRaise(~msg="Failed to convert decoded event", ~logger)
-          },
+          event,
+          eventMod,
         }
       })
     } else {
@@ -305,14 +308,15 @@ let fetchBlockRange = async (
           ~contractInterfaceManager,
           ~chainId,
         ) {
-        | Ok(parsed) =>
+        | Ok((event, eventMod)) =>
           (
             {
               timestamp: block.timestamp,
               chain,
               blockNumber: block.number,
               logIndex,
-              event: parsed,
+              event,
+              eventMod,
             }: Types.eventBatchQueueItem
           )
 
