@@ -236,6 +236,7 @@
       "type": "object",
       "properties": {
         "url": {
+          "description": "URL of the HyperSync endpoint (default: The most performant HyperSync endpoint for the network)",
           "type": "string"
         }
       },
@@ -268,6 +269,7 @@
           "format": "int32"
         },
         "hypersync_config": {
+          "description": "Optional HyperSync Config for additional fine-tuning",
           "anyOf": [
             {
               "$ref": "#/$defs/HypersyncConfig"
@@ -283,6 +285,7 @@
           "minimum": 0
         },
         "rpc_config": {
+          "description": "RPC Config that will be used to subscribe to blockchain data on this network (TIP: This is optional and in most cases does not need to be specified if the network is supported with HyperSync. We recommend using HyperSync instead of RPC for 100x speed-up)",
           "anyOf": [
             {
               "$ref": "#/$defs/RpcConfig"
@@ -348,6 +351,7 @@
           ]
         },
         "url": {
+          "description": "URL of the RPC endpoint. Can be a single URL or an array of URLs. If multiple URLs are provided, the first one will be used as the primary RPC endpoint and the rest will be used as fallbacks.",
           "anyOf": [
             {
               "type": "string"

@@ -307,6 +307,9 @@ pub mod evm {
     #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
         #[serde(alias = "endpoint_url")]
+        #[schemars(
+            description = "URL of the HyperSync endpoint (default: The most performant HyperSync endpoint for the network)"
+        )]
         pub url: String,
     }
 
@@ -331,6 +334,9 @@ pub mod evm {
     #[serde(deny_unknown_fields)]
     #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
     pub struct RpcConfig {
+        #[schemars(
+            description = "URL of the RPC endpoint. Can be a single URL or an array of URLs. If multiple URLs are provided, the first one will be used as the primary RPC endpoint and the rest will be used as fallbacks."
+        )]
         pub url: SingleOrList<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub unstable__sync_config: Option<SyncConfigUnstable>,
@@ -341,8 +347,12 @@ pub mod evm {
     pub struct Network {
         pub id: NetworkId,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "RPC Config that will be used to subscribe to blockchain data on this network (TIP: This is optional and in most cases does not need to be specified if the network is supported with HyperSync. We recommend using HyperSync instead of RPC for 100x speed-up)"
+        )]
         pub rpc_config: Option<RpcConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
         pub hypersync_config: Option<HypersyncConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub confirmed_block_threshold: Option<i32>,
