@@ -271,7 +271,7 @@ let fetchBlockRange = async (
         let chainId = chain->ChainMap.Chain.toChainId
         let (event, eventMod) = switch event
           ->Belt.Option.getExn
-          ->Converters.convertDecodedEvent(
+          ->Converters.convertHyperSyncEvent(
             ~contractInterfaceManager,
             ~log=item.log,
             ~block,
