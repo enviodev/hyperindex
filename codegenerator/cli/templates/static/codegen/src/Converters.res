@@ -27,7 +27,7 @@ let convertDecodedEvent = (
 ): result<
   (
     Types.eventLog<Types.internalEventArgs>,
-    module(Types.Event with type eventArgs = Types.internalEventArgs),
+    module(Types.InternalEvent),
   ),
   _,
 > => {
@@ -55,7 +55,7 @@ let parseEvent = (
 ): result<
   (
     Types.eventLog<Types.internalEventArgs>,
-    module(Types.Event with type eventArgs = Types.internalEventArgs),
+    module(Types.InternalEvent),
   ),
   _,
 > => {
@@ -96,7 +96,7 @@ let blockFromRawEvent = (
 
 let decodeRawEventWith = (
   rawEvent: TablesStatic.RawEvents.t,
-  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ~eventMod: module(Types.InternalEvent),
   ~chain,
 ): result<Types.eventBatchQueueItem, S.error> => {
   let module(Event) = eventMod
@@ -129,10 +129,3 @@ let decodeRawEventWith = (
   }
 }
 
-let parseRawEvent = (rawEvent: TablesStatic.RawEvents.t, ~chain): result<
-  Types.eventBatchQueueItem,
-  S.error,
-> => {
-  let eventMod = rawEvent.eventType->Types.eventTypeToEventMod
-  rawEvent->decodeRawEventWith(~eventMod, ~chain)
-}

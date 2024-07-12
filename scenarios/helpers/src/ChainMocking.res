@@ -40,7 +40,7 @@ module Make = (Indexer: Indexer.S) => {
     eventBatchQueueItem: Types.eventBatchQueueItem,
     srcAddress: Ethers.ethAddress,
     transactionHash: string,
-    eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+    eventMod: module(Types.InternalEvent),
   }
 
   type makeEvent = (~blockHash: string) => Types.eventLog<Types.internalEventArgs>
@@ -50,7 +50,7 @@ module Make = (Indexer: Indexer.S) => {
     makeEvent: makeEvent,
     logIndex: int,
     srcAddress: Ethers.ethAddress,
-    eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+    eventMod: module(Types.InternalEvent),
   }
 
   type composedEventConstructor = (

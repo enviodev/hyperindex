@@ -208,7 +208,10 @@ let eventNameToString = (eventName: eventName) => switch eventName {
   {{/each}}
 }
 
+type internalEventArgs
+
 module type Event = {
+  let key: string
   let eventName: Enums.EventType.t
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
@@ -221,15 +224,17 @@ module type Event = {
   ) => eventLog<eventArgs>
   let convertDecodedEventParams: HyperSyncClient.Decoder.decodedEvent => eventArgs
 }
+module type InternalEvent = Event with type eventArgs = internalEventArgs
 
-type internalEventArgs
 external eventToInternal: eventLog<'a> => eventLog<internalEventArgs> = "%identity"
-external eventModToInternal: module(Event with type eventArgs = 'a) => module(Event with type eventArgs = internalEventArgs) = "%identity"
+external eventModToInternal: module(Event with type eventArgs = 'a) => module(InternalEvent) = "%identity"
+external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent) = "%identity"
 
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
+    let key = "{{contract.name.capitalized}}_{{event.topic0}}"
     let eventName = Enums.EventType.{{event.event_type.full}}
 
     @genType
@@ -337,16 +342,6 @@ let eventNameToEventMod = (eventName, contractName) => {
   }
 }
 
-let eventTypeToEventMod = (eventType: eventName) => {
-  switch eventType {
-  {{#each codegen_contracts as |contract|}}
-  {{#each contract.codegen_events as |event|}}
-    | {{event.event_type.full}} => module({{contract.name.capitalized}}.{{event.name.capitalized}})->eventModToInternal
-  {{/each}}
-  {{/each}}
-  }
-}
-
 @genType
 type chainId = int
 
@@ -356,7 +351,7 @@ type eventBatchQueueItem = {
   blockNumber: int,
   logIndex: int,
   event: eventLog<internalEventArgs>,
-  eventMod: module(Event with type eventArgs = internalEventArgs),
+  eventMod: module(InternalEvent),
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events

@@ -55,15 +55,15 @@ describe("Parsing Raw Events", () => {
       chain,
       blockNumber,
       logIndex,
-      eventMod: module(Types.Gravatar.NewGravatar)->(Utils.magic: module(Types.Event with type eventArgs = Types.Gravatar.NewGravatar.eventArgs) => module(Types.Event with type eventArgs = Types.internalEventArgs)),
+      eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
       event: {
         block,
         chainId,
         srcAddress,
         transaction,
         logIndex,
-        params: params->(Utils.magic: Types.Gravatar.NewGravatar.eventArgs => Types.internalEventArgs),
-      },
+        params,
+      }->Types.eventToInternal,
     }
 
     Assert.deepStrictEqual(parsedEvent, expectedParseResult)

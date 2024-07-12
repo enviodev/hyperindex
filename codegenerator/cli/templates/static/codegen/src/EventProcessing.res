@@ -157,7 +157,7 @@ let runEventLoader = async (
 
 let addEventToRawEvents = (
   event: Types.eventLog<Types.internalEventArgs>,
-  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ~eventMod: module(Types.InternalEvent),
   ~inMemoryStore: InMemoryStore.t,
   ~chainId,
 ) => {
@@ -180,7 +180,7 @@ let addEventToRawEvents = (
     blockTimestamp,
     blockFields,
     transactionFields,
-    eventType: Event.eventName,
+    eventKey: Event.key,
     params,
   }
 
@@ -211,7 +211,7 @@ let runEventHandler = (
   ~executeLoadLayer=LoadLayer.executeLoadLayer,
   ~asyncGetters=?,
   //Required params
-  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ~eventMod: module(Types.InternalEvent),
   ~handler,
   ~inMemoryStore,
   ~logger,
@@ -266,7 +266,7 @@ let runEventHandler = (
 
 let runHandler = (
   event: Types.eventLog<'eventArgs>,
-  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ~eventMod: module(Types.InternalEvent),
   ~latestProcessedBlocks,
   ~inMemoryStore,
   ~logger,

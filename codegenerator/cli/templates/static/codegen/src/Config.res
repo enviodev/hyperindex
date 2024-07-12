@@ -98,6 +98,7 @@ type t = {
   isUnorderedMultichainMode: bool,
   chainMap: ChainMap.t<chainConfig>,
   defaultChain: option<chainConfig>,
+  events: dict<module(Types.InternalEvent)>,
 }
 
 let make = (
@@ -107,24 +108,39 @@ let make = (
   ~isUnorderedMultichainMode=false,
   ~chains=[],
 ) => {
-  historyConfig: {
-    rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
-    historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
-  },
-  shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
-    shouldUseHypersyncClientDecoder,
-  ),
-  isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
-    Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
-      isUnorderedMultichainMode,
-    ),
-  ),
-  chainMap: chains
-  ->Js.Array2.map(n => {
-    (n.chain, n)
+  let events = Js.Dict.empty()
+  chains->Js.Array2.forEach(chainConfig => {
+    chainConfig.contracts->Js.Array2.forEach(contract => {
+      contract.events->Js.Array2.forEach(
+        eventMod => {
+          let eventMod = eventMod->Types.eventModWithoutArgTypeToInternal
+          let module(Event) = eventMod
+          events->Js.Dict.set(Event.key, eventMod)
+        },
+      )
+    })
   })
-  ->ChainMap.fromArrayUnsafe,
-  defaultChain: chains->Belt.Array.get(0),
+  {
+    historyConfig: {
+      rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
+      historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
+    },
+    shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
+      shouldUseHypersyncClientDecoder,
+    ),
+    isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
+      Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
+        isUnorderedMultichainMode,
+      ),
+    ),
+    chainMap: chains
+    ->Js.Array2.map(n => {
+      (n.chain, n)
+    })
+    ->ChainMap.fromArrayUnsafe,
+    defaultChain: chains->Belt.Array.get(0),
+    events,
+  }
 }
 
 %%private(let generatedConfigRef = ref(None))
@@ -155,5 +171,7 @@ let getChain = (config, ~chainId) => {
   let chain = ChainMap.Chain.makeUnsafe(~chainId)
   config.chainMap->ChainMap.has(chain)
     ? chain
-    : Js.Exn.raiseError("No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml")
+    : Js.Exn.raiseError(
+        "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
+      )
 }
