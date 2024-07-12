@@ -45,7 +45,7 @@ describe("Sql transaction tests", () => {
     const mockRawEventRow3 = {
       ...mockRawEventRow,
       event_id: mockRawEventRow.event_id + 2,
-      event_type: "INVALID_EVENT_TYPE",
+      event_key: "INVALID_EVENT_TYPE",
     };
     const transaction = sql.begin((sql) => [
       sql`INSERT INTO raw_events ${sql(mockRawEventRow as any)}`,

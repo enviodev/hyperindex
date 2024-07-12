@@ -11,7 +11,7 @@ const pollGraphQL = async () => {
   const rawEventsQuery = `
     query {
       raw_events_by_pk(chain_id: 1, event_id: "712791818308") {
-        event_type
+        event_key
         log_index
         src_address
         block_number
@@ -39,8 +39,8 @@ const pollGraphQL = async () => {
     let shouldExitOnFailure = false;
     try {
       assert(
-        data.raw_events_by_pk.event_type === "ERC20_Approval",
-        "event_type should be an Approval",
+        data.raw_events_by_pk.event_key === "ERC20_Approval",
+        "event_key should be an Approval",
       );
       console.log("First erc20 test passed, running account entity test.");
 

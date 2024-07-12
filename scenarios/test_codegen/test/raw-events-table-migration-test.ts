@@ -34,7 +34,7 @@ describe("Raw Events Table Migrations", () => {
       { column_name: "block_fields", data_type: "json" },
       { column_name: "transaction_fields", data_type: "json" },
       { column_name: "src_address", data_type: "text" },
-      { column_name: "event_type", data_type: "USER-DEFINED" }, //enum of types
+      { column_name: "event_key", data_type: "text" },
     ];
 
     expect(rawEventsColumnsRes).to.deep.include.members(expectedColumns);

@@ -224,7 +224,7 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     "src_address",
     "block_hash",
     "block_timestamp",
-    "event_type",
+    "event_key",
     "params",
   )}
     ON CONFLICT(chain_id, event_id) DO UPDATE
@@ -238,7 +238,7 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     "src_address" = EXCLUDED."src_address",
     "block_hash" = EXCLUDED."block_hash",
     "block_timestamp" = EXCLUDED."block_timestamp",
-    "event_type" = EXCLUDED."event_type",
+    "event_key" = EXCLUDED."event_key",
     "params" = EXCLUDED."params";`;
 };
 

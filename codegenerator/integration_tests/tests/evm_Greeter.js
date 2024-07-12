@@ -10,7 +10,7 @@ const pollGraphQL = async () => {
   const rawEventsQuery = `
     query {
       raw_events_by_pk(event_id: "3071145413242", chain_id: 137) {
-        event_type
+        event_key
         log_index
         src_address
         block_number
@@ -34,8 +34,8 @@ const pollGraphQL = async () => {
     let shouldExitOnFailure = false;
     try {
       assert(
-        data.raw_events_by_pk.event_type === "Greeter_NewGreeting",
-        "event_type should be Greeter_NewGreeting",
+        data.raw_events_by_pk.event_key === "Greeter_NewGreeting",
+        "event_key should be Greeter_NewGreeting",
       );
       console.log(
         "First greeter passed, running the second one for user entity",
