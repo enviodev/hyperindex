@@ -865,9 +865,17 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
+        let rpc_config2 = RpcConfig {
+            urls: vec![
+                "https://eth.com".to_string(),
+                // Should support fallback urls
+                "https://eth.com/fallback".to_string(),
+            ],
+            sync_config: system_config::SyncConfig::default(),
+        };
         let network2 = super::NetworkTemplate {
             id: 2,
-            rpc_config: Some(rpc_config1),
+            rpc_config: Some(rpc_config2),
             skar_server_url: None,
             start_block: 0,
             end_block: None,
