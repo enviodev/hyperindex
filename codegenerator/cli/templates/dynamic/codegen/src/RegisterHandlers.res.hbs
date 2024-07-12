@@ -31,8 +31,8 @@ let registerContractHandlers = (
       syncSource: 
         {{#if chain_config.network_config.rpc_config}}
         Rpc({
-          provider: Ethers.JsonRpcProvider.makeStatic(
-            ~rpcUrl="{{chain_config.network_config.rpc_config.url}}",
+          provider: Ethers.JsonRpcProvider.make(
+            ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
             ~chainId={{chain_config.network_config.id}}
           ),
         {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}

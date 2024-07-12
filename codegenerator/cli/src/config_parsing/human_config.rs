@@ -1,18 +1,34 @@
 use super::validation;
-use crate::{constants::links, utils::normalized_list::NormalizedList};
+use crate::{
+    constants::links,
+    utils::normalized_list::{NormalizedList, SingleOrList},
+};
 use anyhow::Context;
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, path::PathBuf};
 
-type NetworkId = u64;
+impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
+    fn schema_name() -> Cow<'static, str> {
+        "SingleOrList".into()
+    }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct GlobalContract<T> {
-    pub name: String,
-    #[serde(flatten)]
-    pub config: T,
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        let t_schema = T::json_schema(gen);
+        json_schema!({
+          "anyOf": [
+            t_schema,
+            {
+              "type": "array",
+              "items": t_schema
+            }
+          ]
+        })
+    }
+
+    fn always_inline_schema() -> bool {
+        true
+    }
 }
 
 pub type Addresses = NormalizedList<String>;
@@ -45,6 +61,16 @@ impl JsonSchema for Addresses {
     }
 }
 
+type NetworkId = u64;
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalContract<T> {
+    pub name: String,
+    #[serde(flatten)]
+    pub config: T,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkContract<T> {
@@ -58,7 +84,9 @@ pub struct NetworkContract<T> {
 
 pub mod evm {
     use super::{GlobalContract, NetworkContract, NetworkId};
-    use crate::config_parsing::entity_parsing::RescriptType;
+    use crate::{
+        config_parsing::entity_parsing::RescriptType, utils::normalized_list::SingleOrList,
+    };
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -303,7 +331,7 @@ pub mod evm {
     #[serde(deny_unknown_fields)]
     #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
     pub struct RpcConfig {
-        pub url: String,
+        pub url: SingleOrList<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub unstable__sync_config: Option<SyncConfigUnstable>,
     }

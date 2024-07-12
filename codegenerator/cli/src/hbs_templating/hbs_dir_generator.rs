@@ -1,6 +1,6 @@
 use crate::{project_paths::path_utils::normalize_path, template_dirs::RelativeDir};
 use anyhow::{anyhow, Context};
-use handlebars::Handlebars;
+use handlebars::{handlebars_helper, Handlebars};
 use include_dir::DirEntry;
 use serde::Serialize;
 use std::fs;
@@ -18,6 +18,16 @@ impl<'a, T: Serialize> HandleBarsDirGenerator<'a, T> {
         let mut handlebars = Handlebars::new();
         handlebars.set_strict_mode(true);
         handlebars.register_escape_fn(handlebars::no_escape);
+
+        handlebars_helper!(vec_to_array_helper: |vec: Vec<String>| {
+          let items = vec
+            .iter()
+            .map(|v| format!("\"{}\"", v))
+            .collect::<Vec<_>>()
+            .join(", ");
+          format!("[{}]", items)
+        });
+        handlebars.register_helper("vec_to_array", Box::new(vec_to_array_helper));
 
         HandleBarsDirGenerator {
             handlebars,
