@@ -6,9 +6,10 @@ type rec t = {
   blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
   chainConfig: Config.chainConfig,
   rpcConfig: Config.rpcConfig,
+  config: Config.t,
 }
 
-let make = (chainConfig: Config.chainConfig, ~rpcConfig: Config.rpcConfig): t => {
+let make = (chainConfig: Config.chainConfig, ~config, ~rpcConfig: Config.rpcConfig): t => {
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
       EventFetching.getUnwrappedBlockWithBackoff(
@@ -29,6 +30,7 @@ let make = (chainConfig: Config.chainConfig, ~rpcConfig: Config.rpcConfig): t =>
     blockLoader,
     chainConfig,
     rpcConfig,
+    config,
   }
 }
 
@@ -127,7 +129,7 @@ let fetchBlockRange = async (
       ~chain=chainConfig.chain,
       ~blockLoader,
       ~logger,
-      (),
+      ~config=self.config,
     )
 
     let eventBatches = await eventBatchPromises->Promise.all

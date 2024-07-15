@@ -175,3 +175,11 @@ let getChain = (config, ~chainId) => {
         "No chain with id " ++ chain->ChainMap.Chain.toString ++ " found in config.yaml",
       )
 }
+
+let getEventModOrThrow = (config, ~contractName, ~topic0) => {
+  let key = `${contractName}_${topic0}`
+  switch config.events->Js.Dict.get(key) {
+  | Some(event) => event
+  | None => Js.Exn.raiseError("No registered event found with key " ++ key)
+  }
+}

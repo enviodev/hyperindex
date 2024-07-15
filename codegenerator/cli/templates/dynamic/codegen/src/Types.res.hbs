@@ -269,19 +269,6 @@ module {{contract.name.capitalized}} = {
 }
 
 {{/each}}
-
-exception UnknownEvent(string, string)
-let eventTopicToEventMod = (contractName, topic0) => {
-  switch (contractName, topic0) {
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  | ("{{contract.name.capitalized}}", "{{event.topic0}}") => module({{contract.name.capitalized}}.{{event.name.capitalized}})->eventModToInternal
-{{/each}}
-{{/each}}
-  | (contractName, topic0) => UnknownEvent(contractName, topic0)->raise
-  }
-}
-
 @genType
 type chainId = int
 

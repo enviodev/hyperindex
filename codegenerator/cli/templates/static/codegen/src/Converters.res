@@ -19,6 +19,7 @@ let makeEventLog = (
 
 let convertHyperSyncEvent = (
   event: HyperSyncClient.Decoder.decodedEvent,
+  ~config,
   ~contractInterfaceManager,
   ~log: Types.Log.t,
   ~block,
@@ -36,7 +37,7 @@ let convertHyperSyncEvent = (
   ) {
   | None => Error(UnregisteredContract(log.address))
   | Some(contractName) =>
-    let eventMod = Types.eventTopicToEventMod(contractName, log.topics[0])
+    let eventMod = config->Config.getEventModOrThrow(~contractName, ~topic0=log.topics[0])
     let module(Event) = eventMod
     let event =
       event
@@ -48,6 +49,7 @@ let convertHyperSyncEvent = (
 
 let parseEvent = (
   ~log: Types.Log.t,
+  ~config,
   ~block,
   ~contractInterfaceManager,
   ~chainId,
@@ -73,7 +75,7 @@ let parseEvent = (
     ) {
     | None => Error(UnregisteredContract(log.address))
     | Some(contractName) =>
-      let eventMod = Types.eventTopicToEventMod(contractName, log.topics[0])
+      let eventMod = config->Config.getEventModOrThrow(~contractName, ~topic0=log.topics[0])
       let event: Types.eventLog<Types.internalEventArgs> = {
         params: decodedEvent.args,
         chainId,

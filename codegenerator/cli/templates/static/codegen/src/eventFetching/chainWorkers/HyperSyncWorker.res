@@ -1,6 +1,8 @@
 open ChainWorkerTypes
 open Belt
+
 type t = {
+  config: Config.t,
   chainConfig: Config.chainConfig,
   serverUrl: string,
 }
@@ -58,8 +60,9 @@ module Helpers = {
   exception ErrorMessage(string)
 }
 
-let make = (chainConfig: Config.chainConfig, ~serverUrl): t => {
+let make = (chainConfig: Config.chainConfig, ~config, ~serverUrl): t => {
   {
+    config,
     chainConfig,
     serverUrl,
   }
@@ -153,7 +156,7 @@ let fetchBlockRange = async (
 ) => {
   let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
   try {
-    let {chainConfig: {chain}, serverUrl} = self
+    let {chainConfig: {chain}, serverUrl, config} = self
     let {
       fetchStateRegisterId,
       partitionId,
@@ -241,7 +244,7 @@ let fetchBlockRange = async (
     let parsingTimeRef = Hrtime.makeTimer()
 
     //Parse page items into queue items
-    let parsedQueueItemsPreFilter = if Config.getGenerated().shouldUseHypersyncClientDecoder {
+    let parsedQueueItemsPreFilter = if config.shouldUseHypersyncClientDecoder {
       //Currently there are still issues with decoder for some cases so
       //this can only be activated with a flag
       let decoder = switch contractInterfaceManager
@@ -272,6 +275,7 @@ let fetchBlockRange = async (
         let (event, eventMod) = switch event
           ->Belt.Option.getExn
           ->Converters.convertHyperSyncEvent(
+            ~config,
             ~contractInterfaceManager,
             ~log=item.log,
             ~block,
@@ -303,6 +307,7 @@ let fetchBlockRange = async (
         let chainId = chain->ChainMap.Chain.toChainId
         switch Converters.parseEvent(
           ~log=item.log,
+          ~config,
           ~transaction=item.transaction,
           ~block=item.block,
           ~contractInterfaceManager,
