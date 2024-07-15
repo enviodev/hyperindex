@@ -34,6 +34,13 @@ let logFilePath = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/env
 let userLogLevel = getLogLevelConfig("LOG_LEVEL", ~default=#info)
 let defaultFileLogLevel = getLogLevelConfig("FILE_LOG_LEVEL", ~default=#trace)
 
+let hypersyncApiKey =
+  envSafe->EnvSafe.get(
+    "HYPERSYNC_API_TOKEN",
+    S.string,
+    ~fallback="3dc856dd-b0ea-494f-b27e-017b8b6b7e07",
+  )
+
 type logStrategyType =
   | @as("ecs-file") EcsFile
   | @as("ecs-console") EcsConsole

@@ -238,7 +238,7 @@ type t = {
 
 @module("@envio-dev/hypersync-client") @scope("HypersyncClient") external new: cfg => t = "new"
 
-let make = (~url) => new({url, enableChecksumAddresses: true})
+let make = (~url) => new({url, enableChecksumAddresses: true, bearerToken: Env.hypersyncApiKey})
 
 module Decoder = {
   type rec decodedSolType<'a> = {val: 'a}
