@@ -180,7 +180,6 @@ let addEventToRawEvents = (
     blockTimestamp,
     blockFields,
     transactionFields,
-    eventKey: Event.key,
     params,
   }
 

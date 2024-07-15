@@ -109,7 +109,6 @@ module RawEvents = {
   type t = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: string,
-    @as("event_key") eventKey: string,
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
     @as("src_address") srcAddress: Ethers.ethAddress,
@@ -125,7 +124,6 @@ module RawEvents = {
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("event_id", Numeric, ~isPrimaryKey),
-      mkField("event_key", Text),
       mkField("block_number", Integer),
       mkField("log_index", Integer),
       mkField("src_address", Text),
@@ -248,4 +246,3 @@ let allTables: array<table> = [
   EntityHistory.table,
   EntityHistoryFilter.table,
 ]
-

@@ -16,20 +16,21 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-        }`,
+      sql`${constrQuery(sql)}${
+        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+      }`
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
   const fieldNames = TableModule.getFieldNames(table).filter(
-    (fieldName) => fieldName !== "db_write_timestamp",
+    (fieldName) => fieldName !== "db_write_timestamp"
   );
   const primaryKeyFieldNames = TableModule.getPrimaryKeyFieldNames(table);
   const fieldQueryConstructors = fieldNames.map(
-    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`,
+    (fieldName) => (sql) => sql`${sql(fieldName)} = EXCLUDED.${sql(fieldName)}`
   );
   const pkQueryConstructors = primaryKeyFieldNames.map(
-    (pkField) => (sql) => sql(pkField),
+    (pkField) => (sql) => sql(pkField)
   );
 
   return sql`
@@ -37,7 +38,7 @@ INSERT INTO "public".${sql(table.tableName)}
 ${sql(rowDataArray, ...fieldNames)}
 ON CONFLICT(${sql`${commaSeparateDynamicMapQuery(
     sql,
-    pkQueryConstructors,
+    pkQueryConstructors
   )}`}) DO UPDATE
 SET
 ${sql`${commaSeparateDynamicMapQuery(sql, fieldQueryConstructors)}`};`;
@@ -92,7 +93,7 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "chain_id",
     "block_number",
     "log_index",
-    "block_timestamp",
+    "block_timestamp"
   )}
     ON CONFLICT(chain_id) DO UPDATE
     SET
@@ -123,7 +124,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
     "is_hyper_sync", // this is left out of the on conflict below as it only needs to be set once
     "num_batches_fetched",
     "latest_fetched_block_number",
-    "timestamp_caught_up_to_head_or_endblock",
+    "timestamp_caught_up_to_head_or_endblock"
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
@@ -135,7 +136,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => { })
+    .then((res) => {})
     .catch((err) => {
       console.log("errored", err);
     });
@@ -149,13 +150,13 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
     "chain_id",
     "start_block", // this is left out of the on conflict below as it only needs to be set once
     "end_block", // this is left out of the on conflict below as it only needs to be set once
-    "block_height",
+    "block_height"
   )}
   ON CONFLICT(chain_id) DO UPDATE
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => { })
+    .then((res) => {})
     .catch((err) => {
       console.log("errored", err);
     });
@@ -163,7 +164,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
 
 module.exports.readLatestRawEventsBlockNumberProcessedOnChainId = (
   sql,
-  chainId,
+  chainId
 ) => sql`
   SELECT block_number
   FROM "public"."raw_events"
@@ -181,7 +182,7 @@ module.exports.getRawEventsPageGtOrEqEventId = (
   chainId,
   eventId,
   limit,
-  contractAddresses,
+  contractAddresses
 ) => sql`
   SELECT *
   FROM "public"."raw_events"
@@ -198,7 +199,7 @@ module.exports.getRawEventsPageWithinEventIdRangeInclusive = (
   fromEventIdInclusive,
   toEventIdInclusive,
   limit,
-  contractAddresses,
+  contractAddresses
 ) => sql`
   SELECT *
   FROM public.raw_events
@@ -224,8 +225,7 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     "src_address",
     "block_hash",
     "block_timestamp",
-    "event_key",
-    "params",
+    "params"
   )}
     ON CONFLICT(chain_id, event_id) DO UPDATE
     SET
@@ -238,7 +238,6 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     "src_address" = EXCLUDED."src_address",
     "block_hash" = EXCLUDED."block_hash",
     "block_timestamp" = EXCLUDED."block_timestamp",
-    "event_key" = EXCLUDED."event_key",
     "params" = EXCLUDED."params";`;
 };
 
@@ -282,7 +281,7 @@ module.exports.deleteAllEntityHistoryOnChainBeforeThreshold = async (
   sql,
   chainId,
   blockNumberThreshold,
-  blockTimestampThreshold,
+  blockTimestampThreshold
 ) => {
   await sql`
   DELETE FROM "public"."entity_history"
@@ -301,7 +300,7 @@ module.exports.deleteAllEntityHistoryOnChainBeforeThreshold = async (
 
 module.exports.deleteAllEntityHistoryAfterEventIdentifier = async (
   sql,
-  { blockTimestamp, chainId, blockNumber, logIndex },
+  { blockTimestamp, chainId, blockNumber, logIndex }
 ) => {
   await sql`
   DELETE FROM "public"."entity_history"
@@ -332,7 +331,7 @@ module.exports.deleteAllDynamicContractRegistrationsAfterEventIdentifier =
 
 module.exports.deleteAllRawEventsAfterEventIdentifier = async (
   sql,
-  { blockTimestamp, chainId, blockNumber, logIndex },
+  { blockTimestamp, chainId, blockNumber, logIndex }
 ) => {
   const eventId = EventUtils.packEventIndexFromRecord({
     blockNumber,
@@ -366,7 +365,7 @@ const batchSetEndOfBlockRangeScannedDataCore = (sql, rowDataArray) => {
     "chain_id",
     "block_timestamp",
     "block_number",
-    "block_hash",
+    "block_hash"
   )}
     ON CONFLICT(chain_id, block_number) DO UPDATE
     SET
@@ -380,7 +379,7 @@ module.exports.batchSetEndOfBlockRangeScannedData = (sql, rowDataArray) => {
   return chunkBatchQuery(
     sql,
     rowDataArray,
-    batchSetEndOfBlockRangeScannedDataCore,
+    batchSetEndOfBlockRangeScannedDataCore
   );
 };
 
@@ -396,7 +395,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
   sql,
   chainId,
   blockNumberThreshold,
-  blockTimestampThreshold,
+  blockTimestampThreshold
 ) => {
   return sql`
     DELETE
@@ -410,7 +409,7 @@ module.exports.deleteStaleEndOfBlockRangeScannedDataForChain = (
 module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (
   sql,
   chainId,
-  block_number,
+  block_number
 ) => sql`
   SELECT c.contract_address, c.contract_type, c.event_id, c.chain_id, c.block_timestamp
   FROM "public"."dynamic_contract_registry" as c
@@ -421,7 +420,7 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (
 //Start db operations dynamic_contract_registry
 module.exports.readDynamicContractRegistryEntities = (
   sql,
-  entityIdArray,
+  entityIdArray
 ) => sql`
   SELECT *
   FROM "public"."dynamic_contract_registry"
@@ -436,7 +435,7 @@ const batchSetDynamicContractRegistryCore = (sql, entityDataArray) => {
     "event_id",
     "block_timestamp",
     "contract_address",
-    "contract_type",
+    "contract_type"
   )}
     ON CONFLICT(chain_id, contract_address) DO UPDATE
     SET
@@ -450,7 +449,7 @@ module.exports.batchSetDynamicContractRegistry = (sql, entityDataArray) => {
   return chunkBatchQuery(
     sql,
     entityDataArray,
-    batchSetDynamicContractRegistryCore,
+    batchSetDynamicContractRegistryCore
   );
 };
 
@@ -464,7 +463,7 @@ module.exports.getRollbackDiff = (
   sql,
   blockTimestamp,
   chainId,
-  blockNumber,
+  blockNumber
 ) => sql`
 SELECT DISTINCT
     ON (
