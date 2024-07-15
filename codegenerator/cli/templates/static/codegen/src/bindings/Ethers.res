@@ -200,17 +200,68 @@ module Network = {
 module JsonRpcProvider = {
   type t
 
-  type rpcOptions = {staticNetwork: Network.t}
+  type rpcOptions = {
+    staticNetwork?: Network.t,
+    // Options for FallbackProvider
+    /**
+     *  The amount of time to wait before kicking off the next provider.
+     *
+     *  Any providers that have not responded can still respond and be
+     *  counted, but this ensures new providers start.
+     *  Default: 400ms
+     */
+    stallTimeout?: int,
+
+    /**
+     *  The priority. Lower priority providers are dispatched first.
+     *  Default: 1
+     */
+    priority?: int,
+
+    /**
+     *  The amount of weight a provider is given against the quorum.
+     *  Default: 1
+     */
+    weight?: int,
+  }
+
+  type fallbackProviderOptions = {
+    // How many providers must agree on a value before reporting
+    // back the response
+    // Note: Default the half of the providers weight, so we need to set it to accept result from the first rpc
+    quorum?: int,
+  }
 
   @module("ethers") @scope("ethers") @new
   external makeWithOptions: (
     ~rpcUrl: string,
-    ~chainId: option<Network.t>,
+    ~network: Network.t,
     ~options: rpcOptions,
   ) => t = "JsonRpcProvider"
-  let makeStatic: (~rpcUrl: string, ~chainId: int) => t = (~rpcUrl, ~chainId) => {
+
+  @module("ethers") @scope("ethers") @new
+  external makeFallbackProvider: (
+    ~providers: array<t>,
+    ~network: Network.t,
+    ~options: fallbackProviderOptions,
+  ) => t = "FallbackProvider"
+
+  let makeStatic = (~rpcUrl: string, ~network: Network.t, ~priority=?): t => {
+    makeWithOptions(~rpcUrl, ~network, ~options={staticNetwork: network, ?priority})
+  }
+
+  let make = (~rpcUrls: array<string>, ~chainId: int): t => {
     let network = Network.fromChainId(~chainId)
-    makeWithOptions(~rpcUrl, ~chainId=Some(network), ~options={staticNetwork: network})
+    switch rpcUrls {
+      | [rpcUrl] => makeStatic(~rpcUrl, ~network)
+      | rpcUrls => makeFallbackProvider(
+        ~providers=rpcUrls->Js.Array2.mapi((rpcUrl, index) => makeStatic(~rpcUrl, ~network, ~priority=index)),
+        ~network,
+        ~options={
+          quorum: 1,
+        }
+      )
+    }
   }
 
   @send

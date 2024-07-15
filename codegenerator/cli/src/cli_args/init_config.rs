@@ -105,7 +105,7 @@ pub mod evm {
                             let rpc_config = match &selected_network.network {
                                 NetworkKind::Supported(_) => None,
                                 NetworkKind::Unsupported(_, url) => Some(RpcConfig {
-                                    url: url.clone(),
+                                    url: url.clone().into(),
                                     unstable__sync_config: None,
                                 }),
                             };

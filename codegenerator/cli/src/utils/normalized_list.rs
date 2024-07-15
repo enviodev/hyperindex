@@ -16,6 +16,17 @@ impl<T: Clone> From<SingleOrList<T>> for Vec<T> {
     }
 }
 
+impl<T: Clone> From<Vec<T>> for SingleOrList<T> {
+    fn from(v: Vec<T>) -> Self {
+        SingleOrList::List(v)
+    }
+}
+impl<T: Clone> From<T> for SingleOrList<T> {
+    fn from(v: T) -> Self {
+        SingleOrList::Single(v)
+    }
+}
+
 type OptSingleOrList<T> = Option<SingleOrList<T>>;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]

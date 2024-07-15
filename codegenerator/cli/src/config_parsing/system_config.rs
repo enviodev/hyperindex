@@ -345,7 +345,7 @@ impl Default for SyncConfig {
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct RpcConfig {
-    pub url: String,
+    pub urls: Vec<String>,
     pub sync_config: SyncConfig,
 }
 
@@ -394,11 +394,14 @@ impl SyncSource {
               }),
               ..
           } => {
-            if !validate_url(&url) {
-              return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+            let urls: Vec<String> = url.into();
+            for url in urls.iter() {
+              if !validate_url(url) {
+                return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+              }
             }
             Ok(Self::RpcConfig(RpcConfig {
-                url,
+                urls,
                 sync_config: match unstable__sync_config {
                     None => SyncConfig::default(),
                     Some(c) => SyncConfig {
