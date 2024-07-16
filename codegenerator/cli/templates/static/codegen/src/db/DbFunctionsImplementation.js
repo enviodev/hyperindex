@@ -218,6 +218,8 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     entityDataArray,
     "chain_id",
     "event_id",
+    "event_name",
+    "contract_name",
     "block_number",
     "log_index",
     "transaction_fields",
@@ -231,6 +233,8 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     SET
     "chain_id" = EXCLUDED."chain_id",
     "event_id" = EXCLUDED."event_id",
+    "event_name" = EXCLUDED."event_name",
+    "contract_name" = EXCLUDED."contract_name",
     "block_number" = EXCLUDED."block_number",
     "log_index" = EXCLUDED."log_index",
     "transaction_fields" = EXCLUDED."transaction_fields",

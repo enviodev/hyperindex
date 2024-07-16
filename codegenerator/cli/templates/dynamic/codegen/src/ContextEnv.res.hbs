@@ -57,13 +57,14 @@ let getEventId = (event: Types.eventLog<'a>) => {
   EventUtils.packEventIndex(~blockNumber=event.block.number, ~logIndex=event.logIndex)
 }
 
-let make = (~chain, ~event: Types.eventLog<'eventArgs>, ~eventName: Enums.EventType.t, ~logger) => {
+let make = (~chain, ~event: Types.eventLog<'eventArgs>, ~eventMod: module(Types.InternalEvent), ~logger) => {
   let {block, logIndex} = event
+  let module(Event) = eventMod
   let logger = logger->(
     Logging.createChildFrom(
       ~logger=_,
       ~params={
-        "context": (eventName :> string),
+        "context": `Event "${Event.name}" for contract "${Event.contractName}"`,
         "chainId": chain->ChainMap.Chain.toChainId,
         "block": block.number,
         "logIndex": logIndex,

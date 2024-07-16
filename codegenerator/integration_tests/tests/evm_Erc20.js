@@ -11,7 +11,8 @@ const pollGraphQL = async () => {
   const rawEventsQuery = `
     query {
       raw_events_by_pk(chain_id: 1, event_id: "712791818308") {
-        event_key
+        contract_name
+        event_name
         log_index
         src_address
         block_number
@@ -39,8 +40,12 @@ const pollGraphQL = async () => {
     let shouldExitOnFailure = false;
     try {
       assert(
-        data.raw_events_by_pk.event_key === "ERC20_Approval",
-        "event_key should be an Approval",
+        data.raw_events_by_pk.contract_name === "ERC20",
+        "contract_name should be ERC20"
+      );
+      assert(
+        data.raw_events_by_pk.event_name === "Approval",
+        "event_name should be an Approval"
       );
       console.log("First erc20 test passed, running account entity test.");
 
@@ -55,24 +60,24 @@ const pollGraphQL = async () => {
 
             assert(
               account.balance > 311465476000000000000,
-              "balance should be == 70",
+              "balance should be == 70"
             ); // NOTE the balance shouldn't change since we own this erc20 token.
             assert(
               account.approvals.length > 0,
-              "There should be at least one approval",
+              "There should be at least one approval"
             );
             assert(
               account.approvals[0].amount == 79228162514264337593543950335n,
-              "The first approval amount should be 50",
+              "The first approval amount should be 50"
             );
             assert(
               account.approvals[0].owner_id == account.id,
-              "The first approval owner should be the account id",
+              "The first approval owner should be the account id"
             );
             assert(
               account.approvals[0].spender_id ==
-              "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-              "The first approval spender should be correct (from uniswap)",
+                "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+              "The first approval spender should be correct (from uniswap)"
             );
           } catch (err) {
             //gotta love javascript
@@ -80,7 +85,7 @@ const pollGraphQL = async () => {
             throw err;
           }
           console.log("Second test passed.");
-        },
+        }
       );
     } catch (err) {
       //gotta love javascript

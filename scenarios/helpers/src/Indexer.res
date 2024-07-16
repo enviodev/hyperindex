@@ -58,6 +58,8 @@ module type S = {
 
     module type Event = {
       let key: string
+      let name: string
+      let contractName: string
       let eventName: Enums.EventType.t
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>

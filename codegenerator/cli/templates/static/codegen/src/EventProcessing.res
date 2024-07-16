@@ -87,9 +87,8 @@ let runEventContractRegister = (
   ~inMemoryStore,
 ) => {
   let {chain, eventMod} = eventBatchQueueItem
-  let module(Event) = eventMod
-  let eventName = Event.eventName
-  let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName)
+
+  let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
 
   switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore)) {
   | exception exn =>
@@ -173,6 +172,8 @@ let addEventToRawEvents = (
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
     eventId: eventId->BigInt.toString,
+    eventName: Event.name,
+    contractName: Event.contractName,
     blockNumber,
     logIndex,
     srcAddress,
@@ -220,8 +221,7 @@ let runEventHandler = (
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let module(Event) = eventMod
-    let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName=Event.eventName)
+    let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
     let loadLayer = LoadLayer.make()
 
     let loaderReturnUnawaited = runEventLoader(~contextEnv, ~handler, ~loadLayer)
@@ -384,7 +384,7 @@ let runLoaders = (
       ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
       ->Option.map(
         handler => {
-          let contextEnv = ContextEnv.make(~chain, ~eventName=Event.eventName, ~event, ~logger)
+          let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
           runEventLoader(~contextEnv, ~handler, ~loadLayer)
         },
       )

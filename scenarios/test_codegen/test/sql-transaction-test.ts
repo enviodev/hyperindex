@@ -23,6 +23,9 @@ describe("Sql transaction tests", () => {
     const mockRawEventRow3 = {
       ...mockRawEventRow,
       event_id: mockRawEventRow.event_id + 2,
+      // We don't validate event name and contract name fields
+      event_name: "INVALID_EVENT_NAME",
+      contract_name: "INVALID_CONTRACT_NAME",
     };
 
     const transaction = sql.begin((sql) => [
@@ -45,7 +48,7 @@ describe("Sql transaction tests", () => {
     const mockRawEventRow3 = {
       ...mockRawEventRow,
       event_id: mockRawEventRow.event_id + 2,
-      event_key: "INVALID_EVENT_TYPE",
+      invalid_field: "INVALID_FIELD",
     };
     const transaction = sql.begin((sql) => [
       sql`INSERT INTO raw_events ${sql(mockRawEventRow as any)}`,

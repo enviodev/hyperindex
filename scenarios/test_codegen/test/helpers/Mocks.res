@@ -2,6 +2,8 @@
 let mockRawEventRow: TablesStatic.RawEvents.t = {
   chainId: 1,
   eventId: 1234567890->Belt.Int.toString,
+  contractName: "NftFactory",
+  eventName: "SimpleNftCreated",
   blockNumber: 1000,
   logIndex: 10,
   transactionFields: S.serializeOrRaiseWith(

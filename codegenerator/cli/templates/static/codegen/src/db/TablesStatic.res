@@ -109,6 +109,8 @@ module RawEvents = {
   type t = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: string,
+    @as("event_name") eventName: string,
+    @as("contract_name") contractName: string,
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
     @as("src_address") srcAddress: Ethers.ethAddress,
@@ -124,6 +126,8 @@ module RawEvents = {
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("event_id", Numeric, ~isPrimaryKey),
+      mkField("event_name", Text),
+      mkField("contract_name", Text),
       mkField("block_number", Integer),
       mkField("log_index", Integer),
       mkField("src_address", Text),

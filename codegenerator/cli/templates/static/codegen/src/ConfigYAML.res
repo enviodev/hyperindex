@@ -32,7 +32,7 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
             addresses: contract.addresses,
             events: contract.events->Belt.Array.map(event => {
               let module(Event) = event
-              Event.eventName->Types.eventNameToString
+              Event.name
             }),
           },
         )
