@@ -103,9 +103,9 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~asyncTaskQueue: Async
         firstEventBlockNumber: cf.firstEventBlockNumber, //this is already optional
         latestProcessedBlock: cf.latestProcessedBlock, // this is already optional
         numEventsProcessed: Some(cf.numEventsProcessed),
-        isHyperSync: switch cf.chainConfig.syncSource {
-        | HyperSync(_) => true
-        | HyperFuel(_) => true // FIXME: What value should be for HyperFuel?
+        poweredByHyperSync: switch cf.chainConfig.syncSource {
+        | HyperSync(_)
+        | HyperFuel(_) => true
         | Rpc(_) => false
         },
         numBatchesFetched: cf.numBatchesFetched,

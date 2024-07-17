@@ -21,7 +21,7 @@ let getNumberOfEventsProccessed = (progress: progress) => {
 }
 type chainData = {
   chainId: int,
-  isHyperSync: bool,
+  poweredByHyperSync: bool,
   progress: progress,
   latestFetchedBlockNumber: int,
   currentBlockHeight: int,
@@ -67,12 +67,12 @@ module SyncBar = {
     ~buffered=?,
     ~outOf,
     ~loadingColor,
-    ~isHyperSync=true,
+    ~poweredByHyperSync=true,
     ~isSearching=false,
   ) => {
     <Box flexDirection=Row width=Str("80%")>
       <Box width={Num(20)}>
-        {isHyperSync ? <Text color=Secondary> {"⚡"->React.string} </Text> : React.null}
+        {poweredByHyperSync ? <Text color=Secondary> {"⚡"->React.string} </Text> : React.null}
         <Text> {"Chain ID: "->React.string} </Text>
         <Text> {chainId->React.int} </Text>
         <Text> {" "->React.string} </Text>
@@ -91,7 +91,7 @@ let make = (~chainData: chainData) => {
   let {
     chainId,
     progress,
-    isHyperSync,
+    poweredByHyperSync,
     latestFetchedBlockNumber,
     currentBlockHeight,
     endBlock,
@@ -111,7 +111,7 @@ let make = (~chainData: chainData) => {
         loaded={latestFetchedBlockNumber}
         outOf={toBlock}
         loadingColor={Primary}
-        isHyperSync
+        poweredByHyperSync
         isSearching=true
       />
       <Newline />
@@ -131,7 +131,7 @@ let make = (~chainData: chainData) => {
         buffered={latestFetchedBlockNumber - firstEventBlockNumber}
         outOf={toBlock - firstEventBlockNumber}
         loadingColor=Secondary
-        isHyperSync
+        poweredByHyperSync
       />
       <Newline />
     </Box>
@@ -150,7 +150,7 @@ let make = (~chainData: chainData) => {
         buffered={latestFetchedBlockNumber - firstEventBlockNumber}
         outOf={toBlock - firstEventBlockNumber}
         loadingColor=Success
-        isHyperSync
+        poweredByHyperSync
       />
       <Newline />
     </Box>
