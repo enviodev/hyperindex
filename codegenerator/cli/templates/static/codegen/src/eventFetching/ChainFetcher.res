@@ -37,9 +37,10 @@ let make = (
   ~maxAddrInPartition,
 ): t => {
   let (endpointDescription, chainWorker) = switch chainConfig.syncSource {
-  | HyperSync(serverUrl) => (
+  | HyperSync({endpointUrl})
+  | HyperFuel({endpointUrl}) => (
       "HyperSync",
-      chainConfig->HyperSyncWorker.make(~serverUrl, ~config)->Config.HyperSync,
+      chainConfig->HyperSyncWorker.make(~serverUrl=endpointUrl, ~config)->Config.HyperSync,
     )
   | Rpc(rpcConfig) => ("RPC", chainConfig->RpcWorker.make(~config, ~rpcConfig)->Rpc)
   }

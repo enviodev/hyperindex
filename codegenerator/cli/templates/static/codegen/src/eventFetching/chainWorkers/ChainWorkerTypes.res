@@ -25,7 +25,7 @@ type reorgGuard = {
 /**
 Thes response returned from a block range fetch
 */
-type blockRangeFetchResponse<'a, 'b> = {
+type blockRangeFetchResponse<'a, 'b, 'c> = {
   currentBlockHeight: int,
   reorgGuard: reorgGuard,
   parsedQueueItems: array<Types.eventBatchQueueItem>,
@@ -35,5 +35,5 @@ type blockRangeFetchResponse<'a, 'b> = {
   stats: blockRangeFetchStats,
   fetchStateRegisterId: FetchState.id,
   partitionId: PartitionedFetchState.partitionIndex,
-  worker: Config.source<'a, 'b>,
+  worker: Config.source<'a, 'b, 'c>,
 }

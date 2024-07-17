@@ -14,7 +14,13 @@ type syncConfig = {
   queryTimeoutMillis: int,
 }
 
-type serverUrl = string
+type hyperSyncConfig = {
+  endpointUrl: string,
+}
+
+type hyperFuelConfig = {
+  endpointUrl: string,
+}
 
 type rpcConfig = {
   provider: Ethers.JsonRpcProvider.t,
@@ -26,9 +32,9 @@ A generic type where for different values of HyperSync and Rpc.
 Where first param 'a represents the value for hypersync and the second
 param 'b for rpc
 */
-type source<'a, 'b> = HyperSync('a) | Rpc('b)
+type source<'hyperSync, 'hyperFuel, 'rpc> = HyperSync('hyperSync) | HyperFuel('hyperFuel) | Rpc('rpc)
 
-type syncSource = source<serverUrl, rpcConfig>
+type syncSource = source<hyperSyncConfig, hyperFuelConfig, rpcConfig>
 
 type chainConfig = {
   syncSource: syncSource,

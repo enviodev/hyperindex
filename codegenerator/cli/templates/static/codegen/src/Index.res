@@ -143,6 +143,7 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           endBlock: cf.chainConfig.endBlock,
           isHyperSync: switch cf.chainConfig.syncSource {
           | HyperSync(_) => true
+          | HyperFuel(_) => true // FIXME: What value should be for HyperFuel?
           | Rpc(_) => false
           },
         }: EnvioInkApp.chainData

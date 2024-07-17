@@ -49,6 +49,7 @@ let isRollingBack = state =>
 type arbitraryEventQueue = list<Types.eventBatchQueueItem>
 type blockRangeFetchResponse = ChainWorkerTypes.blockRangeFetchResponse<
   HyperSyncWorker.t,
+  HyperSyncWorker.t,
   RpcWorker.t,
 >
 
@@ -109,6 +110,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~asyncTaskQueue: Async
         numEventsProcessed: Some(cf.numEventsProcessed),
         isHyperSync: switch cf.chainConfig.syncSource {
         | HyperSync(_) => true
+        | HyperFuel(_) => true // FIXME: What value should be for HyperFuel?
         | Rpc(_) => false
         },
         numBatchesFetched: cf.numBatchesFetched,
@@ -622,6 +624,7 @@ let waitForNewBlock = (
   }
   switch chainWorker {
   | Config.HyperSync(w) => compose(w, HyperSyncWorker.waitForBlockGreaterThanCurrentHeight)
+  | Config.HyperFuel(w) => compose(w, HyperSyncWorker.waitForBlockGreaterThanCurrentHeight)
   | Rpc(w) => compose(w, RpcWorker.waitForBlockGreaterThanCurrentHeight)
   }
 }
@@ -651,6 +654,7 @@ let executeNextQuery = (
 
   switch chainWorker {
   | Config.HyperSync(worker) => compose(worker, HyperSyncWorker.fetchBlockRange, "HyperSync")
+  | Config.HyperFuel(worker) => compose(worker, HyperSyncWorker.fetchBlockRange, "HyperSync")
   | Rpc(worker) => compose(worker, RpcWorker.fetchBlockRange, "RPC")
   }
 }

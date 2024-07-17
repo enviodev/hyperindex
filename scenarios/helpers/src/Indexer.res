@@ -118,7 +118,13 @@ module type S = {
       queryTimeoutMillis: int,
     }
 
-    type serverUrl = string
+    type hyperSyncConfig = {
+      endpointUrl: string,
+    }
+
+    type hyperFuelConfig = {
+      endpointUrl: string,
+    }
 
     type rpcConfig = {
       provider: Ethers.JsonRpcProvider.t,
@@ -126,13 +132,13 @@ module type S = {
     }
 
     /**
-A generic type where for different values of HyperSync and Rpc.
-Where first param 'a represents the value for hypersync and the second
-param 'b for rpc
-*/
-    type source<'a, 'b> = HyperSync('a) | Rpc('b)
+    A generic type where for different values of HyperSync and Rpc.
+    Where first param 'a represents the value for hypersync and the second
+    param 'b for rpc
+    */
+    type source<'hyperSync, 'hyperFuel, 'rpc> = HyperSync('hyperSync) | HyperFuel('hyperFuel) | Rpc('rpc)
 
-    type syncSource = source<serverUrl, rpcConfig>
+    type syncSource = source<hyperSyncConfig, hyperFuelConfig, rpcConfig>
 
     type chainConfig = {
       syncSource: syncSource,
@@ -165,7 +171,7 @@ param 'b for rpc
       firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
     }
     type blockRangeFetchStats
-    type blockRangeFetchResponse<'a, 'b> = {
+    type blockRangeFetchResponse<'a, 'b, 'c> = {
       currentBlockHeight: int,
       reorgGuard: reorgGuard,
       parsedQueueItems: array<Types.eventBatchQueueItem>,
@@ -175,7 +181,7 @@ param 'b for rpc
       stats: blockRangeFetchStats,
       fetchStateRegisterId: FetchState.id,
       partitionId: int,
-      worker: Config.source<'a, 'b>,
+      worker: Config.source<'a, 'b, 'c>,
     }
   }
 }
