@@ -388,13 +388,9 @@ impl NetworkWithExplorer {
                 "avalanche.routescan.io",
                 "api.routescan.io/v2/network/mainnet/evm/43114/etherscan",
             ),
-            NetworkWithExplorer::Amoy => BlockExplorerApi::custom(
-                // // This is routescan:
-                // "testnet.routescan.io",
-                // "api.routescan.io/v2/network/mainnet/evm/80002/etherscan",
-                "amoy.polygonscan.com",
-                "api-amoy.polygonscan.com",
-            ),
+            NetworkWithExplorer::Amoy => {
+                BlockExplorerApi::custom("amoy.polygonscan.com", "api-amoy.polygonscan.com")
+            }
             //// Having issues getting blockscout to work.
             // NetworkWithExplorer::Aurora => BlockExplorerApi::custom(
             //     "explorer.mainnet.aurora.dev",
