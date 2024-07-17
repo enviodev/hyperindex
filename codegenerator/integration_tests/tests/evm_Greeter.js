@@ -10,7 +10,8 @@ const pollGraphQL = async () => {
   const rawEventsQuery = `
     query {
       raw_events_by_pk(event_id: "3071145413242", chain_id: 137) {
-        event_type
+        contract_name
+        event_name
         log_index
         src_address
         block_number
@@ -34,11 +35,15 @@ const pollGraphQL = async () => {
     let shouldExitOnFailure = false;
     try {
       assert(
-        data.raw_events_by_pk.event_type === "Greeter_NewGreeting",
-        "event_type should be Greeter_NewGreeting",
+        data.raw_events_by_pk.contract_name === "Greeter",
+        "contract_name should be Greeter"
+      );
+      assert(
+        data.raw_events_by_pk.event_name === "NewGreeting",
+        "event_name should be Greeter_NewGreeting"
       );
       console.log(
-        "First greeter passed, running the second one for user entity",
+        "First greeter passed, running the second one for user entity"
       );
 
       // Run the second test
@@ -50,11 +55,11 @@ const pollGraphQL = async () => {
             assert(!!user, "greeting should not be null or undefined");
             assert(
               user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
-              "First 3 greetings should be 'gm,gn,gm paris'",
+              "First 3 greetings should be 'gm,gn,gm paris'"
             );
             assert(
               user.numberOfGreetings >= 3,
-              "numberOfGreetings should be >= 3",
+              "numberOfGreetings should be >= 3"
             );
             console.log("Second test passed.");
           } catch (err) {
@@ -62,7 +67,7 @@ const pollGraphQL = async () => {
             err.shouldExitOnFailure = shouldExitOnFailure;
             throw err;
           }
-        },
+        }
       );
     } catch (err) {
       //gotta love javascript

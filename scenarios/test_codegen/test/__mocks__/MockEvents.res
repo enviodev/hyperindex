@@ -169,10 +169,3 @@ let eventBatchItems = [
   setGravatarLog3->updatedGravatarEventToBatchItem,
   setGravatarLog4->updatedGravatarEventToBatchItem,
 ]
-
-let inMemoryStoreMock = InMemoryStore.make()
-let makeContext = event =>
-  ContextEnv.make(~logger=Logging.logger, ~chain=MockConfig.chain1, ~event, ...)
-
-let mockNewGravatarContext = makeContext(newGravatarLog1)
-let mockUpdateGravatarContext = makeContext(setGravatarLog1)

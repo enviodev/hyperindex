@@ -58,7 +58,6 @@ classDiagram
     addDynamicContractAndFetchMissingEvents(chainWorker, dynamicContracts, fromBlock, fromLogIndex, logger)
   }
   ChainWorker <|.. SkarWorker : Implements
-  ChainWorker <|.. RawEventsWorker : Implements
   ChainWorker <|.. RpcWorker : Implements
 ```
 
@@ -71,16 +70,14 @@ TODO: it is a good pattern, but potentially risky since you need to remember to 
 
 High level steps:
 
- - Determine which block to start fetching from and starting state
- - loop indefinitely
-   - Create the contract interfaces and fetch a batch of events from skar
-   - Fetch block timestamps for all these blocks (could this not be integrated with skar to be a single query?)
-     - Check if any dynamic contracts have been loaded - If there are discard all these contracts before processing or adding them to the queue.
-   - Parse all the events fetched from skar
-   - Finish updating state, release locked values and start loop again
+- Determine which block to start fetching from and starting state
+- loop indefinitely
+  - Create the contract interfaces and fetch a batch of events from skar
+  - Fetch block timestamps for all these blocks (could this not be integrated with skar to be a single query?)
+    - Check if any dynamic contracts have been loaded - If there are discard all these contracts before processing or adding them to the queue.
+  - Parse all the events fetched from skar
+  - Finish updating state, release locked values and start loop again
 
 ## ChainEventQueue
 
 This is a data structure with some utility functions that is created and managed by the `ChainFetcher` used and shared by the `ChainWorker`.
-
-

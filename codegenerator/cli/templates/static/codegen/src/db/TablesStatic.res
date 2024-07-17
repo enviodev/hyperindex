@@ -109,12 +109,13 @@ module RawEvents = {
   type t = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: string,
+    @as("event_name") eventName: string,
+    @as("contract_name") contractName: string,
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
     @as("src_address") srcAddress: Ethers.ethAddress,
     @as("block_hash") blockHash: string,
     @as("block_timestamp") blockTimestamp: int,
-    @as("event_type") eventType: Enums.EventType.t,
     @as("block_fields") blockFields: Js.Json.t,
     @as("transaction_fields") transactionFields: Js.Json.t,
     params: Js.Json.t,
@@ -125,12 +126,13 @@ module RawEvents = {
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("event_id", Numeric, ~isPrimaryKey),
+      mkField("event_name", Text),
+      mkField("contract_name", Text),
       mkField("block_number", Integer),
       mkField("log_index", Integer),
       mkField("src_address", Text),
       mkField("block_hash", Text),
       mkField("block_timestamp", Integer),
-      mkField("event_type", Enum(EventType.enum.name)),
       mkField("block_fields", Json),
       mkField("transaction_fields", Json),
       mkField("params", Json),
@@ -248,4 +250,3 @@ let allTables: array<table> = [
   EntityHistory.table,
   EntityHistoryFilter.table,
 ]
-

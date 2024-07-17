@@ -57,18 +57,15 @@ module type S = {
     }
 
     module type Event = {
+      let key: string
+      let name: string
+      let contractName: string
       let eventName: Enums.EventType.t
       type eventArgs
-      let eventArgsSchema: RescriptSchema.S.t<eventArgs>
-      let convertLogViem: (
-        Viem.decodedEvent<eventArgs>,
-        ~log: Log.t,
-        ~block: Block.t,
-        ~transaction: Transaction.t,
-        ~chainId: int,
-      ) => eventLog<eventArgs>
-      let convertDecodedEventParams: HyperSyncClient.Decoder.decodedEvent => eventArgs
+      let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
+      let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
     }
+    module type InternalEvent = Event with type eventArgs = internalEventArgs
 
     type eventBatchQueueItem = {
       timestamp: int,

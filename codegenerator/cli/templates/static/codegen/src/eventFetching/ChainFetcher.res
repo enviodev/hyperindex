@@ -20,6 +20,7 @@ type t = {
 
 //CONSTRUCTION
 let make = (
+  ~config,
   ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
   ~staticContracts,
@@ -38,9 +39,9 @@ let make = (
   let (endpointDescription, chainWorker) = switch chainConfig.syncSource {
   | HyperSync(serverUrl) => (
       "HyperSync",
-      chainConfig->HyperSyncWorker.make(~serverUrl)->Config.HyperSync,
+      chainConfig->HyperSyncWorker.make(~serverUrl, ~config)->Config.HyperSync,
     )
-  | Rpc(rpcConfig) => ("RPC", chainConfig->RpcWorker.make(~rpcConfig)->Rpc)
+  | Rpc(rpcConfig) => ("RPC", chainConfig->RpcWorker.make(~config, ~rpcConfig)->Rpc)
   }
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
 
@@ -78,7 +79,7 @@ let getStaticContracts = (chainConfig: Config.chainConfig) => {
   })
 }
 
-let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
+let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
@@ -86,6 +87,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
   )
 
   make(
+    ~config,
     ~staticContracts,
     ~chainConfig,
     ~startBlock=chainConfig.startBlock,
@@ -106,7 +108,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
+let makeFromDbState = async (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
@@ -169,6 +171,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartitio
   let eventFilters = None
 
   make(
+    ~config,
     ~staticContracts,
     ~dynamicContractRegistrations,
     ~chainConfig,

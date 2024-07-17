@@ -17,8 +17,9 @@ let makeEventLog = (
     logIndex: log.logIndex,
   }->Types.eventToInternal
 
-let convertDecodedEvent = (
+let convertHyperSyncEvent = (
   event: HyperSyncClient.Decoder.decodedEvent,
+  ~config,
   ~contractInterfaceManager,
   ~log: Types.Log.t,
   ~block,
@@ -27,7 +28,7 @@ let convertDecodedEvent = (
 ): result<
   (
     Types.eventLog<Types.internalEventArgs>,
-    module(Types.Event with type eventArgs = Types.internalEventArgs),
+    module(Types.InternalEvent),
   ),
   _,
 > => {
@@ -36,11 +37,11 @@ let convertDecodedEvent = (
   ) {
   | None => Error(UnregisteredContract(log.address))
   | Some(contractName) =>
-    let eventMod = Types.eventTopicToEventMod(contractName, log.topics[0])
+    let eventMod = config->Config.getEventModOrThrow(~contractName, ~topic0=log.topics[0])
     let module(Event) = eventMod
     let event =
       event
-      ->Event.convertDecodedEventParams
+      ->Event.convertHyperSyncEventArgs
       ->makeEventLog(~log, ~transaction, ~block, ~chainId)
     Ok((event, eventMod))
   }
@@ -48,6 +49,7 @@ let convertDecodedEvent = (
 
 let parseEvent = (
   ~log: Types.Log.t,
+  ~config,
   ~block,
   ~contractInterfaceManager,
   ~chainId,
@@ -55,7 +57,7 @@ let parseEvent = (
 ): result<
   (
     Types.eventLog<Types.internalEventArgs>,
-    module(Types.Event with type eventArgs = Types.internalEventArgs),
+    module(Types.InternalEvent),
   ),
   _,
 > => {
@@ -73,66 +75,16 @@ let parseEvent = (
     ) {
     | None => Error(UnregisteredContract(log.address))
     | Some(contractName) =>
-      let eventMod = Types.eventNameToEventMod(decodedEvent.eventName, contractName)
-      let module(Event) = eventMod
-      let event = decodedEvent->Event.convertLogViem(~log, ~transaction, ~block, ~chainId)
+      let eventMod = config->Config.getEventModOrThrow(~contractName, ~topic0=log.topics[0])
+      let event: Types.eventLog<Types.internalEventArgs> = {
+        params: decodedEvent.args,
+        chainId,
+        transaction,
+        block,
+        srcAddress: log.address,
+        logIndex: log.logIndex,
+      }
       Ok(event, eventMod)
     }
   }
-}
-
-let blockFromRawEvent = (
-  _rawEvent: TablesStatic.RawEvents.t,
-  _selectableBlockFields: Types.Block.selectableFields,
-): Types.Block.t =>
-  %raw(`
-  {
-    number: _rawEvent.block_number,
-    timestamp: _rawEvent.block_timestamp,
-    hash: _rawEvent.block_hash,
-    ..._selectableBlockFields
-  }
-`)
-
-let decodeRawEventWith = (
-  rawEvent: TablesStatic.RawEvents.t,
-  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
-  ~chain,
-): result<Types.eventBatchQueueItem, S.error> => {
-  let module(Event) = eventMod
-  let parsedParams = rawEvent.params->S.parseWith(Event.eventArgsSchema)
-  let parsedTransactionFields = rawEvent.transactionFields->S.parseWith(Types.Transaction.schema)
-  let parsedSelectableBlockFields = rawEvent.blockFields->S.parseWith(Types.Block.schema)
-
-  switch (parsedParams, parsedTransactionFields, parsedSelectableBlockFields) {
-  | (Ok(params), Ok(transaction), Ok(selectableBlockFields)) =>
-    let block = rawEvent->blockFromRawEvent(selectableBlockFields)
-
-    let queueItem: Types.eventBatchQueueItem = {
-      event: {
-        chainId: rawEvent.chainId,
-        transaction,
-        block,
-        srcAddress: rawEvent.srcAddress,
-        logIndex: rawEvent.logIndex,
-        params,
-      },
-      eventMod,
-      timestamp: rawEvent.blockTimestamp,
-      chain,
-      blockNumber: rawEvent.blockNumber,
-      logIndex: rawEvent.logIndex,
-    }
-
-    Ok(queueItem)
-  | (Error(err), _, _) | (_, Error(err), _) | (_, _, Error(err)) => Error(err)
-  }
-}
-
-let parseRawEvent = (rawEvent: TablesStatic.RawEvents.t, ~chain): result<
-  Types.eventBatchQueueItem,
-  S.error,
-> => {
-  let eventMod = rawEvent.eventType->Types.eventTypeToEventMod
-  rawEvent->decodeRawEventWith(~eventMod, ~chain)
 }

@@ -198,103 +198,48 @@ type eventLog<'a> = {
 @genType
 type eventName = Enums.EventType.t
 
-let eventNameSchema = Enums.EventType.schema
-
-let eventNameToString = (eventName: eventName) => switch eventName {
-  {{#each codegen_contracts as | contract |}}
-  {{#each contract.codegen_events as | event |}}
-    | {{event.event_type.full}} => "{{event.name.capitalized}}"
-  {{/each}}
-  {{/each}}
-}
+type internalEventArgs
 
 module type Event = {
-  let eventName: Enums.EventType.t
+  let key: string
+  let name: string
+  let contractName: string
+  let eventName: Enums.EventType.t // TODO: Remove this
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
-  let convertLogViem: (
-    Viem.decodedEvent<eventArgs>,
-    ~log: Log.t,
-    ~block: Block.t,
-    ~transaction: Transaction.t,
-    ~chainId: int,
-  ) => eventLog<eventArgs>
-  let convertDecodedEventParams: HyperSyncClient.Decoder.decodedEvent => eventArgs
+  let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
 }
+module type InternalEvent = Event with type eventArgs = internalEventArgs
 
-type internalEventArgs
 external eventToInternal: eventLog<'a> => eventLog<internalEventArgs> = "%identity"
-external eventModToInternal: module(Event with type eventArgs = 'a) => module(Event with type eventArgs = internalEventArgs) = "%identity"
+external eventModToInternal: module(Event with type eventArgs = 'a) => module(InternalEvent) = "%identity"
+external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent) = "%identity"
 
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
+    let key = "{{contract.name.capitalized}}_{{event.topic0}}"
+    let name = "{{event.name.capitalized}}"
+    let contractName = "{{contract.name.capitalized}}"
     let eventName = Enums.EventType.{{event.event_type.full}}
 
-    @genType
-    type eventArgs = 
     {{#if event.params}}
-    {
+    @genType
+    type eventArgs = {
       {{#each event.params as | param |}}
       @as("{{param.js_name}}")
       {{param.res_name}}: {{param.res_type}},
       {{/each}}
     }
-    {{else}}
-    unit
-    {{/if}}
 
-    let eventArgsSchema = 
-      {{#if event.params}}
-      S.object(s => {
-      {{#each event.params as | param |}}
-        {{param.res_name}}: s.field("{{param.res_name}}", {{param.res_schema_code}}),
-      {{/each}}
-      })
-      {{else}}
-      S.literal(%raw(`null`))->S.variant((. _) => ())
-      {{/if}}
+    let eventArgsSchema = S.object(s => {
+    {{#each event.params as | param |}}
+      {{param.res_name}}: s.field("{{param.res_name}}", {{param.res_schema_code}}),
+    {{/each}}
+    })
 
-    @genType.as("{{contract.name.capitalized}}_{{event.name.capitalized}}_EventLog")
-    type log = eventLog<eventArgs>
-
-    {{#unless event.params}}
-    @warning("-27")
-    {{/unless}}
-    let convertLogViem = (
-      decodedEvent: Viem.decodedEvent<eventArgs>,
-      ~log: Log.t,
-      ~block,
-      ~transaction,
-      ~chainId: int,
-    ): eventLog<eventArgs> => {
-      let params: eventArgs = 
-      {{#if event.params}}
-      {
-        {{#each event.params as | param |}}
-        {{param.res_name}}: decodedEvent.args.{{param.res_name}},
-        {{/each}}
-      }
-      {{else}}
-      ()
-      {{/if}}
-
-      {
-        params,
-        chainId,
-        transaction,
-        block,
-        srcAddress: log.address,
-        logIndex: log.logIndex,
-      }
-    }
-
-    let convertDecodedEventParams = ( 
-    {{!-- Add underscore if there are no params, to avoid compiler warning of unused argument --}}
-      {{#unless event.params[0]}}_{{/unless}}decodedEvent: HyperSyncClient.Decoder.decodedEvent,
-    ): eventArgs => {
-      {{#if event.params[0]}}{{!--Only create this body if there are params.  Otherwise its always unit--}}
+    let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {
       {
         {{#each event.indexed_params as | param index |}}
         {{param.res_name}}: decodedEvent.indexed->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
@@ -303,50 +248,21 @@ module {{contract.name.capitalized}} = {
         {{param.res_name}}: decodedEvent.body->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
         {{/each}}
       }
-      {{else}}
-      ()
-      {{/if}}
     }
+    {{else}}
+    @genType
+    type eventArgs = unit
+
+    let eventArgsSchema = S.literal(%raw(`null`))->S.variant((. _) => ())
+
+    external convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs = "%identity"
+    {{/if}}
   }
 
 {{/each}}
 }
 
 {{/each}}
-
-exception UnknownEvent(string, string)
-let eventTopicToEventMod = (contractName, topic0) => {
-  switch (contractName, topic0) {
-{{#each codegen_contracts as | contract |}}
-{{#each contract.codegen_events as | event |}}
-  | ("{{contract.name.capitalized}}", "{{event.topic0}}") => module({{contract.name.capitalized}}.{{event.name.capitalized}})->eventModToInternal
-{{/each}}
-{{/each}}
-  | (contractName, topic0) => UnknownEvent(contractName, topic0)->raise
-  }
-}
-
-let eventNameToEventMod = (eventName, contractName) => {
-  switch (eventName, contractName) {
-    {{#each codegen_contracts as |contract|}}
-    {{#each contract.codegen_events as |event|}}
-    | ("{{event.name.capitalized}}", "{{contract.name.capitalized}}") => module({{contract.name.capitalized}}.{{event.name.capitalized}})->eventModToInternal
-    {{/each}}
-    {{/each}}
-    | (contractName, eventName) => UnknownEvent(contractName, eventName)->raise
-  }
-}
-
-let eventTypeToEventMod = (eventType: eventName) => {
-  switch eventType {
-  {{#each codegen_contracts as |contract|}}
-  {{#each contract.codegen_events as |event|}}
-    | {{event.event_type.full}} => module({{contract.name.capitalized}}.{{event.name.capitalized}})->eventModToInternal
-  {{/each}}
-  {{/each}}
-  }
-}
-
 @genType
 type chainId = int
 
@@ -356,7 +272,7 @@ type eventBatchQueueItem = {
   blockNumber: int,
   logIndex: int,
   event: eventLog<internalEventArgs>,
-  eventMod: module(Event with type eventArgs = internalEventArgs),
+  eventMod: module(InternalEvent),
   //Default to false, if an event needs to
   //be reprocessed after it has loaded dynamic contracts
   //This gets set to true and does not try and reload events

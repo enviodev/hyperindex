@@ -33,7 +33,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let loadLayer = LoadLayer.make()
 
     let contextEnv = ContextEnv.make(
-      ~eventName=Gravatar_EmptyEvent,
+      ~eventMod=module(Types.Gravatar.EmptyEvent)->Types.eventModToInternal,
       ~event={"devMsg": "This is a placeholder event", "block": {"number": 456}}->Utils.magic,
       ~chain=MockConfig.chain1,
       ~logger=Logging.logger,

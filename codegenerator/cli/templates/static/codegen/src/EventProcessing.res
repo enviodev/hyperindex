@@ -87,9 +87,8 @@ let runEventContractRegister = (
   ~inMemoryStore,
 ) => {
   let {chain, eventMod} = eventBatchQueueItem
-  let module(Event) = eventMod
-  let eventName = Event.eventName
-  let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName)
+
+  let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
 
   switch contractRegister(contextEnv->ContextEnv.getContractRegisterArgs(~inMemoryStore)) {
   | exception exn =>
@@ -157,7 +156,7 @@ let runEventLoader = async (
 
 let addEventToRawEvents = (
   event: Types.eventLog<Types.internalEventArgs>,
-  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ~eventMod: module(Types.InternalEvent),
   ~inMemoryStore: InMemoryStore.t,
   ~chainId,
 ) => {
@@ -173,6 +172,8 @@ let addEventToRawEvents = (
   let rawEvent: TablesStatic.RawEvents.t = {
     chainId,
     eventId: eventId->BigInt.toString,
+    eventName: Event.name,
+    contractName: Event.contractName,
     blockNumber,
     logIndex,
     srcAddress,
@@ -180,7 +181,6 @@ let addEventToRawEvents = (
     blockTimestamp,
     blockFields,
     transactionFields,
-    eventType: Event.eventName,
     params,
   }
 
@@ -211,7 +211,7 @@ let runEventHandler = (
   ~executeLoadLayer=LoadLayer.executeLoadLayer,
   ~asyncGetters=?,
   //Required params
-  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ~eventMod: module(Types.InternalEvent),
   ~handler,
   ~inMemoryStore,
   ~logger,
@@ -221,8 +221,7 @@ let runEventHandler = (
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let module(Event) = eventMod
-    let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventName=Event.eventName)
+    let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
     let loadLayer = LoadLayer.make()
 
     let loaderReturnUnawaited = runEventLoader(~contextEnv, ~handler, ~loadLayer)
@@ -266,7 +265,7 @@ let runEventHandler = (
 
 let runHandler = (
   event: Types.eventLog<'eventArgs>,
-  ~eventMod: module(Types.Event with type eventArgs = Types.internalEventArgs),
+  ~eventMod: module(Types.InternalEvent),
   ~latestProcessedBlocks,
   ~inMemoryStore,
   ~logger,
@@ -385,7 +384,7 @@ let runLoaders = (
       ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
       ->Option.map(
         handler => {
-          let contextEnv = ContextEnv.make(~chain, ~eventName=Event.eventName, ~event, ~logger)
+          let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
           runEventLoader(~contextEnv, ~handler, ~loadLayer)
         },
       )
