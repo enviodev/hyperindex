@@ -425,6 +425,7 @@ impl Entity {
         Ok(entity)
     }
 
+    /// Returns the fields of this [`Entity`] sorted by field name.
     pub fn get_fields<'a>(&'a self) -> Vec<&'a Field> {
         self.fields.values().sorted_by_key(|v| &v.name).collect()
     }
@@ -658,6 +659,25 @@ impl Field {
             .any(|single_field_index| single_field_index == self.name);
 
         has_indexed_directive || has_single_field_index_directive
+    }
+
+    pub fn is_derived_lookup_field(&self, entity: &Entity, schema: &Schema) -> bool {
+        schema.entities.values().fold(false, |accum, entity_inner| {
+            accum
+                || entity_inner
+                    .get_fields()
+                    .iter()
+                    .fold(false, |accum, field| {
+                        accum
+                            || matches!(
+                                &field.field_type,
+                                FieldType::DerivedFromField {
+                                    entity_name,
+                                    derived_from_field
+                                } if entity_name == &entity.name && derived_from_field == &self.name
+                            )
+                    })
+        })
     }
 
     pub fn is_primary_key(&self) -> bool {

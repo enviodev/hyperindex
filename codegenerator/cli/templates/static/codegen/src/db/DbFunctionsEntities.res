@@ -1,4 +1,7 @@
+open Belt
+
 type id = string
+
 @module("./DbFunctionsImplementation.js")
 external batchReadItemsInTable: (
   ~table: Table.table,
@@ -75,3 +78,54 @@ let makeBatchDelete = (~table) => async (~logger=?, sql, ids) =>
     )
   | res => res
   }
+
+@module("./DbFunctionsImplementation.js")
+external whereEqQuery: (
+  ~table: Table.table,
+  ~sql: Postgres.sql,
+  ~fieldName: string,
+  ~value: Js.Json.t,
+) => promise<Js.Json.t> = "whereEqQuery"
+
+let makeWhereEq = (
+  ~table: Table.table,
+  ~rowsSchema: S.t<array<'entityRow>>,
+  ~fieldValueSchema: S.t<'fieldValue>,
+  ~fieldName: string,
+  ~fieldValue: 'fieldValue,
+  ~logger=?,
+  sql: Postgres.sql,
+) => {
+  async (): array<'entityRow> => {
+    let logger =
+      logger
+      ->Option.getWithDefault(Logging.logger)
+      ->Logging.createChildFrom(
+        ~logger=_,
+        ~params={
+          "queryType": "whereEq",
+          "tableName": table.tableName,
+          "fieldName": fieldName,
+          "fieldValue": fieldValue,
+        },
+      )
+
+    let value = switch fieldValue->S.serializeOrRaiseWith(fieldValueSchema) {
+    | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to serialize value`)
+    | value => value
+    }
+
+    switch await whereEqQuery(~table, ~sql, ~fieldName, ~value) {
+    | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to execute query`)
+    | res =>
+      switch res->S.parseAnyOrRaiseWith(rowsSchema) {
+      | exception exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~logger,
+          ~msg=`Failed to parse rows from database of entity ${table.tableName}`,
+        )
+      | entitys => entitys
+      }
+    }
+  }
+}

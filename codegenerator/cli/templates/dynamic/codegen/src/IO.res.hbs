@@ -163,7 +163,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
     _,
     ~entityMod=module(Entities.{{entity.name.capitalized}}),
-    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryTable.values,
+    ~rows=inMemoryStore.{{entity.name.uncapitalized}}.table->InMemoryTable.values,
   )
 
   {{/each}}

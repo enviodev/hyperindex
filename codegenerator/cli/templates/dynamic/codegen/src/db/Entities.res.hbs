@@ -34,6 +34,9 @@ let isNullable = true
 let isArray = true
 let isIndex = true
 
+@genType
+type whereOperations<'entity, 'fieldType> = {eq: 'fieldType => promise<array<'entity>>}
+
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
   let name = {{entity.name.capitalized}}
@@ -44,13 +47,20 @@ module {{entity.name.capitalized}} = {
     {{/each}}
   }
 
-  let schema = S.object(s => {
+  let schema = S.object((s): t => {
     {{#each entity.params as | param |}}
     {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", {{param.res_schema_code}}),{{/unless}}
     {{/each}}
   })
 
   let rowsSchema = S.array(schema)
+
+  @genType
+  type indexedFieldOperations = {
+    {{#each entity.params as | param |}}{{#if param.is_queryable_field}}
+      @as("{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}") {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: whereOperations<t, {{param.res_type}}>,
+    {{/if}}{{/each}}
+  }
 
   let table = mkTable(
      (name :> string),
@@ -113,3 +123,13 @@ let allTables: array<table> = [
 {{/each}}
 ]
 let schema = Schema.make(allTables)
+
+exception UnexpectedIdNotDefinedOnEntity
+let getEntityIdUnsafe = (entity: 'entity): id =>
+  switch Utils.magic(entity)["id"] {
+  | Some(id) => id
+  | None =>
+    UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
+      ~msg="Property 'id' does not exist on expected entity object",
+    )
+  }

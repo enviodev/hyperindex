@@ -49,8 +49,8 @@ let createNewAccountWithZeroBalance = (
 }
 
 Handlers.ERC20.Approval.handlerWithLoader({
-  loader: ({event, context}) => {
-    context.account.get(event.params.owner->Ethers.ethAddressToString)
+  loader: async ({event, context}) => {
+    await context.account.get(event.params.owner->Ethers.ethAddressToString)
   },
   handler: async ({event, context, loaderReturn}) => {
     let ownerAccount = loaderReturn
@@ -105,14 +105,14 @@ let manipulateAccountBalance = (
   ->setAccountToken
 
 Handlers.ERC20.Transfer.handlerWithLoader({
-  loader: ({event, context}) => {
+  loader: async ({event, context}) => {
     let fromAccount_id = event.params.from->Ethers.ethAddressToString
     let toAccount_id = event.params.to->Ethers.ethAddressToString
     let tokenAddress = event.srcAddress->Ethers.ethAddressToString
     let fromAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=fromAccount_id)
     let toAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=toAccount_id)
 
-    (
+    await (
       context.accountToken.get(fromAccountToken_id),
       context.accountToken.get(toAccountToken_id),
     )->Promise.all2

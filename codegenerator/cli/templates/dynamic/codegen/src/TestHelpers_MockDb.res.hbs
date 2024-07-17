@@ -116,7 +116,7 @@ let makeStoreOperatorEntity = (
   let delete = key => {
     let cloned = inMemoryStore->InMemoryStore.clone
     let store = cloned->getStore
-    store.dict->deleteDictKey(key)
+    store.table.dict->deleteDictKey(key)
     cloned->makeMockDb
   }
 
@@ -273,8 +273,7 @@ let executeRowsEntity = (
   ~getInMemTable: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
   ~getKey: 'entity => 'key,
 ) => {
-  inMemoryStore
-  ->getInMemTable
+  getInMemTable(inMemoryStore).table
   ->InMemoryTable.values
   ->Array.forEach(row => {
     let inMemTable = mockDb->getInternalDb->getInMemTable
@@ -287,7 +286,7 @@ let executeRowsEntity = (
         ~entity=Some(entity),
       )
     | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
-      inMemTable.dict->deleteDictKey(entityId)
+      inMemTable.table.dict->deleteDictKey(entityId)
     | InitialReadFromDb(NotSet) => ()
     }
   })
