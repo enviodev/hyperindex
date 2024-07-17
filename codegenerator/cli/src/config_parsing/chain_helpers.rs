@@ -225,7 +225,7 @@ pub enum Network {
     // Explorers:
     // https://explorer.testnet.fhenix.zone/ (blockscout)
     FhenixTestnet = 42069,
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Amoy = 80002,
     #[subenum(HypersyncNetwork)]
     // Explorers:
@@ -387,6 +387,13 @@ impl NetworkWithExplorer {
             NetworkWithExplorer::Avalanche => BlockExplorerApi::custom(
                 "avalanche.routescan.io",
                 "api.routescan.io/v2/network/mainnet/evm/43114/etherscan",
+            ),
+            NetworkWithExplorer::Amoy => BlockExplorerApi::custom(
+                // // This is routescan:
+                // "testnet.routescan.io",
+                // "api.routescan.io/v2/network/mainnet/evm/80002/etherscan",
+                "amoy.polygonscan.com",
+                "api-amoy.polygonscan.com",
             ),
             //// Having issues getting blockscout to work.
             // NetworkWithExplorer::Aurora => BlockExplorerApi::custom(
