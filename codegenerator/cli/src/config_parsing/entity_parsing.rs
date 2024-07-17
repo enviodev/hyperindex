@@ -1157,14 +1157,27 @@ impl UserDefinedFieldType {
                 Ok(Self::NonNullType(Box::new(Self::Single(GqlScalar::String))))
             }
             EthAbiParamType::Array(abi_type) | EthAbiParamType::FixedArray(abi_type, _) => {
-                let inner_type = Self::from_ethabi_type(abi_type)?;
+                //Validate no nested arrays or
+                match abi_type.as_ref() {
+                    EthAbiParamType::Tuple(_) => {
+                        Err(anyhow!("Unhandled contract import type 'array of tuple'"))?
+                    }
+                    EthAbiParamType::Array(_) => {
+                        Err(anyhow!("Unhandled contract import type 'array of array'"))?
+                    }
+                    _ => (),
+                }
+                let inner_type = Self::from_ethabi_type(abi_type)
+                    .context("Unhandled contract import nested type in array")?;
                 Ok(Self::NonNullType(Box::new(Self::ListType(Box::new(
                     inner_type,
                 )))))
             }
-            EthAbiParamType::Tuple(_abi_types) => Err(anyhow!(
-                "Tuples are not handled currently using contract import."
-            )),
+            EthAbiParamType::Tuple(_abi_types) =>
+            //This case should be flattened out unless it is nested inside an array
+            {
+                Err(anyhow!("Unhandled contract import type 'tuple'"))
+            }
         }
     }
 }

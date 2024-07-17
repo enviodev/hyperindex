@@ -402,7 +402,10 @@ impl Param {
             event_key: flattened_event_param.get_event_param_key(),
             tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
             graphql_type: FieldType::from_ethabi_type(&flattened_event_param.event_param.kind)
-                .context("converting eth event param to gql scalar")?,
+                .context(format!(
+                    "Converting eth event param '{}' to gql scalar",
+                    flattened_event_param.event_param.name
+                ))?,
             is_eth_address: flattened_event_param.event_param.kind == ParamType::Address,
         })
     }
