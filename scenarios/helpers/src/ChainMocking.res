@@ -234,10 +234,7 @@ module Make = (Indexer: Indexer.S) => {
     )
   }
 
-  let executeQuery = (
-    self: t,
-    query: FetchState.nextQuery,
-  ): ChainWorkerTypes.blockRangeFetchResponse<_> => {
+  let executeQuery = (self: t, query: FetchState.nextQuery): ChainWorker.blockRangeFetchResponse => {
     let unfilteredBlocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
     let firstBlockParentNumberAndHash =
@@ -284,7 +281,6 @@ module Make = (Indexer: Indexer.S) => {
       stats: "NO_STATS"->Obj.magic,
       fetchStateRegisterId: query.fetchStateRegisterId,
       partitionId: query.partitionId,
-      worker: HyperSync(self->Obj.magic),
     }
   }
 

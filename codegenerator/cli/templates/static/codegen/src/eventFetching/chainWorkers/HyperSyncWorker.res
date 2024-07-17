@@ -1,4 +1,4 @@
-open ChainWorkerTypes
+open ChainWorker
 open Belt
 
 module Make = (
@@ -7,7 +7,10 @@ module Make = (
     let chainConfig: Config.chainConfig
     let endpointUrl: string
   },
-) => {
+): Type => {
+  let name = "HyperSync"
+  let chain = T.chainConfig.chain
+
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
       ~backoffMsOnFailure=200,
@@ -43,21 +46,6 @@ module Make = (
       | Ok(v) => v
       }
 
-    type jsExnObj = {
-      name?: string,
-      message?: string,
-      stack?: string,
-    }
-
-    let makeJsExnParams = exn => {
-      open Js.Exn
-      let name = exn->name
-      let message = exn->message
-      let stack = exn->stack
-      {?name, ?message, ?stack}
-    }
-
-    exception JsExn(jsExnObj)
     exception ErrorMessage(string)
   }
 
@@ -133,7 +121,13 @@ module Make = (
 
     //fetch batch
     let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-      () => HyperSync.queryLogsPage(~serverUrl, ~fromBlock, ~toBlock, ~contractAddressesAndtopics),
+      () =>
+        HyperSync.queryLogsPage(
+          ~serverUrl=T.endpointUrl,
+          ~fromBlock,
+          ~toBlock,
+          ~contractAddressesAndtopics,
+        ),
       logger,
     )
 
@@ -151,7 +145,6 @@ module Make = (
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
-      let {chainConfig: {chain}, serverUrl, config} = T
       let {
         fetchStateRegisterId,
         partitionId,
@@ -216,7 +209,7 @@ module Make = (
           //If there were no logs at all in the current page query then fetch the
           //timestamp of the heighest block accounted for
           HyperSync.queryBlockData(
-            ~serverUrl,
+            ~serverUrl=T.endpointUrl,
             ~blockNumber=heighestBlockQueried,
           )->Promise.thenResolve(res =>
             switch res {
@@ -238,7 +231,7 @@ module Make = (
       let parsingTimeRef = Hrtime.makeTimer()
 
       //Parse page items into queue items
-      let parsedQueueItemsPreFilter = if config.shouldUseHypersyncClientDecoder {
+      let parsedQueueItemsPreFilter = if T.config.shouldUseHypersyncClientDecoder {
         //Currently there are still issues with decoder for some cases so
         //this can only be activated with a flag
         let decoder = switch contractInterfaceManager
@@ -269,7 +262,7 @@ module Make = (
           let (event, eventMod) = switch event
           ->Belt.Option.getExn
           ->Converters.convertHyperSyncEvent(
-            ~config,
+            ~config=T.config,
             ~contractInterfaceManager,
             ~log=item.log,
             ~block,
@@ -300,7 +293,7 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           switch Converters.parseEvent(
             ~log=item.log,
-            ~config,
+            ~config=T.config,
             ~transaction=item.transaction,
             ~block=item.block,
             ~contractInterfaceManager,
@@ -376,13 +369,14 @@ module Make = (
         fromBlockQueried: fromBlock,
         fetchStateRegisterId,
         partitionId,
-        worker: HyperSync(self),
       }->Ok
     } catch {
     | exn => exn->ErrorHandling.make(~logger, ~msg="Failed to fetch block Range")->Error
     }
   }
 
-  let getBlockHashes = ({serverUrl}: t, ~blockNumbers) =>
-    HyperSync.queryBlockDataMulti(~serverUrl, ~blockNumbers)->Promise.thenResolve(HyperSync.mapExn)
+  let getBlockHashes = (~blockNumbers) =>
+    HyperSync.queryBlockDataMulti(~serverUrl=T.endpointUrl, ~blockNumbers)->Promise.thenResolve(
+      HyperSync.mapExn,
+    )
 }
