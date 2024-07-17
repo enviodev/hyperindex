@@ -27,8 +27,8 @@ importers:
         specifier: 11.1.0
         version: 11.1.0
       rescript-schema:
-        specifier: 7.0.1
-        version: 7.0.1(rescript@11.1.0)
+        specifier: 8.0.0
+        version: 8.0.0(rescript@11.1.0)
     optionalDependencies:
       generated:
         specifier: ./generated
@@ -40,8 +40,8 @@ importers:
         specifier: 11.1.0
         version: 11.1.0
       rescript-schema:
-        specifier: 7.0.1
-        version: 7.0.1(rescript@11.1.0)
+        specifier: 8.0.0
+        version: 8.0.0(rescript@11.1.0)
 
   generated:
     dependencies:
@@ -59,7 +59,7 @@ importers:
         version: 1.5.0(rescript@11.1.0)
       '@rescript/react':
         specifier: 0.12.1
-        version: 0.12.1(react-dom@18.3.1)(react@18.2.0)
+        version: 0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)
       '@ryyppy/rescript-promise':
         specifier: 2.1.0
         version: 2.1.0
@@ -83,10 +83,10 @@ importers:
         version: 3.2.0(react@18.2.0)
       ink-big-text:
         specifier: 1.2.0
-        version: 1.2.0(ink@3.2.0)(react@18.2.0)
+        version: 1.2.0(ink@3.2.0(react@18.2.0))(react@18.2.0)
       ink-spinner:
         specifier: 4.0.3
-        version: 4.0.3(ink@3.2.0)(react@18.2.0)
+        version: 4.0.3(ink@3.2.0(react@18.2.0))(react@18.2.0)
       js-sdsl:
         specifier: 4.4.2
         version: 4.4.2
@@ -112,14 +112,14 @@ importers:
         specifier: 11.1.0
         version: 11.1.0
       rescript-envsafe:
-        specifier: 4.1.0
-        version: 4.1.0(rescript-schema@7.0.1)(rescript@11.1.0)
+        specifier: 4.2.0
+        version: 4.2.0(rescript-schema@8.0.0(rescript@11.1.0))(rescript@11.1.0)
       rescript-express:
         specifier: 0.4.1
         version: 0.4.1(express@4.19.2)
       rescript-schema:
-        specifier: 7.0.1
-        version: 7.0.1(rescript@11.1.0)
+        specifier: 8.0.0
+        version: 8.0.0(rescript@11.1.0)
       viem:
         specifier: 1.16.6
         version: 1.16.6
@@ -1020,19 +1020,19 @@ packages:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
     engines: {node: '>=0.10.0'}
 
-  rescript-envsafe@4.1.0:
-    resolution: {integrity: sha512-rndy9+OIR1bLynElbVmYJpX31cg/nn4xL4OfTotJFgJdJ1TIRmC7U7ZMuT5qZPb0NdR+YNO5/qh4E/4IH8j+HA==}
+  rescript-envsafe@4.2.0:
+    resolution: {integrity: sha512-EpoEkyFzYZa2xzvOwHMAeW/dagqN0WXTL03IBJuZlE+33baKSTQEQ60L20472fPTJRxYaDv14A0UXglPvhSDsA==}
     peerDependencies:
       rescript: 11.x
-      rescript-schema: 6.x || 7.x
+      rescript-schema: 6.x || 7.x || 8.x
 
   rescript-express@0.4.1:
     resolution: {integrity: sha512-R+xAQKANfIFAIcxhQrkLn58IZQwhMZuQpVCH6UtTRNLWqlVtaogG9z4Rt0MQZgqYOjvrOtt51P0hOmYGg/90Fw==}
     peerDependencies:
       express: ^4.17.1
 
-  rescript-schema@7.0.1:
-    resolution: {integrity: sha512-iCcYsHO8owjlB5uWQ50tXQnMBwsNlsOUAPNGJ8tUxPn8bhq3TIVJLTAnnRDJxHuSZj7fj4nXltCjj2pr606tSA==}
+  rescript-schema@8.0.0:
+    resolution: {integrity: sha512-+i/us90Q73HeRZ9Y6BXfogb0BXpfwDmmFhHI+dZkvnzGOLMQEx3kowXv78LfP2ujpedwpN85/aqEPXRb+eBtog==}
     peerDependencies:
       rescript: 11.x
 
@@ -1351,7 +1351,7 @@ snapshots:
     dependencies:
       rescript: 11.1.0
 
-  '@rescript/react@0.12.1(react-dom@18.3.1)(react@18.2.0)':
+  '@rescript/react@0.12.1(react-dom@18.3.1(react@18.2.0))(react@18.2.0)':
     dependencies:
       react: 18.2.0
       react-dom: 18.3.1(react@18.2.0)
@@ -1567,6 +1567,7 @@ snapshots:
   debug@4.3.4(supports-color@8.1.1):
     dependencies:
       ms: 2.1.2
+    optionalDependencies:
       supports-color: 8.1.1
 
   decamelize@4.0.0: {}
@@ -1817,14 +1818,14 @@ snapshots:
 
   inherits@2.0.4: {}
 
-  ink-big-text@1.2.0(ink@3.2.0)(react@18.2.0):
+  ink-big-text@1.2.0(ink@3.2.0(react@18.2.0))(react@18.2.0):
     dependencies:
       cfonts: 2.10.1
       ink: 3.2.0(react@18.2.0)
       prop-types: 15.8.1
       react: 18.2.0
 
-  ink-spinner@4.0.3(ink@3.2.0)(react@18.2.0):
+  ink-spinner@4.0.3(ink@3.2.0(react@18.2.0))(react@18.2.0):
     dependencies:
       cli-spinners: 2.9.2
       ink: 3.2.0(react@18.2.0)
@@ -2182,16 +2183,16 @@ snapshots:
 
   require-directory@2.1.1: {}
 
-  rescript-envsafe@4.1.0(rescript-schema@7.0.1)(rescript@11.1.0):
+  rescript-envsafe@4.2.0(rescript-schema@8.0.0(rescript@11.1.0))(rescript@11.1.0):
     dependencies:
       rescript: 11.1.0
-      rescript-schema: 7.0.1(rescript@11.1.0)
+      rescript-schema: 8.0.0(rescript@11.1.0)
 
   rescript-express@0.4.1(express@4.19.2):
     dependencies:
       express: 4.19.2
 
-  rescript-schema@7.0.1(rescript@11.1.0):
+  rescript-schema@8.0.0(rescript@11.1.0):
     dependencies:
       rescript: 11.1.0
 
