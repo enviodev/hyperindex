@@ -12,7 +12,7 @@ type AccountToken {
   id: ID!
   account: Account!
   tokenAddress: String!
-  balance: BigInt!
+  balance: BigInt! @index
 }
 
 type Approval {

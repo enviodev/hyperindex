@@ -104,6 +104,9 @@ let manipulateAccountBalance = (
   ->fn(value)
   ->setAccountToken
 
+let whereEqFromAccountTest = ref([])
+let whereEqBigNumTest = ref([])
+
 Handlers.ERC20.Transfer.handlerWithLoader({
   loader: async ({event, context}) => {
     let fromAccount_id = event.params.from->Ethers.ethAddressToString
@@ -111,6 +114,9 @@ Handlers.ERC20.Transfer.handlerWithLoader({
     let tokenAddress = event.srcAddress->Ethers.ethAddressToString
     let fromAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=fromAccount_id)
     let toAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=toAccount_id)
+
+    whereEqFromAccountTest := (await context.accountToken.where.account_id.eq(fromAccount_id))
+    whereEqBigNumTest := (await context.accountToken.where.balance.eq(50n))
 
     await (
       context.accountToken.get(fromAccountToken_id),
@@ -138,6 +144,15 @@ Handlers.ERC20.Transfer.handlerWithLoader({
   },
 })
 
-Handlers.ERC20Factory.DeleteUser.handler(async ({event, context}) => {
-  context.account.deleteUnsafe(event.params.user->Ethers.ethAddressToString)
+Handlers.ERC20Factory.DeleteUser.handlerWithLoader({
+  loader: ({event, context}) => {
+    let account_id = event.params.user->Ethers.ethAddressToString
+    context.accountToken.where.account_id.eq(account_id)
+  },
+  handler: async ({event, context, loaderReturn}) => {
+    context.account.deleteUnsafe(event.params.user->Ethers.ethAddressToString)
+    loaderReturn->Belt.Array.forEach(accountToken => {
+      context.accountToken.deleteUnsafe(accountToken.id)
+    })
+  },
 })
