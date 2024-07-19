@@ -1,5 +1,3 @@
-open Belt
-
 type id = string
 
 @module("./DbFunctionsImplementation.js")
@@ -79,6 +77,24 @@ let makeBatchDelete = (~table) => async (~logger=?, sql, ids) =>
   | res => res
   }
 
+let batchRead = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
+  let module(EntityMod) = entityMod
+  let {table, rowsSchema} = module(EntityMod)
+  makeReadEntities(~table, ~rowsSchema)
+}
+
+let batchSet = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
+  let module(EntityMod) = entityMod
+  let {table, rowsSchema} = module(EntityMod)
+  makeBatchSet(~table, ~rowsSchema)
+}
+
+let batchDelete = (type entity, ~entityMod: module(Entities.Entity with type t = entity)) => {
+  let module(EntityMod) = entityMod
+  let {table} = module(EntityMod)
+  makeBatchDelete(~table)
+}
+
 @module("./DbFunctionsImplementation.js")
 external whereEqQuery: (
   ~table: Table.table,
@@ -88,44 +104,41 @@ external whereEqQuery: (
 ) => promise<Js.Json.t> = "whereEqQuery"
 
 let makeWhereEq = (
-  ~table: Table.table,
-  ~rowsSchema: S.t<array<'entityRow>>,
-  ~fieldValueSchema: S.t<'fieldValue>,
+  type entity,
+  sql: Postgres.sql,
+  ~entityMod: module(Entities.Entity with type t = entity),
+) => async (
   ~fieldName: string,
   ~fieldValue: 'fieldValue,
-  ~logger=?,
-  sql: Postgres.sql,
-) => {
-  async (): array<'entityRow> => {
-    let logger =
-      logger
-      ->Option.getWithDefault(Logging.logger)
-      ->Logging.createChildFrom(
-        ~logger=_,
-        ~params={
-          "queryType": "whereEq",
-          "tableName": table.tableName,
-          "fieldName": fieldName,
-          "fieldValue": fieldValue,
-        },
+  ~fieldValueSchema: S.t<'fieldValue>,
+  ~logger=Logging.logger,
+): array<entity> => {
+  let module(Entity) = entityMod
+  let logger = Logging.createChildFrom(
+    ~logger,
+    ~params={
+      "queryType": "whereEq",
+      "tableName": Entity.table.tableName,
+      "fieldName": fieldName,
+      "fieldValue": fieldValue,
+    },
+  )
+
+  let value = switch fieldValue->S.serializeOrRaiseWith(fieldValueSchema) {
+  | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to serialize value`)
+  | value => value
+  }
+
+  switch await whereEqQuery(~table=Entity.table, ~sql, ~fieldName, ~value) {
+  | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to execute query`)
+  | res =>
+    switch res->S.parseAnyOrRaiseWith(Entity.rowsSchema) {
+    | exception exn =>
+      exn->ErrorHandling.mkLogAndRaise(
+        ~logger,
+        ~msg=`Failed to parse rows from database of entity ${Entity.table.tableName}`,
       )
-
-    let value = switch fieldValue->S.serializeOrRaiseWith(fieldValueSchema) {
-    | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to serialize value`)
-    | value => value
-    }
-
-    switch await whereEqQuery(~table, ~sql, ~fieldName, ~value) {
-    | exception exn => exn->ErrorHandling.mkLogAndRaise(~logger, ~msg=`Failed to execute query`)
-    | res =>
-      switch res->S.parseAnyOrRaiseWith(rowsSchema) {
-      | exception exn =>
-        exn->ErrorHandling.mkLogAndRaise(
-          ~logger,
-          ~msg=`Failed to parse rows from database of entity ${table.tableName}`,
-        )
-      | entitys => entitys
-      }
+    | entitys => entitys
     }
   }
 }

@@ -46,8 +46,13 @@ module Operator = {
 }
 
 module SingleIndex = {
-  //todo make field name a generated enum
   type t = {fieldName: string, fieldValue: FieldValue.t, operator: Operator.t}
+
+  let make = (~fieldName, ~fieldValue: 'a, ~operator) => {
+    fieldName,
+    fieldValue: FieldValue.castFrom(fieldValue),
+    operator,
+  }
 
   let toString = ({fieldName, fieldValue, operator}) =>
     `{fn:${fieldName},fv:${fieldValue->FieldValue.toString},o:${(operator :> string)}}`
@@ -62,6 +67,10 @@ module Index = {
   //Next step is to support composite indexes
   @unboxed
   type t = Single(SingleIndex.t) //| Composite(array<SingleIndex.t>)
+
+  let makeSingleEq = (~fieldName, ~fieldValue) => Single(
+    SingleIndex.make(~fieldName, ~fieldValue, ~operator=Eq),
+  )
   let getFieldName = index =>
     switch index {
     | Single(index) => index.fieldName

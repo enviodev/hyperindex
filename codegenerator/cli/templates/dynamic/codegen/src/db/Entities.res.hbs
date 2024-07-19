@@ -10,24 +10,6 @@ module type Entity = {
   let table: Table.table
 }
 
-let batchRead = (type entity, ~entityMod: module(Entity with type t = entity)) => {
-  let module(EntityMod) = entityMod
-  let {table, rowsSchema} = module(EntityMod)
-  DbFunctionsEntities.makeReadEntities(~table, ~rowsSchema)
-}
-
-let batchSet = (type entity, ~entityMod: module(Entity with type t = entity)) => {
-  let module(EntityMod) = entityMod
-  let {table, rowsSchema} = module(EntityMod)
-  DbFunctionsEntities.makeBatchSet(~table, ~rowsSchema)
-}
-
-let batchDelete = (type entity, ~entityMod: module(Entity with type t = entity)) => {
-  let module(EntityMod) = entityMod
-  let {table} = module(EntityMod)
-  DbFunctionsEntities.makeBatchDelete(~table)
-}
-
 //shorthand for punning
 let isPrimaryKey = true
 let isNullable = true

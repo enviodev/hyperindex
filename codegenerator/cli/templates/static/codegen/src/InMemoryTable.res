@@ -1,4 +1,5 @@
 module StdSet = Set
+
 external arrayFromSet: StdSet.t<'a> => array<'a> = "Array.from"
 open Belt
 
@@ -31,9 +32,12 @@ module Entity = {
     fieldNameIndices: indexFieldNameToIndices,
   }
 
-  let makeEmptyIndicesSerializedToValue = (~index): indicesSerializedToValue => {
+  let makeIndicesSerializedToValue = (
+    ~index,
+    ~relatedEntityIds=StdSet.make(),
+  ): indicesSerializedToValue => {
     let empty = make(~hash=TableIndices.Index.toString)
-    empty->set(index, (index, StdSet.make()))
+    empty->set(index, (index, relatedEntityIds))
     empty
   }
 
@@ -58,10 +62,7 @@ module Entity = {
         ->values
         ->Array.forEach(((index, relatedEntityIds)) => {
           if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
-            indices->set(
-              index,
-              (index, relatedEntityIds->StdSet.add(Entities.getEntityIdUnsafe(entity))),
-            )
+            relatedEntityIds->StdSet.add(Entities.getEntityIdUnsafe(entity))->ignore
           }
         })
       | _ =>
@@ -185,7 +186,7 @@ module Entity = {
 
   let addEmptyIndex = (inMemTable: t<'entity>, ~index) => {
     switch inMemTable.fieldNameIndices->getRow(index) {
-    | None => inMemTable.fieldNameIndices->setRow(index, makeEmptyIndicesSerializedToValue(~index))
+    | None => inMemTable.fieldNameIndices->setRow(index, makeIndicesSerializedToValue(~index))
     | Some(indicesSerializedToValue) =>
       switch indicesSerializedToValue->getRow(index) {
       | None => indicesSerializedToValue->setRow(index, (index, StdSet.make()))
@@ -193,6 +194,21 @@ module Entity = {
       }
     }
   }
+
+  let addIdToIndex = (inMemTable: t<'entity>, ~index, ~entityId) =>
+    switch inMemTable.fieldNameIndices->getRow(index) {
+    | None =>
+      inMemTable.fieldNameIndices->setRow(
+        index,
+        makeIndicesSerializedToValue(~index, ~relatedEntityIds=StdSet.make()->StdSet.add(entityId)),
+      )
+    | Some(indicesSerializedToValue) =>
+      switch indicesSerializedToValue->getRow(index) {
+      | None =>
+        indicesSerializedToValue->setRow(index, (index, StdSet.make()->StdSet.add(entityId)))
+      | Some((_index, relatedEntityIds)) => relatedEntityIds->StdSet.add(entityId)->ignore
+      }
+    }
 
   let values = (inMemTable: t<'entity>) => {
     inMemTable.table
@@ -202,6 +218,12 @@ module Entity = {
 
   let clone = ({table, fieldNameIndices}: t<'entity>) => {
     table: table->clone,
-    fieldNameIndices: fieldNameIndices->clone,
+    fieldNameIndices: {
+      ...fieldNameIndices,
+      dict: fieldNameIndices.dict
+      ->Js.Dict.entries
+      ->Array.map(((k, v)) => (k, v->clone))
+      ->Js.Dict.fromArray,
+    },
   }
 }

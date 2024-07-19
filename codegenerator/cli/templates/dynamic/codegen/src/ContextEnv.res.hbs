@@ -114,14 +114,7 @@ let makeLoader = (loadLayerRef, ~entityIdsMap, ~entityName, entityId) => {
   })
 }
 
-let makeWhereEqLoader = (
-  loadLayerRef,
-  ~fieldName,
-  ~table,
-  ~rowsSchema,
-  ~fieldValueSchema,
-  ~logger,
-) => {
+let makeWhereEqLoader = (loadLayerRef, ~fieldName, ~fieldValueSchema, ~logger) => {
   Entities.eq: fieldValue => {
     Promise.make((resolve, _reject) => {
       loadLayerRef.contents->LoadLayer.LoadActionMap.addLookUpByIndex(
@@ -130,15 +123,10 @@ let makeWhereEqLoader = (
           fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
           operator: Eq,
         }),
-        ~loadFn=DbFunctionsEntities.makeWhereEq(
-          DbFunctions.sql,
-          ~table,
-          ~rowsSchema,
-          ~fieldValueSchema,
-          ~logger,
-          ~fieldName,
-          ~fieldValue,
-        ),
+        ~fieldValueSchema,
+        ~logger,
+        ~fieldName,
+        ~fieldValue,
         ~resolve,
       )
     })
@@ -205,8 +193,6 @@ let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loa
         {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: makeWhereEqLoader(
           loadLayer.{{entity.name.uncapitalized}},
           ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
-          ~table=Entities.{{entity.name.capitalized}}.table,
-          ~rowsSchema=Entities.{{entity.name.capitalized}}.rowsSchema,
           ~fieldValueSchema={{param.res_schema_code}},
           ~logger,
         ),
@@ -223,7 +209,9 @@ type asyncGetters = {
 {{/each}}
 }
 
-let readEntity = (~entityMod) => id => Entities.batchRead(~entityMod)(DbFunctions.sql, [id])
+let readEntity = (~entityMod) => id =>
+  DbFunctionsEntities.batchRead(~entityMod)(DbFunctions.sql, [id])
+
 let asyncGetters: asyncGetters = {
 {{#each entities as | entity |}}
  get{{entity.name.capitalized}}: readEntity(~entityMod=module(Entities.{{entity.name.capitalized}})),
