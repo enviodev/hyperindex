@@ -200,7 +200,7 @@ let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loa
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
       get: makeLoader(loadLayer.{{entity.name.uncapitalized}}, ~entityName={{entity.name.capitalized}},  ~entityIdsMap, ...),
-      where: {
+      getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
         {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: makeWhereEqLoader(
           loadLayer.{{entity.name.uncapitalized}},

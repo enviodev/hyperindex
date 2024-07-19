@@ -15,7 +15,7 @@ type contractRegistrations = {
 @genType
 type entityLoaderContext<'entity, 'indexedFieldOperations> = {
   get: id => promise<option<'entity>>,
-  where: 'indexedFieldOperations,
+  getWhere: 'indexedFieldOperations,
 }
 
 @genType
