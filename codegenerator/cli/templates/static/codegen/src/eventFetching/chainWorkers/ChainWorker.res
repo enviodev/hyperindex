@@ -37,7 +37,7 @@ type blockRangeFetchResponse = {
   partitionId: PartitionedFetchState.partitionIndex,
 }
 
-module type Type = {
+module type S = {
   let name: string
   let chain: ChainMap.Chain.t
   let getBlockHashes: (

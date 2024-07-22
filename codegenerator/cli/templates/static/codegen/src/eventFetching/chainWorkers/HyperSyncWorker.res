@@ -7,7 +7,7 @@ module Make = (
     let chainConfig: Config.chainConfig
     let endpointUrl: string
   },
-): Type => {
+): S => {
   let name = "HyperSync"
   let chain = T.chainConfig.chain
 

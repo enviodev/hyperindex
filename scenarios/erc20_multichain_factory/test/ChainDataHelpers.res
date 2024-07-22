@@ -99,7 +99,7 @@ module Stubs = {
 
   //Stub for getting block hashes instead of the worker
   let makeGetBlockHashes = (~stubData, ~chainWorker) => async (~blockNumbers) => {
-    let module(ChainWorker: ChainWorker.Type) = chainWorker
+    let module(ChainWorker: ChainWorker.S) = chainWorker
     stubData->getMockChainData(ChainWorker.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
 
@@ -122,7 +122,7 @@ module Stubs = {
     ~setCurrentBlockHeight,
   ) => {
     (logger, currentBlockHeight)->ignore
-    let module(ChainWorker: ChainWorker.Type) = chainWorker
+    let module(ChainWorker: ChainWorker.S) = chainWorker
     stubData->getMockChainData(ChainWorker.chain)->MockChainData.getHeight->setCurrentBlockHeight
   }
   //Stub dispatch action to set state and not dispatch task but store in
@@ -140,9 +140,10 @@ module Stubs = {
     GlobalState.injectedTaskReducer(
       ~executeNextQuery=makeExecuteNextQuery(stubData, ...),
       ~waitForNewBlock=makeWaitForNewBlock(stubData, ...),
-      ~rollbackLastBlockHashesToReorgLocation=chainFetcher => chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
-        ~getBlockHashes=makeGetBlockHashes(~stubData, ~chainWorker=chainFetcher.chainWorker),
-      ),
+      ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
+        chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
+          ~getBlockHashes=makeGetBlockHashes(~stubData, ~chainWorker=chainFetcher.chainWorker),
+        ),
       ~registeredEvents=RegisteredEvents.global,
     )(
       ~dispatchAction=makeDispatchAction(stubData, _),

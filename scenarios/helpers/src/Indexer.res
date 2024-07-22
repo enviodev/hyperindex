@@ -181,7 +181,7 @@ module type S = {
       partitionId: int,
     }
 
-    module type Type = {
+    module type S = {
       let name: string
       let chain: ChainMap.Chain.t
       let getBlockHashes: (

@@ -7,7 +7,7 @@ module Make = (
     let rpcConfig: Config.rpcConfig
     let chainConfig: Config.chainConfig
   },
-): Type => {
+): S => {
   let name = "RPC"
   let config = T.config
   let rpcConfig = T.rpcConfig

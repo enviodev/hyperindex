@@ -3,7 +3,7 @@ type t = {
   logger: Pino.t,
   fetchState: PartitionedFetchState.t,
   chainConfig: Config.chainConfig,
-  chainWorker: module(ChainWorker.Type),
+  chainWorker: module(ChainWorker.S),
   //The latest known block of the chain
   currentBlockHeight: int,
   isFetchingBatch: bool,
@@ -27,7 +27,7 @@ let makeChainWorker = (~config, ~chainConfig: Config.chainConfig) => {
         let config = config
         let chainConfig = chainConfig
         let endpointUrl = endpointUrl
-      }): ChainWorker.Type
+      }): ChainWorker.S
     )
   | Rpc(rpcConfig) =>
     module(
@@ -35,7 +35,7 @@ let makeChainWorker = (~config, ~chainConfig: Config.chainConfig) => {
         let config = config
         let chainConfig = chainConfig
         let rpcConfig = rpcConfig
-      }): ChainWorker.Type
+      }): ChainWorker.S
     )
   }
 }
@@ -306,10 +306,12 @@ Finds the last known block where hashes are valid and returns
 the updated lastBlockScannedHashes rolled back where this occurs
 */
 let rollbackLastBlockHashesToReorgLocation = async (
-   chainFetcher: t,
+  chainFetcher: t,
   //Parameter used for dependency injecting in tests
-  ~getBlockHashes as getBlockHashesMock=? // FIXME: Mock chainWorker instead
+  ~getBlockHashes as getBlockHashesMock=?,
 ) => {
+  // FIXME: Mock chainWorker instead
+
   //get a list of block hashes via the chainworker
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
@@ -321,9 +323,7 @@ let rollbackLastBlockHashesToReorgLocation = async (
   | None => ChainWorker.getBlockHashes
   }
 
-  let blockNumbersAndHashes = await getBlockHashes(
-    ~blockNumbers,
-  )->Promise.thenResolve(res =>
+  let blockNumbersAndHashes = await getBlockHashes(~blockNumbers)->Promise.thenResolve(res =>
     switch res {
     | Ok(v) => v
     | Error(exn) =>

@@ -603,7 +603,7 @@ let waitForNewBlock = async (
   ~currentBlockHeight,
   ~setCurrentBlockHeight,
 ) => {
-  let module(ChainWorker: ChainWorker.Type) = chainWorker
+  let module(ChainWorker: ChainWorker.S) = chainWorker
 
   logger->Logging.childTrace("Waiting for new blocks")
   let logger = Logging.createChildFrom(
@@ -629,7 +629,7 @@ let executeNextQuery = (
   ~query,
   ~dispatchAction,
 ) => {
-  let module(ChainWorker: ChainWorker.Type) = chainWorker
+  let module(ChainWorker: ChainWorker.S) = chainWorker
 
   let logger = Logging.createChildFrom(
     ~logger,
