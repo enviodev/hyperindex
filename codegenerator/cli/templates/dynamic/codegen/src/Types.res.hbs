@@ -204,6 +204,7 @@ module type Event = {
   let key: string
   let name: string
   let contractName: string
+  let topic0: string // Or rb for Fuel receipts
   let eventName: Enums.EventType.t // TODO: Remove this
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
@@ -223,6 +224,7 @@ module {{contract.name.capitalized}} = {
     let name = "{{event.name.capitalized}}"
     let contractName = "{{contract.name.capitalized}}"
     let eventName = Enums.EventType.{{event.event_type.full}}
+    let topic0 = "{{event.topic0}}"
 
     {{#if event.params}}
     @genType

@@ -20,14 +20,21 @@ type t = {
 
 let makeChainWorker = (~config, ~chainConfig: Config.chainConfig) => {
   switch chainConfig.syncSource {
-  | HyperSync({endpointUrl})
-  | HyperFuel({endpointUrl}) =>
+  | HyperSync({endpointUrl}) =>
     module(
       HyperSyncWorker.Make({
         let config = config
         let chainConfig = chainConfig
         let endpointUrl = endpointUrl
       }): ChainWorker.S
+    )
+  | HyperFuel({endpointUrl}) =>
+    module(
+      HyperFuelWorker.Make({
+        let config = config
+        let chainConfig = chainConfig
+        let endpointUrl = endpointUrl
+      }): ChainWorker.Type
     )
   | Rpc(rpcConfig) =>
     module(
