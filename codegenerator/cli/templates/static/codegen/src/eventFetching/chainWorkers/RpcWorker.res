@@ -14,6 +14,8 @@ module Make = (
   let chainConfig = T.chainConfig
   let chain = chainConfig.chain
 
+  let blockIntervals = Js.Dict.empty()
+
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
       EventFetching.getUnwrappedBlockWithBackoff(
@@ -28,8 +30,6 @@ module Make = (
     },
     (),
   )
-
-  let currentBlockInterval = ref(T.rpcConfig.syncConfig.initialBlockInterval)
 
   let waitForBlockGreaterThanCurrentHeight = async (~currentBlockHeight, ~logger) => {
     let provider = T.rpcConfig.provider
@@ -91,7 +91,11 @@ module Make = (
         ~logger,
       )
 
-      let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval.contents - 1)
+      let currentBlockInterval = blockIntervals->Js.Dict.get(partitionId->Belt.Int.toString)->Belt.Option.getWithDefault(
+        T.rpcConfig.syncConfig.initialBlockInterval,
+      )
+
+      let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)
 
       let toBlockPromise = blockLoader->LazyLoader.get(targetBlock)
 
@@ -113,7 +117,7 @@ module Make = (
         ~contractInterfaceManager,
         ~fromBlock,
         ~toBlock=targetBlock,
-        ~initialBlockInterval=currentBlockInterval.contents,
+        ~initialBlockInterval=currentBlockInterval,
         ~minFromBlockLogIndex=0,
         ~rpcConfig=T.rpcConfig,
         ~chain,
@@ -152,8 +156,7 @@ module Make = (
 
       // Increase batch size going forward, but do not increase past a configured maximum
       // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-      currentBlockInterval :=
-        Pervasives.min(finalExecutedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling)
+      blockIntervals->Js.Dict.set(partitionId->Belt.Int.toString, Pervasives.min(finalExecutedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling))
 
       let (optFirstBlockParent, toBlock) = (await firstBlockParentPromise, await toBlockPromise)
 
