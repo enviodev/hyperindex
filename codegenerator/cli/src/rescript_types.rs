@@ -273,7 +273,7 @@ impl RescriptTypeIdent {
                 format!("({})", inner_types_str)
             }
             RescriptTypeIdent::SchemaEnum(enum_name) => {
-                format!("Enums.{}", &enum_name.uncapitalized)
+                format!("Enums.{}.t", &enum_name.capitalized)
             }
             // Lowercase generic params because of the issue https://github.com/rescript-lang/rescript-compiler/issues/6759
             RescriptTypeIdent::GenericParam(name) => format!("'{}", name.to_lowercase()),

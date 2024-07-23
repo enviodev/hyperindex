@@ -150,7 +150,7 @@ mod tests {
         );
         assert_eq!(
             amount_uint256_res_type.get_default_value_rescript(),
-            "BigInt.zero".to_string()
+            "0n".to_string()
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),
