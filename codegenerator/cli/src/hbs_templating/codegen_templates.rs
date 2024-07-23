@@ -2,9 +2,10 @@ use std::path::PathBuf;
 use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
+use crate::rescript_types::RescriptTypeIdent;
 use crate::{
     config_parsing::{
-        entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
+        entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::abi_to_rescript_type,
         human_config::evm::EventDecoder,
         postgres_types,
@@ -159,7 +160,7 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
-    pub res_type: RescriptType,
+    pub res_type: RescriptTypeIdent,
     pub res_schema_code: String,
     pub type_pg: String,
     pub is_entity_field: bool,
@@ -177,7 +178,7 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, entity: &Entity, config: &SystemConfig) -> Result<Self> {
-        let res_type: RescriptType = field
+        let res_type: RescriptTypeIdent = field
             .field_type
             .to_rescript_type(&config.schema)
             .context("Failed getting rescript type")?
@@ -404,7 +405,7 @@ impl EventTemplate {
                     default_value_non_rescript: res_type.get_default_value_non_rescript(),
                     res_type: res_type.to_string(),
                     res_schema_code: res_type.to_rescript_schema(),
-                    is_eth_address: res_type == RescriptType::Address,
+                    is_eth_address: res_type == RescriptTypeIdent::Address,
                     is_indexed: input.indexed,
                     type_rescript_skar_decoded_param: res_type.to_string_decoded_skar(),
                 }
@@ -610,7 +611,7 @@ impl FieldSelection {
 #[derive(Serialize)]
 struct SelectableField {
     name: CaseOptions,
-    res_type: RescriptType,
+    res_type: RescriptTypeIdent,
     res_schema_code: String,
     default_value_rescript: String,
 }
@@ -618,10 +619,10 @@ struct SelectableField {
 impl SelectableField {
     fn from<T>(value: T) -> Self
     where
-        T: Display + Into<RescriptType>,
+        T: Display + Into<RescriptTypeIdent>,
     {
         let name = value.to_string().into();
-        let res_type: RescriptType = value.into();
+        let res_type: RescriptTypeIdent = value.into();
         Self {
             name,
             res_schema_code: res_type.to_rescript_schema(),
@@ -759,7 +760,6 @@ mod test {
     use super::*;
     use crate::{
         config_parsing::{
-            entity_parsing::RescriptType,
             human_config,
             system_config::{RpcConfig, SystemConfig},
         },
@@ -991,12 +991,12 @@ mod test {
         get_project_template_helper("config5.yaml");
     }
 
-    const RESCRIPT_BIG_INT_TYPE: RescriptType = RescriptType::BigInt;
-    const RESCRIPT_ADDRESS_TYPE: RescriptType = RescriptType::Address;
-    const RESCRIPT_STRING_TYPE: RescriptType = RescriptType::String;
+    const RESCRIPT_BIG_INT_TYPE: RescriptTypeIdent = RescriptTypeIdent::BigInt;
+    const RESCRIPT_ADDRESS_TYPE: RescriptTypeIdent = RescriptTypeIdent::Address;
+    const RESCRIPT_STRING_TYPE: RescriptTypeIdent = RescriptTypeIdent::String;
 
     impl EventParamTypeTemplate {
-        fn new(name: &str, res_type: RescriptType) -> Self {
+        fn new(name: &str, res_type: RescriptTypeIdent) -> Self {
             let js_name = name.to_string();
             Self {
                 res_name: make_res_name(&js_name),

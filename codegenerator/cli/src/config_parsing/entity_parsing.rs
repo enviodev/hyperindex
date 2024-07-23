@@ -7,10 +7,8 @@ use super::{
 };
 use crate::{
     hbs_templating::codegen_templates::DerivedFieldTemplate,
-    utils::{
-        text::{Capitalize, CapitalizedOptions},
-        unique_hashmap,
-    },
+    rescript_types::RescriptTypeIdent,
+    utils::{text::Capitalize, unique_hashmap},
 };
 use anyhow::{anyhow, Context};
 use ethers::abi::ethabi::ParamType as EthAbiParamType;
@@ -22,7 +20,7 @@ use itertools::Itertools;
 use serde::{Serialize, Serializer};
 use std::{
     collections::{HashMap, HashSet},
-    fmt::{self, Display},
+    fmt::{self},
     path::PathBuf,
 };
 use subenum::subenum;
@@ -801,179 +799,6 @@ impl MultiFieldIndex {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
-pub enum RescriptType {
-    ID,
-    Int,
-    Float,
-    BigInt,
-    BigDecimal,
-    Address,
-    String,
-    Bool,
-    EnumVariant(CapitalizedOptions),
-    Array(Box<RescriptType>),
-    Option(Box<RescriptType>),
-    Tuple(Vec<RescriptType>),
-}
-
-impl RescriptType {
-    pub fn to_string_decoded_skar(&self) -> String {
-        match self {
-            RescriptType::Array(inner_type) => format!(
-                "array<HyperSyncClient.Decoder.decodedSolType<{}>>",
-                inner_type.to_string_decoded_skar()
-            ),
-            RescriptType::Tuple(inner_types) => {
-                let inner_types_str = inner_types
-                    .iter()
-                    .map(|inner_type| inner_type.to_string_decoded_skar())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-                format!(
-                    "HyperSyncClient.Decoder.decodedSolType<({})>",
-                    inner_types_str
-                )
-            }
-            v => {
-                format!("HyperSyncClient.Decoder.decodedSolType<{}>", v.to_string())
-            }
-        }
-    }
-
-    fn to_string(&self) -> String {
-        match self {
-            RescriptType::Int => "int".to_string(),
-            RescriptType::Float => "GqlDbCustomTypes.Float.t".to_string(),
-            RescriptType::BigInt => "bigint".to_string(),
-            RescriptType::BigDecimal => "BigDecimal.t".to_string(),
-            RescriptType::Address => "Ethers.ethAddress".to_string(),
-            RescriptType::String => "string".to_string(),
-            RescriptType::ID => "id".to_string(),
-            RescriptType::Bool => "bool".to_string(),
-            RescriptType::Array(inner_type) => {
-                format!("array<{}>", inner_type.to_string())
-            }
-            RescriptType::Option(inner_type) => {
-                format!("option<{}>", inner_type.to_string())
-            }
-            RescriptType::Tuple(inner_types) => {
-                let inner_types_str = inner_types
-                    .iter()
-                    .map(|inner_type| inner_type.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-                format!("({})", inner_types_str)
-            }
-            RescriptType::EnumVariant(enum_name) => format!("Enums.{}.t", &enum_name.capitalized),
-        }
-    }
-
-    pub fn to_rescript_schema(&self) -> String {
-        match self {
-            RescriptType::Int => "S.int".to_string(),
-            RescriptType::Float => "GqlDbCustomTypes.Float.schema".to_string(),
-            RescriptType::BigInt => "BigInt.schema".to_string(),
-            RescriptType::BigDecimal => "BigDecimal.schema".to_string(),
-            RescriptType::Address => "Ethers.ethAddressSchema".to_string(),
-            RescriptType::String => "S.string".to_string(),
-            RescriptType::ID => "S.string".to_string(),
-            RescriptType::Bool => "S.bool".to_string(),
-            RescriptType::Array(inner_type) => {
-                format!("S.array({})", inner_type.to_rescript_schema())
-            }
-            RescriptType::Option(inner_type) => {
-                format!("S.null({})", inner_type.to_rescript_schema())
-            }
-            RescriptType::Tuple(inner_types) => {
-                let inner_str = inner_types
-                    .iter()
-                    .enumerate()
-                    .map(|(index, inner_type)| {
-                        format!("s.item({index}, {})", inner_type.to_rescript_schema())
-                    })
-                    .collect::<Vec<String>>()
-                    .join(", ");
-                format!("S.tuple(s => ({}))", inner_str)
-            }
-            RescriptType::EnumVariant(enum_name) => {
-                format!("Enums.{}.schema", &enum_name.capitalized)
-            }
-        }
-    }
-
-    pub fn get_default_value_rescript(&self) -> String {
-        match self {
-            RescriptType::Int => "0".to_string(),
-            RescriptType::Float => "0.0".to_string(),
-            RescriptType::BigInt => "BigInt.zero".to_string(), //TODO: Migrate to RescriptCore on ReScript migration
-            RescriptType::BigDecimal => "BigDecimal.zero".to_string(),
-            RescriptType::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
-            RescriptType::String => "\"foo\"".to_string(),
-            RescriptType::ID => "\"my_id\"".to_string(),
-            RescriptType::Bool => "false".to_string(),
-            RescriptType::Array(_) => "[]".to_string(),
-            RescriptType::Option(_) => "None".to_string(),
-            RescriptType::EnumVariant(enum_name) => {
-                format!("Enums.{}.default", &enum_name.capitalized)
-            }
-            RescriptType::Tuple(inner_types) => {
-                let inner_types_str = inner_types
-                    .iter()
-                    .map(|inner_type| inner_type.get_default_value_rescript())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                format!("({})", inner_types_str)
-            }
-        }
-    }
-
-    pub fn get_default_value_non_rescript(&self) -> String {
-        match self {
-            RescriptType::Int | RescriptType::Float => "0".to_string(),
-            RescriptType::BigInt => "0n".to_string(),
-            RescriptType::BigDecimal => "// default value not required since BigDecimal doesn't \
-                                         exist on contracts for contract import"
-                .to_string(),
-            RescriptType::Address => "Addresses.defaultAddress".to_string(),
-            RescriptType::String => "\"foo\"".to_string(),
-            RescriptType::ID => "\"my_id\"".to_string(),
-            RescriptType::Bool => "false".to_string(),
-            RescriptType::Array(_) => "[]".to_string(),
-            RescriptType::Option(_) => "null".to_string(),
-            RescriptType::EnumVariant(enum_name) => format!("{}Default", &enum_name.uncapitalized),
-            RescriptType::Tuple(inner_types) => {
-                let inner_types_str = inner_types
-                    .iter()
-                    .map(|inner_type| inner_type.get_default_value_non_rescript())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-
-                format!("[{}]", inner_types_str)
-            }
-        }
-    }
-}
-
-impl Display for RescriptType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.to_string())
-    }
-}
-
-///Implementation of Serialize allows handlebars get a stringified
-///version of the string representation of the rescript type
-impl Serialize for RescriptType {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // Serialize as display value
-        self.to_string().serialize(serializer)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum UserDefinedFieldType {
     Single(GqlScalar),
@@ -1073,13 +898,13 @@ impl UserDefinedFieldType {
         }
     }
 
-    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptType> {
+    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptTypeIdent> {
         let composed_type_name = match self {
             //Only types in here should be non optional
             Self::NonNullType(field_type) => match field_type.as_ref() {
                 Self::Single(gql_scalar) => gql_scalar.to_rescript_type(schema)?,
                 Self::ListType(field_type) => {
-                    RescriptType::Array(Box::new(field_type.to_rescript_type(schema)?))
+                    RescriptTypeIdent::Array(Box::new(field_type.to_rescript_type(schema)?))
                 }
                 //This case shouldn't happen, and should recurse without adding any types if so
                 //A double non null would be !! in gql
@@ -1087,12 +912,12 @@ impl UserDefinedFieldType {
             },
             //If we match this case it missed the non null path entirely and should be optional
             Self::Single(gql_scalar) => {
-                RescriptType::Option(Box::new(gql_scalar.to_rescript_type(schema)?))
+                RescriptTypeIdent::Option(Box::new(gql_scalar.to_rescript_type(schema)?))
             }
             //If we match this case it missed the non null path entirely and should be optional
-            Self::ListType(field_type) => RescriptType::Option(Box::new(RescriptType::Array(
-                Box::new(field_type.to_rescript_type(schema)?),
-            ))),
+            Self::ListType(field_type) => RescriptTypeIdent::Option(Box::new(
+                RescriptTypeIdent::Array(Box::new(field_type.to_rescript_type(schema)?)),
+            )),
         };
         Ok(composed_type_name)
     }
@@ -1292,7 +1117,7 @@ impl FieldType {
         }
     }
 
-    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptType> {
+    pub fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptTypeIdent> {
         self.to_user_defined_field_type().to_rescript_type(schema)
     }
 
@@ -1430,19 +1255,19 @@ impl GqlScalar {
         Ok(converted)
     }
 
-    fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptType> {
+    fn to_rescript_type(&self, schema: &Schema) -> anyhow::Result<RescriptTypeIdent> {
         let res_type = match self {
-            GqlScalar::ID => RescriptType::ID,
-            GqlScalar::String => RescriptType::String,
-            GqlScalar::Int => RescriptType::Int,
-            GqlScalar::BigInt => RescriptType::BigInt,
-            GqlScalar::BigDecimal => RescriptType::BigDecimal,
-            GqlScalar::Float => RescriptType::Float,
-            GqlScalar::Bytes => RescriptType::String,
-            GqlScalar::Boolean => RescriptType::Bool,
+            GqlScalar::ID => RescriptTypeIdent::ID,
+            GqlScalar::String => RescriptTypeIdent::String,
+            GqlScalar::Int => RescriptTypeIdent::Int,
+            GqlScalar::BigInt => RescriptTypeIdent::BigInt,
+            GqlScalar::BigDecimal => RescriptTypeIdent::BigDecimal,
+            GqlScalar::Float => RescriptTypeIdent::Float,
+            GqlScalar::Bytes => RescriptTypeIdent::String,
+            GqlScalar::Boolean => RescriptTypeIdent::Bool,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
-                TypeDef::Entity(_) => RescriptType::ID,
-                TypeDef::Enum => RescriptType::EnumVariant(name.to_capitalized_options()),
+                TypeDef::Entity(_) => RescriptTypeIdent::ID,
+                TypeDef::Enum => RescriptTypeIdent::SchemaEnum(name.to_capitalized_options()),
             },
         };
         Ok(res_type)

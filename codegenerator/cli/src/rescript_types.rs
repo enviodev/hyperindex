@@ -194,6 +194,7 @@ pub enum RescriptTypeIdent {
     Int,
     Float,
     BigInt,
+    BigDecimal,
     Address,
     String,
     Bool,
@@ -252,6 +253,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Int => "int".to_string(),
             RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.t".to_string(),
             RescriptTypeIdent::BigInt => "bigint".to_string(),
+            RescriptTypeIdent::BigDecimal => "BigDecimal.t".to_string(),
             RescriptTypeIdent::Address => "Ethers.ethAddress".to_string(),
             RescriptTypeIdent::String => "string".to_string(),
             RescriptTypeIdent::ID => "id".to_string(),
@@ -298,6 +300,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Int => "S.int".to_string(),
             RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.schema".to_string(),
             RescriptTypeIdent::BigInt => "BigInt.schema".to_string(),
+            RescriptTypeIdent::BigDecimal => "BigDecimal.schema".to_string(),
             RescriptTypeIdent::Address => "Ethers.ethAddressSchema".to_string(),
             RescriptTypeIdent::String => "S.string".to_string(),
             RescriptTypeIdent::ID => "S.string".to_string(),
@@ -363,7 +366,8 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "()".to_string(),
             RescriptTypeIdent::Int => "0".to_string(),
             RescriptTypeIdent::Float => "0.0".to_string(),
-            RescriptTypeIdent::BigInt => "BigInt.zero".to_string(), // TODO: Migrate to RescriptCore on ReScript migration
+            RescriptTypeIdent::BigInt => "0n".to_string(),
+            RescriptTypeIdent::BigDecimal => "BigDecimal.zero".to_string(),
             RescriptTypeIdent::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
             RescriptTypeIdent::String => "\"foo\"".to_string(),
             RescriptTypeIdent::ID => "\"my_id\"".to_string(),
@@ -426,6 +430,11 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "undefined".to_string(),
             RescriptTypeIdent::Int | RescriptTypeIdent::Float => "0".to_string(),
             RescriptTypeIdent::BigInt => "0n".to_string(),
+            RescriptTypeIdent::BigDecimal => {
+                "// default value not required since BigDecimal doesn't \
+                                         exist on contracts for contract import"
+                    .to_string()
+            }
             RescriptTypeIdent::Address => "Addresses.defaultAddress".to_string(),
             RescriptTypeIdent::String => "\"foo\"".to_string(),
             RescriptTypeIdent::ID => "\"my_id\"".to_string(),
