@@ -323,7 +323,7 @@ impl RescriptTypeIdent {
                 format!("S.tuple(s => ({}))", inner_str)
             }
             RescriptTypeIdent::SchemaEnum(enum_name) => {
-                format!("Enums.{}Schema", &enum_name.uncapitalized)
+                format!("Enums.{}.schema", &enum_name.capitalized)
             }
             // TODO: ensure these are defined
             RescriptTypeIdent::GenericParam(name) => {
@@ -375,7 +375,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Array(_) => "[]".to_string(),
             RescriptTypeIdent::Option(_) => "None".to_string(),
             RescriptTypeIdent::SchemaEnum(enum_name) => {
-                format!("Enums.{}Default", &enum_name.uncapitalized)
+                format!("Enums.{}.default", &enum_name.capitalized)
             }
             RescriptTypeIdent::Tuple(inner_types) => {
                 let inner_types_str = inner_types
