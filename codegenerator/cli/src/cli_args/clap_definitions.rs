@@ -1,7 +1,7 @@
 use crate::constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH};
 
 use clap::{Args, Parser, Subcommand};
-use strum_macros::{Display, EnumIter, EnumString};
+use strum::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
 use super::init_config::{self};

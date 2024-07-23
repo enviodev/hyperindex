@@ -9,7 +9,7 @@ edition = "2021"
 clap = { version = "4.2.2", features = ["derive", "env"] }
 clap-markdown = { version = "0.1.0" }
 dialoguer = "0.8"
-ethers = "2.0.10"
+ethers = "2.0.14"
 graphql-parser = "0.4.0"
 handlebars = "4.3.6"
 include_dir = "0.7.3"
@@ -20,8 +20,8 @@ serde_json = "1.0.95"
 serde_yaml = "0.9.19"
 regex = "1.5"
 reqwest = "0.11"
-strum = "0.25"
-strum_macros = "0.25"
+strum = { version = "0.26", features = ["derive"] }
+strum_macros = "0.26"
 tokio = { version = "1.28.2", features = [
   "macros",
   "process",
@@ -42,6 +42,9 @@ sqlx = { version = "0.7.2", features = [
 ] }
 thiserror = "1.0.50"
 fuel-abi-types = "0.5.2"
+# TODO: replace ethers with alloy and foundry-block-explorers since these are actively maintained
+# foundry-block-explorers = "0.5.1"
+# alloy-chains = "0.1.23"
 
 [dev-dependencies]
 tempdir = "0.3"
