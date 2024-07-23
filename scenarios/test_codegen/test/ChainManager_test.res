@@ -107,6 +107,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       currentTime := currentTime.contents + blockTime
       currentBlockNumber := currentBlockNumber.contents + 1
     }
+    let chainConfig = config.defaultChain->Utils.magic
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
       firstEventBlockNumber: None,
@@ -117,9 +118,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       logger: Logging.logger,
       chainConfig: config.defaultChain->Utils.magic,
       // This is quite a hack - but it works!
-      chainWorker: Config.Rpc(
-        (1, {"latestFetchedBlockTimestamp": currentTime.contents})->Utils.magic,
-      ),
+      chainWorker: ChainFetcher.makeChainWorker(~config, ~chainConfig),
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),

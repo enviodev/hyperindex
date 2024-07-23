@@ -1,4 +1,12 @@
 module type S = {
+  module Pino: {
+    type t
+  }
+
+  module ErrorHandling: {
+    type t
+  }
+
   module Viem: {
     type decodedEvent<'a>
   }
@@ -118,21 +126,16 @@ module type S = {
       queryTimeoutMillis: int,
     }
 
-    type serverUrl = string
+    type hyperSyncConfig = {endpointUrl: string}
+
+    type hyperFuelConfig = {endpointUrl: string}
 
     type rpcConfig = {
       provider: Ethers.JsonRpcProvider.t,
       syncConfig: syncConfig,
     }
 
-    /**
-A generic type where for different values of HyperSync and Rpc.
-Where first param 'a represents the value for hypersync and the second
-param 'b for rpc
-*/
-    type source<'a, 'b> = HyperSync('a) | Rpc('b)
-
-    type syncSource = source<serverUrl, rpcConfig>
+    type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
 
     type chainConfig = {
       syncSource: syncSource,
@@ -159,13 +162,14 @@ param 'b for rpc
     }
   }
 
-  module ChainWorkerTypes: {
+  module ChainWorker: {
     type reorgGuard = {
       lastBlockScannedData: ReorgDetection.blockData,
       firstBlockParentNumberAndHash: option<ReorgDetection.blockNumberAndHash>,
     }
+    type blockRangeFetchArgs
     type blockRangeFetchStats
-    type blockRangeFetchResponse<'a, 'b> = {
+    type blockRangeFetchResponse = {
       currentBlockHeight: int,
       reorgGuard: reorgGuard,
       parsedQueueItems: array<Types.eventBatchQueueItem>,
@@ -175,7 +179,24 @@ param 'b for rpc
       stats: blockRangeFetchStats,
       fetchStateRegisterId: FetchState.id,
       partitionId: int,
-      worker: Config.source<'a, 'b>,
+    }
+
+    module type S = {
+      let name: string
+      let chain: ChainMap.Chain.t
+      let getBlockHashes: (
+        ~blockNumbers: array<int>,
+      ) => promise<result<array<ReorgDetection.blockData>, exn>>
+      let waitForBlockGreaterThanCurrentHeight: (
+        ~currentBlockHeight: int,
+        ~logger: Pino.t,
+      ) => promise<int>
+      let fetchBlockRange: (
+        ~query: blockRangeFetchArgs,
+        ~logger: Pino.t,
+        ~currentBlockHeight: int,
+        ~setCurrentBlockHeight: int => unit,
+      ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
     }
   }
 }

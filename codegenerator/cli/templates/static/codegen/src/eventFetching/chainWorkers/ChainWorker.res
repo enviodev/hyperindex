@@ -25,7 +25,7 @@ type reorgGuard = {
 /**
 Thes response returned from a block range fetch
 */
-type blockRangeFetchResponse<'a, 'b> = {
+type blockRangeFetchResponse = {
   currentBlockHeight: int,
   reorgGuard: reorgGuard,
   parsedQueueItems: array<Types.eventBatchQueueItem>,
@@ -35,5 +35,22 @@ type blockRangeFetchResponse<'a, 'b> = {
   stats: blockRangeFetchStats,
   fetchStateRegisterId: FetchState.id,
   partitionId: PartitionedFetchState.partitionIndex,
-  worker: Config.source<'a, 'b>,
+}
+
+module type S = {
+  let name: string
+  let chain: ChainMap.Chain.t
+  let getBlockHashes: (
+    ~blockNumbers: array<int>,
+  ) => promise<result<array<ReorgDetection.blockData>, exn>>
+  let waitForBlockGreaterThanCurrentHeight: (
+    ~currentBlockHeight: int,
+    ~logger: Pino.t,
+  ) => promise<int>
+  let fetchBlockRange: (
+    ~query: blockRangeFetchArgs,
+    ~logger: Pino.t,
+    ~currentBlockHeight: int,
+    ~setCurrentBlockHeight: int => unit,
+  ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
 }

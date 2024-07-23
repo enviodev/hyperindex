@@ -97,16 +97,10 @@ module Stubs = {
     dispatchAction(GlobalState.BlockRangeResponse(chain, response))
   }
 
-  let getChainFromWorker = (worker: SourceWorker.sourceWorker) =>
-    switch worker {
-    | Rpc(w) => w.chainConfig.chain
-    | HyperSync(w) => w.chainConfig.chain
-    }
-
   //Stub for getting block hashes instead of the worker
-  let makeGetBlockHashes = stubData => sourceWorker => async (~blockNumbers) => {
-    let chain = sourceWorker->getChainFromWorker
-    stubData->getMockChainData(chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
+  let makeGetBlockHashes = (~stubData, ~chainWorker) => async (~blockNumbers) => {
+    let module(ChainWorker: ChainWorker.S) = chainWorker
+    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
 
   let replaceNexQueryCheckAllChainsWithGivenChain = ({tasks}: t, chain) => {
@@ -123,13 +117,13 @@ module Stubs = {
   let makeWaitForNewBlock = async (
     stubData: t,
     ~logger,
-    ~chainWorker: SourceWorker.sourceWorker,
+    ~chainWorker,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
-    (logger, currentBlockHeight, chainWorker)->ignore
-    let chain = chainWorker->getChainFromWorker
-    stubData->getMockChainData(chain)->MockChainData.getHeight->setCurrentBlockHeight
+    (logger, currentBlockHeight)->ignore
+    let module(ChainWorker: ChainWorker.S) = chainWorker
+    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getHeight->setCurrentBlockHeight
   }
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref
@@ -146,10 +140,10 @@ module Stubs = {
     GlobalState.injectedTaskReducer(
       ~executeNextQuery=makeExecuteNextQuery(stubData, ...),
       ~waitForNewBlock=makeWaitForNewBlock(stubData, ...),
-      ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(
-        ~getBlockHashes=makeGetBlockHashes(stubData),
-        _,
-      ),
+      ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
+        chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
+          ~getBlockHashes=makeGetBlockHashes(~stubData, ~chainWorker=chainFetcher.chainWorker),
+        ),
       ~registeredEvents=RegisteredEvents.global,
     )(
       ~dispatchAction=makeDispatchAction(stubData, _),

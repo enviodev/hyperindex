@@ -3,7 +3,7 @@ type t = {
   logger: Pino.t,
   fetchState: PartitionedFetchState.t,
   chainConfig: Config.chainConfig,
-  chainWorker: SourceWorker.sourceWorker,
+  chainWorker: module(ChainWorker.S),
   //The latest known block of the chain
   currentBlockHeight: int,
   isFetchingBatch: bool,
@@ -18,10 +18,32 @@ type t = {
   eventFilters: option<FetchState.eventFilters>,
 }
 
+let makeChainWorker = (~config, ~chainConfig: Config.chainConfig) => {
+  switch chainConfig.syncSource {
+  | HyperSync({endpointUrl})
+  | HyperFuel({endpointUrl}) =>
+    module(
+      HyperSyncWorker.Make({
+        let config = config
+        let chainConfig = chainConfig
+        let endpointUrl = endpointUrl
+      }): ChainWorker.S
+    )
+  | Rpc(rpcConfig) =>
+    module(
+      RpcWorker.Make({
+        let config = config
+        let chainConfig = chainConfig
+        let rpcConfig = rpcConfig
+      }): ChainWorker.S
+    )
+  }
+}
+
 //CONSTRUCTION
 let make = (
   ~config,
-  ~chainConfig: Config.chainConfig,
+  ~chainConfig,
   ~lastBlockScannedHashes,
   ~staticContracts,
   ~dynamicContractRegistrations,
@@ -36,14 +58,9 @@ let make = (
   ~eventFilters,
   ~maxAddrInPartition,
 ): t => {
-  let (endpointDescription, chainWorker) = switch chainConfig.syncSource {
-  | HyperSync(serverUrl) => (
-      "HyperSync",
-      chainConfig->HyperSyncWorker.make(~serverUrl, ~config)->Config.HyperSync,
-    )
-  | Rpc(rpcConfig) => ("RPC", chainConfig->RpcWorker.make(~config, ~rpcConfig)->Rpc)
-  }
-  logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
+  let chainWorker = makeChainWorker(~config, ~chainConfig)
+  let module(ChainWorker) = chainWorker
+  logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
 
   let fetchState = PartitionedFetchState.make(
     ~maxAddrInPartition,
@@ -289,17 +306,24 @@ Finds the last known block where hashes are valid and returns
 the updated lastBlockScannedHashes rolled back where this occurs
 */
 let rollbackLastBlockHashesToReorgLocation = async (
-  //Parameter used for dependency injecting in tests
-  ~getBlockHashes=SourceWorker.getBlockHashes,
   chainFetcher: t,
+  //Parameter used for dependency injecting in tests
+  ~getBlockHashes as getBlockHashesMock=?,
 ) => {
+  // FIXME: Mock chainWorker instead
+
   //get a list of block hashes via the chainworker
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
 
-  let blockNumbersAndHashes = await getBlockHashes(chainFetcher.chainWorker)(
-    ~blockNumbers,
-  )->Promise.thenResolve(res =>
+  let module(ChainWorker) = chainFetcher.chainWorker
+
+  let getBlockHashes = switch getBlockHashesMock {
+  | Some(getBlockHashes) => getBlockHashes
+  | None => ChainWorker.getBlockHashes
+  }
+
+  let blockNumbersAndHashes = await getBlockHashes(~blockNumbers)->Promise.thenResolve(res =>
     switch res {
     | Ok(v) => v
     | Error(exn) =>
@@ -335,4 +359,5 @@ let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
   }
 }
 
-let isFetchingAtHead = (chainFetcher: t) => chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
+let isFetchingAtHead = (chainFetcher: t) =>
+  chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
