@@ -65,6 +65,13 @@
         "$ref": "#/$defs/Network"
       }
     },
+    "raw_events": {
+      "description": "If true, the indexer will store the raw event data in the database. This is useful for debugging, but will increase the size of the database and the amount of time it takes to process events (default: false)",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "rollback_on_reorg": {
       "description": "A flag to indicate if the indexer should rollback to the last known valid block on a reorg (default: false)",
       "type": [

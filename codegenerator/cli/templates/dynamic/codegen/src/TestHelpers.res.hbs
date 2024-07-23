@@ -150,6 +150,7 @@ module EventFunctions = {
           ~logger,
           ~latestProcessedBlocks,
           ~asyncGetters,
+          ~config,
         ) {
         | Ok(_) => ()
         | Error(e) => e->ErrorHandling.logAndRaise

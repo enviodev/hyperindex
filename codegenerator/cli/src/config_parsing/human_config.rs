@@ -153,6 +153,14 @@ pub mod evm {
                            handlers."
         )]
         pub field_selection: Option<FieldSelection>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If true, the indexer will store the raw event data in the database. \
+            This is useful for debugging, but will increase the size of the database \
+            and the amount of time it takes to process events \
+            (default: false)"
+        )]
+        pub raw_events: Option<bool>,
     }
 
     impl Display for HumanConfig {

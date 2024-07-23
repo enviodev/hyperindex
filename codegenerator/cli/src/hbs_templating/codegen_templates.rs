@@ -644,6 +644,7 @@ pub struct ProjectTemplate {
     should_use_hypersync_client_decoder: bool,
     should_rollback_on_reorg: bool,
     should_save_full_history: bool,
+    enable_raw_events: bool,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     has_multiple_events: bool,
@@ -744,6 +745,7 @@ impl ProjectTemplate {
             should_use_hypersync_client_decoder,
             should_rollback_on_reorg: cfg.rollback_on_reorg,
             should_save_full_history: cfg.save_full_history,
+            enable_raw_events: cfg.enable_raw_events,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             has_multiple_events,

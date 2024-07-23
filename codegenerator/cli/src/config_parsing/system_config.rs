@@ -45,6 +45,7 @@ pub struct SystemConfig {
     pub save_full_history: bool,
     pub schema: Schema,
     pub field_selection: FieldSelection,
+    pub enable_raw_events: bool,
 }
 
 //Getter methods for system config
@@ -288,6 +289,7 @@ impl SystemConfig {
             save_full_history: human_cfg.save_full_history.unwrap_or(false),
             schema,
             field_selection,
+            enable_raw_events: human_cfg.raw_events.unwrap_or(false),
         })
     }
 
