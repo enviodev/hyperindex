@@ -325,7 +325,7 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub initial_block_interval: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        pub backoff_multiplicative: Option<f32>,
+        pub backoff_multiplicative: Option<f64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub acceleration_additive: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
