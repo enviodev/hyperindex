@@ -315,7 +315,7 @@ pub struct HypersyncConfig {
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct SyncConfig {
     initial_block_interval: u32,
-    backoff_multiplicative: f32,
+    backoff_multiplicative: f64,
     acceleration_additive: u32,
     interval_ceiling: u32,
     backoff_millis: u32,
@@ -676,12 +676,46 @@ impl From<human_config::RequiredEntity> for RequiredEntity {
 
 #[cfg(test)]
 mod test {
-    use super::SystemConfig;
+    use super::*;
     use crate::{
         config_parsing::{self, entity_parsing::Schema, system_config::Event},
         project_paths::ParsedProjectPaths,
     };
     use ethers::abi::{Event as EthAbiEvent, EventParam, ParamType};
+    use handlebars::Handlebars;
+    use serde_json::json;
+
+    #[test]
+    fn renders_nested_f32() {
+        let hbs = Handlebars::new();
+
+        let rendered_backoff_multiplicative = hbs
+            .render_template(
+                "{{backoff_multiplicative}}",
+                &json!({"backoff_multiplicative": 0.8}),
+            )
+            .unwrap();
+        assert_eq!(&rendered_backoff_multiplicative, "0.8");
+
+        let sync_config = SyncConfig {
+            initial_block_interval: 10_000,
+            backoff_multiplicative: 0.8,
+            acceleration_additive: 2_000,
+            interval_ceiling: 10_000,
+            backoff_millis: 5000,
+            query_timeout_millis: 20_000,
+        };
+
+        assert_eq!(sync_config.backoff_multiplicative.to_string(), "0.8");
+
+        let rendered_backoff_multiplicative = hbs
+            .render_template(
+                "{{backoff_multiplicative}}",
+                &json!({"backoff_multiplicative": sync_config.backoff_multiplicative}),
+            )
+            .unwrap();
+        assert_eq!(&rendered_backoff_multiplicative, "0.8");
+    }
 
     #[test]
     fn test_get_contract_abi() {
