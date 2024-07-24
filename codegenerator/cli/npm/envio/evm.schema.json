@@ -394,7 +394,7 @@
             "number",
             "null"
           ],
-          "format": "float"
+          "format": "double"
         },
         "initial_block_interval": {
           "type": [
