@@ -816,6 +816,7 @@ let injectedTaskReducer = (
             ~checkContractIsRegistered,
             ~latestProcessedBlocks,
             ~registeredEvents,
+            ~config=state.config,
           ) {
           | exception exn =>
             //All casese should be handled/caught before this with better user messaging.

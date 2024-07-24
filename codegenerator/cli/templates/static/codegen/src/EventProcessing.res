@@ -207,6 +207,7 @@ let updateEventSyncState = (
 }
 
 let runEventHandler = (
+  event,
   //Injection params for testing framework
   ~executeLoadLayer=LoadLayer.executeLoadLayer,
   ~asyncGetters=?,
@@ -217,7 +218,7 @@ let runEventHandler = (
   ~logger,
   ~chain,
   ~latestProcessedBlocks,
-  event,
+  ~config: Config.t,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
@@ -255,7 +256,9 @@ let runEventHandler = (
       let {chainId} = event
 
       event->updateEventSyncState(~chainId, ~inMemoryStore)
-      event->addEventToRawEvents(~eventMod, ~inMemoryStore, ~chainId)
+      if config.enableRawEvents {
+        event->addEventToRawEvents(~eventMod, ~inMemoryStore, ~chainId)
+      }
       latestProcessedBlocks
       ->EventsProcessed.updateEventsProcessed(~chain, ~blockNumber=event.block.number)
       ->Ok
@@ -271,6 +274,7 @@ let runHandler = (
   ~logger,
   ~chain,
   ~registeredEvents,
+  ~config,
 ) => {
   let module(Event) = eventMod
   switch registeredEvents
@@ -284,6 +288,7 @@ let runHandler = (
       ~logger,
       ~chain,
       ~eventMod,
+      ~config,
     )
   | None => Ok(latestProcessedBlocks)->Promise.resolve
   }
@@ -413,6 +418,7 @@ let runHandlers = (
   ~inMemoryStore,
   ~latestProcessedBlocks,
   ~logger,
+  ~config,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   let latestProcessedBlocks = ref(latestProcessedBlocks)
@@ -429,6 +435,7 @@ let runHandlers = (
           ~chain,
           ~latestProcessedBlocks=latestProcessedBlocks.contents,
           ~registeredEvents,
+          ~config,
         )->propogateAsync
     }
     Ok(latestProcessedBlocks.contents)
@@ -466,6 +473,7 @@ let processEventBatch = (
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
   ~registeredEvents: RegisteredEvents.t,
+  ~config,
 ) => {
   let logger = Logging.createChild(
     ~params={
@@ -502,7 +510,7 @@ let processEventBatch = (
 
     let latestProcessedBlocks =
       await eventsBeforeDynamicRegistrations
-      ->runHandlers(~registeredEvents, ~inMemoryStore, ~latestProcessedBlocks, ~logger)
+      ->runHandlers(~registeredEvents, ~inMemoryStore, ~latestProcessedBlocks, ~logger, ~config)
       ->propogateAsync
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

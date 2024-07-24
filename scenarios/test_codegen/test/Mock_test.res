@@ -24,6 +24,7 @@ describe("E2E Mock Event Batch", () => {
           ~logger=Logging.logger,
           ~chain=MockConfig.chain1,
           ~eventMod,
+          ~config,
         )
       | None => Ok(EventProcessing.EventsProcessed.makeEmpty(~config))
       }
@@ -64,6 +65,7 @@ describe_skip("E2E Db check", () => {
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       ~registeredEvents=RegisteredEvents.global,
+      ~config,
     )
 
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.

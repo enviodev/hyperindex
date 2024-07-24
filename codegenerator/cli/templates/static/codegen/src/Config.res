@@ -94,6 +94,7 @@ type t = {
   chainMap: ChainMap.t<chainConfig>,
   defaultChain: option<chainConfig>,
   events: dict<module(Types.InternalEvent)>,
+  enableRawEvents: bool,
 }
 
 let make = (
@@ -102,6 +103,7 @@ let make = (
   ~shouldUseHypersyncClientDecoder=true,
   ~isUnorderedMultichainMode=false,
   ~chains=[],
+  ~enableRawEvents=false,
 ) => {
   let events = Js.Dict.empty()
   chains->Js.Array2.forEach(chainConfig => {
@@ -135,6 +137,7 @@ let make = (
     ->ChainMap.fromArrayUnsafe,
     defaultChain: chains->Belt.Array.get(0),
     events,
+    enableRawEvents,
   }
 }
 

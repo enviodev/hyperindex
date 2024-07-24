@@ -50,3 +50,4 @@ networks:
   - id: 137
     start_block: 1
     contracts: []
+raw_events: true
