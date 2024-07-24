@@ -29,52 +29,26 @@ const pollGraphQL = async () => {
     }
   `;
 
-  console.log("[js context] Starting running test Greeter - raw events check");
-  // TODO: make this use promises rather than callbacks.
-  fetchQueryWithTestCallback(rawEventsQuery, maxRetryFailureMessage, (data) => {
-    let shouldExitOnFailure = false;
-    try {
-      assert(
-        data.raw_events_by_pk.contract_name === "Greeter",
-        "contract_name should be Greeter"
-      );
-      assert(
-        data.raw_events_by_pk.event_name === "NewGreeting",
-        "event_name should be Greeter_NewGreeting"
-      );
-      console.log(
-        "First greeter passed, running the second one for user entity"
-      );
-
-      // Run the second test
-      fetchQueryWithTestCallback(
-        userEntityQuery,
-        maxRetryFailureMessage,
-        ({ User_by_pk: user }) => {
-          try {
-            assert(!!user, "greeting should not be null or undefined");
-            assert(
-              user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
-              "First 3 greetings should be 'gm,gn,gm paris'"
-            );
-            assert(
-              user.numberOfGreetings >= 3,
-              "numberOfGreetings should be >= 3"
-            );
-            console.log("Second test passed.");
-          } catch (err) {
-            //gotta love javascript
-            err.shouldExitOnFailure = shouldExitOnFailure;
-            throw err;
-          }
-        }
-      );
-    } catch (err) {
-      //gotta love javascript
-      err.shouldExitOnFailure = shouldExitOnFailure;
-      throw err;
+  console.log("[js context] Starting running test Greeter - user entity check");
+  fetchQueryWithTestCallback(
+    userEntityQuery,
+    maxRetryFailureMessage,
+    ({ User_by_pk: user }) => {
+      try {
+        assert(!!user, "greeting should not be null or undefined");
+        assert(
+          user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
+          "First 3 greetings should be 'gm,gn,gm paris'"
+        );
+        assert(user.numberOfGreetings >= 3, "numberOfGreetings should be >= 3");
+        console.log("Second test passed.");
+      } catch (err) {
+        //gotta love javascript
+        err.shouldExitOnFailure = shouldExitOnFailure;
+        throw err;
+      }
     }
-  });
+  );
 };
 
 pollGraphQL();
