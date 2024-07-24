@@ -1,5 +1,6 @@
-use crate::config_parsing::entity_parsing::RescriptType;
 use ethers::abi::{EventParam as EthAbiEventParam, ParamType as EthAbiParamType};
+
+use crate::rescript_types::RescriptTypeIdent;
 
 pub struct EthereumEventParam<'a> {
     name: &'a str,
@@ -15,21 +16,21 @@ impl<'a> From<&'a EthAbiEventParam> for EthereumEventParam<'a> {
     }
 }
 
-pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptType {
+pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptTypeIdent {
     match &param.abi_type {
-        EthAbiParamType::Uint(_size) => RescriptType::BigInt,
-        EthAbiParamType::Int(_size) => RescriptType::BigInt,
-        EthAbiParamType::Bool => RescriptType::Bool,
-        EthAbiParamType::Address => RescriptType::Address,
-        EthAbiParamType::Bytes => RescriptType::String,
-        EthAbiParamType::String => RescriptType::String,
-        EthAbiParamType::FixedBytes(_) => RescriptType::String,
+        EthAbiParamType::Uint(_size) => RescriptTypeIdent::BigInt,
+        EthAbiParamType::Int(_size) => RescriptTypeIdent::BigInt,
+        EthAbiParamType::Bool => RescriptTypeIdent::Bool,
+        EthAbiParamType::Address => RescriptTypeIdent::Address,
+        EthAbiParamType::Bytes => RescriptTypeIdent::String,
+        EthAbiParamType::String => RescriptTypeIdent::String,
+        EthAbiParamType::FixedBytes(_) => RescriptTypeIdent::String,
         EthAbiParamType::Array(abi_type) => {
             let sub_param = EthereumEventParam {
                 abi_type,
                 name: param.name,
             };
-            RescriptType::Array(Box::new(abi_to_rescript_type(&sub_param)))
+            RescriptTypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
         EthAbiParamType::FixedArray(abi_type, _) => {
             let sub_param = EthereumEventParam {
@@ -37,10 +38,10 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptType {
                 name: param.name,
             };
 
-            RescriptType::Array(Box::new(abi_to_rescript_type(&sub_param)))
+            RescriptTypeIdent::Array(Box::new(abi_to_rescript_type(&sub_param)))
         }
         EthAbiParamType::Tuple(abi_types) => {
-            let rescript_types: Vec<RescriptType> = abi_types
+            let rescript_types: Vec<RescriptTypeIdent> = abi_types
                 .iter()
                 .map(|abi_type| {
                     let ethereum_param = EthereumEventParam {
@@ -54,7 +55,7 @@ pub fn abi_to_rescript_type(param: &EthereumEventParam) -> RescriptType {
                 })
                 .collect();
 
-            RescriptType::Tuple(rescript_types)
+            RescriptTypeIdent::Tuple(rescript_types)
         }
     }
 }
@@ -149,7 +150,7 @@ mod tests {
         );
         assert_eq!(
             amount_uint256_res_type.get_default_value_rescript(),
-            "BigInt.zero".to_string()
+            "0n".to_string()
         );
         assert_eq!(
             tuple_bool_string_res_type.get_default_value_rescript(),

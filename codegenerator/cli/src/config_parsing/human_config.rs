@@ -84,9 +84,7 @@ pub struct NetworkContract<T> {
 
 pub mod evm {
     use super::{GlobalContract, NetworkContract, NetworkId};
-    use crate::{
-        config_parsing::entity_parsing::RescriptType, utils::normalized_list::SingleOrList,
-    };
+    use crate::{rescript_types::RescriptTypeIdent, utils::normalized_list::SingleOrList};
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use std::fmt::Display;
@@ -213,32 +211,32 @@ pub mod evm {
         Sighash,
     }
 
-    impl From<TransactionField> for RescriptType {
-        fn from(value: TransactionField) -> RescriptType {
+    impl From<TransactionField> for RescriptTypeIdent {
+        fn from(value: TransactionField) -> RescriptTypeIdent {
             match value {
-                TransactionField::TransactionIndex => RescriptType::Int,
-                TransactionField::Hash => RescriptType::String,
-                TransactionField::From => RescriptType::Address,
-                TransactionField::To => RescriptType::Address,
-                TransactionField::Gas => RescriptType::BigInt,
-                TransactionField::GasPrice => RescriptType::BigInt,
-                TransactionField::MaxPriorityFeePerGas => RescriptType::BigInt,
-                TransactionField::MaxFeePerGas => RescriptType::BigInt,
-                TransactionField::CumulativeGasUsed => RescriptType::BigInt,
-                TransactionField::EffectiveGasPrice => RescriptType::BigInt,
-                TransactionField::GasUsed => RescriptType::BigInt,
-                TransactionField::Input => RescriptType::String,
-                TransactionField::Nonce => RescriptType::Int,
-                TransactionField::Value => RescriptType::BigInt,
-                TransactionField::V => RescriptType::String,
-                TransactionField::R => RescriptType::String,
-                TransactionField::S => RescriptType::String,
-                TransactionField::ContractAddress => RescriptType::Address,
-                TransactionField::LogsBloom => RescriptType::String,
-                TransactionField::Type => RescriptType::Int,
-                TransactionField::Root => RescriptType::String,
-                TransactionField::Status => RescriptType::Int,
-                TransactionField::Sighash => RescriptType::String,
+                TransactionField::TransactionIndex => RescriptTypeIdent::Int,
+                TransactionField::Hash => RescriptTypeIdent::String,
+                TransactionField::From => RescriptTypeIdent::Address,
+                TransactionField::To => RescriptTypeIdent::Address,
+                TransactionField::Gas => RescriptTypeIdent::BigInt,
+                TransactionField::GasPrice => RescriptTypeIdent::BigInt,
+                TransactionField::MaxPriorityFeePerGas => RescriptTypeIdent::BigInt,
+                TransactionField::MaxFeePerGas => RescriptTypeIdent::BigInt,
+                TransactionField::CumulativeGasUsed => RescriptTypeIdent::BigInt,
+                TransactionField::EffectiveGasPrice => RescriptTypeIdent::BigInt,
+                TransactionField::GasUsed => RescriptTypeIdent::BigInt,
+                TransactionField::Input => RescriptTypeIdent::String,
+                TransactionField::Nonce => RescriptTypeIdent::Int,
+                TransactionField::Value => RescriptTypeIdent::BigInt,
+                TransactionField::V => RescriptTypeIdent::String,
+                TransactionField::R => RescriptTypeIdent::String,
+                TransactionField::S => RescriptTypeIdent::String,
+                TransactionField::ContractAddress => RescriptTypeIdent::Address,
+                TransactionField::LogsBloom => RescriptTypeIdent::String,
+                TransactionField::Type => RescriptTypeIdent::Int,
+                TransactionField::Root => RescriptTypeIdent::String,
+                TransactionField::Status => RescriptTypeIdent::Int,
+                TransactionField::Sighash => RescriptTypeIdent::String,
             }
         }
     }
@@ -274,25 +272,25 @@ pub mod evm {
         BaseFeePerGas,
     }
 
-    impl From<BlockField> for RescriptType {
-        fn from(value: BlockField) -> RescriptType {
+    impl From<BlockField> for RescriptTypeIdent {
+        fn from(value: BlockField) -> RescriptTypeIdent {
             match value {
-                BlockField::ParentHash => RescriptType::String,
-                BlockField::Nonce => RescriptType::Int,
-                BlockField::Sha3Uncles => RescriptType::String,
-                BlockField::LogsBloom => RescriptType::String,
-                BlockField::TransactionsRoot => RescriptType::String,
-                BlockField::StateRoot => RescriptType::String,
-                BlockField::ReceiptsRoot => RescriptType::String,
-                BlockField::Miner => RescriptType::Address,
-                BlockField::Difficulty => RescriptType::BigInt,
-                BlockField::TotalDifficulty => RescriptType::BigInt,
-                BlockField::ExtraData => RescriptType::String,
-                BlockField::Size => RescriptType::BigInt,
-                BlockField::GasLimit => RescriptType::BigInt,
-                BlockField::GasUsed => RescriptType::BigInt,
-                BlockField::Uncles => RescriptType::String,
-                BlockField::BaseFeePerGas => RescriptType::BigInt,
+                BlockField::ParentHash => RescriptTypeIdent::String,
+                BlockField::Nonce => RescriptTypeIdent::Int,
+                BlockField::Sha3Uncles => RescriptTypeIdent::String,
+                BlockField::LogsBloom => RescriptTypeIdent::String,
+                BlockField::TransactionsRoot => RescriptTypeIdent::String,
+                BlockField::StateRoot => RescriptTypeIdent::String,
+                BlockField::ReceiptsRoot => RescriptTypeIdent::String,
+                BlockField::Miner => RescriptTypeIdent::Address,
+                BlockField::Difficulty => RescriptTypeIdent::BigInt,
+                BlockField::TotalDifficulty => RescriptTypeIdent::BigInt,
+                BlockField::ExtraData => RescriptTypeIdent::String,
+                BlockField::Size => RescriptTypeIdent::BigInt,
+                BlockField::GasLimit => RescriptTypeIdent::BigInt,
+                BlockField::GasUsed => RescriptTypeIdent::BigInt,
+                BlockField::Uncles => RescriptTypeIdent::String,
+                BlockField::BaseFeePerGas => RescriptTypeIdent::BigInt,
             }
         }
     }

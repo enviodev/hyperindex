@@ -194,6 +194,7 @@ pub enum RescriptTypeIdent {
     Int,
     Float,
     BigInt,
+    BigDecimal,
     Address,
     String,
     Bool,
@@ -252,6 +253,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Int => "int".to_string(),
             RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.t".to_string(),
             RescriptTypeIdent::BigInt => "bigint".to_string(),
+            RescriptTypeIdent::BigDecimal => "BigDecimal.t".to_string(),
             RescriptTypeIdent::Address => "Ethers.ethAddress".to_string(),
             RescriptTypeIdent::String => "string".to_string(),
             RescriptTypeIdent::ID => "id".to_string(),
@@ -271,7 +273,7 @@ impl RescriptTypeIdent {
                 format!("({})", inner_types_str)
             }
             RescriptTypeIdent::SchemaEnum(enum_name) => {
-                format!("Enums.{}", &enum_name.uncapitalized)
+                format!("Enums.{}.t", &enum_name.capitalized)
             }
             // Lowercase generic params because of the issue https://github.com/rescript-lang/rescript-compiler/issues/6759
             RescriptTypeIdent::GenericParam(name) => format!("'{}", name.to_lowercase()),
@@ -298,6 +300,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Int => "S.int".to_string(),
             RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.schema".to_string(),
             RescriptTypeIdent::BigInt => "BigInt.schema".to_string(),
+            RescriptTypeIdent::BigDecimal => "BigDecimal.schema".to_string(),
             RescriptTypeIdent::Address => "Ethers.ethAddressSchema".to_string(),
             RescriptTypeIdent::String => "S.string".to_string(),
             RescriptTypeIdent::ID => "S.string".to_string(),
@@ -320,7 +323,7 @@ impl RescriptTypeIdent {
                 format!("S.tuple(s => ({}))", inner_str)
             }
             RescriptTypeIdent::SchemaEnum(enum_name) => {
-                format!("Enums.{}Schema", &enum_name.uncapitalized)
+                format!("Enums.{}.schema", &enum_name.capitalized)
             }
             // TODO: ensure these are defined
             RescriptTypeIdent::GenericParam(name) => {
@@ -363,7 +366,8 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "()".to_string(),
             RescriptTypeIdent::Int => "0".to_string(),
             RescriptTypeIdent::Float => "0.0".to_string(),
-            RescriptTypeIdent::BigInt => "BigInt.zero".to_string(), // TODO: Migrate to RescriptCore on ReScript migration
+            RescriptTypeIdent::BigInt => "0n".to_string(),
+            RescriptTypeIdent::BigDecimal => "BigDecimal.zero".to_string(),
             RescriptTypeIdent::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
             RescriptTypeIdent::String => "\"foo\"".to_string(),
             RescriptTypeIdent::ID => "\"my_id\"".to_string(),
@@ -371,7 +375,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Array(_) => "[]".to_string(),
             RescriptTypeIdent::Option(_) => "None".to_string(),
             RescriptTypeIdent::SchemaEnum(enum_name) => {
-                format!("Enums.{}Default", &enum_name.uncapitalized)
+                format!("Enums.{}.default", &enum_name.capitalized)
             }
             RescriptTypeIdent::Tuple(inner_types) => {
                 let inner_types_str = inner_types
@@ -426,6 +430,11 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "undefined".to_string(),
             RescriptTypeIdent::Int | RescriptTypeIdent::Float => "0".to_string(),
             RescriptTypeIdent::BigInt => "0n".to_string(),
+            RescriptTypeIdent::BigDecimal => {
+                "// default value not required since BigDecimal doesn't \
+                                         exist on contracts for contract import"
+                    .to_string()
+            }
             RescriptTypeIdent::Address => "Addresses.defaultAddress".to_string(),
             RescriptTypeIdent::String => "\"foo\"".to_string(),
             RescriptTypeIdent::ID => "\"my_id\"".to_string(),
