@@ -2,5 +2,6 @@
 #not have a defined schema path
 
 type EmptyEntity {
+  id: ID!
   emptyField: ID!
 }
