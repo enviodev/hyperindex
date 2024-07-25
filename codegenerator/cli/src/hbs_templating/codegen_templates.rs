@@ -412,6 +412,7 @@ pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub codegen_events: Vec<EventTemplate>,
     pub abi: StringifiedAbi,
+    pub event_signatures: Vec<String>,
     pub handler: HandlerPathsTemplate,
 }
 
@@ -428,11 +429,19 @@ impl ContractTemplate {
             .iter()
             .map(|event| EventTemplate::from_config_event(event))
             .collect::<Result<_>>()?;
+
+        let event_signatures = contract
+            .events
+            .iter()
+            .map(|event| event.get_event_signature())
+            .collect();
+
         Ok(ContractTemplate {
             name,
             handler,
             codegen_events,
             abi: contract.abi.raw.clone(),
+            event_signatures,
         })
     }
 }

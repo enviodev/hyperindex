@@ -1,7 +1,5 @@
 type unchecksummedEthAddress = string
 
-type t
-
 type cfg = {
   url: string,
   bearer_token?: string,
@@ -211,49 +209,33 @@ module ResponseTypes = {
     archiveHeight: option<int>,
     nextBlock: int,
     totalExecutionTime: int,
-    events: array<event>,
+    data: array<event>,
     rollbackGuard: option<rollbackGuard>,
   }
 }
 
-module Internal = {
-  type constructor
-  @module("@envio-dev/hypersync-client") external constructor: constructor = "HypersyncClient"
+type query = QueryTypes.postQueryBody
+type eventResponse = ResponseTypes.response
 
-  @send external make: (constructor, cfg) => t = "new"
-
-  @send
-  external sendEventsReq: (t, QueryTypes.postQueryBody) => promise<ResponseTypes.response> =
-    "sendEventsReq"
+//Todo, add bindings for these types
+type streamConfig
+type queryResponse
+type queryResponseStream
+type eventStream
+type t = {
+  getHeight: unit => promise<int>,
+  collect: (~query: query, ~config: streamConfig) => promise<queryResponse>,
+  collectEvents: (~query: query, ~config: streamConfig) => promise<eventResponse>,
+  collectParquet: (~path: string, ~query: query, ~config: streamConfig) => promise<unit>,
+  get: (~query: query) => promise<queryResponse>,
+  getEvents: (~query: query) => promise<eventResponse>,
+  stream: (~query: query, ~config: streamConfig) => promise<queryResponseStream>,
+  streamEvents: (~query: query, ~config: streamConfig) => promise<eventStream>,
 }
 
-let make = (cfg: cfg) => {
-  open Internal
-
-  let cfg_with_token = {...cfg, bearer_token: "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"}
-
-  constructor->make(cfg_with_token)
-}
-
-let sendEventsReq = Internal.sendEventsReq
+@module("@envio-dev/hypersync-client") @scope("HypersyncClient") external make: cfg => t = "new"
 
 module Decoder = {
-  type abiMapping = dict<Ethers.abi>
-
-  type constructor
-  @module("@envio-dev/hypersync-client") external constructor: constructor = "Decoder"
-
-  type t
-
-  @send external new: (constructor, abiMapping) => t = "new"
-  @send external enableChecksummedAddresses: t => unit = "enableChecksummedAddresses"
-
-  let make = abiMapping => {
-    let t = constructor->new(abiMapping)
-    t->enableChecksummedAddresses
-    t
-  }
-
   type rec decodedSolType<'a> = {val: 'a}
 
   @unboxed
@@ -286,7 +268,16 @@ module Decoder = {
     body: array<decodedRaw>,
   }
 
-  @send
-  external decodeEvents: (t, array<ResponseTypes.event>) => promise<array<option<decodedEvent>>> =
-    "decodeEvents"
+  type log
+  type t = {
+    enableChecksummedAddresses: unit => unit,
+    disableChecksummedAddresses: unit => unit,
+    decodeLogs: array<log> => promise<array<Js.Nullable.t<decodedEvent>>>,
+    decodeLogsSync: array<log> => array<Js.Nullable.t<decodedEvent>>,
+    decodeEvents: array<ResponseTypes.event> => promise<array<Js.Nullable.t<decodedEvent>>>,
+    decodeEventsSync: array<ResponseTypes.event> => array<Js.Nullable.t<decodedEvent>>,
+  }
+
+  @module("@envio-dev/hypersync-client") @scope("Decoder")
+  external fromSignatures: array<string> => t = "fromSignatures"
 }

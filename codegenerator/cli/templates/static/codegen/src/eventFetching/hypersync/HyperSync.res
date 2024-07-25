@@ -154,12 +154,12 @@ module LogsQuery = {
   > => {
     try {
       let {nextBlock, archiveHeight, rollbackGuard} = res
-      let items = res.events->Belt.Array.map(event => event->convertEvent)
+      let items = res.data->Belt.Array.map(event => event->convertEvent)
       let page: logsQueryPage = {
         items,
         nextBlock,
         archiveHeight: archiveHeight->Belt.Option.getWithDefault(0), //Archive Height is only None if height is 0
-        events: res.events,
+        events: res.data,
         rollbackGuard,
       }
 
@@ -176,7 +176,7 @@ module LogsQuery = {
     ~contractAddressesAndtopics: ContractInterfaceManager.contractAddressesAndTopics,
   ): queryResponse<logsQueryPage> => {
     //TODO: This needs to be modified so that only related topics to addresses get passed in
-    let body = makeRequestBody(
+    let query = makeRequestBody(
       ~fromBlock,
       ~toBlockInclusive=toBlock,
       ~addressesWithTopics=contractAddressesAndtopics,
@@ -188,9 +188,10 @@ module LogsQuery = {
       ~params={"type": "hypersync query", "fromBlock": fromBlock, "serverUrl": serverUrl},
     )
 
-    let executeQuery = () => hyperSyncClient->HyperSyncClient.sendEventsReq(body)
+    let executeQuery = () => hyperSyncClient.getEvents(~query)
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+    // Js.log2("response")
 
     res->convertResponse
   }
