@@ -330,17 +330,20 @@ pub struct SyncConfig {
     interval_ceiling: u32,
     backoff_millis: u32,
     query_timeout_millis: u32,
+    fallback_stall_timeout: u32,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
+        let query_timeout_millis = 20_000;
         Self {
             initial_block_interval: 10_000,
             backoff_multiplicative: 0.8,
             acceleration_additive: 2_000,
             interval_ceiling: 10_000,
             backoff_millis: 5000,
-            query_timeout_millis: 20_000,
+            query_timeout_millis,
+            fallback_stall_timeout: query_timeout_millis / 2,
         }
     }
 }
@@ -406,7 +409,11 @@ impl SyncSource {
                 urls,
                 sync_config: match unstable__sync_config {
                     None => SyncConfig::default(),
-                    Some(c) => SyncConfig {
+                    Some(c) => {
+                      let query_timeout_millis = c
+                        .query_timeout_millis
+                        .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
+                      SyncConfig {
                         acceleration_additive: c
                             .acceleration_additive
                             .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
@@ -422,10 +429,11 @@ impl SyncSource {
                         interval_ceiling: c
                             .interval_ceiling
                             .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
-                        query_timeout_millis: c
-                            .query_timeout_millis
-                            .unwrap_or_else(|| SyncConfig::default().query_timeout_millis),
-                    },
+                        query_timeout_millis,
+                        fallback_stall_timeout: c
+                            .fallback_stall_timeout
+                            .unwrap_or_else(|| query_timeout_millis / 2),
+                    }},
                 },
             }))},
             human_config::evm::Network {

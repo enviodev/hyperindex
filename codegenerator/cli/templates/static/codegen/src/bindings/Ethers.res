@@ -242,22 +242,18 @@ module JsonRpcProvider = {
     ~options: fallbackProviderOptions,
   ) => t = "FallbackProvider"
 
-  let makeStatic = (~rpcUrl: string, ~network: Network.t, ~priority=?): t => {
-    makeWithOptions(
-      ~rpcUrl,
-      ~network,
-      ~options={staticNetwork: network, ?priority, stallTimeout: 30_000},
-    )
+  let makeStatic = (~rpcUrl: string, ~network: Network.t, ~priority=?, ~stallTimeout=?): t => {
+    makeWithOptions(~rpcUrl, ~network, ~options={staticNetwork: network, ?priority, ?stallTimeout})
   }
 
-  let make = (~rpcUrls: array<string>, ~chainId: int): t => {
+  let make = (~rpcUrls: array<string>, ~chainId: int, ~fallbackStallTimeout): t => {
     let network = Network.fromChainId(~chainId)
     switch rpcUrls {
     | [rpcUrl] => makeStatic(~rpcUrl, ~network)
     | rpcUrls =>
       makeFallbackProvider(
         ~providers=rpcUrls->Js.Array2.mapi((rpcUrl, index) =>
-          makeStatic(~rpcUrl, ~network, ~priority=index)
+          makeStatic(~rpcUrl, ~network, ~priority=index, ~stallTimeout=fallbackStallTimeout)
         ),
         ~network,
         ~options={
