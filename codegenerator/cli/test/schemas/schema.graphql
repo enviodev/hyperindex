@@ -1,5 +1,6 @@
 #test schema
 
 type EmptyEntity {
+  id: ID!
   emptyField: ID!
 }

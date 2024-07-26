@@ -367,6 +367,14 @@ impl Entity {
     fn from_object(obj: &ObjectType<String>) -> anyhow::Result<Self> {
         let name = &obj.name;
 
+        let has_id = obj.fields.iter().any(|field| field.name == "id");
+        if !has_id {
+            return Err(anyhow!(
+                "No 'id' field found on entity {}. Please add an 'id' field to your entity.",
+                name
+            ));
+        }
+
         let multi_field_indexes = obj
             .directives
             .iter()
@@ -1336,6 +1344,24 @@ type TestEntity
     }
 
     #[test]
+    fn test_missing_id_field() {
+        let schema_str = r#"
+type TestEntity {
+  testField: String
+}
+        "#;
+        let first_entity_schema = get_first_entity_from_string(schema_str);
+        let parsed_entity = Entity::from_object(&first_entity_schema);
+
+        assert!(parsed_entity.is_err());
+        let err_message = format!("{:?}", parsed_entity.unwrap_err());
+        assert_eq!(
+            err_message,
+            "No 'id' field found on entity TestEntity. Please add an 'id' field to your entity."
+        );
+    }
+
+    #[test]
     fn test_field_is_derived_from_and_indexed() {
         let schema_str = r#"
 type TestEntity
@@ -1403,6 +1429,7 @@ type TestEntity @index(fields: ["tokenId"]) {
     fn more_than_one_derived_from_directive() {
         let schema_str = r#"
 type TestEntity {
+  id: ID!
   testField: String @derivedFrom(field: "someField") @derivedFrom(field: "anotherField")
 }
         "#;
@@ -1419,6 +1446,7 @@ type TestEntity {
     fn more_than_one_indexed_directive() {
         let schema_str = r#"
 type TestEntity {
+  id: ID!
   testField: String @index @index
 }
         "#;
@@ -1435,6 +1463,7 @@ type TestEntity {
     fn fail_derived_from_and_indexed_directive() {
         let schema_str = r#"
 type TestEntity {
+  id: ID!
   testField: String @derivedFrom(field: "someField") @index
 }
         "#;
@@ -1590,6 +1619,7 @@ type TestEntity {
         let schema_string = format!(
             r#"
         type TestEntity {{
+          id: ID!
           test_field: {gql_field_str}
         }}
         {enum_type_defs}
