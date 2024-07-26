@@ -33,14 +33,7 @@ module type S = {
     type t<'a>
   }
 
-  module Enums: {
-    module EventType: {
-      type t
-    }
-  }
-
   module Types: {
-    type eventName = Enums.EventType.t
     type internalEventArgs
 
     module Transaction: {
@@ -68,7 +61,6 @@ module type S = {
       let key: string
       let name: string
       let contractName: string
-      let eventName: Enums.EventType.t
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs

@@ -339,41 +339,9 @@ impl EntityRecordTypeTemplate {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct EventType {
-    //Contract name and event name joined with a '_'
-    //Always capitalized
-    //Used as a unique per-contract event variant in rescript
-    full: String,
-    //Contract name and event name joined with a '_' truncated to  63 char max
-    //Always capitalized
-    //for char limit in postgres for enums
-    truncated_for_pg_enum_limit: String,
-}
-
-impl EventType {
-    pub fn new(contract_name: String, event_name: String) -> Self {
-        let full = contract_name.capitalize() + "_" + &event_name;
-        const MAX_CHAR_LIMIT_FOR_PG_ENUM: usize = 63;
-        let truncated_for_pg_enum_limit = full
-            .chars()
-            .enumerate()
-            .filter(|(i, _x)| i < &MAX_CHAR_LIMIT_FOR_PG_ENUM)
-            .map(|(_i, x)| x)
-            .collect();
-
-        EventType {
-            full,
-            truncated_for_pg_enum_limit,
-        }
-    }
-}
-
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventTemplate {
     pub name: CapitalizedOptions,
-    //Used for the eventType variant in Types.res and the truncated version in postgres
-    pub event_type: EventType,
     pub params: Vec<EventParamTypeTemplate>,
     pub indexed_params: Vec<EventParamTypeTemplate>,
     pub body_params: Vec<EventParamTypeTemplate>,
@@ -428,10 +396,6 @@ impl EventTemplate {
 
         Ok(EventTemplate {
             name,
-            event_type: EventType::new(
-                contract_name.clone(),
-                config_event.get_event().name.clone(),
-            ),
             params,
             is_async: config_event.is_async,
             body_params,
@@ -480,15 +444,12 @@ impl ContractTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct PerNetworkContractEventTemplate {
     pub name: CapitalizedOptions,
-    //Used for the eventType variant in Types.res and the truncated version in postgres
-    pub event_type: EventType,
 }
 
 impl PerNetworkContractEventTemplate {
     fn new(event_name: String, contract_name: String) -> Self {
         PerNetworkContractEventTemplate {
             name: event_name.to_capitalized_options(),
-            event_type: EventType::new(contract_name, event_name),
         }
     }
 }
@@ -1024,10 +985,6 @@ mod test {
 
         EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
-            event_type: EventType {
-                full: "Contract1_NewGravatar".to_string(),
-                truncated_for_pg_enum_limit: "Contract1_NewGravatar".to_string(),
-            },
             topic0,
             body_params: params.clone(),
             params,

@@ -195,16 +195,12 @@ type eventLog<'a> = {
   block: Block.t,
 }
 
-@genType
-type eventName = Enums.EventType.t
-
 type internalEventArgs
 
 module type Event = {
   let key: string
   let name: string
   let contractName: string
-  let eventName: Enums.EventType.t // TODO: Remove this
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
@@ -222,7 +218,6 @@ module {{contract.name.capitalized}} = {
     let key = "{{contract.name.capitalized}}_{{event.topic0}}"
     let name = "{{event.name.capitalized}}"
     let contractName = "{{contract.name.capitalized}}"
-    let eventName = Enums.EventType.{{event.event_type.full}}
 
     {{#if event.params}}
     @genType

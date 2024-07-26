@@ -276,9 +276,8 @@ let runHandler = (
   ~registeredEvents,
   ~config,
 ) => {
-  let module(Event) = eventMod
   switch registeredEvents
-  ->RegisteredEvents.get(Event.eventName)
+  ->RegisteredEvents.get(eventMod)
   ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler) {
   | Some(handler) =>
     event->runEventHandler(
@@ -330,10 +329,9 @@ let rec registerDynamicContracts = (
       ->Ok
     } else {
       let {eventMod, event} = eventBatchQueueItem
-      let module(Event) = eventMod
 
       switch registeredEvents
-      ->RegisteredEvents.get(Event.eventName)
+      ->RegisteredEvents.get(eventMod)
       ->Option.flatMap(v => v.contractRegister) {
       | Some(handler) =>
         handler->runEventContractRegister(
@@ -383,9 +381,8 @@ let runLoaders = (
     let loadLayer = LoadLayer.make()
 
     let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, eventMod, event}) => {
-      let module(Event) = eventMod
       registeredEvents
-      ->RegisteredEvents.get(Event.eventName)
+      ->RegisteredEvents.get(eventMod)
       ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
       ->Option.map(
         handler => {

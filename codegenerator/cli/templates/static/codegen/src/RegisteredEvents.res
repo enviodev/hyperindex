@@ -39,13 +39,14 @@ let make = () => {
 
 let addLoaderHandler = (
   registeredEvents: t,
-  eventName: Types.eventName,
+  eventMod,
   args: registeredLoaderHandler<'eventArgs, 'loadReturn>,
 ) => {
-  let key = (eventName :> string)
+  let module(Event: Types.InternalEvent) = eventMod
+  let key = Event.key
 
   if registeredEvents.loaderHandlers->Js.Dict.get(key)->Belt.Option.isSome {
-    Js.Exn.raiseError(`[envio] The event ${key} is alredy registered.`)
+    Js.Exn.raiseError(`[envio] The event ${Event.name} is alredy registered.`)
   } else {
     registeredEvents.loaderHandlers->Js.Dict.set(
       key,
@@ -61,13 +62,14 @@ let addLoaderHandler = (
 
 let addContractRegister = (
   registeredEvents: t,
-  eventName: Types.eventName,
+  eventMod,
   args: contractRegister<'eventArgs>,
 ) => {
-  let key = (eventName :> string)
+  let module(Event: Types.InternalEvent) = eventMod
+  let key = Event.key
 
   if registeredEvents.contractRegisters->Js.Dict.get(key)->Belt.Option.isSome {
-    Js.Exn.raiseError(`[envio] The event ${key} is alredy registered.`)
+    Js.Exn.raiseError(`[envio] The event ${Event.name} is alredy registered.`)
   } else {
     registeredEvents.contractRegisters->Js.Dict.set(
       key,
@@ -79,10 +81,12 @@ let addContractRegister = (
 // This set makes sure that the warning doesn't print for every event of a type, but rather only prints the first time.
 let hasPrintedWarning = Set.make()
 
-let get = (registeredEvents: t, eventName: Types.eventName) => {
+let get = (registeredEvents: t, eventMod) => {
+  let module(Event: Types.InternalEvent) = eventMod
+
   let registeredLoaderHandler =
     registeredEvents.loaderHandlers
-    ->Js.Dict.unsafeGet((eventName :> string))
+    ->Js.Dict.unsafeGet(Event.key)
     ->(
       Utils.magic: registeredLoaderHandler<unknown, unknown> => option<
         registeredLoaderHandler<'eventArgs, 'loadReturn>,
@@ -91,17 +95,17 @@ let get = (registeredEvents: t, eventName: Types.eventName) => {
 
   let contractRegister =
     registeredEvents.contractRegisters
-    ->Js.Dict.unsafeGet((eventName :> string))
+    ->Js.Dict.unsafeGet(Event.key)
     ->(Utils.magic: contractRegister<unknown> => option<contractRegister<'eventArgs>>)
 
   switch (registeredLoaderHandler, contractRegister) {
   | (None, None) =>
-    if !(hasPrintedWarning->Set.has((eventName :> string))) {
+    if !(hasPrintedWarning->Set.has(Event.key)) {
       // Here are docs on the 'terminal hyperlink' formatting that I use to link to the docs: https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
       Logging.warn(
-        `Skipped ${(eventName :> string)}, as there is no handler registered. You need to implement a ${(eventName :> string)} register method in your handler file or ignore this warning if you don't intend to implement it. Here are our docs on this topic: \n\n https://docs.envio.dev/docs/event-handlers`,
+        `Skipped ${Event.name}, as there is no handler registered. You need to implement the event ${Event.name} register method in your handler file or ignore this warning if you don't intend to implement it. Here are our docs on this topic: \n\n https://docs.envio.dev/docs/event-handlers`,
       )
-      let _ = hasPrintedWarning->Set.add((eventName :> string))
+      let _ = hasPrintedWarning->Set.add(Event.key)
     }
     None
   | (loaderHandler, contractRegister) =>
@@ -117,9 +121,11 @@ let global = make()
 let defaultAsyncFn = _ => Promise.resolve()
 
 module MakeRegister = (Event: Types.Event) => {
+  let eventMod = module(Event)->Types.eventModToInternal
+
   let handler = handler =>
     global->addLoaderHandler(
-      Event.eventName,
+      eventMod,
       {
         loader: defaultAsyncFn,
         handler,
@@ -127,8 +133,8 @@ module MakeRegister = (Event: Types.Event) => {
     )
 
   let contractRegister: contractRegister<Event.eventArgs> => unit = contractRegister =>
-    global->addContractRegister(Event.eventName, contractRegister)
+    global->addContractRegister(eventMod, contractRegister)
 
   let handlerWithLoader: registeredLoaderHandler<Event.eventArgs, 'loaderReturn> => unit = args =>
-    global->addLoaderHandler(Event.eventName, args)
+    global->addLoaderHandler(eventMod, args)
 }
