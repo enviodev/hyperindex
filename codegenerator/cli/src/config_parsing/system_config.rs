@@ -335,15 +335,15 @@ pub struct SyncConfig {
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        let query_timeout_millis = 20_000;
+        const QUERY_TIMEOUT_MILLIS: u32 = 20_000;
         Self {
             initial_block_interval: 10_000,
             backoff_multiplicative: 0.8,
             acceleration_additive: 2_000,
             interval_ceiling: 10_000,
             backoff_millis: 5000,
-            query_timeout_millis,
-            fallback_stall_timeout: query_timeout_millis / 2,
+            query_timeout_millis: QUERY_TIMEOUT_MILLIS,
+            fallback_stall_timeout: QUERY_TIMEOUT_MILLIS / 2,
         }
     }
 }
