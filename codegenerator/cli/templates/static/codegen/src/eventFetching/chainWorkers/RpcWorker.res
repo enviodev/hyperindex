@@ -199,8 +199,7 @@ module Make = (
     }
   }
 
-  let getBlockHashes = (~blockNumbers, ~logger) => {
-    let _currentlyUnusedLogger = logger
+  let getBlockHashes = (~blockNumbers, ~logger as _currentlyUnusedLogger) => {
     blockNumbers
     ->Array.map(blockNum => blockLoader->LazyLoader.get(blockNum))
     ->Promise.all
