@@ -403,6 +403,14 @@
           ],
           "format": "double"
         },
+        "fallback_stall_timeout": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "initial_block_interval": {
           "type": [
             "integer",

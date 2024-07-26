@@ -333,6 +333,8 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub backoff_millis: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        pub fallback_stall_timeout: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub query_timeout_millis: Option<u32>,
     }
 

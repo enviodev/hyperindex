@@ -33,7 +33,8 @@ let registerContractHandlers = (
         Rpc({
           provider: Ethers.JsonRpcProvider.make(
             ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
-            ~chainId={{chain_config.network_config.id}}
+            ~chainId={{chain_config.network_config.id}},
+            ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
           ),
         {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
           syncConfig: Config.getSyncConfig({
