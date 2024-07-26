@@ -22,14 +22,19 @@ type hyperSyncPage<'item> = {
   archiveHeight: int,
 }
 
+type block = {
+  hash: string,
+  timestamp: int,
+  blockNumber: int,
+}
+
 type item = {
   transactionId: string,
-  blockHeight: int,
   contractId: Fuel.fuelAddress,
   receipt: Fuel.Receipt.t,
   receiptType: Fuel.receiptType,
   receiptIndex: int,
-  blockTimestamp: int,
+  block: block,
   txOrigin: option<Ethers.ethAddress>,
 }
 
@@ -119,8 +124,7 @@ module LogsQuery = {
           Ra,
           Rb,
         ],
-        // block: [Id, Height, Time],
-        transaction: [Id, Time],
+        block: [Id, Height, Time],
       },
     }
   }
@@ -142,26 +146,31 @@ module LogsQuery = {
   let decodeLogQueryPageItems = (response_data: HyperFuelClient.queryResponseDataTyped): array<
     item,
   > => {
-    let {receipts, transactions} = response_data
+    let {receipts, blocks} = response_data
 
-    let txBlocktimeDictionary = Js.Dict.empty()
-    transactions->Belt.Array.forEach(tx => {
-      Js.Dict.set(txBlocktimeDictionary, tx.id, tx.time)
+    let blocksDict = Js.Dict.empty()
+    blocks
+    ->(Utils.magic: option<'a> => 'a)
+    ->Belt.Array.forEach(block => {
+      blocksDict->Js.Dict.set(block.height->(Utils.magic: int => string), block)
     })
 
     receipts->Belt.Array.map(receipt => {
-      let blockTimestamp =
-        txBlocktimeDictionary
-        ->Js.Dict.get(receipt.txId)
-        ->getParam("tx associated to receipt not found")
+      let block =
+        blocksDict
+        ->Js.Dict.get(receipt.blockHeight->(Utils.magic: int => string))
+        ->getParam("Failed to find block associated to receipt")
       {
         transactionId: receipt.txId,
-        blockHeight: receipt.blockHeight,
+        block: {
+          blockNumber: block.height,
+          hash: block.id,
+          timestamp: block.time,
+        },
         contractId: receipt.rootContractId->getParam("receipt.rootContractId"),
         receipt: receipt->(Utils.magic: HyperFuelClient.FuelTypes.receipt => Fuel.Receipt.t),
         receiptType: receipt.receiptType,
         receiptIndex: receipt.receiptIndex,
-        blockTimestamp,
         txOrigin: None,
       }
     })

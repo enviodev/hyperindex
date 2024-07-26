@@ -7,7 +7,7 @@ module Make = (
     let chainConfig: Config.chainConfig
     let endpointUrl: string
   },
-): Type => {
+): S => {
   let name = "HyperFuel"
   let chainConfig = T.chainConfig
   let chain = chainConfig.chain
@@ -46,8 +46,6 @@ module Make = (
         }
       | Ok(v) => v
       }
-
-    exception ErrorMessage(string)
   }
 
   /**
@@ -151,14 +149,7 @@ module Make = (
   ) => {
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
-      let {
-        fetchStateRegisterId,
-        partitionId,
-        fromBlock,
-        contractAddressMapping,
-        toBlock,
-        ?eventFilters,
-      } = query
+      let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
       let startFetchingBatchTimeRef = Hrtime.makeTimer()
       //fetch batch
       let {page: pageUnsafe, pageFetchTime} = await getNextPage(
@@ -186,159 +177,124 @@ module Make = (
 
       let lastBlockQueriedPromise: promise<
         ReorgDetection.blockData,
-      > = switch pageUnsafe.rollbackGuard {
-      //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
-      //use these values
-      | Some({blockNumber, timestamp, hash}) =>
+      > = // switch pageUnsafe.rollbackGuard {
+      // //In the case a rollbackGuard is returned (this only happens at the head for unconfirmed blocks)
+      // //use these values
+      // | Some({blockNumber, timestamp, hash}) =>
+      //   {
+      //     ReorgDetection.blockNumber,
+      //     blockTimestamp: timestamp,
+      //     blockHash: hash,
+      //   }->Promise.resolve
+      // | None =>
+      //The optional block and timestamp of the last item returned by the query
+      //(Optional in the case that there are no logs returned in the query)
+      switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
+      | Some({block}) if block.blockNumber == heighestBlockQueried =>
+        //If the last log item in the current page is equal to the
+        //heighest block acounted for in the query. Simply return this
+        //value without making an extra query
         {
-          ReorgDetection.blockNumber,
-          blockTimestamp: timestamp,
-          blockHash: hash,
+          ReorgDetection.blockNumber: block.blockNumber,
+          blockTimestamp: block.timestamp,
+          blockHash: block.hash,
         }->Promise.resolve
+      //If it does not match it means that there were no matching logs in the last
+      //block so we should fetch the block data
+      | Some(_)
       | None =>
-        //The optional block and timestamp of the last item returned by the query
-        //(Optional in the case that there are no logs returned in the query)
-        switch pageUnsafe.items->Belt.Array.get(pageUnsafe.items->Belt.Array.length - 1) {
-        | Some({block}) if block.number == heighestBlockQueried =>
-          //If the last log item in the current page is equal to the
-          //heighest block acounted for in the query. Simply return this
-          //value without making an extra query
-          {
-            ReorgDetection.blockNumber: block.number,
-            blockTimestamp: block.timestamp,
-            blockHash: block.hash,
-          }->Promise.resolve
-        //If it does not match it means that there were no matching logs in the last
-        //block so we should fetch the block data
-        | Some(_)
-        | None =>
-          //If there were no logs at all in the current page query then fetch the
-          //timestamp of the heighest block accounted for
-          HyperFuel.queryBlockData(
-            ~serverUrl=T.endpointUrl,
-            ~blockNumber=heighestBlockQueried,
-          )->Promise.thenResolve(res =>
-            switch res {
-            | Ok(Some(blockData)) => blockData
-            | Ok(None) =>
-              mkLogAndRaise(
-                Not_found,
-                ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
-              )
-            | Error(e) =>
-              Helpers.ErrorMessage(HyperFuel.queryErrorToMsq(e))->mkLogAndRaise(
-                ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
-              )
-            }
-          )
-        }
+        {
+          ReorgDetection.blockNumber: 0,
+          blockTimestamp: 0,
+          blockHash: "",
+        }->Promise.resolve
+      // //If there were no logs at all in the current page query then fetch the
+      // //timestamp of the heighest block accounted for
+      // HyperFuel.queryBlockData(
+      //   ~serverUrl=T.endpointUrl,
+      //   ~blockNumber=heighestBlockQueried,
+      // )->Promise.thenResolve(res =>
+      //   switch res {
+      //   | Ok(Some(blockData)) => blockData
+      //   | Ok(None) =>
+      //     mkLogAndRaise(
+      //       Not_found,
+      //       ~msg=`Failure, blockData for block ${heighestBlockQueried->Int.toString} unexpectedly returned None`,
+      //     )
+      //   | Error(e) =>
+      //     Helpers.ErrorMessage(HyperFuel.queryErrorToMsq(e))->mkLogAndRaise(
+      //       ~msg=`Failed to query blockData for block ${heighestBlockQueried->Int.toString}`,
+      //     )
+      //   }
+      // )
       }
+      // }
 
       let parsingTimeRef = Hrtime.makeTimer()
 
       //Parse page items into queue items
-      let parsedQueueItemsPreFilter = if T.config.shouldUseHypersyncClientDecoder {
-        //Currently there are still issues with decoder for some cases so
-        //this can only be activated with a flag
-        let decoder = switch contractInterfaceManager
-        ->ContractInterfaceManager.getAbiMapping
-        ->HyperFuelClient.Decoder.make {
-        | exception exn =>
-          exn->mkLogAndRaise(
-            ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI.",
-          )
-        | decoder => decoder
-        }
-        //Parse page items into queue items
-        let parsedEvents = switch await decoder->HyperFuelClient.Decoder.decodeEvents(
-          pageUnsafe.events,
-        ) {
-        | exception exn =>
-          exn->mkLogAndRaise(
-            ~msg="Failed to parse events using hypersync client, please double check your ABI.",
-          )
-        | parsedEvents => parsedEvents
-        }
-
-        pageUnsafe.items
-        ->Belt.Array.zip(parsedEvents)
-        ->Belt.Array.map(((item, event)): Types.eventBatchQueueItem => {
-          let {block, transaction, log: {logIndex}} = item
-          let chainId = chain->ChainMap.Chain.toChainId
-          let (event, eventMod) = switch event
-          ->Belt.Option.getExn
-          ->Converters.convertHyperFuelEvent(
-            ~config=T.config,
-            ~contractInterfaceManager,
-            ~log=item.log,
-            ~block,
-            ~transaction,
-            ~chainId,
-          ) {
-          | Ok(v) => v
-          | Error(exn) =>
-            let logger = Logging.createChildFrom(
-              ~logger,
-              ~params={"chainId": chainId, "blockNumber": block.number, "logIndex": logIndex},
-            )
-            exn->ErrorHandling.mkLogAndRaise(~msg="Failed to convert decoded event", ~logger)
-          }
-          {
-            timestamp: block.timestamp,
-            chain,
-            blockNumber: block.number,
-            logIndex,
-            event,
-            eventMod,
-          }
-        })
-      } else {
-        //Parse with viem -> slower than the HyperFuelClient
+      let parsedQueueItems = {
+        let chainId = chain->ChainMap.Chain.toChainId
         pageUnsafe.items->Array.map(item => {
-          let {block, log: {logIndex}} = item
-          let chainId = chain->ChainMap.Chain.toChainId
-          switch Converters.parseEvent(
-            ~log=item.log,
-            ~config=T.config,
-            ~transaction=item.transaction,
-            ~block=item.block,
-            ~contractInterfaceManager,
-            ~chainId,
-          ) {
-          | Ok((event, eventMod)) =>
-            (
-              {
-                timestamp: block.timestamp,
-                chain,
-                blockNumber: block.number,
-                logIndex,
-                event,
-                eventMod,
-              }: Types.eventBatchQueueItem
-            )
+          let {contractId, receipt, block, receiptIndex, transactionId} = item
+          try {
+            switch contractAddressMapping->ContractAddressingMap.getName(
+              contractId->Ethers.ethAddressToString,
+            ) {
+            | None => raise(Converters.UnregisteredContract(contractId))
+            | Some(contractName) =>
+              let logId = switch receipt {
+              | LogData({rb}) => rb
+              }
+              let eventMod =
+                T.config->Config.getEventModOrThrow(
+                  ~contractName,
+                  ~topic0=logId->Js.BigInt.toString,
+                )
+              let module(Event) = eventMod
 
-          | Error(exn) =>
-            let params = {
-              "chainId": chainId,
-              "blockNumber": block.number,
-              "logIndex": logIndex,
+              (
+                {
+                  timestamp: block.timestamp,
+                  chain,
+                  blockNumber: block.blockNumber,
+                  logIndex: receiptIndex,
+                  event: {
+                    chainId,
+                    params: switch receipt {
+                    | LogData({data}) => data->Event.decodeHyperFuelData
+                    },
+                    transaction: {
+                      transactionIndex: 0,
+                      hash: transactionId,
+                    }->Obj.magic, // Obj.magic temorarily needed until the transaction fields are not configurable for Fuel separately from evm
+                    block: {
+                      number: block.blockNumber,
+                      timestamp: block.timestamp,
+                      hash: block.hash,
+                    },
+                    srcAddress: contractId,
+                    logIndex: receiptIndex,
+                  }->Types.eventToInternal,
+                  eventMod,
+                }: Types.eventBatchQueueItem
+              )
             }
-            let logger = Logging.createChildFrom(~logger, ~params)
-            exn->ErrorHandling.mkLogAndRaise(
-              ~msg="Failed to parse event with viem, please double check your ABI.",
-              ~logger,
-            )
+          } catch {
+          | exn => {
+              let params = {
+                "chainId": chainId,
+                "blockNumber": block.blockNumber,
+                "logIndex": receiptIndex,
+              }
+              let logger = Logging.createChildFrom(~logger, ~params)
+              logger.error({"msg": "error decoding event", "responsible event": item}->Utils.magic)
+              exn->mkLogAndRaise(
+                ~msg="Failed to parse event with Fuel, please double check your ABI.",
+              )
+            }
           }
         })
-      }
-
-      let parsedQueueItems = switch eventFilters {
-      //Most cases there are no filters so this will be passed throug
-      | None => parsedQueueItemsPreFilter
-      | Some(eventFilters) =>
-        //In the case where there are filters, apply them and keep the events that
-        //are needed
-        parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters, ...))
       }
 
       let parsingTimeElapsed =
@@ -348,9 +304,9 @@ module Make = (
 
       let reorgGuard = {
         lastBlockScannedData,
-        firstBlockParentNumberAndHash: pageUnsafe.rollbackGuard->Option.map(v => {
-          ReorgDetection.blockHash: v.firstParentHash,
-          blockNumber: v.firstBlockNumber - 1,
+        firstBlockParentNumberAndHash: Some({
+          ReorgDetection.blockHash: lastBlockScannedData.blockHash,
+          blockNumber: lastBlockScannedData.blockNumber,
         }),
       }
 
@@ -381,8 +337,6 @@ module Make = (
     }
   }
 
-  let getBlockHashes = (~blockNumbers) =>
-    HyperFuel.queryBlockDataMulti(~serverUrl=T.endpointUrl, ~blockNumbers)->Promise.thenResolve(
-      HyperFuel.mapExn,
-    )
+  let getBlockHashes = (~blockNumbers as _) =>
+    Js.Exn.raiseError("HyperFuel does not support getting block hashes")
 }

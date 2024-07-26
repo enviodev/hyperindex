@@ -34,7 +34,7 @@ let makeChainWorker = (~config, ~chainConfig: Config.chainConfig) => {
         let config = config
         let chainConfig = chainConfig
         let endpointUrl = endpointUrl
-      }): ChainWorker.Type
+      }): ChainWorker.S
     )
   | Rpc(rpcConfig) =>
     module(
