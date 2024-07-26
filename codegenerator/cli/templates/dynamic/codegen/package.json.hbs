@@ -7,6 +7,7 @@
     "clean": "rescript clean",
     "build": "rescript",
     "watch": "rescript -w",
+    "format": "rescript format -all",
     "db-up": "node -e 'require(`./src/db/Migrations.bs.js`).runUpMigrations(true)'",
     "db-down": "node -e 'require(`./src/db/Migrations.bs.js`).runDownMigrations(true, true)'",
     "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).setupDb(true)'",
