@@ -204,10 +204,12 @@ module type Event = {
   let key: string
   let name: string
   let contractName: string
+  let topic0: string // Or rb for Fuel receipts
   let eventName: Enums.EventType.t // TODO: Remove this
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
+  let decodeHyperFuelData: string => eventArgs
 }
 module type InternalEvent = Event with type eventArgs = internalEventArgs
 
@@ -223,6 +225,7 @@ module {{contract.name.capitalized}} = {
     let name = "{{event.name.capitalized}}"
     let contractName = "{{contract.name.capitalized}}"
     let eventName = Enums.EventType.{{event.event_type.full}}
+    let topic0 = "{{event.topic0}}"
 
     {{#if event.params}}
     @genType
@@ -249,6 +252,8 @@ module {{contract.name.capitalized}} = {
         {{/each}}
       }
     }
+
+    let decodeHyperFuelData = (_) => Js.Exn.raiseError("HyperFuel decoder not implemented")
     {{else}}
     @genType
     type eventArgs = unit
@@ -256,6 +261,8 @@ module {{contract.name.capitalized}} = {
     let eventArgsSchema = S.literal(%raw(`null`))->S.variant((. _) => ())
 
     external convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs = "%identity"
+
+    let decodeHyperFuelData = (_) => Js.Exn.raiseError("HyperFuel decoder not implemented")
     {{/if}}
   }
 
