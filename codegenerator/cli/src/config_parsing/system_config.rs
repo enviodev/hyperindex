@@ -822,6 +822,7 @@ mod test {
             interval_ceiling: 10_000,
             backoff_millis: 5000,
             query_timeout_millis: 20_000,
+            fallback_stall_timeout: 10_000,
         };
 
         assert_eq!(sync_config.backoff_multiplicative.to_string(), "0.8");
