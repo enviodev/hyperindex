@@ -38,12 +38,15 @@ let pollForHeightGtOrEq: (~serverUrl: string, ~blockNumber: int, ~logger: Pino.t
 let queryBlockData: (
   ~serverUrl: string,
   ~blockNumber: int,
+  ~logger: Pino.t,
 ) => promise<queryResponse<option<ReorgDetection.blockData>>>
 
 let queryBlockDataMulti: (
   ~serverUrl: string,
   ~blockNumbers: array<int>,
+  ~logger: Pino.t,
 ) => promise<queryResponse<array<ReorgDetection.blockData>>>
 
 let mapExn: queryResponse<'a> => result<'a, exn>
 let getExn: queryResponse<'a> => 'a
+

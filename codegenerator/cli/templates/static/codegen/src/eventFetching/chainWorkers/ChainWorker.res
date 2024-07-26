@@ -42,6 +42,7 @@ module type S = {
   let chain: ChainMap.Chain.t
   let getBlockHashes: (
     ~blockNumbers: array<int>,
+    ~logger: Pino.t,
   ) => promise<result<array<ReorgDetection.blockData>, exn>>
   let waitForBlockGreaterThanCurrentHeight: (
     ~currentBlockHeight: int,
@@ -54,3 +55,4 @@ module type S = {
     ~setCurrentBlockHeight: int => unit,
   ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
 }
+
