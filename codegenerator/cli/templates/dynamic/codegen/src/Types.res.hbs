@@ -209,6 +209,7 @@ module type Event = {
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
+  let decodeHyperFuelData: string => eventArgs
 }
 module type InternalEvent = Event with type eventArgs = internalEventArgs
 
@@ -251,6 +252,8 @@ module {{contract.name.capitalized}} = {
         {{/each}}
       }
     }
+
+    let decodeHyperFuelData = (_) => Js.Exn.raiseError("HyperFuel decoder not implemented")
     {{else}}
     @genType
     type eventArgs = unit
@@ -258,6 +261,8 @@ module {{contract.name.capitalized}} = {
     let eventArgsSchema = S.literal(%raw(`null`))->S.variant((. _) => ())
 
     external convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs = "%identity"
+
+    let decodeHyperFuelData = (_) => Js.Exn.raiseError("HyperFuel decoder not implemented")
     {{/if}}
   }
 

@@ -4,14 +4,19 @@ type hyperSyncPage<'item> = {
   archiveHeight: int,
 }
 
+type block = {
+  hash: string,
+  timestamp: int,
+  blockNumber: int,
+}
+
 type item = {
   transactionId: string,
-  blockHeight: int,
   contractId: Fuel.fuelAddress,
   receipt: Fuel.Receipt.t,
   receiptType: Fuel.receiptType,
   receiptIndex: int,
-  blockTimestamp: int,
+  block: block,
   txOrigin: option<Ethers.ethAddress>,
 }
 
