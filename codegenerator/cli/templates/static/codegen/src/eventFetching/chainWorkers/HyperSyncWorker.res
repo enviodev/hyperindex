@@ -211,6 +211,7 @@ module Make = (
           HyperSync.queryBlockData(
             ~serverUrl=T.endpointUrl,
             ~blockNumber=heighestBlockQueried,
+            ~logger,
           )->Promise.thenResolve(res =>
             switch res {
             | Ok(Some(blockData)) => blockData
@@ -375,8 +376,9 @@ module Make = (
     }
   }
 
-  let getBlockHashes = (~blockNumbers) =>
-    HyperSync.queryBlockDataMulti(~serverUrl=T.endpointUrl, ~blockNumbers)->Promise.thenResolve(
+  let getBlockHashes = (~blockNumbers, ~logger) =>
+    HyperSync.queryBlockDataMulti(~serverUrl=T.endpointUrl, ~blockNumbers, ~logger)->Promise.thenResolve(
       HyperSync.mapExn,
     )
 }
+

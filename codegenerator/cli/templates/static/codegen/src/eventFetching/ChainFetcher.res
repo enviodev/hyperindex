@@ -323,7 +323,10 @@ let rollbackLastBlockHashesToReorgLocation = async (
   | None => ChainWorker.getBlockHashes
   }
 
-  let blockNumbersAndHashes = await getBlockHashes(~blockNumbers)->Promise.thenResolve(res =>
+  let blockNumbersAndHashes = await getBlockHashes(
+    ~blockNumbers,
+    ~logger=chainFetcher.logger,
+  )->Promise.thenResolve(res =>
     switch res {
     | Ok(v) => v
     | Error(exn) =>
@@ -361,3 +364,4 @@ let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
 
 let isFetchingAtHead = (chainFetcher: t) =>
   chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
+

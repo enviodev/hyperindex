@@ -631,9 +631,13 @@ let executeNextQuery = (
 ) => {
   let module(ChainWorker: ChainWorker.S) = chainWorker
 
-  let logger = Logging.createChildFrom(
+let logger = Logging.createChildFrom(
     ~logger,
-    ~params={"logType": "Block Range Query", "workerType": ChainWorker.name},
+    ~params={
+      "chainId": chain->ChainMap.Chain.toChainId,
+      "logType": "Block Range Query",
+      "workerType": ChainWorker.name,
+    },
   )
   let logger = query->FetchState.getQueryLogger(~logger)
   ChainWorker.fetchBlockRange(

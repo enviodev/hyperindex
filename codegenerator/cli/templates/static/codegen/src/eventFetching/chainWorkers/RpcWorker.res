@@ -91,9 +91,10 @@ module Make = (
         ~logger,
       )
 
-      let currentBlockInterval = blockIntervals->Js.Dict.get(partitionId->Belt.Int.toString)->Belt.Option.getWithDefault(
-        T.rpcConfig.syncConfig.initialBlockInterval,
-      )
+      let currentBlockInterval =
+        blockIntervals
+        ->Js.Dict.get(partitionId->Belt.Int.toString)
+        ->Belt.Option.getWithDefault(T.rpcConfig.syncConfig.initialBlockInterval)
 
       let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)
 
@@ -156,7 +157,10 @@ module Make = (
 
       // Increase batch size going forward, but do not increase past a configured maximum
       // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease
-      blockIntervals->Js.Dict.set(partitionId->Belt.Int.toString, Pervasives.min(finalExecutedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling))
+      blockIntervals->Js.Dict.set(
+        partitionId->Belt.Int.toString,
+        Pervasives.min(finalExecutedBlockInterval + sc.accelerationAdditive, sc.intervalCeiling),
+      )
 
       let (optFirstBlockParent, toBlock) = (await firstBlockParentPromise, await toBlockPromise)
 
@@ -195,7 +199,8 @@ module Make = (
     }
   }
 
-  let getBlockHashes = (~blockNumbers) => {
+  let getBlockHashes = (~blockNumbers, ~logger) => {
+    let _currentlyUnusedLogger = logger
     blockNumbers
     ->Array.map(blockNum => blockLoader->LazyLoader.get(blockNum))
     ->Promise.all
@@ -211,3 +216,4 @@ module Make = (
     ->Promise.catch(exn => exn->Error->Promise.resolve)
   }
 }
+

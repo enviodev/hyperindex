@@ -212,7 +212,7 @@ module HeightQuery = {
       | Ok(h) => height := h
       | Error(e) =>
         logger->Logging.childWarn({
-          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Belt.Int.toString}ms...`,
+          "message": `Block #${blockNumber->Belt.Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
           "error": e,
         })
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
@@ -294,35 +294,37 @@ module BlockData = {
     }
   }
 
-  let rec queryBlockData = async (~serverUrl, ~blockNumber): queryResponse<
+  let rec queryBlockData = async (~serverUrl, ~blockNumber, ~logger): queryResponse<
     option<ReorgDetection.blockData>,
   > => {
     let body = makeRequestBody(~blockNumber)
 
     let executeQuery = () => HyperSyncJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
 
-    let logger = Logging.createChild(
-      ~params={"type": "hypersync get blockhash query", "blockNumber": blockNumber},
+    let logger = Logging.createChildFrom(
+      ~logger,
+      ~params={"logType": "hypersync get blockhash query", "blockNumber": blockNumber},
     )
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
 
     // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
     if res->Belt.Result.mapWithDefault(0, res => res.nextBlock) <= blockNumber {
+      let logger = Logging.createChild(~params={"url": serverUrl})
       logger->Logging.childWarn(
         `Block #${blockNumber->Belt.Int.toString} not found in hypersync. Retrying query in 100ms.`,
       )
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
-      await queryBlockData(~serverUrl, ~blockNumber)
+      await queryBlockData(~serverUrl, ~blockNumber, ~logger)
     } else {
       res->convertResponse->Belt.Result.map(res => res->Belt.Array.get(0))
     }
   }
 
-  let queryBlockDataMulti = async (~serverUrl, ~blockNumbers) => {
+  let queryBlockDataMulti = async (~serverUrl, ~blockNumbers, ~logger) => {
     let res =
       await blockNumbers
-      ->Belt.Array.map(blockNumber => queryBlockData(~blockNumber, ~serverUrl))
+      ->Belt.Array.map(blockNumber => queryBlockData(~blockNumber, ~serverUrl, ~logger))
       ->Promise.all
     res
     ->Utils.mapArrayOfResults
@@ -335,3 +337,4 @@ let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
 let queryBlockData = BlockData.queryBlockData
 let queryBlockDataMulti = BlockData.queryBlockDataMulti
+
