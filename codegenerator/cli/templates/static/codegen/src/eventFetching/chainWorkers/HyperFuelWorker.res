@@ -236,7 +236,7 @@ module Make = (
       let parsedQueueItems = {
         let chainId = chain->ChainMap.Chain.toChainId
         pageUnsafe.items->Array.map(item => {
-          let {contractId, receipt, block, receiptIndex, transactionId} = item
+          let {contractId, receipt, block, receiptIndex} = item
           try {
             switch contractAddressMapping->ContractAddressingMap.getName(
               contractId->Ethers.ethAddressToString,
@@ -264,10 +264,7 @@ module Make = (
                     params: switch receipt {
                     | LogData({data}) => data->Event.decodeHyperFuelData
                     },
-                    transaction: {
-                      transactionIndex: 0,
-                      hash: transactionId,
-                    }->Obj.magic, // Obj.magic temorarily needed until the transaction fields are not configurable for Fuel separately from evm
+                    transaction: %raw(`{}`), // TODO: %raw needed until the transaction fields are not configurable for Fuel separately from evm
                     block: {
                       number: block.blockNumber,
                       timestamp: block.timestamp,
