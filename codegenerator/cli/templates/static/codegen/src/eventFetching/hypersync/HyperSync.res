@@ -212,7 +212,7 @@ module HeightQuery = {
       | Ok(h) => height := h
       | Error(e) =>
         logger->Logging.childWarn({
-          "message": `Block #${blockNumber->Belt.Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
+          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Belt.Int.toString}ms...`,
           "error": e,
         })
         await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
@@ -312,7 +312,7 @@ module BlockData = {
     if res->Belt.Result.mapWithDefault(0, res => res.nextBlock) <= blockNumber {
       let logger = Logging.createChild(~params={"url": serverUrl})
       logger->Logging.childWarn(
-        `Block #${blockNumber->Belt.Int.toString} not found in hypersync. Retrying query in 100ms.`,
+        `Block #${blockNumber->Belt.Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`
       )
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
       await queryBlockData(~serverUrl, ~blockNumber, ~logger)
