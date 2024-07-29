@@ -154,7 +154,7 @@ module LogsQuery = {
   > => {
     try {
       let {nextBlock, archiveHeight, rollbackGuard} = res
-      let items = res.data->Belt.Array.map(event => event->convertEvent)
+      let items = res.data->Belt.Array.map(convertEvent)
       let page: logsQueryPage = {
         items,
         nextBlock,
@@ -191,7 +191,6 @@ module LogsQuery = {
     let executeQuery = () => hyperSyncClient.getEvents(~query)
 
     let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
-    // Js.log2("response")
 
     res->convertResponse
   }
