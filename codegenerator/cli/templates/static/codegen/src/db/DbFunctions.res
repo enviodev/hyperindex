@@ -3,9 +3,7 @@ let sql = Postgres.makeSql(~config)
 
 type chainId = int
 type eventId = string
-type blockNumberRow = {
-  @as("block_number") blockNumber: int
-}
+type blockNumberRow = {@as("block_number") blockNumber: int}
 
 module ChainMetadata = {
   type chainMetadata = {
@@ -19,7 +17,8 @@ module ChainMetadata = {
     @as("is_hyper_sync") isHyperSync: bool,
     @as("num_batches_fetched") numBatchesFetched: int,
     @as("latest_fetched_block_number") latestFetchedBlockNumber: int,
-    @as("timestamp_caught_up_to_head_or_endblock") timestampCaughtUpToHeadOrEndblock: Js.Nullable.t<Js.Date.t>
+    @as("timestamp_caught_up_to_head_or_endblock")
+    timestampCaughtUpToHeadOrEndblock: Js.Nullable.t<Js.Date.t>,
   }
 
   @module("./DbFunctionsImplementation.js")
@@ -83,7 +82,7 @@ module EndOfBlockRangeScannedData = {
 }
 
 module EventSyncState = {
-  @genType 
+  @genType
   type eventSyncState = {
     @as("chain_id") chainId: int,
     @as("block_number") blockNumber: int,
@@ -102,9 +101,8 @@ module EventSyncState = {
     arr->Belt.Array.get(0)
   }
 
-  let getLatestProcessedBlockNumber = async (~chainId) => {
-    let latestEventOpt = await sql->readLatestSyncedEventOnChainId(~chainId)
-    latestEventOpt->Belt.Option.map(event => event.blockNumber)
+  let getLatestProcessedEvent = (~chainId) => {
+    sql->readLatestSyncedEventOnChainId(~chainId)
   }
 
   @module("./DbFunctionsImplementation.js")
