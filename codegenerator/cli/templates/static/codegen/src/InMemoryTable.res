@@ -4,7 +4,7 @@ external arrayFromSet: StdSet.t<'a> => array<'a> = "Array.from"
 open Belt
 
 type t<'key, 'val> = {
-  dict: Js.Dict.t<'val>,
+  dict: dict<'val>,
   hash: 'key => string,
 }
 
@@ -62,7 +62,7 @@ module Entity = {
       let fieldName = index->TableIndices.Index.getFieldName
       let fieldValue =
         entity
-        ->(Utils.magic: 'entity => Js.Dict.t<TableIndices.FieldValue.t>)
+        ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
         ->Js.Dict.get(fieldName)
         ->Option.getUnsafe
       if !(index->TableIndices.Index.evaluate(~fieldName, ~fieldValue)) {
@@ -75,7 +75,7 @@ module Entity = {
     ->Array.forEach(fieldName => {
       switch (
         entity
-        ->(Utils.magic: 'entity => Js.Dict.t<TableIndices.FieldValue.t>)
+        ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
         ->Js.Dict.get(fieldName),
         self.fieldNameIndices.dict->Js.Dict.get(fieldName),
       ) {

@@ -32,8 +32,8 @@ module LoadActionMap = {
 
   type key = string
   type t<'entity> = {
-    singleEntities: Js.Dict.t<array<loadSingle<'entity>>>,
-    lookupByIndex: Js.Dict.t<loadIndex<'entity>>,
+    singleEntities: dict<array<loadSingle<'entity>>>,
+    lookupByIndex: dict<loadIndex<'entity>>,
   }
   let empty: unit => t<'entity> = () => {
     singleEntities: Js.Dict.empty(),
