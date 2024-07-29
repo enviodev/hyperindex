@@ -79,7 +79,7 @@ module EventFunctions = {
       //Create an individual logging context for traceability
       let logger = Logging.createChild(
         ~params={
-          "Context": `Test Processor for ${Event.name} Event`,
+          "Context": `Test Processor for "${Event.name}" event on contract "${Event.contractName}"`,
           "Chain ID": chain->ChainMap.Chain.toChainId,
           "event": event,
         },
@@ -102,7 +102,7 @@ module EventFunctions = {
       | None =>
         Not_found->ErrorHandling.mkLogAndRaise(
           ~logger,
-          ~msg=`No registered handler found for ${Event.name}`,
+          ~msg=`No registered handler found for "${Event.name}" on contract "${Event.contractName}"`,
         )
       }
       //Construct a new instance of an in memory store to run for the given event
