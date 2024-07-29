@@ -129,16 +129,30 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~config, ~maxAddrI
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
-  let latestProcessedBlock = await DbFunctions.EventSyncState.getLatestProcessedBlockNumber(
-    ~chainId,
-  )
+  let latestProcessedEvent = await DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
   let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
-  let startBlock =
-    latestProcessedBlock->Option.mapWithDefault(chainConfig.startBlock, latestProcessedBlock =>
-      latestProcessedBlock + 1
-    )
+  let startBlock = latestProcessedEvent->Option.mapWithDefault(chainConfig.startBlock, event =>
+    //start from the same block but filter out any events already processed
+    event.blockNumber
+  )
+
+  let eventFilters: option<
+    FetchState.eventFilters,
+  > = latestProcessedEvent->Option.map(event => list{
+    {
+      FetchState.filter: qItem => {
+        //Only keep events greater than the last processed event
+        (qItem.chain->ChainMap.Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
+        (event.chainId, event.blockNumber, event.logIndex)
+      },
+      isValid: (~fetchState, ~chain as _) => {
+        //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
+        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= event.blockNumber
+      },
+    },
+  })
 
   //Add all dynamic contracts from DB
   let dynamicContractRegistrations =
@@ -182,10 +196,6 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~config, ~maxAddrI
     ->ReorgDetection.LastBlockScannedHashes.makeWithData(
       ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
     )
-
-  //TODO create filter to only accept events with blockNumber AND logIndex
-  //higher than stored in chain blockNumber, blockHash, blockTimestamp
-  let eventFilters = None
 
   make(
     ~config,
