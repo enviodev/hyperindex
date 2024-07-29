@@ -23,7 +23,6 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{Event, EventExt};
 use pathdiff::diff_paths;
-use serde::Deserialize;
 use serde::Serialize;
 
 fn make_res_name(js_name: &String) -> String {
@@ -350,10 +349,7 @@ pub struct EventTemplate {
 }
 
 impl EventTemplate {
-    pub fn from_config_event(
-        config_event: &system_config::Event,
-        contract_name: &String,
-    ) -> Result<Self> {
+    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
         let name = config_event
             .get_event()
             .name
@@ -430,7 +426,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, &contract.name))
+            .map(|event| EventTemplate::from_config_event(event))
             .collect::<Result<_>>()?;
         Ok(ContractTemplate {
             name,
@@ -447,7 +443,7 @@ pub struct PerNetworkContractEventTemplate {
 }
 
 impl PerNetworkContractEventTemplate {
-    fn new(event_name: String, contract_name: String) -> Self {
+    fn new(event_name: String) -> Self {
         PerNetworkContractEventTemplate {
             name: event_name.to_capitalized_options(),
         }
@@ -473,7 +469,7 @@ impl PerNetworkContractTemplate {
         let events = contract
             .get_event_names()
             .into_iter()
-            .map(|n| PerNetworkContractEventTemplate::new(n, contract.name.clone()))
+            .map(|n| PerNetworkContractEventTemplate::new(n))
             .collect();
 
         Ok(PerNetworkContractTemplate {
@@ -733,11 +729,10 @@ mod test {
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
-        contract_name: &str,
     ) -> Vec<PerNetworkContractEventTemplate> {
         event_names
             .into_iter()
-            .map(|n| PerNetworkContractEventTemplate::new(n.to_string(), contract_name.to_string()))
+            .map(|n| PerNetworkContractEventTemplate::new(n.to_string()))
             .collect()
     }
 
@@ -781,8 +776,7 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
@@ -845,16 +839,14 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
             events,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract2");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract2 = super::PerNetworkContractTemplate {
             name: String::from("Contract2").to_capitalized_options(),
             addresses: vec![address2.clone()],
@@ -890,8 +882,7 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
 
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
