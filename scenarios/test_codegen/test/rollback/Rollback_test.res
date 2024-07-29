@@ -77,7 +77,7 @@ module Stubs = {
   }
 
   //Stub for getting block hashes instead of the worker
-  let getBlockHashes = mockChainData => async (~blockNumbers) =>
+  let getBlockHashes = mockChainData => async (~blockNumbers, ~logger as _) =>
     mockChainData->MockChainData.getBlockHashes(~blockNumbers)->Ok
 
   //Hold next tasks temporarily here so they do not get actioned off automatically

@@ -14,29 +14,6 @@ module type Enum = {
   let enum: enumType<t>
 }
 
-module EventType = {
-  @genType
-  type t = 
-  {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
-    | @as("{{event.event_type.truncated_for_pg_enum_limit}}") {{event.event_type.full}} {{/each}}{{/each}}
-
-  let schema = S.union([
-    {{#each codegen_contracts as | contract |}}
-    {{#each contract.codegen_events as | event |}}
-    S.literal({{event.event_type.full}}),
-    {{/each}}
-    {{/each}}
-  ])
-
-  let name = "EVENT_TYPE"
-  let variants = [
-  {{#each codegen_contracts as | contract |}}{{#each contract.codegen_events as | event |}}
-    {{event.event_type.full}},
-  {{/each}}{{/each}}
-  ]
-  let enum = mkEnum(~name, ~variants)
-}
-
 module ContractType = {
   @genType
   type t = 
@@ -116,7 +93,6 @@ module {{enum.name.capitalized}} = {
 {{/each}}
 
 let allEnums: array<module(Enum)> = [
-  module(EventType), 
   module(ContractType), 
   module(EntityType),
 {{#each gql_enums as | enum |}} 

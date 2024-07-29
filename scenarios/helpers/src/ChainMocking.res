@@ -206,7 +206,7 @@ module Make = (Indexer: Indexer.S) => {
 
   type contractAddressesAndEventNames = {
     addresses: array<Ethers.ethAddress>,
-    eventNames: array<Types.eventName>,
+    eventKeys: array<string>,
   }
 
   let getLogsFromBlocks = (
@@ -217,11 +217,11 @@ module Make = (Indexer: Indexer.S) => {
       b.logs->Array.keepMap(l => {
         let isLogInConfig = addressesAndEventNames->Array.reduce(
           false,
-          (prev, {addresses, eventNames}) => {
+          (prev, {addresses, eventKeys}) => {
             prev ||
             (addresses->arrayHas(l.srcAddress) && {
                 let module(Event) = l.eventMod
-                eventNames->arrayHas(Event.eventName)
+                eventKeys->arrayHas(Event.key)
               })
           },
         )
@@ -250,9 +250,9 @@ module Make = (Indexer: Indexer.S) => {
         )
       {
         addresses,
-        eventNames: c.events->Belt.Array.map(event => {
+        eventKeys: c.events->Belt.Array.map(event => {
           let module(Event) = event
-          Event.eventName
+          Event.key
         }),
       }
     })

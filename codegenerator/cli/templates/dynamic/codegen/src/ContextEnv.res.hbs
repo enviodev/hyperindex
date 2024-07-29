@@ -64,7 +64,7 @@ let make = (~chain, ~event: Types.eventLog<'eventArgs>, ~eventMod: module(Types.
     Logging.createChildFrom(
       ~logger=_,
       ~params={
-        "context": `Event "${Event.name}" for contract "${Event.contractName}"`,
+        "context": `Event "${Event.name}" on contract "${Event.contractName}"`,
         "chainId": chain->ChainMap.Chain.toChainId,
         "block": block.number,
         "logIndex": logIndex,

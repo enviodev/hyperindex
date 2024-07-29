@@ -40,7 +40,7 @@ type t
 
 let make: unit => t
 
-let get: (t, Types.eventName) => option<registeredEvent<'eventArgs, 'loadReturn>>
+let get: (t, module(Types.InternalEvent)) => option<registeredEvent<'eventArgs, 'loadReturn>>
 
 let global: t
 

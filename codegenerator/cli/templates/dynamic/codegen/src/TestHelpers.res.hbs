@@ -62,7 +62,6 @@ module EventFunctions = {
       let eventMod = eventMod->Types.eventModToInternal
       let {event, mockDb, ?chainId} = args->(Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>)
       let module(Event) = eventMod
-      let {eventName} = module(Event)
       let config = RegisterHandlers.registerAllHandlers()
 
       // The user can specify a chainId of an event or leave it off
@@ -80,7 +79,7 @@ module EventFunctions = {
       //Create an individual logging context for traceability
       let logger = Logging.createChild(
         ~params={
-          "Context": `Test Processor for ${(eventName :> string)} Event`,
+          "Context": `Test Processor for "${Event.name}" event on contract "${Event.contractName}"`,
           "Chain ID": chain->ChainMap.Chain.toChainId,
           "event": event,
         },
@@ -98,12 +97,12 @@ module EventFunctions = {
         {{/each}}
       }
 
-      let registeredEvent = switch RegisteredEvents.global->RegisteredEvents.get(eventName) {
+      let registeredEvent = switch RegisteredEvents.global->RegisteredEvents.get(eventMod) {
       | Some(l) => l
       | None =>
         Not_found->ErrorHandling.mkLogAndRaise(
           ~logger,
-          ~msg=`No registered handler found for ${(eventName :> string)}`,
+          ~msg=`No registered handler found for "${Event.name}" on contract "${Event.contractName}"`,
         )
       }
       //Construct a new instance of an in memory store to run for the given event

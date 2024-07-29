@@ -23,7 +23,6 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{Event, EventExt};
 use pathdiff::diff_paths;
-use serde::Deserialize;
 use serde::Serialize;
 
 fn make_res_name(js_name: &String) -> String {
@@ -339,41 +338,9 @@ impl EntityRecordTypeTemplate {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct EventType {
-    //Contract name and event name joined with a '_'
-    //Always capitalized
-    //Used as a unique per-contract event variant in rescript
-    full: String,
-    //Contract name and event name joined with a '_' truncated to  63 char max
-    //Always capitalized
-    //for char limit in postgres for enums
-    truncated_for_pg_enum_limit: String,
-}
-
-impl EventType {
-    pub fn new(contract_name: String, event_name: String) -> Self {
-        let full = contract_name.capitalize() + "_" + &event_name;
-        const MAX_CHAR_LIMIT_FOR_PG_ENUM: usize = 63;
-        let truncated_for_pg_enum_limit = full
-            .chars()
-            .enumerate()
-            .filter(|(i, _x)| i < &MAX_CHAR_LIMIT_FOR_PG_ENUM)
-            .map(|(_i, x)| x)
-            .collect();
-
-        EventType {
-            full,
-            truncated_for_pg_enum_limit,
-        }
-    }
-}
-
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventTemplate {
     pub name: CapitalizedOptions,
-    //Used for the eventType variant in Types.res and the truncated version in postgres
-    pub event_type: EventType,
     pub params: Vec<EventParamTypeTemplate>,
     pub indexed_params: Vec<EventParamTypeTemplate>,
     pub body_params: Vec<EventParamTypeTemplate>,
@@ -382,10 +349,7 @@ pub struct EventTemplate {
 }
 
 impl EventTemplate {
-    pub fn from_config_event(
-        config_event: &system_config::Event,
-        contract_name: &String,
-    ) -> Result<Self> {
+    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
         let name = config_event
             .get_event()
             .name
@@ -428,10 +392,6 @@ impl EventTemplate {
 
         Ok(EventTemplate {
             name,
-            event_type: EventType::new(
-                contract_name.clone(),
-                config_event.get_event().name.clone(),
-            ),
             params,
             is_async: config_event.is_async,
             body_params,
@@ -466,7 +426,7 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, &contract.name))
+            .map(|event| EventTemplate::from_config_event(event))
             .collect::<Result<_>>()?;
         Ok(ContractTemplate {
             name,
@@ -480,15 +440,12 @@ impl ContractTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct PerNetworkContractEventTemplate {
     pub name: CapitalizedOptions,
-    //Used for the eventType variant in Types.res and the truncated version in postgres
-    pub event_type: EventType,
 }
 
 impl PerNetworkContractEventTemplate {
-    fn new(event_name: String, contract_name: String) -> Self {
+    fn new(event_name: String) -> Self {
         PerNetworkContractEventTemplate {
             name: event_name.to_capitalized_options(),
-            event_type: EventType::new(contract_name, event_name),
         }
     }
 }
@@ -512,7 +469,7 @@ impl PerNetworkContractTemplate {
         let events = contract
             .get_event_names()
             .into_iter()
-            .map(|n| PerNetworkContractEventTemplate::new(n, contract.name.clone()))
+            .map(|n| PerNetworkContractEventTemplate::new(n))
             .collect();
 
         Ok(PerNetworkContractTemplate {
@@ -772,11 +729,10 @@ mod test {
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
-        contract_name: &str,
     ) -> Vec<PerNetworkContractEventTemplate> {
         event_names
             .into_iter()
-            .map(|n| PerNetworkContractEventTemplate::new(n.to_string(), contract_name.to_string()))
+            .map(|n| PerNetworkContractEventTemplate::new(n.to_string()))
             .collect()
     }
 
@@ -820,8 +776,7 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
@@ -884,16 +839,14 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
             events,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract2");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract2 = super::PerNetworkContractTemplate {
             name: String::from("Contract2").to_capitalized_options(),
             addresses: vec![address2.clone()],
@@ -929,8 +882,7 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
 
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
@@ -1024,10 +976,6 @@ mod test {
 
         EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
-            event_type: EventType {
-                full: "Contract1_NewGravatar".to_string(),
-                truncated_for_pg_enum_limit: "Contract1_NewGravatar".to_string(),
-            },
             topic0,
             body_params: params.clone(),
             params,

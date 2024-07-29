@@ -98,7 +98,7 @@ module Stubs = {
   }
 
   //Stub for getting block hashes instead of the worker
-  let makeGetBlockHashes = (~stubData, ~chainWorker) => async (~blockNumbers) => {
+  let makeGetBlockHashes = (~stubData, ~chainWorker) => async (~blockNumbers, ~logger as _) => {
     let module(ChainWorker: ChainWorker.S) = chainWorker
     stubData->getMockChainData(ChainWorker.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
