@@ -1,4 +1,6 @@
-// %%raw(`globalThis.fetch = require('node-fetch')`)
+type require = {resolve: string => string}
+external require: require = "require"
+let _res = Dotenv.config({path: require.resolve("handlers/.env")})
 
 /**
  * This function can be used to override the console.log (and related functions for users). This means these logs will also be available to the user

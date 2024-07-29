@@ -1,3 +1,7 @@
+type requireObj = {resolve: string => string}
+external requireObj: requireObj = "require"
+let _res = Dotenv.config({path: requireObj.resolve("handlers/.env")})
+
 @val external require: string => unit = "require"
 
 let registerContractHandlers = (

@@ -69,6 +69,9 @@ importers:
       date-fns:
         specifier: 3.3.1
         version: 3.3.1
+      dotenv:
+        specifier: 16.4.5
+        version: 16.4.5
       ethers:
         specifier: 6.8.0
         version: 6.8.0
