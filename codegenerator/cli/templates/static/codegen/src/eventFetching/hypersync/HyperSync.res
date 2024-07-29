@@ -81,7 +81,7 @@ module CachedClients = {
     switch cache->Js.Dict.get(url) {
     | Some(client) => client
     | None =>
-      let newClient = HyperSyncClient.make({url: url})
+      let newClient = HyperSyncClient.make(~url)
 
       cache->Js.Dict.set(url, newClient)
 
@@ -135,7 +135,7 @@ module LogsQuery = {
     //Address is not yet checksummed (TODO this should be done in the client)
     let logUnsanitized: Types.Log.t = event.log->Utils.magic
     let topics = event.log.topics->Belt.Option.getUnsafe->Belt.Array.keepMap(Js.Nullable.toOption)
-    let address = event.log.address->Belt.Option.getUnsafe->Viem.getAddressUnsafe
+    let address = event.log.address->Belt.Option.getUnsafe
     let log = {
       ...logUnsanitized,
       topics,

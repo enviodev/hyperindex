@@ -1,9 +1,12 @@
-type unchecksummedEthAddress = string
-
 type cfg = {
   url: string,
-  bearer_token?: string,
-  http_req_timeout_millis?: int,
+  bearerToken?: string,
+  httpReqTimeoutMillis?: int,
+  maxNumRetries?: int,
+  retryBackoffMs?: int,
+  retryBaseMs?: int,
+  retryCeilingMs?: int,
+  enableChecksumAddresses?: bool,
 }
 
 module QueryTypes = {
@@ -118,7 +121,7 @@ module ResponseTypes = {
     transactionsRoot?: string,
     stateRoot?: string,
     receiptsRoot?: string,
-    miner?: unchecksummedEthAddress,
+    miner?: Address.t,
     difficulty?: bigint, //nullable
     totalDifficulty?: bigint, //nullable
     extraData?: string,
@@ -136,13 +139,13 @@ module ResponseTypes = {
   type transactionData = {
     blockHash?: string,
     blockNumber?: int,
-    from?: unchecksummedEthAddress, //nullable
+    from?: Address.t, //nullable
     gas?: bigint,
     gasPrice?: bigint, //nullable
     hash?: string,
     input?: string,
     nonce?: int,
-    to?: unchecksummedEthAddress, //nullable
+    to?: Address.t, //nullable
     @as("transactionIndex") transactionIndex?: int,
     value?: bigint,
     v?: string, //nullable
@@ -154,7 +157,7 @@ module ResponseTypes = {
     cumulativeGasUsed?: bigint,
     effectiveGasPrice?: bigint,
     gasUsed?: bigint,
-    contractAddress?: unchecksummedEthAddress, //nullable
+    contractAddress?: Address.t, //nullable
     logsBoom?: string,
     type_?: int, //nullable
     root?: string, //nullable
@@ -172,7 +175,7 @@ module ResponseTypes = {
     transactionHash?: string,
     blockHash?: string,
     blockNumber?: int,
-    address?: unchecksummedEthAddress,
+    address?: Address.t,
     data?: string,
     topics?: array<Js.Nullable.t<Ethers.EventFilter.topic>>, //nullable
   }
@@ -233,7 +236,9 @@ type t = {
   streamEvents: (~query: query, ~config: streamConfig) => promise<eventStream>,
 }
 
-@module("@envio-dev/hypersync-client") @scope("HypersyncClient") external make: cfg => t = "new"
+@module("@envio-dev/hypersync-client") @scope("HypersyncClient") external new: cfg => t = "new"
+
+let make = (~url) => new({url, enableChecksumAddresses: true})
 
 module Decoder = {
   type rec decodedSolType<'a> = {val: 'a}
