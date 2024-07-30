@@ -8,7 +8,7 @@ let registerContractHandlers = (
   ~handlerPathRelativeToConfig,
 ) => {
   try {
-    require("handlers/" ++ handlerPathRelativeToRoot)
+    require("root/" ++ handlerPathRelativeToRoot)
   } catch {
   | exn =>
     let params = {

@@ -8,7 +8,7 @@ module Utils = {
   external require: require = "require"
 
   let getEnvFilePath = () =>
-    switch require.resolve("handlers/.env") {
+    switch require.resolve("root/.env") {
     | path => Some(path)
     | exception _exn => None
     }
