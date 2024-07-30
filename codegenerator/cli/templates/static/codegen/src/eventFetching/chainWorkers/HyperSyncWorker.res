@@ -20,7 +20,9 @@ module Make = (
         exn->ErrorHandling.mkLogAndRaise(
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
         )
-      | decoder => decoder
+      | decoder =>
+        decoder.enableChecksummedAddresses()
+        decoder
       }
     }
 
