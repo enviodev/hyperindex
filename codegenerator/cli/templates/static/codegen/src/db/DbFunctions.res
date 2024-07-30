@@ -96,9 +96,8 @@ module EventSyncState = {
     arr->Belt.Array.get(0)
   }
 
-  let getLatestProcessedBlockNumber = async (~chainId) => {
-    let latestEventOpt = await sql->readLatestSyncedEventOnChainId(~chainId)
-    latestEventOpt->Belt.Option.map(event => event.blockNumber)
+  let getLatestProcessedEvent = (~chainId) => {
+    sql->readLatestSyncedEventOnChainId(~chainId)
   }
 
   @module("./DbFunctionsImplementation.js")
