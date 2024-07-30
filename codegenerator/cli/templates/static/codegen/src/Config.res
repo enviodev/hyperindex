@@ -94,6 +94,7 @@ type t = {
   chainMap: ChainMap.t<chainConfig>,
   defaultChain: option<chainConfig>,
   events: dict<module(Types.InternalEvent)>,
+  allEventSignatures: array<string>,
   enableRawEvents: bool,
 }
 
@@ -136,6 +137,7 @@ let make = (
     })
     ->ChainMap.fromArrayUnsafe,
     defaultChain: chains->Belt.Array.get(0),
+    allEventSignatures: Abis.EventSignatures.all,
     events,
     enableRawEvents,
   }

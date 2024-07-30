@@ -10,6 +10,19 @@ module Make = (
 ): S => {
   let name = "HyperSync"
   let chain = T.chainConfig.chain
+  let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
+  let getHscDecoder = () =>
+    switch hscDecoder.contents {
+    | Some(decoder) => decoder
+    | None =>
+      switch HyperSyncClient.Decoder.fromSignatures(T.config.allEventSignatures) {
+      | exception exn =>
+        exn->ErrorHandling.mkLogAndRaise(
+          ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
+        )
+      | decoder => decoder
+      }
+    }
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -137,6 +150,13 @@ module Make = (
     {page: pageUnsafe, contractInterfaceManager, pageFetchTime}
   }
 
+  exception UndefinedValue
+  let getNullableExn = (opt: Js.Nullable.t<'a>, ~msg=?, ~logger=?) =>
+    switch opt {
+    | Null | Undefined => UndefinedValue->ErrorHandling.mkLogAndRaise(~msg?, ~logger?)
+    | Value(v) => v
+    }
+
   let fetchBlockRange = async (
     ~query: blockRangeFetchArgs,
     ~logger,
@@ -235,19 +255,9 @@ module Make = (
       let parsedQueueItemsPreFilter = if T.config.shouldUseHypersyncClientDecoder {
         //Currently there are still issues with decoder for some cases so
         //this can only be activated with a flag
-        let decoder = switch contractInterfaceManager
-        ->ContractInterfaceManager.getAbiMapping
-        ->HyperSyncClient.Decoder.make {
-        | exception exn =>
-          exn->mkLogAndRaise(
-            ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI.",
-          )
-        | decoder => decoder
-        }
+
         //Parse page items into queue items
-        let parsedEvents = switch await decoder->HyperSyncClient.Decoder.decodeEvents(
-          pageUnsafe.events,
-        ) {
+        let parsedEvents = switch await getHscDecoder().decodeEvents(pageUnsafe.events) {
         | exception exn =>
           exn->mkLogAndRaise(
             ~msg="Failed to parse events using hypersync client, please double check your ABI.",
@@ -261,7 +271,7 @@ module Make = (
           let {block, transaction, log: {logIndex}} = item
           let chainId = chain->ChainMap.Chain.toChainId
           let (event, eventMod) = switch event
-          ->Belt.Option.getExn
+          ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
           ->Converters.convertHyperSyncEvent(
             ~config=T.config,
             ~contractInterfaceManager,

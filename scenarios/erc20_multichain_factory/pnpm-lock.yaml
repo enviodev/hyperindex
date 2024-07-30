@@ -49,8 +49,8 @@ importers:
         specifier: 1.4.0
         version: 1.4.0
       '@envio-dev/hypersync-client':
-        specifier: 0.1.10
-        version: 0.1.10
+        specifier: 0.3.3
+        version: 0.3.3
       '@glennsl/rescript-fetch':
         specifier: 0.2.0
         version: 0.2.0
@@ -151,8 +151,8 @@ packages:
       '@elastic/ecs-helpers': 1.1.0
     dev: false
 
-  /@envio-dev/hypersync-client-darwin-arm64@0.1.10:
-    resolution: {integrity: sha512-dJu9ZlKem0mFPSYNOKh3IpNqBI3ItN0+PfIKy4xKkydyNbSHSB7+UJFzY+i9huzWc5i85Qo+c48DHc1bgd+ZsQ==}
+  /@envio-dev/hypersync-client-darwin-arm64@0.3.3:
+    resolution: {integrity: sha512-mxN21X7ouY4DWi5LurcFKDssFjbY82uz9y58zIs0me5CyX+I92Aj1PTx38kXQLWIZHgt3SF1sHkE7pKVm2wqbg==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [darwin]
@@ -160,8 +160,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-darwin-x64@0.1.10:
-    resolution: {integrity: sha512-0nRdk9bjFdY8cus3LUwUchSswV1sFdcAhwLqzD/8/6x8I3gGuc7MuoLMLqc0SHIlTOFO7bhKlivb/Y+9a2Bw0Q==}
+  /@envio-dev/hypersync-client-darwin-x64@0.3.3:
+    resolution: {integrity: sha512-vu55gsimp/48I1NofaHVG0rqQJawSF/WFl1IdUSIDWKLx4eeQO16ZQGpNCxtCsDjLNSHl2XWvvLrbtLbknvRbg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [darwin]
@@ -169,8 +169,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-linux-arm64-gnu@0.1.10:
-    resolution: {integrity: sha512-+P1HQ0JPIufnBl/+GS7z03Sh4IwRfg3rRCOMF8qN4S9KzUNGHMsVRbOsJ8SICS+cSIoueCGC3Jmo/Oe62MaHBg==}
+  /@envio-dev/hypersync-client-linux-arm64-gnu@0.3.3:
+    resolution: {integrity: sha512-ujgWh0xpgoGVv/eSr4baTA6E2wM181QwRxiifEIdkMPDPqy2TBKvuSDWxsxd+ObjfHKuZbiBhLg3HxDhohSBDQ==}
     engines: {node: '>= 10'}
     cpu: [arm64]
     os: [linux]
@@ -178,8 +178,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-linux-x64-gnu@0.1.10:
-    resolution: {integrity: sha512-5D8B2AUfvNBcsl/+BkFWFycOIxLQQ3o7GWJ42SHrUa8LVr6meLvTfU1GH/GfDtuZxi8xgBxs6rKilPmloZ3TtA==}
+  /@envio-dev/hypersync-client-linux-x64-gnu@0.3.3:
+    resolution: {integrity: sha512-6I/TjwGHc0NtaUA5c5wrFj5aEeZuujQeOuWHql/5krpUFYz6VIGiLYCl/+qHWiQl+4l2YbLa+OXvdNGhAT1wPA==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -187,8 +187,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-linux-x64-musl@0.1.10:
-    resolution: {integrity: sha512-u10yDDdPATqQwYUdXBTRcBDks51Ig53cjoqgt9zqro/m2Vh/Nknb+kATmF/AaO1TpJlmXnljuWJ+x6Ol5Eea3g==}
+  /@envio-dev/hypersync-client-linux-x64-musl@0.3.3:
+    resolution: {integrity: sha512-iPVga2vgg3kLfpva1CSjLzwTzHA20wbdp8Ne2zeg8qRYvVWZx7wHc7qGe4/KugZ4hKTq1EqwUD4LkPoZaA884g==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [linux]
@@ -196,8 +196,8 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client-win32-x64-msvc@0.1.10:
-    resolution: {integrity: sha512-qJwanO+v3O78vH467Bj3E4InHF9i/hc7S3wMW7vboXkUPFVPXsG+pB8yfpESl04Kf6MlWsR7vaBvIodxVFhCgQ==}
+  /@envio-dev/hypersync-client-win32-x64-msvc@0.3.3:
+    resolution: {integrity: sha512-JlDSruiDYcEHS2k+nL9pdyKqX6yx4EC8nrqpHWdZwJsFpMM8kIFdztxpRX8Kv/urz2b8VCyWM7+dS40GMROUJg==}
     engines: {node: '>= 10'}
     cpu: [x64]
     os: [win32]
@@ -205,16 +205,16 @@ packages:
     dev: false
     optional: true
 
-  /@envio-dev/hypersync-client@0.1.10:
-    resolution: {integrity: sha512-SKz6ZFUv8XGUkC82x+RqGz8yIBRy+9zWZJBB0D/lSrgYlP4v9cAR8faQopyMbcwz655f53Nh9N1GOuBZDd1QPA==}
+  /@envio-dev/hypersync-client@0.3.3:
+    resolution: {integrity: sha512-sQutd3n16nQZVfGzLdP8asJ1vD3e+qLbuZBJPAzlpZMbds2kfh8M8BgtEsTTeDCapb3cqJ4nIwEs69KQsI8zeA==}
     engines: {node: '>= 10'}
     optionalDependencies:
-      '@envio-dev/hypersync-client-darwin-arm64': 0.1.10
-      '@envio-dev/hypersync-client-darwin-x64': 0.1.10
-      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.1.10
-      '@envio-dev/hypersync-client-linux-x64-gnu': 0.1.10
-      '@envio-dev/hypersync-client-linux-x64-musl': 0.1.10
-      '@envio-dev/hypersync-client-win32-x64-msvc': 0.1.10
+      '@envio-dev/hypersync-client-darwin-arm64': 0.3.3
+      '@envio-dev/hypersync-client-darwin-x64': 0.3.3
+      '@envio-dev/hypersync-client-linux-arm64-gnu': 0.3.3
+      '@envio-dev/hypersync-client-linux-x64-gnu': 0.3.3
+      '@envio-dev/hypersync-client-linux-x64-musl': 0.3.3
+      '@envio-dev/hypersync-client-win32-x64-msvc': 0.3.3
     dev: false
 
   /@glennsl/rescript-fetch@0.2.0:

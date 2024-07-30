@@ -669,6 +669,10 @@ impl Event {
     pub fn get_event(&self) -> &EthAbiEvent {
         &self.event.0
     }
+
+    pub fn get_event_signature(&self) -> String {
+        EventConfig::event_string_from_abi_event(&self.event.0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
