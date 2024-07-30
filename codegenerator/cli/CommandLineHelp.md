@@ -71,6 +71,7 @@ Initialize an indexer with one of the initialization options
 
   Possible values: `javascript`, `typescript`, `rescript`
 
+* `--api-token <API_TOKEN>` — The hypersync API key to be initialized in your templates .env file
 
 
 
