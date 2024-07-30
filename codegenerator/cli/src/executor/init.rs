@@ -108,6 +108,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                     parsed_config,
                     false,
                     &init_config.language,
+                    init_config.api_token.clone(),
                 )
                 .context("Failed converting config to auto auto_schema_handler_template")?;
 
@@ -163,6 +164,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                     parsed_config,
                     true,
                     &init_config.language,
+                    init_config.api_token.clone(),
                 )
                 .context("Failed converting config to auto auto_schema_handler_template")?;
 
@@ -216,6 +218,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
                     parsed_config,
                     false,
                     &init_config.language,
+                    init_config.api_token.clone(),
                 )
                 .context("Failed converting config to auto auto_schema_handler_template")?;
 
@@ -261,6 +264,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
         &init_config.language,
         &parsed_project_paths,
         envio_version.clone(),
+        init_config.api_token,
     )
     .context("Failed creating init templates")?;
 

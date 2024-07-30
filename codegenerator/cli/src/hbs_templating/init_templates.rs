@@ -16,6 +16,7 @@ pub struct InitTemplates {
     envio_version: String,
     //Used for the package.json reference to generated in handlers
     relative_path_from_root_to_generated: String,
+    hypersync_api_token: Option<String>,
 }
 
 impl InitTemplates {
@@ -24,6 +25,7 @@ impl InitTemplates {
         lang: &Language,
         project_paths: &ParsedProjectPaths,
         envio_version: String,
+        hypersync_api_token: Option<String>,
     ) -> anyhow::Result<Self> {
         //Take the absolute paths of  project root and generated, diff them to get
         //relative path from root to generated and add a leading dot. So in a default project, if your
@@ -49,6 +51,7 @@ impl InitTemplates {
             is_javascript: lang == &Language::JavaScript,
             envio_version,
             relative_path_from_root_to_generated,
+            hypersync_api_token,
         };
 
         Ok(template)
@@ -67,6 +70,7 @@ mod test {
             &Language::ReScript,
             &ParsedProjectPaths::default(),
             "latest".to_string(),
+            None,
         )
         .unwrap();
 
@@ -77,6 +81,7 @@ mod test {
             is_javascript: false,
             envio_version: "latest".to_string(),
             relative_path_from_root_to_generated: "./generated".to_string(),
+            hypersync_api_token: None,
         };
 
         assert_eq!(expected, init_temp);
