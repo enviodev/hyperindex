@@ -154,9 +154,9 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "If true, the indexer will store the raw event data in the database. \
-            This is useful for debugging, but will increase the size of the database \
-            and the amount of time it takes to process events \
-            (default: false)"
+                           This is useful for debugging, but will increase the size of the \
+                           database and the amount of time it takes to process events (default: \
+                           false)"
         )]
         pub raw_events: Option<bool>,
     }
@@ -314,7 +314,8 @@ pub mod evm {
     pub struct HypersyncConfig {
         #[serde(alias = "endpoint_url")]
         #[schemars(
-            description = "URL of the HyperSync endpoint (default: The most performant HyperSync endpoint for the network)"
+            description = "URL of the HyperSync endpoint (default: The most performant HyperSync \
+                           endpoint for the network)"
         )]
         pub url: String,
     }
@@ -343,7 +344,9 @@ pub mod evm {
     #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
     pub struct RpcConfig {
         #[schemars(
-            description = "URL of the RPC endpoint. Can be a single URL or an array of URLs. If multiple URLs are provided, the first one will be used as the primary RPC endpoint and the rest will be used as fallbacks."
+            description = "URL of the RPC endpoint. Can be a single URL or an array of URLs. If \
+                           multiple URLs are provided, the first one will be used as the primary \
+                           RPC endpoint and the rest will be used as fallbacks."
         )]
         pub url: SingleOrList<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -356,7 +359,10 @@ pub mod evm {
         pub id: NetworkId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
-            description = "RPC Config that will be used to subscribe to blockchain data on this network (TIP: This is optional and in most cases does not need to be specified if the network is supported with HyperSync. We recommend using HyperSync instead of RPC for 100x speed-up)"
+            description = "RPC Config that will be used to subscribe to blockchain data on this \
+                           network (TIP: This is optional and in most cases does not need to be \
+                           specified if the network is supported with HyperSync. We recommend \
+                           using HyperSync instead of RPC for 100x speed-up)"
         )]
         pub rpc_config: Option<RpcConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
