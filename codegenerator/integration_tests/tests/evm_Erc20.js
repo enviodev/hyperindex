@@ -39,30 +39,31 @@ const pollGraphQL = async () => {
     accountEntityQuery,
     maxRetryFailureMessage,
     ({ Account_by_pk: account }) => {
+      let shouldExitOnFailure = false;
       try {
         assert(!!account, "account should not be null or undefined");
         shouldExitOnFailure = true;
 
         assert(
           account.balance > 311465476000000000000,
-          "balance should be == 70"
+          "balance should be == 70",
         ); // NOTE the balance shouldn't change since we own this erc20 token.
         assert(
           account.approvals.length > 0,
-          "There should be at least one approval"
+          "There should be at least one approval",
         );
         assert(
           account.approvals[0].amount == 79228162514264337593543950335n,
-          "The first approval amount should be 50"
+          "The first approval amount should be 50",
         );
         assert(
           account.approvals[0].owner_id == account.id,
-          "The first approval owner should be the account id"
+          "The first approval owner should be the account id",
         );
         assert(
           account.approvals[0].spender_id ==
-            "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
-          "The first approval spender should be correct (from uniswap)"
+          "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D",
+          "The first approval spender should be correct (from uniswap)",
         );
       } catch (err) {
         //gotta love javascript
@@ -70,7 +71,7 @@ const pollGraphQL = async () => {
         throw err;
       }
       console.log("Second test passed.");
-    }
+    },
   );
 };
 
