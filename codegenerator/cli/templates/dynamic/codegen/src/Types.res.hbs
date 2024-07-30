@@ -13,13 +13,16 @@ type contractRegistrations = {
 }
 
 @genType
-type entityLoaderContext<'entity> = {get: id => promise<option<'entity>>}
+type entityLoaderContext<'entity, 'indexedFieldOperations> = {
+  get: id => promise<option<'entity>>,
+  getWhere: 'indexedFieldOperations,
+}
 
 @genType
 type loaderContext = {
   log: Logs.userLogger,
   {{#each entities as | entity |}}
-  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityLoaderContext<Entities.{{entity.name.capitalized}}.t>,
+  @as("{{entity.name.original}}") {{entity.name.uncapitalized}}: entityLoaderContext<Entities.{{entity.name.capitalized}}.t, Entities.{{entity.name.capitalized}}.indexedFieldOperations>,
   {{/each}}
 }
 

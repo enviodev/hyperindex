@@ -82,6 +82,36 @@ and storeOperations<'entityKey, 'entity> = {
 }
 
 /**
+Removes all existing indices on an entity in the mockDB and
+adds an index for each field to ensure getWhere queries are
+always accounted for
+*/
+let updateEntityIndicesMockDb = (
+  ~mockDbTable: InMemoryTable.Entity.t<'entity>,
+  ~entity: 'entity,
+  ~entityId,
+) => {
+  let entityIndices = switch mockDbTable.table
+  ->InMemoryTable.get(entityId)
+  ->Option.map(r => r.entityIndices) {
+  | Some(entityIndices) => entityIndices
+  | None => Js.Exn.raiseError("Unexpected, updateEntityIndicesMockDb was called before entity was set")
+  }
+  //first prune all indices to avoid stale values
+  mockDbTable->InMemoryTable.Entity.deleteEntityFromIndices(~entityId, ~entityIndices)
+
+  //then add all indices
+  entity
+  ->Utils.magic
+  ->Js.Dict.entries
+  ->Array.forEach(((fieldName, fieldValue)) => {
+    let index = TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue)
+    mockDbTable->InMemoryTable.Entity.addIdToIndex(~index, ~entityId)
+    entityIndices->InMemoryTable.StdSet.add(index)->ignore
+  })
+}
+
+/**
 a composable function to make the "storeOperations" record to represent all the mock
 db operations for each entity.
 */
@@ -102,21 +132,29 @@ let makeStoreOperatorEntity = (
 
   let set = entity => {
     let cloned = inMemoryStore->InMemoryStore.clone
-    cloned
-    ->getStore
-    ->set(
+    let table = cloned->getStore
+    let entityId = entity->getKey
+
+    table->set(
       Set(entity)->Types.mkEntityUpdate(
-        ~entityId=entity->getKey,
+        ~entityId,
         ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
       ),
     )
+
+    updateEntityIndicesMockDb(~mockDbTable=table, ~entity, ~entityId)
     cloned->makeMockDb
   }
 
   let delete = key => {
     let cloned = inMemoryStore->InMemoryStore.clone
     let store = cloned->getStore
-    store.dict->deleteDictKey(key)
+    let entityIndices = switch store.table->InMemoryTable.get(key) {
+    | Some({entityIndices}) => entityIndices
+    | None => InMemoryTable.StdSet.make()
+    }
+    store->InMemoryTable.Entity.deleteEntityFromIndices(~entityId=key, ~entityIndices)
+    store.table.dict->deleteDictKey(key)
     cloned->makeMockDb
   }
 
@@ -137,7 +175,7 @@ let makeStoreOperatorMeta = (
   let {get, values, set} = module(InMemoryTable)
 
   let get = get(inMemoryStore->getStore, _)
-  // unit => array<StoreState.value>
+
   let getAll = () => inMemoryStore->getStore->values->Array.map(row => row)
 
   let set = metaData => {
@@ -235,6 +273,18 @@ let cloneMockDb = (self: t) => {
 let batchRead = (entity: entityStoreOperations<'entity>) => ids =>
   ids->Array.keepMap(id => entity.get(id))->Promise.resolve
 
+let makeWhereEq = (mockDbTable: InMemoryTable.Entity.t<_>) => async (
+  ~fieldName: string,
+  ~fieldValue: 'fieldValue,
+  ~fieldValueSchema: S.t<'fieldValue>,
+  ~logger=Logging.logger,
+): array<'entityRow> => {
+  let _ = (fieldValueSchema, logger) //unused here
+  mockDbTable->InMemoryTable.Entity.getOnIndex(
+    ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),
+  )
+}
+
 /**
 Executes a single load layer using the mockDb functions
 */
@@ -252,6 +302,7 @@ let executeMockDbLoadLayer = async (
       loadLayer.{{entity.name.uncapitalized}}->LoadLayer.executeLoadActionMap(
         ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
         ~batchLoadIds=batchRead(mockDb.entities.{{entity.name.uncapitalized}}),
+        ~whereFnComposer=makeWhereEq(mockDb.__dbInternal__.{{entity.name.uncapitalized}}),
       ),
       {{/each}}
     ]->Promise.all
@@ -273,21 +324,28 @@ let executeRowsEntity = (
   ~getInMemTable: InMemoryStore.t => InMemoryTable.Entity.t<'entity>,
   ~getKey: 'entity => 'key,
 ) => {
-  inMemoryStore
-  ->getInMemTable
+  let inMemTable = getInMemTable(inMemoryStore)
+
+  inMemTable.table
   ->InMemoryTable.values
   ->Array.forEach(row => {
-    let inMemTable = mockDb->getInternalDb->getInMemTable
-    switch row {
+    let mockDbTable = mockDb->getInternalDb->getInMemTable
+    switch row.entityRow {
     | Updated({latest: {entityUpdateAction: Set(entity)}})
     | InitialReadFromDb(AlreadySet(entity)) =>
-      inMemTable->InMemoryTable.Entity.initValue(
+      let key = getKey(entity)
+      mockDbTable->InMemoryTable.Entity.initValue(
         ~allowOverWriteEntity=true,
-        ~key=getKey(entity),
+        ~key,
         ~entity=Some(entity),
       )
+      updateEntityIndicesMockDb(~mockDbTable, ~entity, ~entityId=key)
     | Updated({latest: {entityUpdateAction: Delete, entityId}}) =>
-      inMemTable.dict->deleteDictKey(entityId)
+      mockDbTable.table.dict->deleteDictKey(entityId)
+      mockDbTable->InMemoryTable.Entity.deleteEntityFromIndices(
+        ~entityId,
+        ~entityIndices=InMemoryTable.StdSet.make(),
+      )
     | InitialReadFromDb(NotSet) => ()
     }
   })

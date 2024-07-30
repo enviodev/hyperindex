@@ -167,6 +167,9 @@ pub struct EntityParamTypeTemplate {
     ///the table
     pub is_derived_from: bool,
     pub is_indexed_field: bool,
+    ///Used to determine if you can run a where
+    ///query on this field.
+    pub is_queryable_field: bool,
 }
 
 impl HasIsDerivedFrom for EntityParamTypeTemplate {
@@ -194,6 +197,10 @@ impl EntityParamTypeTemplate {
 
         let is_entity_field = field.field_type.is_entity_field(schema)?;
         let is_indexed_field = field.is_indexed_field(entity);
+        let is_derived_lookup_field = field.is_derived_lookup_field(entity, schema);
+
+        //Both of these cases have indexes on them and should exist
+        let is_queryable_field = is_indexed_field || is_derived_lookup_field;
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
@@ -203,6 +210,7 @@ impl EntityParamTypeTemplate {
             type_pg,
             is_entity_field,
             is_indexed_field,
+            is_queryable_field,
         })
     }
 }

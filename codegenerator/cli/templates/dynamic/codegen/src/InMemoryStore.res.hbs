@@ -47,7 +47,7 @@ let clone = (self: t) => {
   rawEvents: self.rawEvents->InMemoryTable.clone,
   dynamicContractRegistry: self.dynamicContractRegistry->InMemoryTable.clone,
   {{#each entities as |entity|}}
-  {{entity.name.uncapitalized}}: self.{{entity.name.uncapitalized}}->InMemoryTable.clone,
+  {{entity.name.uncapitalized}}: self.{{entity.name.uncapitalized}}->InMemoryTable.Entity.clone,
   {{/each}}
   rollBackEventIdentifier: self.rollBackEventIdentifier->InMemoryTable.structuredClone,
 }

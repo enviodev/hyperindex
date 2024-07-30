@@ -49,8 +49,8 @@ let createNewAccountWithZeroBalance = (
 }
 
 Handlers.ERC20.Approval.handlerWithLoader({
-  loader: ({event, context}) => {
-    context.account.get(event.params.owner->Ethers.ethAddressToString)
+  loader: async ({event, context}) => {
+    await context.account.get(event.params.owner->Ethers.ethAddressToString)
   },
   handler: async ({event, context, loaderReturn}) => {
     let ownerAccount = loaderReturn
@@ -104,15 +104,21 @@ let manipulateAccountBalance = (
   ->fn(value)
   ->setAccountToken
 
+let whereEqFromAccountTest = ref([])
+let whereEqBigNumTest = ref([])
+
 Handlers.ERC20.Transfer.handlerWithLoader({
-  loader: ({event, context}) => {
+  loader: async ({event, context}) => {
     let fromAccount_id = event.params.from->Ethers.ethAddressToString
     let toAccount_id = event.params.to->Ethers.ethAddressToString
     let tokenAddress = event.srcAddress->Ethers.ethAddressToString
     let fromAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=fromAccount_id)
     let toAccountToken_id = makeAccountTokenId(~tokenAddress, ~account_id=toAccount_id)
 
-    (
+    whereEqFromAccountTest := (await context.accountToken.getWhere.account_id.eq(fromAccount_id))
+    whereEqBigNumTest := (await context.accountToken.getWhere.balance.eq(50n))
+
+    await (
       context.accountToken.get(fromAccountToken_id),
       context.accountToken.get(toAccountToken_id),
     )->Promise.all2
@@ -138,6 +144,15 @@ Handlers.ERC20.Transfer.handlerWithLoader({
   },
 })
 
-Handlers.ERC20Factory.DeleteUser.handler(async ({event, context}) => {
-  context.account.deleteUnsafe(event.params.user->Ethers.ethAddressToString)
+Handlers.ERC20Factory.DeleteUser.handlerWithLoader({
+  loader: ({event, context}) => {
+    let account_id = event.params.user->Ethers.ethAddressToString
+    context.accountToken.getWhere.account_id.eq(account_id)
+  },
+  handler: async ({event, context, loaderReturn}) => {
+    context.account.deleteUnsafe(event.params.user->Ethers.ethAddressToString)
+    loaderReturn->Belt.Array.forEach(accountToken => {
+      context.accountToken.deleteUnsafe(accountToken.id)
+    })
+  },
 })

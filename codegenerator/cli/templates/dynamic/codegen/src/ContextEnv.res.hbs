@@ -64,7 +64,7 @@ let make = (~chain, ~event: Types.eventLog<'eventArgs>, ~eventMod: module(Types.
     Logging.createChildFrom(
       ~logger=_,
       ~params={
-        "context": `Event "${Event.name}" on contract "${Event.contractName}"`,
+        "context": `Event '${Event.name}' for contract '${Event.contractName}'`,
         "chainId": chain->ChainMap.Chain.toChainId,
         "block": block.number,
         "logIndex": logIndex,
@@ -107,11 +107,30 @@ let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, 
   )
 }
 
-let makeLoader = (loadLayerRef, ~entityIdsMap, ~entityName) => entityId => {
+let makeLoader = (loadLayerRef, ~entityIdsMap, ~entityName) => (entityId) => {
   entityIdsMap->EntityIdsMap.addId(~entityId, ~entityName)
   Promise.make((resolve, _reject) => {
-    loadLayerRef.contents->LoadLayer.LoadActionMap.add(~entityId, ~resolve)
+    loadLayerRef.contents->LoadLayer.LoadActionMap.addSingle(~entityId, ~resolve)
   })
+}
+
+let makeWhereEqLoader = (loadLayerRef, ~fieldName, ~fieldValueSchema, ~logger) => {
+  Entities.eq: fieldValue => {
+    Promise.make((resolve, _reject) => {
+      loadLayerRef.contents->LoadLayer.LoadActionMap.addLookUpByIndex(
+        ~index=Single({
+          fieldName,
+          fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
+          operator: Eq,
+        }),
+        ~fieldValueSchema,
+        ~logger,
+        ~fieldName,
+        ~fieldValue,
+        ~resolve,
+      )
+    })
+  },
 }
 
 let makeEntityHandlerContext = (
@@ -169,6 +188,16 @@ let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loa
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
       get: makeLoader(loadLayer.{{entity.name.uncapitalized}}, ~entityName={{entity.name.capitalized}},  ~entityIdsMap),
+      getWhere: {
+        {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
+        {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: makeWhereEqLoader(
+          loadLayer.{{entity.name.uncapitalized}},
+          ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
+          ~fieldValueSchema={{param.res_schema_code}},
+          ~logger,
+        ),
+      {{/if}}{{/each}}
+      },
     },
     {{/each}}
   }
@@ -180,7 +209,9 @@ type asyncGetters = {
 {{/each}}
 }
 
-let readEntity = (~entityMod) => id => Entities.batchRead(~entityMod)(DbFunctions.sql, [id])
+let readEntity = (~entityMod) => id =>
+  DbFunctionsEntities.batchRead(~entityMod)(DbFunctions.sql, [id])
+
 let asyncGetters: asyncGetters = {
 {{#each entities as | entity |}}
  get{{entity.name.capitalized}}: readEntity(~entityMod=module(Entities.{{entity.name.capitalized}})),

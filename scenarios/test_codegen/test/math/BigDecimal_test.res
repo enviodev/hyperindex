@@ -24,7 +24,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       bigDecimal: BigDecimal.fromFloat(654.321),
     }
 
-    await Entities.batchSet(~entityMod=module(Entities.EntityWithFields))(
+    await DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithFields))(
       sql,
       [testEntity1, testEntity2],
     )

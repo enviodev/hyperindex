@@ -89,12 +89,12 @@ let executeSetEntityWithHistory = (
       ~entityHistoriesToSet=Belt.Array.concatMany(entityHistoryItemsToSet),
     ),
     if entitiesToSet->Array.length > 0 {
-      sql->Entities.batchSet(~entityMod)(entitiesToSet)
+      sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)
     } else {
       Promise.resolve()
     },
     if idsToDelete->Array.length > 0 {
-      sql->Entities.batchDelete(~entityMod)(idsToDelete)
+      sql->DbFunctionsEntities.batchDelete(~entityMod)(idsToDelete)
     } else {
       Promise.resolve()
     },
@@ -128,9 +128,9 @@ let executeDbFunctionsEntity = (
 
   let promises =
     (
-      entitiesToSet->Array.length > 0 ? [sql->Entities.batchSet(~entityMod)(entitiesToSet)] : []
+      entitiesToSet->Array.length > 0 ? [sql->DbFunctionsEntities.batchSet(~entityMod)(entitiesToSet)] : []
     )->Belt.Array.concat(
-      idsToDelete->Array.length > 0 ? [sql->Entities.batchDelete(~entityMod)(idsToDelete)] : [],
+      idsToDelete->Array.length > 0 ? [sql->DbFunctionsEntities.batchDelete(~entityMod)(idsToDelete)] : [],
     )
 
   promises->Promise.all->Promise.thenResolve(_ => ())
@@ -163,7 +163,7 @@ let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
   let set{{entity.name.capitalized}}s = entityDbExecutionComposer(
     _,
     ~entityMod=module(Entities.{{entity.name.capitalized}}),
-    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryTable.values,
+    ~rows=inMemoryStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.rows,
   )
 
   {{/each}}
