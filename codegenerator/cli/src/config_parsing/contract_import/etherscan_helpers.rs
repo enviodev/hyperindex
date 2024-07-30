@@ -143,7 +143,11 @@ async fn fetch_get_source_code_result_from_block_explorer(
                 } else {
                     let retry_err = match e {
                         //Unhandled case from client
-                        | EtherscanError::ErrorResponse {result:  Some(res), .. } if res.to_lowercase().contains("invalid api key")  => Err(EtherscanError::InvalidApiKey),
+                        EtherscanError::ErrorResponse {
+                            result: Some(res), ..
+                        } if res.to_lowercase().contains("invalid api key") => {
+                            Err(EtherscanError::InvalidApiKey)
+                        }
                         //In these cases, return ok(err) if it should be retried
                         EtherscanError::Reqwest(_)
                         | EtherscanError::BadStatusCode(_)

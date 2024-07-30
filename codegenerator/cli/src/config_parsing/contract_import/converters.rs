@@ -75,6 +75,13 @@ impl NetworkKind {
             Self::Unsupported(n, _) => *n,
         }
     }
+
+    pub fn uses_hypersync(&self) -> bool {
+        match self {
+            Self::Supported(_) => true,
+            Self::Unsupported(_, _) => false,
+        }
+    }
 }
 
 impl Display for NetworkKind {
@@ -105,5 +112,9 @@ impl ContractImportNetworkSelection {
             network,
             addresses: vec![],
         }
+    }
+
+    pub fn uses_hypersync(&self) -> bool {
+        self.network.uses_hypersync()
     }
 }
