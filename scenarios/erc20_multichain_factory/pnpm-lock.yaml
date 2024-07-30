@@ -2102,7 +2102,7 @@ snapshots:
 
   prom-client@15.0.0:
     dependencies:
-      '@opentelemetry/api': 1.8.0
+      '@opentelemetry/api': 1.9.0
       tdigest: 0.1.2
 
   prop-types@15.8.1:
