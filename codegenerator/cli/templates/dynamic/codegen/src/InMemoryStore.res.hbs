@@ -31,7 +31,7 @@ type t = {
 }
 
 let makeWithRollBackEventIdentifier = (rollBackEventIdentifier): t => {
-  eventSyncState: InMemoryTable.make(~hash=v => v->RescriptCore.Int.toString),
+  eventSyncState: InMemoryTable.make(~hash=v => v->Belt.Int.toString),
   rawEvents: InMemoryTable.make(~hash=hashRawEventsKey),
   dynamicContractRegistry: InMemoryTable.make(~hash=hashDynamicContractRegistryKey),
   {{#each entities as |entity|}}

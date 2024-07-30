@@ -1,5 +1,5 @@
 module FieldValue = {
-  open RescriptCore
+  open Belt
   @unboxed
   type rec tNonOptional =
     | String(string)
@@ -16,7 +16,7 @@ module FieldValue = {
     | Int(v) => v->Int.toString
     | BigDecimal(v) => v->BigDecimal.toString
     | Bool(v) => v ? "true" : "false"
-    | Array(v) => `[${v->Array.map(toString)->Array.join(",")}]`
+    | Array(v) => `[${v->Array.joinWith(",", toString)}]`
     }
 
   //This needs to be a castable type from any type that we
