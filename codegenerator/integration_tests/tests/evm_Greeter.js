@@ -34,11 +34,12 @@ const pollGraphQL = async () => {
     userEntityQuery,
     maxRetryFailureMessage,
     ({ User_by_pk: user }) => {
+      let shouldExitOnFailure = false;
       try {
         assert(!!user, "greeting should not be null or undefined");
         assert(
           user.greetings.slice(0, 3).toString() === "gm,gn,gm paris",
-          "First 3 greetings should be 'gm,gn,gm paris'"
+          "First 3 greetings should be 'gm,gn,gm paris'",
         );
         assert(user.numberOfGreetings >= 3, "numberOfGreetings should be >= 3");
         console.log("Second test passed.");
@@ -47,7 +48,7 @@ const pollGraphQL = async () => {
         err.shouldExitOnFailure = shouldExitOnFailure;
         throw err;
       }
-    }
+    },
   );
 };
 
