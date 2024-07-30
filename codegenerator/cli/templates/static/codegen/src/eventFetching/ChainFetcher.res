@@ -44,7 +44,12 @@ let make = (
   }
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ endpointDescription)
 
-  let fetchState = FetchState.makeRoot(~contractAddressMapping, ~dynamicContracts, ~startBlock, ~endBlock)
+  let fetchState = FetchState.makeRoot(
+    ~contractAddressMapping,
+    ~dynamicContracts,
+    ~startBlock,
+    ~endBlock,
+  )
 
   {
     logger,
@@ -108,16 +113,30 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     m
   }
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
-  let latestProcessedBlock = await DbFunctions.EventSyncState.getLatestProcessedBlockNumber(
-    ~chainId,
-  )
+  let latestProcessedEvent = await DbFunctions.EventSyncState.getLatestProcessedEvent(~chainId)
 
   let chainMetadata = await DbFunctions.ChainMetadata.getLatestChainMetadataState(~chainId)
 
-  let startBlock =
-    latestProcessedBlock->Option.mapWithDefault(chainConfig.startBlock, latestProcessedBlock =>
-      latestProcessedBlock + 1
-    )
+  let startBlock = latestProcessedEvent->Option.mapWithDefault(chainConfig.startBlock, event =>
+    //start from the same block but filter out any events already processed
+    event.blockNumber
+  )
+
+  let eventFilters: option<
+    FetchState.eventFilters,
+  > = latestProcessedEvent->Option.map(event => list{
+    {
+      FetchState.filter: qItem => {
+        //Only keep events greater than the last processed event
+        (qItem.chain->ChainMap.Chain.toChainId, qItem.blockNumber, qItem.logIndex) >
+        (event.chainId, event.blockNumber, event.logIndex)
+      },
+      isValid: (~fetchState, ~chain as _) => {
+        //the filter can be cleaned up as soon as the fetch state block is ahead of the latestProcessedEvent blockNumber
+        FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber <= event.blockNumber
+      },
+    },
+  })
 
   //Add all dynamic contracts from DB
   let dynamicContractRegistrations =
@@ -148,11 +167,16 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     numEventsProcessed,
     timestampCaughtUpToHeadOrEndblock,
   ) = switch chainMetadata {
-  | Some({firstEventBlockNumber, latestProcessedBlock, numEventsProcessed, timestampCaughtUpToHeadOrEndblock}) => (
+  | Some({
       firstEventBlockNumber,
       latestProcessedBlock,
       numEventsProcessed,
-      Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption
+      timestampCaughtUpToHeadOrEndblock,
+    }) => (
+      firstEventBlockNumber,
+      latestProcessedBlock,
+      numEventsProcessed,
+      Env.updateSyncTimeOnRestart ? None : timestampCaughtUpToHeadOrEndblock->Js.Nullable.toOption,
     )
   | None => (None, None, None, None)
   }
@@ -172,10 +196,6 @@ let makeFromDbState = async (chainConfig: Config.chainConfig) => {
     ->ReorgDetection.LastBlockScannedHashes.makeWithData(
       ~confirmedBlockThreshold=chainConfig.confirmedBlockThreshold,
     )
-
-  //TODO create filter to only accept events with blockNumber AND logIndex
-  //higher than stored in chain blockNumber, blockHash, blockTimestamp
-  let eventFilters = None
 
   make(
     ~contractAddressMapping,
