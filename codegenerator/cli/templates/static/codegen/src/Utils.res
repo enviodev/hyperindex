@@ -69,11 +69,21 @@ let createPromiseWithHandles = () => {
 }
 
 let mapArrayOfResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
-  results->Belt.Array.reduce(Ok([]), (accum, nextItem) => {
-    accum->Belt.Result.flatMap(currentOkItems => {
-      nextItem->Belt.Result.map(item => Belt.Array.concat(currentOkItems, [item]))
-    })
-  })
+  let rec loop = (index: int, output: array<'a>): result<array<'a>, 'b> => {
+    if index >= Array.length(results) {
+      Ok(output)
+    } else {
+      switch results->Js.Array2.unsafe_get(index) {
+      | Ok(value) => {
+          output[index] = value
+          loop(index + 1, output)
+        }
+      | Error(_) as err => err->(magic: result<'a, 'b> => result<array<'a>, 'b>)
+      }
+    }
+  }
+
+  loop(0, Belt.Array.makeUninitializedUnsafe(results->Js.Array2.length))
 }
 
 let optionMapNone = (opt: option<'a>, val: 'b): option<'b> => {
@@ -113,4 +123,3 @@ let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     await item->fn
   }
 }
-
