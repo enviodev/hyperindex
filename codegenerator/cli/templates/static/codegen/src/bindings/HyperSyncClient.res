@@ -238,7 +238,13 @@ type t = {
 
 @module("@envio-dev/hypersync-client") @scope("HypersyncClient") external new: cfg => t = "new"
 
-let make = (~url) => new({url, enableChecksumAddresses: true, bearerToken: Env.hypersyncApiKey})
+let defaultToken = "3dc856dd-b0ea-494f-b27e-017b8b6b7e07"
+let make = (~url) =>
+  new({
+    url,
+    enableChecksumAddresses: true,
+    bearerToken: Env.hypersyncApiToken->Belt.Option.getWithDefault(defaultToken),
+  })
 
 module Decoder = {
   type rec decodedSolType<'a> = {val: 'a}
