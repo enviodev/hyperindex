@@ -12,3 +12,8 @@ update-help:
 
 # Target to update generated docs, depends on update-schemas and update-help
 update-generated-docs: update-schemas update-help
+
+# Runs rustfmt with format_strings option.
+format:
+	@echo "Formatting code"
+	cargo fmt -- --config format_strings=true
