@@ -270,9 +270,6 @@ let cloneMockDb = (self: t) => {
   clonedInternalDb->makeWithInMemoryStore
 }
 
-let batchRead = (entity: entityStoreOperations<'entity>) => ids =>
-  ids->Array.keepMap(id => entity.get(id)->(Utils.magic: option<'entity> => option<Entities.internalEntity>))->Promise.resolve
-
 let makeWhereEq = (mockDbTable: InMemoryTable.Entity.t<_>) => async (
   ~fieldName: string,
   ~fieldValue: 'fieldValue,
@@ -285,6 +282,19 @@ let makeWhereEq = (mockDbTable: InMemoryTable.Entity.t<_>) => async (
   )
 }
 
+let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {
+  let module(Entity: Entities.InternalEntity) = entityMod
+  (mockDb.entities->Utils.magic)->Utils.Dict.dangerouslyGetNonOption(Entity.key->Utils.String.uncapitalize)->Utils.Option.getExn("Mocked operations for entity " ++ Entity.key ++ " not found")
+}
+
+let makeLoadEntitiesByIds = (mockDb: t) => {
+  (ids, ~entityMod) => {
+    let operations = mockDb->getEntityOperations(~entityMod)
+    ids->Array.keepMap(id => operations.get(id))->Promise.resolve
+  }
+}
+
+{{!-- 
 /**
 Executes a single load layer using the mockDb functions
 */
@@ -313,7 +323,7 @@ let executeMockDbLoadLayer = async (
         accum || entityHasLoadActions->LoadLayer.toBool
       })
   }
-}
+} --}}
 
 /**
 A function composer for simulating the writing of an inMemoryStore to the external db with a mockDb.

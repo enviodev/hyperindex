@@ -209,7 +209,6 @@ let updateEventSyncState = (
 let runEventHandler = (
   event,
   //Injection params for testing framework
-  ~executeLoadLayer=LoadLayer.executeLoadLayer,
   ~asyncGetters=?,
   //Required params
   ~eventMod: module(Types.InternalEvent),
@@ -218,28 +217,14 @@ let runEventHandler = (
   ~logger,
   ~chain,
   ~latestProcessedBlocks,
+  ~loadLayer,
   ~config: Config.t,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
-    let loadLayer = LoadLayer.make(~config)
 
-    let loaderReturnUnawaited = runEventLoader(~contextEnv, ~handler, ~loadLayer)
-
-    switch await loadLayer->executeLoadLayer(~inMemoryStore, ~config) {
-    | exception exn =>
-      exn
-      ->ErrorHandling.make(
-        ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
-        ~logger,
-      )
-      ->Error
-      ->propogate
-    | () => ()
-    }
-
-    let loaderReturn = await loaderReturnUnawaited->propogateAsync
+    let loaderReturn = await runEventLoader(~contextEnv, ~handler, ~loadLayer)->propogateAsync
 
     switch await handler.handler(
       contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters?),
@@ -274,6 +259,7 @@ let runHandler = (
   ~logger,
   ~chain,
   ~registeredEvents,
+  ~loadLayer,
   ~config,
 ) => {
   switch registeredEvents
@@ -287,6 +273,7 @@ let runHandler = (
       ~logger,
       ~chain,
       ~eventMod,
+      ~loadLayer,
       ~config,
     )
   | None => Ok(latestProcessedBlocks)->Promise.resolve
@@ -373,14 +360,11 @@ let rec registerDynamicContracts = (
 let runLoaders = (
   eventBatch: array<Types.eventBatchQueueItem>,
   ~registeredEvents: RegisteredEvents.t,
-  ~inMemoryStore,
+  ~loadLayer,
   ~logger,
-  ~config,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let loadLayer = LoadLayer.make(~config)
-
     let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, eventMod, event}) => {
       registeredEvents
       ->RegisteredEvents.get(eventMod)
@@ -392,15 +376,6 @@ let runLoaders = (
         },
       )
     })
-
-    switch await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore, ~config) {
-    | exception exn =>
-      exn
-      ->ErrorHandling.make(~msg="Load layer failed during execution", ~logger)
-      ->Error
-      ->propogate
-    | () => ()
-    }
 
     let loaderReturns = await loaderReturnsUnawaited->Promise.all
     //We don't actually need these returns here but errors will be propogated
@@ -416,6 +391,7 @@ let runHandlers = (
   ~inMemoryStore,
   ~latestProcessedBlocks,
   ~logger,
+  ~loadLayer,
   ~config,
 ) => {
   open ErrorHandling.ResultPropogateEnv
@@ -433,6 +409,7 @@ let runHandlers = (
           ~chain,
           ~latestProcessedBlocks=latestProcessedBlocks.contents,
           ~registeredEvents,
+          ~loadLayer,
           ~config,
         )->propogateAsync
     }
@@ -471,6 +448,7 @@ let processEventBatch = (
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
   ~registeredEvents: RegisteredEvents.t,
+  ~loadLayer,
   ~config,
 ) => {
   let logger = Logging.createChild(
@@ -501,14 +479,21 @@ let processEventBatch = (
       ->propogate
 
     await eventsBeforeDynamicRegistrations
-    ->runLoaders(~registeredEvents, ~inMemoryStore, ~logger, ~config)
+    ->runLoaders(~registeredEvents, ~loadLayer, ~logger)
     ->propogateAsync
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let latestProcessedBlocks =
       await eventsBeforeDynamicRegistrations
-      ->runHandlers(~registeredEvents, ~inMemoryStore, ~latestProcessedBlocks, ~logger, ~config)
+      ->runHandlers(
+        ~registeredEvents,
+        ~inMemoryStore,
+        ~latestProcessedBlocks,
+        ~logger,
+        ~loadLayer,
+        ~config,
+      )
       ->propogateAsync
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

@@ -111,6 +111,9 @@ let allTables: array<table> = [
 ]
 let schema = Schema.make(allTables)
 
+@get
+external getEntityId: internalEntity => string = "id"
+
 exception UnexpectedIdNotDefinedOnEntity
 let getEntityIdUnsafe = (entity: 'entity): id =>
   switch Utils.magic(entity)["id"] {

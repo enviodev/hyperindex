@@ -53,12 +53,12 @@ let createPromiseWithHandles = () => {
 
   let resolve = (val: 'a) => {
     let res = resolveRef.contents->Belt.Option.getUnsafe
-    res(. val)
+    res(val)
   }
 
   let reject = (exn: exn) => {
     let rej = rejectRef.contents->Belt.Option.getUnsafe
-    rej(. exn)
+    rej(exn)
   }
 
   {
@@ -94,9 +94,17 @@ let optionMapNone = (opt: option<'a>, val: 'b): option<'b> => {
 }
 
 module Option = {
-  let flatten = opt => switch opt {
-  | None => None
-  | Some(opt) => opt
+  let flatten = opt =>
+    switch opt {
+    | None => None
+    | Some(opt) => opt
+    }
+
+  let getExn = (opt, message) => {
+    switch opt {
+    | None => Js.Exn.raiseError(message)
+    | Some(v) => v
+    }
   }
 }
 
@@ -104,6 +112,21 @@ module Tuple = {
   /**Access a tuple value by its index*/
   @warning("-27")
   let get = (tuple: 'a, index: int): option<'b> => %raw(`tuple[index]`)
+}
+
+module Dict = {
+  @get_index
+  /**
+    It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
+   */
+  external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
+}
+
+module String = {
+  let uncapitalize = str => {
+    str->Js.String2.slice(~from=0, ~to_=1)->Js.String.toLowerCase ++
+      str->Js.String2.sliceToEnd(~from=1)
+  }
 }
 
 /**

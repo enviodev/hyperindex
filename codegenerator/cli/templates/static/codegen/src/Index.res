@@ -158,7 +158,8 @@ let main = async () => {
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
     let chainManager = await ChainManager.makeFromDbState(~config)
-    let globalState = GlobalState.make(~config, ~chainManager)
+    let loadLayer = LoadLayer.make(~loadEntitiesByIds=(ids, ~entityMod) => DbFunctionsEntities.batchRead(~entityMod)(DbFunctions.sql, ids))
+    let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)
