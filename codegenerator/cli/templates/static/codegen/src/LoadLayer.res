@@ -82,16 +82,15 @@ module LoadActionMap = {
   }
 }
 
-type t = {
-  {{#each entities as | entity |}}
-  {{entity.name.uncapitalized}}: ref<LoadActionMap.t<Entities.{{entity.name.capitalized}}.t>>,
-  {{/each}}
-}
+type t = dict<ref<LoadActionMap.t<Entities.internalEntity>>>
 
-let make = () => {
-  {{#each entities as | entity |}}
-  {{entity.name.uncapitalized}}: ref(LoadActionMap.empty()),
-  {{/each}}
+let make = (~config: Config.t) => {
+  let maps = Js.Dict.empty()
+  config.entities->Js.Array2.forEach(entityMod => {
+    let module(Entity) = entityMod
+    maps->Js.Dict.set(Entity.key, ref(LoadActionMap.empty()))
+  })
+  maps
 }
 
 type hasLoadActions = | @as(true) SomeLoadActions | @as(false) NoLoadActions
@@ -184,23 +183,57 @@ let executeLoadActionMap = async (
   }
 }
 
-let executeLoadLayer = async (loadLayer, ~inMemoryStore: InMemoryStore.t) => {
+let makeLoader = (
+  type entity,
+  loadLayer,
+  ~entityMod: module(Entities.Entity with type t = entity),
+) => {
+  let module(Entity) = entityMod
+  let loadLayerRef = loadLayer->Js.Dict.unsafeGet(Entity.key)
+  (entityId) => {
+    Promise.make((resolve, _reject) => {
+      loadLayerRef.contents->LoadActionMap.addSingle(~entityId, ~resolve)
+    })->(Utils.magic: promise<option<Entities.internalEntity>> => promise<option<entity>>)
+  }
+}
+
+let makeWhereEqLoader = (type entity, loadLayer, ~entityMod: module(Entities.Entity with type t = entity), ~fieldName, ~fieldValueSchema, ~logger) => {
+  let module(Entity) = entityMod
+  let loadLayerRef = loadLayer->Js.Dict.unsafeGet(Entity.key)
+  fieldValue => {
+    Promise.make((resolve, _reject) => {
+      loadLayerRef.contents->LoadActionMap.addLookUpByIndex(
+        ~index=Single({
+          fieldName,
+          fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
+          operator: Eq,
+        }),
+        ~fieldValueSchema,
+        ~logger,
+        ~fieldName,
+        ~fieldValue,
+        ~resolve,
+      )
+    })->(Utils.magic: promise<array<Entities.internalEntity>> => promise<array<entity>>)
+  }
+}
+
+let executeLoadLayer = async (loadLayer, ~inMemoryStore: InMemoryStore.t, ~config: Config.t) => {
   let hasLoadActions = ref(true)
 
   while hasLoadActions.contents {
-    let hasLoadActionsAll = await [
-      //each of the entities in the load layer
-      {{#each entities as | entity |}}
-      loadLayer.{{entity.name.uncapitalized}}->executeLoadActionMap(
-        ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
-        ~batchLoadIds=DbFunctionsEntities.batchRead(~entityMod=module(Entities.{{entity.name.capitalized}}))(DbFunctions.sql, _),
+    let hasLoadActionsAll = await config.entities->Array.map(entityMod => {
+      let module(Entity) = entityMod
+      let loadLayerRef = loadLayer->Js.Dict.unsafeGet(Entity.key)
+      loadLayerRef->executeLoadActionMap(
+        ~inMemTable=inMemoryStore->InMemoryStore.getEntityTable(~entityMod),
+        ~batchLoadIds=DbFunctionsEntities.batchRead(~entityMod)(DbFunctions.sql, _),
         ~whereFnComposer=DbFunctionsEntities.makeWhereEq(
           DbFunctions.sql,
-          ~entityMod=module(Entities.{{entity.name.capitalized}}),
+          ~entityMod,
         ),
-      ),
-      {{/each}}
-    ]->Promise.all
+      )
+    })->Promise.all
 
     hasLoadActions :=
       hasLoadActionsAll->Array.reduce(false, (accum, entityHasLoadActions) => {

@@ -79,29 +79,8 @@ let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, 
   )
 }
 
-let makeLoader = (loadLayerRef) => (entityId) => {
-  Promise.make((resolve, _reject) => {
-    loadLayerRef.contents->LoadLayer.LoadActionMap.addSingle(~entityId, ~resolve)
-  })
-}
-
-let makeWhereEqLoader = (loadLayerRef, ~fieldName, ~fieldValueSchema, ~logger) => {
-  Entities.eq: fieldValue => {
-    Promise.make((resolve, _reject) => {
-      loadLayerRef.contents->LoadLayer.LoadActionMap.addLookUpByIndex(
-        ~index=Single({
-          fieldName,
-          fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
-          operator: Eq,
-        }),
-        ~fieldValueSchema,
-        ~logger,
-        ~fieldName,
-        ~fieldValue,
-        ~resolve,
-      )
-    })
-  },
+let makeWhereLoader = (loadLayer, ~entityMod, ~fieldName, ~fieldValueSchema, ~logger) => {
+  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(~entityMod, ~fieldName, ~fieldValueSchema, ~logger)
 }
 
 let makeEntityHandlerContext = (
@@ -152,11 +131,11 @@ let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loa
     log: logger->getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
-      get: makeLoader(loadLayer.{{entity.name.uncapitalized}}),
+      get: loadLayer->LoadLayer.makeLoader(~entityMod=module(Entities.{{entity.name.capitalized}})),
       getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
-        {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: makeWhereEqLoader(
-          loadLayer.{{entity.name.uncapitalized}},
+        {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: loadLayer->makeWhereLoader(
+          ~entityMod=module(Entities.{{entity.name.capitalized}}),
           ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
           ~fieldValueSchema={{param.res_schema_code}},
           ~logger,

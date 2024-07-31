@@ -30,7 +30,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     )
 
     let inMemoryStore = InMemoryStore.make()
-    let loadLayer = LoadLayer.make()
+    let loadLayer = LoadLayer.make(~config=Config.getGenerated())
 
     let contextEnv = ContextEnv.make(
       ~eventMod=module(Types.Gravatar.EmptyEvent)->Types.eventModToInternal,
@@ -44,7 +44,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let _ = loaderContext.entityWithFields.get(testEntity1.id)
     let _ = loaderContext.entityWithFields.get(testEntity2.id)
 
-    await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore)
+    await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore, ~config=Config.getGenerated())
 
     let handlerContext =
       contextEnv->ContextEnv.getHandlerContext(

@@ -85,6 +85,11 @@ let registerContractHandlers = (
     ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
     ~chains,
     ~enableRawEvents={{enable_raw_events}},
+    ~entities=[
+    {{#each entities as |entity|}}
+      module(Entities.{{entity.name.capitalized}}),
+    {{/each}}
+    ],
   )
   Config.setGenerated(config)
 )
