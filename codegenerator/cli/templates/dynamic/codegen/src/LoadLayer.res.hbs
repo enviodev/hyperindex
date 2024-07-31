@@ -167,10 +167,7 @@ let executeLoadActionMap = async (
     ->LoadActionMap.entriesSingleEntities
     ->Array.forEach(((entityId, loadActions)) => {
       loadActions->Array.forEach(({resolve}) => {
-        switch inMemTable->InMemoryTable.Entity.get(entityId) {
-        | Some(maybeEntity) => resolve(maybeEntity)
-        | None => resolve(None) // Shouldn't happen
-        }
+        resolve(inMemTable->InMemoryTable.Entity.get(entityId)->Utils.Option.flatten)
       })
     })
 
