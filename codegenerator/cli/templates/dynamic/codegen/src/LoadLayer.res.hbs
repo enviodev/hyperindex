@@ -168,8 +168,8 @@ let executeLoadActionMap = async (
     ->Array.forEach(((entityId, loadActions)) => {
       loadActions->Array.forEach(({resolve}) => {
         switch inMemTable->InMemoryTable.Entity.get(entityId) {
-        | Some(entity) => resolve(Some(entity))
-        | None => resolve(None)
+        | Some(maybeEntity) => resolve(maybeEntity)
+        | None => resolve(None) // Shouldn't happen
         }
       })
     })

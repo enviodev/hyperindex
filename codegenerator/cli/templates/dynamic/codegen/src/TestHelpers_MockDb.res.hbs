@@ -123,7 +123,7 @@ let makeStoreOperatorEntity = (
 ): storeOperations<Types.id, 'entity> => {
   let {get, values, set} = module(InMemoryTable.Entity)
 
-  let get = get(inMemoryStore->getStore, _)
+  let get = id => get(inMemoryStore->getStore, id)->Utils.Option.flatten
 
   let getAll = () =>
     inMemoryStore
@@ -174,7 +174,7 @@ let makeStoreOperatorMeta = (
 ): storeOperations<'key, 'value> => {
   let {get, values, set} = module(InMemoryTable)
 
-  let get = get(inMemoryStore->getStore, _)
+  let get = id => get(inMemoryStore->getStore, id)
 
   let getAll = () => inMemoryStore->getStore->values->Array.map(row => row)
 

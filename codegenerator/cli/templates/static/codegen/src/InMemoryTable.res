@@ -110,11 +110,11 @@ module Entity = {
     })
 
   let initValue = (
-    // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
-    ~allowOverWriteEntity=false,
+    inMemTable: t<'entity>,
     ~key: Types.id,
     ~entity: option<'entity>,
-    inMemTable: t<'entity>,
+    // NOTE: This value is only set to true in the internals of the test framework to create the mockDb.
+    ~allowOverWriteEntity=false,
   ) => {
     let shouldWriteEntity =
       allowOverWriteEntity ||
@@ -193,10 +193,14 @@ module Entity = {
 
   let getRow = get
 
+  // It returns option<option<'entity>> where the first option means
+  // that the entity is not set to the in memory store,
+  // and the second option means that the entity doesn't esist/deleted.
+  // It's needed to prevent an additional round trips to the database for deleted entities.
   let get = (inMemTable: t<'entity>, key: Types.id) =>
     inMemTable.table
     ->get(key)
-    ->Option.flatMap(rowToEntity)
+    ->Option.map(rowToEntity)
 
   let getOnIndex = (inMemTable: t<'entity>, ~index: TableIndices.Index.t) => {
     inMemTable.fieldNameIndices
@@ -205,7 +209,7 @@ module Entity = {
       indicesSerializedToValue
       ->getRow(index)
       ->Option.map(((_index, relatedEntityIds)) => {
-        let res = relatedEntityIds->arrayFromSet->Array.keepMap(get(inMemTable, ...))
+        let res = relatedEntityIds->arrayFromSet->Array.keepMap(entityId => inMemTable->get(entityId)->Utils.Option.flatten)
         res
       })
     })

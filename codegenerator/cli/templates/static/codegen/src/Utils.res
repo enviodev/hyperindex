@@ -93,6 +93,13 @@ let optionMapNone = (opt: option<'a>, val: 'b): option<'b> => {
   }
 }
 
+module Option = {
+  let flatten = opt => switch opt {
+  | None => None
+  | Some(opt) => opt
+  }
+}
+
 module Tuple = {
   /**Access a tuple value by its index*/
   @warning("-27")

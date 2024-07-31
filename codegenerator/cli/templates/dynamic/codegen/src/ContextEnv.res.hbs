@@ -126,7 +126,7 @@ let makeEntityHandlerContext = (
     },
     get: async entityId => {
       switch inMemTable->InMemoryTable.Entity.get(entityId) {
-      | Some(entity) => Some(entity)
+      | Some(maybeEntity) => maybeEntity
       | None =>
         let entities = await asyncGetter(entityId)
 
