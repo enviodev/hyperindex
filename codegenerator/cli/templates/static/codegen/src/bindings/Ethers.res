@@ -11,13 +11,11 @@ module Misc = {
   }
 }
 
-module BigInt = BigInt
-
 type abi
 
-let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Obj.magic
+let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Utils.magic
 
-let makeAbi = (abi: Js.Json.t): abi => abi->Obj.magic
+let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
 
 @genType.import(("./OpaqueTypes.ts", "EthersAddress"))
 type ethAddress
@@ -37,7 +35,7 @@ let ethAddressToStringLower = (address: ethAddress): string =>
   address->ethAddressToString->Js.String2.toLowerCase
 
 let ethAddressSchema =
-  S.string->S.setName("ethAddress")->(Obj.magic: S.t<string> => S.t<ethAddress>)
+  S.string->S.setName("ethAddress")->(Utils.magic: S.t<string> => S.t<ethAddress>)
 
 type txHash = string
 
@@ -84,9 +82,9 @@ module BlockTag = {
 
   type blockTagVariant = Latest | Earliest | Pending | HexString(string) | BlockNumber(int)
 
-  let blockTagFromSemantic = (semanticTag: semanticTag): t => semanticTag->Obj.magic
-  let blockTagFromBlockNumber = (blockNumber: blockNumber): t => blockNumber->Obj.magic
-  let blockTagFromHexString = (hexString: hexString): t => hexString->Obj.magic
+  let blockTagFromSemantic = (semanticTag: semanticTag): t => semanticTag->Utils.magic
+  let blockTagFromBlockNumber = (blockNumber: blockNumber): t => blockNumber->Utils.magic
+  let blockTagFromHexString = (hexString: hexString): t => hexString->Utils.magic
 
   let blockTagFromVariant = variant =>
     switch variant {
@@ -117,7 +115,7 @@ module Filter = {
     toBlock: BlockTag.t,
   }
 
-  let filterFromRecord = (filterRecord: filterRecord): t => filterRecord->Obj.magic
+  let filterFromRecord = (filterRecord: filterRecord): t => filterRecord->Utils.magic
 }
 
 module CombinedFilter = {
@@ -153,7 +151,7 @@ module CombinedFilter = {
   }
 
   let combinedFilterToFilter = (combinedFilter: combinedFilterRecord): Filter.t =>
-    combinedFilter->Obj.magic
+    combinedFilter->Utils.magic
 }
 
 type log = {
@@ -174,7 +172,7 @@ type minimumParseableLogData = {topics: array<EventFilter.topic>, data: string}
 
 //Can safely convert from log to minimumParseableLogData since it contains
 //both data points required
-let logToMinimumParseableLogData: log => minimumParseableLogData = Obj.magic
+let logToMinimumParseableLogData: log => minimumParseableLogData = Utils.magic
 
 type logDescription<'a> = {
   args: 'a,
@@ -203,17 +201,66 @@ module Network = {
 module JsonRpcProvider = {
   type t
 
-  type rpcOptions = {staticNetwork: Network.t}
+  type rpcOptions = {
+    staticNetwork?: Network.t,
+    // Options for FallbackProvider
+    /**
+     *  The amount of time to wait before kicking off the next provider.
+     *
+     *  Any providers that have not responded can still respond and be
+     *  counted, but this ensures new providers start.
+     *  Default: 400ms
+     */
+    stallTimeout?: int,
+    /**
+     *  The priority. Lower priority providers are dispatched first.
+     *  Default: 1
+     */
+    priority?: int,
+    /**
+     *  The amount of weight a provider is given against the quorum.
+     *  Default: 1
+     */
+    weight?: int,
+  }
+
+  type fallbackProviderOptions = {
+    // How many providers must agree on a value before reporting
+    // back the response
+    // Note: Default the half of the providers weight, so we need to set it to accept result from the first rpc
+    quorum?: int,
+  }
 
   @module("ethers") @scope("ethers") @new
-  external makeWithOptions: (
-    ~rpcUrl: string,
-    ~chainId: option<Network.t>,
-    ~options: rpcOptions,
-  ) => t = "JsonRpcProvider"
-  let makeStatic: (~rpcUrl: string, ~chainId: int) => t = (~rpcUrl, ~chainId) => {
+  external makeWithOptions: (~rpcUrl: string, ~network: Network.t, ~options: rpcOptions) => t =
+    "JsonRpcProvider"
+
+  @module("ethers") @scope("ethers") @new
+  external makeFallbackProvider: (
+    ~providers: array<t>,
+    ~network: Network.t,
+    ~options: fallbackProviderOptions,
+  ) => t = "FallbackProvider"
+
+  let makeStatic = (~rpcUrl: string, ~network: Network.t, ~priority=?, ~stallTimeout=?): t => {
+    makeWithOptions(~rpcUrl, ~network, ~options={staticNetwork: network, ?priority, ?stallTimeout})
+  }
+
+  let make = (~rpcUrls: array<string>, ~chainId: int, ~fallbackStallTimeout): t => {
     let network = Network.fromChainId(~chainId)
-    makeWithOptions(~rpcUrl, ~chainId=Some(network), ~options={staticNetwork: network})
+    switch rpcUrls {
+    | [rpcUrl] => makeStatic(~rpcUrl, ~network)
+    | rpcUrls =>
+      makeFallbackProvider(
+        ~providers=rpcUrls->Js.Array2.mapi((rpcUrl, index) =>
+          makeStatic(~rpcUrl, ~network, ~priority=index, ~stallTimeout=fallbackStallTimeout)
+        ),
+        ~network,
+        ~options={
+          quorum: 1,
+        },
+      )
+    }
   }
 
   @send
@@ -232,11 +279,11 @@ module JsonRpcProvider = {
   external getBlockNumber: t => promise<int> = "getBlockNumber"
 
   type block = {
-    _difficulty: BigInt.t,
+    _difficulty: bigint,
     difficulty: int,
     extraData: ethAddress,
-    gasLimit: BigInt.t,
-    gasUsed: BigInt.t,
+    gasLimit: bigint,
+    gasUsed: bigint,
     hash: string,
     miner: ethAddress,
     nonce: int,

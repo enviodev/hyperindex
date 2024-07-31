@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../npm/envio/fuel.schema.json
 name: Fuel indexer
 ecosystem: fuel
 networks:

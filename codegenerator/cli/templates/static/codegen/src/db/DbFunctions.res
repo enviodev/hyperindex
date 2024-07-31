@@ -3,9 +3,7 @@ let sql = Postgres.makeSql(~config)
 
 type chainId = int
 type eventId = string
-type blockNumberRow = {
-  @as("block_number") blockNumber: int
-}
+type blockNumberRow = {@as("block_number") blockNumber: int}
 
 module ChainMetadata = {
   type chainMetadata = {
@@ -16,10 +14,11 @@ module ChainMetadata = {
     @as("first_event_block_number") firstEventBlockNumber: option<int>,
     @as("latest_processed_block") latestProcessedBlock: option<int>,
     @as("num_events_processed") numEventsProcessed: option<int>,
-    @as("is_hyper_sync") isHyperSync: bool,
+    @as("is_hyper_sync") poweredByHyperSync: bool,
     @as("num_batches_fetched") numBatchesFetched: int,
     @as("latest_fetched_block_number") latestFetchedBlockNumber: int,
-    @as("timestamp_caught_up_to_head_or_endblock") timestampCaughtUpToHeadOrEndblock: Js.Nullable.t<Js.Date.t>
+    @as("timestamp_caught_up_to_head_or_endblock")
+    timestampCaughtUpToHeadOrEndblock: Js.Nullable.t<Js.Date.t>,
   }
 
   @module("./DbFunctionsImplementation.js")
@@ -83,14 +82,9 @@ module EndOfBlockRangeScannedData = {
 }
 
 module EventSyncState = {
-  @genType 
-  type eventSyncState = {
-    @as("chain_id") chainId: int,
-    @as("block_number") blockNumber: int,
-    @as("log_index") logIndex: int,
-    @as("transaction_index") transactionIndex: int,
-    @as("block_timestamp") blockTimestamp: int,
-  }
+  @genType
+  type eventSyncState = TablesStatic.EventSyncState.t
+
   @module("./DbFunctionsImplementation.js")
   external readLatestSyncedEventOnChainIdArr: (
     Postgres.sql,
@@ -102,20 +96,19 @@ module EventSyncState = {
     arr->Belt.Array.get(0)
   }
 
-  let getLatestProcessedBlockNumber = async (~chainId) => {
-    let latestEventOpt = await sql->readLatestSyncedEventOnChainId(~chainId)
-    latestEventOpt->Belt.Option.map(event => event.blockNumber)
+  let getLatestProcessedEvent = (~chainId) => {
+    sql->readLatestSyncedEventOnChainId(~chainId)
   }
 
   @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<eventSyncState>) => promise<unit> =
+  external batchSet: (Postgres.sql, array<TablesStatic.EventSyncState.t>) => promise<unit> =
     "batchSetEventSyncState"
 }
 
 module RawEvents = {
   type rawEventRowId = (chainId, eventId)
   @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<Types.rawEventsEntity>) => promise<unit> =
+  external batchSet: (Postgres.sql, array<TablesStatic.RawEvents.t>) => promise<unit> =
     "batchSetRawEvents"
 
   @module("./DbFunctionsImplementation.js")
@@ -126,26 +119,26 @@ module RawEvents = {
   external readEntities: (
     Postgres.sql,
     array<rawEventRowId>,
-  ) => promise<array<Types.rawEventsEntity>> = "readRawEventsEntities"
+  ) => promise<array<TablesStatic.RawEvents.t>> = "readRawEventsEntities"
 
   @module("./DbFunctionsImplementation.js")
   external getRawEventsPageGtOrEqEventId: (
     Postgres.sql,
     ~chainId: chainId,
-    ~eventId: Ethers.BigInt.t,
+    ~eventId: bigint,
     ~limit: int,
     ~contractAddresses: array<Ethers.ethAddress>,
-  ) => promise<array<Types.rawEventsEntity>> = "getRawEventsPageGtOrEqEventId"
+  ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageGtOrEqEventId"
 
   @module("./DbFunctionsImplementation.js")
   external getRawEventsPageWithinEventIdRangeInclusive: (
     Postgres.sql,
     ~chainId: chainId,
-    ~fromEventIdInclusive: Ethers.BigInt.t,
-    ~toEventIdInclusive: Ethers.BigInt.t,
+    ~fromEventIdInclusive: bigint,
+    ~toEventIdInclusive: bigint,
     ~limit: int,
     ~contractAddresses: array<Ethers.ethAddress>,
-  ) => promise<array<Types.rawEventsEntity>> = "getRawEventsPageWithinEventIdRangeInclusive"
+  ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageWithinEventIdRangeInclusive"
 
   ///Returns an array with 1 block number (the highest processed on the given chainId)
   @module("./DbFunctionsImplementation.js")
@@ -171,8 +164,10 @@ module DynamicContractRegistry = {
   type contractAddress = Ethers.ethAddress
   type dynamicContractRegistryRowId = (chainId, contractAddress)
   @module("./DbFunctionsImplementation.js")
-  external batchSet: (Postgres.sql, array<Types.dynamicContractRegistryEntity>) => promise<unit> =
-    "batchSetDynamicContractRegistry"
+  external batchSet: (
+    Postgres.sql,
+    array<TablesStatic.DynamicContractRegistry.t>,
+  ) => promise<unit> = "batchSetDynamicContractRegistry"
 
   @module("./DbFunctionsImplementation.js")
   external batchDelete: (Postgres.sql, array<dynamicContractRegistryRowId>) => promise<unit> =
@@ -182,20 +177,11 @@ module DynamicContractRegistry = {
   external readEntities: (
     Postgres.sql,
     array<dynamicContractRegistryRowId>,
-  ) => promise<array<Types.dynamicContractRegistryEntity>> = "readDynamicContractRegistryEntities"
+  ) => promise<array<Js.Json.t>> = "readDynamicContractRegistryEntities"
 
-  type contractTypeAndAddress = {
-    @as("contract_address") contractAddress: Ethers.ethAddress,
-    @as("contract_type") contractType: string,
-    @as("event_id") eventId: Ethers.BigInt.t,
-  }
+  type contractTypeAndAddress = TablesStatic.DynamicContractRegistry.t
 
-  let contractTypeAndAddressSchema = S.object((. s) => {
-    contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
-    contractType: s.field("contract_type", S.string),
-    eventId: s.field("event_id", Ethers.BigInt.schema),
-  })
-
+  let contractTypeAndAddressSchema = TablesStatic.DynamicContractRegistry.schema
   let contractTypeAndAddressArraySchema = S.array(contractTypeAndAddressSchema)
 
   ///Returns an array with 1 block number (the highest processed on the given chainId)
@@ -234,7 +220,7 @@ type entityHistoryItem = {
   entity_id: string,
 }
 
-let entityHistoryItemSchema = S.object((. s) => {
+let entityHistoryItemSchema = S.object(s => {
   block_timestamp: s.field("block_timestamp", S.int),
   chain_id: s.field("chain_id", S.int),
   block_number: s.field("block_number", S.int),
@@ -243,7 +229,7 @@ let entityHistoryItemSchema = S.object((. s) => {
   previous_chain_id: s.field("previous_chain_id", S.null(S.int)),
   previous_block_number: s.field("previous_block_number", S.null(S.int)),
   previous_log_index: s.field("previous_log_index", S.null(S.int)),
-  params: s.field("params", S.null(S.json)),
+  params: s.field("params", S.null(S.json(~validate=false))),
   entity_type: s.field("entity_type", S.string),
   entity_id: s.field("entity_id", S.string),
 })
@@ -283,7 +269,7 @@ module EntityHistory = {
   ) => promise<unit> = "deleteAllEntityHistoryAfterEventIdentifier"
 
   type rollbackDiffResponseRaw = {
-    entity_type: Entities.entityName,
+    entity_type: Enums.EntityType.t,
     entity_id: string,
     chain_id: option<int>,
     block_timestamp: option<int>,
@@ -292,14 +278,14 @@ module EntityHistory = {
     val: option<Js.Json.t>,
   }
 
-  let rollbackDiffResponseRawSchema = S.object((. s) => {
-    entity_type: s.field("entity_type", Entities.entityNameSchema),
+  let rollbackDiffResponseRawSchema = S.object(s => {
+    entity_type: s.field("entity_type", Enums.EntityType.schema),
     entity_id: s.field("entity_id", S.string),
     chain_id: s.field("chain_id", S.null(S.int)),
     block_timestamp: s.field("block_timestamp", S.null(S.int)),
     block_number: s.field("block_number", S.null(S.int)),
     log_index: s.field("log_index", S.null(S.int)),
-    val: s.field("val", S.null(S.json)),
+    val: s.field("val", S.null(S.json(~validate=false))),
   })
 
   type previousEntity = {
@@ -308,14 +294,14 @@ module EntityHistory = {
   }
 
   type rollbackDiffResponse = {
-    entityType: Entities.entityName,
+    entityType: Enums.EntityType.t,
     entityId: string,
     previousEntity: option<previousEntity>,
   }
 
   let rollbackDiffResponse_decode = (json: Js.Json.t) => {
     json
-    ->S.parseWith(. rollbackDiffResponseRawSchema)
+    ->S.parseWith(rollbackDiffResponseRawSchema)
     ->Belt.Result.flatMap(raw => {
       switch raw {
       | {
@@ -326,9 +312,7 @@ module EntityHistory = {
           log_index: Some(logIndex),
           entity_type,
         } =>
-        entity_type
-        ->Entities.getEntityParamsDecoder(val)
-        ->Belt.Result.map(entity => {
+        Entities.getEntityParamsDecoder(entity_type)(val)->Belt.Result.map(entity => {
           let eventIdentifier: Types.eventIdentifier = {
             chainId,
             blockTimestamp,

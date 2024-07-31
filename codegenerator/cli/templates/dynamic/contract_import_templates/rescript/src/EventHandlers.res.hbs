@@ -4,30 +4,24 @@
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
 
-Handlers.{{contract.name.capitalized
-    }}Contract.{{event.name.capitalized
-    }}.handler(({event, context}) => {
-  let entity: Types.{{contract.name.uncapitalized
-    }}_{{event.name.capitalized
-    }}Entity = {
-      id: {{event.entity_id_from_event_code}},
+Handlers.{{contract.name.capitalized}}.{{event.name.capitalized}}.handler(async ({event, context}) => {
+  let entity: Types.{{contract.name.uncapitalized}}_{{event.name.capitalized}} = {
+    id: {{event.entity_id_from_event_code}},
     {{#each event.params as |param|}}
-      {{param.entity_key.uncapitalized
-      }}: event.params.{{param.event_key.uncapitalized}}
-      {{#if param.tuple_param_accessor_indexes}}
-        {{#each param.tuple_param_accessor_indexes as |index|}}
-          ->Utils.Tuple.get({{index}})->Belt.Option.getUnsafe
-        {{/each}}
-      {{/if}}
-      {{#if param.is_eth_address}}
-        ->Ethers.ethAddressToString
-      {{/if}}
-      ,
+    {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}
+    {{#if param.tuple_param_accessor_indexes}}
+      {{#each param.tuple_param_accessor_indexes as |index|}}
+        ->Utils.Tuple.get({{index}})->Belt.Option.getUnsafe
+      {{/each}}
+    {{/if}}
+    {{#if param.is_eth_address}}
+      ->Ethers.ethAddressToString
+    {{/if~}}
+    ,
     {{/each}}
   }
 
-  context.{{contract.name.uncapitalized
-    }}_{{event.name.capitalized}}.set(entity)
+  context.{{contract.name.uncapitalized}}_{{event.name.capitalized}}.set(entity)
 })
   {{/each}}
 {{/each}}

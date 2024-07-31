@@ -20,7 +20,7 @@
     "docker-down": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local docker down",
     "db-setup": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- local db-migrate setup",
     "envio": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml --",
-    "start": "node ./generated/src/Index.bs.js"
+    "start": "ts-node ./generated/src/Index.bs.js"
   },
   "keywords": [
     "ReScript"
@@ -46,8 +46,7 @@
     "nyc": "^15.1.0",
     "rescript": "11.1.0",
     "rescript-express": "0.4.1",
-    "rescript-mocha": "^0.9.0",
-    "rescript-schema": "6.4.0",
+    "rescript-schema": "8.0.0",
     "sinon": "^15.0.4",
     "ts-node": "^10.9.1"
   },

@@ -12,10 +12,10 @@ Handlers.PloffenContract.CreatePloffen.handler((~event, ~context) => {
   let ploffenObject: ploffengameEntity = {
     id: "MASTER_GAME",
     gameToken: event.params.tokenGameAddress->Ethers.ethAddressToString,
-    seedAmount: Ethers.BigInt.fromInt(0),
+    seedAmount: BigInt.fromInt(0),
     gameStartTime: 0,
     status: "Created",
-    totalPot: Ethers.BigInt.fromInt(0),
+    totalPot: BigInt.fromInt(0),
     users: None,
     winner: None,
     possibleWinner: None,
@@ -72,13 +72,13 @@ Handlers.PloffenContract.registerPlayPloffenHandler((~event, ~context) => {
         let userObject: userEntity = {
           ...user,
           numberOfTimesPlayed: user.numberOfTimesPlayed + 1,
-          totalContributed: user.totalContributed->Ethers.BigInt.add(event.params.amount),
+          totalContributed: user.totalContributed->BigInt.add(event.params.amount),
         }
         context.user.set(userObject)
 
         let ploffenObject: ploffengameEntity = {
           ...ploffen,
-          totalPot: ploffen.totalPot->Ethers.BigInt.add(event.params.amount),
+          totalPot: ploffen.totalPot->BigInt.add(event.params.amount),
           possibleGameWinTime: event.blockTimestamp + 3600,
           possibleWinner: Some(user.id),
         }
@@ -96,7 +96,7 @@ Handlers.PloffenContract.registerPlayPloffenHandler((~event, ~context) => {
 
         let ploffenObject: ploffengameEntity = {
           ...ploffen,
-          totalPot: ploffen.totalPot->Ethers.BigInt.add(event.params.amount),
+          totalPot: ploffen.totalPot->BigInt.add(event.params.amount),
           possibleGameWinTime: event.blockTimestamp + 3600,
           possibleWinner: Some(userObject.id),
           users: Some(Array.append(ploffen.users->Belt.Option.getWithDefault([]), [userObject.id])),

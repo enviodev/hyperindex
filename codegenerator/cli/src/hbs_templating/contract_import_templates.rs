@@ -189,13 +189,14 @@ mod nested_params {
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
     cli_args::init_config::Language,
     config_parsing::{
         entity_parsing::{Entity, Field, FieldType, Schema},
         system_config::{self, SystemConfig},
     },
+    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     template_dirs::TemplateDirs,
+    utils::text::{Capitalize, CapitalizedOptions},
 };
 use anyhow::{Context, Result};
 use ethers::abi::ParamType;
@@ -303,13 +304,20 @@ impl Event {
         );
         match is_fuel {
             true => {
-              let data_code =  match language {
-                Language::ReScript => "%raw(`{}`)",
-                Language::TypeScript => "{}",
-                Language::JavaScript => "{}",
-              };
-              format!("{event_module}.mock({{data: {data_code} /* It mocks event fields with default values, so you only need to provide data */}})")}, // FIXME: Generate default data
-            false => format!("{event_module}.createMockEvent({{/* It mocks event fields with default values. You can overwrite them if you need */}})"),
+                let data_code = match language {
+                    Language::ReScript => "%raw(`{}`)",
+                    Language::TypeScript => "{}",
+                    Language::JavaScript => "{}",
+                };
+                format!(
+                    "{event_module}.mock({{data: {data_code} /* It mocks event fields with \
+                     default values, so you only need to provide data */}})"
+                )
+            } // FIXME: Generate default data
+            false => format!(
+                "{event_module}.createMockEvent({{/* It mocks event fields with default values. \
+                 You can overwrite them if you need */}})"
+            ),
         }
     }
 
@@ -361,7 +369,8 @@ impl Into<Entity> for Event {
 ///schema and handlers.
 #[derive(Serialize, Clone)]
 pub struct Param {
-    param_name: CapitalizedOptions,
+    res_name: String,
+    js_name: String,
     ///Event param name + index if its a tuple ie. myTupleParam_0_1 or just myRegularParam
     entity_key: CapitalizedOptions,
     ///Just the event param name accessible on the event type
@@ -374,17 +383,29 @@ pub struct Param {
 }
 
 impl Param {
+    fn make_res_name(js_name: &String) -> String {
+        let uncapitalized = js_name.uncapitalize();
+        if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
+            format!("{}_", uncapitalized)
+        } else {
+            uncapitalized
+        }
+    }
+
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
+        let js_name = flattened_event_param.event_param.name.to_string();
+        let res_name = Self::make_res_name(&js_name);
         Ok(Param {
-            param_name: flattened_event_param
-                .event_param
-                .name
-                .to_capitalized_options(),
+            res_name,
+            js_name,
             entity_key: flattened_event_param.get_entity_key(),
             event_key: flattened_event_param.get_event_param_key(),
             tuple_param_accessor_indexes: flattened_event_param.accessor_indexes,
             graphql_type: FieldType::from_ethabi_type(&flattened_event_param.event_param.kind)
-                .context("converting eth event param to gql scalar")?,
+                .context(format!(
+                    "Converting eth event param '{}' to gql scalar",
+                    flattened_event_param.event_param.name
+                ))?,
             is_eth_address: flattened_event_param.event_param.kind == ParamType::Address,
         })
     }

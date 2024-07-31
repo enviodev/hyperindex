@@ -14,7 +14,7 @@ type rec t = {
 }
 
 // Constructors
-@new @module external fromBigInt: Ethers.BigInt.t => t = "bignumber.js"
+@new @module external fromBigInt: bigint => t = "bignumber.js"
 @new @module external fromFloat: float => t = "bignumber.js"
 @new @module external fromInt: int => t = "bignumber.js"
 @new @module external fromStringUnsafe: string => t = "bignumber.js"
@@ -47,7 +47,7 @@ let one = fromInt(1)
 let schema =
   S.string
   ->S.setName("BigDecimal")
-  ->S.transform((. s) => {
+  ->S.transform(s => {
     parser: (. string) =>
       switch string->fromString {
       | Some(bigDecimal) => bigDecimal

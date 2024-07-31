@@ -2,22 +2,16 @@
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
 
-import {
-  SwapContractContract_Swap_loader,
-  SwapContractContract_Swap_handler,
-} from "../generated/src/Handlers.gen";
+import { SwapContract } from "generated";
 
-SwapContractContract_Swap_loader(({ event, context }) => { });
-
-SwapContractContract_Swap_handler(({ event, context }) => {
-
+SwapContract.Swap.handler(async ({ event, context }) => {
   context.EventTracker.set({
     id: "eventTracker",
-    count: 1
-  })
+    count: 1,
+  });
 
   context.Swap.set({
-    id: event.transactionHash + event.logIndex,
+    id: event.transaction.hash + event.logIndex,
     recipient: event.params.recipient,
     sender: event.params.sender,
     amount0: event.params.amount0,
@@ -25,8 +19,8 @@ SwapContractContract_Swap_handler(({ event, context }) => {
     sqrtPriceX96: event.params.sqrtPriceX96,
     liquidity: event.params.liquidity,
     tick: event.params.tick,
-    blockNumber: event.blockNumber,
-    blockTimestamp: event.blockTimestamp,
-    transactionHash: event.transactionHash,
+    blockNumber: event.block.number,
+    blockTimestamp: event.block.timestamp,
+    transactionHash: event.transaction.hash,
   });
 });

@@ -1,7 +1,7 @@
 use crate::constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH};
 
 use clap::{Args, Parser, Subcommand};
-use strum_macros::{Display, EnumIter, EnumString};
+use strum::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
 use super::init_config::{self};
@@ -55,7 +55,18 @@ pub enum CommandType {
     ///Print help into a markdown file
     ///Command to run: cargo run --bin envio -- print-all-help > CommandLineHelp.md
     #[clap(hide = true)]
-    PrintAllHelp,
+    PrintCliHelpMd,
+    ///Print help into a markdown file
+    ///Command to run: cargo run --bin envio -- print-all-help > CommandLineHelp.md
+    #[clap(hide = true)]
+    #[command(subcommand)]
+    PrintConfigJsonSchema(JsonSchema),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum JsonSchema {
+    Evm,
+    Fuel,
 }
 
 #[derive(Debug, Args)]
@@ -307,5 +318,29 @@ pub mod fuel {
         #[arg(short, long)]
         #[clap(value_enum)]
         pub template: Option<init_config::fuel::Template>,
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::path::PathBuf;
+
+    #[test]
+    fn check_cli_help_md_is_up_to_date() {
+        let md_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("CommandLineHelp.md");
+        let md_current =
+            std::fs::read_to_string(md_path).expect("Failed reading CommandLineHelp.md");
+
+        let md_output = clap_markdown::help_markdown::<CommandLineArgs>();
+
+        //current is trimmed because then print command
+        //adds a line at the end of the md file
+        assert_eq!(
+            md_current.trim(),
+            md_output.trim(),
+            "Please run 'make update-generated-docs'"
+        );
     }
 }

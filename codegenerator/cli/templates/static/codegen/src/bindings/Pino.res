@@ -20,12 +20,12 @@ type pinoMessageBlob
 type pinoMessageBlobWithError
 @genType
 type t = {
-  trace: (. pinoMessageBlob) => unit,
-  debug: (. pinoMessageBlob) => unit,
-  info: (. pinoMessageBlob) => unit,
-  warn: (. pinoMessageBlob) => unit,
-  error: (. pinoMessageBlob) => unit,
-  fatal: (. pinoMessageBlob) => unit,
+  trace: pinoMessageBlob => unit,
+  debug: pinoMessageBlob => unit,
+  info: pinoMessageBlob => unit,
+  warn: pinoMessageBlob => unit,
+  error: pinoMessageBlob => unit,
+  fatal: pinoMessageBlob => unit,
 }
 @send external errorExn: (t, pinoMessageBlobWithError) => unit = "error"
 
@@ -39,12 +39,12 @@ external levels: t => 'a = "levels"
 @set external setLevel: (t, logLevel) => unit = "level"
 
 @ocaml.doc(`Identity function to help co-erce any type to a pino log message`)
-let createPinoMessage = (message): pinoMessageBlob => Obj.magic(message)
+let createPinoMessage = (message): pinoMessageBlob => Utils.magic(message)
 let createPinoMessageWithError = (message, err): pinoMessageBlobWithError => {
-//See https://github.com/pinojs/pino-std-serializers for standard pino serializers
-//for common objects. We have also defined the serializer in this format in the
-// serializers type below: `type serializers = {err: Js.Json.t => Js.Json.t}`
- Obj.magic({
+  //See https://github.com/pinojs/pino-std-serializers for standard pino serializers
+  //for common objects. We have also defined the serializer in this format in the
+  // serializers type below: `type serializers = {err: Js.Json.t => Js.Json.t}`
+  Utils.magic({
     "msg": message,
     "err": err,
   })
@@ -53,14 +53,14 @@ let createPinoMessageWithError = (message, err): pinoMessageBlobWithError => {
 module Transport = {
   type t
   type optionsObject
-  let makeTransportOptions: 'a => optionsObject = Obj.magic
+  let makeTransportOptions: 'a => optionsObject = Utils.magic
 
   // NOTE: this config is pretty polymorphic - so keeping this as all optional fields.
   type rec transportTarget = {
     target?: string,
     targets?: array<transportTarget>,
     options?: optionsObject,
-    levels?: Js.Dict.t<int>,
+    levels?: dict<int>,
     level?: logLevel,
   }
   @module("pino")
@@ -82,7 +82,7 @@ type serializers = {err: Js.Json.t => Js.Json.t}
 type options = {
   name?: string,
   level?: logLevel,
-  customLevels?: Js.Dict.t<int>,
+  customLevels?: dict<int>,
   useOnlyCustomLevels?: bool,
   depthLimit?: int,
   edgeLimit?: int,
@@ -104,7 +104,7 @@ type options = {
 @module external makeWithOptionsAndTransport: (options, Transport.t) => t = "pino"
 
 type childParams
-let createChildParams: 'a => childParams = Obj.magic
+let createChildParams: 'a => childParams = Utils.magic
 @send external child: (t, childParams) => t = "child"
 
 module ECS = {
@@ -133,7 +133,7 @@ module MultiStreamLogger = {
 
   type prettyFactoryOpts = {...options, customColors?: string}
   @module("pino-pretty")
-  external prettyFactory: prettyFactoryOpts => (. string) => string = "prettyFactory"
+  external prettyFactory: prettyFactoryOpts => string => string = "prettyFactory"
 
   let makeFormatter = logLevels => {
     prettyFactory({
@@ -144,7 +144,7 @@ module MultiStreamLogger = {
 
   let makeStreams = (~userLogLevel, ~formatter, ~logFile, ~defaultFileLogLevel) => {
     let stream = {
-      stream: {write: v => formatter(. v)->Js.log},
+      stream: {write: v => formatter(v)->Js.log},
       level: userLogLevel,
     }
     let maybeFileStream = logFile->Belt.Option.mapWithDefault([], dest => [
@@ -158,7 +158,7 @@ module MultiStreamLogger = {
 
   let make = (
     ~userLogLevel: logLevel,
-    ~customLevels: Js.Dict.t<int>,
+    ~customLevels: dict<int>,
     ~logFile: option<string>,
     ~options: option<options>,
     ~defaultFileLogLevel,

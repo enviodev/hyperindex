@@ -13,7 +13,7 @@ type blockNumberAndTimestamp = {
 
 module DynamicContractsMap = {
   //mapping of address to dynamicContractId
-  module IdCmp = Belt.Id.MakeComparable({
+  module IdCmp = Belt.Id.MakeComparableU({
     type t = dynamicContractId
     let toCmp = (dynamicContractId: dynamicContractId) => (
       dynamicContractId.blockNumber,
@@ -27,7 +27,7 @@ module DynamicContractsMap = {
   let empty: t = Belt.Map.make(~id=module(IdCmp))
 
   let add = (self, id, addressesArr: array<Ethers.ethAddress>) => {
-    self->Belt.Map.set(id, addressesArr->Obj.magic->Belt.Set.String.fromArray)
+    self->Belt.Map.set(id, addressesArr->Utils.magic->Belt.Set.String.fromArray)
   }
 
   let addAddress = (self: t, id, address: Ethers.ethAddress) => {
@@ -94,6 +94,7 @@ type rec t = {
   //Used to prune dynamic contract registrations in the event
   //of a rollback.
   dynamicContracts: DynamicContractsMap.t,
+  isFetchingAtHead: bool,
 }
 and register = RootRegister({endBlock: option<int>}) | DynamicContractRegister(dynamicContractId, t)
 
@@ -132,7 +133,8 @@ Merges two event queues on a single event fetcher
 
 Pass the shorter list into A for better performance
 */
-let mergeSortedEventList = mergeSortedList(~cmp=eventCmp)
+let mergeSortedEventList =
+  mergeSortedList(~cmp=eventCmp, ...)
 
 /**
 Merges a node into its next registered branch. Combines contract address mappings and queues
@@ -155,6 +157,7 @@ let mergeIntoNextRegistered = (self: t) => {
     )
 
     {
+      isFetchingAtHead: nextRegistered.isFetchingAtHead,
       registerType: nextRegistered.registerType,
       fetchedEventQueue,
       contractAddressMapping,
@@ -196,8 +199,9 @@ exception UnexpectedRegisterDoesNotExist(id)
 Updates a given register with new latest block values and new fetched
 events.
 */
-let updateRegister = (self: t, ~latestFetchedBlock, ~newFetchedEvents) => {
+let updateRegister = (self: t, ~latestFetchedBlock, ~newFetchedEvents, ~isFetchingAtHead) => {
   ...self,
+  isFetchingAtHead,
   latestFetchedBlock,
   fetchedEventQueue: List.concat(self.fetchedEventQueue, newFetchedEvents),
 }
@@ -205,7 +209,7 @@ let updateRegister = (self: t, ~latestFetchedBlock, ~newFetchedEvents) => {
 /**
 Links next register to a dynamic contract register
 */
-let addNextRegister = (~register: t, ~dynamicContractId, nextRegister: t) => {
+let addNextRegister = (nextRegister: t, ~register: t, ~dynamicContractId) => {
   ...register,
   registerType: DynamicContractRegister(dynamicContractId, nextRegister),
 }
@@ -214,23 +218,26 @@ let addNextRegister = (~register: t, ~dynamicContractId, nextRegister: t) => {
 Updates node at the given id with the values passed.
 Errors if the node can't be found.
 */
-let rec updateInternal = (~id, ~latestFetchedBlock, ~newFetchedEvents, register: t): result<
-  t,
-  exn,
-> => {
+let rec updateInternal = (
+  ~id,
+  ~latestFetchedBlock,
+  ~newFetchedEvents,
+  ~isFetchingAtHead,
+  register: t,
+): result<t, exn> => {
   switch (register.registerType, id) {
   | (RootRegister(_), Root) =>
     register
-    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock)
+    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
     ->Ok
   | (DynamicContractRegister(id, _nextRegistered), DynamicContract(targetId)) if id == targetId =>
     register
-    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock)
+    ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
     ->Ok
   | (DynamicContractRegister(dynamicContractId, nextRegistered), id) =>
     nextRegistered
-    ->updateInternal(~newFetchedEvents, ~id, ~latestFetchedBlock)
-    ->Result.map(addNextRegister(~register, ~dynamicContractId))
+    ->updateInternal(~newFetchedEvents, ~id, ~latestFetchedBlock, ~isFetchingAtHead)
+    ->Result.map(s => s->addNextRegister(~register, ~dynamicContractId))
   | (RootRegister(_), DynamicContract(_)) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 }
@@ -260,10 +267,16 @@ let rec pruneAndMergeNextRegistered = (self: t) => {
 Updates node at given id with given values and checks to see if it can be merged into its next register.
 Returns Error if the node with given id cannot be found (unexpected)
 */
-let update = (self: t, ~id, ~latestFetchedBlock, ~fetchedEvents): result<t, exn> =>
+let update = (self: t, ~id, ~latestFetchedBlock, ~fetchedEvents, ~currentBlockHeight): result<
+  t,
+  exn,
+> => {
+  let isFetchingAtHead =
+    currentBlockHeight <= latestFetchedBlock.blockNumber ? true : self.isFetchingAtHead
   self
-  ->updateInternal(~id, ~latestFetchedBlock, ~newFetchedEvents=fetchedEvents)
+  ->updateInternal(~id, ~latestFetchedBlock, ~newFetchedEvents=fetchedEvents, ~isFetchingAtHead)
   ->Result.map(result => pruneAndMergeNextRegistered(result)->Option.getWithDefault(result))
+}
 
 //A filter should return true if the event should be kept and isValid should return
 //false when the filter should be removed/cleaned up
@@ -280,6 +293,8 @@ let applyFilters = (eventBatchQueueItem, ~eventFilters) =>
 
 type nextQuery = {
   fetchStateRegisterId: id,
+  //used to id the partition of the fetchstate
+  partitionId: int,
   fromBlock: int,
   toBlock: int,
   contractAddressMapping: ContractAddressingMap.mapping,
@@ -337,6 +352,7 @@ let getNextQueryFromNode = (
   {registerType, latestFetchedBlock, contractAddressMapping}: t,
   ~toBlock,
   ~eventFilters,
+  ~partitionId,
 ) => {
   let (id, endBlock) = switch registerType {
   | RootRegister({endBlock}) => (Root, endBlock)
@@ -348,6 +364,7 @@ let getNextQueryFromNode = (
   }
   let toBlock = minOfOption(toBlock, endBlock)
   {
+    partitionId,
     fetchStateRegisterId: id,
     fromBlock,
     toBlock,
@@ -384,15 +401,19 @@ Or with a toBlock of the nextRegistered latestBlockNumber to catch up and merge 
 Errors if nextRegistered dynamic contract has a lower latestFetchedBlock than the current as this would be
 an invalid state.
 */
-let getNextQuery = (~eventFilters=?, ~currentBlockHeight, self: t) => {
+let getNextQuery = (~eventFilters=?, ~currentBlockHeight, ~partitionId, self: t) => {
   let maybeMerged = self->pruneAndMergeNextRegistered
   let self = maybeMerged->Option.getWithDefault(self)
 
   let nextQuery = switch self.registerType {
   | RootRegister({endBlock}) =>
-    self->getNextQueryFromNode(~toBlock={minOfOption(currentBlockHeight, endBlock)}, ~eventFilters)
+    self->getNextQueryFromNode(
+      ~toBlock={minOfOption(currentBlockHeight, endBlock)},
+      ~eventFilters,
+      ~partitionId,
+    )
   | DynamicContractRegister(_, {latestFetchedBlock}) =>
-    self->getNextQueryFromNode(~toBlock=latestFetchedBlock.blockNumber, ~eventFilters)
+    self->getNextQueryFromNode(~toBlock=latestFetchedBlock.blockNumber, ~eventFilters, ~partitionId)
   }
 
   switch nextQuery {
@@ -515,7 +536,7 @@ let rec popQItemAtRegisterId = (self: t, ~id) =>
   | DynamicContractRegister(dynamicContractId, nextRegister) =>
     nextRegister
     ->popQItemAtRegisterId(~id)
-    ->Result.map(getRegisterWithNextResponse(self, ~dynamicContractId))
+    ->Result.map(getRegisterWithNextResponse(self, ~dynamicContractId, ...))
   | RootRegister(_) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 
@@ -531,21 +552,61 @@ let getEarliestEvent = (self: t) => {
   self->popQItemAtRegisterId(~id=registerWithEarliestQItem)->Utils.unwrapResultExn
 }
 
-let makeInternal = (~registerType, ~contractAddressMapping, ~dynamicContracts, ~startBlock): t => {
-  registerType,
-  latestFetchedBlock: {
-    blockTimestamp: 0,
-    blockNumber: Pervasives.max(startBlock - 1, 0),
-  },
-  contractAddressMapping,
-  dynamicContracts,
-  fetchedEventQueue: list{},
+let makeInternal = (
+  ~registerType,
+  ~staticContracts,
+  ~dynamicContractRegistrations: array<DbFunctions.DynamicContractRegistry.contractTypeAndAddress>,
+  ~startBlock,
+  ~isFetchingAtHead,
+  ~logger,
+): t => {
+  let contractAddressMapping = ContractAddressingMap.make()
+
+  staticContracts->Belt.Array.forEach(((contractName, address)) => {
+    Logging.childTrace(
+      logger,
+      {
+        "msg": "adding contract address",
+        "contractName": contractName,
+        "address": address,
+      },
+    )
+
+    contractAddressMapping->ContractAddressingMap.addAddress(~name=contractName, ~address)
+  })
+
+  let dynamicContracts = dynamicContractRegistrations->Array.reduce(DynamicContractsMap.empty, (
+    accum,
+    {contractType, contractAddress, eventId},
+  ) => {
+    //add address to contract address mapping
+    contractAddressMapping->ContractAddressingMap.addAddress(
+      ~name=(contractType :> string),
+      ~address=contractAddress,
+    )
+
+    let dynamicContractId = EventUtils.unpackEventIndex(eventId)
+
+    accum->DynamicContractsMap.addAddress(dynamicContractId, contractAddress)
+  })
+
+  {
+    isFetchingAtHead,
+    registerType,
+    latestFetchedBlock: {
+      blockTimestamp: 0,
+      blockNumber: Pervasives.max(startBlock - 1, 0),
+    },
+    contractAddressMapping,
+    dynamicContracts,
+    fetchedEventQueue: list{},
+  }
 }
 
 /**
 Instantiates a fetch state with root register
 */
-let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}))
+let makeRoot = (~endBlock) => makeInternal(~registerType=RootRegister({endBlock: endBlock}), ...)
 
 /**
 Inserts a dynamic contract register to the head of a given
@@ -570,6 +631,7 @@ let addNewRegisterToHead = (
     )
 
   {
+    isFetchingAtHead: false,
     registerType,
     latestFetchedBlock: {
       blockNumber: registeringEventBlockNumber - 1,
@@ -591,14 +653,19 @@ let rec registerDynamicContract = (
   register: t,
   ~registeringEventBlockNumber,
   ~registeringEventLogIndex,
-  ~contractAddressMapping,
+  ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
 ) => {
   let latestFetchedBlockNumber = registeringEventBlockNumber - 1
-  let addToHead = addNewRegisterToHead(
-    ~contractAddressMapping,
-    ~registeringEventLogIndex,
-    ~registeringEventBlockNumber,
-  )
+
+  let addToHead =
+    addNewRegisterToHead(
+      ~contractAddressMapping=dynamicContractRegistrations
+      ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
+      ->ContractAddressingMap.fromArray,
+      ~registeringEventLogIndex,
+      ~registeringEventBlockNumber,
+      ...
+    )
 
   switch register.registerType {
   | RootRegister(_) => register->addToHead
@@ -608,9 +675,9 @@ let rec registerDynamicContract = (
   | DynamicContractRegister(dynamicContractId, nextRegister) =>
     nextRegister
     ->registerDynamicContract(
-      ~contractAddressMapping,
       ~registeringEventBlockNumber,
       ~registeringEventLogIndex,
+      ~dynamicContractRegistrations,
     )
     ->addNextRegister(~register, ~dynamicContractId)
   }
@@ -627,7 +694,8 @@ let rec queueSizeInternal = (self: t, ~accum) => {
 /**
 Calculates the cummulative queue sizes in all registers
 */
-let queueSize = queueSizeInternal(~accum=0)
+let queueSize =
+  queueSizeInternal(~accum=0, ...)
 
 /**
 Check the max queue size of the tip of the tree.
@@ -718,7 +786,8 @@ let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
     }
   //Case 3 Root register that has fetched further than the confirmed valid block number
   //Should prune its queue and set its latest fetched block data to the latest known confirmed block
-  | RootRegister(_) => {
+  | RootRegister(_) =>
+    {
       ...self,
       fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
       latestFetchedBlock: lastKnownValidBlock,
@@ -764,6 +833,8 @@ let isActivelyIndexing = fetchState => {
   | _ => true
   }
 }
+
+let getNumContracts = (self: t) => self.contractAddressMapping->ContractAddressingMap.addressCount
 
 /**
 Helper functions for debugging and printing

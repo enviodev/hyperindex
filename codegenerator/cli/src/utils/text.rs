@@ -1,3 +1,4 @@
+use convert_case::{Case, Casing};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -43,11 +44,34 @@ impl Capitalize for String {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CaseOptions {
+    pub pascal: String,
+    pub snake: String,
+    pub camel: String,
+}
+
+impl CaseOptions {
+    pub fn new(s: &str) -> Self {
+        Self {
+            pascal: s.to_case(Case::Pascal),
+            snake: s.to_case(Case::Snake),
+            camel: s.to_case(Case::Camel),
+        }
+    }
+}
+
+impl From<String> for CaseOptions {
+    fn from(value: String) -> Self {
+        Self::new(&value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::*;
     use pretty_assertions::assert_eq;
 
-    use super::Capitalize;
     #[test]
     fn string_capitalize() {
         let string = String::from("hello");
@@ -78,5 +102,13 @@ mod tests {
         assert_eq!(capitalization_options.uncapitalized, "camelCase");
         assert_eq!(capitalization_options.capitalized, "CamelCase");
         assert_eq!(capitalization_options.original, "camelCase");
+    }
+
+    #[test]
+    fn casing_works() {
+        let case_options = CaseOptions::new("TransactionIndex");
+        assert_eq!(case_options.snake, "transaction_index");
+        assert_eq!(case_options.pascal, "TransactionIndex");
+        assert_eq!(case_options.camel, "transactionIndex");
     }
 }

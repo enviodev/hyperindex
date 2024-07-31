@@ -1,58 +1,67 @@
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
 
-let eventMock1: Types.event = GravatarContract_NewGravatar({
-  blockNumber: 1,
+let block1: Types.Block.t = {
+  number: 1,
+  timestamp: 1,
+  hash: "deasne",
+}
+
+let tx1: Types.Transaction.t = {
+  hash: "0xaaa",
+  transactionIndex: 1,
+}
+let eventMock1: Types.eventLog<Types.internalEventArgs> = {
+  block: {
+    number: 1,
+    hash: "0xdef",
+    timestamp: 1900000,
+  },
   chainId: 54321,
-  blockHash: "0xdef",
   logIndex: 0,
   params: MockEvents.newGravatar1,
-  blockTimestamp: 1900000,
   srcAddress: "0x1234512345123451234512345123451234512345"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xabc",
-  transactionIndex: 987,
-  txOrigin: None,
-  txTo: None,
-})
+  transaction: {
+    hash: "0xabc",
+    transactionIndex: 987,
+  },
+}->Types.eventToInternal
 
 let qItemMock1: Types.eventBatchQueueItem = {
   timestamp: 0,
-  chain: Chain_1337,
+  chain: MockConfig.chain1337,
   blockNumber: 1,
   logIndex: 0,
   event: eventMock1,
+  eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
 }
 
-let eventMock2: Types.event = GravatarContract_NewGravatar({
-  blockNumber: 2,
+let eventMock2: Types.eventLog<Types.internalEventArgs> = {
+  block: {
+    number: 2,
+    hash: "0xabc",
+    timestamp: 1900001,
+  },
   chainId: 54321,
-  blockHash: "0xabc",
   logIndex: 1,
   params: MockEvents.newGravatar2,
-  blockTimestamp: 1900001,
   srcAddress: "0x1234512345123451234512345123451234512346"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xdef",
-  transactionIndex: 988,
-  txOrigin: None,
-  txTo: None,
-})
+  transaction: {
+    hash: "0xdef",
+    transactionIndex: 988,
+  },
+}->Types.eventToInternal
 
 let qItemMock2: Types.eventBatchQueueItem = {
   timestamp: 1,
-  chain: Chain_1337,
+  chain: MockConfig.chain1337,
   blockNumber: 2,
   logIndex: 1,
   event: eventMock1,
+  eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
 }
 
 describe("Chain Event Queue", () => {
-  it_promise("Awaits item to be pushed to queue before resolveing", async () => {
+  Async.it("Awaits item to be pushed to queue before resolveing", async () => {
     let q = ChainEventQueue.make(~maxQueueSize=100)
 
     let itemPromise = q->ChainEventQueue.popSingleAndAwaitItem
@@ -68,11 +77,11 @@ describe("Chain Event Queue", () => {
     Assert.equal(q.popBacklogCallbacks->SDSL.Queue.size, 0)
     let poppedItem = await itemPromise
 
-    Assert.deep_equal(~message="Poped item not the same", qItemMock1, poppedItem)
+    Assert.deepEqual(~message="Poped item not the same", qItemMock1, poppedItem)
     Assert.equal(q.queue->SDSL.Queue.size, 0)
   })
 
-  it_promise("Awaits space on the queue before pushing", async () => {
+  Async.it("Awaits space on the queue before pushing", async () => {
     let hasResolvedPromise = ref(false)
     //Make a queue with small max size
     let q = ChainEventQueue.make(~maxQueueSize=1)
@@ -89,7 +98,7 @@ describe("Chain Event Queue", () => {
         },
       )
     //Assert that the item is not on the queue
-    Assert.deep_equal(q->ChainEventQueue.peekFront, Some(qItemMock1))
+    Assert.deepEqual(q->ChainEventQueue.peekFront, Some(qItemMock1))
     Assert.equal(
       q.queue->SDSL.Queue.size,
       1,
@@ -101,7 +110,7 @@ describe("Chain Event Queue", () => {
     Assert.equal(q.pushBacklogCallbacks->SDSL.Queue.size, 1)
 
     let popedValue1 = q->ChainEventQueue.popSingle
-    Assert.deep_equal(popedValue1, Some(qItemMock1))
+    Assert.deepEqual(popedValue1, Some(qItemMock1))
     Assert.equal(q.pushBacklogCallbacks->SDSL.Queue.size, 0)
 
     await nextIemPromise
@@ -114,6 +123,6 @@ describe("Chain Event Queue", () => {
 
     //assert that the front of the queue is the new item
     let popedValue2 = q->ChainEventQueue.popSingle
-    Assert.deep_equal(popedValue2, Some(qItemMock2))
+    Assert.deepEqual(popedValue2, Some(qItemMock2))
   })
 })

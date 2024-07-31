@@ -1,235 +1,171 @@
-let newGravatar1: Types.GravatarContract.NewGravatarEvent.eventArgs = {
-  id: 1001->Ethers.BigInt.fromInt,
+let newGravatar1: Types.Gravatar.NewGravatar.eventArgs = {
+  id: 1001->BigInt.fromInt,
   owner: "0x1230000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "gravatar1",
   imageUrl: "https://gravatar1.com",
 }
 
-let newGravatar2: Types.GravatarContract.NewGravatarEvent.eventArgs = {
-  id: 1002->Ethers.BigInt.fromInt,
+let newGravatar2: Types.Gravatar.NewGravatar.eventArgs = {
+  id: 1002->BigInt.fromInt,
   owner: "0x4560000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "gravatar2",
   imageUrl: "https://gravatar2.com",
 }
 
-let newGravatar3: Types.GravatarContract.NewGravatarEvent.eventArgs = {
-  id: 1003->Ethers.BigInt.fromInt,
+let newGravatar3: Types.Gravatar.NewGravatar.eventArgs = {
+  id: 1003->BigInt.fromInt,
   owner: "0x7890000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "gravatar3",
   imageUrl: "https://gravatar3.com",
 }
 
-let newGravatar4_deleted: Types.GravatarContract.NewGravatarEvent.eventArgs = {
-  id: 1004->Ethers.BigInt.fromInt,
+let newGravatar4_deleted: Types.Gravatar.NewGravatar.eventArgs = {
+  id: 1004->BigInt.fromInt,
   owner: "0x9990000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "gravatar4_deleted",
   imageUrl: "https://gravatar4.com",
 }
 
-let setGravatar1: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
-  id: 1001->Ethers.BigInt.fromInt,
+let setGravatar1: Types.Gravatar.UpdatedGravatar.eventArgs = {
+  id: 1001->BigInt.fromInt,
   owner: "0x1230000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update1",
   imageUrl: "https://gravatar1.com",
 }
 
-let setGravatar2: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
-  id: 1002->Ethers.BigInt.fromInt,
+let setGravatar2: Types.Gravatar.UpdatedGravatar.eventArgs = {
+  id: 1002->BigInt.fromInt,
   owner: "0x4560000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update2",
   imageUrl: "https://gravatar2.com",
 }
 
-let setGravatar3: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
-  id: 1003->Ethers.BigInt.fromInt,
+let setGravatar3: Types.Gravatar.UpdatedGravatar.eventArgs = {
+  id: 1003->BigInt.fromInt,
   owner: "0x7890000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update3",
   imageUrl: "https://gravatar3.com",
 }
-let setGravatar4: Types.GravatarContract.UpdatedGravatarEvent.eventArgs = {
-  id: 1004->Ethers.BigInt.fromInt,
+let setGravatar4: Types.Gravatar.UpdatedGravatar.eventArgs = {
+  id: 1004->BigInt.fromInt,
   owner: "0x9990000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
   displayName: "update4",
   imageUrl: "https://gravatar4.com",
 }
 
-let newGravatarEventLog1: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs> = {
-  params: newGravatar1,
-  blockNumber: 1,
-  chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
-  // TODO: this should be an address type
-  srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
-  logIndex: 11,
+let block1: Types.Block.t = {
+  number: 1,
+  timestamp: 1,
+  hash: "deasne",
 }
 
-let newGravatarEventLog2: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs> = {
-  params: newGravatar2,
-  blockNumber: 1,
-  chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
-  srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
+let tx1: Types.Transaction.t = {
+  hash: "0xaaa",
   transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
+}
+
+let newGravatarLog1: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
+  params: newGravatar1,
+  chainId: 54321,
+  // TODO: this should be an address type
+  srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
+  logIndex: 11,
+  transaction: tx1,
+  block: block1,
+}
+
+let newGravatarLog2: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
+  params: newGravatar2,
+  block: block1,
+  chainId: 54321,
+  srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
+  transaction: tx1,
   logIndex: 12,
 }
 
-let newGravatarEventLog3: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs> = {
+let newGravatarLog3: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
   params: newGravatar3,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 13,
+  transaction: tx1,
+  block: block1,
 }
 
-let newGravatarEventLog4: Types.eventLog<Types.GravatarContract.NewGravatarEvent.eventArgs> = {
+let newGravatarLog4: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs> = {
   params: newGravatar4_deleted,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 13,
+  transaction: tx1,
+  block: block1,
 }
 
-let setGravatarEventLog1: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
+let setGravatarLog1: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = {
   params: setGravatar1,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 14,
+  transaction: tx1,
+  block: block1,
 }
 
-let setGravatarEventLog2: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
+let setGravatarLog2: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = {
   params: setGravatar2,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 15,
+  transaction: tx1,
+  block: block1,
 }
 
-let setGravatarEventLog3: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
+let setGravatarLog3: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = {
   params: setGravatar3,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 16,
+  transaction: tx1,
+  block: block1,
 }
-let setGravatarEventLog4: Types.eventLog<Types.GravatarContract.UpdatedGravatarEvent.eventArgs> = {
+let setGravatarLog4: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs> = {
   params: setGravatar4,
-  blockNumber: 1,
   chainId: 54321,
-  blockTimestamp: 1,
-  blockHash: "deasne",
   srcAddress: "0xabc0000000000000000000000000000000000000"->Ethers.getAddressFromStringUnsafe,
-  transactionHash: "0xaaa",
-  transactionIndex: 1,
-  txOrigin: None,
-  txTo: None,
   logIndex: 17,
+  transaction: tx1,
+  block: block1,
 }
 
-let eventBatch: array<Types.event> = [
-  GravatarContract_NewGravatar(newGravatarEventLog1),
-  GravatarContract_NewGravatar(newGravatarEventLog2),
-  GravatarContract_NewGravatar(newGravatarEventLog3),
-  GravatarContract_NewGravatar(newGravatarEventLog4),
-  GravatarContract_UpdatedGravatar(setGravatarEventLog1),
-  GravatarContract_UpdatedGravatar(setGravatarEventLog2),
-  GravatarContract_UpdatedGravatar(setGravatarEventLog3),
-  GravatarContract_UpdatedGravatar(setGravatarEventLog4),
-]
-
-let eventBatchChain = ChainMap.Chain.Chain_1337
-
-let eventBatchItems = eventBatch->Belt.Array.map((e): Types.eventBatchQueueItem => {
-  switch e {
-  | GravatarContract_NewGravatar(el) => {
-      timestamp: el.blockTimestamp,
-      chain: eventBatchChain,
-      blockNumber: el.blockNumber,
-      logIndex: el.logIndex,
-      event: e,
-    }
-  | GravatarContract_UpdatedGravatar(el) => {
-      timestamp: el.blockTimestamp,
-      chain: eventBatchChain,
-      blockNumber: el.blockNumber,
-      logIndex: el.logIndex,
-      event: e,
-    }
-  | _ => Js.Exn.raiseError("I couldn't figure out how to make this method polymorphic")
+let newGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.NewGravatar.eventArgs>): Types.eventBatchQueueItem => {
+  {
+    timestamp: event.block.timestamp,
+    chain: MockConfig.chain1337,
+    blockNumber: event.block.number,
+    logIndex: event.logIndex,
+    eventMod: module(Types.Gravatar.NewGravatar)->Types.eventModToInternal,
+    event: event->Types.eventToInternal,
   }
-})
+}
 
-let getNewGravatarContext = () => {
-  ContextMock.mockNewGravatarContext
+
+let updatedGravatarEventToBatchItem = (event: Types.eventLog<Types.Gravatar.UpdatedGravatar.eventArgs>): Types.eventBatchQueueItem => {
+  {
+    timestamp: event.block.timestamp,
+    chain: MockConfig.chain1337,
+    blockNumber: event.block.number,
+    logIndex: event.logIndex,
+    eventMod: module(Types.Gravatar.UpdatedGravatar)->Types.eventModToInternal,
+    event: event->Types.eventToInternal,
+  }
 }
-let getUpdatedGravatarContext = () => {
-  ContextMock.mockUpdateGravatarContext
-}
-let eventBatchWithContext: array<Context.eventAndContext> = [
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog1, ContextMock.mockNewGravatarContext),
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog2, ContextMock.mockNewGravatarContext),
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog3, ContextMock.mockNewGravatarContext),
-  GravatarContract_NewGravatarWithContext(newGravatarEventLog4, ContextMock.mockNewGravatarContext),
-  GravatarContract_UpdatedGravatarWithContext(
-    setGravatarEventLog1,
-    ContextMock.mockUpdateGravatarContext,
-  ),
-  GravatarContract_UpdatedGravatarWithContext(
-    setGravatarEventLog2,
-    ContextMock.mockUpdateGravatarContext,
-  ),
-  GravatarContract_UpdatedGravatarWithContext(
-    setGravatarEventLog3,
-    ContextMock.mockUpdateGravatarContext,
-  ),
-  GravatarContract_UpdatedGravatarWithContext(
-    setGravatarEventLog4,
-    ContextMock.mockUpdateGravatarContext,
-  ),
+
+let eventBatchItems = [
+  newGravatarLog1->newGravatarEventToBatchItem,
+  newGravatarLog2->newGravatarEventToBatchItem,
+  newGravatarLog3->newGravatarEventToBatchItem,
+  newGravatarLog4->newGravatarEventToBatchItem,
+  setGravatarLog1->updatedGravatarEventToBatchItem,
+  setGravatarLog2->updatedGravatarEventToBatchItem,
+  setGravatarLog3->updatedGravatarEventToBatchItem,
+  setGravatarLog4->updatedGravatarEventToBatchItem,
 ]
-
-let eventRouterBatch: array<
-  Context.eventRouterEventAndContext,
-> = eventBatchWithContext->Belt.Array.map((event): Context.eventRouterEventAndContext => {
-  chainId: eventBatchChain->ChainMap.Chain.toChainId,
-  event,
-})

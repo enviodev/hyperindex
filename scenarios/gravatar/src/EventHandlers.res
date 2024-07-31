@@ -6,7 +6,7 @@ Handlers.GravatarContract.NewGravatar.loader((~event as _, ~context as _) => {
 
 Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {
   let gravatarObject: gravatarEntity = {
-    id: event.params.id->Ethers.BigInt.toString,
+    id: event.params.id->BigInt.toString,
     owner: event.params.owner->Ethers.ethAddressToString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
@@ -17,7 +17,7 @@ Handlers.GravatarContract.NewGravatar.handler((~event, ~context) => {
 })
 
 Handlers.GravatarContract.UpdatedGravatar.loader((~event, ~context) => {
-  let _ = context.gravatar.gravatarWithChangesLoad(event.params.id->Ethers.BigInt.toString)
+  let _ = context.gravatar.gravatarWithChangesLoad(event.params.id->BigInt.toString)
 })
 
 Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
@@ -27,7 +27,7 @@ Handlers.GravatarContract.UpdatedGravatar.handler((~event, ~context) => {
     )
 
   let gravatar: gravatarEntity = {
-    id: event.params.id->Ethers.BigInt.toString,
+    id: event.params.id->BigInt.toString,
     owner: event.params.owner->Ethers.ethAddressToString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,

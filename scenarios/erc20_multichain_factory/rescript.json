@@ -1,7 +1,6 @@
 {
   "name": "erc20",
   "version": "0.1.0",
-  "uncurried": false,
   "sources": [
     {
       "dir": "src",
@@ -33,7 +32,6 @@
   "suffix": ".bs.js",
   "bs-dependencies": [
     "generated",
-    "rescript-mocha",
     "@ryyppy/rescript-promise",
     "rescript-schema",
     "helpers"

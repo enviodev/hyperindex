@@ -7,14 +7,13 @@ let isNullable = true
 let isIndex = true
 
 module EventSyncState = {
-  type row = {
-    chain_id: int,
-    block_number: int,
-    log_index: int,
-    transaction_index: int,
-    block_timestamp: int,
+  @genType
+  type t = {
+    @as("chain_id") chainId: int,
+    @as("block_number") blockNumber: int,
+    @as("log_index") logIndex: int,
+    @as("block_timestamp") blockTimestamp: int,
   }
-  let tableName = "event_sync_state"
 
   let table = mkTable(
     "event_sync_state",
@@ -22,14 +21,14 @@ module EventSyncState = {
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("block_number", Integer),
       mkField("log_index", Integer),
-      mkField("transaction_index", Integer),
       mkField("block_timestamp", Integer),
     ],
   )
 }
 
 module ChainMetadata = {
-  type row = {
+  @genType
+  type t = {
     chain_id: int,
     start_block: int,
     end_block: option<int>,
@@ -62,7 +61,8 @@ module ChainMetadata = {
 }
 
 module PersistedState = {
-  type row = {
+  @genType
+  type t = {
     id: int,
     envio_version: string,
     config_hash: string,
@@ -85,7 +85,8 @@ module PersistedState = {
 }
 
 module EndOfBlockRangeScannedData = {
-  type row = {
+  @genType
+  type t = {
     chain_id: int,
     block_timestamp: int,
     block_number: int,
@@ -103,18 +104,20 @@ module EndOfBlockRangeScannedData = {
   )
 }
 
-module RawEventsTable = {
-  type row = {
-    chain_id: int,
-    event_id: float,
-    block_number: int,
-    log_index: int,
-    transaction_index: int,
-    transaction_hash: string,
-    src_address: string,
-    block_hash: string,
-    block_timestamp: int,
-    event_type: Enums.EventType.variants,
+module RawEvents = {
+  @genType
+  type t = {
+    @as("chain_id") chainId: int,
+    @as("event_id") eventId: string,
+    @as("event_name") eventName: string,
+    @as("contract_name") contractName: string,
+    @as("block_number") blockNumber: int,
+    @as("log_index") logIndex: int,
+    @as("src_address") srcAddress: Ethers.ethAddress,
+    @as("block_hash") blockHash: string,
+    @as("block_timestamp") blockTimestamp: int,
+    @as("block_fields") blockFields: Js.Json.t,
+    @as("transaction_fields") transactionFields: Js.Json.t,
     params: Js.Json.t,
   }
 
@@ -123,28 +126,39 @@ module RawEventsTable = {
     ~fields=[
       mkField("chain_id", Integer, ~isPrimaryKey),
       mkField("event_id", Numeric, ~isPrimaryKey),
+      mkField("event_name", Text),
+      mkField("contract_name", Text),
       mkField("block_number", Integer),
       mkField("log_index", Integer),
-      mkField("transaction_index", Integer),
-      mkField("transaction_hash", Text),
       mkField("src_address", Text),
       mkField("block_hash", Text),
       mkField("block_timestamp", Integer),
-      mkField("event_type", Enum(EventType.enum.name)),
+      mkField("block_fields", Json),
+      mkField("transaction_fields", Json),
       mkField("params", Json),
       mkField("db_write_timestamp", Timestamp, ~default="CURRENT_TIMESTAMP"),
     ],
   )
 }
 
-module DynamicContractRegistryTable = {
-  type row = {
-    chain_id: int,
-    event_id: Ethers.BigInt.t,
-    block_timestamp: int,
-    contract_address: string,
-    contract_type: Enums.ContractType.variants,
+module DynamicContractRegistry = {
+  @genType
+  type t = {
+    @as("chain_id") chainId: int,
+    @as("event_id") eventId: bigint,
+    @as("block_timestamp") blockTimestamp: int,
+    @as("contract_address") contractAddress: Ethers.ethAddress,
+    @as("contract_type") contractType: Enums.ContractType.t,
   }
+
+  let schema = S.object((. s) => {
+    chainId: s.field("chain_id", S.int),
+    eventId: s.field("event_id", BigInt.schema),
+    blockTimestamp: s.field("block_timestamp", S.int),
+    contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
+    contractType: s.field("contract_type", Enums.ContractType.schema),
+  })
+
   let table = mkTable(
     "dynamic_contract_registry",
     ~fields=[
@@ -157,14 +171,15 @@ module DynamicContractRegistryTable = {
   )
 }
 
-module EntityHistoryTable = {
-  type row = {
+module EntityHistory = {
+  @genType
+  type t = {
     entity_id: string,
     block_timestamp: int,
     chain_id: int,
     block_number: int,
     log_index: int,
-    entity_type: EntityType.variants,
+    entity_type: EntityType.t,
     params: option<Js.Json.t>,
     previous_block_timestamp: option<int>,
     previous_chain_id: option<int>,
@@ -191,8 +206,9 @@ module EntityHistoryTable = {
   )
 }
 
-module EntityHistoryFilterTable = {
-  type row = {
+module EntityHistoryFilter = {
+  @genType
+  type t = {
     entity_id: option<string>,
     chain_id: int,
     old_val: option<Js.Json.t>,
@@ -202,7 +218,7 @@ module EntityHistoryFilterTable = {
     previous_block_number: option<int>,
     log_index: int,
     previous_log_index: option<int>,
-    entity_type: EntityType.variants,
+    entity_type: EntityType.t,
   }
 
   // This table is purely for the sake of viewing the diffs generated by the postgres function. It will never be written to during the application.
@@ -229,8 +245,8 @@ let allTables: array<table> = [
   ChainMetadata.table,
   PersistedState.table,
   EndOfBlockRangeScannedData.table,
-  RawEventsTable.table,
-  DynamicContractRegistryTable.table,
-  EntityHistoryTable.table,
-  EntityHistoryFilterTable.table,
+  RawEvents.table,
+  DynamicContractRegistry.table,
+  EntityHistory.table,
+  EntityHistoryFilter.table,
 ]

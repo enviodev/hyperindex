@@ -1,12 +1,7 @@
 open Belt
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_only: it_promise_only,
-  it_skip: it_skip_promise,
-  before: before_promise,
-} = module(RescriptMocha.Promise)
+
+let config = Config.getGenerated()
 
 module Mock = {
   /*
@@ -36,10 +31,11 @@ module Mock = {
   | 144  |     | 9d
   | 150  |  6d |
  */
-  let makeTransferMock = (~from, ~to, ~value): Types.ERC20Contract.TransferEvent.eventArgs => {
+
+  let makeTransferMock = (~from, ~to, ~value): Types.ERC20.Transfer.eventArgs => {
     from,
     to,
-    value: value->Ethers.BigInt.fromInt,
+    value: value->BigInt.fromInt,
   }
 
   let mintAddress = Ethers.Constants.zeroAddress
@@ -69,9 +65,9 @@ module Mock = {
     })
 
   module Chain1 = {
-    let chain = ChainMap.Chain.Chain_1
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=1)
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=Config.config->ChainMap.get(chain),
+      ~chainConfig=config.chainMap->ChainMap.get(chain),
       ~maxBlocksReturned=2,
       ~blockTimestampInterval=25,
     )
@@ -82,7 +78,7 @@ module Mock = {
     )
 
     open ChainDataHelpers.ERC20
-    let mkTransferEventConstr = Transfer.mkEventConstr(~chain)
+    let mkTransferEventConstr = Transfer.mkEventConstr(~chain, ...)
 
     let b0 = []
     //balances: u1=0 | u2=0
@@ -106,27 +102,25 @@ module Mock = {
     let blocksInitial = blocksBase->Array.concat([b4, b5, b6])
     let blocksReorg = blocksBase->Array.concat([rollbackB4, b5, b6])
 
-    let applyBlocks = addBlocksOfTransferEvents(
-      ~mockChainData=mockChainDataEmpty,
-      ~mkTransferEventConstr,
-    )
+    let applyBlocks =
+      addBlocksOfTransferEvents(~mockChainData=mockChainDataEmpty, ~mkTransferEventConstr, ...)
 
     let mockChainDataInitial = blocksInitial->applyBlocks
     let mockChainDataReorg = blocksReorg->applyBlocks
   }
   module Chain2 = {
-    let chain = ChainMap.Chain.Chain_137
+    let chain = ChainMap.Chain.makeUnsafe(~chainId=137)
     let defaultTokenAddress = ChainDataHelpers.getDefaultAddress(
       chain,
       ChainDataHelpers.ERC20.contractName,
     )
     let mockChainDataEmpty = MockChainData.make(
-      ~chainConfig=Config.config->ChainMap.get(chain),
+      ~chainConfig=config.chainMap->ChainMap.get(chain),
       ~maxBlocksReturned=3,
       ~blockTimestampInterval=16,
     )
     open ChainDataHelpers.ERC20
-    let mkTransferEventConstr = Transfer.mkEventConstr(~chain)
+    let mkTransferEventConstr = Transfer.mkEventConstr(~chain, ...)
     let b0 = []
     //balances: u1=0 | u2=0
     let b1 = [mint50ToUser1]
@@ -148,25 +142,25 @@ module Mock = {
 
     let blocks = [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9]
 
-    let applyBlocks = addBlocksOfTransferEvents(
-      ~mockChainData=mockChainDataEmpty,
-      ~mkTransferEventConstr,
-    )
+    let applyBlocks =
+      addBlocksOfTransferEvents(~mockChainData=mockChainDataEmpty, ~mkTransferEventConstr, ...)
 
     let mockChainData = blocks->applyBlocks
   }
 
-  let mockChainDataMapInitial = ChainMap.make(chain =>
-    switch chain {
-    | Chain_1 => Chain1.mockChainDataInitial
-    | Chain_137 => Chain2.mockChainData
+  let mockChainDataMapInitial = config.chainMap->ChainMap.mapWithKey((chain, _) =>
+    switch chain->ChainMap.Chain.toChainId {
+    | 1 => Chain1.mockChainDataInitial
+    | 137 => Chain2.mockChainData
+    | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
 
-  let mockChainDataMapReorg = ChainMap.make(chain =>
-    switch chain {
-    | Chain_1 => Chain1.mockChainDataReorg
-    | Chain_137 => Chain2.mockChainData
+  let mockChainDataMapReorg = config.chainMap->ChainMap.mapWithKey((chain, _) =>
+    switch chain->ChainMap.Chain.toChainId {
+    | 1 => Chain1.mockChainDataReorg
+    | 137 => Chain2.mockChainData
+    | _ => Js.Exn.raiseError("Unexpected chain")
     }
   )
 
@@ -198,7 +192,7 @@ module Sql = {
   @send
   external unsafe: (Postgres.sql, string) => promise<'a> = "unsafe"
 
-  let query = unsafe(DbFunctions.sql)
+  let query = unsafe(DbFunctions.sql, _)
 
   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 
@@ -226,24 +220,24 @@ let setupDb = async (~shouldDropRawEvents) => {
 }
 
 describe("Multichain rollback test", () => {
-  before_promise(() => {
+  Async.before(() => {
     //Provision the db
     DbHelpers.runUpDownMigration()
   })
-  it_promise("Multichain indexer should rollback and not reprocess any events", async () => {
+  Async.it("Multichain indexer should rollback and not reprocess any events", async () => {
     //Setup a chainManager with unordered multichain mode to make processing happen
     //without blocking for the purposes of this test
     let chainManager = {
-      ...ChainManager.makeFromConfig(~configs=Config.config),
+      ...ChainManager.makeFromConfig(~config),
       isUnorderedMultichainMode: true,
     }
 
     //Setup initial state stub that will be used for both
     //initial chain data and reorg chain data
-    let initState = GlobalState.make(~chainManager)
+    let initState = GlobalState.make(~config, ~chainManager)
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
-    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks)
+    let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
 
     //helpers
     let getState = () => {
@@ -259,35 +253,42 @@ describe("Multichain rollback test", () => {
       cf.fetchState
     }
 
-    let getQueueSize = chain => {
-      chain->getFetchState->FetchState.queueSize
-    }
-
     let getLatestFetchedBlock = chain => {
-      chain->getFetchState->FetchState.getLatestFullyFetchedBlock
+      chain->getFetchState->PartitionedFetchState.getLatestFullyFetchedBlock
     }
 
-    let getTokenBalance = chain => {
-      Sql.getAccountTokenBalance(~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain))
+    let getTokenBalance = (~accountAddress) => chain => {
+      Sql.getAccountTokenBalance(
+        ~tokenAddress=ChainDataHelpers.ERC20.getDefaultAddress(chain),
+        ~accountAddress,
+      )
     }
 
     let getUser1Balance = getTokenBalance(~accountAddress=Mock.userAddress1)
     let getUser2Balance = getTokenBalance(~accountAddress=Mock.userAddress2)
 
-    let getTotalQueueSize = () =>
-      ChainMap.Chain.all->Array.reduce(0, (accum, next) => accum + next->getQueueSize)
+    let getTotalQueueSize = () => {
+      let state = gsManager->GlobalStateManager.getState
+      state.chainManager.chainFetchers
+      ->ChainMap.values
+      ->Array.reduce(
+        0,
+        (accum, chainFetcher) => accum + chainFetcher.fetchState->PartitionedFetchState.queueSize,
+      )
+    }
+
     open ChainDataHelpers
     //Stub specifically for using data from then initial chain data and functions
     let stubDataInitial = makeStub(~mockChainDataMap=Mock.mockChainDataMapInitial)
-    let dispatchTask = stubDataInitial->Stubs.makeDispatchTask
+    let dispatchTask = Stubs.makeDispatchTask(stubDataInitial, _)
     let dispatchAllTasks = () => stubDataInitial->Stubs.dispatchAllTasks
 
     //Dispatch first task of next query all chains
     //First query will just get the height
     await dispatchTask(NextQuery(CheckAllChains))
 
-    Assert.deep_equal(
-      [GlobalState.NextQuery(Chain(Chain_1)), NextQuery(Chain(Chain_137))],
+    Assert.deepEqual(
+      [GlobalState.NextQuery(Chain(Mock.Chain1.chain)), NextQuery(Chain(Mock.Chain2.chain))],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have completed query to get height, next tasks would be to execute block range query",
     )
@@ -305,12 +306,12 @@ describe("Multichain rollback test", () => {
     ) => {
       Assert.equal(
         chain1LatestFetchBlock,
-        getLatestFetchedBlock(Chain_1).blockNumber,
+        getLatestFetchedBlock(Mock.Chain1.chain).blockNumber,
         ~message=`Chain 1 should have fetched up to block ${chain1LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
         chain2LatestFetchBlock,
-        getLatestFetchedBlock(Chain_137).blockNumber,
+        getLatestFetchedBlock(Mock.Chain2.chain).blockNumber,
         ~message=`Chain 2 should have fetched up to block ${chain2LatestFetchBlock->Int.toString} on query ${queryName}`,
       )
       Assert.equal(
@@ -319,35 +320,35 @@ describe("Multichain rollback test", () => {
         ~message=`Query ${queryName} should have returned ${totalQueueSize->Int.toString} events`,
       )
 
-      let toBigInt = Ethers.BigInt.fromInt
+      let toBigInt = BigInt.fromInt
       let optIntToString = optInt =>
         switch optInt {
         | Some(n) => `Some(${n->Int.toString})`
         | None => "None"
         }
 
-      let getBalanceFn = user =>
+      let getBalanceFn = (chain, user) =>
         switch user {
-        | 1 => getUser1Balance
-        | 2 => getUser2Balance
+        | 1 => chain->getUser1Balance
+        | 2 => chain->getUser2Balance
         | user => Js.Exn.raiseError(`Invalid user num ${user->Int.toString}`)
         }
 
       let assertBalance = async (~chain, ~expectedBalance, ~user) => {
-        let balance = await getBalanceFn(user, chain)
-        Assert.deep_equal(
+        let balance = await getBalanceFn(chain, user)
+        Assert.deepEqual(
           expectedBalance->Option.map(toBigInt),
           balance,
           ~message=`Chain ${chain->ChainMap.Chain.toString} after processing blocks in batch ${batchName}, User ${user->Int.toString} should have a balance of ${expectedBalance->optIntToString} but has ${balance
-            ->Option.flatMap(Ethers.BigInt.toInt)
+            ->Option.flatMap(BigInt.toInt)
             ->optIntToString}`,
         )
       }
       //Chain 1 balances
-      await assertBalance(~chain=Chain_1, ~user=1, ~expectedBalance=chain1User1Balance)
-      await assertBalance(~chain=Chain_1, ~user=2, ~expectedBalance=chain1User2Balance)
-      await assertBalance(~chain=Chain_137, ~user=1, ~expectedBalance=chain2User1Balance)
-      await assertBalance(~chain=Chain_137, ~user=2, ~expectedBalance=chain2User2Balance)
+      await assertBalance(~chain=Mock.Chain1.chain, ~user=1, ~expectedBalance=chain1User1Balance)
+      await assertBalance(~chain=Mock.Chain1.chain, ~user=2, ~expectedBalance=chain1User2Balance)
+      await assertBalance(~chain=Mock.Chain2.chain, ~user=1, ~expectedBalance=chain2User1Balance)
+      await assertBalance(~chain=Mock.Chain2.chain, ~user=2, ~expectedBalance=chain2User2Balance)
     }
 
     await makeAssertions(
@@ -364,28 +365,28 @@ describe("Multichain rollback test", () => {
 
     //Make the first queries (A)
     await dispatchAllTasks()
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain=Chain_1,
+          ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-199,
           ~blockTimestampThreshold=25,
           ~blockNumber=1,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain(Chain_1)),
+        NextQuery(Chain(Mock.Chain1.chain)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain=Chain_137,
+          ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-198,
           ~blockTimestampThreshold=25,
           ~blockNumber=2,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain(Chain_137)),
+        NextQuery(Chain(Mock.Chain2.chain)),
       ],
       stubDataInitial->Stubs.getTasks,
       ~message="Should have received a response and next tasks will be to process batch and next query",
@@ -417,29 +418,29 @@ describe("Multichain rollback test", () => {
       ~chain2User1Balance=Some(50),
       ~chain2User2Balance=Some(100),
     )
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain=Chain_1,
+          ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-197,
           ~blockTimestampThreshold=25,
           ~blockNumber=3,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain(Chain_1)),
+        NextQuery(Chain(Mock.Chain1.chain)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain=Chain_137,
+          ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-195,
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain(Chain_137)),
+        NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -457,29 +458,29 @@ describe("Multichain rollback test", () => {
     //And make queries (C)
     await dispatchAllTasks()
 
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain=Chain_1,
+          ~chain=Mock.Chain1.chain,
           ~blockNumberThreshold=-195,
           ~blockTimestampThreshold=25,
           ~blockNumber=5,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain(Chain_1)),
+        NextQuery(Chain(Mock.Chain1.chain)),
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain=Chain_137,
+          ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-192,
           ~blockTimestampThreshold=25,
           ~blockNumber=8,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain(Chain_137)),
+        NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -511,20 +512,20 @@ describe("Multichain rollback test", () => {
     //Process batch 3 of events and make queries
     //Execute queries(D)
     await dispatchAllTasks()
-    Assert.deep_equal(
+    Assert.deepEqual(
       [
         GlobalState.NextQuery(CheckAllChains),
         Rollback,
         Mock.getUpdateEndofBlockRangeScannedData(
           Mock.mockChainDataMapInitial,
-          ~chain=Chain_137,
+          ~chain=Mock.Chain2.chain,
           ~blockNumberThreshold=-191,
           ~blockTimestampThreshold=25,
           ~blockNumber=9,
         ),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
-        NextQuery(Chain(Chain_137)),
+        NextQuery(Chain(Mock.Chain2.chain)),
         UpdateChainMetaDataAndCheckForExit(NoExit),
         ProcessEventBatch,
       ],
@@ -545,7 +546,7 @@ describe("Multichain rollback test", () => {
 
     //Action reorg
     await dispatchAllTasks()
-    Assert.deep_equal(
+    Assert.deepEqual(
       [GlobalState.NextQuery(CheckAllChains), ProcessEventBatch],
       stubDataReorg->Stubs.getTasks,
       ~message="Rollback should have actioned and next tasks are query and process batch",

@@ -26,19 +26,19 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     }),
     startBlock: 1,
     endBlock: None,
-    chain: Chain_1337,
+    chain: MockConfig.chain1337,
     contracts: [
       {
         name: "NftFactory",
         abi: Abis.nftFactoryAbi->Ethers.makeAbi,
         addresses: [nftFactoryContractAddress],
-        events: [NftFactory_SimpleNftCreated],
+        events: [module(Types.NftFactory.SimpleNftCreated)],
       },
       {
         name: "SimpleNft",
         abi: Abis.simpleNftAbi->Ethers.makeAbi,
         addresses: [],
-        events: [SimpleNft_Transfer],
+        events: [module(Types.SimpleNft.Transfer)],
       },
     ],
   }
@@ -49,21 +49,15 @@ type chainManager = ChainManager.t
 
 @genType
 let makeChainManager = (cfg: chainConfig): chainManager => {
-  // let getConfig = chain =>
-  //   if chain == cfg.chain {
-  //     cfg
-  //   } else {
-  //     chain->Config.getConfig
-  //   }
-  // let configs = ChainMap.make(getConfig)
-  let configs = [(cfg.chain, cfg)]->Belt.Map.fromArray(~id=module(ChainMap.Chain.ChainIdCmp))
-  let cm = ChainManager.makeFromConfig(~configs)
-  {...cm, isUnorderedMultichainMode: true}
+  // FIXME: Should fork from the main ChainMap?
+  ChainManager.makeFromConfig(~config=Config.make(~isUnorderedMultichainMode=true, ~chains=[cfg]))
 }
 
 @genType
-let startProcessing = (cfg: chainConfig, chainManager: chainManager) => {
-  let globalState: GlobalState.t = GlobalState.make(~chainManager)
+let startProcessing = (config, cfg: chainConfig, chainManager: chainManager) => {
+  let globalState = GlobalState.make(~config=config->(
+    // Workaround for genType to treat the type as unknown, since we don't want to expose Config.t to TS users
+    Utils.magic: unknown => Config.t), ~chainManager)
 
   let gsManager = globalState->GlobalStateManager.make
 

@@ -40,11 +40,13 @@ let pinoFile: Transport.transportTarget = {
   level: Env.defaultFileLogLevel,
 }
 
-let makeMultiStreamLogger = MultiStreamLogger.make(
-  ~userLogLevel=Env.userLogLevel,
-  ~defaultFileLogLevel=Env.defaultFileLogLevel,
-  ~customLevels=logLevels,
-)
+let makeMultiStreamLogger =
+  MultiStreamLogger.make(
+    ~userLogLevel=Env.userLogLevel,
+    ~defaultFileLogLevel=Env.defaultFileLogLevel,
+    ~customLevels=logLevels,
+    ...
+  )
 
 let logger = switch Env.logStrategy {
 | EcsFile =>
@@ -80,53 +82,53 @@ let setLogLevel = (level: Pino.logLevel) => {
 }
 
 let trace = message => {
-  logger.trace(. message->createPinoMessage)
+  logger.trace(message->createPinoMessage)
 }
 
 let debug = message => {
-  logger.debug(. message->createPinoMessage)
+  logger.debug(message->createPinoMessage)
 }
 
 let info = message => {
-  logger.info(. message->createPinoMessage)
+  logger.info(message->createPinoMessage)
 }
 
 let warn = message => {
-  logger.warn(. message->createPinoMessage)
+  logger.warn(message->createPinoMessage)
 }
 
 let error = message => {
-  logger.error(. message->createPinoMessage)
+  logger.error(message->createPinoMessage)
 }
 let errorWithExn = (error, message) => {
   logger->Pino.errorExn(message->createPinoMessageWithError(error))
 }
 
 let fatal = message => {
-  logger.fatal(. message->createPinoMessage)
+  logger.fatal(message->createPinoMessage)
 }
 
 let childTrace = (logger, params: 'a) => {
-  logger.trace(. params->createPinoMessage)
+  logger.trace(params->createPinoMessage)
 }
 let childDebug = (logger, params: 'a) => {
-  logger.debug(. params->createPinoMessage)
+  logger.debug(params->createPinoMessage)
 }
 let childInfo = (logger, params: 'a) => {
-  logger.info(. params->createPinoMessage)
+  logger.info(params->createPinoMessage)
 }
 let childWarn = (logger, params: 'a) => {
-  logger.warn(. params->createPinoMessage)
+  logger.warn(params->createPinoMessage)
 }
 let childError = (logger, params: 'a) => {
-  logger.error(. params->createPinoMessage)
+  logger.error(params->createPinoMessage)
 }
 let childErrorWithExn = (logger, error, params: 'a) => {
   logger->Pino.errorExn(params->createPinoMessageWithError(error))
 }
 
 let childFatal = (logger, params: 'a) => {
-  logger.fatal(. params->createPinoMessage)
+  logger.fatal(params->createPinoMessage)
 }
 
 let createChild = (~params: 'a) => {

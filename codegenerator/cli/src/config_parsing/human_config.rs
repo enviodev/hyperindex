@@ -1,22 +1,81 @@
 use super::validation;
-use crate::{constants::links, utils::normalized_list::NormalizedList};
+use crate::{
+    constants::links,
+    utils::normalized_list::{NormalizedList, SingleOrList},
+};
 use anyhow::Context;
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{borrow::Cow, path::PathBuf};
+
+impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
+    fn schema_name() -> Cow<'static, str> {
+        "SingleOrList".into()
+    }
+
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        let t_schema = T::json_schema(gen);
+        json_schema!({
+          "anyOf": [
+            t_schema,
+            {
+              "type": "array",
+              "items": t_schema
+            }
+          ]
+        })
+    }
+
+    fn always_inline_schema() -> bool {
+        true
+    }
+}
+
+pub type Addresses = NormalizedList<String>;
+
+impl JsonSchema for Addresses {
+    fn schema_name() -> Cow<'static, str> {
+        "Addresses".into()
+    }
+
+    fn json_schema(gen: &mut SchemaGenerator) -> Schema {
+        let t_schema = json_schema!({
+          "anyOf": [
+            String::json_schema(gen),
+            usize::json_schema(gen),
+          ]
+        });
+        json_schema!({
+          "anyOf": [
+            t_schema,
+            {
+              "type": "array",
+              "items": t_schema
+            }
+          ]
+        })
+    }
+
+    fn _schemars_private_is_option() -> bool {
+        true
+    }
+}
 
 type NetworkId = u64;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GlobalContract<T> {
     pub name: String,
     #[serde(flatten)]
     pub config: T,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct NetworkContract<T> {
     pub name: String,
-    pub address: NormalizedList<String>,
+    pub address: Addresses,
     #[serde(flatten)]
     //If this is "None" it should be expected that
     //there is a global config for the contract
@@ -24,57 +83,249 @@ pub struct NetworkContract<T> {
 }
 
 pub mod evm {
-    use super::{GlobalContract, NetworkContract, NetworkId, RequiredEntity};
+    use super::{GlobalContract, NetworkContract, NetworkId};
+    use crate::{rescript_types::RescriptTypeIdent, utils::normalized_list::SingleOrList};
+    use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
+    use std::fmt::Display;
+    use strum::Display;
+    use subenum::subenum;
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[schemars(
+        title = "Envio Config Schema",
+        description = "Schema for a YAML config for an envio indexer"
+    )]
+    #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
+        #[schemars(description = "Name of the project")]
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Description of the project")]
         pub description: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: Option<EcosystemTag>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Custom path to config file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Global contract definitions that must contain all definitions except \
+                           addresses. You can share a single handler/abi/event definitions for \
+                           contracts across multiple chains."
+        )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
+        #[schemars(
+            description = "Configuration of the blockchain networks that the project is deployed \
+                           on."
+        )]
         pub networks: Vec<Network>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "A flag to indicate if the indexer should use a single queue for all \
+                           chains or a queue per chain (default: false)"
+        )]
         pub unordered_multichain_mode: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The event decoder to use for the indexer (default: hypersync-client)"
+        )]
         pub event_decoder: Option<EventDecoder>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "A flag to indicate if the indexer should rollback to the last known \
+                           valid block on a reorg (default: false)"
+        )]
         pub rollback_on_reorg: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "A flag to indicate if the indexer should save the full history of \
+                           events. This is useful for debugging but will increase the size of the \
+                           database (default: false)"
+        )]
         pub save_full_history: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "An object representing additional fields to add to the event passed to \
+                           handlers."
+        )]
+        pub field_selection: Option<FieldSelection>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If true, the indexer will store the raw event data in the database. \
+            This is useful for debugging, but will increase the size of the database \
+            and the amount of time it takes to process events \
+            (default: false)"
+        )]
+        pub raw_events: Option<bool>,
+    }
+
+    impl Display for HumanConfig {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "# yaml-language-server: $schema=./node_modules/envio/evm.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
+            )
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(deny_unknown_fields)]
+    pub struct FieldSelection {
+        #[schemars(description = "Fields of a transaction to add to the event passed to handlers")]
+        pub transaction_fields: Option<Vec<TransactionField>>,
+        #[schemars(description = "Fields of a block to add to the event passed to handlers")]
+        pub block_fields: Option<Vec<BlockField>>,
+    }
+
+    #[subenum(RpcTransactionField)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[serde(rename_all = "snake_case", deny_unknown_fields)]
+    pub enum TransactionField {
+        #[subenum(RpcTransactionField)]
+        TransactionIndex,
+        #[subenum(RpcTransactionField)]
+        Hash,
+        From,
+        To,
+        Gas,
+        GasPrice,
+        MaxPriorityFeePerGas,
+        MaxFeePerGas,
+        CumulativeGasUsed,
+        EffectiveGasPrice,
+        GasUsed,
+        Input,
+        Nonce,
+        Value,
+        V,
+        R,
+        S,
+        ContractAddress,
+        LogsBloom,
+        Type,
+        Root,
+        Status,
+        Sighash,
+    }
+
+    impl From<TransactionField> for RescriptTypeIdent {
+        fn from(value: TransactionField) -> RescriptTypeIdent {
+            match value {
+                TransactionField::TransactionIndex => RescriptTypeIdent::Int,
+                TransactionField::Hash => RescriptTypeIdent::String,
+                TransactionField::From => RescriptTypeIdent::Address,
+                TransactionField::To => RescriptTypeIdent::Address,
+                TransactionField::Gas => RescriptTypeIdent::BigInt,
+                TransactionField::GasPrice => RescriptTypeIdent::BigInt,
+                TransactionField::MaxPriorityFeePerGas => RescriptTypeIdent::BigInt,
+                TransactionField::MaxFeePerGas => RescriptTypeIdent::BigInt,
+                TransactionField::CumulativeGasUsed => RescriptTypeIdent::BigInt,
+                TransactionField::EffectiveGasPrice => RescriptTypeIdent::BigInt,
+                TransactionField::GasUsed => RescriptTypeIdent::BigInt,
+                TransactionField::Input => RescriptTypeIdent::String,
+                TransactionField::Nonce => RescriptTypeIdent::Int,
+                TransactionField::Value => RescriptTypeIdent::BigInt,
+                TransactionField::V => RescriptTypeIdent::String,
+                TransactionField::R => RescriptTypeIdent::String,
+                TransactionField::S => RescriptTypeIdent::String,
+                TransactionField::ContractAddress => RescriptTypeIdent::Address,
+                TransactionField::LogsBloom => RescriptTypeIdent::String,
+                TransactionField::Type => RescriptTypeIdent::Int,
+                TransactionField::Root => RescriptTypeIdent::String,
+                TransactionField::Status => RescriptTypeIdent::Int,
+                TransactionField::Sighash => RescriptTypeIdent::String,
+            }
+        }
+    }
+
+    #[subenum(RpcBlockField)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
+    #[serde(rename_all = "snake_case", deny_unknown_fields)]
+    pub enum BlockField {
+        #[subenum(RpcBlockField)]
+        ParentHash,
+        #[subenum(RpcBlockField)]
+        Nonce,
+        Sha3Uncles,
+        LogsBloom,
+        TransactionsRoot,
+        #[subenum(RpcBlockField)]
+        StateRoot,
+        ReceiptsRoot,
+        #[subenum(RpcBlockField)]
+        Miner,
+        #[subenum(RpcBlockField)]
+        Difficulty,
+        TotalDifficulty,
+        #[subenum(RpcBlockField)]
+        ExtraData,
+        Size,
+        #[subenum(RpcBlockField)]
+        GasLimit,
+        #[subenum(RpcBlockField)]
+        GasUsed,
+        Uncles,
+        #[subenum(RpcBlockField)]
+        BaseFeePerGas,
+    }
+
+    impl From<BlockField> for RescriptTypeIdent {
+        fn from(value: BlockField) -> RescriptTypeIdent {
+            match value {
+                BlockField::ParentHash => RescriptTypeIdent::String,
+                BlockField::Nonce => RescriptTypeIdent::Int,
+                BlockField::Sha3Uncles => RescriptTypeIdent::String,
+                BlockField::LogsBloom => RescriptTypeIdent::String,
+                BlockField::TransactionsRoot => RescriptTypeIdent::String,
+                BlockField::StateRoot => RescriptTypeIdent::String,
+                BlockField::ReceiptsRoot => RescriptTypeIdent::String,
+                BlockField::Miner => RescriptTypeIdent::Address,
+                BlockField::Difficulty => RescriptTypeIdent::BigInt,
+                BlockField::TotalDifficulty => RescriptTypeIdent::BigInt,
+                BlockField::ExtraData => RescriptTypeIdent::String,
+                BlockField::Size => RescriptTypeIdent::BigInt,
+                BlockField::GasLimit => RescriptTypeIdent::BigInt,
+                BlockField::GasUsed => RescriptTypeIdent::BigInt,
+                BlockField::Uncles => RescriptTypeIdent::String,
+                BlockField::BaseFeePerGas => RescriptTypeIdent::BigInt,
+            }
+        }
     }
 
     // Workaround for https://github.com/serde-rs/serde/issues/2231
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    #[serde(rename_all = "lowercase")]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
     pub enum EcosystemTag {
         Evm,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-    #[serde(rename_all = "kebab-case")]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(rename_all = "kebab-case", deny_unknown_fields)]
     pub enum EventDecoder {
         Viem,
         HypersyncClient,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct HypersyncConfig {
-        #[serde(alias = "url")]
-        pub endpoint_url: String,
+        #[serde(alias = "endpoint_url")]
+        #[schemars(
+            description = "URL of the HyperSync endpoint (default: The most performant HyperSync endpoint for the network)"
+        )]
+        pub url: String,
     }
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct SyncConfigUnstable {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub initial_block_interval: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        pub backoff_multiplicative: Option<f32>,
+        pub backoff_multiplicative: Option<f64>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub acceleration_additive: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,29 +333,35 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub backoff_millis: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        pub fallback_stall_timeout: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
         pub query_timeout_millis: Option<u32>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
     pub struct RpcConfig {
-        pub url: String,
+        #[schemars(
+            description = "URL of the RPC endpoint. Can be a single URL or an array of URLs. If multiple URLs are provided, the first one will be used as the primary RPC endpoint and the rest will be used as fallbacks."
+        )]
+        pub url: SingleOrList<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub unstable__sync_config: Option<SyncConfigUnstable>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    #[serde(rename_all = "snake_case")]
-    pub enum SyncSourceConfig {
-        RpcConfig(RpcConfig),
-        HypersyncConfig(HypersyncConfig),
-    }
-
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Network {
         pub id: NetworkId,
-        #[serde(flatten, skip_serializing_if = "Option::is_none")]
-        pub sync_source: Option<SyncSourceConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "RPC Config that will be used to subscribe to blockchain data on this network (TIP: This is optional and in most cases does not need to be specified if the network is supported with HyperSync. We recommend using HyperSync instead of RPC for 100x speed-up)"
+        )]
+        pub rpc_config: Option<RpcConfig>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
+        pub hypersync_config: Option<HypersyncConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub confirmed_block_threshold: Option<i32>,
         pub start_block: i32,
@@ -113,7 +370,8 @@ pub mod evm {
         pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct ContractConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
         pub abi_file_path: Option<String>,
@@ -121,14 +379,10 @@ pub mod evm {
         pub events: Vec<EventConfig>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    #[serde(rename_all = "camelCase")]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
         pub event: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub is_async: Option<bool>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub required_entities: Option<Vec<RequiredEntity>>,
     }
 
     impl EventConfig {
@@ -159,30 +413,62 @@ pub mod evm {
 }
 
 pub mod fuel {
+    use std::fmt::Display;
+
     use super::{GlobalContract, NetworkContract, NetworkId};
+    use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[schemars(
+        title = "Envio Config Schema",
+        description = "Schema for a YAML config for an envio indexer"
+    )]
+    #[serde(deny_unknown_fields)]
     pub struct HumanConfig {
+        #[schemars(description = "Name of the project")]
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Description of the project")]
         pub description: Option<String>,
+        #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: EcosystemTag,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Custom path to config file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Global contract definitions that must contain all definitions except \
+                           addresses. You can share a single handler/abi/event definitions for \
+                           contracts across multiple chains."
+        )]
         pub contracts: Option<Vec<GlobalContract<ContractConfig>>>,
+        #[schemars(
+            description = "Configuration of the blockchain networks that the project is deployed \
+                           on."
+        )]
         pub networks: Vec<Network>,
     }
 
+    impl Display for HumanConfig {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "# yaml-language-server: $schema=./node_modules/envio/fuel.schema.json\n{}",
+                serde_yaml::to_string(self).expect("Failed to serialize config")
+            )
+        }
+    }
+
     // Workaround for https://github.com/serde-rs/serde/issues/2231
-    #[derive(Debug, Serialize, Deserialize, PartialEq)]
-    #[serde(rename_all = "lowercase")]
+    #[derive(Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+    #[serde(rename_all = "lowercase", deny_unknown_fields)]
     pub enum EcosystemTag {
         Fuel,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct Network {
         pub id: NetworkId,
         pub start_block: i32,
@@ -191,30 +477,21 @@ pub mod fuel {
         pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(deny_unknown_fields)]
     pub struct ContractConfig {
         pub abi_file_path: String,
         pub handler: String,
         pub events: Vec<EventConfig>,
     }
 
-    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-    #[serde(rename_all = "camelCase")]
+    #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub log_id: Option<String>,
     }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RequiredEntity {
-    pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub labels: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub array_labels: Option<Vec<String>>,
 }
 
 fn strip_to_letters(string: &str) -> String {
@@ -257,8 +534,40 @@ mod tests {
         NetworkContract,
     };
     use crate::{config_parsing::human_config::fuel, utils::normalized_list::NormalizedList};
+    use pretty_assertions::assert_eq;
+    use schemars::{schema_for, Schema};
     use serde_json::json;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_evm_config_schema() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/evm.schema.json");
+        let npm_schema: Schema =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+
+        let actual_schema = schema_for!(HumanConfig);
+
+        assert_eq!(
+            npm_schema, actual_schema,
+            "Please run 'make update-generated-docs'"
+        );
+    }
+
+    #[test]
+    fn test_fuel_config_schema() {
+        let config_path =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("npm/envio/fuel.schema.json");
+        let npm_schema: Schema =
+            serde_json::from_str(&std::fs::read_to_string(config_path).unwrap()).unwrap();
+
+        let actual_schema = schema_for!(fuel::HumanConfig);
+
+        assert_eq!(
+            npm_schema, actual_schema,
+            "Please run 'make update-generated-docs'"
+        );
+    }
 
     #[test]
     fn test_flatten_deserialize_local_contract() {
@@ -514,7 +823,8 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
         assert_eq!(
             Network {
                 id: 1,
-                sync_source: None,
+                hypersync_config: None,
+                rpc_config: None,
                 start_block: 2_000,
                 confirmed_block_threshold: None,
                 end_block: Some(2_000_000),

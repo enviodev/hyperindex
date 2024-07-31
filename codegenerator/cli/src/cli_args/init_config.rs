@@ -15,9 +15,7 @@ pub mod evm {
         config_parsing::{
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
-                evm::{
-                    ContractConfig, EventConfig, HumanConfig, Network, RpcConfig, SyncSourceConfig,
-                },
+                evm::{ContractConfig, EventConfig, HumanConfig, Network, RpcConfig},
                 GlobalContract, NetworkContract,
             },
         },
@@ -56,8 +54,6 @@ pub mod evm {
                     .into_iter()
                     .map(|event| EventConfig {
                         event: EventConfig::event_string_from_abi_event(&event),
-                        required_entities: None,
-                        is_async: None,
                     })
                     .collect();
 
@@ -81,10 +77,10 @@ pub mod evm {
                         global_contract,
                     )
                     .context(format!(
-                    "Unexpected, failed to add global contract {}. Contract should have unique \
-                     names",
-                    selected_contract.name
-                ))?;
+                        "Unexpected, failed to add global contract {}. Contract should have \
+                         unique names",
+                        selected_contract.name
+                    ))?;
                     None
                 } else {
                     //Return some for local contract config
@@ -106,19 +102,18 @@ pub mod evm {
                     let network = networks_map
                         .entry(selected_network.network.get_network_id())
                         .or_insert({
-                            let sync_source = match &selected_network.network {
+                            let rpc_config = match &selected_network.network {
                                 NetworkKind::Supported(_) => None,
-                                NetworkKind::Unsupported(_, url) => {
-                                    Some(SyncSourceConfig::RpcConfig(RpcConfig {
-                                        url: url.clone(),
-                                        unstable__sync_config: None,
-                                    }))
-                                }
+                                NetworkKind::Unsupported(_, url) => Some(RpcConfig {
+                                    url: url.clone().into(),
+                                    unstable__sync_config: None,
+                                }),
                             };
 
                             Network {
                                 id: selected_network.network.get_network_id(),
-                                sync_source,
+                                hypersync_config: None,
+                                rpc_config,
                                 start_block: 0,
                                 end_block: None,
                                 confirmed_block_threshold: None,
@@ -156,6 +151,8 @@ pub mod evm {
                 event_decoder: None,
                 rollback_on_reorg: None,
                 save_full_history: None,
+                field_selection: None,
+                raw_events: None,
             })
         }
     }
@@ -266,10 +263,13 @@ pub mod fuel {
                 rollback_on_reorg: None,
                 save_full_history: None,
                 contracts: None,
+                field_selection: None,
+                raw_events: None,
                 networks: vec![human_config::evm::Network {
                     id: 1,
                     start_block: 0,
-                    sync_source: None,
+                    hypersync_config: None,
+                    rpc_config: None,
                     confirmed_block_threshold: None,
                     end_block: None,
                     contracts: self
@@ -291,8 +291,6 @@ pub mod fuel {
                                     .iter()
                                     .map(|selected_log| human_config::evm::EventConfig {
                                         event: format!("{}()", selected_log.event_name),
-                                        is_async: None,
-                                        required_entities: None,
                                     })
                                     .collect(),
                             }),

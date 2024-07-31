@@ -1,38 +1,45 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
+use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
+use crate::rescript_types::RescriptTypeIdent;
 use crate::{
-    capitalization::{Capitalize, CapitalizedOptions},
     config_parsing::{
-        entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, RescriptType, Schema},
+        entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::abi_to_rescript_type,
         human_config::evm::EventDecoder,
         postgres_types,
         system_config::{self, RpcConfig, SystemConfig},
     },
+    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
         handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
         ParsedProjectPaths,
     },
     template_dirs::TemplateDirs,
+    utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{Event, EventExt};
 use pathdiff::diff_paths;
-use serde::Deserialize;
 use serde::Serialize;
 
-pub trait HasName {
-    fn set_name(&mut self, name: CapitalizedOptions);
+fn make_res_name(js_name: &String) -> String {
+    let uncapitalized = js_name.uncapitalize();
+    if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
+        format!("{}_", uncapitalized)
+    } else {
+        uncapitalized
+    }
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
-    pub param_name: CapitalizedOptions,
-    pub type_rescript: String,
-    pub type_rescript_schema: String,
+    pub res_name: String,
+    pub js_name: String,
+    pub res_type: String,
+    pub res_schema_code: String,
     pub default_value_rescript: String,
     pub default_value_non_rescript: String,
     pub is_eth_address: bool,
@@ -45,17 +52,11 @@ pub struct EventRecordTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EventParamTypeTemplate>,
 }
-impl HasName for EventRecordTypeTemplate {
-    fn set_name(&mut self, name: CapitalizedOptions) {
-        self.name = name;
-    }
-}
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct GraphQlEnumTypeTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<CapitalizedOptions>,
-    pub has_multiple_params: bool,
 }
 
 impl GraphQlEnumTypeTemplate {
@@ -69,11 +70,9 @@ impl GraphQlEnumTypeTemplate {
                 "Failed templating gql enum fields of enum: {}",
                 gql_enum.name
             ))?;
-        let has_multiple_params = params.len() > 1;
         Ok(GraphQlEnumTypeTemplate {
             name: gql_enum.name.to_capitalized_options(),
             params,
-            has_multiple_params,
         })
     }
 }
@@ -155,28 +154,22 @@ impl<T: HasIsDerivedFrom + Clone> FilteredTemplateLists<T> {
             filtered_is_derived_from,
         }
     }
-
-    #[cfg(test)]
-    pub fn empty() -> Self {
-        FilteredTemplateLists {
-            all: Vec::new(),
-            filtered_not_derived_from: Vec::new(),
-            filtered_is_derived_from: Vec::new(),
-        }
-    }
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EntityParamTypeTemplate {
     pub field_name: CapitalizedOptions,
-    pub type_rescript: RescriptType,
-    pub type_rescript_schema: String,
+    pub res_type: RescriptTypeIdent,
+    pub res_schema_code: String,
     pub type_pg: String,
     pub is_entity_field: bool,
     ///Used in template to tell whether it is a field looked up from another table or a value in
     ///the table
     pub is_derived_from: bool,
     pub is_indexed_field: bool,
+    ///Used to determine if you can run a where
+    ///query on this field.
+    pub is_queryable_field: bool,
 }
 
 impl HasIsDerivedFrom for EntityParamTypeTemplate {
@@ -187,7 +180,7 @@ impl HasIsDerivedFrom for EntityParamTypeTemplate {
 
 impl EntityParamTypeTemplate {
     fn from_entity_field(field: &Field, entity: &Entity, config: &SystemConfig) -> Result<Self> {
-        let type_rescript: RescriptType = field
+        let res_type: RescriptTypeIdent = field
             .field_type
             .to_rescript_type(&config.schema)
             .context("Failed getting rescript type")?
@@ -204,15 +197,20 @@ impl EntityParamTypeTemplate {
 
         let is_entity_field = field.field_type.is_entity_field(schema)?;
         let is_indexed_field = field.is_indexed_field(entity);
+        let is_derived_lookup_field = field.is_derived_lookup_field(entity, schema);
+
+        //Both of these cases have indexes on them and should exist
+        let is_queryable_field = is_indexed_field || is_derived_lookup_field;
 
         Ok(EntityParamTypeTemplate {
             field_name: field.name.to_capitalized_options(),
-            type_rescript_schema: type_rescript.to_rescript_schema(),
-            type_rescript,
+            res_schema_code: res_type.to_rescript_schema(),
+            res_type,
             is_derived_from,
             type_pg,
             is_entity_field,
             is_indexed_field,
+            is_queryable_field,
         })
     }
 }
@@ -348,98 +346,18 @@ impl EntityRecordTypeTemplate {
     }
 }
 
-impl HasName for EntityRecordTypeTemplate {
-    fn set_name(&mut self, name: CapitalizedOptions) {
-        self.name = name;
-    }
-}
-
-#[derive(Serialize, Debug, PartialEq, Clone)]
-pub struct RequiredEntityEntityFieldTemplate {
-    pub field_name: CapitalizedOptions,
-    pub type_name: CapitalizedOptions,
-    pub is_optional: bool,
-    pub is_array: bool,
-    pub is_derived_from: bool,
-    pub is_indexed: bool,
-}
-
-impl RequiredEntityEntityFieldTemplate {
-    fn from_config_entity(field: &Field, entity: &Entity) -> Self {
-        RequiredEntityEntityFieldTemplate {
-            field_name: field.name.to_capitalized_options(),
-            type_name: entity.name.to_capitalized_options(),
-            is_optional: field.field_type.is_optional(),
-            is_array: field.field_type.is_array(),
-            is_derived_from: field.field_type.is_derived_from(),
-            is_indexed: field.is_indexed_field(entity),
-        }
-    }
-}
-
-impl HasIsDerivedFrom for RequiredEntityEntityFieldTemplate {
-    fn get_is_derived_from(&self) -> bool {
-        self.is_derived_from
-    }
-}
-
-#[derive(Debug, Serialize, PartialEq, Clone)]
-pub struct RequiredEntityTemplate {
-    pub name: CapitalizedOptions,
-    pub labels: Option<Vec<String>>,
-    pub array_labels: Option<Vec<String>>,
-    pub entity_fields_of_required_entity: FilteredTemplateLists<RequiredEntityEntityFieldTemplate>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct EventType {
-    //Contract name and event name joined with a '_'
-    //Always capitalized
-    //Used as a unique per-contract event variant in rescript
-    full: String,
-    //Contract name and event name joined with a '_' truncated to  63 char max
-    //Always capitalized
-    //for char limit in postgres for enums
-    truncated_for_pg_enum_limit: String,
-}
-
-impl EventType {
-    pub fn new(contract_name: String, event_name: String) -> Self {
-        let full = contract_name.capitalize() + "_" + &event_name;
-        const MAX_CHAR_LIMIT_FOR_PG_ENUM: usize = 63;
-        let truncated_for_pg_enum_limit = full
-            .chars()
-            .enumerate()
-            .filter(|(i, _x)| i < &MAX_CHAR_LIMIT_FOR_PG_ENUM)
-            .map(|(_i, x)| x)
-            .collect();
-
-        EventType {
-            full,
-            truncated_for_pg_enum_limit,
-        }
-    }
-}
-
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventTemplate {
     pub name: CapitalizedOptions,
-    //Used for the eventType variant in Types.res and the truncated version in postgres
-    pub event_type: EventType,
     pub params: Vec<EventParamTypeTemplate>,
     pub indexed_params: Vec<EventParamTypeTemplate>,
     pub body_params: Vec<EventParamTypeTemplate>,
-    pub required_entities: Vec<RequiredEntityTemplate>,
     pub is_async: bool,
     pub topic0: String,
 }
 
 impl EventTemplate {
-    pub fn from_config_event(
-        config_event: &system_config::Event,
-        config: &SystemConfig,
-        contract_name: &String,
-    ) -> Result<Self> {
+    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
         let name = config_event
             .get_event()
             .name
@@ -450,17 +368,18 @@ impl EventTemplate {
             .inputs
             .iter()
             .map(|input| {
-                let type_rescript = abi_to_rescript_type(&input.into());
-
+                let res_type = abi_to_rescript_type(&input.into());
+                let js_name = input.name.to_string();
                 EventParamTypeTemplate {
-                    param_name: input.name.to_capitalized_options(),
-                    default_value_rescript: type_rescript.get_default_value_rescript(),
-                    default_value_non_rescript: type_rescript.get_default_value_non_rescript(),
-                    type_rescript: type_rescript.to_string(),
-                    type_rescript_schema: type_rescript.to_rescript_schema(),
-                    is_eth_address: type_rescript == RescriptType::Address,
+                    res_name: make_res_name(&js_name),
+                    js_name,
+                    default_value_rescript: res_type.get_default_value_rescript(),
+                    default_value_non_rescript: res_type.get_default_value_non_rescript(),
+                    res_type: res_type.to_string(),
+                    res_schema_code: res_type.to_rescript_schema(),
+                    is_eth_address: res_type == RescriptTypeIdent::Address,
                     is_indexed: input.indexed,
-                    type_rescript_skar_decoded_param: type_rescript.to_string_decoded_skar(),
+                    type_rescript_skar_decoded_param: res_type.to_string_decoded_skar(),
                 }
             })
             .collect::<Vec<_>>();
@@ -477,77 +396,11 @@ impl EventTemplate {
             .cloned()
             .collect();
 
-        let all_entity_names = config.get_entity_names();
-
-        let required_entities = config_event
-            .required_entities
-            .iter()
-            .map(|required_entity| {
-                let entity = config
-                    .get_entity(&required_entity.name)
-                    .cloned()
-                    .ok_or_else(|| {
-                        // Look to see if there is a key that is similar in the keys of `entity_fields_of_required_entity_map`.
-                        // It is similar if the lower case of the key is the same as the lowercase
-                        // of the required_entity.name.
-                        let required_entity_name_lower = required_entity.name.to_lowercase();
-                        // NOTE: this is a very primative similarity metric. We could use something
-                        // like the Levenshtein distance or something more 'fuzzy'. The https://docs.rs/strsim/latest/strsim/
-                        // crate looks great for this!
-                        let key_that_is_similar = all_entity_names
-                            .iter()
-                            .find(|&key| key.to_lowercase() == required_entity_name_lower);
-
-                        match key_that_is_similar {
-                            Some(similar_key) => anyhow!(
-                                "Required entity with name {} not found in Schema - did you mean \
-                                 '{}'? Note, capitalization matters.",
-                                &required_entity.name,
-                                similar_key
-                            ),
-                            None => anyhow!(
-                                "Required entity with name {} not found in Schema. Note, \
-                                 capitalization matters.",
-                                &required_entity.name
-                            ),
-                        }
-                    })
-                    .context("Validating 'requiredEntity' fields in config.")?;
-
-                let required_entity_entity_field_templates = entity
-                    .get_related_entities(&config.schema)
-                    .context(format!(
-                        "Failed retrieving related entities of required entity {}",
-                        entity.name
-                    ))?
-                    .iter()
-                    .map(|(field, related_entity)| {
-                        RequiredEntityEntityFieldTemplate::from_config_entity(field, related_entity)
-                    })
-                    .collect();
-
-                let entity_fields_of_required_entity =
-                    FilteredTemplateLists::new(required_entity_entity_field_templates);
-
-                Ok(RequiredEntityTemplate {
-                    name: required_entity.name.to_capitalized_options(),
-                    labels: required_entity.labels.clone(),
-                    array_labels: required_entity.array_labels.clone(),
-                    entity_fields_of_required_entity,
-                })
-            })
-            .collect::<Result<_>>()?;
-
         let topic0 = event_selector(&config_event.get_event());
 
         Ok(EventTemplate {
             name,
-            event_type: EventType::new(
-                contract_name.clone(),
-                config_event.get_event().name.clone(),
-            ),
             params,
-            required_entities,
             is_async: config_event.is_async,
             body_params,
             indexed_params,
@@ -567,6 +420,7 @@ pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub codegen_events: Vec<EventTemplate>,
     pub abi: StringifiedAbi,
+    pub event_signatures: Vec<String>,
     pub handler: HandlerPathsTemplate,
 }
 
@@ -574,7 +428,6 @@ impl ContractTemplate {
     fn from_config_contract(
         contract: &system_config::Contract,
         project_paths: &ParsedProjectPaths,
-        config: &SystemConfig,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
         let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
@@ -582,13 +435,21 @@ impl ContractTemplate {
         let codegen_events = contract
             .events
             .iter()
-            .map(|event| EventTemplate::from_config_event(event, config, &contract.name))
+            .map(|event| EventTemplate::from_config_event(event))
             .collect::<Result<_>>()?;
+
+        let event_signatures = contract
+            .events
+            .iter()
+            .map(|event| event.get_event_signature())
+            .collect();
+
         Ok(ContractTemplate {
             name,
             handler,
             codegen_events,
             abi: contract.abi.raw.clone(),
+            event_signatures,
         })
     }
 }
@@ -596,15 +457,12 @@ impl ContractTemplate {
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct PerNetworkContractEventTemplate {
     pub name: CapitalizedOptions,
-    //Used for the eventType variant in Types.res and the truncated version in postgres
-    pub event_type: EventType,
 }
 
 impl PerNetworkContractEventTemplate {
-    fn new(event_name: String, contract_name: String) -> Self {
+    fn new(event_name: String) -> Self {
         PerNetworkContractEventTemplate {
             name: event_name.to_capitalized_options(),
-            event_type: EventType::new(contract_name, event_name),
         }
     }
 }
@@ -628,7 +486,7 @@ impl PerNetworkContractTemplate {
         let events = contract
             .get_event_names()
             .into_iter()
-            .map(|n| PerNetworkContractEventTemplate::new(n, contract.name.clone()))
+            .map(|n| PerNetworkContractEventTemplate::new(n))
             .collect();
 
         Ok(PerNetworkContractTemplate {
@@ -695,6 +553,60 @@ impl NetworkConfigTemplate {
 }
 
 #[derive(Serialize)]
+struct FieldSelection {
+    transaction_fields: Vec<SelectableField>,
+    block_fields: Vec<SelectableField>,
+}
+
+impl FieldSelection {
+    fn new(transaction_fields: Vec<SelectableField>, block_fields: Vec<SelectableField>) -> Self {
+        Self {
+            transaction_fields,
+            block_fields,
+        }
+    }
+
+    fn from_config_field_selection(cfg: &system_config::FieldSelection) -> Self {
+        Self::new(
+            cfg.transaction_fields
+                .iter()
+                .cloned()
+                .map(|field| SelectableField::from(field))
+                .collect(),
+            cfg.block_fields
+                .iter()
+                .cloned()
+                .map(|field| SelectableField::from(field))
+                .collect(),
+        )
+    }
+}
+
+#[derive(Serialize)]
+struct SelectableField {
+    name: CaseOptions,
+    res_type: RescriptTypeIdent,
+    res_schema_code: String,
+    default_value_rescript: String,
+}
+
+impl SelectableField {
+    fn from<T>(value: T) -> Self
+    where
+        T: Display + Into<RescriptTypeIdent>,
+    {
+        let name = value.to_string().into();
+        let res_type: RescriptTypeIdent = value.into();
+        Self {
+            name,
+            res_schema_code: res_type.to_rescript_schema(),
+            default_value_rescript: res_type.get_default_value_rescript(),
+            res_type,
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct ProjectTemplate {
     project_name: String,
     codegen_contracts: Vec<ContractTemplate>,
@@ -707,9 +619,11 @@ pub struct ProjectTemplate {
     should_use_hypersync_client_decoder: bool,
     should_rollback_on_reorg: bool,
     should_save_full_history: bool,
+    enable_raw_events: bool,
     //Used for the package.json reference to handlers in generated
     relative_path_to_root_from_generated: String,
     has_multiple_events: bool,
+    field_selection: FieldSelection,
 }
 
 impl ProjectTemplate {
@@ -737,9 +651,7 @@ impl ProjectTemplate {
         let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
-            .map(|cfg_contract| {
-                ContractTemplate::from_config_contract(cfg_contract, project_paths, cfg)
-            })
+            .map(|cfg_contract| ContractTemplate::from_config_contract(cfg_contract, project_paths))
             .collect::<Result<_>>()
             .context("Failed generating contract template types")?;
 
@@ -794,6 +706,8 @@ impl ProjectTemplate {
             diff_from_current(&project_paths.project_root, &project_paths.generated)
                 .context("Failed to diff generated to root path")?;
 
+        let field_selection = FieldSelection::from_config_field_selection(&cfg.field_selection);
+
         Ok(ProjectTemplate {
             project_name: cfg.name.clone(),
             codegen_contracts,
@@ -806,34 +720,36 @@ impl ProjectTemplate {
             should_use_hypersync_client_decoder,
             should_rollback_on_reorg: cfg.rollback_on_reorg,
             should_save_full_history: cfg.save_full_history,
+            enable_raw_events: cfg.enable_raw_events,
             //Used for the package.json reference to handlers in generated
             relative_path_to_root_from_generated,
             has_multiple_events,
+            field_selection,
         })
     }
 }
 
 #[cfg(test)]
 mod test {
+    use std::vec;
+
     use super::*;
     use crate::{
-        capitalization::Capitalize,
         config_parsing::{
-            entity_parsing::RescriptType,
             human_config,
             system_config::{RpcConfig, SystemConfig},
         },
         project_paths::ParsedProjectPaths,
+        utils::text::Capitalize,
     };
     use pretty_assertions::assert_eq;
 
     fn get_per_contract_events_vec_helper(
         event_names: Vec<&str>,
-        contract_name: &str,
     ) -> Vec<PerNetworkContractEventTemplate> {
         event_names
             .into_iter()
-            .map(|n| PerNetworkContractEventTemplate::new(n.to_string(), contract_name.to_string()))
+            .map(|n| PerNetworkContractEventTemplate::new(n.to_string()))
             .collect()
     }
 
@@ -860,32 +776,11 @@ mod test {
     }
 
     #[test]
-    fn check_config_with_multiple_sync_sources() {
-        let project_template = get_project_template_helper("invalid-multiple-sync-config6.yaml");
-
-        assert!(
-            project_template.chain_configs[0]
-                .network_config
-                .rpc_config
-                .is_none(),
-            "rpc config should have been none since it was defined second"
-        );
-
-        assert!(
-            project_template.chain_configs[0]
-                .network_config
-                .skar_server_url
-                .is_some(),
-            "skar config should be some since it was defined first"
-        );
-    }
-
-    #[test]
     fn chain_configs_parsed_case_1() {
         let address1 = String::from("0x2E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
         let rpc_config1 = RpcConfig {
-            url: "https://eth.com".to_string(),
+            urls: vec!["https://eth.com".to_string()],
             sync_config: system_config::SyncConfig::default(),
         };
 
@@ -898,8 +793,7 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
@@ -933,7 +827,7 @@ mod test {
         let address2 = String::from("0x1E645469f354BB4F5c8a05B3b30A929361cf77eC");
 
         let rpc_config1 = RpcConfig {
-            url: "https://eth.com".to_string(),
+            urls: vec!["https://eth.com".to_string()],
             sync_config: system_config::SyncConfig::default(),
         };
         let network1 = super::NetworkTemplate {
@@ -945,25 +839,31 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
+        let rpc_config2 = RpcConfig {
+            urls: vec![
+                "https://eth.com".to_string(),
+                // Should support fallback urls
+                "https://eth.com/fallback".to_string(),
+            ],
+            sync_config: system_config::SyncConfig::default(),
+        };
         let network2 = super::NetworkTemplate {
             id: 2,
-            rpc_config: Some(rpc_config1),
+            rpc_config: Some(rpc_config2),
             skar_server_url: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
             addresses: vec![address1.clone()],
             events,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract2");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
         let contract2 = super::PerNetworkContractTemplate {
             name: String::from("Contract2").to_capitalized_options(),
             addresses: vec![address2.clone()],
@@ -999,8 +899,7 @@ mod test {
             confirmed_block_threshold: 200,
         };
 
-        let events =
-            get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"], "Contract1");
+        let events = get_per_contract_events_vec_helper(vec!["NewGravatar", "UpdatedGravatar"]);
 
         let contract1 = super::PerNetworkContractTemplate {
             name: String::from("Contract1").to_capitalized_options(),
@@ -1063,16 +962,18 @@ mod test {
         get_project_template_helper("config5.yaml");
     }
 
-    const RESCRIPT_BIG_INT_TYPE: RescriptType = RescriptType::BigInt;
-    const RESCRIPT_ADDRESS_TYPE: RescriptType = RescriptType::Address;
-    const RESCRIPT_STRING_TYPE: RescriptType = RescriptType::String;
+    const RESCRIPT_BIG_INT_TYPE: RescriptTypeIdent = RescriptTypeIdent::BigInt;
+    const RESCRIPT_ADDRESS_TYPE: RescriptTypeIdent = RescriptTypeIdent::Address;
+    const RESCRIPT_STRING_TYPE: RescriptTypeIdent = RescriptTypeIdent::String;
 
     impl EventParamTypeTemplate {
-        fn new(param_name: &str, res_type: RescriptType) -> Self {
+        fn new(name: &str, res_type: RescriptTypeIdent) -> Self {
+            let js_name = name.to_string();
             Self {
-                param_name: param_name.to_string().to_capitalized_options(),
-                type_rescript: res_type.to_string(),
-                type_rescript_schema: res_type.to_rescript_schema(),
+                res_name: make_res_name(&js_name),
+                js_name,
+                res_type: res_type.to_string(),
+                res_schema_code: res_type.to_rescript_schema(),
                 default_value_rescript: res_type.get_default_value_rescript(),
                 default_value_non_rescript: res_type.get_default_value_non_rescript(),
                 is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,
@@ -1082,10 +983,7 @@ mod test {
         }
     }
 
-    fn make_expected_event_template(
-        topic0: String,
-        required_entity: RequiredEntityTemplate,
-    ) -> EventTemplate {
+    fn make_expected_event_template(topic0: String) -> EventTemplate {
         let params = vec![
             EventParamTypeTemplate::new("id", RESCRIPT_BIG_INT_TYPE),
             EventParamTypeTemplate::new("owner", RESCRIPT_ADDRESS_TYPE),
@@ -1095,15 +993,10 @@ mod test {
 
         EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
-            event_type: EventType {
-                full: "Contract1_NewGravatar".to_string(),
-                truncated_for_pg_enum_limit: "Contract1_NewGravatar".to_string(),
-            },
             topic0,
             body_params: params.clone(),
             params,
             indexed_params: vec![],
-            required_entities: vec![required_entity],
             is_async: false,
         }
     }
@@ -1115,15 +1008,8 @@ mod test {
         let new_gavatar_event_template =
             project_template.codegen_contracts[0].codegen_events[0].clone();
 
-        let expected_event_template = make_expected_event_template(
-            new_gavatar_event_template.topic0.clone(),
-            RequiredEntityTemplate {
-                name: "EmptyEntity".to_string().to_capitalized_options(),
-                labels: None,
-                array_labels: None,
-                entity_fields_of_required_entity: FilteredTemplateLists::empty(),
-            },
-        );
+        let expected_event_template =
+            make_expected_event_template(new_gavatar_event_template.topic0.clone());
 
         assert_eq!(expected_event_template, new_gavatar_event_template);
     }
@@ -1133,15 +1019,8 @@ mod test {
         let project_template = get_project_template_helper("gravatar-with-required-entities.yaml");
 
         let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
-        let expected_event_template = make_expected_event_template(
-            new_gavatar_event_template.topic0.clone(),
-            RequiredEntityTemplate {
-                name: String::from("Gravatar").to_capitalized_options(),
-                labels: Some(vec![String::from("gravatarWithChanges")]),
-                array_labels: None,
-                entity_fields_of_required_entity: FilteredTemplateLists::empty(),
-            },
-        );
+        let expected_event_template =
+            make_expected_event_template(new_gavatar_event_template.topic0.clone());
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }

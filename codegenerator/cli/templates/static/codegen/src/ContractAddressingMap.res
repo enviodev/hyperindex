@@ -7,8 +7,8 @@ exception UndefinedContractAddress(Ethers.ethAddress)
 // protecting static addresses from de-registration.
 
 type mapping = {
-  nameByAddress: Js.Dict.t<contractName>,
-  addressesByName: Js.Dict.t<Belt.Set.String.t>,
+  nameByAddress: dict<contractName>,
+  addressesByName: dict<Belt.Set.String.t>,
 }
 
 let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
@@ -75,8 +75,8 @@ let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress):
   mapping->getName(contractAddress->Ethers.ethAddressToString)
 }
 
-let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Obj.magic
-let keyValStringToAddress: array<(string, string)> => array<(Ethers.ethAddress, string)> = Obj.magic
+let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Utils.magic
+let keyValStringToAddress: array<(string, string)> => array<(Ethers.ethAddress, string)> = Utils.magic
 
 let getAddressesFromContractName = (mapping, ~contractName) => {
   switch mapping->getAddresses(contractName) {
@@ -97,7 +97,7 @@ let combine = (a, b) => {
     v.nameByAddress
     ->Js.Dict.entries
     ->Belt.Array.forEach(((addr, name)) => {
-      m->addAddress(~address=addr->Obj.magic, ~name)
+      m->addAddress(~address=addr->Utils.magic, ~name)
     })
   )
   m
@@ -116,11 +116,13 @@ let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Ethers.ethAdd
   mapping.nameByAddress
   ->Js.Dict.entries
   ->Belt.Array.keep(((addr, _name)) => {
-    let shouldRemove = addressesToRemove->Utils.arrayIncludes(addr->Obj.magic)
+    let shouldRemove = addressesToRemove->Utils.arrayIncludes(addr->Utils.magic)
     !shouldRemove
   })
   ->keyValStringToAddress
   ->fromArray
 }
 
-let isEmpty = (mapping: mapping) => mapping.nameByAddress->Js.Dict.keys->Belt.Array.length == 0
+let addressCount = (mapping: mapping) => mapping.nameByAddress->Js.Dict.keys->Belt.Array.length
+
+let isEmpty = (mapping: mapping) => mapping->addressCount == 0

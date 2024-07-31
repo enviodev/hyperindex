@@ -1,7 +1,5 @@
-@genType.import(("./OpaqueTypes.ts", "GenericBigInt"))
-type t
-
-module Misc = {
+%%private(
+  @inline
   let unsafeToOption: (unit => 'a) => option<'a> = unsafeFunc => {
     try {
       unsafeFunc()->Some
@@ -9,38 +7,38 @@ module Misc = {
     | Js.Exn.Error(_obj) => None
     }
   }
-}
+)
 
 // constructors and methods
-@val external fromInt: int => t = "BigInt"
-@val external fromStringUnsafe: string => t = "BigInt"
-let fromString = str => Misc.unsafeToOption(() => str->fromStringUnsafe)
-@send external toString: t => string = "toString"
-let toInt = (b: t): option<int> => b->toString->Belt.Int.fromString
+@val external fromInt: int => bigint = "BigInt"
+@val external fromStringUnsafe: string => bigint = "BigInt"
+let fromString = str => unsafeToOption(() => str->fromStringUnsafe)
+@send external toString: bigint => string = "toString"
+let toInt = (b: bigint): option<int> => b->toString->Belt.Int.fromString
 
 //silence unused var warnings for raw bindings
 @@warning("-27")
 // operation
-let add = (a: t, b: t): t => %raw("a + b")
-let sub = (a: t, b: t): t => %raw("a - b")
-let mul = (a: t, b: t): t => %raw("a * b")
-let div = (a: t, b: t): t => %raw("b > 0n ? a / b : 0n")
-let pow = (a: t, b: t): t => %raw("a ** b")
-let mod = (a: t, b: t): t => %raw("b > 0n ? a % b : 0n")
+let add = (a: bigint, b: bigint): bigint => %raw("a + b")
+let sub = (a: bigint, b: bigint): bigint => %raw("a - b")
+let mul = (a: bigint, b: bigint): bigint => %raw("a * b")
+let div = (a: bigint, b: bigint): bigint => %raw("b > 0n ? a / b : 0n")
+let pow = (a: bigint, b: bigint): bigint => %raw("a ** b")
+let mod = (a: bigint, b: bigint): bigint => %raw("b > 0n ? a % b : 0n")
 
 // comparison
-let eq = (a: t, b: t): bool => %raw("a === b")
-let neq = (a: t, b: t): bool => %raw("a !== b")
-let gt = (a: t, b: t): bool => %raw("a > b")
-let gte = (a: t, b: t): bool => %raw("a >= b")
-let lt = (a: t, b: t): bool => %raw("a < b")
-let lte = (a: t, b: t): bool => %raw("a <= b")
+let eq = (a: bigint, b: bigint): bool => %raw("a === b")
+let neq = (a: bigint, b: bigint): bool => %raw("a !== b")
+let gt = (a: bigint, b: bigint): bool => %raw("a > b")
+let gte = (a: bigint, b: bigint): bool => %raw("a >= b")
+let lt = (a: bigint, b: bigint): bool => %raw("a < b")
+let lte = (a: bigint, b: bigint): bool => %raw("a <= b")
 
 module Bitwise = {
-  let shift_left = (a: t, b: t): t => %raw("a << b")
-  let shift_right = (a: t, b: t): t => %raw("a >> b")
-  let logor = (a: t, b: t): t => %raw("a | b")
-  let logand = (a: t, b: t): t => %raw("a & b")
+  let shift_left = (a: bigint, b: bigint): bigint => %raw("a << b")
+  let shift_right = (a: bigint, b: bigint): bigint => %raw("a >> b")
+  let logor = (a: bigint, b: bigint): bigint => %raw("a | b")
+  let logand = (a: bigint, b: bigint): bigint => %raw("a & b")
 }
 
 let zero = fromInt(0)
@@ -48,7 +46,7 @@ let zero = fromInt(0)
 let schema =
   S.string
   ->S.setName("BigInt")
-  ->S.transform((. s) => {
+  ->S.transform(s => {
     parser: (. string) =>
       switch string->fromString {
       | Some(bigInt) => bigInt

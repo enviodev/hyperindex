@@ -28,13 +28,12 @@ describe("Raw Events Table Migrations", () => {
       { column_name: "event_id", data_type: "numeric" },
       { column_name: "block_number", data_type: "integer" },
       { column_name: "log_index", data_type: "integer" },
-      { column_name: "transaction_index", data_type: "integer" },
       { column_name: "block_timestamp", data_type: "integer" },
       { column_name: "params", data_type: "json" },
       { column_name: "block_hash", data_type: "text" },
-      { column_name: "transaction_hash", data_type: "text" },
+      { column_name: "block_fields", data_type: "json" },
+      { column_name: "transaction_fields", data_type: "json" },
       { column_name: "src_address", data_type: "text" },
-      { column_name: "event_type", data_type: "USER-DEFINED" }, //enum of types
     ];
 
     expect(rawEventsColumnsRes).to.deep.include.members(expectedColumns);
@@ -42,13 +41,13 @@ describe("Raw Events Table Migrations", () => {
 
   it("Inserting 2 rows with the the same pk should fail", async () => {
     let first_valid_row_query = sql`INSERT INTO raw_events ${sql(
-      mockRawEventRow
+      mockRawEventRow as any
     )}`;
 
     await expect(first_valid_row_query).to.eventually.be.fulfilled;
 
     let second_valid_row_query = sql`INSERT INTO raw_events ${sql(
-      mockRawEventRow
+      mockRawEventRow as any
     )}`;
 
     await expect(second_valid_row_query).to.eventually.be.rejected;

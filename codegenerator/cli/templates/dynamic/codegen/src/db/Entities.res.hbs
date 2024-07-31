@@ -1,5 +1,14 @@
 open Table
+open Enums.EntityType
 type id = string
+
+module type Entity = {
+  type t
+  let name: Enums.EntityType.t
+  let schema: S.schema<t>
+  let rowsSchema: S.schema<array<t>>
+  let table: Table.table
+}
 
 //shorthand for punning
 let isPrimaryKey = true
@@ -7,50 +16,36 @@ let isNullable = true
 let isArray = true
 let isIndex = true
 
-module type Entity = {
-  type t
-  let schema: S.schema<t>
-  let rowsSchema: S.schema<array<t>>
-  let table: Table.table
-}
-
-let batchRead = (type entity, ~entityMod: module(Entity with type t = entity)) => {
-  let module(EntityMod) = entityMod
-  let {table, rowsSchema} = module(EntityMod)
-  DbFunctionsEntities.makeReadEntities(~table, ~rowsSchema)
-}
-
-let batchSet = (type entity, ~entityMod: module(Entity with type t = entity)) => {
-  let module(EntityMod) = entityMod
-  let {table, rowsSchema} = module(EntityMod)
-  DbFunctionsEntities.makeBatchSet(~table, ~rowsSchema)
-}
-
-let batchDelete = (type entity, ~entityMod: module(Entity with type t = entity)) => {
-  let module(EntityMod) = entityMod
-  let {table} = module(EntityMod)
-  DbFunctionsEntities.makeBatchDelete(~table)
-}
+@genType
+type whereOperations<'entity, 'fieldType> = {eq: 'fieldType => promise<array<'entity>>}
 
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
+  let name = {{entity.name.capitalized}}
   @genType
   type t = {
     {{#each entity.params as | param |}}
-    {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.type_rescript}},{{/unless}}
+    {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: {{param.res_type}},{{/unless}}
     {{/each}}
   }
 
-  let schema = S.object((. s) => {
+  let schema = S.object((s): t => {
     {{#each entity.params as | param |}}
-    {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", {{param.type_rescript_schema}}),{{/unless}}
+    {{#unless param.is_derived_from }}{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}: s.field("{{param.field_name.uncapitalized}}{{#if param.is_entity_field}}_id{{/if}}", {{param.res_schema_code}}),{{/unless}}
     {{/each}}
   })
 
   let rowsSchema = S.array(schema)
 
+  @genType
+  type indexedFieldOperations = {
+    {{#each entity.params as | param |}}{{#if param.is_queryable_field}}
+      @as("{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}") {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: whereOperations<t, {{param.res_type}}>,
+    {{/if}}{{/each}}
+  }
+
   let table = mkTable(
-    "{{entity.name.original}}",
+     (name :> string),
     ~fields=[
   {{#each entity.postgres_fields as | pg_field |}}
       mkField(
@@ -92,32 +87,15 @@ module {{entity.name.capitalized}} = {
 
 type entity = 
 {{#each entities as | entity |}}
-  | {{entity.name.capitalized}}Entity({{entity.name.capitalized}}.t)
+  | {{entity.name.capitalized}}({{entity.name.capitalized}}.t)
 {{/each}}
 
-type entityName =
-{{#each entities as | entity |}}
-  | @as("{{entity.name.capitalized}}") {{entity.name.capitalized}}
-{{/each}}
+let makeGetter = (schema, accessor) => json => json->S.parseWith(schema)->Belt.Result.map(accessor)
 
-let entityNameSchema = 
-{{#if entities.1}}
-{{!-- If there are multiple entities --}}
-S.union([
-{{#each entities as | entity |}}
-  S.literal({{entity.name.capitalized}}), 
-{{/each}}
-])
-{{else}}
-{{#each entities as | entity |}}
-  S.literal({{entity.name.capitalized}})
-{{/each}}
-{{/if}}
-
-let getEntityParamsDecoder = entityName =>
+let getEntityParamsDecoder = (entityName: Enums.EntityType.t) =>
   switch entityName {
 {{#each entities as | entity |}}
-  | {{entity.name.capitalized}} => json => json->S.parseWith(. {{entity.name.capitalized}}.schema)->Belt.Result.map(decoded => {{entity.name.capitalized}}Entity(decoded))
+  | {{entity.name.capitalized}} => makeGetter({{entity.name.capitalized}}.schema, e => {{entity.name.capitalized}}(e))
 {{/each}}
   }
 
@@ -127,3 +105,13 @@ let allTables: array<table> = [
 {{/each}}
 ]
 let schema = Schema.make(allTables)
+
+exception UnexpectedIdNotDefinedOnEntity
+let getEntityIdUnsafe = (entity: 'entity): id =>
+  switch Utils.magic(entity)["id"] {
+  | Some(id) => id
+  | None =>
+    UnexpectedIdNotDefinedOnEntity->ErrorHandling.mkLogAndRaise(
+      ~msg="Property 'id' does not exist on expected entity object",
+    )
+  }

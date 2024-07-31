@@ -3,17 +3,18 @@
  */
 import {
 {{#each imported_contracts as |contract|}}
-  {{contract.name.capitalized}}Contract,
-{{#each contract.imported_events as |event|}}
-  {{contract.name.capitalized}}_{{event.name.capitalized}}Entity,
-{{/each}}
+  {{contract.name.capitalized}},
+  {{#each contract.imported_events as |event|}}
+  {{!--These are the entity types--}}
+  {{contract.name.capitalized}}_{{event.name.capitalized}},
+  {{/each}}
 {{/each}}
 } from "generated";
 {{#each imported_contracts as |contract|}}
   {{#each contract.imported_events as |event|}}
 
-{{contract.name.capitalized}}Contract.{{event.name.capitalized}}.handler(({ event, context }) => {
-  const entity: {{contract.name.capitalized}}_{{event.name.capitalized}}Entity = {
+{{contract.name.capitalized}}.{{event.name.capitalized}}.handler(async ({ event, context }) => {
+  const entity: {{contract.name.capitalized}}_{{event.name.capitalized}} = {
     id: {{event.entity_id_from_event_code}},
     {{#each event.params as |param|}}
     {{param.entity_key.uncapitalized}}: event.params.{{param.event_key.uncapitalized}}{{#if
@@ -28,5 +29,6 @@ import {
 
   context.{{contract.name.capitalized}}_{{event.name.capitalized}}.set(entity);
 });
+
   {{/each}}
 {{/each}}

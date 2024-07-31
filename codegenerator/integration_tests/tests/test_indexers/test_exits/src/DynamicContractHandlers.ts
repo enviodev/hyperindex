@@ -2,26 +2,25 @@
  *Please refer to https://docs.envio.dev for a thorough guide on all Envio indexer features*
  */
 import {
-  FuturesMarketContract,
-  FuturesMarketManagerContract,
-} from "../generated/src/Handlers.gen";
+  //contracts 
+  FuturesMarket, FuturesMarketManager
+  //entities
+  FuturesMarket_CacheUpdated,
+  FuturesMarket_FundingRecomputed,
+  FuturesMarket_FuturesTracking,
+  FuturesMarket_MarginTransferred,
+  FuturesMarket_NextPriceOrderRemoved,
+  FuturesMarket_NextPriceOrderSubmitted,
+  FuturesMarket_PositionLiquidated,
+  FuturesMarket_PositionModified,
+  FuturesMarketManager_MarketAdded,
+  EventsSummary,
 
-import {
-  FuturesMarket_CacheUpdatedEntity,
-  FuturesMarket_FundingRecomputedEntity,
-  FuturesMarket_FuturesTrackingEntity,
-  FuturesMarket_MarginTransferredEntity,
-  FuturesMarket_NextPriceOrderRemovedEntity,
-  FuturesMarket_NextPriceOrderSubmittedEntity,
-  FuturesMarket_PositionLiquidatedEntity,
-  FuturesMarket_PositionModifiedEntity,
-  FuturesMarketManager_MarketAddedEntity,
-  EventsSummaryEntity,
-} from "../generated/src/Types.gen";
+} from "generated";
 
 export const GLOBAL_EVENTS_SUMMARY_KEY = "GlobalEventsSummary";
 
-const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
+const INITIAL_EVENTS_SUMMARY: EventsSummary = {
   id: GLOBAL_EVENTS_SUMMARY_KEY,
   futuresMarket_CacheUpdatedCount: BigInt(0),
   futuresMarket_FundingRecomputedCount: BigInt(0),
@@ -34,15 +33,11 @@ const INITIAL_EVENTS_SUMMARY: EventsSummaryEntity = {
   futuresMarketManager_MarketAddedCount: BigInt(0),
 };
 
-FuturesMarketContract.CacheUpdated.loader(({ event, context }) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
 
-FuturesMarketContract.CacheUpdated.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarket.CacheUpdated.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -50,8 +45,8 @@ FuturesMarketContract.CacheUpdated.handler(({ event, context }) => {
       currentSummaryEntity.futuresMarket_CacheUpdatedCount + BigInt(1),
   };
 
-  const futuresMarket_CacheUpdatedEntity: FuturesMarket_CacheUpdatedEntity = {
-    id: event.transactionHash + event.logIndex.toString(),
+  const futuresMarket_CacheUpdatedEntity: FuturesMarket_CacheUpdated = {
+    id: event.transaction.hash + event.logIndex.toString(),
     name: event.params.name,
     destination: event.params.destination,
     eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
@@ -60,15 +55,11 @@ FuturesMarketContract.CacheUpdated.handler(({ event, context }) => {
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarket_CacheUpdated.set(futuresMarket_CacheUpdatedEntity);
 });
-FuturesMarketContract.FundingRecomputed.loader(({ event, context }) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
 
-FuturesMarketContract.FundingRecomputed.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarket.FundingRecomputed.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -76,29 +67,25 @@ FuturesMarketContract.FundingRecomputed.handler(({ event, context }) => {
       currentSummaryEntity.futuresMarket_FundingRecomputedCount + BigInt(1),
   };
 
-  const futuresMarket_FundingRecomputedEntity: FuturesMarket_FundingRecomputedEntity =
-    {
-      id: event.transactionHash + event.logIndex.toString(),
-      funding: event.params.funding,
-      index: event.params.index,
-      timestamp: event.params.timestamp,
-      eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
-    };
+  const futuresMarket_FundingRecomputedEntity: FuturesMarket_FundingRecomputed =
+  {
+    id: event.transaction.hash + event.logIndex.toString(),
+    funding: event.params.funding,
+    index: event.params.index,
+    timestamp: event.params.timestamp,
+    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
+  };
 
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarket_FundingRecomputed.set(
-    futuresMarket_FundingRecomputedEntity
+    futuresMarket_FundingRecomputedEntity,
   );
 });
-FuturesMarketContract.FuturesTracking.loader(({ event, context }) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
 
-FuturesMarketContract.FuturesTracking.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarket.FuturesTracking.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -106,31 +93,26 @@ FuturesMarketContract.FuturesTracking.handler(({ event, context }) => {
       currentSummaryEntity.futuresMarket_FuturesTrackingCount + BigInt(1),
   };
 
-  const futuresMarket_FuturesTrackingEntity: FuturesMarket_FuturesTrackingEntity =
-    {
-      id: event.transactionHash + event.logIndex.toString(),
-      trackingCode: event.params.trackingCode,
-      baseAsset: event.params.baseAsset,
-      marketKey: event.params.marketKey,
-      sizeDelta: event.params.sizeDelta,
-      fee: event.params.fee,
-      eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
-    };
+  const futuresMarket_FuturesTrackingEntity: FuturesMarket_FuturesTracking = {
+    id: event.transaction.hash + event.logIndex.toString(),
+    trackingCode: event.params.trackingCode,
+    baseAsset: event.params.baseAsset,
+    marketKey: event.params.marketKey,
+    sizeDelta: event.params.sizeDelta,
+    fee: event.params.fee,
+    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
+  };
 
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarket_FuturesTracking.set(
-    futuresMarket_FuturesTrackingEntity
+    futuresMarket_FuturesTrackingEntity,
   );
 });
-FuturesMarketContract.MarginTransferred.loader(({ event, context }) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
 
-FuturesMarketContract.MarginTransferred.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarket.MarginTransferred.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -138,28 +120,24 @@ FuturesMarketContract.MarginTransferred.handler(({ event, context }) => {
       currentSummaryEntity.futuresMarket_MarginTransferredCount + BigInt(1),
   };
 
-  const futuresMarket_MarginTransferredEntity: FuturesMarket_MarginTransferredEntity =
-    {
-      id: event.transactionHash + event.logIndex.toString(),
-      account: event.params.account,
-      marginDelta: event.params.marginDelta,
-      eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
-    };
+  const futuresMarket_MarginTransferredEntity: FuturesMarket_MarginTransferred =
+  {
+    id: event.transaction.hash + event.logIndex.toString(),
+    account: event.params.account,
+    marginDelta: event.params.marginDelta,
+    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
+  };
 
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarket_MarginTransferred.set(
-    futuresMarket_MarginTransferredEntity
+    futuresMarket_MarginTransferredEntity,
   );
 });
-FuturesMarketContract.NextPriceOrderRemoved.loader(({ event, context }) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
 
-FuturesMarketContract.NextPriceOrderRemoved.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarket.NextPriceOrderRemoved.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -167,33 +145,29 @@ FuturesMarketContract.NextPriceOrderRemoved.handler(({ event, context }) => {
       currentSummaryEntity.futuresMarket_NextPriceOrderRemovedCount + BigInt(1),
   };
 
-  const futuresMarket_NextPriceOrderRemovedEntity: FuturesMarket_NextPriceOrderRemovedEntity =
-    {
-      id: event.transactionHash + event.logIndex.toString(),
-      account: event.params.account,
-      currentRoundId: event.params.currentRoundId,
-      sizeDelta: event.params.sizeDelta,
-      targetRoundId: event.params.targetRoundId,
-      commitDeposit: event.params.commitDeposit,
-      keeperDeposit: event.params.keeperDeposit,
-      trackingCode: event.params.trackingCode,
-      eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
-    };
+  const futuresMarket_NextPriceOrderRemovedEntity: FuturesMarket_NextPriceOrderRemoved =
+  {
+    id: event.transaction.hash + event.logIndex.toString(),
+    account: event.params.account,
+    currentRoundId: event.params.currentRoundId,
+    sizeDelta: event.params.sizeDelta,
+    targetRoundId: event.params.targetRoundId,
+    commitDeposit: event.params.commitDeposit,
+    keeperDeposit: event.params.keeperDeposit,
+    trackingCode: event.params.trackingCode,
+    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
+  };
 
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarket_NextPriceOrderRemoved.set(
-    futuresMarket_NextPriceOrderRemovedEntity
+    futuresMarket_NextPriceOrderRemovedEntity,
   );
 });
-FuturesMarketContract.NextPriceOrderSubmitted.loader(({ event, context }) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
 
-FuturesMarketContract.NextPriceOrderSubmitted.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarket.NextPriceOrderSubmitted.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -202,32 +176,28 @@ FuturesMarketContract.NextPriceOrderSubmitted.handler(({ event, context }) => {
       BigInt(1),
   };
 
-  const futuresMarket_NextPriceOrderSubmittedEntity: FuturesMarket_NextPriceOrderSubmittedEntity =
-    {
-      id: event.transactionHash + event.logIndex.toString(),
-      account: event.params.account,
-      sizeDelta: event.params.sizeDelta,
-      targetRoundId: event.params.targetRoundId,
-      commitDeposit: event.params.commitDeposit,
-      keeperDeposit: event.params.keeperDeposit,
-      trackingCode: event.params.trackingCode,
-      eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
-    };
+  const futuresMarket_NextPriceOrderSubmittedEntity: FuturesMarket_NextPriceOrderSubmitted =
+  {
+    id: event.transaction.hash + event.logIndex.toString(),
+    account: event.params.account,
+    sizeDelta: event.params.sizeDelta,
+    targetRoundId: event.params.targetRoundId,
+    commitDeposit: event.params.commitDeposit,
+    keeperDeposit: event.params.keeperDeposit,
+    trackingCode: event.params.trackingCode,
+    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
+  };
 
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarket_NextPriceOrderSubmitted.set(
-    futuresMarket_NextPriceOrderSubmittedEntity
+    futuresMarket_NextPriceOrderSubmittedEntity,
   );
 });
-FuturesMarketContract.PositionLiquidated.loader(({ event, context }) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
 
-FuturesMarketContract.PositionLiquidated.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarket.PositionLiquidated.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -235,32 +205,28 @@ FuturesMarketContract.PositionLiquidated.handler(({ event, context }) => {
       currentSummaryEntity.futuresMarket_PositionLiquidatedCount + BigInt(1),
   };
 
-  const futuresMarket_PositionLiquidatedEntity: FuturesMarket_PositionLiquidatedEntity =
-    {
-      id: event.transactionHash + event.logIndex.toString(),
-      event_id: event.params.id,
-      account: event.params.account,
-      liquidator: event.params.liquidator,
-      size: event.params.size,
-      price: event.params.price,
-      fee: event.params.fee,
-      eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
-    };
+  const futuresMarket_PositionLiquidatedEntity: FuturesMarket_PositionLiquidated =
+  {
+    id: event.transaction.hash + event.logIndex.toString(),
+    event_id: event.params.id,
+    account: event.params.account,
+    liquidator: event.params.liquidator,
+    size: event.params.size,
+    price: event.params.price,
+    fee: event.params.fee,
+    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
+  };
 
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarket_PositionLiquidated.set(
-    futuresMarket_PositionLiquidatedEntity
+    futuresMarket_PositionLiquidatedEntity,
   );
 });
-FuturesMarketContract.PositionModified.loader(({ event, context }) => {
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
-});
 
-FuturesMarketContract.PositionModified.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarket.PositionModified.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -268,36 +234,33 @@ FuturesMarketContract.PositionModified.handler(({ event, context }) => {
       currentSummaryEntity.futuresMarket_PositionModifiedCount + BigInt(1),
   };
 
-  const futuresMarket_PositionModifiedEntity: FuturesMarket_PositionModifiedEntity =
-    {
-      id: event.transactionHash + event.logIndex.toString(),
-      event_id: event.params.id,
-      account: event.params.account,
-      margin: event.params.margin,
-      size: event.params.size,
-      tradeSize: event.params.tradeSize,
-      lastPrice: event.params.lastPrice,
-      fundingIndex: event.params.fundingIndex,
-      fee: event.params.fee,
-      eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
-    };
+  const futuresMarket_PositionModifiedEntity: FuturesMarket_PositionModified = {
+    id: event.transaction.hash + event.logIndex.toString(),
+    event_id: event.params.id,
+    account: event.params.account,
+    margin: event.params.margin,
+    size: event.params.size,
+    tradeSize: event.params.tradeSize,
+    lastPrice: event.params.lastPrice,
+    fundingIndex: event.params.fundingIndex,
+    fee: event.params.fee,
+    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
+  };
 
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarket_PositionModified.set(
-    futuresMarket_PositionModifiedEntity
+    futuresMarket_PositionModifiedEntity,
   );
 });
 
-FuturesMarketManagerContract.MarketAdded.loader(({ event, context }) => {
-  context.contractRegistration.addFuturesMarket(event.params.market);
-  context.EventsSummary.load(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarketManager.MarketAdded.contractRegistration(({ event, context }) => {
+  context.addFuturesMarket(event.params.market);
 });
 
-FuturesMarketManagerContract.MarketAdded.handler(({ event, context }) => {
-  const summary = context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
+FuturesMarketManager.MarketAdded.handler(async ({ event, context }) => {
+  const summary = await context.EventsSummary.get(GLOBAL_EVENTS_SUMMARY_KEY);
 
-  const currentSummaryEntity: EventsSummaryEntity =
-    summary ?? INITIAL_EVENTS_SUMMARY;
+  const currentSummaryEntity: EventsSummary = summary ?? INITIAL_EVENTS_SUMMARY;
 
   const nextSummaryEntity = {
     ...currentSummaryEntity,
@@ -305,17 +268,17 @@ FuturesMarketManagerContract.MarketAdded.handler(({ event, context }) => {
       currentSummaryEntity.futuresMarketManager_MarketAddedCount + BigInt(1),
   };
 
-  const futuresMarketManager_MarketAddedEntity: FuturesMarketManager_MarketAddedEntity =
-    {
-      id: event.transactionHash + event.logIndex.toString(),
-      market: event.params.market,
-      asset: event.params.asset,
-      marketKey: event.params.marketKey,
-      eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
-    };
+  const futuresMarketManager_MarketAddedEntity: FuturesMarketManager_MarketAdded =
+  {
+    id: event.transaction.hash + event.logIndex.toString(),
+    market: event.params.market,
+    asset: event.params.asset,
+    marketKey: event.params.marketKey,
+    eventsSummary: GLOBAL_EVENTS_SUMMARY_KEY,
+  };
 
   context.EventsSummary.set(nextSummaryEntity);
   context.FuturesMarketManager_MarketAdded.set(
-    futuresMarketManager_MarketAddedEntity
+    futuresMarketManager_MarketAddedEntity,
   );
 });

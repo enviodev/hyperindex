@@ -10,7 +10,7 @@ type interfaceAndAbi = {
 }
 type t = {
   contractAddressMapping: ContractAddressingMap.mapping,
-  contractNameInterfaceMapping: Js.Dict.t<interfaceAndAbi>,
+  contractNameInterfaceMapping: dict<interfaceAndAbi>,
 }
 
 let make = (
@@ -216,22 +216,7 @@ let getCombinedEthersFilter = (
 
 type parseError = ParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Ethers.ethAddress)
 
-let parseLogEthers = (self: t, ~log: Ethers.log) => {
-  let interfaceOpt =
-    self
-    ->getInterfaceByAddress(~contractAddress=log.address)
-    ->Belt.Option.map(mapping => mapping.interface)
-  switch interfaceOpt {
-  | None => Error(UndefinedInterface(log.address))
-  | Some(interface) =>
-    switch interface->Ethers.Interface.parseLog(~log) {
-    | Error(e) => Error(ParseError(e))
-    | Ok(v) => Ok(v)
-    }
-  }
-}
-
-let parseLogViem = (self: t, ~log: Ethers.log) => {
+let parseLogViem = (self: t, ~log: Types.Log.t) => {
   let abiOpt =
     self
     ->getInterfaceByAddress(~contractAddress=log.address)

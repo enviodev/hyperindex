@@ -281,6 +281,8 @@ pub async fn generate_config_from_subgraph_id(
         event_decoder: None,
         rollback_on_reorg: None,
         save_full_history: None,
+        field_selection: None,
+        raw_events: None,
     };
     let mut networks: Vec<Network> = vec![];
 
@@ -304,8 +306,9 @@ pub async fn generate_config_from_subgraph_id(
         // Create network object to be populated
         let mut network = Network {
             id: chain_helpers::Network::from(*graph_network).get_network_id(),
+            hypersync_config: None,
             // TODO: update to the final rpc url
-            sync_source: None,
+            rpc_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: None,
@@ -343,8 +346,6 @@ pub async fn generate_config_from_subgraph_id(
                                 .collect::<String>();
                             let event = EventConfig {
                                 event: event_name.to_string(),
-                                required_entities: Some(vec![]),
-                                is_async: None,
                             };
 
                             Ok(event)

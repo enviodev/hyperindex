@@ -148,7 +148,7 @@ module QueryTypes = {
     log?: logFieldSelection,
   }
 
-  let fieldSelectionSchema = S.object((. s) => {
+  let fieldSelectionSchema = S.object(s => {
     block: ?s.field("block", S.option(blockFieldSelectionSchema)),
     transaction: ?s.field("transaction", S.option(transactionFieldSelectionSchema)),
     log: ?s.field("log", S.option(logFieldSelectionSchema)),
@@ -159,7 +159,7 @@ module QueryTypes = {
     topics: array<array<Ethers.EventFilter.topic>>,
   }
 
-  let logParamsSchema = S.object((. s) => {
+  let logParamsSchema = S.object(s => {
     address: ?s.field("address", S.option(S.array(Ethers.ethAddressSchema))),
     topics: s.field("topics", S.array(S.array(S.string))),
   })
@@ -170,7 +170,7 @@ module QueryTypes = {
     sighash?: array<string>,
   }
 
-  let transactionParamsSchema = S.object((. s) => {
+  let transactionParamsSchema = S.object(s => {
     from: ?s.field("from", S.option(S.array(Ethers.ethAddressSchema))),
     to: ?s.field("to", S.option(S.array(Ethers.ethAddressSchema))),
     sighash: ?s.field("sighash", S.option(S.array(S.string))),
@@ -186,7 +186,7 @@ module QueryTypes = {
     includeAllBlocks?: bool,
   }
 
-  let postQueryBodySchema = S.object((. s) => {
+  let postQueryBodySchema = S.object(s => {
     fromBlock: s.field("from_block", S.int),
     toBlockExclusive: ?s.field("to_block", S.option(S.int)),
     logs: ?s.field("logs", S.option(S.array(logParamsSchema))),
@@ -209,18 +209,18 @@ module ResponseTypes = {
     stateRoot?: string,
     receiptsRoot?: string,
     miner?: unchecksummedEthAddress,
-    difficulty?: option<Ethers.BigInt.t>,
-    totalDifficulty?: option<Ethers.BigInt.t>,
+    difficulty?: option<bigint>,
+    totalDifficulty?: option<bigint>,
     extraData?: string,
-    size?: Ethers.BigInt.t,
-    gasLimit?: Ethers.BigInt.t,
-    gasUsed?: Ethers.BigInt.t,
-    timestamp?: Ethers.BigInt.t,
+    size?: bigint,
+    gasLimit?: bigint,
+    gasUsed?: bigint,
+    timestamp?: bigint,
     uncles?: option<string>,
-    baseFeePerGas?: option<Ethers.BigInt.t>,
+    baseFeePerGas?: option<bigint>,
   }
 
-  let blockDataSchema = S.object((. s) => {
+  let blockDataSchema = S.object(s => {
     number: ?s.field("number", S.option(S.int)),
     hash: ?s.field("hash", S.option(S.string)),
     parentHash: ?s.field("parent_hash", S.option(S.string)),
@@ -231,38 +231,38 @@ module ResponseTypes = {
     stateRoot: ?s.field("state_root", S.option(S.string)),
     receiptsRoot: ?s.field("receipts_root", S.option(S.string)),
     miner: ?s.field("miner", S.option(S.string)),
-    difficulty: ?s.field("difficulty", S.option(S.null(Ethers.BigInt.schema))),
-    totalDifficulty: ?s.field("total_difficulty", S.option(S.null(Ethers.BigInt.schema))),
+    difficulty: ?s.field("difficulty", S.option(S.null(BigInt.schema))),
+    totalDifficulty: ?s.field("total_difficulty", S.option(S.null(BigInt.schema))),
     extraData: ?s.field("extra_data", S.option(S.string)),
-    size: ?s.field("size", S.option(Ethers.BigInt.schema)),
-    gasLimit: ?s.field("gas_limit", S.option(Ethers.BigInt.schema)),
-    gasUsed: ?s.field("gas_used", S.option(Ethers.BigInt.schema)),
-    timestamp: ?s.field("timestamp", S.option(Ethers.BigInt.schema)),
+    size: ?s.field("size", S.option(BigInt.schema)),
+    gasLimit: ?s.field("gas_limit", S.option(BigInt.schema)),
+    gasUsed: ?s.field("gas_used", S.option(BigInt.schema)),
+    timestamp: ?s.field("timestamp", S.option(BigInt.schema)),
     uncles: ?s.field("unclus", S.option(S.null(S.string))),
-    baseFeePerGas: ?s.field("base_fee_per_gas", S.option(S.null(Ethers.BigInt.schema))),
+    baseFeePerGas: ?s.field("base_fee_per_gas", S.option(S.null(BigInt.schema))),
   })
 
   type transactionData = {
     blockHash?: string,
     blockNumber?: int,
     from?: option<unchecksummedEthAddress>,
-    gas?: Ethers.BigInt.t,
-    gasPrice?: option<Ethers.BigInt.t>,
+    gas?: bigint,
+    gasPrice?: option<bigint>,
     hash?: string,
     input?: string,
     nonce?: int,
     to?: option<unchecksummedEthAddress>,
     transactionIndex?: int,
-    value?: Ethers.BigInt.t,
+    value?: bigint,
     v?: option<string>,
     r?: option<string>,
     s?: option<string>,
-    maxPriorityFeePerGas?: option<Ethers.BigInt.t>,
-    maxFeePerGas?: option<Ethers.BigInt.t>,
+    maxPriorityFeePerGas?: option<bigint>,
+    maxFeePerGas?: option<bigint>,
     chainId?: option<int>,
-    cumulativeGasUsed?: Ethers.BigInt.t,
-    effectiveGasPrice?: Ethers.BigInt.t,
-    gasUsed?: Ethers.BigInt.t,
+    cumulativeGasUsed?: bigint,
+    effectiveGasPrice?: bigint,
+    gasUsed?: bigint,
     contractAddress?: option<unchecksummedEthAddress>,
     logsBoom?: string,
     type_?: option<int>,
@@ -271,30 +271,30 @@ module ResponseTypes = {
     sighash?: option<string>,
   }
 
-  let transactionDataSchema = S.object((. s) => {
+  let transactionDataSchema = S.object(s => {
     blockHash: ?s.field("block_hash", S.option(S.string)),
     blockNumber: ?s.field("block_number", S.option(S.int)),
     from: ?s.field("from", S.option(S.null(S.string))),
-    gas: ?s.field("gas", S.option(Ethers.BigInt.schema)),
-    gasPrice: ?s.field("gas_price", S.option(S.null(Ethers.BigInt.schema))),
+    gas: ?s.field("gas", S.option(BigInt.schema)),
+    gasPrice: ?s.field("gas_price", S.option(S.null(BigInt.schema))),
     hash: ?s.field("hash", S.option(S.string)),
     input: ?s.field("input", S.option(S.string)),
     nonce: ?s.field("nonce", S.option(S.int)),
     to: ?s.field("to", S.option(S.null(S.string))),
     transactionIndex: ?s.field("transaction_index", S.option(S.int)),
-    value: ?s.field("value", S.option(Ethers.BigInt.schema)),
+    value: ?s.field("value", S.option(BigInt.schema)),
     v: ?s.field("v", S.option(S.null(S.string))),
     r: ?s.field("r", S.option(S.null(S.string))),
     s: ?s.field("s", S.option(S.null(S.string))),
     maxPriorityFeePerGas: ?s.field(
       "max_priority_fee_per_gas",
-      S.option(S.null(Ethers.BigInt.schema)),
+      S.option(S.null(BigInt.schema)),
     ),
-    maxFeePerGas: ?s.field("max_fee_per_gas", S.option(S.null(Ethers.BigInt.schema))),
+    maxFeePerGas: ?s.field("max_fee_per_gas", S.option(S.null(BigInt.schema))),
     chainId: ?s.field("chain_id", S.option(S.null(S.int))),
-    cumulativeGasUsed: ?s.field("cumulative_gas_used", S.option(Ethers.BigInt.schema)),
-    effectiveGasPrice: ?s.field("effective_gas_price", S.option(Ethers.BigInt.schema)),
-    gasUsed: ?s.field("gas_used", S.option(Ethers.BigInt.schema)),
+    cumulativeGasUsed: ?s.field("cumulative_gas_used", S.option(BigInt.schema)),
+    effectiveGasPrice: ?s.field("effective_gas_price", S.option(BigInt.schema)),
+    gasUsed: ?s.field("gas_used", S.option(BigInt.schema)),
     contractAddress: ?s.field("contract_address", S.option(S.null(S.string))),
     logsBoom: ?s.field("logs_bloom", S.option(S.string)),
     type_: ?s.field("type", S.option(S.null(S.int))),
@@ -318,7 +318,7 @@ module ResponseTypes = {
     topic3?: option<Ethers.EventFilter.topic>,
   }
 
-  let logDataSchema = S.object((. s) => {
+  let logDataSchema = S.object(s => {
     removed: ?s.field("removed", S.option(S.null(S.bool))),
     index: ?s.field("log_index", S.option(S.int)),
     transactionIndex: ?s.field("transaction_index", S.option(S.int)),
@@ -339,7 +339,7 @@ module ResponseTypes = {
     logs?: array<logData>,
   }
 
-  let dataSchema = S.object((. s) => {
+  let dataSchema = S.object(s => {
     blocks: ?s.field("blocks", S.array(blockDataSchema)->S.option),
     transactions: ?s.field("transactions", S.array(transactionDataSchema)->S.option),
     logs: ?s.field("logs", S.array(logDataSchema)->S.option),
@@ -352,7 +352,7 @@ module ResponseTypes = {
     totalTime: int,
   }
 
-  let queryResponseSchema = S.object((. s) => {
+  let queryResponseSchema = S.object(s => {
     data: s.field("data", S.array(dataSchema)),
     archiveHeight: s.field("archive_height", S.int),
     nextBlock: s.field("next_block", S.int),
@@ -373,7 +373,7 @@ let executeHyperSyncQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBod
 }
 
 let getArchiveHeight = {
-  let responseSchema = S.object((. s) => s.field("height", S.int))
+  let responseSchema = S.object(s => s.field("height", S.int))
 
   async (~serverUrl): result<int, QueryHelpers.queryError> => {
     await QueryHelpers.executeFetchRequest(

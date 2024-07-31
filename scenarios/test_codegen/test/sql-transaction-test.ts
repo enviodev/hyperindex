@@ -23,12 +23,15 @@ describe("Sql transaction tests", () => {
     const mockRawEventRow3 = {
       ...mockRawEventRow,
       event_id: mockRawEventRow.event_id + 2,
+      // We don't validate event name and contract name fields
+      event_name: "INVALID_EVENT_NAME",
+      contract_name: "INVALID_CONTRACT_NAME",
     };
 
     const transaction = sql.begin((sql) => [
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow)}`,
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow2)}`,
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow3)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow as any)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow2 as any)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow3 as any)}`,
     ]);
 
     await expect(transaction).to.eventually.be.fulfilled;
@@ -45,12 +48,12 @@ describe("Sql transaction tests", () => {
     const mockRawEventRow3 = {
       ...mockRawEventRow,
       event_id: mockRawEventRow.event_id + 2,
-      event_type: "INVALID_EVENT_TYPE",
+      invalid_field: "INVALID_FIELD",
     };
     const transaction = sql.begin((sql) => [
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow)}`,
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow2)}`,
-      sql`INSERT INTO raw_events ${sql(mockRawEventRow3)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow as any)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow2 as any)}`,
+      sql`INSERT INTO raw_events ${sql(mockRawEventRow3 as any)}`,
     ]);
 
     await expect(transaction).to.eventually.be.rejected;

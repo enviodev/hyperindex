@@ -17,9 +17,9 @@ type asyncMap<'a> = {
   // How long to wait before cancelling a load request
   _timeoutMillis: int,
   // The promises we return to callers. We satisfy them asynchronously.
-  externalPromises: Js.Dict.t<promise<'a>>,
+  externalPromises: dict<promise<'a>>,
   // The handled used to populate the external promises once we have loaded their data.
-  resolvers: Js.Dict.t<(. 'a) => unit>,
+  resolvers: dict<(. 'a) => unit>,
   // The keys currently being loaded
   inProgress: Belt.MutableSet.Int.t,
   // Keys  for items that we have not started loading yet.
@@ -54,7 +54,7 @@ let make = (
   metadata,
 }
 
-let deleteKey: (Js.Dict.t<'a>, string) => unit = (_obj, _k) => %raw(`delete _obj[_k]`)
+let deleteKey: (dict<'a>, string) => unit = (_obj, _k) => %raw(`delete _obj[_k]`)
 
 // If something takes longer than this to load, reject the promise and try again
 let timeoutAfter = timeoutMillis =>

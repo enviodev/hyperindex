@@ -1,8 +1,8 @@
 %%private(
-  let envSafe = EnvSafe.make(.)
+  let envSafe = EnvSafe.make()
 
   let getLogLevelConfig = (name, ~default): Pino.logLevel =>
-    envSafe->EnvSafe.get(.
+    envSafe->EnvSafe.get(
       name,
       S.union([
         S.literal(#trace),
@@ -16,20 +16,21 @@
         S.literal(#uwarn),
         S.literal(#uerror),
       ]),
-      ~fallback=default
+      ~fallback=default,
     )
 )
 // resets the timestampCaughtUpToHeadOrEndblock after a restart when true
 let updateSyncTimeOnRestart =
   envSafe->EnvSafe.get(. "UPDATE_SYNC_TIME_ON_RESTART", S.bool, ~fallback=true)
-let maxEventFetchedQueueSize = envSafe->EnvSafe.get(. "MAX_QUEUE_SIZE", S.int, ~fallback=100_000)
-let maxProcessBatchSize = envSafe->EnvSafe.get(. "MAX_BATCH_SIZE", S.int, ~fallback=5_000)
+let maxEventFetchedQueueSize = envSafe->EnvSafe.get("MAX_QUEUE_SIZE", S.int, ~fallback=100_000)
+let maxProcessBatchSize = envSafe->EnvSafe.get("MAX_BATCH_SIZE", S.int, ~fallback=5_000)
+let maxAddrInPartition = envSafe->EnvSafe.get("MAX_PARTITION_SIZE", S.int, ~fallback=5_000)
 
-let metricsPort = envSafe->EnvSafe.get(. "METRICS_PORT", S.Int.port(. S.int), ~devFallback=9898)
+let metricsPort = envSafe->EnvSafe.get("METRICS_PORT", S.int->S.port, ~devFallback=9898)
 
-let tuiOffEnvVar = envSafe->EnvSafe.get(. "TUI_OFF", S.bool, ~fallback=false)
+let tuiOffEnvVar = envSafe->EnvSafe.get("TUI_OFF", S.bool, ~fallback=false)
 
-let logFilePath = envSafe->EnvSafe.get(. "LOG_FILE", S.string, ~fallback="logs/envio.log")
+let logFilePath = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/envio.log")
 let userLogLevel = getLogLevelConfig("LOG_LEVEL", ~default=#info)
 let defaultFileLogLevel = getLogLevelConfig("FILE_LOG_LEVEL", ~default=#trace)
 
@@ -41,27 +42,28 @@ type logStrategyType =
   | @as("console-raw") ConsoleRaw
   | @as("console-pretty") ConsolePretty
   | @as("both-prettyconsole") Both
-let logStrategy = envSafe->EnvSafe.get(.
-  "LOG_STRATEGY",
-  S.union([
-    S.literal(EcsFile),
-    S.literal(EcsConsole),
-    S.literal(EcsConsoleMultistream),
-    S.literal(FileOnly),
-    S.literal(ConsoleRaw),
-    S.literal(ConsolePretty),
-    S.literal(Both),
-  ]),
-  ~fallback=ConsolePretty,
-)
+let logStrategy =
+  envSafe->EnvSafe.get(
+    "LOG_STRATEGY",
+    S.union([
+      S.literal(EcsFile),
+      S.literal(EcsConsole),
+      S.literal(EcsConsoleMultistream),
+      S.literal(FileOnly),
+      S.literal(ConsoleRaw),
+      S.literal(ConsolePretty),
+      S.literal(Both),
+    ]),
+    ~fallback=ConsolePretty,
+  )
 
 module Db = {
-  let host = envSafe->EnvSafe.get(. "ENVIO_PG_HOST", S.string, ~devFallback="localhost")
-  let port = envSafe->EnvSafe.get(. "ENVIO_PG_PORT", S.Int.port(. S.int), ~devFallback=5433)
-  let user = envSafe->EnvSafe.get(. "ENVIO_PG_USER", S.string, ~devFallback="postgres")
-  let password = envSafe->EnvSafe.get(. "ENVIO_POSTGRES_PASSWORD", S.string, ~devFallback="testing")
-  let database = envSafe->EnvSafe.get(. "ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev")
-  let ssl = envSafe->EnvSafe.get(.
+  let host = envSafe->EnvSafe.get("ENVIO_PG_HOST", S.string, ~devFallback="localhost")
+  let port = envSafe->EnvSafe.get("ENVIO_PG_PORT", S.int->S.port, ~devFallback=5433)
+  let user = envSafe->EnvSafe.get("ENVIO_PG_USER", S.string, ~devFallback="postgres")
+  let password = envSafe->EnvSafe.get("ENVIO_POSTGRES_PASSWORD", S.string, ~devFallback="testing")
+  let database = envSafe->EnvSafe.get("ENVIO_PG_DATABASE", S.string, ~devFallback="envio-dev")
+  let ssl = envSafe->EnvSafe.get(
     "ENVIO_PG_SSL_MODE",
     Postgres.sslOptionsSchema,
     //this is a dev fallback option for local deployments, shouldn't run in the prod env
@@ -71,45 +73,44 @@ module Db = {
 }
 
 module Hasura = {
-  let responseLimit = envSafe->EnvSafe.get(. "HASURA_RESPONSE_LIMIT", S.option(S.int))
+  let responseLimit = envSafe->EnvSafe.get("HASURA_RESPONSE_LIMIT", S.option(S.int))
 
   let graphqlEndpoint =
-    envSafe->EnvSafe.get(.
+    envSafe->EnvSafe.get(
       "HASURA_GRAPHQL_ENDPOINT",
       S.string,
       ~devFallback="http://localhost:8080/v1/metadata",
     )
 
-  let role = envSafe->EnvSafe.get(. "HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
+  let role = envSafe->EnvSafe.get("HASURA_GRAPHQL_ROLE", S.string, ~devFallback="admin")
 
-  let secret =
-    envSafe->EnvSafe.get(. "HASURA_GRAPHQL_ADMIN_SECRET", S.string, ~devFallback="testing")
+  let secret = envSafe->EnvSafe.get("HASURA_GRAPHQL_ADMIN_SECRET", S.string, ~devFallback="testing")
 }
 
 module Configurable = {
   let shouldUseHypersyncClientDecoder =
-    envSafe->EnvSafe.get(. "USE_HYPERSYNC_CLIENT_DECODER", S.option(S.bool))
+    envSafe->EnvSafe.get("USE_HYPERSYNC_CLIENT_DECODER", S.option(S.bool))
 
   /**
     Used for backwards compatability
   */
-  let unstable__temp_unordered_head_mode = envSafe->EnvSafe.get(.
+  let unstable__temp_unordered_head_mode = envSafe->EnvSafe.get(
     "UNSTABLE__TEMP_UNORDERED_HEAD_MODE",
     S.option(S.bool),
   )
 
   let isUnorderedMultichainMode =
-    envSafe->EnvSafe.get(. "UNORDERED_MULTICHAIN_MODE", S.option(S.bool))
+    envSafe->EnvSafe.get("UNORDERED_MULTICHAIN_MODE", S.option(S.bool))
 
   module SyncConfig = {
     let initialBlockInterval =
-      envSafe->EnvSafe.get(. "UNSTABLE__SYNC_CONFIG_INITIAL_BLOCK_INTERVAL", S.option(S.int))
+      envSafe->EnvSafe.get("UNSTABLE__SYNC_CONFIG_INITIAL_BLOCK_INTERVAL", S.option(S.int))
     let backoffMultiplicative =
-      envSafe->EnvSafe.get(. "UNSTABLE__SYNC_CONFIG_BACKOFF_MULTIPLICATIVE", S.option(S.float))
+      envSafe->EnvSafe.get("UNSTABLE__SYNC_CONFIG_BACKOFF_MULTIPLICATIVE", S.option(S.float))
     let accelerationAdditive =
-      envSafe->EnvSafe.get(. "UNSTABLE__SYNC_CONFIG_ACCELERATION_ADDITIVE", S.option(S.int))
+      envSafe->EnvSafe.get("UNSTABLE__SYNC_CONFIG_ACCELERATION_ADDITIVE", S.option(S.int))
     let intervalCeiling =
-      envSafe->EnvSafe.get(. "UNSTABLE__SYNC_CONFIG_INTERVAL_CEILING", S.option(S.int))
+      envSafe->EnvSafe.get("UNSTABLE__SYNC_CONFIG_INTERVAL_CEILING", S.option(S.int))
   }
 }
 

@@ -3,23 +3,20 @@ use super::{
     entity_parsing::{Entity, GraphQLEnum, Schema},
     human_config::{
         self,
-        evm::{
-            EventConfig, EventDecoder, HumanConfig, HypersyncConfig as HumanHypersyncConfig,
-            Network as HumanNetwork, RpcConfig as HumanRpcConfig, SyncSourceConfig,
-        },
+        evm::{EventConfig, EventDecoder, HumanConfig, Network as HumanNetwork},
     },
     hypersync_endpoints,
     validation::validate_names_not_reserved,
 };
 use crate::{
+    config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
 use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam, HumanReadableParser};
-
 use itertools::Itertools;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -47,6 +44,8 @@ pub struct SystemConfig {
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
     pub schema: Schema,
+    pub field_selection: FieldSelection,
+    pub enable_raw_events: bool,
 }
 
 //Getter methods for system config
@@ -147,7 +146,6 @@ impl SystemConfig {
             .collect::<Vec<_>>();
 
         filtered_unique_abi_files.sort();
-
         Ok(filtered_unique_abi_files)
     }
 }
@@ -173,7 +171,7 @@ impl SystemConfig {
                     .events
                     .iter()
                     .cloned()
-                    .map(|e| Event::try_from_config_event(e, &abi_from_file, &schema))
+                    .map(|e| Event::try_from_config_event(e, &abi_from_file))
                     .collect::<Result<Vec<_>>>()
                     .context(format!(
                         "Failed parsing abi types for events in global contract {}",
@@ -207,20 +205,22 @@ impl SystemConfig {
                             .events
                             .iter()
                             .cloned()
-                            .map(|e| Event::try_from_config_event(e, &abi_from_file, &schema))
+                            .map(|e| Event::try_from_config_event(e, &abi_from_file))
                             .collect::<Result<Vec<_>>>()?;
 
                         let contract =
                             Contract::new(contract.name, l_contract.handler, events, abi_from_file)
                                 .context(format!(
-                            "Failed parsing locally defined network contract at network id {}",
-                            network.id
-                        ))?;
+                                    "Failed parsing locally defined network contract at network \
+                                     id {}",
+                                    network.id
+                                ))?;
 
                         //Check if contract exists
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
                             .context(format!(
-                                "Failed inserting locally defined network contract at network id {}",
+                                "Failed inserting locally defined network contract at network id \
+                                 {}",
                                 network.id,
                             ))?;
                     }
@@ -229,7 +229,8 @@ impl SystemConfig {
                         //there is no config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Expected a local network config definition or a global definition"
+                                "Failed to find contract '{}' in global contract config. If you don't use global contracts for multiple networks support, please specify events and handler for the contract.",
+                                contract.name
                             ))?;
                         }
                     }
@@ -263,6 +264,13 @@ impl SystemConfig {
                 .context("Failed inserting network at networks map")?;
         }
 
+        let field_selection =
+            human_cfg
+                .field_selection
+                .map_or(Ok(FieldSelection::empty()), |field_selection| {
+                    FieldSelection::try_from_config_field_selection(field_selection, &networks)
+                })?;
+
         Ok(SystemConfig {
             name: human_cfg.name.clone(),
             parsed_project_paths: project_paths.clone(),
@@ -280,6 +288,8 @@ impl SystemConfig {
             rollback_on_reorg: human_cfg.rollback_on_reorg.unwrap_or(false),
             save_full_history: human_cfg.save_full_history.unwrap_or(false),
             schema,
+            field_selection,
+            enable_raw_events: human_cfg.raw_events.unwrap_or(false),
         })
     }
 
@@ -315,29 +325,32 @@ pub struct HypersyncConfig {
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct SyncConfig {
     initial_block_interval: u32,
-    backoff_multiplicative: f32,
+    backoff_multiplicative: f64,
     acceleration_additive: u32,
     interval_ceiling: u32,
     backoff_millis: u32,
     query_timeout_millis: u32,
+    fallback_stall_timeout: u32,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
+        const QUERY_TIMEOUT_MILLIS: u32 = 20_000;
         Self {
             initial_block_interval: 10_000,
             backoff_multiplicative: 0.8,
             acceleration_additive: 2_000,
             interval_ceiling: 10_000,
             backoff_millis: 5000,
-            query_timeout_millis: 20_000,
+            query_timeout_millis: QUERY_TIMEOUT_MILLIS,
+            fallback_stall_timeout: QUERY_TIMEOUT_MILLIS / 2,
         }
     }
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct RpcConfig {
-    pub url: String,
+    pub urls: Vec<String>,
     pub sync_config: SyncConfig,
 }
 
@@ -347,25 +360,60 @@ pub enum SyncSource {
     HypersyncConfig(HypersyncConfig),
 }
 
+// Check if the given RPC URL is valid in terms of formatting.
+// For now, we only check if it starts with http:// or https://
+fn validate_url(url: &str) -> bool {
+    // Check URL format
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return false;
+    }
+    true
+}
+
 impl SyncSource {
     fn from_human_config(network: HumanNetwork) -> Result<Self> {
-        match network.sync_source {
-            None => {
+        match network {
+            human_config::evm::Network {
+                hypersync_config: Some(_),
+                rpc_config: Some(_),
+                ..
+            } => {
+                Err(anyhow!("EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file"))
+            }
+            human_config::evm::Network {
+              hypersync_config: None,
+              rpc_config: None,
+                ..
+            } => {
                 let defualt_hypersync_endpoint = hypersync_endpoints::get_default_hypersync_endpoint(network.id.clone())
                     .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
-
                 Ok(Self::HypersyncConfig(HypersyncConfig {
                     endpoint_url: defualt_hypersync_endpoint,
                 }))
             }
-            Some(SyncSourceConfig::RpcConfig(HumanRpcConfig {
+            human_config::evm::Network {
+              hypersync_config: None,
+              rpc_config: Some(human_config::evm::RpcConfig {
                 url,
-                unstable__sync_config,
-            })) => Ok(Self::RpcConfig(RpcConfig {
-                url,
+                unstable__sync_config
+              }),
+              ..
+          } => {
+            let urls: Vec<String> = url.into();
+            for url in urls.iter() {
+              if !validate_url(url) {
+                return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+              }
+            }
+            Ok(Self::RpcConfig(RpcConfig {
+                urls,
                 sync_config: match unstable__sync_config {
                     None => SyncConfig::default(),
-                    Some(c) => SyncConfig {
+                    Some(c) => {
+                      let query_timeout_millis = c
+                        .query_timeout_millis
+                        .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
+                      SyncConfig {
                         acceleration_additive: c
                             .acceleration_additive
                             .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
@@ -381,14 +429,22 @@ impl SyncSource {
                         interval_ceiling: c
                             .interval_ceiling
                             .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
-                        query_timeout_millis: c
-                            .query_timeout_millis
-                            .unwrap_or_else(|| SyncConfig::default().query_timeout_millis),
-                    },
+                        query_timeout_millis,
+                        fallback_stall_timeout: c
+                            .fallback_stall_timeout
+                            .unwrap_or_else(|| query_timeout_millis / 2),
+                    }},
                 },
-            })),
-            Some(SyncSourceConfig::HypersyncConfig(HumanHypersyncConfig { endpoint_url })) => {
-                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url }))
+            }))},
+            human_config::evm::Network {
+              hypersync_config: Some(human_config::evm::HypersyncConfig { url }),
+              rpc_config: None,
+              ..
+          } => {
+                if !validate_url(&url) {
+                  return Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url));
+                }
+                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: url }))
             }
         }
     }
@@ -444,7 +500,7 @@ pub struct EvmAbi {
     // The path is not always present since we allow to get ABI from events
     pub path: Option<PathBuf>,
     pub raw: String,
-    typed: ethers::abi::Contract,
+    typed: ethers::abi::Abi,
 }
 
 impl EvmAbi {
@@ -455,16 +511,32 @@ impl EvmAbi {
         match &abi_file_path {
             None => Ok(None),
             Some(abi_file_path) => {
+                #[derive(Deserialize)]
+                #[serde(untagged)]
+                enum AbiOrNestedAbi {
+                    Abi(ethers::abi::Abi),
+                    NestedAbi { abi: ethers::abi::Abi },
+                }
+
                 let relative_path_buf = PathBuf::from(abi_file_path);
                 let path =
                     path_utils::get_config_path_relative_to_root(project_paths, relative_path_buf)
                         .context("Failed to get path to ABI relative to the root of the project")?;
-                let raw = fs::read_to_string(&path)
+                let mut raw = fs::read_to_string(&path)
                     .context(format!("Failed to read ABI file at \"{}\"", abi_file_path))?;
-                let decoding_context_error =
-                    format!("Failed to decode ABI file at \"{}\"", abi_file_path);
-                let typed: ethers::abi::Abi =
-                    serde_json::from_str(&raw).context(decoding_context_error.clone())?;
+
+                // Abi files generated by the hardhat plugin can contain a nested abi field. This code to support that.
+                let typed = match serde_json::from_str::<AbiOrNestedAbi>(&raw).context(format!(
+                    "Failed to decode ABI file at \"{}\"",
+                    abi_file_path
+                ))? {
+                    AbiOrNestedAbi::Abi(abi) => abi,
+                    AbiOrNestedAbi::NestedAbi { abi } => {
+                        raw = serde_json::to_string(&abi)
+                            .context("Failed serializing ABI from nested field")?;
+                        abi
+                    }
+                };
                 Ok(Some(Self {
                     path: Some(path),
                     raw,
@@ -490,10 +562,9 @@ impl Contract {
         events: Vec<Event>,
         abi_from_file: Option<EvmAbi>,
     ) -> Result<Self> {
-        let mut events_abi = ethers::abi::Contract::default();
+        let mut events_abi = ethers::abi::Abi::default();
 
         let mut event_names = Vec::new();
-        let mut entity_and_label_names = Vec::new();
         for event in &events {
             events_abi
                 .events
@@ -502,18 +573,6 @@ impl Contract {
                 .push(event.get_event().clone());
 
             event_names.push(event.event.0.name.clone());
-
-            for entity in &event.required_entities {
-                entity_and_label_names.push(entity.name.clone());
-                if let Some(labels) = &entity.labels {
-                    entity_and_label_names.extend(labels.clone());
-                }
-                if let Some(array_labels) = &entity.array_labels {
-                    entity_and_label_names.extend(array_labels.clone());
-                }
-            }
-            // Checking that entity names do not include any reserved words
-            validate_names_not_reserved(&entity_and_label_names, "Required Entities".to_string())?;
         }
         // Checking that event names do not include any reserved words
         validate_names_not_reserved(&event_names, "Events".to_string())?;
@@ -557,7 +616,6 @@ impl Contract {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     event: NormalizedEthAbiEvent,
-    pub required_entities: Vec<human_config::RequiredEntity>,
     pub is_async: bool,
 }
 
@@ -568,7 +626,7 @@ impl Event {
                 Ok(event) => Ok(event),
                 Err(err) => Err(anyhow!(
                     "EE103: Unable to parse event signature {} due to the following error: {}. \
-                   Please refer to our docs on how to correctly define a human readable ABI.",
+                     Please refer to our docs on how to correctly define a human readable ABI.",
                     sig,
                     err
                 )),
@@ -599,35 +657,108 @@ impl Event {
     pub fn try_from_config_event(
         human_cfg_event: EventConfig,
         opt_abi: &Option<EvmAbi>,
-        schema: &Schema,
     ) -> Result<Self> {
         let event = Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
 
-        let required_entities = human_cfg_event.required_entities.unwrap_or_else(|| {
-            // If no required entities are specified, we assume all entities are required
-            schema
-                .entities
-                .values()
-                .sorted_by_key(|v| &v.name)
-                .cloned()
-                .map(|entity| human_config::RequiredEntity {
-                    name: entity.name,
-                    labels: None,
-                    array_labels: None,
-                })
-                .collect()
-        });
-        let is_async = human_cfg_event.is_async.unwrap_or_else(|| false);
-
         Ok(Event {
             event,
-            required_entities,
-            is_async,
+            is_async: false,
         })
     }
 
     pub fn get_event(&self) -> &EthAbiEvent {
         &self.event.0
+    }
+
+    pub fn get_event_signature(&self) -> String {
+        EventConfig::event_string_from_abi_event(&self.event.0)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldSelection {
+    pub transaction_fields: Vec<human_config::evm::TransactionField>,
+    pub block_fields: Vec<human_config::evm::BlockField>,
+}
+
+impl FieldSelection {
+    fn new(
+        transaction_fields: Vec<human_config::evm::TransactionField>,
+        block_fields: Vec<human_config::evm::BlockField>,
+    ) -> Self {
+        Self {
+            transaction_fields,
+            block_fields,
+        }
+    }
+
+    pub fn empty() -> Self {
+        Self::new(vec![], vec![])
+    }
+
+    pub fn try_from_config_field_selection(
+        field_selection_cfg: human_config::evm::FieldSelection,
+        network_map: &NetworkMap,
+    ) -> Result<Self> {
+        //validate transaction field selection with rpc
+        let has_rpc_sync_src = network_map
+            .values()
+            .sorted_by_key(|n| n.id)
+            .fold(false, |accum, n| {
+                accum || matches!(n.sync_source, SyncSource::RpcConfig(_))
+            });
+
+        let transaction_fields = field_selection_cfg.transaction_fields.unwrap_or(vec![]);
+        let block_fields = field_selection_cfg.block_fields.unwrap_or(vec![]);
+
+        //Validate no duplicates in field selection
+        let tx_duplicates: Vec<_> = transaction_fields.iter().duplicates().collect();
+
+        if !tx_duplicates.is_empty() {
+            return Err(anyhow!(
+                "transaction_fields selection contains the following duplicates: {}",
+                tx_duplicates.iter().join(", ")
+            ));
+        }
+
+        let block_duplicates: Vec<_> = block_fields.iter().duplicates().collect();
+
+        if !block_duplicates.is_empty() {
+            return Err(anyhow!(
+                "block_fields selection contains the following duplicates: {}",
+                block_duplicates.iter().join(", ")
+            ));
+        }
+
+        if has_rpc_sync_src {
+            let invalid_rpc_tx_fields: Vec<_> = transaction_fields
+                .iter()
+                .cloned()
+                .filter(|field| RpcTransactionField::try_from(field.clone()).is_err())
+                .collect();
+
+            if !invalid_rpc_tx_fields.is_empty() {
+                return Err(anyhow!(
+                    "The following selected transaction_fields are unavailable for indexing via RPC: {}",
+                    invalid_rpc_tx_fields.iter().join(", ")
+                ));
+            }
+
+            let invalid_rpc_block_fields: Vec<_> = block_fields
+                .iter()
+                .cloned()
+                .filter(|field| RpcBlockField::try_from(field.clone()).is_err())
+                .collect();
+
+            if !invalid_rpc_block_fields.is_empty() {
+                return Err(anyhow!(
+                    "The following selected block_fields are unavailable for indexing via RPC: {}",
+                    invalid_rpc_block_fields.iter().join(", ")
+                ));
+            }
+        }
+
+        Ok(Self::new(transaction_fields, block_fields))
     }
 }
 
@@ -658,30 +789,56 @@ impl From<EthAbiEvent> for NormalizedEthAbiEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct RequiredEntity {
-    pub name: String,
-    pub labels: Vec<String>,
-    pub array_labels: Vec<String>,
-}
-impl From<human_config::RequiredEntity> for RequiredEntity {
-    fn from(r: human_config::RequiredEntity) -> Self {
-        RequiredEntity {
-            name: r.name,
-            labels: r.labels.unwrap_or_else(|| vec![]),
-            array_labels: r.array_labels.unwrap_or_else(|| vec![]),
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
+    use std::path::PathBuf;
+
     use super::SystemConfig;
     use crate::{
-        config_parsing::{self, entity_parsing::Schema, system_config::Event},
+        config_parsing::{
+            self,
+            entity_parsing::Schema,
+            human_config::evm::HumanConfig,
+            system_config::{Event, SyncConfig, SyncSource},
+        },
         project_paths::ParsedProjectPaths,
     };
     use ethers::abi::{Event as EthAbiEvent, EventParam, ParamType};
+    use handlebars::Handlebars;
+    use serde_json::json;
+
+    #[test]
+    fn renders_nested_f32() {
+        let hbs = Handlebars::new();
+
+        let rendered_backoff_multiplicative = hbs
+            .render_template(
+                "{{backoff_multiplicative}}",
+                &json!({"backoff_multiplicative": 0.8}),
+            )
+            .unwrap();
+        assert_eq!(&rendered_backoff_multiplicative, "0.8");
+
+        let sync_config = SyncConfig {
+            initial_block_interval: 10_000,
+            backoff_multiplicative: 0.8,
+            acceleration_additive: 2_000,
+            interval_ceiling: 10_000,
+            backoff_millis: 5000,
+            query_timeout_millis: 20_000,
+            fallback_stall_timeout: 10_000,
+        };
+
+        assert_eq!(sync_config.backoff_multiplicative.to_string(), "0.8");
+
+        let rendered_backoff_multiplicative = hbs
+            .render_template(
+                "{{backoff_multiplicative}}",
+                &json!({"backoff_multiplicative": sync_config.backoff_multiplicative}),
+            )
+            .unwrap();
+        assert_eq!(&rendered_backoff_multiplicative, "0.8");
+    }
 
     #[test]
     fn test_get_contract_abi() {
@@ -771,8 +928,7 @@ mod test {
                 ]
     "#;
 
-        let expected_abi: ethers::abi::Contract =
-            serde_json::from_str(expected_abi_string).unwrap();
+        let expected_abi: ethers::abi::Abi = serde_json::from_str(expected_abi_string).unwrap();
 
         assert_eq!(expected_abi, contract_abi);
     }
@@ -822,7 +978,9 @@ mod test {
             Event::get_abi_event(&event_string, &None)
                 .unwrap_err()
                 .to_string(),
-            "EE103: Unable to parse event signature event MyEvent(uint69 myArg) due to the following error: UnrecognisedToken 14:20 `uint69`. Please refer to our docs on how to correctly define a human readable ABI."
+            "EE103: Unable to parse event signature event MyEvent(uint69 myArg) due to the \
+             following error: UnrecognisedToken 14:20 `uint69`. Please refer to our docs on how \
+             to correctly define a human readable ABI."
         );
     }
 
@@ -835,5 +993,46 @@ mod test {
                 .to_string(),
             "No abi file provided for event MyEvent"
         );
+    }
+
+    #[test]
+    fn test_valid_urls() {
+        let valid_url_1 = "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
+        let valid_url_2 = "http://api.example.org:8080";
+        let valid_url_3 = "https://eth.com/rpc-endpoint";
+        let is_valid_url_1 = super::validate_url(valid_url_1);
+        let is_valid_url_2 = super::validate_url(valid_url_2);
+        let is_valid_url_3 = super::validate_url(valid_url_3);
+        assert!(is_valid_url_1);
+        assert!(is_valid_url_2);
+        assert!(is_valid_url_3);
+    }
+
+    #[test]
+    fn test_invalid_urls() {
+        let invalid_url_missing_slash = "http:/example.com";
+        let invalid_url_other_protocol = "ftp://example.com";
+        let is_invalid_missing_slash = super::validate_url(invalid_url_missing_slash);
+        let is_invalid_other_protocol = super::validate_url(invalid_url_other_protocol);
+        assert!(!is_invalid_missing_slash);
+        assert!(!is_invalid_other_protocol);
+    }
+
+    #[test]
+    fn deserializes_contract_config_with_multiple_sync_sources() {
+        let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("test/configs/invalid-multiple-sync-config6.yaml");
+
+        let file_str = std::fs::read_to_string(config_path).unwrap();
+
+        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
+
+        // Both hypersync and rpc config should be present
+        assert!(cfg.networks[0].rpc_config.is_some());
+        assert!(cfg.networks[0].hypersync_config.is_some());
+
+        let error = SyncSource::from_human_config(cfg.networks[0].clone()).unwrap_err();
+
+        assert_eq!(error.to_string(), "EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file");
     }
 }

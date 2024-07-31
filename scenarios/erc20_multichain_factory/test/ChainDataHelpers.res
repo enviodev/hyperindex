@@ -1,27 +1,37 @@
 open Belt
 
 let getDefaultAddress = (chain, contractName) => {
-  let chainConfig = Config.config->ChainMap.get(chain)
+  let chainConfig = Config.getGenerated().chainMap->ChainMap.get(chain)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
   defaultAddress
 }
 
+let gAS_USED_DEFAULT = BigInt.zero
+let makeBlock = (~blockNumber, ~blockTimestamp, ~blockHash): Types.Block.t => {
+  number: blockNumber,
+  hash: blockHash,
+  timestamp: blockTimestamp,
+  gasUsed: gAS_USED_DEFAULT,
+}
+let makeTransaction = (~transactionIndex, ~transactionHash): Types.Transaction.t => {
+  transactionIndex,
+  hash: transactionHash,
+}
 module ERC20 = {
   let contractName = "ERC20"
   let getDefaultAddress = getDefaultAddress(_, contractName)
   module Transfer = {
-    let accessor = v => Types.ERC20Contract_Transfer(v)
-    let schema = Types.ERC20Contract.TransferEvent.eventArgsSchema
-    let eventName = Types.ERC20_Transfer
-    let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
-      ~accessor,
-      ~schema,
-      ~eventName,
-    )
+    let mkEventConstrWithParamsAndAddress =
+      MockChainData.makeEventConstructor(
+        ~eventMod=module(Types.ERC20.Transfer),
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
   }
 }
 
@@ -30,32 +40,28 @@ module ERC20Factory = {
   let getDefaultAddress = getDefaultAddress(_, contractName)
 
   module TokenCreated = {
-    let accessor = v => Types.ERC20FactoryContract_TokenCreated(v)
-    let schema = Types.ERC20FactoryContract.TokenCreatedEvent.eventArgsSchema
-    let eventName = Types.ERC20Factory_TokenCreated
-
-    let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
-      ~accessor,
-      ~schema,
-      ~eventName,
-    )
+    let mkEventConstrWithParamsAndAddress =
+      MockChainData.makeEventConstructor(
+        ~eventMod=module(Types.ERC20Factory.TokenCreated),
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
   }
   module DeleteUser = {
-    let accessor = v => Types.ERC20FactoryContract_DeleteUser(v)
-    let schema = Types.ERC20FactoryContract.DeleteUserEvent.eventArgsSchema
-    let eventName = Types.ERC20Factory_DeleteUser
-
-    let mkEventConstrWithParamsAndAddress = MockChainData.makeEventConstructor(
-      ~accessor,
-      ~schema,
-      ~eventName,
-    )
+    let mkEventConstrWithParamsAndAddress =
+      MockChainData.makeEventConstructor(
+        ~eventMod=module(Types.ERC20Factory.DeleteUser),
+        ~makeBlock,
+        ~makeTransaction,
+        ...
+      )
 
     let mkEventConstr = (params, ~chain) =>
-      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params)
+      mkEventConstrWithParamsAndAddress(~srcAddress=getDefaultAddress(chain), ~params, ...)
   }
 }
 
@@ -72,7 +78,7 @@ module Stubs = {
     gsManager,
   }
   let getTasks = ({tasks}) => tasks.contents
-  let getMockChainData = ({mockChainDataMap}) => mockChainDataMap->ChainMap.get
+  let getMockChainData = ({mockChainDataMap}, chain) => mockChainDataMap->ChainMap.get(chain)
 
   //Stub executeNextQuery with mock data
   let makeExecuteNextQuery = async (
@@ -91,16 +97,10 @@ module Stubs = {
     dispatchAction(GlobalState.BlockRangeResponse(chain, response))
   }
 
-  let getChainFromWorker = (worker: SourceWorker.sourceWorker) =>
-    switch worker {
-    | Rpc(w) => w.chainConfig.chain
-    | HyperSync(w) => w.chainConfig.chain
-    }
-
   //Stub for getting block hashes instead of the worker
-  let makeGetBlockHashes = async (stubData, sourceWorker, ~blockNumbers) => {
-    let chain = sourceWorker->getChainFromWorker
-    stubData->getMockChainData(chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
+  let makeGetBlockHashes = (~stubData, ~chainWorker) => async (~blockNumbers, ~logger as _) => {
+    let module(ChainWorker: ChainWorker.S) = chainWorker
+    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getBlockHashes(~blockNumbers)->Ok
   }
 
   let replaceNexQueryCheckAllChainsWithGivenChain = ({tasks}: t, chain) => {
@@ -117,13 +117,13 @@ module Stubs = {
   let makeWaitForNewBlock = async (
     stubData: t,
     ~logger,
-    ~chainWorker: SourceWorker.sourceWorker,
+    ~chainWorker,
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
-    (logger, currentBlockHeight, chainWorker)->ignore
-    let chain = chainWorker->getChainFromWorker
-    stubData->getMockChainData(chain)->MockChainData.getHeight->setCurrentBlockHeight
+    (logger, currentBlockHeight)->ignore
+    let module(ChainWorker: ChainWorker.S) = chainWorker
+    stubData->getMockChainData(ChainWorker.chain)->MockChainData.getHeight->setCurrentBlockHeight
   }
   //Stub dispatch action to set state and not dispatch task but store in
   //the tasks ref
@@ -138,12 +138,15 @@ module Stubs = {
 
   let makeDispatchTask = (stubData: t, task) => {
     GlobalState.injectedTaskReducer(
-      ~executeNextQuery=makeExecuteNextQuery(stubData),
-      ~waitForNewBlock=makeWaitForNewBlock(stubData),
-      ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(
-        ~getBlockHashes=makeGetBlockHashes(stubData),
-      ),
-      ~dispatchAction=makeDispatchAction(stubData),
+      ~executeNextQuery=makeExecuteNextQuery(stubData, ...),
+      ~waitForNewBlock=makeWaitForNewBlock(stubData, ...),
+      ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
+        chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
+          ~getBlockHashes=makeGetBlockHashes(~stubData, ~chainWorker=chainFetcher.chainWorker),
+        ),
+      ~registeredEvents=RegisteredEvents.global,
+    )(
+      ~dispatchAction=makeDispatchAction(stubData, _),
       stubData.gsManager->GlobalStateManager.getState,
       task,
     )

@@ -4,20 +4,19 @@ use crate::{
     config_parsing::chain_helpers::{self, NetworkWithExplorer},
     evm::address::Address,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context};
 use async_recursion::async_recursion;
 use ethers::{
     etherscan::{self, contract::ContractMetadata},
     prelude::errors::EtherscanError,
     types::H160,
 };
-
 use tokio::time::Duration;
 
 pub async fn fetch_contract_auto_selection_from_etherscan(
     contract_address: Address,
     network: &NetworkWithExplorer,
-) -> Result<SelectedContract> {
+) -> anyhow::Result<SelectedContract> {
     let supported_network: chain_helpers::HypersyncNetwork =
         chain_helpers::Network::from(network.clone())
             .try_into()
@@ -134,17 +133,17 @@ async fn fetch_get_source_code_result_from_block_explorer(
             Err(e) => {
                 if let EtherscanError::RateLimitExceeded = e {
                     eprintln!(
-                      "Rate limit hit. Retrying in {} seconds. You can try use your own API key by setting the {} environment variable if you are being rate limited or blocked.",
-                      refetch_delay.as_secs(),
-                      network.get_env_token_name()
-                  );
-                                      fail_if_maximum_is_exceeded(refetch_delay, EtherscanError::RateLimitExceeded)?;
-
-
-
-                                     
+                        "Rate limit hit. Retrying in {} seconds. You can try use your own API key \
+                         by setting the {} environment variable if you are being rate limited or \
+                         blocked.",
+                        refetch_delay.as_secs(),
+                        network.get_env_token_name()
+                    );
+                    fail_if_maximum_is_exceeded(refetch_delay, EtherscanError::RateLimitExceeded)?;
                 } else {
                     let retry_err = match e {
+                        //Unhandled case from client
+                        | EtherscanError::ErrorResponse {result:  Some(res), .. } if res.to_lowercase().contains("invalid api key")  => Err(EtherscanError::InvalidApiKey),
                         //In these cases, return ok(err) if it should be retried
                         EtherscanError::Reqwest(_)
                         | EtherscanError::BadStatusCode(_)
@@ -170,12 +169,14 @@ async fn fetch_get_source_code_result_from_block_explorer(
                         | EtherscanError::InvalidApiKey
                         | EtherscanError::BlockedByCloudflare
                         | EtherscanError::CloudFlareSecurityChallenge
+                        | EtherscanError::EthSupplyFailed
+                        | EtherscanError::SecurityChallenge(_)
                         | EtherscanError::PageNotFound => Err(e),
                     }?;
                     fail_if_maximum_is_exceeded(refetch_delay, retry_err)?;
-                  }
-                  tokio::time::sleep(refetch_delay).await;
-                  refetch_delay *= 2;
+                }
+                tokio::time::sleep(refetch_delay).await;
+                refetch_delay *= 2;
             }
         }
     }

@@ -1,77 +1,57 @@
 open Belt
-open Types
 open RescriptMocha
-open Mocha
-let {
-  it: it_promise,
-  it_skip: it_skip_promise,
-  before: before_promise,
-  after: after_promise,
-} = module(RescriptMocha.Promise)
 
-let inMemoryStore = IO.InMemoryStore.make()
+let inMemoryStore = InMemoryStore.make()
+
 describe("E2E Mock Event Batch", () => {
-  before(() => {
-    RegisterHandlers.registerAllHandlers()
+  Async.before(async () => {
+    let config = RegisterHandlers.registerAllHandlers()
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
-    //EventProcessing.processEventBatch(MockEvents.eventBatch)
-    MockEvents.eventRouterBatch->Belt.Array.forEach(
-      event =>
-        event->EventProcessing.eventRouter(
+    // EventProcessing.processEventBatch(MockEvents.eventBatch)
+
+    let runEventHandler = async (
+      event: Types.eventLog<'a>,
+      eventMod: module(Types.Event with type eventArgs = 'a),
+    ) => {
+      let eventMod = eventMod->Types.eventModToInternal
+      switch RegisteredEvents.global
+      ->RegisteredEvents.get(eventMod)
+      ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler) {
+      | Some(handler) =>
+        await event->EventProcessing.runEventHandler(
+          ~handler,
+          ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
           ~inMemoryStore,
-          ~cb=_ => (),
-          ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
-        ),
-    )
-  })
+          ~logger=Logging.logger,
+          ~chain=MockConfig.chain1,
+          ~eventMod,
+          ~config,
+        )
+      | None => Ok(EventProcessing.EventsProcessed.makeEmpty(~config))
+      }
+    }
 
-  after(() => {
-    ContextMock.setMock->Sinon.resetStub
-    ContextMock.deleteUnsafeMock->Sinon.resetStub
-  })
-
-  it("8 gravatar events (new and set) calls in order", () => {
-    let setCallFirstArgs =
-      ContextMock.setMock->Sinon.getCalls->Belt.Array.map(call => call->Sinon.getCallFirstArg)
-
-    Assert.deep_equal(
-      setCallFirstArgs,
-      [
-        MockEvents.newGravatar1.id->Ethers.BigInt.toString,
-        MockEvents.newGravatar2.id->Ethers.BigInt.toString,
-        MockEvents.newGravatar3.id->Ethers.BigInt.toString,
-        MockEvents.newGravatar4_deleted.id->Ethers.BigInt.toString,
-        MockEvents.setGravatar1.id->Ethers.BigInt.toString,
-        MockEvents.setGravatar2.id->Ethers.BigInt.toString,
-        MockEvents.setGravatar3.id->Ethers.BigInt.toString,
-        MockEvents.setGravatar4.id->Ethers.BigInt.toString,
-      ],
-    )
-  })
-  it("should delete 1 gravatar", () => {
-    let deleteCallFirstArgs =
-      ContextMock.deleteUnsafeMock
-      ->Sinon.getCalls
-      ->Belt.Array.map(call => call->Sinon.getCallFirstArg)
-
-    Assert.deep_equal(
-      deleteCallFirstArgs,
-      [MockEvents.newGravatar4_deleted.id->Ethers.BigInt.toString],
-    )
+    for i in 0 to MockEvents.eventBatchItems->Array.length - 1 {
+      let batchItem = MockEvents.eventBatchItems->Js.Array2.unsafe_get(i)
+      let res = await batchItem.event->runEventHandler(batchItem.eventMod)
+      switch res {
+      | Error(e) => e->ErrorHandling.logAndRaise
+      | Ok(_) => ()
+      }
+    }
   })
 })
 
 // NOTE: skipping this test for now since there seems to be some invalid DB state. Need to investigate again.
 // TODO: add a similar kind of test back again.
 describe_skip("E2E Db check", () => {
-  before_promise(async () => {
+  Async.before(async () => {
     await DbHelpers.runUpDownMigration()
 
-    RegisterHandlers.registerAllHandlers()
+    let config = RegisterHandlers.registerAllHandlers()
 
-    let _ = await Entities.batchSet(
-      ~entityMod=module(Entities.Gravatar),
+    let _ = await DbFunctionsEntities.batchSet(~entityMod=module(Entities.Gravatar))(
       Migrations.sql,
       [MockEntities.gravatarEntity1, MockEntities.gravatarEntity2],
     )
@@ -81,12 +61,15 @@ describe_skip("E2E Db check", () => {
       false
     }
 
-    await EventProcessing.processEventBatch(
+    let _ = await EventProcessing.processEventBatch(
       ~inMemoryStore,
       ~eventBatch=MockEvents.eventBatchItems->List.fromArray,
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
-      ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(),
+      ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
+      ~registeredEvents=RegisteredEvents.global,
+      ~config,
     )
+
     //// TODO: write code (maybe via dependency injection) to allow us to use the stub rather than the actual database here.
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity1)
     // DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
@@ -94,51 +77,35 @@ describe_skip("E2E Db check", () => {
   })
 
   it("Validate inmemory store state", () => {
-    let inMemoryStoreRows = inMemoryStore.gravatar->IO.InMemoryStore.Gravatar.values
-    let gravatars = inMemoryStoreRows->Belt.Array.map(
-      row =>
-        switch row {
-        | Updated({latest: {entityUpdateAction: Set(_)}}) => None
-        | Updated({latest: {entityUpdateAction: Delete(id)}}) => Some(id)
-        | InitialReadFromDb(_) => None
-        },
-    )
-    Js.log2("gravatars", gravatars)
+    let gravatars = inMemoryStore.gravatar->InMemoryTable.Entity.values
 
-    Assert.deep_equal(
-      inMemoryStoreRows->Belt.Array.map(
-        row =>
-          switch row {
-          | Updated({latest: {entityUpdateAction: Set(latestEntity)}}) => Some(latestEntity)
-          | Updated({latest: {entityUpdateAction: Delete(_)}}) => None
-          | InitialReadFromDb(_) => None
-          },
-      ),
+    Assert.deepEqual(
+      gravatars,
       [
-        Some({
+        {
           id: "1001",
           owner_id: "0x1230000000000000000000000000000000000000",
           displayName: "update1",
           imageUrl: "https://gravatar1.com",
-          updatesCount: Ethers.BigInt.fromInt(2),
+          updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
-        }),
-        Some({
+        },
+        {
           id: "1002",
           owner_id: "0x4560000000000000000000000000000000000000",
           displayName: "update2",
           imageUrl: "https://gravatar2.com",
-          updatesCount: Ethers.BigInt.fromInt(2),
+          updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
-        }),
-        Some({
+        },
+        {
           id: "1003",
           owner_id: "0x7890000000000000000000000000000000000000",
           displayName: "update3",
           imageUrl: "https://gravatar3.com",
-          updatesCount: Ethers.BigInt.fromInt(2),
+          updatesCount: BigInt.fromInt(2),
           size: MEDIUM,
-        }),
+        },
       ],
     )
   })

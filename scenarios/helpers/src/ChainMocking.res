@@ -1,3 +1,7 @@
+module Utils = {
+  external magic: 'a => 'b = "%identity"
+}
+
 module Crypto = {
   type t
   @module external crypto: t = "crypto"
@@ -22,10 +26,10 @@ module Crypto = {
     ->digest(Hex)
     ->pad
 
-  let hashKeccak256String = hashKeccak256(~toString=Obj.magic)
-  let hashKeccak256Int = hashKeccak256(~toString=Int.toString)
+  let hashKeccak256String = hashKeccak256(~toString=int => int->Obj.magic, _)
+  let hashKeccak256Int = hashKeccak256(~toString=int => int->Int.toString, _)
   let anyToString = a => a->Js.Json.stringifyAny->Option.getExn
-  let hashKeccak256Any = hashKeccak256(~toString=anyToString)
+  let hashKeccak256Any = hashKeccak256(~toString=anyToString, _)
   let hashKeccak256Compound = (previousHash, input) =>
     input->hashKeccak256(~toString=v => anyToString(v) ++ previousHash)
 }
@@ -36,90 +40,77 @@ module Make = (Indexer: Indexer.S) => {
     eventBatchQueueItem: Types.eventBatchQueueItem,
     srcAddress: Ethers.ethAddress,
     transactionHash: string,
-    eventName: Types.eventName,
+    eventMod: module(Types.InternalEvent),
   }
 
-  let eventConstructor = (
-    ~params,
-    ~accessor,
-    ~srcAddress,
-    ~chainId,
-    ~txOrigin,
-    ~txTo,
-    ~blockNumber,
-    ~blockTimestamp,
-    ~blockHash,
-    ~transactionHash,
-    ~transactionIndex,
-    ~logIndex,
-  ): Types.event =>
-    {
-      Types.params,
-      srcAddress,
-      chainId,
-      txOrigin,
-      txTo,
-      blockNumber,
-      blockTimestamp,
-      blockHash,
-      transactionHash,
-      transactionIndex,
-      logIndex,
-    }->accessor
-
-  type makeEvent = (~blockHash: string) => Types.event
+  type makeEvent = (~blockHash: string) => Types.eventLog<Types.internalEventArgs>
 
   type logConstructor = {
     transactionHash: string,
     makeEvent: makeEvent,
     logIndex: int,
     srcAddress: Ethers.ethAddress,
-    eventName: Types.eventName,
+    eventMod: module(Types.InternalEvent),
   }
+
   type composedEventConstructor = (
     ~chainId: int,
     ~blockTimestamp: int,
     ~blockNumber: int,
     ~transactionIndex: int,
-    ~txOrigin: option<Ethers.ethAddress>,
-    ~txTo: option<Ethers.ethAddress>,
     ~logIndex: int,
   ) => logConstructor
 
   let makeEventConstructor = (
-    ~accessor,
-    ~params,
-    ~schema,
-    ~eventName,
+    type eventArgs,
+    ~params: eventArgs,
+    ~eventMod: module(Types.Event with type eventArgs = eventArgs),
     ~srcAddress,
+    ~makeBlock: (
+      ~blockNumber: int,
+      ~blockTimestamp: int,
+      ~blockHash: string,
+    ) => Indexer.Types.Block.t,
+    ~makeTransaction: (
+      ~transactionIndex: int,
+      ~transactionHash: string,
+    ) => Indexer.Types.Transaction.t,
     ~chainId,
-    ~blockTimestamp,
-    ~blockNumber,
+    ~blockTimestamp: int,
+    ~blockNumber: int,
     ~transactionIndex,
-    ~txOrigin,
-    ~txTo,
     ~logIndex,
   ) => {
+    let module(Event) = eventMod
+
     let transactionHash =
-      Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(schema))
+      Crypto.hashKeccak256Any(params->RescriptSchema.S.serializeOrRaiseWith(Event.eventArgsSchema))
       ->Crypto.hashKeccak256Compound(transactionIndex)
       ->Crypto.hashKeccak256Compound(blockNumber)
 
-    let makeEvent: makeEvent = eventConstructor(
-      ~accessor,
-      ~params,
-      ~transactionIndex,
-      ~logIndex,
-      ~transactionHash,
-      ~srcAddress,
-      ~chainId,
-      ~txOrigin,
-      ~txTo,
-      ~blockNumber,
-      ~blockTimestamp,
-    )
+    let makeEvent: makeEvent = (~blockHash) => {
+      let block = makeBlock(~blockHash, ~blockNumber, ~blockTimestamp)
+      {
+        params: params->(Utils.magic: eventArgs => Types.internalEventArgs),
+        srcAddress,
+        chainId,
+        block,
+        transaction: makeTransaction(~transactionIndex, ~transactionHash),
+        logIndex,
+      }
+    }
 
-    {transactionHash, makeEvent, logIndex, srcAddress, eventName}
+    {
+      transactionHash,
+      makeEvent,
+      logIndex,
+      srcAddress,
+      eventMod: eventMod->(
+        Utils.magic: module(Types.Event with type eventArgs = eventArgs) => module(Types.Event with
+          type eventArgs = Types.internalEventArgs
+        )
+      ),
+    }
   }
 
   type block = {
@@ -167,8 +158,6 @@ module Make = (Indexer: Indexer.S) => {
           ~transactionIndex=i,
           ~logIndex=i,
           ~chainId=self.chainConfig.chain->ChainMap.Chain.toChainId,
-          ~txOrigin=None,
-          ~txTo=None,
           ~blockNumber,
           ~blockTimestamp,
         )
@@ -181,17 +170,17 @@ module Make = (Indexer: Indexer.S) => {
       logIndex,
       srcAddress,
       transactionHash,
-      eventName,
-    }) => {
-      let event: Types.event = makeEvent(~blockHash)
+      eventMod,
+    }): log => {
       let log: Types.eventBatchQueueItem = {
-        event,
+        event: makeEvent(~blockHash),
         chain: self.chainConfig.chain,
         timestamp: blockTimestamp,
         blockNumber,
         logIndex,
+        eventMod,
       }
-      {eventBatchQueueItem: log, srcAddress, transactionHash, eventName}
+      {eventBatchQueueItem: log, srcAddress, transactionHash, eventMod}
     })
 
     let block = {blockNumber, blockTimestamp, blockHash, logs}
@@ -217,7 +206,7 @@ module Make = (Indexer: Indexer.S) => {
 
   type contractAddressesAndEventNames = {
     addresses: array<Ethers.ethAddress>,
-    eventNames: array<Types.eventName>,
+    eventKeys: array<string>,
   }
 
   let getLogsFromBlocks = (
@@ -228,8 +217,12 @@ module Make = (Indexer: Indexer.S) => {
       b.logs->Array.keepMap(l => {
         let isLogInConfig = addressesAndEventNames->Array.reduce(
           false,
-          (prev, {addresses, eventNames}) => {
-            prev || (addresses->arrayHas(l.srcAddress) && eventNames->arrayHas(l.eventName))
+          (prev, {addresses, eventKeys}) => {
+            prev ||
+            (addresses->arrayHas(l.srcAddress) && {
+                let module(Event) = l.eventMod
+                eventKeys->arrayHas(Event.key)
+              })
           },
         )
         if isLogInConfig {
@@ -241,10 +234,7 @@ module Make = (Indexer: Indexer.S) => {
     )
   }
 
-  let executeQuery = (
-    self: t,
-    query: FetchState.nextQuery,
-  ): ChainWorkerTypes.blockRangeFetchResponse<_> => {
+  let executeQuery = (self: t, query: FetchState.nextQuery): ChainWorker.blockRangeFetchResponse => {
     let unfilteredBlocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
     let firstBlockParentNumberAndHash =
@@ -258,14 +248,20 @@ module Make = (Indexer: Indexer.S) => {
         query.contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
           ~contractName=c.name,
         )
-      {addresses, eventNames: c.events}
+      {
+        addresses,
+        eventKeys: c.events->Belt.Array.map(event => {
+          let module(Event) = event
+          Event.key
+        }),
+      }
     })
 
     let parsedQueueItemsPreFilter = unfilteredBlocks->getLogsFromBlocks(~addressesAndEventNames)
     let parsedQueueItems = switch query.eventFilters {
     | None => parsedQueueItemsPreFilter
     | Some(eventFilters) =>
-      parsedQueueItemsPreFilter->Array.keep(FetchState.applyFilters(~eventFilters))
+      parsedQueueItemsPreFilter->Array.keep(i => i->FetchState.applyFilters(~eventFilters))
     }
 
     {
@@ -284,7 +280,7 @@ module Make = (Indexer: Indexer.S) => {
       latestFetchedBlockTimestamp: heighstBlock.blockTimestamp,
       stats: "NO_STATS"->Obj.magic,
       fetchStateRegisterId: query.fetchStateRegisterId,
-      worker: HyperSync(self->Obj.magic),
+      partitionId: query.partitionId,
     }
   }
 

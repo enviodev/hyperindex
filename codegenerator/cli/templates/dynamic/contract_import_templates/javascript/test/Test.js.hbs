@@ -14,30 +14,30 @@ describe("{{contract.name.capitalized}} contract {{event.name.capitalized}} even
   // Creating mock for {{contract.name.capitalized}} contract {{event.name.capitalized}} event
   const event = {{event.create_mock_code}};
 
-  // Processing the event
-  const mockDbUpdated = {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
-    event,
-    mockDb,
-  });
+  it("{{contract.name.capitalized}}_{{event.name.capitalized}} is created correctly", async () => {
+    // Processing the event
+    const mockDbUpdated = await {{contract.name.capitalized}}.{{event.name.capitalized}}.processEvent({
+      event,
+      mockDb,
+    });
 
-  it("{{contract.name.capitalized}}_{{event.name.capitalized}}Entity is created correctly", () => {
     // Getting the actual entity from the mock database
-    let actual{{contract.name.capitalized}}{{event.name.capitalized}}Entity = mockDbUpdated.entities.{{contract.name.capitalized}}_{{event.name.capitalized}}.get(
+    let actual{{contract.name.capitalized}}{{event.name.capitalized}} = mockDbUpdated.entities.{{contract.name.capitalized}}_{{event.name.capitalized}}.get(
       {{event.entity_id_from_event_code}}
     );
 
     // Creating the expected entity
-    const expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity = {
-      id: {{event.entity_id_from_event_code}},
+    const expected{{contract.name.capitalized}}{{event.name.capitalized}} = {
+      id:{{event.entity_id_from_event_code}},
       {{#each event.params as |param|}}
-      {{param.param_name.uncapitalized}}: event.params.{{param.param_name.uncapitalized}},
+      {{param.js_name}}: event.params.{{param.js_name}},
       {{/each}}
     };
     // Asserting that the entity in the mock database is the same as the expected entity
     assert.deepEqual(
-      actual{{contract.name.capitalized}}{{event.name.capitalized}}Entity,
-      expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity,
-      "Actual {{contract.name.capitalized}}{{event.name.capitalized}}Entity should be the same as the expected{{contract.name.capitalized}}{{event.name.capitalized}}Entity"
+      actual{{contract.name.capitalized}}{{event.name.capitalized}},
+      expected{{contract.name.capitalized}}{{event.name.capitalized}},
+      "Actual {{contract.name.capitalized}}{{event.name.capitalized}} should be the same as the expected{{contract.name.capitalized}}{{event.name.capitalized}}"
     );
   });
 });

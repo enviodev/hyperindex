@@ -19,6 +19,7 @@ use crate::{
     init_config::evm::{ContractImportSelection, InitFlow},
 };
 use anyhow::{anyhow, Context, Result};
+use async_recursion::async_recursion;
 use inquire::{validator::Validation, CustomType, Select, Text};
 use std::{env, path::PathBuf, str::FromStr};
 use strum::IntoEnumIterator;
@@ -73,6 +74,40 @@ impl ContractImportArgs {
         ))
     }
 
+    #[async_recursion]
+    async fn get_contract_import_selection_from_etherscan(
+        network_with_explorer: &NetworkWithExplorer,
+        contract_address: Address,
+    ) -> Result<SelectedContract> {
+        match SelectedContract::from_etherscan(network_with_explorer, contract_address.clone())
+            .await
+        {
+            Err(e) => {
+                //hacky way to detect invalid api key for now
+                if format!("{:?}", e)
+                    .to_lowercase()
+                    .contains("invalid api key")
+                {
+                    let env_token_name = network_with_explorer.get_env_token_name();
+                    let text_prompt = format!(
+                        "Please provide a valid api key for etherscan on network {}:",
+                        network_with_explorer
+                    );
+                    let val = Text::new(&text_prompt).prompt()?;
+                    std::env::set_var(env_token_name, val);
+                    Self::get_contract_import_selection_from_etherscan(
+                        network_with_explorer,
+                        contract_address,
+                    )
+                    .await
+                } else {
+                    Err(e)
+                }
+            }
+            Ok(v) => Ok(v),
+        }
+    }
+
     ///Constructs SelectedContract via block explorer requests.
     async fn get_contract_import_selection_from_explore_import_args(
         &self,
@@ -86,10 +121,12 @@ impl ContractImportArgs {
             .get_contract_address()
             .context("Failed getting contract address")?;
 
-        let contract_selection_from_etherscan =
-            SelectedContract::from_etherscan(&network_with_explorer, chosen_contract_address)
-                .await
-                .context("Failed getting SelectedContract from explorer")?;
+        let contract_selection_from_etherscan = Self::get_contract_import_selection_from_etherscan(
+            &network_with_explorer,
+            chosen_contract_address,
+        )
+        .await
+        .context("Failed getting SelectedContract from explorer")?;
 
         let SelectedContract {
             name,
@@ -271,8 +308,8 @@ impl LocalImportArgs {
         ))?;
 
         let abi: ethers::abi::Contract = serde_json::from_str(&abi_file).context(format!(
-            "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted correctly \
-            or contact the team.",
+            "Failed to deserialize ABI at {:?} -  Please ensure the ABI file is formatted \
+             correctly or contact the team.",
             abi_path
         ))?;
 

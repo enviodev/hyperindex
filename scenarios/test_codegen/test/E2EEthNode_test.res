@@ -1,18 +1,18 @@
 open RescriptMocha
-module MochaPromise = RescriptMocha.Promise
-open Mocha
 
 describe("E2E Integration Test", () => {
-  MochaPromise.before(async () => {
-    await DbHelpers.runUpDownMigration()
+  Async.before(() => {
+    DbHelpers.runUpDownMigration()
   })
 
-  MochaPromise.after(async () => {
+  Async.after(() => {
     // It is probably overkill that we are running these 'after' also
-    await DbHelpers.runUpDownMigration()
+    DbHelpers.runUpDownMigration()
   })
 
-  MochaPromise.it("Complete E2E", ~timeout=5 * 1000, async () => {
+  Async.it("Complete E2E", async () => {
+    This.timeout(5 * 1000)
+
     let contracts = await SetupRpcNode.deployContracts()
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
     let provider = Hardhat.hardhatProvider
@@ -31,7 +31,7 @@ describe("E2E Integration Test", () => {
       }),
       startBlock: 0,
       endBlock: None,
-      chain: Chain_1337,
+      chain: MockConfig.chain1337,
       contracts: [
         {
           name: "GravatarRegistry",
@@ -39,16 +39,16 @@ describe("E2E Integration Test", () => {
           addresses: [
             "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
           ],
-          events: [Gravatar_NewGravatar, Gravatar_UpdatedGravatar],
+          events: [module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
         },
       ],
     }
 
-    RegisterHandlers.registerAllHandlers()
+    let config = RegisterHandlers.registerAllHandlers()
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
 
-    let globalState: GlobalState.t = GlobalState.make(~chainManager)
+    let globalState = GlobalState.make(~config, ~chainManager)
 
     let gsManager = globalState->GlobalStateManager.make
 

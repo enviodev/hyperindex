@@ -1,7 +1,7 @@
 {
   "name": "envio",
   "version": "${version}",
-  "description": "A ️latency and sync speed optimized, developer friendly blockchain data indexer.",
+  "description": "A latency and sync speed optimized, developer friendly blockchain data indexer.",
   "bin": "lib/index.js",
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -18,6 +18,7 @@
     "blockchain",
     "indexer",
     "ethereum",
+    "fuel",
     "data",
     "dapp"
   ],
@@ -54,5 +55,10 @@
       "lib/*"
     ],
     "root": true
-  }
+  },
+  "files": [
+    "lib",
+    "evm.schema.json",
+    "fuel.schema.json"
+  ]
 }

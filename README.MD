@@ -56,6 +56,21 @@ alias lenvio="cargo run --manifest-path <absolute repository path>/hyperindex/co
 
 > `lenvio` is like `local envio` 😁
 
+
+## Update CLI Generated Docs
+Navigate to the cli directory
+`cd codegenerator/cli`
+
+To update all generated docs run
+
+`make update-generated-docs`
+
+To updated just the config json schemas
+`make update-schemas`
+
+Or to update just the cli help md file
+`update-help`
+
 ## Create templates
 
 `cd` into folder of your choice and run

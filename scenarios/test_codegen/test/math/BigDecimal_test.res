@@ -1,65 +1,66 @@
 open RescriptMocha
-open Mocha
-module MochaPromise = RescriptMocha.Promise
 
 describe("Load and save an entity with a BigDecimal from DB", () => {
-  MochaPromise.before(async () => {
+  Async.before(() => {
     DbHelpers.runUpDownMigration()
   })
 
-  MochaPromise.after(async () => {
+  Async.after(() => {
     // It is probably overkill that we are running these 'after' also
     DbHelpers.runUpDownMigration()
   })
 
-  MochaPromise.it(
-    "be able to set and read entities with BigDecimal from DB",
-    ~timeout=5 * 1000,
-    async () => {
-      let sql = DbFunctions.sql
-      /// Setup DB
-      let testEntity1: Types.entityWithFieldsEntity = {
-        id: "testEntity",
-        bigDecimal: BigDecimal.fromFloat(123.456),
-      }
-      let testEntity2: Types.entityWithFieldsEntity = {
-        id: "testEntity2",
-        bigDecimal: BigDecimal.fromFloat(654.321),
-      }
+  Async.it("be able to set and read entities with BigDecimal from DB", async () => {
+    This.timeout(5 * 1000)
 
-      await Entities.batchSet(sql, [testEntity1, testEntity2], ~entityMod=module(Entities.EntityWithFields))
+    let sql = DbFunctions.sql
+    /// Setup DB
+    let testEntity1: Entities.EntityWithFields.t = {
+      id: "testEntity",
+      bigDecimal: BigDecimal.fromFloat(123.456),
+    }
+    let testEntity2: Entities.EntityWithFields.t = {
+      id: "testEntity2",
+      bigDecimal: BigDecimal.fromFloat(654.321),
+    }
 
-      let inMemoryStore = IO.InMemoryStore.make()
+    await DbFunctionsEntities.batchSet(~entityMod=module(Entities.EntityWithFields))(
+      sql,
+      [testEntity1, testEntity2],
+    )
 
-      let context = Context.GravatarContract.EmptyEventEvent.contextCreator(
+    let inMemoryStore = InMemoryStore.make()
+    let loadLayer = LoadLayer.make()
+
+    let contextEnv = ContextEnv.make(
+      ~eventMod=module(Types.Gravatar.EmptyEvent)->Types.eventModToInternal,
+      ~event={"devMsg": "This is a placeholder event", "block": {"number": 456}}->Utils.magic,
+      ~chain=MockConfig.chain1,
+      ~logger=Logging.logger,
+    )
+
+    let loaderContext = contextEnv->ContextEnv.getLoaderContext(~loadLayer)
+
+    let _ = loaderContext.entityWithFields.get(testEntity1.id)
+    let _ = loaderContext.entityWithFields.get(testEntity2.id)
+
+    await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore)
+
+    let handlerContext =
+      contextEnv->ContextEnv.getHandlerContext(
         ~inMemoryStore,
-        ~chainId=123,
-        ~event={"devMsg": "This is a placeholder event", "blockNumber": 456}->Obj.magic,
-        ~logger=Logging.logger,
-        ~asyncGetters=EventProcessing.asyncGetters,
+        ~asyncGetters=ContextEnv.asyncGetters,
       )
 
-      let loaderContext = context.getLoaderContext()
-
-      let _ = loaderContext.entityWithFields.load(testEntity1.id)
-      let _ = loaderContext.entityWithFields.load(testEntity2.id)
-
-      let entitiesToLoad = context.getEntitiesToLoad()
-
-      await IO.loadEntitiesToInMemStore(~inMemoryStore, ~entityBatch=entitiesToLoad)
-
-      let handlerContext = context.getHandlerContextSync()
-
-      switch handlerContext.entityWithFields.get(testEntity1.id) {
-      | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")
-      | None => Assert.fail("Entity should exist")
-      }
-      switch handlerContext.entityWithFields.get(testEntity2.id) {
-      | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "654.321")
-      | None => Assert.fail("Entity should exist")
-      }
-    },
-  )
+    switch await handlerContext.entityWithFields.get(testEntity1.id) {
+    | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")
+    | None => Assert.fail("Entity should exist")
+    }
+    switch await handlerContext.entityWithFields.get(testEntity2.id) {
+    | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "654.321")
+    | None => Assert.fail("Entity should exist")
+    }
+  })
 })
 
 describe("BigDecimal Operations", () => {

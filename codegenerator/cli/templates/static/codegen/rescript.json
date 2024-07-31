@@ -1,7 +1,6 @@
 {
   "name": "generated",
   "version": "0.1.0",
-  "uncurried": false,
   "sources": [
     {
       "dir": "src",

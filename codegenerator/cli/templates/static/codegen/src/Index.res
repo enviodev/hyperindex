@@ -1,4 +1,4 @@
-// %%raw(`globalThis.fetch = require('node-fetch')`)
+Dotenv.initialize()
 
 /**
  * This function can be used to override the console.log (and related functions for users). This means these logs will also be available to the user
@@ -74,7 +74,9 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
     ->ChainMap.values
     ->Array.map(cf => {
       let {numEventsProcessed, fetchState, numBatchesFetched} = cf
-      let latestFetchedBlockNumber = FetchState.getLatestFullyFetchedBlock(fetchState).blockNumber
+      let latestFetchedBlockNumber = PartitionedFetchState.getLatestFullyFetchedBlock(
+        fetchState,
+      ).blockNumber
       let hasProcessedToEndblock = cf->ChainFetcher.hasProcessedToEndblock
       let currentBlockHeight =
         cf->ChainFetcher.hasProcessedToEndblock
@@ -82,10 +84,10 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           : cf.currentBlockHeight
 
       let progress: ChainData.progress = if hasProcessedToEndblock {
-      // If the endblock has been reached then set the progress to synced.
-      // if there's chains that have no events in the block range start->end, 
-      // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
-      // This ensures TUI still displays synced in this case
+        // If the endblock has been reached then set the progress to synced.
+        // if there's chains that have no events in the block range start->end,
+        // it's possible there are no events in that block  range (ie firstEventBlockNumber = None)
+        // This ensures TUI still displays synced in this case
         let {
           firstEventBlockNumber,
           latestProcessedBlock,
@@ -139,8 +141,9 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
           numBatchesFetched,
           chainId: cf.chainConfig.chain->ChainMap.Chain.toChainId,
           endBlock: cf.chainConfig.endBlock,
-          isHyperSync: switch cf.chainConfig.syncSource {
-          | HyperSync(_) => true
+          poweredByHyperSync: switch cf.chainConfig.syncSource {
+          | HyperSync(_)
+          | HyperFuel(_) => true
           | Rpc(_) => false
           },
         }: EnvioInkApp.chainData
@@ -151,13 +154,11 @@ let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
 
 let main = async () => {
   try {
-    RegisterHandlers.registerAllHandlers()
+    let config = RegisterHandlers.registerAllHandlers()
     let mainArgs: mainArgs = process->argv->Yargs.hideBin->Yargs.yargs->Yargs.argv
     let shouldUseTui = !(mainArgs.tuiOff->Belt.Option.getWithDefault(Env.tuiOffEnvVar))
-    // let shouldSyncFromRawEvents = mainArgs.syncFromRawEvents->Belt.Option.getWithDefault(false)
-
-    let chainManager = await ChainManager.makeFromDbState(~configs=Config.config)
-    let globalState: GlobalState.t = GlobalState.make(~chainManager)
+    let chainManager = await ChainManager.makeFromDbState(~config)
+    let globalState = GlobalState.make(~config, ~chainManager)
     let stateUpdatedHook = if shouldUseTui {
       let rerender = EnvioInkApp.startApp(makeAppState(globalState))
       Some(globalState => globalState->makeAppState->rerender)
@@ -175,8 +176,8 @@ let main = async () => {
     gsManager->GlobalStateManager.dispatchTask(ProcessEventBatch)
   } catch {
   | e => {
-    e->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
-    NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
+      e->ErrorHandling.make(~msg="Failed at initialization")->ErrorHandling.log
+      NodeJsLocal.process->NodeJsLocal.exitWithCode(Failure)
     }
   }
 }

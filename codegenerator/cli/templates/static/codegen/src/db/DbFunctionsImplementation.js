@@ -16,9 +16,8 @@ const chunkBatchQuery = async (sql, entityDataArray, queryToExecute) => {
 const commaSeparateDynamicMapQuery = (sql, dynQueryConstructors) =>
   sql`${dynQueryConstructors.map(
     (constrQuery, i) =>
-      sql`${constrQuery(sql)}${
-        i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
-      }`,
+      sql`${constrQuery(sql)}${i === dynQueryConstructors.length - 1 ? sql`` : sql`, `
+        }`,
   )}`;
 
 const batchSetItemsInTableCore = (table, sql, rowDataArray) => {
@@ -80,6 +79,14 @@ module.exports.batchReadItemsInTable = (table, sql, pkArray) => {
   }
 };
 
+module.exports.whereEqQuery = (table, sql, fieldName, value) => {
+  return sql`
+    SELECT *
+    FROM "public".${sql(table.tableName)}
+    WHERE ${sql(fieldName)} = ${value};
+    `;
+};
+
 module.exports.readLatestSyncedEventOnChainId = (sql, chainId) => sql`
   SELECT *
   FROM public.event_sync_state
@@ -93,7 +100,6 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "chain_id",
     "block_number",
     "log_index",
-    "transaction_index",
     "block_timestamp",
   )}
     ON CONFLICT(chain_id) DO UPDATE
@@ -101,7 +107,6 @@ module.exports.batchSetEventSyncState = (sql, entityDataArray) => {
     "chain_id" = EXCLUDED."chain_id",
     "block_number" = EXCLUDED."block_number",
     "log_index" = EXCLUDED."log_index",
-    "transaction_index" = EXCLUDED."transaction_index",
     "block_timestamp" = EXCLUDED."block_timestamp";
     `;
 };
@@ -138,7 +143,7 @@ module.exports.batchSetChainMetadata = (sql, entityDataArray) => {
   "latest_fetched_block_number" = EXCLUDED."latest_fetched_block_number",
   "timestamp_caught_up_to_head_or_endblock" = EXCLUDED."timestamp_caught_up_to_head_or_endblock",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -158,7 +163,7 @@ module.exports.setChainMetadataBlockHeight = (sql, entityDataArray) => {
   SET
   "chain_id" = EXCLUDED."chain_id",
   "block_height" = EXCLUDED."block_height";`
-    .then((res) => {})
+    .then((res) => { })
     .catch((err) => {
       console.log("errored", err);
     });
@@ -220,28 +225,30 @@ const batchSetRawEventsCore = (sql, entityDataArray) => {
     entityDataArray,
     "chain_id",
     "event_id",
+    "event_name",
+    "contract_name",
     "block_number",
     "log_index",
-    "transaction_index",
-    "transaction_hash",
+    "transaction_fields",
+    "block_fields",
     "src_address",
     "block_hash",
     "block_timestamp",
-    "event_type",
     "params",
   )}
     ON CONFLICT(chain_id, event_id) DO UPDATE
     SET
     "chain_id" = EXCLUDED."chain_id",
     "event_id" = EXCLUDED."event_id",
+    "event_name" = EXCLUDED."event_name",
+    "contract_name" = EXCLUDED."contract_name",
     "block_number" = EXCLUDED."block_number",
     "log_index" = EXCLUDED."log_index",
-    "transaction_index" = EXCLUDED."transaction_index",
-    "transaction_hash" = EXCLUDED."transaction_hash",
+    "transaction_fields" = EXCLUDED."transaction_fields",
+    "block_fields" = EXCLUDED."block_fields",
     "src_address" = EXCLUDED."src_address",
     "block_hash" = EXCLUDED."block_hash",
     "block_timestamp" = EXCLUDED."block_timestamp",
-    "event_type" = EXCLUDED."event_type",
     "params" = EXCLUDED."params";`;
 };
 
@@ -415,7 +422,7 @@ module.exports.readDynamicContractsOnChainIdAtOrBeforeBlock = (
   chainId,
   block_number,
 ) => sql`
-  SELECT c.contract_address, c.contract_type, c.event_id
+  SELECT c.contract_address, c.contract_type, c.event_id, c.chain_id, c.block_timestamp
   FROM "public"."dynamic_contract_registry" as c
   JOIN raw_events e ON c.chain_id = e.chain_id
   AND c.event_id = e.event_id

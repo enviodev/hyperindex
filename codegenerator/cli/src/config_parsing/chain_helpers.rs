@@ -225,7 +225,7 @@ pub enum Network {
     // Explorers:
     // https://explorer.testnet.fhenix.zone/ (blockscout)
     FhenixTestnet = 42069,
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Amoy = 80002,
     #[subenum(HypersyncNetwork)]
     // Explorers:
@@ -388,6 +388,9 @@ impl NetworkWithExplorer {
                 "avalanche.routescan.io",
                 "api.routescan.io/v2/network/mainnet/evm/43114/etherscan",
             ),
+            NetworkWithExplorer::Amoy => {
+                BlockExplorerApi::custom("amoy.polygonscan.com", "api-amoy.polygonscan.com")
+            }
             //// Having issues getting blockscout to work.
             // NetworkWithExplorer::Aurora => BlockExplorerApi::custom(
             //     "explorer.mainnet.aurora.dev",
@@ -462,11 +465,9 @@ pub fn get_confirmed_block_threshold_from_id(id: u64) -> i32 {
 
 #[cfg(test)]
 mod test {
-
-    use crate::config_parsing::chain_helpers::Network;
-
     use super::{get_etherscan_client, GraphNetwork, HypersyncNetwork, NetworkWithExplorer};
-
+    use crate::config_parsing::chain_helpers::Network;
+    use pretty_assertions::assert_eq;
     use strum::IntoEnumIterator;
 
     #[test]
@@ -483,6 +484,7 @@ mod test {
         let expected = vec![HypersyncNetwork::EthereumMainnet, HypersyncNetwork::Polygon];
         assert_eq!(expected, names_des);
     }
+
     #[test]
     fn strum_serialize() {
         assert_eq!(
@@ -550,6 +552,15 @@ mod test {
                 n
             )
         }
+    }
+
+    #[test]
+    fn network_api_key_name() {
+        let env_token_name = NetworkWithExplorer::EthereumMainnet.get_env_token_name();
+        assert_eq!(
+            env_token_name,
+            "ETHEREUMMAINNET_VERIFIED_CONTRACT_API_TOKEN"
+        );
     }
 
     use tracing_subscriber;

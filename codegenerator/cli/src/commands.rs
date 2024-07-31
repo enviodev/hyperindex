@@ -35,16 +35,12 @@ pub mod rescript {
     use std::path::PathBuf;
 
     pub async fn clean(path: &PathBuf) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript", "clean", "-with-deps"];
+        let args = vec!["rescript", "clean"];
         execute_command("pnpm", args, path).await
     }
 
-    pub async fn format(path: &PathBuf) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript", "format", "-all"];
-        execute_command("pnpm", args, path).await
-    }
     pub async fn build(path: &PathBuf) -> Result<std::process::ExitStatus> {
-        let args = vec!["rescript", "build", "-with-deps"];
+        let args = vec!["rescript"];
         execute_command("pnpm", args, path).await
     }
 }
@@ -112,13 +108,13 @@ pub mod codegen {
     async fn run_post_codegen_command_sequence(
         project_paths: &ParsedProjectPaths,
     ) -> anyhow::Result<std::process::ExitStatus> {
-        println!("installing packages... ");
+        println!("Installing packages... ");
         let exit1 = pnpm_install(project_paths).await?;
         if !exit1.success() {
             return Ok(exit1);
         }
 
-        println!("clean build directory");
+        println!("Clean build directory");
         let exit2 = rescript::clean(&project_paths.generated)
             .await
             .context("Failed running rescript clean")?;
@@ -126,9 +122,7 @@ pub mod codegen {
             return Ok(exit2);
         }
 
-        //NOTE: Runing format before build was causing freezing on some
-        //cases
-        println!("building code");
+        println!("Building code");
         let exit3 = rescript::build(&project_paths.generated)
             .await
             .context("Failed running rescript build")?;
@@ -136,14 +130,7 @@ pub mod codegen {
             return Ok(exit3);
         }
 
-        //NOTE: Runing format before build was causing freezing on some
-        //cases
-        println!("formatting code");
-        let last_exit = rescript::format(&project_paths.generated)
-            .await
-            .context("Failed running rescript format")?;
-
-        Ok(last_exit)
+        Ok(exit3)
     }
 
     pub async fn npx_codegen(
@@ -226,7 +213,10 @@ pub mod start {
                 "Indexer has failed to run. Please see error logs for more details"
             ));
         }
-        println!("\nIndexer has successfully finished processing all events on all chains. Exiting process.");
+        println!(
+            "\nIndexer has successfully finished processing all events on all chains. Exiting \
+             process."
+        );
         Ok(())
     }
 }

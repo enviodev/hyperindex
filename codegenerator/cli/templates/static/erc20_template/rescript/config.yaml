@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
 name: erc20indexer
 description: ERC-20 indexer
 networks:
@@ -9,10 +10,4 @@ networks:
         handler: src/EventHandlers.bs.js
         events:
           - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
-            requiredEntities:
-              - name: "Account"
-              - name: "Approval"
           - event: "Transfer(address indexed from, address indexed to, uint256 value)"
-            requiredEntities:
-              - name: "Account"
-              - name: "Approval"

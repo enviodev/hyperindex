@@ -1,6 +1,3 @@
 {
-  "yaml.schemas": {
-    "./config-schema/config.schema.json": "**/config.yaml"
-  },
   "rust-analyzer.showUnlinkedFileNotification": false
 }

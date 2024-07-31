@@ -31,3 +31,4 @@ artifacts
 cache
 *.bs.js
 generated
+.env

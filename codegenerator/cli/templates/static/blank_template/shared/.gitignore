@@ -34,3 +34,4 @@ logs
 *.bs.mjs
 *.gen.ts
 build
+.env

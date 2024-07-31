@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./node_modules/envio/evm.schema.json
 name: Greeter
 description: Greeter indexer
 #Global contract definitions that must contain all definitions except

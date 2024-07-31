@@ -34,6 +34,6 @@ let toMillis = ((sec, nano): timeElapsed): milliseconds => {
   sec->secToMilli + nano->nanoToMilli
 }
 
-let intFromMillis = Obj.magic
-let intFromNanos = Obj.magic
-let intFromSeconds = Obj.magic
+let intFromMillis = Utils.magic
+let intFromNanos = Utils.magic
+let intFromSeconds = Utils.magic

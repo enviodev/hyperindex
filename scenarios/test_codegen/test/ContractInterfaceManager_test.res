@@ -1,11 +1,11 @@
 open RescriptMocha
-open Mocha
+
 open ContractInterfaceManager
 
 describe("Test ContractInterfaceManager", () => {
   it("Full config contractInterfaceManager gets all topics and addresses for filters", () => {
     let logger = Logging.logger
-    let chainConfig = Config.config->ChainMap.get(Chain_1337)
+    let chainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
     let contractAddressMapping = ContractAddressingMap.make()
     contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
 
@@ -21,13 +21,13 @@ describe("Test ContractInterfaceManager", () => {
 
     Assert.equal(
       topics->Array.length,
-      7,
+      8,
       ~message="Expected same amount of topics as number of events in config",
     )
   })
 
   it("Single address config gets all topics and addresses for filters", () => {
-    let chainConfig = Config.config->ChainMap.get(Chain_1337)
+    let chainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
     let contractAddress =
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe
 
@@ -51,13 +51,13 @@ describe("Test ContractInterfaceManager", () => {
 
     Assert.equal(
       topics->Array.length,
-      6,
+      7,
       ~message="Expected same amount of topics as number of events in config",
     )
   })
 
   it("Combined Interface Manager matches the values from single Interface Managers", () => {
-    let chainConfig = Config.config->ChainMap.get(Chain_1337)
+    let chainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
     let gravatarAddress =
       "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe
 
@@ -85,13 +85,13 @@ describe("Test ContractInterfaceManager", () => {
 
     let {addresses: allAddresses, topics: allTopics} = combinedIM->getAllTopicsAndAddresses
 
-    Assert.deep_strict_equal(
+    Assert.deepStrictEqual(
       Belt.Array.concat(gravatarAddresses, nftFactoryAddresses),
       allAddresses,
       ~message="combined addresses should contain addresses of single ContractInterfaceManager",
     )
 
-    Assert.deep_strict_equal(
+    Assert.deepStrictEqual(
       Belt.Array.concat(gravatarTopics, nftFactoryTopics),
       allTopics,
       ~message="combined topics should contain addresses of single ContractInterfaceManager",
