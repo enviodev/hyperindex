@@ -15,6 +15,8 @@ Our licenses allows self-hosting but restricts third-party hosting with Envio's 
 - **Code** is open and public.
 - **Generated license** allows self-hosting but restricts third-party competition.
 - **Code generator license** is a commercial license.
+  - **non-comercial use** is allowed.
+  - **forking and modifying code** is not allowed. However, if you have specific needs or use cases, please contact us to discuss potential exceptions.
 - **Future considerations** for open-sourcing are dependent on market traction and stakeholder interests.
 
 ## Our Position
