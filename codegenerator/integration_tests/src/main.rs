@@ -45,6 +45,7 @@ impl InitCombo {
             language: Some(l.clone()),
             init_commands: Some(init_flow),
             name: Some("test".to_string()),
+            api_token: None,
         };
         InitCombo {
             id,
