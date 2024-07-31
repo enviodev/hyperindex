@@ -150,14 +150,18 @@ let executeLoadActionMap = async (
       entityLoadIds->Array.keep(id => inMemTable->InMemoryTable.Entity.get(id)->Option.isNone)
 
     //load in values that don't exist in the inMemoryStore
-    let res = await idsNotInMemory->batchLoadIds
-
-    res->Array.forEach(entity => {
+    let entities = await idsNotInMemory->batchLoadIds
+    let entitiesMap = Js.Dict.empty()
+    for idx in 0 to entities->Array.length - 1 {
+      let entity = entities->Js.Array2.unsafe_get(idx)
+      entitiesMap->Js.Dict.set(entity->Entities.getEntityIdUnsafe, entity)
+    }
+    idsNotInMemory->Array.forEach(entityId => {
       //Set the entity in the in memory store
       inMemTable->InMemoryTable.Entity.initValue(
         ~allowOverWriteEntity=false,
-        ~key=Entities.getEntityIdUnsafe(entity),
-        ~entity=Some(entity),
+        ~key=entityId,
+        ~entity=entitiesMap->Js.Dict.get(entityId),
       )
     })
 
