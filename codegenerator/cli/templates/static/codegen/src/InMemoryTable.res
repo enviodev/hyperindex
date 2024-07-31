@@ -193,10 +193,10 @@ module Entity = {
 
   let getRow = get
 
-  // It returns option<option<'entity>> where the first option means
-  // that the entity is not set to the in memory store,
-  // and the second option means that the entity doesn't esist/deleted.
-  // It's needed to prevent an additional round trips to the database for deleted entities.
+  /** It returns option<option<'entity>> where the first option means
+  that the entity is not set to the in memory store,
+  and the second option means that the entity doesn't esist/deleted.
+  It's needed to prevent an additional round trips to the database for deleted entities. */
   let get = (inMemTable: t<'entity>, key: Types.id) =>
     inMemTable.table
     ->get(key)
