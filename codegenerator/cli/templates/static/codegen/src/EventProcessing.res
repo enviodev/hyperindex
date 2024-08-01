@@ -223,11 +223,11 @@ let runEventHandler = (
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
-    let loadLayer = LoadLayer.make()
+    let loadLayer = LoadLayer.make(~config)
 
     let loaderReturnUnawaited = runEventLoader(~contextEnv, ~handler, ~loadLayer)
 
-    switch await loadLayer->executeLoadLayer(~inMemoryStore) {
+    switch await loadLayer->executeLoadLayer(~inMemoryStore, ~config) {
     | exception exn =>
       exn
       ->ErrorHandling.make(
@@ -375,10 +375,11 @@ let runLoaders = (
   ~registeredEvents: RegisteredEvents.t,
   ~inMemoryStore,
   ~logger,
+  ~config,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let loadLayer = LoadLayer.make()
+    let loadLayer = LoadLayer.make(~config)
 
     let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, eventMod, event}) => {
       registeredEvents
@@ -392,7 +393,7 @@ let runLoaders = (
       )
     })
 
-    switch await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore) {
+    switch await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore, ~config) {
     | exception exn =>
       exn
       ->ErrorHandling.make(~msg="Load layer failed during execution", ~logger)
@@ -500,7 +501,7 @@ let processEventBatch = (
       ->propogate
 
     await eventsBeforeDynamicRegistrations
-    ->runLoaders(~registeredEvents, ~inMemoryStore, ~logger)
+    ->runLoaders(~registeredEvents, ~inMemoryStore, ~logger, ~config)
     ->propogateAsync
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

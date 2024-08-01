@@ -25,6 +25,7 @@ type t = {
     TablesStatic.DynamicContractRegistry.t,
   >,
   {{#each entities as |entity|}}
+  @as("{{entity.name.capitalized}}") {{!-- The @as is Needed for the hacky getEntityTable implementation. TODO: Remove after migrating to static codegen --}}
   {{entity.name.uncapitalized}}: InMemoryTable.Entity.t<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}
   rollBackEventIdentifier: option<Types.eventIdentifier>,
@@ -50,4 +51,9 @@ let clone = (self: t) => {
   {{entity.name.uncapitalized}}: self.{{entity.name.uncapitalized}}->InMemoryTable.Entity.clone,
   {{/each}}
   rollBackEventIdentifier: self.rollBackEventIdentifier->InMemoryTable.structuredClone,
+}
+
+let getEntityTable = (inMemoryStore: t, ~entityMod) => {
+  let module(Entity: Entities.InternalEntity) = entityMod
+  inMemoryStore->Utils.magic->Js.Dict.unsafeGet(Entity.key)
 }

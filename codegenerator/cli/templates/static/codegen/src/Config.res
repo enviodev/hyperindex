@@ -96,6 +96,7 @@ type t = {
   events: dict<module(Types.InternalEvent)>,
   allEventSignatures: array<string>,
   enableRawEvents: bool,
+  entities: array<module(Entities.InternalEntity)>,
 }
 
 let make = (
@@ -105,6 +106,7 @@ let make = (
   ~isUnorderedMultichainMode=false,
   ~chains=[],
   ~enableRawEvents=false,
+  ~entities=[],
 ) => {
   let events = Js.Dict.empty()
   chains->Js.Array2.forEach(chainConfig => {
@@ -140,6 +142,7 @@ let make = (
     allEventSignatures: Abis.EventSignatures.all,
     events,
     enableRawEvents,
+    entities: entities->(Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>),
   }
 }
 

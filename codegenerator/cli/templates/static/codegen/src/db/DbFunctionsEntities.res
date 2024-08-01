@@ -25,7 +25,7 @@ let makeReadEntities = (~table: Table.table, ~rowsSchema: S.t<array<'entityRow>>
         ~logger?,
         ~msg=`Failed to parse rows from database of entity ${table.tableName}`,
       )
-    | entitys => entitys
+    | entities => entities
     }
   }
 }
@@ -138,7 +138,7 @@ let makeWhereEq = (
         ~logger,
         ~msg=`Failed to parse rows from database of entity ${Entity.table.tableName}`,
       )
-    | entitys => entitys
+    | entities => entities
     }
   }
 }

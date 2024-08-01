@@ -1,31 +1,5 @@
 open Types
 
-module EntityIdsMap = {
-  type t = dict<Set.t<Types.id>>
-
-  let makeEmptyEntityIdsMap = (): t => {
-    Entities.allTables->Belt.Array.map(table => (table.tableName, Set.make()))->Js.Dict.fromArray
-  }
-
-  let addId = (entityIdsMap: t, ~entityName: Enums.EntityType.t, ~entityId) => {
-    switch entityIdsMap->Js.Dict.get((entityName :> string)) {
-    | Some(ids) => ids->Set.add(entityId)->ignore
-    | None =>
-      //unexpected
-      let newSet = Set.make()
-      newSet->Set.add(entityId)->ignore
-      entityIdsMap->Js.Dict.set((entityName :> string), newSet)
-    }
-  }
-
-  let hasId = (entityIdsMap: t, ~entityName: Enums.EntityType.t, ~entityId) => {
-    switch entityIdsMap->Js.Dict.get((entityName :> string)) {
-    | Some(ids) => ids->Set.has(entityId)
-    | None => false //unexpected
-    }
-  }
-}
-
 /**
 The context holds all the state for a given events loader and handler.
 */
@@ -33,7 +7,6 @@ type t<'eventArgs> = {
   logger: Pino.t,
   chain: ChainMap.Chain.t,
   addedDynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
-  entityIdsMap: EntityIdsMap.t,
   event: Types.eventLog<'eventArgs>,
 }
 
@@ -77,7 +50,6 @@ let make = (~chain, ~event: Types.eventLog<'eventArgs>, ~eventMod: module(Types.
     logger,
     chain,
     addedDynamicContractRegistrations: [],
-    entityIdsMap: EntityIdsMap.makeEmptyEntityIdsMap(),
   }
 }
 
@@ -107,37 +79,14 @@ let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, 
   )
 }
 
-let makeLoader = (loadLayerRef, ~entityIdsMap, ~entityName) => (entityId) => {
-  entityIdsMap->EntityIdsMap.addId(~entityId, ~entityName)
-  Promise.make((resolve, _reject) => {
-    loadLayerRef.contents->LoadLayer.LoadActionMap.addSingle(~entityId, ~resolve)
-  })
-}
-
-let makeWhereEqLoader = (loadLayerRef, ~fieldName, ~fieldValueSchema, ~logger) => {
-  Entities.eq: fieldValue => {
-    Promise.make((resolve, _reject) => {
-      loadLayerRef.contents->LoadLayer.LoadActionMap.addLookUpByIndex(
-        ~index=Single({
-          fieldName,
-          fieldValue: TableIndices.FieldValue.castFrom(fieldValue),
-          operator: Eq,
-        }),
-        ~fieldValueSchema,
-        ~logger,
-        ~fieldName,
-        ~fieldValue,
-        ~resolve,
-      )
-    })
-  },
+let makeWhereLoader = (loadLayer, ~entityMod, ~fieldName, ~fieldValueSchema, ~logger) => {
+  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(~entityMod, ~fieldName, ~fieldValueSchema, ~logger)
 }
 
 let makeEntityHandlerContext = (
   type entity,
   ~eventIdentifier,
   ~inMemTable: InMemoryTable.Entity.t<entity>, //TODO: store and store functions should be passed in via module
-  ~entityIdsMap: EntityIdsMap.t,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~asyncGetter,
   ~getKey,
@@ -155,20 +104,15 @@ let makeEntityHandlerContext = (
       )
     },
     get: async entityId => {
-      if entityIdsMap->EntityIdsMap.hasId(~entityName=EntityMod.name, ~entityId) {
-        inMemTable->InMemoryTable.Entity.get(entityId)
-      } else {
-        // NOTE: this will still return the value if it exists in the in-memory store (despite the loader not being run).
-        switch inMemTable->InMemoryTable.Entity.get(entityId) {
-        | Some(entity) => Some(entity)
-        | None =>
-          let entities = await asyncGetter(entityId)
+      switch inMemTable->InMemoryTable.Entity.get(entityId) {
+      | Some(maybeEntity) => maybeEntity
+      | None =>
+        let entities = await asyncGetter(entityId)
 
-          let optEntity = entities->Belt.Array.get(0)
-          inMemTable->InMemoryTable.Entity.initValue(~key=entityId, ~entity=optEntity)
+        let optEntity = entities->Belt.Array.get(0)
+        inMemTable->InMemoryTable.Entity.initValue(~key=entityId, ~entity=optEntity)
 
-          optEntity
-        }
+        optEntity
       }
     },
   }
@@ -182,16 +126,16 @@ let getContractRegisterContext = (contextEnv, ~inMemoryStore) => {
 }
 
 let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loaderContext => {
-  let {entityIdsMap, logger} = contextEnv
+  let {logger} = contextEnv
   {
     log: logger->getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
-      get: makeLoader(loadLayer.{{entity.name.uncapitalized}}, ~entityName={{entity.name.capitalized}},  ~entityIdsMap),
+      get: loadLayer->LoadLayer.makeLoader(~entityMod=module(Entities.{{entity.name.capitalized}})),
       getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
-        {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: makeWhereEqLoader(
-          loadLayer.{{entity.name.uncapitalized}},
+        {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: loadLayer->makeWhereLoader(
+          ~entityMod=module(Entities.{{entity.name.capitalized}}),
           ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
           ~fieldValueSchema={{param.res_schema_code}},
           ~logger,
@@ -219,7 +163,7 @@ let asyncGetters: asyncGetters = {
 }
 
 let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~asyncGetters) => {
-  let {entityIdsMap, event, logger} = context
+  let {event, logger} = context
 
   let eventIdentifier = event->makeEventIdentifier
   {
@@ -227,7 +171,6 @@ let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~asyncGetters
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: makeEntityHandlerContext(
       ~eventIdentifier,
-      ~entityIdsMap,
       ~asyncGetter=asyncGetters.get{{entity.name.capitalized}},
       ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
