@@ -78,7 +78,7 @@ module LoadActionMap = {
 
 type rec t = {
   mutable byEntity: dict<LoadActionMap.t>,
-  mutable schedule: option<t => promise<unit>>,
+  mutable isScheduled: bool,
   mutable inMemoryStore: InMemoryStore.t,
   loadEntitiesByIds: (
     array<Types.id>,
@@ -181,15 +181,15 @@ let executeLoadActionMap = async (loadLayer, ~loadActionMap: LoadActionMap.t) =>
   }
 }
 
-let rec schedule = async loadLayer => {
+let schedule = async loadLayer => {
   // Set the schedule function to None, to ensure that the logic runs only once until we finish executing.
-  loadLayer.schedule = None
+  loadLayer.isScheduled = true
 
   // Use a while loop instead of a recursive function,
   // so the memory is grabaged collected between executions.
   // Although recursive function shouldn't have caused a memory leak,
   // there's still a chance for it living for a long time.
-  while loadLayer.schedule === None {
+  while loadLayer.isScheduled {
     // Wait for a microtask here, to get all the actions registered in case when
     // running loaders in batch or using Promise.all
     // Theoretically, we could use a setTimeout, which would allow to skip awaits for
@@ -216,7 +216,7 @@ let rec schedule = async loadLayer => {
     // If there are new loaders register, schedule the next execution immediately.
     // Otherwise reset the schedule function, so it can be triggered externally again.
     if loadLayer.byEntity->Js.Dict.values->Array.length === 0 {
-      loadLayer.schedule = Some(schedule)
+      loadLayer.isScheduled = false
     }
   }
 }
@@ -224,7 +224,7 @@ let rec schedule = async loadLayer => {
 let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
   {
     byEntity: Js.Dict.empty(),
-    schedule: Some(schedule),
+    isScheduled: false,
     inMemoryStore: InMemoryStore.make(),
     loadEntitiesByIds,
     makeLoadEntitiesByField,
@@ -253,9 +253,8 @@ let useActionMap = (loadLayer, ~entityMod: module(Entities.InternalEntity), ~log
   | None => {
       let loadActionMap = LoadActionMap.make(~entityMod, ~logger)
       loadLayer.byEntity->Js.Dict.set(Entity.key, loadActionMap)
-      switch loadLayer.schedule {
-      | None => ()
-      | Some(schedule) => let _: promise<()> =schedule(loadLayer)
+      if !loadLayer.isScheduled {
+        let _: promise<()> = schedule(loadLayer)
       }
       loadActionMap
     }
