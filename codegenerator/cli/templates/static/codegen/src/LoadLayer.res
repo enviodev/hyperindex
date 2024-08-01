@@ -78,7 +78,7 @@ module LoadActionMap = {
 
 type rec t = {
   mutable byEntity: dict<LoadActionMap.t>,
-  mutable schedule: option<t => unit>,
+  mutable schedule: option<t => promise<unit>>,
   mutable inMemoryStore: InMemoryStore.t,
   loadEntitiesByIds: (
     array<Types.id>,
@@ -106,7 +106,6 @@ let executeLoadActionMap = async (loadLayer, ~loadActionMap: LoadActionMap.t) =>
   | (entityIdsToLoad, lookupByIndex) =>
     let {entityMod, logger} = loadActionMap
     try {
-
       let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
 
       let lookupIndexesNotInMemory = lookupByIndex->Array.keep(({index}) => {
@@ -123,7 +122,12 @@ let executeLoadActionMap = async (loadLayer, ~loadActionMap: LoadActionMap.t) =>
       await lookupIndexesNotInMemory->Utils.awaitEach(async ({
         loadArgs: {fieldName, fieldValue, fieldValueSchema},
       }) => {
-        let entities = await loadEntitiesByField(~fieldName, ~fieldValue, ~fieldValueSchema, ~logger)
+        let entities = await loadEntitiesByField(
+          ~fieldName,
+          ~fieldValue,
+          ~fieldValueSchema,
+          ~logger,
+        )
 
         entities->Array.forEach(entity => {
           //Set the entity in the in memory store
@@ -171,31 +175,30 @@ let executeLoadActionMap = async (loadLayer, ~loadActionMap: LoadActionMap.t) =>
         })
       })
     } catch {
-    | exn => exn->ErrorHandling.make(~logger, ~msg="Failed to execute load layer")->ErrorHandling.log
+    | exn =>
+      exn->ErrorHandling.make(~logger, ~msg="Failed to execute load layer")->ErrorHandling.log
     }
   }
 }
 
-let execute = (loadLayer, ~loadActionMaps: array<LoadActionMap.t>) => {
-  loadActionMaps
-  ->Array.map(loadActionMap => {
-    loadLayer->executeLoadActionMap(~loadActionMap)
-  })
-  ->Promise.all
-}
-
-let rec schedule = loadLayer => {
+let rec schedule = async loadLayer => {
   // Set the schedule function to None, to ensure that the logic runs only once until we finish executing.
   loadLayer.schedule = None
 
-  // Wait for a microtask here, to get all the actions registered in case when
-  // running loaders in batch or using Promise.all
-  // Theoretically, we could use a setTimeout, which would allow to skip awaits for
-  // some context.<entitty>.get which are already in the in memory store.
-  // This way we'd be able to register more actions,
-  // but assuming it would not affect performance in a positive way.
-  // On the other hand, queueMicrotask is more predictable, easier for testing and less memory intensive.
-  Utils.queueMicrotask(() => {
+  // Use a while loop instead of a recursive function,
+  // so the memory is grabaged collected between executions.
+  // Although recursive function shouldn't have caused a memory leak,
+  // there's still a chance for it living for a long time.
+  while loadLayer.schedule === None {
+    // Wait for a microtask here, to get all the actions registered in case when
+    // running loaders in batch or using Promise.all
+    // Theoretically, we could use a setTimeout, which would allow to skip awaits for
+    // some context.<entitty>.get which are already in the in memory store.
+    // This way we'd be able to register more actions,
+    // but assuming it would not affect performance in a positive way.
+    // On the other hand it is more predictable, easier for testing and less memory intensive.
+    let _ = await %raw(`void 0`)
+
     let loadActionMaps = loadLayer.byEntity->Js.Dict.values
 
     // Reset loadActionMaps, so they can be filled with new loaders.
@@ -203,16 +206,19 @@ let rec schedule = loadLayer => {
     loadLayer.byEntity = Js.Dict.empty()
 
     // Error should be caught for each loadActionMap execution separately, since we have a logger attached to it.
-    let _ = loadLayer->execute(~loadActionMaps)->Promise.thenResolve(_ => {
-      // If there are new loaders register, schedule the next execution immediately.
-      // Otherwise reset the schedule function, so it can be triggered externally again.
-      if loadLayer.byEntity->Js.Dict.values->Array.length > 0 {
-        schedule(loadLayer)
-      } else {
-        loadLayer.schedule = Some(schedule)
-      }
-    })
-  })
+    let _: array<unit> =
+      await loadActionMaps
+      ->Array.map(loadActionMap => {
+        loadLayer->executeLoadActionMap(~loadActionMap)
+      })
+      ->Promise.all
+
+    // If there are new loaders register, schedule the next execution immediately.
+    // Otherwise reset the schedule function, so it can be triggered externally again.
+    if loadLayer.byEntity->Js.Dict.values->Array.length === 0 {
+      loadLayer.schedule = Some(schedule)
+    }
+  }
 }
 
 let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
@@ -249,7 +255,7 @@ let useActionMap = (loadLayer, ~entityMod: module(Entities.InternalEntity), ~log
       loadLayer.byEntity->Js.Dict.set(Entity.key, loadActionMap)
       switch loadLayer.schedule {
       | None => ()
-      | Some(schedule) => schedule(loadLayer)
+      | Some(schedule) => let _: promise<()> =schedule(loadLayer)
       }
       loadActionMap
     }
