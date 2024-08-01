@@ -208,9 +208,6 @@ let updateEventSyncState = (
 
 let runEventHandler = (
   event,
-  //Injection params for testing framework
-  ~asyncGetters=?,
-  //Required params
   ~eventMod: module(Types.InternalEvent),
   ~handler,
   ~inMemoryStore,
@@ -227,7 +224,7 @@ let runEventHandler = (
     let loaderReturn = await runEventLoader(~contextEnv, ~handler, ~loadLayer)->propogateAsync
 
     switch await handler.handler(
-      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters?),
+      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~loadLayer),
     ) {
     | exception exn =>
       exn

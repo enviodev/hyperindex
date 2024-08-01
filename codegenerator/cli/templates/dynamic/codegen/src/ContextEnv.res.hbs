@@ -88,8 +88,8 @@ let makeEntityHandlerContext = (
   ~eventIdentifier,
   ~inMemTable: InMemoryTable.Entity.t<entity>, //TODO: store and store functions should be passed in via module
   ~entityMod: module(Entities.Entity with type t = entity),
-  ~asyncGetter,
   ~getKey,
+  ~loadLayer,
 ): entityHandlerContext<entity> => {
   let module(EntityMod) = entityMod
   {
@@ -103,18 +103,7 @@ let makeEntityHandlerContext = (
         Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
       )
     },
-    get: async entityId => {
-      switch inMemTable->InMemoryTable.Entity.get(entityId) {
-      | Some(maybeEntity) => maybeEntity
-      | None =>
-        let entities = await asyncGetter(entityId)
-
-        let optEntity = entities->Belt.Array.get(0)
-        inMemTable->InMemoryTable.Entity.initValue(~key=entityId, ~entity=optEntity)
-
-        optEntity
-      }
-    },
+    get: loadLayer->LoadLayer.makeLoader(~entityMod),
   }
 }
 
@@ -147,22 +136,7 @@ let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loa
   }
 }
 
-type asyncGetters = {
-{{#each entities as | entity |}}
- get{{entity.name.capitalized}}: Types.id => promise<array<Entities.{{entity.name.capitalized}}.t>>,
-{{/each}}
-}
-
-let readEntity = (~entityMod) => id =>
-  DbFunctionsEntities.batchRead(~entityMod)(DbFunctions.sql, [id])
-
-let asyncGetters: asyncGetters = {
-{{#each entities as | entity |}}
- get{{entity.name.capitalized}}: readEntity(~entityMod=module(Entities.{{entity.name.capitalized}})),
-{{/each}}
-}
-
-let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~asyncGetters) => {
+let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~loadLayer) => {
   let {event, logger} = context
 
   let eventIdentifier = event->makeEventIdentifier
@@ -171,10 +145,10 @@ let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~asyncGetters
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: makeEntityHandlerContext(
       ~eventIdentifier,
-      ~asyncGetter=asyncGetters.get{{entity.name.capitalized}},
       ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
       ~getKey=entity => entity.id,
+      ~loadLayer,
     ),
     {{/each}}
   }
@@ -190,8 +164,8 @@ let getLoaderArgs = (contextEnv, ~loadLayer) => {
   context: contextEnv->getLoaderContext(~loadLayer),
 }
 
-let getHandlerArgs = (contextEnv, ~asyncGetters=asyncGetters, ~inMemoryStore, ~loaderReturn) => {
+let getHandlerArgs = (contextEnv, ~inMemoryStore, ~loaderReturn, ~loadLayer) => {
   RegisteredEvents.event: contextEnv.event,
-  context: contextEnv->getHandlerContext(~asyncGetters, ~inMemoryStore),
+  context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer),
   loaderReturn,
 }

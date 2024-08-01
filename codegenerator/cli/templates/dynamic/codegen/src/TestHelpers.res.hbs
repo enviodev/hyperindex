@@ -90,13 +90,6 @@ module EventFunctions = {
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-      let asyncGetters: ContextEnv.asyncGetters = {
-        {{#each entities as | entity |}}
-        get{{entity.name.capitalized}}: async id =>
-          mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-        {{/each}}
-      }
-
       let registeredEvent = switch RegisteredEvents.global->RegisteredEvents.get(eventMod) {
       | Some(l) => l
       | None =>
@@ -153,7 +146,6 @@ module EventFunctions = {
           ~chain,
           ~logger,
           ~latestProcessedBlocks,
-          ~asyncGetters,
           ~config,
         ) {
         | Ok(_) => ()
