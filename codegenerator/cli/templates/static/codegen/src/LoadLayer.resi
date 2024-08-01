@@ -6,6 +6,7 @@ let make: (
   ~loadEntitiesByIds: (
     array<Types.id>,
     ~entityMod: module(Entities.InternalEntity),
+    ~logger: Pino.t=?,
   ) => promise<array<Entities.internalEntity>>,
   ~makeLoadEntitiesByField: (
     ~entityMod: module(Entities.InternalEntity),
