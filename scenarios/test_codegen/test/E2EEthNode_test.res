@@ -47,8 +47,9 @@ describe("E2E Integration Test", () => {
     let config = RegisterHandlers.registerAllHandlers()
 
     let chainManager = Integration_ts_helpers.makeChainManager(localChainConfig)
+    let loadLayer = LoadLayer.makeWithDbConnection()
 
-    let globalState = GlobalState.make(~config, ~chainManager)
+    let globalState = GlobalState.make(~config, ~chainManager, ~loadLayer)
 
     let gsManager = globalState->GlobalStateManager.make
 

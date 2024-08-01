@@ -221,7 +221,7 @@ let runEventHandler = (
   runAsyncEnv(async () => {
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
 
-    let loaderReturn = await runEventLoader(~contextEnv, ~handler, ~loadLayer)->propogateAsync
+    let loaderReturn = (await runEventLoader(~contextEnv, ~handler, ~loadLayer))->propogate
 
     switch await handler.handler(
       contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~loadLayer),
@@ -362,22 +362,24 @@ let runLoaders = (
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, eventMod, event}) => {
-      registeredEvents
-      ->RegisteredEvents.get(eventMod)
-      ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
-      ->Option.map(
-        handler => {
-          let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
-          runEventLoader(~contextEnv, ~handler, ~loadLayer)
-        },
-      )
-    })
-
-    let loaderReturns = await loaderReturnsUnawaited->Promise.all
-    //We don't actually need these returns here but errors will be propogated
-    //here
-    let _unusedReturns = loaderReturns->Utils.mapArrayOfResults->propogate
+    // We don't actually need loader returns,
+    // since we'll need to rerun each loader separately
+    // before the handler, to get the uptodate entities from the in memory store.
+    // Still need to propogate the errors.
+    let _: array<unknown> =
+      await eventBatch
+      ->Array.keepMap(({chain, eventMod, event}) => {
+        registeredEvents
+        ->RegisteredEvents.get(eventMod)
+        ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
+        ->Option.map(
+          handler => {
+            let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
+            runEventLoader(~contextEnv, ~handler, ~loadLayer)->Promise.thenResolve(propogate)
+          },
+        )
+      })
+      ->Promise.all
     Ok()
   })
 }
@@ -398,17 +400,19 @@ let runHandlers = (
       let {event, eventMod, chain} = eventBatch->Js.Array2.unsafe_get(i)
 
       latestProcessedBlocks :=
-        await runHandler(
-          event,
-          ~eventMod,
-          ~inMemoryStore,
-          ~logger,
-          ~chain,
-          ~latestProcessedBlocks=latestProcessedBlocks.contents,
-          ~registeredEvents,
-          ~loadLayer,
-          ~config,
-        )->propogateAsync
+        (
+          await runHandler(
+            event,
+            ~eventMod,
+            ~inMemoryStore,
+            ~logger,
+            ~chain,
+            ~latestProcessedBlocks=latestProcessedBlocks.contents,
+            ~registeredEvents,
+            ~loadLayer,
+            ~config,
+          )
+        )->propogate
     }
     Ok(latestProcessedBlocks.contents)
   })
@@ -475,14 +479,14 @@ let processEventBatch = (
       )
       ->propogate
 
-    await eventsBeforeDynamicRegistrations
-    ->runLoaders(~registeredEvents, ~loadLayer, ~logger)
-    ->propogateAsync
+    (await eventsBeforeDynamicRegistrations
+    ->runLoaders(~registeredEvents, ~loadLayer, ~logger))
+    ->propogate
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let latestProcessedBlocks =
-      await eventsBeforeDynamicRegistrations
+      (await eventsBeforeDynamicRegistrations
       ->runHandlers(
         ~registeredEvents,
         ~inMemoryStore,
@@ -490,8 +494,8 @@ let processEventBatch = (
         ~logger,
         ~loadLayer,
         ~config,
-      )
-      ->propogateAsync
+      ))
+      ->propogate
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 

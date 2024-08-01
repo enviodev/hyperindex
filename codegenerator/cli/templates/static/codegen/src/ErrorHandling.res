@@ -70,7 +70,4 @@ module ResultPropogateEnv = {
     | Ok(v) => v
     | Error(e) => raise(ErrorHandlingEarlyReturn(e))
     }
-
-  let propogateAsync = (res: promise<resultWithErrorHandle<'a>>) =>
-    res->Promise.thenResolve(propogate)
 }

@@ -30,7 +30,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     )
 
     let inMemoryStore = InMemoryStore.make()
-    let loadLayer = LoadLayer.make(~config=Config.getGenerated())
+    let loadLayer = LoadLayer.makeWithDbConnection()
 
     let contextEnv = ContextEnv.make(
       ~eventMod=module(Types.Gravatar.EmptyEvent)->Types.eventModToInternal,
@@ -44,13 +44,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
     let _ = loaderContext.entityWithFields.get(testEntity1.id)
     let _ = loaderContext.entityWithFields.get(testEntity2.id)
 
-    await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore, ~config=Config.getGenerated())
-
-    let handlerContext =
-      contextEnv->ContextEnv.getHandlerContext(
-        ~inMemoryStore,
-        ~asyncGetters=ContextEnv.asyncGetters,
-      )
+    let handlerContext = contextEnv->ContextEnv.getHandlerContext(~inMemoryStore, ~loadLayer)
 
     switch await handlerContext.entityWithFields.get(testEntity1.id) {
     | Some(entity) => Assert.equal(entity.bigDecimal.toString(), "123.456")

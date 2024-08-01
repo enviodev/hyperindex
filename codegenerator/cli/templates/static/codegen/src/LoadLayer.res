@@ -10,18 +10,15 @@ module LoadActionMap = {
     fieldName: string,
     fieldValue: fieldValue,
     fieldValueSchema: S.t<fieldValue>,
-    logger?: Pino.t,
   }
 
   let makeLoadArgs = (
     ~fieldName,
     ~fieldValue: 'fieldValue,
     ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
-    ~logger,
   ) => {
     fieldName,
     fieldValueSchema: Utils.magic(fieldValueSchema),
-    logger,
     fieldValue: Utils.magic(fieldValue),
   }
 
@@ -36,11 +33,13 @@ module LoadActionMap = {
     singleEntities: dict<array<loadSingle<Entities.internalEntity>>>,
     lookupByIndex: dict<loadIndex<Entities.internalEntity>>,
     entityMod: module(Entities.InternalEntity),
+    logger: Pino.t,
   }
-  let make = (~entityMod) => {
+  let make = (~entityMod, ~logger) => {
     singleEntities: Js.Dict.empty(),
     lookupByIndex: Js.Dict.empty(),
     entityMod,
+    logger,
   }
   let getSingleEntityIds = (map: t) => map.singleEntities->Js.Dict.keys
   let getIndexes = (map: t) => map.lookupByIndex->Js.Dict.values
@@ -57,15 +56,7 @@ module LoadActionMap = {
     }
   }
 
-  let addLookUpByIndex = (
-    map: t,
-    ~index,
-    ~resolve,
-    ~fieldName,
-    ~fieldValue,
-    ~fieldValueSchema,
-    ~logger,
-  ) => {
+  let addLookUpByIndex = (map: t, ~index, ~resolve, ~fieldName, ~fieldValue, ~fieldValueSchema) => {
     let loadCallback: loadMultiple<'entity> = {
       resolve: resolve,
     }
@@ -76,7 +67,7 @@ module LoadActionMap = {
         indexId,
         {
           index,
-          loadArgs: makeLoadArgs(~fieldName, ~fieldValueSchema, ~fieldValue, ~logger),
+          loadArgs: makeLoadArgs(~fieldName, ~fieldValueSchema, ~fieldValue),
           loadCallbacks: [loadCallback],
         },
       )
@@ -113,69 +104,75 @@ let executeLoadActionMap = async (loadLayer, ~loadActionMap: LoadActionMap.t) =>
     //for the given loader batch
     ()
   | (entityIdsToLoad, lookupByIndex) =>
-    let {entityMod} = loadActionMap
-    let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
+    let {entityMod, logger} = loadActionMap
+    try {
 
-    let lookupIndexesNotInMemory = lookupByIndex->Array.keep(({index}) => {
-      inMemTable->InMemoryTable.Entity.indexDoesNotExists(~index)
-    })
+      let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
 
-    lookupIndexesNotInMemory->Array.forEach(({index}) => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
-    })
+      let lookupIndexesNotInMemory = lookupByIndex->Array.keep(({index}) => {
+        inMemTable->InMemoryTable.Entity.indexDoesNotExists(~index)
+      })
 
-    let loadEntitiesByField = loadLayer.makeLoadEntitiesByField(~entityMod)
-    //Do not do these queries concurrently. They are cpu expensive for
-    //postgres
-    await lookupIndexesNotInMemory->Utils.awaitEach(async ({
-      loadArgs: {fieldName, fieldValue, fieldValueSchema, ?logger},
-    }) => {
-      let entities = await loadEntitiesByField(~fieldName, ~fieldValue, ~fieldValueSchema, ~logger?)
+      lookupIndexesNotInMemory->Array.forEach(({index}) => {
+        inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+      })
 
-      entities->Array.forEach(entity => {
+      let loadEntitiesByField = loadLayer.makeLoadEntitiesByField(~entityMod)
+      //Do not do these queries concurrently. They are cpu expensive for
+      //postgres
+      await lookupIndexesNotInMemory->Utils.awaitEach(async ({
+        loadArgs: {fieldName, fieldValue, fieldValueSchema},
+      }) => {
+        let entities = await loadEntitiesByField(~fieldName, ~fieldValue, ~fieldValueSchema, ~logger)
+
+        entities->Array.forEach(entity => {
+          //Set the entity in the in memory store
+          inMemTable->InMemoryTable.Entity.initValue(
+            ~allowOverWriteEntity=false,
+            ~key=Entities.getEntityId(entity),
+            ~entity=Some(entity),
+          )
+        })
+      })
+
+      // Since makeLoader prevents registerign entities already existing in the inMemTable,
+      // we can be sure that we load only the new ones.
+      let entities = await entityIdsToLoad->loadLayer.loadEntitiesByIds(~entityMod)
+
+      let entitiesMap = Js.Dict.empty()
+      for idx in 0 to entities->Array.length - 1 {
+        let entity = entities->Js.Array2.unsafe_get(idx)
+        entitiesMap->Js.Dict.set(entity->Entities.getEntityId, entity)
+      }
+      entityIdsToLoad->Array.forEach(entityId => {
         //Set the entity in the in memory store
         inMemTable->InMemoryTable.Entity.initValue(
           ~allowOverWriteEntity=false,
-          ~key=Entities.getEntityId(entity),
-          ~entity=Some(entity),
+          ~key=entityId,
+          ~entity=entitiesMap->Js.Dict.get(entityId),
         )
       })
-    })
 
-    // Since makeLoader prevents registerign entities already existing in the inMemTable,
-    // we can be sure that we load only the new ones.
-    let entities = await entityIdsToLoad->loadLayer.loadEntitiesByIds(~entityMod)
-    let entitiesMap = Js.Dict.empty()
-    for idx in 0 to entities->Array.length - 1 {
-      let entity = entities->Js.Array2.unsafe_get(idx)
-      entitiesMap->Js.Dict.set(entity->Entities.getEntityId, entity)
+      //Iterate through the map and resolve the load actions for each entity
+      loadActionMap
+      ->LoadActionMap.entriesSingleEntities
+      ->Array.forEach(((entityId, loadActions)) => {
+        loadActions->Array.forEach(({resolve}) => {
+          resolve(inMemTable->InMemoryTable.Entity.get(entityId)->Utils.Option.flatten)
+        })
+      })
+
+      loadActionMap
+      ->LoadActionMap.getIndexes
+      ->Array.forEach(({loadCallbacks, index}) => {
+        let valuesOnIndex = inMemTable->InMemoryTable.Entity.getOnIndex(~index)
+        loadCallbacks->Array.forEach(({resolve}) => {
+          valuesOnIndex->resolve
+        })
+      })
+    } catch {
+    | exn => exn->ErrorHandling.make(~logger, ~msg="Failed to execute load layer")->ErrorHandling.log
     }
-    entityIdsToLoad->Array.forEach(entityId => {
-      //Set the entity in the in memory store
-      inMemTable->InMemoryTable.Entity.initValue(
-        ~allowOverWriteEntity=false,
-        ~key=entityId,
-        ~entity=entitiesMap->Js.Dict.get(entityId),
-      )
-    })
-
-    //Iterate through the map and resolve the load actions for each entity
-    loadActionMap
-    ->LoadActionMap.entriesSingleEntities
-    ->Array.forEach(((entityId, loadActions)) => {
-      loadActions->Array.forEach(({resolve}) => {
-        resolve(inMemTable->InMemoryTable.Entity.get(entityId)->Utils.Option.flatten)
-      })
-    })
-
-    loadActionMap
-    ->LoadActionMap.getIndexes
-    ->Array.forEach(({loadCallbacks, index}) => {
-      let valuesOnIndex = inMemTable->InMemoryTable.Entity.getOnIndex(~index)
-      loadCallbacks->Array.forEach(({resolve}) => {
-        valuesOnIndex->resolve
-      })
-    })
   }
 }
 
@@ -191,31 +188,31 @@ let rec schedule = loadLayer => {
   // Set the schedule function to None, to ensure that the logic runs only once until we finish executing.
   loadLayer.schedule = None
 
-  // FIXME: Maybe that's not what we want to do here.
-  // We wait a macrotask here, to wait until all promises are resolved.
-  // Theoretically, we could use a microtask. But in this case loading an entity,
-  // which already exists in the in memory store,
-  // would require to wait until we do a round trip to the database.
-  let _ = Js.Global.setTimeout(() => {
+  // Wait for a microtask here, to get all the actions registered in case when
+  // running loaders in batch or using Promise.all
+  // Theoretically, we could use a setTimeout, which would allow to skip awaits for
+  // some context.<entitty>.get which are already in the in memory store.
+  // This way we'd be able to register more actions,
+  // but assuming it would not affect performance in a positive way.
+  // On the other hand, queueMicrotask is more predictable, easier for testing and less memory intensive.
+  Utils.queueMicrotask(() => {
     let loadActionMaps = loadLayer.byEntity->Js.Dict.values
 
     // Reset loadActionMaps, so they can be filled with new loaders.
     // But don't reset the schedule function, so that it doesn't run before execute finishes.
     loadLayer.byEntity = Js.Dict.empty()
 
-    let _ =
-      loadLayer
-      ->execute(~loadActionMaps)
-      ->Promise.thenResolve(_ => {
-        // If there are new loaders register, schedule the next execution immediately.
-        // Otherwise reset the schedule function, so it can be triggered externally again.
-        if loadLayer.byEntity->Js.Dict.values->Array.length > 0 {
-          schedule(loadLayer)
-        } else {
-          loadLayer.schedule = Some(schedule)
-        }
-      })
-  }, 0)
+    // Error should be caught for each loadActionMap execution separately, since we have a logger attached to it.
+    let _ = loadLayer->execute(~loadActionMaps)->Promise.thenResolve(_ => {
+      // If there are new loaders register, schedule the next execution immediately.
+      // Otherwise reset the schedule function, so it can be triggered externally again.
+      if loadLayer.byEntity->Js.Dict.values->Array.length > 0 {
+        schedule(loadLayer)
+      } else {
+        loadLayer.schedule = Some(schedule)
+      }
+    })
+  })
 }
 
 let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
@@ -228,16 +225,27 @@ let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
   }
 }
 
+// Ideally it shouldn't be here, but it'll make writing tests easier,
+// until we have a proper mocking solution.
+let makeWithDbConnection = () => {
+  make(
+    ~loadEntitiesByIds=(ids, ~entityMod) =>
+      DbFunctionsEntities.batchRead(~entityMod)(DbFunctions.sql, ids),
+    ~makeLoadEntitiesByField=(~entityMod) =>
+      DbFunctionsEntities.makeWhereEq(DbFunctions.sql, ~entityMod),
+  )
+}
+
 let setInMemoryStore = (loadLayer, ~inMemoryStore) => {
   loadLayer.inMemoryStore = inMemoryStore
 }
 
-let useActionMap = (loadLayer, ~entityMod: module(Entities.InternalEntity)) => {
+let useActionMap = (loadLayer, ~entityMod: module(Entities.InternalEntity), ~logger) => {
   let module(Entity) = entityMod
   switch loadLayer.byEntity->Utils.Dict.dangerouslyGetNonOption(Entity.key) {
   | Some(loadActionMap) => loadActionMap
   | None => {
-      let loadActionMap = LoadActionMap.make(~entityMod)
+      let loadActionMap = LoadActionMap.make(~entityMod, ~logger)
       loadLayer.byEntity->Js.Dict.set(Entity.key, loadActionMap)
       switch loadLayer.schedule {
       | None => ()
@@ -252,6 +260,7 @@ let makeLoader = (
   type entity,
   loadLayer,
   ~entityMod: module(Entities.Entity with type t = entity),
+  ~logger,
 ) => {
   let module(Entity) = entityMod
   let entityMod = entityMod->Entities.entityModToInternal
@@ -260,10 +269,11 @@ let makeLoader = (
   let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
   entityId => {
     switch inMemTable->InMemoryTable.Entity.get(entityId) {
-      | Some(maybeEntity) => Promise.resolve(maybeEntity)
-      | None => Promise.make((resolve, _reject) => {
+    | Some(maybeEntity) => Promise.resolve(maybeEntity)
+    | None =>
+      Promise.make((resolve, _reject) => {
         loadLayer
-        ->useActionMap(~entityMod)
+        ->useActionMap(~entityMod, ~logger)
         ->LoadActionMap.addSingle(~entityId, ~resolve)
       })->(Utils.magic: promise<option<Entities.internalEntity>> => promise<option<entity>>)
     }
@@ -274,14 +284,14 @@ let makeWhereEqLoader = (
   type entity,
   loadLayer,
   ~entityMod: module(Entities.Entity with type t = entity),
+  ~logger,
   ~fieldName,
   ~fieldValueSchema,
-  ~logger,
 ) => {
   fieldValue => {
     Promise.make((resolve, _reject) => {
       loadLayer
-      ->useActionMap(~entityMod=entityMod->Entities.entityModToInternal)
+      ->useActionMap(~entityMod=entityMod->Entities.entityModToInternal, ~logger)
       ->LoadActionMap.addLookUpByIndex(
         ~index=Single({
           fieldName,
@@ -289,7 +299,6 @@ let makeWhereEqLoader = (
           operator: Eq,
         }),
         ~fieldValueSchema,
-        ~logger,
         ~fieldName,
         ~fieldValue,
         ~resolve,

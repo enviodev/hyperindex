@@ -272,7 +272,7 @@ let cloneMockDb = (self: t) => {
 
 let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {
   let module(Entity: Entities.InternalEntity) = entityMod
-  (mockDb.entities->Utils.magic)->Utils.Dict.dangerouslyGetNonOption(Entity.key->Utils.String.uncapitalize)->Utils.Option.getExn("Mocked operations for entity " ++ Entity.key ++ " not found")
+  (mockDb.entities->Utils.magic)->Utils.Dict.dangerouslyGetNonOption(Entity.key)->Utils.Option.getExn("Mocked operations for entity " ++ Entity.key ++ " not found")
 }
 
 let makeLoadEntitiesByIds = (mockDb: t) => {

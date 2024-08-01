@@ -10,6 +10,8 @@ describe("E2E Mock Event Batch", () => {
     DbStub.setGravatarDb(~gravatar=MockEntities.gravatarEntity2)
     // EventProcessing.processEventBatch(MockEvents.eventBatch)
 
+    let loadLayer = LoadLayer.makeWithDbConnection()
+
     let runEventHandler = async (
       event: Types.eventLog<'a>,
       eventMod: module(Types.Event with type eventArgs = 'a),
@@ -26,6 +28,7 @@ describe("E2E Mock Event Batch", () => {
           ~logger=Logging.logger,
           ~chain=MockConfig.chain1,
           ~eventMod,
+          ~loadLayer,
           ~config,
         )
       | None => Ok(EventProcessing.EventsProcessed.makeEmpty(~config))
@@ -50,6 +53,7 @@ describe_skip("E2E Db check", () => {
     await DbHelpers.runUpDownMigration()
 
     let config = RegisterHandlers.registerAllHandlers()
+    let loadLayer = LoadLayer.makeWithDbConnection()
 
     let _ = await DbFunctionsEntities.batchSet(~entityMod=module(Entities.Gravatar))(
       Migrations.sql,
@@ -67,6 +71,7 @@ describe_skip("E2E Db check", () => {
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       ~registeredEvents=RegisteredEvents.global,
+      ~loadLayer,
       ~config,
     )
 

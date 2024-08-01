@@ -215,7 +215,7 @@ describe("Async linked entity loaders", () => {
       updatedMockDb.entities.a.get(EventHandlers.aIdWithNoGrandChildC)->Belt.Option.flatMap(
         a => a.optionalStringToTestLinkedEntities,
       )
-    Js.log(optionalStringToTestLinkedEntitiesNoGrandchild)
+
     Assert.deepEqual(optionalStringToTestLinkedEntitiesNoGrandchild, None)
   })
 })

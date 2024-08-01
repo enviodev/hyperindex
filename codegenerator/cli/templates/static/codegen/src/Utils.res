@@ -122,13 +122,6 @@ module Dict = {
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 }
 
-module String = {
-  let uncapitalize = str => {
-    str->Js.String2.slice(~from=0, ~to_=1)->Js.String.toLowerCase ++
-      str->Js.String2.sliceToEnd(~from=1)
-  }
-}
-
 /**
 Useful when an unsafe unwrap is needed on Result type
 and Error holds an exn. This is better than Result.getExn
@@ -153,3 +146,5 @@ let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     await item->fn
   }
 }
+
+external queueMicrotask: (unit => unit) => unit = "queueMicrotask"

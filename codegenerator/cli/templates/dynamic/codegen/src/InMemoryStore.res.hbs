@@ -25,7 +25,7 @@ type t = {
     TablesStatic.DynamicContractRegistry.t,
   >,
   {{#each entities as |entity|}}
-  @as("{{entity.name.capitalized}}") {{!-- The @as is Needed for the hacky getEntityTable implementation. TODO: Remove after migrating to static codegen --}}
+  @as("{{entity.name.original}}") {{!-- The @as is Needed for the hacky getEntityTable implementation. TODO: Remove after migrating to static codegen --}}
   {{entity.name.uncapitalized}}: InMemoryTable.Entity.t<Entities.{{entity.name.capitalized}}.t>,
   {{/each}}
   rollBackEventIdentifier: option<Types.eventIdentifier>,

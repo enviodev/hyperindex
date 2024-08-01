@@ -17,17 +17,20 @@ let make: (
   ) => promise<array<Entities.internalEntity>>,
 ) => t
 
+let makeWithDbConnection: unit => t
+
 let setInMemoryStore: (t, ~inMemoryStore: InMemoryStore.t) => unit
 
 let makeLoader: (
   t,
   ~entityMod: module(Entities.Entity with type t = 'a),
+  ~logger: Pino.t,
 ) => Js.Dict.key => promise<option<'a>>
 
 let makeWhereEqLoader: (
   t,
   ~entityMod: module(Entities.Entity with type t = 'a),
+  ~logger: Pino.t,
   ~fieldName: string,
   ~fieldValueSchema: RescriptSchema.S.t<'b>,
-  ~logger: Pino.t,
 ) => 'b => promise<array<'a>>

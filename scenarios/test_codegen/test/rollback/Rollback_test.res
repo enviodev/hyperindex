@@ -154,7 +154,8 @@ let setupDb = async (~shouldDropRawEvents) => {
 describe("Single Chain Simple Rollback", () => {
   Async.it("Detects reorgs and actions a rollback", async () => {
     let chainManager = ChainManager.makeFromConfig(~config)
-    let initState = GlobalState.make(~config, ~chainManager)
+    let loadLayer = LoadLayer.makeWithDbConnection()
+    let initState = GlobalState.make(~config, ~chainManager, ~loadLayer)
     let gsManager = initState->GlobalStateManager.make
     let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState
@@ -216,7 +217,8 @@ describe("Single Chain Simple Rollback", () => {
       ...ChainManager.makeFromConfig(~config),
       isUnorderedMultichainMode: true,
     }
-    let initState = GlobalState.make(~config, ~chainManager)
+    let loadLayer = LoadLayer.makeWithDbConnection()
+    let initState = GlobalState.make(~config, ~chainManager, ~loadLayer)
     let gsManager = initState->GlobalStateManager.make
     let chain = MockConfig.chain1337
     let getState = () => gsManager->GlobalStateManager.getState

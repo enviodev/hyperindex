@@ -88,6 +88,7 @@ let makeEntityHandlerContext = (
   ~eventIdentifier,
   ~inMemTable: InMemoryTable.Entity.t<entity>, //TODO: store and store functions should be passed in via module
   ~entityMod: module(Entities.Entity with type t = entity),
+  ~logger,
   ~getKey,
   ~loadLayer,
 ): entityHandlerContext<entity> => {
@@ -103,7 +104,7 @@ let makeEntityHandlerContext = (
         Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
       )
     },
-    get: loadLayer->LoadLayer.makeLoader(~entityMod),
+    get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger),
   }
 }
 
@@ -120,7 +121,7 @@ let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loa
     log: logger->getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
-      get: loadLayer->LoadLayer.makeLoader(~entityMod=module(Entities.{{entity.name.capitalized}})),
+      get: loadLayer->LoadLayer.makeLoader(~entityMod=module(Entities.{{entity.name.capitalized}}), ~logger),
       getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
         {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: loadLayer->makeWhereLoader(
@@ -148,6 +149,7 @@ let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~loadLayer) =
       ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
       ~getKey=entity => entity.id,
+      ~logger,
       ~loadLayer,
     ),
     {{/each}}
