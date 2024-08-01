@@ -23,14 +23,16 @@ module BatchQueue = {
     byId: dict<loadSingle>,
     byIndex: dict<loadIndex>,
     entityMod: module(Entities.InternalEntity),
+    inMemTable: InMemoryTable.Entity.t<Entities.internalEntity>,
     logger: Pino.t,
   }
 
-  let make = (~entityMod, ~logger) => {
+  let make = (~entityMod, ~logger, ~inMemTable) => {
     byId: Js.Dict.empty(),
     byIndex: Js.Dict.empty(),
     entityMod,
     logger,
+    inMemTable,
   }
 
   let getIdsToLoad = (batchQueue: t) => batchQueue.byId->Js.Dict.keys
@@ -85,7 +87,6 @@ module BatchQueue = {
 type rec t = {
   mutable entityBatchQueues: dict<BatchQueue.t>,
   mutable isScheduled: bool,
-  mutable inMemoryStore: InMemoryStore.t,
   loadEntitiesByIds: (
     array<Types.id>,
     ~entityMod: module(Entities.InternalEntity),
@@ -102,11 +103,9 @@ type rec t = {
 }
 
 let executeLoadEntitiesById = async (loadLayer, ~idsToLoad, ~batchQueue: BatchQueue.t) => {
-  let {entityMod, logger} = batchQueue
+  let {entityMod, logger, inMemTable} = batchQueue
 
   try {
-    let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
-
     // Since makeLoader prevents registerign entities already existing in the inMemTable,
     // we can be sure that we load only the new ones.
     let entities = await idsToLoad->loadLayer.loadEntitiesByIds(~entityMod, ~logger)
@@ -140,11 +139,9 @@ let executeLoadEntitiesById = async (loadLayer, ~idsToLoad, ~batchQueue: BatchQu
 }
 
 let executeLoadEntitiesByIndex = async (loadLayer, ~indexesToLoad: array<BatchQueue.loadIndex>, ~batchQueue: BatchQueue.t) => {
-  let {entityMod, logger} = batchQueue
+  let {entityMod, logger, inMemTable} = batchQueue
 
   try {
-    let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
-
     let lookupIndexesNotInMemory = indexesToLoad->Array.keep(({index}) => {
       inMemTable->InMemoryTable.Entity.indexDoesNotExists(~index)
     })
@@ -247,7 +244,6 @@ let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
   {
     entityBatchQueues: Js.Dict.empty(),
     isScheduled: false,
-    inMemoryStore: InMemoryStore.make(),
     loadEntitiesByIds,
     makeLoadEntitiesByField,
   }
@@ -264,16 +260,12 @@ let makeWithDbConnection = () => {
   )
 }
 
-let setInMemoryStore = (loadLayer, ~inMemoryStore) => {
-  loadLayer.inMemoryStore = inMemoryStore
-}
-
-let useActionMap = (loadLayer, ~entityMod: module(Entities.InternalEntity), ~logger) => {
+let useBatchQueue = (loadLayer, ~entityMod: module(Entities.InternalEntity), ~inMemTable, ~logger) => {
   let module(Entity) = entityMod
   switch loadLayer.entityBatchQueues->Utils.Dict.dangerouslyGetNonOption(Entity.key) {
   | Some(batchQueue) => batchQueue
   | None => {
-      let batchQueue = BatchQueue.make(~entityMod, ~logger)
+      let batchQueue = BatchQueue.make(~entityMod, ~logger, ~inMemTable)
       loadLayer.entityBatchQueues->Js.Dict.set(Entity.key, batchQueue)
       if !loadLayer.isScheduled {
         let _: promise<()> = schedule(loadLayer)
@@ -287,19 +279,20 @@ let makeLoader = (
   type entity,
   loadLayer,
   ~entityMod: module(Entities.Entity with type t = entity),
+  ~inMemTable,
   ~logger,
 ) => {
   let module(Entity) = entityMod
-  let entityMod = entityMod->Entities.entityModToInternal
-  // Since makeLoader is called on every handler run, it's safe to get the inMemTable
-  // outside of the returned function, since the inMemoryStore will always be up to date
-  let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
   entityId => {
     switch inMemTable->InMemoryTable.Entity.get(entityId) {
     | Some(maybeEntity) => Promise.resolve(maybeEntity)
     | None =>
       loadLayer
-        ->useActionMap(~entityMod, ~logger)
+        ->useBatchQueue(
+          ~entityMod=entityMod->Entities.entityModToInternal,
+          ~inMemTable=inMemTable->(Utils.magic: InMemoryTable.Entity.t<entity> => InMemoryTable.Entity.t<Entities.internalEntity>),
+          ~logger
+        )
         ->BatchQueue.registerLoadById(~entityId)
         ->(Utils.magic: promise<option<Entities.internalEntity>> => promise<option<entity>>)
     }
@@ -310,13 +303,18 @@ let makeWhereEqLoader = (
   type entity,
   loadLayer,
   ~entityMod: module(Entities.Entity with type t = entity),
+  ~inMemTable,
   ~logger,
   ~fieldName,
   ~fieldValueSchema,
 ) => {
   fieldValue => {
     loadLayer
-    ->useActionMap(~entityMod=entityMod->Entities.entityModToInternal, ~logger)
+    ->useBatchQueue(
+      ~entityMod=entityMod->Entities.entityModToInternal,
+      ~inMemTable=inMemTable->(Utils.magic: InMemoryTable.Entity.t<entity> => InMemoryTable.Entity.t<Entities.internalEntity>),
+      ~logger,
+    )
     ->BatchQueue.registerLoadByIndex(
       ~index=Single({
         fieldName,

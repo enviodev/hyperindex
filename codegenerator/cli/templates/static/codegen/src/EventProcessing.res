@@ -138,11 +138,12 @@ let runEventContractRegister = (
 let runEventLoader = async (
   ~contextEnv,
   ~handler: RegisteredEvents.registeredLoaderHandler<_>,
+  ~inMemoryStore,
   ~loadLayer,
 ) => {
   let {loader} = handler
 
-  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~loadLayer)) {
+  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer)) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
@@ -221,7 +222,7 @@ let runEventHandler = (
   runAsyncEnv(async () => {
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
 
-    let loaderReturn = (await runEventLoader(~contextEnv, ~handler, ~loadLayer))->propogate
+    let loaderReturn = (await runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer))->propogate
 
     switch await handler.handler(
       contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~loadLayer),
@@ -358,6 +359,7 @@ let runLoaders = (
   eventBatch: array<Types.eventBatchQueueItem>,
   ~registeredEvents: RegisteredEvents.t,
   ~loadLayer,
+  ~inMemoryStore,
   ~logger,
 ) => {
   open ErrorHandling.ResultPropogateEnv
@@ -375,7 +377,7 @@ let runLoaders = (
         ->Option.map(
           handler => {
             let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
-            runEventLoader(~contextEnv, ~handler, ~loadLayer)->Promise.thenResolve(propogate)
+            runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(propogate)
           },
         )
       })
@@ -480,7 +482,7 @@ let processEventBatch = (
       ->propogate
 
     (await eventsBeforeDynamicRegistrations
-    ->runLoaders(~registeredEvents, ~loadLayer, ~logger))
+    ->runLoaders(~registeredEvents, ~loadLayer, ~inMemoryStore,~logger))
     ->propogate
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

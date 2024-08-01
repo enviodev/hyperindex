@@ -104,7 +104,6 @@ module EventFunctions = {
         ~loadEntitiesByIds=TestHelpers_MockDb.makeLoadEntitiesByIds(mockDbClone),
         ~makeLoadEntitiesByField=(~entityMod) => TestHelpers_MockDb.makeLoadEntitiesByField(mockDbClone, ~entityMod),
       )
-      loadLayer->LoadLayer.setInMemoryStore(~inMemoryStore)
 
       //No need to check contract is registered or return anything.
       //The only purpose is to test the registerContract function and to

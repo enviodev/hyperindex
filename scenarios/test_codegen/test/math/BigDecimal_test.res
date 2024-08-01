@@ -39,7 +39,7 @@ describe("Load and save an entity with a BigDecimal from DB", () => {
       ~logger=Logging.logger,
     )
 
-    let loaderContext = contextEnv->ContextEnv.getLoaderContext(~loadLayer)
+    let loaderContext = contextEnv->ContextEnv.getLoaderContext(~loadLayer, ~inMemoryStore)
 
     let _ = loaderContext.entityWithFields.get(testEntity1.id)
     let _ = loaderContext.entityWithFields.get(testEntity2.id)

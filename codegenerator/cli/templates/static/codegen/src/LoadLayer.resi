@@ -20,18 +20,18 @@ let make: (
 
 let makeWithDbConnection: unit => t
 
-let setInMemoryStore: (t, ~inMemoryStore: InMemoryStore.t) => unit
-
 let makeLoader: (
   t,
-  ~entityMod: module(Entities.Entity with type t = 'a),
+  ~entityMod: module(Entities.Entity with type t = 'entity),
+  ~inMemTable: InMemoryTable.Entity.t<'entity>,
   ~logger: Pino.t,
-) => Js.Dict.key => promise<option<'a>>
+) => Js.Dict.key => promise<option<'entity>>
 
 let makeWhereEqLoader: (
   t,
-  ~entityMod: module(Entities.Entity with type t = 'a),
+  ~entityMod: module(Entities.Entity with type t = 'entity),
+  ~inMemTable: InMemoryTable.Entity.t<'entity>,
   ~logger: Pino.t,
   ~fieldName: string,
-  ~fieldValueSchema: RescriptSchema.S.t<'b>,
-) => 'b => promise<array<'a>>
+  ~fieldValueSchema: RescriptSchema.S.t<'fieldValue>,
+) => 'fieldValue => promise<array<'entity>>

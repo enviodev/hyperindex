@@ -79,8 +79,8 @@ let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, 
   )
 }
 
-let makeWhereLoader = (loadLayer, ~entityMod, ~fieldName, ~fieldValueSchema, ~logger) => {
-  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(~entityMod, ~fieldName, ~fieldValueSchema, ~logger)
+let makeWhereLoader = (loadLayer, ~entityMod, ~inMemTable, ~fieldName, ~fieldValueSchema, ~logger) => {
+  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(~entityMod, ~fieldName, ~fieldValueSchema, ~inMemTable, ~logger)
 }
 
 let makeEntityHandlerContext = (
@@ -104,7 +104,7 @@ let makeEntityHandlerContext = (
         Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
       )
     },
-    get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger),
+    get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger, ~inMemTable),
   }
 }
 
@@ -115,17 +115,22 @@ let getContractRegisterContext = (contextEnv, ~inMemoryStore) => {
   {{/each}}
 }
 
-let getLoaderContext = (contextEnv: t<'eventArgs>, ~loadLayer: LoadLayer.t): loaderContext => {
+let getLoaderContext = (contextEnv: t<'eventArgs>, ~inMemoryStore: InMemoryStore.t, ~loadLayer: LoadLayer.t): loaderContext => {
   let {logger} = contextEnv
   {
     log: logger->getUserLogger,
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: {
-      get: loadLayer->LoadLayer.makeLoader(~entityMod=module(Entities.{{entity.name.capitalized}}), ~logger),
+      get: loadLayer->LoadLayer.makeLoader(
+        ~entityMod=module(Entities.{{entity.name.capitalized}}),
+        ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
+        ~logger,
+      ),
       getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
         {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: loadLayer->makeWhereLoader(
           ~entityMod=module(Entities.{{entity.name.capitalized}}),
+          ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
           ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
           ~fieldValueSchema={{param.res_schema_code}},
           ~logger,
@@ -161,9 +166,9 @@ let getContractRegisterArgs = (contextEnv, ~inMemoryStore) => {
   context: contextEnv->getContractRegisterContext(~inMemoryStore),
 }
 
-let getLoaderArgs = (contextEnv, ~loadLayer) => {
+let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer) => {
   RegisteredEvents.event: contextEnv.event,
-  context: contextEnv->getLoaderContext(~loadLayer),
+  context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer),
 }
 
 let getHandlerArgs = (contextEnv, ~inMemoryStore, ~loaderReturn, ~loadLayer) => {

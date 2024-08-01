@@ -814,7 +814,6 @@ let injectedTaskReducer = (
         }
 
         let inMemoryStore = rollbackInMemStore->Option.getWithDefault(InMemoryStore.make())
-        state.loadLayer->LoadLayer.setInMemoryStore(~inMemoryStore)
         switch await EventProcessing.processEventBatch(
           ~eventBatch=batch,
           ~inMemoryStore,
