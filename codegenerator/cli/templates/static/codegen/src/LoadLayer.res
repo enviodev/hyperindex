@@ -112,7 +112,7 @@ let executeLoadActionMap = async (loadLayer, ~loadActionMap: LoadActionMap.t) =>
   | ([], []) => //in this case there are no more load actions to be performed on this entity
     //for the given loader batch
     ()
-  | (entityLoadIds, lookupByIndex) =>
+  | (entityIdsToLoad, lookupByIndex) =>
     let {entityMod} = loadActionMap
     let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
 
@@ -142,18 +142,15 @@ let executeLoadActionMap = async (loadLayer, ~loadActionMap: LoadActionMap.t) =>
       })
     })
 
-    //filter out ids that don't already exist in the in memory store
-    let idsNotInMemory =
-      entityLoadIds->Array.keep(id => inMemTable->InMemoryTable.Entity.get(id)->Option.isNone)
-
-    //load in values that don't exist in the inMemoryStore
-    let entities = await idsNotInMemory->loadLayer.loadEntitiesByIds(~entityMod)
+    // Since makeLoader prevents registerign entities already existing in the inMemTable,
+    // we can be sure that we load only the new ones.
+    let entities = await entityIdsToLoad->loadLayer.loadEntitiesByIds(~entityMod)
     let entitiesMap = Js.Dict.empty()
     for idx in 0 to entities->Array.length - 1 {
       let entity = entities->Js.Array2.unsafe_get(idx)
       entitiesMap->Js.Dict.set(entity->Entities.getEntityId, entity)
     }
-    idsNotInMemory->Array.forEach(entityId => {
+    entityIdsToLoad->Array.forEach(entityId => {
       //Set the entity in the in memory store
       inMemTable->InMemoryTable.Entity.initValue(
         ~allowOverWriteEntity=false,
@@ -257,12 +254,19 @@ let makeLoader = (
   ~entityMod: module(Entities.Entity with type t = entity),
 ) => {
   let module(Entity) = entityMod
+  let entityMod = entityMod->Entities.entityModToInternal
+  // Since makeLoader is called on every handler run, it's safe to get the inMemTable
+  // outside of the returned function, since the inMemoryStore will always be up to date
+  let inMemTable = loadLayer.inMemoryStore->InMemoryStore.getEntityTable(~entityMod)
   entityId => {
-    Promise.make((resolve, _reject) => {
-      loadLayer
-      ->useActionMap(~entityMod=entityMod->Entities.entityModToInternal)
-      ->LoadActionMap.addSingle(~entityId, ~resolve)
-    })->(Utils.magic: promise<option<Entities.internalEntity>> => promise<option<entity>>)
+    switch inMemTable->InMemoryTable.Entity.get(entityId) {
+      | Some(maybeEntity) => Promise.resolve(maybeEntity)
+      | None => Promise.make((resolve, _reject) => {
+        loadLayer
+        ->useActionMap(~entityMod)
+        ->LoadActionMap.addSingle(~entityId, ~resolve)
+      })->(Utils.magic: promise<option<Entities.internalEntity>> => promise<option<entity>>)
+    }
   }
 }
 
