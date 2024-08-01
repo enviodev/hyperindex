@@ -1,7 +1,20 @@
 type t
 
+type fieldValue
+
 let make: (
-  ~loadEntitiesByIds: (array<Types.id>, ~entityMod: module(Entities.InternalEntity)) => promise<array<Entities.internalEntity>>,
+  ~loadEntitiesByIds: (
+    array<Types.id>,
+    ~entityMod: module(Entities.InternalEntity),
+  ) => promise<array<Entities.internalEntity>>,
+  ~makeLoadEntitiesByField: (
+    ~entityMod: module(Entities.InternalEntity),
+  ) => (
+    ~fieldName: string,
+    ~fieldValue: fieldValue,
+    ~fieldValueSchema: S.t<fieldValue>,
+    ~logger: Pino.t=?,
+  ) => promise<array<Entities.internalEntity>>,
 ) => t
 
 let setInMemoryStore: (t, ~inMemoryStore: InMemoryStore.t) => unit

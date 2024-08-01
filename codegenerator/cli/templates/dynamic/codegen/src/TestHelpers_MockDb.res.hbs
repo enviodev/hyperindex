@@ -270,18 +270,6 @@ let cloneMockDb = (self: t) => {
   clonedInternalDb->makeWithInMemoryStore
 }
 
-let makeWhereEq = (mockDbTable: InMemoryTable.Entity.t<_>) => async (
-  ~fieldName: string,
-  ~fieldValue: 'fieldValue,
-  ~fieldValueSchema: S.t<'fieldValue>,
-  ~logger=Logging.logger,
-): array<'entityRow> => {
-  let _ = (fieldValueSchema, logger) //unused here
-  mockDbTable->InMemoryTable.Entity.getOnIndex(
-    ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),
-  )
-}
-
 let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {
   let module(Entity: Entities.InternalEntity) = entityMod
   (mockDb.entities->Utils.magic)->Utils.Dict.dangerouslyGetNonOption(Entity.key->Utils.String.uncapitalize)->Utils.Option.getExn("Mocked operations for entity " ++ Entity.key ++ " not found")
@@ -294,36 +282,14 @@ let makeLoadEntitiesByIds = (mockDb: t) => {
   }
 }
 
-{{!-- 
-/**
-Executes a single load layer using the mockDb functions
-*/
-let executeMockDbLoadLayer = async (
-  mockDb: t,
-  loadLayer: LoadLayer.t,
-  ~inMemoryStore: InMemoryStore.t,
-  ~config as _config,
-) => {
-  let hasLoadActions = ref(true)
-
-  while hasLoadActions.contents {
-    let hasLoadActionsAll = await [
-      //each of the entities in the load layer
-      {{#each entities as | entity |}}
-      loadLayer->Js.Dict.unsafeGet("{{entity.name.capitalized}}")->LoadLayer.executeLoadActionMap(
-        ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}}->(Utils.magic: InMemoryTable.Entity.t<Entities.{{entity.name.capitalized}}.t> => InMemoryTable.Entity.t<Entities.internalEntity>),
-        ~batchLoadIds=batchRead(mockDb.entities.{{entity.name.uncapitalized}}),
-        ~whereFnComposer=makeWhereEq(mockDb.__dbInternal__.{{entity.name.uncapitalized}}->(Utils.magic: InMemoryTable.Entity.t<Entities.{{entity.name.capitalized}}.t> => InMemoryTable.Entity.t<Entities.internalEntity>)),
-      ),
-      {{/each}}
-    ]->Promise.all
-
-    hasLoadActions :=
-      hasLoadActionsAll->Array.reduce(false, (accum, entityHasLoadActions) => {
-        accum || entityHasLoadActions->LoadLayer.toBool
-      })
+let makeLoadEntitiesByField = (mockDb: t, ~entityMod) => {
+  let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getEntityTable(~entityMod)
+  async (~fieldName, ~fieldValue, ~fieldValueSchema as _, ~logger as _=?) => {
+    mockDbTable->InMemoryTable.Entity.getOnIndex(
+      ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),
+    )
   }
-} --}}
+}
 
 /**
 A function composer for simulating the writing of an inMemoryStore to the external db with a mockDb.

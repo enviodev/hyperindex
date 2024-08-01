@@ -1,10 +1,11 @@
 open Belt
 
+type fieldValue
+
 module LoadActionMap = {
   type loadSingle<'entity> = {resolve: option<'entity> => unit}
   type loadMultiple<'entity> = {resolve: array<'entity> => unit}
 
-  type fieldValue
   type loadArgs<'entity> = {
     fieldName: string,
     fieldValue: fieldValue,
@@ -88,14 +89,21 @@ type rec t = {
   mutable byEntity: dict<LoadActionMap.t>,
   mutable schedule: option<t => unit>,
   mutable inMemoryStore: InMemoryStore.t,
-  loadEntitiesByIds: (array<Types.id>, ~entityMod: module(Entities.InternalEntity)) => promise<array<Entities.internalEntity>>,
+  loadEntitiesByIds: (
+    array<Types.id>,
+    ~entityMod: module(Entities.InternalEntity),
+  ) => promise<array<Entities.internalEntity>>,
+  makeLoadEntitiesByField: (
+    ~entityMod: module(Entities.InternalEntity),
+  ) => (
+    ~fieldName: string,
+    ~fieldValue: fieldValue,
+    ~fieldValueSchema: S.t<fieldValue>,
+    ~logger: Pino.t=?,
+  ) => promise<array<Entities.internalEntity>>,
 }
 
-let executeLoadActionMap = async (
-  loadLayer,
-  ~loadActionMap: LoadActionMap.t,
-  ~whereFnComposer,
-) => {
+let executeLoadActionMap = async (loadLayer, ~loadActionMap: LoadActionMap.t) => {
   let entityLoadIds = loadActionMap->LoadActionMap.getSingleEntityIds
   let lookupByIndex = loadActionMap->LoadActionMap.getIndexes
 
@@ -116,12 +124,13 @@ let executeLoadActionMap = async (
       inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
     })
 
+    let loadEntitiesByField = loadLayer.makeLoadEntitiesByField(~entityMod)
     //Do not do these queries concurrently. They are cpu expensive for
     //postgres
     await lookupIndexesNotInMemory->Utils.awaitEach(async ({
       loadArgs: {fieldName, fieldValue, fieldValueSchema, ?logger},
     }) => {
-      let entities = await whereFnComposer(~fieldName, ~fieldValue, ~fieldValueSchema, ~logger?)
+      let entities = await loadEntitiesByField(~fieldName, ~fieldValue, ~fieldValueSchema, ~logger?)
 
       entities->Array.forEach(entity => {
         //Set the entity in the in memory store
@@ -176,10 +185,7 @@ let executeLoadActionMap = async (
 let execute = (loadLayer, ~loadActionMaps: array<LoadActionMap.t>) => {
   loadActionMaps
   ->Array.map(loadActionMap => {
-    loadLayer->executeLoadActionMap(
-      ~loadActionMap,
-      ~whereFnComposer=DbFunctionsEntities.makeWhereEq(DbFunctions.sql, ~entityMod=loadActionMap.entityMod),
-    )
+    loadLayer->executeLoadActionMap(~loadActionMap)
   })
   ->Promise.all
 }
@@ -215,12 +221,13 @@ let rec schedule = loadLayer => {
   }, 0)
 }
 
-let make = (~loadEntitiesByIds) => {
+let make = (~loadEntitiesByIds, ~makeLoadEntitiesByField) => {
   {
     byEntity: Js.Dict.empty(),
     schedule: Some(schedule),
     inMemoryStore: InMemoryStore.make(),
     loadEntitiesByIds,
+    makeLoadEntitiesByField,
   }
 }
 

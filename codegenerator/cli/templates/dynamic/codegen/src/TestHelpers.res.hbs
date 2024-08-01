@@ -107,7 +107,10 @@ module EventFunctions = {
       }
       //Construct a new instance of an in memory store to run for the given event
       let inMemoryStore = InMemoryStore.make()
-      let loadLayer = LoadLayer.make(~loadEntitiesByIds=TestHelpers_MockDb.makeLoadEntitiesByIds(mockDbClone))
+      let loadLayer = LoadLayer.make(
+        ~loadEntitiesByIds=TestHelpers_MockDb.makeLoadEntitiesByIds(mockDbClone),
+        ~makeLoadEntitiesByField=(~entityMod) => TestHelpers_MockDb.makeLoadEntitiesByField(mockDbClone, ~entityMod),
+      )
       loadLayer->LoadLayer.setInMemoryStore(~inMemoryStore)
 
       //No need to check contract is registered or return anything.
