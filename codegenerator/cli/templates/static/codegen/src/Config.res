@@ -16,7 +16,15 @@ type syncConfig = {
 
 type hyperSyncConfig = {endpointUrl: string}
 
+let hyperSyncConfigSchema: S.t<hyperSyncConfig> = S.object(s => {
+  endpointUrl: s.field("endpointUrl", S.string),
+})
+
 type hyperFuelConfig = {endpointUrl: string}
+
+let hyperFuelConfigSchema: S.t<hyperFuelConfig> = S.object(s => {
+  endpointUrl: s.field("endpointUrl", S.string),
+})
 
 type rpcConfig = {
   provider: Ethers.JsonRpcProvider.t,
@@ -24,6 +32,28 @@ type rpcConfig = {
 }
 
 type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
+
+let syncSourceSchema = S.union([
+  S.object(s => {
+    s.tag("kind", "HyperSync")
+    HyperSync(s.field("payload", hyperSyncConfigSchema))
+  }),
+  S.object(s => {
+    s.tag("kind", "HyperFuel")
+    HyperFuel(s.field("payload", hyperFuelConfigSchema))
+  }),
+  S.object(s => {
+    s.tag("kind", "Rpc")
+    //Do not share users private rpc details
+    Rpc(Js.Nullable.Null->Utils.magic)
+  }),
+])
+
+let usesHyperSync = syncSource =>
+  switch syncSource {
+  | HyperSync(_) | HyperFuel(_) => true
+  | Rpc(_) => false
+  }
 
 type chainConfig = {
   syncSource: syncSource,
@@ -34,9 +64,13 @@ type chainConfig = {
   contracts: array<contract>,
 }
 
-type historyFlag = FullHistory | MinHistory
-type rollbackFlag = RollbackOnReorg | NoRollback
+type historyFlag = | @as(true) FullHistory | @as(false) MinHistory
+type rollbackFlag = | @as(true) RollbackOnReorg | @as(false) NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
+let historyConfigSchema: S.t<historyConfig> = S.object(s => {
+  rollbackFlag: s.field("rollbackFlag", S.bool->Utils.magic),
+  historyFlag: s.field("historyFlag", S.bool->Utils.magic),
+})
 
 let db: Postgres.poolConfig = {
   host: Env.Db.host,
@@ -184,5 +218,16 @@ let getEventModOrThrow = (config, ~contractName, ~topic0) => {
   switch config.events->Js.Dict.get(key) {
   | Some(event) => event
   | None => Js.Exn.raiseError("No registered event found with key " ++ key)
+  }
+}
+
+let sanitizeForPost = (config: t): t => {
+  {
+    ...config,
+    defaultChain: None,
+    chainMap: config.chainMap->ChainMap.map(chain => {
+      ...chain,
+      contracts: chain.contracts->Belt.Array.map(c => {...c, addresses: []}),
+    }),
   }
 }

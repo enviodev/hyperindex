@@ -5,6 +5,7 @@ type chainData = ChainData.chainData
 type appState = {
   chains: array<ChainData.chainData>,
   indexerStartTime: Js.Date.t,
+  config: ConfigYAML.t,
 }
 
 let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
@@ -27,7 +28,7 @@ module TotalEventsProcessed = {
 module App = {
   @react.component
   let make = (~appState: appState) => {
-    let {chains, indexerStartTime} = appState
+    let {chains, indexerStartTime, config} = appState
     let hasuraPort = "8080"
     let hasuraLink = `http://localhost:${hasuraPort}`
     let totalEventsProcessed = getTotalNumEventsProcessed(~chains)
@@ -45,6 +46,7 @@ module App = {
         <Text bold=true> {"GraphQL:"->React.string} </Text>
         <Text color={Info} underline=true> {hasuraLink->React.string} </Text>
       </Box>
+      <Messages config />
     </Box>
   }
 }

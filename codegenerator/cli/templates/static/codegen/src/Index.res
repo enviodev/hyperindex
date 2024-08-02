@@ -1,5 +1,3 @@
-Dotenv.initialize()
-
 /**
  * This function can be used to override the console.log (and related functions for users). This means these logs will also be available to the user
  */
@@ -69,6 +67,7 @@ type mainArgs = Yargs.parsedArgs<args>
 let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
   open Belt
   {
+    config: globalState.config->ConfigYAML.fromConfig(~shouldRemoveAddresses=true),
     indexerStartTime: globalState.indexerStartTime,
     chains: globalState.chainManager.chainFetchers
     ->ChainMap.values
