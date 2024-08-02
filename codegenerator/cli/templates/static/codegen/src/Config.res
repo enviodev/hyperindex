@@ -100,7 +100,7 @@ type t = {
 }
 
 let make = (
-  ~shouldRollbackOnReorg=false,
+  ~shouldRollbackOnReorg=true,
   ~shouldSaveFullHistory=false,
   ~shouldUseHypersyncClientDecoder=true,
   ~isUnorderedMultichainMode=false,
