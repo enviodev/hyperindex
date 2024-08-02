@@ -220,14 +220,3 @@ let getEventModOrThrow = (config, ~contractName, ~topic0) => {
   | None => Js.Exn.raiseError("No registered event found with key " ++ key)
   }
 }
-
-let sanitizeForPost = (config: t): t => {
-  {
-    ...config,
-    defaultChain: None,
-    chainMap: config.chainMap->ChainMap.map(chain => {
-      ...chain,
-      contracts: chain.contracts->Belt.Array.map(c => {...c, addresses: []}),
-    }),
-  }
-}
