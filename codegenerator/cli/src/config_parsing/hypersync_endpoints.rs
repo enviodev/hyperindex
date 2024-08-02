@@ -26,6 +26,7 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::Kroma => "https://kroma.hypersync.xyz".to_string(),
         HypersyncNetwork::Celo => "https://celo.hypersync.xyz".to_string(),
         HypersyncNetwork::Avalanche => "https://avalanche.hypersync.xyz".to_string(),
+        HypersyncNetwork::Fuji => "https://fuji.hypersync.xyz".to_string(),
         HypersyncNetwork::Boba => "https://boba.hypersync.xyz".to_string(),
         HypersyncNetwork::ZksyncEra => "https://zksync.hypersync.xyz".to_string(),
         HypersyncNetwork::Moonbeam => "https://moonbeam.hypersync.xyz".to_string(),
