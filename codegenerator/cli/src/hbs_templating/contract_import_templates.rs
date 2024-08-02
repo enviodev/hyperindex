@@ -209,6 +209,7 @@ use std::path::PathBuf;
 #[derive(Serialize)]
 pub struct AutoSchemaHandlerTemplate {
     imported_contracts: Vec<Contract>,
+    envio_api_token: Option<String>,
 }
 
 impl TryInto<Schema> for AutoSchemaHandlerTemplate {
@@ -421,13 +422,21 @@ impl Into<Field> for Param {
 }
 
 impl AutoSchemaHandlerTemplate {
-    pub fn try_from(config: SystemConfig, is_fuel: bool, language: &Language) -> Result<Self> {
+    pub fn try_from(
+        config: SystemConfig,
+        is_fuel: bool,
+        language: &Language,
+        envio_api_token: Option<String>,
+    ) -> Result<Self> {
         let imported_contracts = config
             .get_contracts()
             .iter()
             .map(|contract| Contract::from_config_contract(contract, is_fuel, &language))
             .collect::<Result<_>>()?;
-        Ok(AutoSchemaHandlerTemplate { imported_contracts })
+        Ok(AutoSchemaHandlerTemplate {
+            imported_contracts,
+            envio_api_token,
+        })
     }
 
     pub fn generate_contract_import_templates(

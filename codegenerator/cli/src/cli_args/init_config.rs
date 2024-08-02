@@ -155,6 +155,15 @@ pub mod evm {
                 raw_events: None,
             })
         }
+
+        fn uses_hypersync(&self) -> bool {
+            self.selected_contracts.iter().fold(false, |accum_c, c| {
+                accum_c
+                    || c.networks
+                        .iter()
+                        .fold(false, |accum_n, n| accum_n || n.uses_hypersync())
+            })
+        }
     }
 
     #[derive(Clone, Debug, Display)]
@@ -162,6 +171,16 @@ pub mod evm {
         Template(Template),
         SubgraphID(String),
         ContractImport(ContractImportSelection),
+    }
+
+    impl InitFlow {
+        pub fn uses_hypersync(&self) -> bool {
+            match self {
+                Self::Template(_) => true,
+                Self::ContractImport(selection) => selection.uses_hypersync(),
+                Self::SubgraphID(_) => todo!("Subgraph migration not yet handled"),
+            }
+        }
     }
 }
 
@@ -314,6 +333,15 @@ pub enum Ecosystem {
     Fuel { init_flow: fuel::InitFlow },
 }
 
+impl Ecosystem {
+    pub fn uses_hypersync(&self) -> bool {
+        match self {
+            Self::Evm { init_flow } => init_flow.uses_hypersync(),
+            Self::Fuel { .. } => true,
+        }
+    }
+}
+
 #[derive(
     Clone, Debug, ValueEnum, Serialize, Deserialize, EnumIter, EnumString, PartialEq, Eq, Display,
 )]
@@ -344,4 +372,5 @@ pub struct InitConfig {
     pub directory: String,
     pub ecosystem: Ecosystem,
     pub language: Language,
+    pub api_token: Option<String>,
 }

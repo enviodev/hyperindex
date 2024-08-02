@@ -430,11 +430,9 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Unit => "undefined".to_string(),
             RescriptTypeIdent::Int | RescriptTypeIdent::Float => "0".to_string(),
             RescriptTypeIdent::BigInt => "0n".to_string(),
-            RescriptTypeIdent::BigDecimal => {
-                "// default value not required since BigDecimal doesn't \
-                                         exist on contracts for contract import"
-                    .to_string()
-            }
+            RescriptTypeIdent::BigDecimal => "// default value not required since BigDecimal \
+                                              doesn't exist on contracts for contract import"
+                .to_string(),
             RescriptTypeIdent::Address => "Addresses.defaultAddress".to_string(),
             RescriptTypeIdent::String => "\"foo\"".to_string(),
             RescriptTypeIdent::ID => "\"my_id\"".to_string(),

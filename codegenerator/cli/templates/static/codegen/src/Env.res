@@ -34,6 +34,8 @@ let logFilePath = envSafe->EnvSafe.get("LOG_FILE", S.string, ~fallback="logs/env
 let userLogLevel = getLogLevelConfig("LOG_LEVEL", ~default=#info)
 let defaultFileLogLevel = getLogLevelConfig("FILE_LOG_LEVEL", ~default=#trace)
 
+let envioApiToken = envSafe->EnvSafe.get("ENVIO_API_TOKEN", S.option(S.string))
+
 type logStrategyType =
   | @as("ecs-file") EcsFile
   | @as("ecs-console") EcsConsole

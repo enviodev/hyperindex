@@ -229,7 +229,9 @@ impl SystemConfig {
                         //there is no config
                         if !contracts.get(&contract.name).is_some() {
                             Err(anyhow!(
-                                "Failed to find contract '{}' in global contract config. If you don't use global contracts for multiple networks support, please specify events and handler for the contract.",
+                                "Failed to find contract '{}' in global contract config. If you \
+                                 don't use global contracts for multiple networks support, please \
+                                 specify events and handler for the contract.",
                                 contract.name
                             ))?;
                         }
@@ -739,7 +741,8 @@ impl FieldSelection {
 
             if !invalid_rpc_tx_fields.is_empty() {
                 return Err(anyhow!(
-                    "The following selected transaction_fields are unavailable for indexing via RPC: {}",
+                    "The following selected transaction_fields are unavailable for indexing via \
+                     RPC: {}",
                     invalid_rpc_tx_fields.iter().join(", ")
                 ));
             }
