@@ -67,7 +67,7 @@ type mainArgs = Yargs.parsedArgs<args>
 let makeAppState = (globalState: GlobalState.t): EnvioInkApp.appState => {
   open Belt
   {
-    config: globalState.config->ConfigYAML.fromConfig(~shouldRemoveAddresses=true),
+    config: globalState.config,
     indexerStartTime: globalState.indexerStartTime,
     chains: globalState.chainManager.chainFetchers
     ->ChainMap.values

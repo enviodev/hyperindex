@@ -5,7 +5,7 @@ type chainData = ChainData.chainData
 type appState = {
   chains: array<ChainData.chainData>,
   indexerStartTime: Js.Date.t,
-  config: ConfigYAML.t,
+  config: Config.t,
 }
 
 let getTotalNumEventsProcessed = (~chains: array<ChainData.chainData>) => {
