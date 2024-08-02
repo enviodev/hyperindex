@@ -98,7 +98,7 @@ pub enum Network {
     ArbitrumSepolia = 421614,
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Celo = 42220,
-    #[subenum(GraphNetwork)]
+    #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Fuji = 43113,
     #[subenum(HypersyncNetwork, GraphNetwork, NetworkWithExplorer)]
     Avalanche = 43114,
@@ -225,7 +225,7 @@ pub enum Network {
     // Explorers:
     // https://explorer.testnet.fhenix.zone/ (blockscout)
     FhenixTestnet = 42069,
-    #[subenum(HypersyncNetwork)]
+    #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Amoy = 80002,
     #[subenum(HypersyncNetwork)]
     // Explorers:
@@ -388,6 +388,13 @@ impl NetworkWithExplorer {
                 "avalanche.routescan.io",
                 "api.routescan.io/v2/network/mainnet/evm/43114/etherscan",
             ),
+            NetworkWithExplorer::Fuji => BlockExplorerApi::custom(
+                "avalanche.testnet.routescan.io",
+                "api.routescan.io/v2/network/testnet/evm/43113/etherscan",
+            ),
+            NetworkWithExplorer::Amoy => {
+                BlockExplorerApi::custom("amoy.polygonscan.com", "api-amoy.polygonscan.com")
+            }
             //// Having issues getting blockscout to work.
             // NetworkWithExplorer::Aurora => BlockExplorerApi::custom(
             //     "explorer.mainnet.aurora.dev",
