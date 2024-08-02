@@ -6,7 +6,7 @@ module BatchQueue = {
   type loadSingle = {
     resolve: option<Entities.internalEntity> => unit,
     reject: exn => unit,
-    mutable promise: promise<option<Entities.internalEntity>>
+    mutable promise: promise<option<Entities.internalEntity>>,
   }
 
   type loadIndex = {
@@ -16,7 +16,7 @@ module BatchQueue = {
     fieldValueSchema: S.t<fieldValue>,
     resolve: array<Entities.internalEntity> => unit,
     reject: exn => unit,
-    mutable promise: promise<array<Entities.internalEntity>>
+    mutable promise: promise<array<Entities.internalEntity>>,
   }
 
   type t = {
@@ -46,10 +46,11 @@ module BatchQueue = {
           let loadRecord: loadSingle = {
             resolve,
             reject,
-            promise: %raw(`null`)
+            promise: %raw(`null`),
           }
           batchQueue.byId->Js.Dict.set(entityId, loadRecord)
         })
+
         // Don't use ref since it'll allocate an object to store .contents
         (batchQueue.byId->Js.Dict.unsafeGet(entityId)).promise = promise
         promise
@@ -57,7 +58,13 @@ module BatchQueue = {
     }
   }
 
-  let registerLoadByIndex = (batchQueue: t, ~index, ~fieldName, ~fieldValue: 'fieldValue, ~fieldValueSchema: S.t<'fieldValue>) => {
+  let registerLoadByIndex = (
+    batchQueue: t,
+    ~index,
+    ~fieldName,
+    ~fieldValue: 'fieldValue,
+    ~fieldValueSchema: S.t<'fieldValue>,
+  ) => {
     let indexId = index->TableIndices.Index.toString
     switch batchQueue.byIndex->Utils.Dict.dangerouslyGetNonOption(indexId) {
     | Some(loadRecord) => loadRecord.promise
@@ -68,14 +75,17 @@ module BatchQueue = {
             {
               index,
               fieldName,
-              fieldValueSchema: fieldValueSchema->(Utils.magic: S.t<'fieldValue> => S.t<fieldValue>),
+              fieldValueSchema: fieldValueSchema->(
+                Utils.magic: S.t<'fieldValue> => S.t<fieldValue>
+              ),
               fieldValue: fieldValue->(Utils.magic: 'fieldValue => fieldValue),
               resolve,
               reject,
-              promise: %raw(`null`)
+              promise: %raw(`null`),
             },
           )
         })
+
         // Don't use ref since it'll allocate an object to store .contents
         (batchQueue.byIndex->Js.Dict.unsafeGet(indexId)).promise = promise
         promise
@@ -93,7 +103,7 @@ type rec t = {
     ~logger: Pino.t=?,
   ) => promise<array<Entities.internalEntity>>,
   makeLoadEntitiesByField: (
-    ~entityMod: module(Entities.InternalEntity),
+    . ~entityMod: module(Entities.InternalEntity),
   ) => (
     ~fieldName: string,
     ~fieldValue: fieldValue,
@@ -128,26 +138,31 @@ let executeLoadEntitiesById = async (loadLayer, ~idsToLoad, ~batchQueue: BatchQu
       loadRecord.resolve(inMemTable->InMemoryTable.Entity.get(entityId)->Utils.Option.flatten)
     })
   } catch {
-    | exn => {
-      idsToLoad->Array.forEach(entityId => {
-        // Can use unsafeGet here safely since batchQueue is snapshotted at the point and won't change
-        let loadRecord = batchQueue.byId->Js.Dict.unsafeGet(entityId)
-        loadRecord.reject(exn)
-      })
-    }
+  | exn =>
+    idsToLoad->Array.forEach(entityId => {
+      // Can use unsafeGet here safely since batchQueue is snapshotted at the point and won't change
+      let loadRecord = batchQueue.byId->Js.Dict.unsafeGet(entityId)
+      loadRecord.reject(exn)
+    })
   }
 }
 
-let executeLoadEntitiesByIndex = async (loadLayer, ~indexesToLoad: array<BatchQueue.loadIndex>, ~batchQueue: BatchQueue.t) => {
+let executeLoadEntitiesByIndex = async (
+  loadLayer,
+  ~indexesToLoad: array<BatchQueue.loadIndex>,
+  ~batchQueue: BatchQueue.t,
+) => {
   let {entityMod, logger, inMemTable} = batchQueue
 
   try {
+    // TODO: Maybe worth moving the check before the place where we register the load in a batchQueue
+    // Need to duble check that it won't resolve an empty index
     let lookupIndexesNotInMemory = indexesToLoad->Array.keep(({index}) => {
-      inMemTable->InMemoryTable.Entity.indexDoesNotExists(~index)
-    })
-
-    lookupIndexesNotInMemory->Array.forEach(({index}) => {
-      inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+      let notInMemory = inMemTable->InMemoryTable.Entity.indexDoesNotExists(~index)
+      if notInMemory {
+        inMemTable->InMemoryTable.Entity.addEmptyIndex(~index)
+      }
+      notInMemory
     })
 
     let loadEntitiesByField = loadLayer.makeLoadEntitiesByField(~entityMod)
@@ -156,14 +171,9 @@ let executeLoadEntitiesByIndex = async (loadLayer, ~indexesToLoad: array<BatchQu
     await lookupIndexesNotInMemory->Utils.awaitEach(async ({
       fieldName,
       fieldValue,
-      fieldValueSchema
+      fieldValueSchema,
     }) => {
-      let entities = await loadEntitiesByField(
-        ~fieldName,
-        ~fieldValue,
-        ~fieldValueSchema,
-        ~logger,
-      )
+      let entities = await loadEntitiesByField(~fieldName, ~fieldValue, ~fieldValueSchema, ~logger)
 
       entities->Array.forEach(entity => {
         //Set the entity in the in memory store
@@ -182,13 +192,12 @@ let executeLoadEntitiesByIndex = async (loadLayer, ~indexesToLoad: array<BatchQu
       resolve(valuesOnIndex)
     })
   } catch {
-    | exn => {
-      batchQueue
-      ->BatchQueue.getIndexesToLoad
-      ->Array.forEach(({reject}) => {
-        reject(exn)
-      })
-    }
+  | exn =>
+    batchQueue
+    ->BatchQueue.getIndexesToLoad
+    ->Array.forEach(({reject}) => {
+      reject(exn)
+    })
   }
 }
 
@@ -216,21 +225,21 @@ let schedule = async loadLayer => {
     // But don't reset the schedule function, so that it doesn't run before execute finishes.
     loadLayer.entityBatchQueues = Js.Dict.empty()
 
-    let promises = []
-    batchQueues->Array.forEach(batchQueue => {
-      switch batchQueue->BatchQueue.getIdsToLoad {
-        | [] => ()
-        | idsToLoad => 
-          promises->Js.Array2.push(loadLayer->executeLoadEntitiesById(~idsToLoad, ~batchQueue))->ignore
-      }
-      switch batchQueue->BatchQueue.getIndexesToLoad {
-        | [] => ()
-        | indexesToLoad => 
-          promises->Js.Array2.push(loadLayer->executeLoadEntitiesByIndex(~indexesToLoad, ~batchQueue))->ignore
-      }
-    })
     // Error should be caught for each batchQueue execution separately, since we have a logger attached to it.
-    let _: array<unit> = await promises->Promise.all
+    let _: array<unit> =
+      await batchQueues
+      ->Array.map(batchQueue => {
+        switch (batchQueue->BatchQueue.getIndexesToLoad, batchQueue->BatchQueue.getIdsToLoad) {
+        | ([], []) => Promise.resolve()
+        | (indexesToLoad, []) => loadLayer->executeLoadEntitiesByIndex(~indexesToLoad, ~batchQueue)
+        | ([], idsToLoad) => loadLayer->executeLoadEntitiesById(~idsToLoad, ~batchQueue)
+        | (indexesToLoad, idsToLoad) =>
+          loadLayer
+          ->executeLoadEntitiesById(~idsToLoad, ~batchQueue)
+          ->Promise.then(_ => loadLayer->executeLoadEntitiesByIndex(~indexesToLoad, ~batchQueue))
+        }
+      })
+      ->Promise.all
 
     // If there are new loaders register, schedule the next execution immediately.
     // Otherwise reset the schedule function, so it can be triggered externally again.
@@ -260,7 +269,12 @@ let makeWithDbConnection = () => {
   )
 }
 
-let useBatchQueue = (loadLayer, ~entityMod: module(Entities.InternalEntity), ~inMemTable, ~logger) => {
+let useBatchQueue = (
+  loadLayer,
+  ~entityMod: module(Entities.InternalEntity),
+  ~inMemTable,
+  ~logger,
+) => {
   let module(Entity) = entityMod
   switch loadLayer.entityBatchQueues->Utils.Dict.dangerouslyGetNonOption(Entity.key) {
   | Some(batchQueue) => batchQueue
@@ -268,7 +282,7 @@ let useBatchQueue = (loadLayer, ~entityMod: module(Entities.InternalEntity), ~in
       let batchQueue = BatchQueue.make(~entityMod, ~logger, ~inMemTable)
       loadLayer.entityBatchQueues->Js.Dict.set(Entity.key, batchQueue)
       if !loadLayer.isScheduled {
-        let _: promise<()> = schedule(loadLayer)
+        let _: promise<unit> = schedule(loadLayer)
       }
       batchQueue
     }
@@ -288,13 +302,17 @@ let makeLoader = (
     | Some(maybeEntity) => Promise.resolve(maybeEntity)
     | None =>
       loadLayer
-        ->useBatchQueue(
-          ~entityMod=entityMod->Entities.entityModToInternal,
-          ~inMemTable=inMemTable->(Utils.magic: InMemoryTable.Entity.t<entity> => InMemoryTable.Entity.t<Entities.internalEntity>),
-          ~logger
-        )
-        ->BatchQueue.registerLoadById(~entityId)
-        ->(Utils.magic: promise<option<Entities.internalEntity>> => promise<option<entity>>)
+      ->useBatchQueue(
+        ~entityMod=entityMod->Entities.entityModToInternal,
+        ~inMemTable=inMemTable->(
+          Utils.magic: InMemoryTable.Entity.t<entity> => InMemoryTable.Entity.t<
+            Entities.internalEntity,
+          >
+        ),
+        ~logger,
+      )
+      ->BatchQueue.registerLoadById(~entityId)
+      ->(Utils.magic: promise<option<Entities.internalEntity>> => promise<option<entity>>)
     }
   }
 }
@@ -312,7 +330,11 @@ let makeWhereEqLoader = (
     loadLayer
     ->useBatchQueue(
       ~entityMod=entityMod->Entities.entityModToInternal,
-      ~inMemTable=inMemTable->(Utils.magic: InMemoryTable.Entity.t<entity> => InMemoryTable.Entity.t<Entities.internalEntity>),
+      ~inMemTable=inMemTable->(
+        Utils.magic: InMemoryTable.Entity.t<entity> => InMemoryTable.Entity.t<
+          Entities.internalEntity,
+        >
+      ),
       ~logger,
     )
     ->BatchQueue.registerLoadByIndex(
@@ -324,6 +346,7 @@ let makeWhereEqLoader = (
       ~fieldValueSchema,
       ~fieldName,
       ~fieldValue,
-    )->(Utils.magic: promise<array<Entities.internalEntity>> => promise<array<entity>>)
+    )
+    ->(Utils.magic: promise<array<Entities.internalEntity>> => promise<array<entity>>)
   }
 }

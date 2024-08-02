@@ -35,39 +35,6 @@ let mergeSorted = (f: 'a => 'b, xs: array<'a>, ys: array<'a>) => {
   }
 }
 
-type promiseWithHandles<'a> = {
-  pendingPromise: promise<'a>,
-  resolve: 'a => unit,
-  reject: exn => unit,
-}
-
-let createPromiseWithHandles = () => {
-  //Create a placeholder resovle
-  let resolveRef = ref(None)
-  let rejectRef = ref(None)
-
-  let pendingPromise = Promise.make((resolve, reject) => {
-    resolveRef := Some(resolve)
-    rejectRef := Some(reject)
-  })
-
-  let resolve = (val: 'a) => {
-    let res = resolveRef.contents->Belt.Option.getUnsafe
-    res(val)
-  }
-
-  let reject = (exn: exn) => {
-    let rej = rejectRef.contents->Belt.Option.getUnsafe
-    rej(exn)
-  }
-
-  {
-    pendingPromise,
-    resolve,
-    reject,
-  }
-}
-
 let mapArrayOfResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
   let rec loop = (index: int, output: array<'a>): result<array<'a>, 'b> => {
     if index >= Array.length(results) {
