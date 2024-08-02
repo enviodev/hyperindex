@@ -283,7 +283,7 @@ let makeLoadEntitiesByIds = (mockDb: t) => {
 }
 
 let makeLoadEntitiesByField = (mockDb: t, ~entityMod) => {
-  let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getEntityTable(~entityMod)
+  let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
   async (~fieldName, ~fieldValue, ~fieldValueSchema as _, ~logger as _=?) => {
     mockDbTable->InMemoryTable.Entity.getOnIndex(
       ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),

@@ -79,20 +79,20 @@ let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, 
   )
 }
 
-let makeWhereLoader = (loadLayer, ~entityMod, ~inMemTable, ~fieldName, ~fieldValueSchema, ~logger) => {
-  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(~entityMod, ~fieldName, ~fieldValueSchema, ~inMemTable, ~logger)
+let makeWhereLoader = (loadLayer, ~entityMod, ~inMemoryStore, ~fieldName, ~fieldValueSchema, ~logger) => {
+  Entities.eq: loadLayer->LoadLayer.makeWhereEqLoader(~entityMod, ~fieldName, ~fieldValueSchema, ~inMemoryStore, ~logger)
 }
 
 let makeEntityHandlerContext = (
   type entity,
   ~eventIdentifier,
-  ~inMemTable: InMemoryTable.Entity.t<entity>, //TODO: store and store functions should be passed in via module
+  ~inMemoryStore,
   ~entityMod: module(Entities.Entity with type t = entity),
   ~logger,
   ~getKey,
   ~loadLayer,
 ): entityHandlerContext<entity> => {
-  let module(EntityMod) = entityMod
+  let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
   {
     set: entity => {
       inMemTable->InMemoryTable.Entity.set(
@@ -104,7 +104,7 @@ let makeEntityHandlerContext = (
         Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
       )
     },
-    get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger, ~inMemTable),
+    get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger, ~inMemoryStore),
   }
 }
 
@@ -123,14 +123,14 @@ let getLoaderContext = (contextEnv: t<'eventArgs>, ~inMemoryStore: InMemoryStore
     {{entity.name.uncapitalized}}: {
       get: loadLayer->LoadLayer.makeLoader(
         ~entityMod=module(Entities.{{entity.name.capitalized}}),
-        ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
+        ~inMemoryStore,
         ~logger,
       ),
       getWhere: {
         {{#each entity.params as | param |}}{{#if param.is_queryable_field }}
         {{param.field_name.uncapitalized}}{{#if param.is_entity_field }}_id{{/if}}: loadLayer->makeWhereLoader(
           ~entityMod=module(Entities.{{entity.name.capitalized}}),
-          ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
+          ~inMemoryStore,
           ~fieldName="{{param.field_name.original}}{{#if param.is_entity_field }}_id{{/if}}",
           ~fieldValueSchema={{param.res_schema_code}},
           ~logger,
@@ -151,7 +151,7 @@ let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~loadLayer) =
     {{#each entities as | entity |}}
     {{entity.name.uncapitalized}}: makeEntityHandlerContext(
       ~eventIdentifier,
-      ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}},
+      ~inMemoryStore,
       ~entityMod=module(Entities.{{entity.name.capitalized}}),
       ~getKey=entity => entity.id,
       ~logger,
