@@ -102,11 +102,11 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
 
 #[derive(Debug, Clone, strum::Display, strum::EnumIter, strum::EnumString)]
 enum ApiTokenInput {
-    #[strum(serialize = "Create a new API token (https://envio.dev/app/api-tokens)")]
+    #[strum(serialize = "Create a new API token (Opens https://envio.dev/app/api-tokens)")]
     Create,
     #[strum(serialize = "Add an existing API token")]
     AddExisting,
-    #[strum(serialize = "Skip for now I'll add later")]
+    #[strum(serialize = "Skip for now, I'll add later")]
     Skip,
 }
 pub async fn prompt_missing_init_args(
@@ -184,7 +184,7 @@ pub async fn prompt_missing_init_args(
                     .context("Prompting for add existing token")?),
                 ApiTokenInput::Skip => {
                     println!(
-                        "You can always visit 'https://envio.dev/app/api-tokens' add one later to \
+                        "You can always visit 'https://envio.dev/app/api-tokens' and add a token later to \
                          your .env file."
                     );
                     Ok(None)
