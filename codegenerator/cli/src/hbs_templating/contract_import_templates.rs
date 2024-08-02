@@ -209,7 +209,7 @@ use std::path::PathBuf;
 #[derive(Serialize)]
 pub struct AutoSchemaHandlerTemplate {
     imported_contracts: Vec<Contract>,
-    hypersync_api_token: Option<String>,
+    envio_api_token: Option<String>,
 }
 
 impl TryInto<Schema> for AutoSchemaHandlerTemplate {
@@ -426,7 +426,7 @@ impl AutoSchemaHandlerTemplate {
         config: SystemConfig,
         is_fuel: bool,
         language: &Language,
-        hypersync_api_token: Option<String>,
+        envio_api_token: Option<String>,
     ) -> Result<Self> {
         let imported_contracts = config
             .get_contracts()
@@ -435,7 +435,7 @@ impl AutoSchemaHandlerTemplate {
             .collect::<Result<_>>()?;
         Ok(AutoSchemaHandlerTemplate {
             imported_contracts,
-            hypersync_api_token,
+            envio_api_token,
         })
     }
 

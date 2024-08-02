@@ -184,8 +184,8 @@ pub async fn prompt_missing_init_args(
                     .context("Prompting for add existing token")?),
                 ApiTokenInput::Skip => {
                     println!(
-                        "You can always visit 'https://envio.dev/app/api-tokens' and add a token later to \
-                         your .env file."
+                        "You can always visit 'https://envio.dev/app/api-tokens' and add a token \
+                         later to your .env file."
                     );
                     Ok(None)
                 }

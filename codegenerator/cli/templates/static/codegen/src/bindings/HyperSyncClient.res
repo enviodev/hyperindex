@@ -243,7 +243,7 @@ let make = (~url) =>
   new({
     url,
     enableChecksumAddresses: true,
-    bearerToken: Env.hypersyncApiToken->Belt.Option.getWithDefault(defaultToken),
+    bearerToken: Env.envioApiToken->Belt.Option.getWithDefault(defaultToken),
   })
 
 module Decoder = {
