@@ -209,7 +209,10 @@ module Entity = {
       indicesSerializedToValue
       ->getRow(index)
       ->Option.map(((_index, relatedEntityIds)) => {
-        let res = relatedEntityIds->arrayFromSet->Array.keepMap(entityId => inMemTable->get(entityId)->Utils.Option.flatten)
+        let res =
+          relatedEntityIds
+          ->arrayFromSet
+          ->Array.keepMap(entityId => inMemTable->get(entityId)->Utils.Option.flatten)
         res
       })
     })
@@ -221,12 +224,35 @@ module Entity = {
   }
 
   let addEmptyIndex = (inMemTable: t<'entity>, ~index) => {
+    let fieldName = index->TableIndices.Index.getFieldName
+    let relatedEntityIds = StdSet.make()
+
+    inMemTable.table
+    ->values
+    ->Array.forEach(row => {
+      switch row->rowToEntity {
+      | Some(entity) =>
+        let fieldValue =
+          entity
+          ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
+          ->Js.Dict.unsafeGet(fieldName)
+        if index->TableIndices.Index.evaluate(~fieldName, ~fieldValue) {
+          let _ = row.entityIndices->StdSet.add(index)
+          let _ = relatedEntityIds->StdSet.add(entity->Entities.getEntityIdUnsafe)
+        }
+      | None => ()
+      }
+    })
     switch inMemTable.fieldNameIndices->getRow(index) {
-    | None => inMemTable.fieldNameIndices->setRow(index, makeIndicesSerializedToValue(~index))
+    | None =>
+      inMemTable.fieldNameIndices->setRow(
+        index,
+        makeIndicesSerializedToValue(~index, ~relatedEntityIds),
+      )
     | Some(indicesSerializedToValue) =>
       switch indicesSerializedToValue->getRow(index) {
-      | None => indicesSerializedToValue->setRow(index, (index, StdSet.make()))
-      | Some(_) => ()
+      | None => indicesSerializedToValue->setRow(index, (index, relatedEntityIds))
+      | Some(_) => () //Should not happen, this means the index already exists
       }
     }
   }
