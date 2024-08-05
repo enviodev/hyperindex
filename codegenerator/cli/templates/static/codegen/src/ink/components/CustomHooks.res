@@ -44,14 +44,36 @@ module InitApi = {
     }
   }
 
-  type messageKind = | @as("warning") Warning | @as("destructive") Destructive | @as("info") Info
+  type messageKind =
+    | @as("primary") Primary
+    | @as("secondary") Secondary
+    | @as("info") Info
+    | @as("danger") Danger
+    | @as("success") Success
+    | @as("white") White
+    | @as("gray") Gray
+
+  let toTheme = (kind: messageKind): Style.chalkTheme =>
+    switch kind {
+    | Primary => Primary
+    | Secondary => Secondary
+    | Info => Info
+    | Danger => Danger
+    | Success => Success
+    | White => White
+    | Gray => Gray
+    }
+
   type message = {
     kind: messageKind,
     content: string,
   }
 
   let messageSchema = S.object(s => {
-    kind: s.field("kind", S.union([S.literal(Warning), S.literal(Destructive), S.literal(Info)])),
+    kind: s.field(
+      "kind",
+      S.union([Primary, Secondary, Info, Danger, Success, White, Gray]->Belt.Array.map(S.literal)),
+    ),
     content: s.field("content", S.string),
   })
 
@@ -64,6 +86,8 @@ module InitApi = {
     let envioVersion =
       PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
+
+    Js.log(body)
     QueryHelpers.executeFetchRequest(
       ~endpoint,
       ~method=#POST,
