@@ -64,7 +64,7 @@ jobs:
       - name: Pre-pull docker-compose images
         run: |
           cd ../cli/templates/static/codegen # we use the docker-compose.yml in the static folder
-          docker-compose pull
+          docker compose pull
 
       - name: Mock gio
         run: |

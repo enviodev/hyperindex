@@ -17,6 +17,7 @@ use anyhow::{Context, Result};
 use inquire::{Select, Text};
 use shared_prompts::prompt_template;
 use std::str::FromStr;
+use strum;
 use strum::{Display, EnumIter, IntoEnumIterator};
 use validation::{
     contains_no_whitespace_validator, is_directory_new_validator, is_not_empty_string_validator,
@@ -99,6 +100,15 @@ async fn prompt_ecosystem(cli_init_flow: Option<InitFlow>) -> Result<Ecosystem> 
     Ok(initialization)
 }
 
+#[derive(Debug, Clone, strum::Display, strum::EnumIter, strum::EnumString)]
+enum ApiTokenInput {
+    #[strum(serialize = "Create a new API token (Opens https://envio.dev/app/api-tokens)")]
+    Create,
+    #[strum(serialize = "Add an existing API token")]
+    AddExisting,
+    #[strum(serialize = "Skip for now, I'll add later")]
+    Skip,
+}
 pub async fn prompt_missing_init_args(
     init_args: InitArgs,
     project_paths: &ProjectPaths,
@@ -149,10 +159,47 @@ pub async fn prompt_missing_init_args(
         .await
         .context("Failed getting template")?;
 
+    let api_token: Option<String> = match init_args.api_token {
+        Some(k) => Ok::<_, anyhow::Error>(Some(k)),
+        None if ecosystem.uses_hypersync() => {
+            let select = Select::new(
+                "Add an API token for HyperSync to your .env file?",
+                ApiTokenInput::iter().collect(),
+            )
+            .prompt()
+            .context("Prompting for add API token")?;
+
+            let token_prompt = Text::new("Add your API token: ")
+                .with_help_message("See tokens at: https://envio.dev/app/api-tokens");
+
+            match select {
+                ApiTokenInput::Create => {
+                    open::that_detached("https://envio.dev/app/api-tokens")?;
+                    Ok(token_prompt
+                        .prompt_skippable()
+                        .context("Prompting for create token")?)
+                }
+                ApiTokenInput::AddExisting => Ok(token_prompt
+                    .prompt_skippable()
+                    .context("Prompting for add existing token")?),
+                ApiTokenInput::Skip => {
+                    println!(
+                        "You can always visit 'https://envio.dev/app/api-tokens' and add a token \
+                         later to your .env file."
+                    );
+                    Ok(None)
+                }
+            }
+        }
+        None => Ok(None),
+    }
+    .context("Prompting for API Token")?;
+
     Ok(InitConfig {
         name,
         directory,
         ecosystem,
         language,
+        api_token,
     })
 }

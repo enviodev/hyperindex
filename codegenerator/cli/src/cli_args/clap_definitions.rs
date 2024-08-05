@@ -118,6 +118,10 @@ pub struct InitArgs {
     #[arg(global = true, short = 'l', long = "language")]
     #[clap(value_enum)]
     pub language: Option<init_config::Language>,
+
+    ///The hypersync API key to be initialized in your templates .env file
+    #[arg(global = true, long)]
+    pub api_token: Option<String>,
 }
 
 #[subenum(EvmInitFlowInteractive)]
