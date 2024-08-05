@@ -3,7 +3,9 @@ open Ink
 module Message = {
   @react.component
   let make = (~message: CustomHooks.InitApi.message) => {
-    <Text color={message.kind->CustomHooks.InitApi.toTheme}> {message.content->React.string} </Text>
+    <Text color={message.color->CustomHooks.InitApi.toTheme}>
+      {message.content->React.string}
+    </Text>
   }
 }
 
@@ -32,7 +34,7 @@ let make = (~config) => {
       </Notifications>
     | Err(_) =>
       <Notifications>
-        <Message message={kind: Danger, content: "Failed to load messages from envio server"} />
+        <Message message={color: Danger, content: "Failed to load messages from envio server"} />
       </Notifications>
     }}
   </>

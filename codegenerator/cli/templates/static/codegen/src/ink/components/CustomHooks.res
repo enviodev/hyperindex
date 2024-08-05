@@ -23,7 +23,7 @@ module InitApi = {
     let rpcNetworks = []
     config.chainMap
     ->ChainMap.values
-    ->Array.forEach(({syncSource, chain}) => {https://github.com/enviodev/hyperindex/pull/103
+    ->Array.forEach(({syncSource, chain}) => {
       switch syncSource {
       | HyperSync(_) => hyperSyncNetworks
       | HyperFuel(_) =>
@@ -44,7 +44,7 @@ module InitApi = {
     }
   }
 
-  type messageKind =
+  type messageColor =
     | @as("primary") Primary
     | @as("secondary") Secondary
     | @as("info") Info
@@ -53,8 +53,8 @@ module InitApi = {
     | @as("white") White
     | @as("gray") Gray
 
-  let toTheme = (kind: messageKind): Style.chalkTheme =>
-    switch kind {
+  let toTheme = (color: messageColor): Style.chalkTheme =>
+    switch color {
     | Primary => Primary
     | Secondary => Secondary
     | Info => Info
@@ -65,13 +65,13 @@ module InitApi = {
     }
 
   type message = {
-    kind: messageKind,
+    color: messageColor,
     content: string,
   }
 
   let messageSchema = S.object(s => {
-    kind: s.field(
-      "kind",
+    color: s.field(
+      "color",
       S.union([Primary, Secondary, Info, Danger, Success, White, Gray]->Belt.Array.map(S.literal)),
     ),
     content: s.field("content", S.string),
