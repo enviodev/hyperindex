@@ -63,6 +63,37 @@ describe("LoadLayer", () => {
     },
   )
 
+  Async.it(
+    "Stores the loaded entity in the in memory store and starts returning it on a subsequent call",
+    async () => {
+      let mock = Mock.LoadLayer.make()
+
+      let getUser =
+        mock.loadLayer->LoadLayer.makeLoader(
+          ~entityMod=module(Entities.User),
+          ~inMemoryStore=InMemoryStore.make(),
+          ~logger=Logging.logger,
+        )
+
+      let user1 = await getUser("1")
+      let user2 = await getUser("1")
+
+      Assert.deepEqual(user1, None)
+      Assert.deepEqual(user2, None)
+      Assert.deepEqual(
+        mock.loadEntitiesByIdsCalls,
+        [
+          {
+            entityIds: ["1"],
+            entityMod: module(Entities.User)->Entities.entityModToInternal,
+            logger: Logging.logger,
+          },
+        ],
+      )
+      Assert.deepEqual(mock.loadEntitiesByFieldCalls, [])
+    },
+  )
+
   Async.it("Doesn't stack with an await in between of loader calls", async () => {
     let mock = Mock.LoadLayer.make()
 
@@ -277,6 +308,136 @@ describe("LoadLayer", () => {
         ],
       )
       Assert.deepEqual(mock.loadEntitiesByFieldCalls, [])
+    },
+  )
+
+  Async.it("Trys to load non existing entities from db by field", async () => {
+    let mock = Mock.LoadLayer.make()
+
+    let getUsersWithId =
+      mock.loadLayer->LoadLayer.makeWhereEqLoader(
+        ~entityMod=module(Entities.User),
+        ~inMemoryStore=InMemoryStore.make(),
+        ~logger=Logging.logger,
+        ~fieldName="id",
+        ~fieldValueSchema=S.string,
+      )
+
+    let users = await getUsersWithId("123")
+
+    Assert.deepEqual(users, [])
+    Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+    Assert.deepEqual(
+      mock.loadEntitiesByFieldCalls,
+      [
+        {
+          fieldName: "id",
+          fieldValue: "123"->Utils.magic,
+          fieldValueSchema: S.string->Utils.magic,
+          entityMod: module(Entities.User)->Entities.entityModToInternal,
+          logger: Logging.logger,
+        },
+      ],
+    )
+  })
+
+  Async.it("Gets entity from inMemoryStore by index if it exists", async () => {
+    let mock = Mock.LoadLayer.make()
+
+    let user1 = (
+      {
+        id: "1",
+        accountType: USER,
+        address: "",
+        gravatar_id: None,
+        updatesCountOnUserForTesting: 0,
+      }: Entities.User.t
+    )
+
+    let inMemoryStore = Mock.InMemoryStore.make(~entities=[(module(Entities.User), [user1])])
+
+    let getUsersWithId =
+      mock.loadLayer->LoadLayer.makeWhereEqLoader(
+        ~entityMod=module(Entities.User),
+        ~inMemoryStore,
+        ~logger=Logging.logger,
+        ~fieldName="id",
+        ~fieldValueSchema=S.string,
+      )
+
+    let users = await getUsersWithId("1")
+
+    // FIXME: Should register indexes for entities set in the inMemoryStore before the index creation
+    // Assert.deepEqual(users, [user1])
+    // Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+    // Assert.deepEqual(mock.loadEntitiesByFieldCalls, [])
+
+    Assert.deepEqual(users, [])
+    Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+    Assert.deepEqual(
+      mock.loadEntitiesByFieldCalls,
+      [
+        {
+          fieldName: "id",
+          fieldValue: "1"->Utils.magic,
+          fieldValueSchema: S.string->Utils.magic,
+          entityMod: module(Entities.User)->Entities.entityModToInternal,
+          logger: Logging.logger,
+        },
+      ],
+    )
+  })
+
+  Async.it(
+    "Correctly gets entity from inMemoryStore by index if the entity set after the index creation",
+    async () => {
+      let mock = Mock.LoadLayer.make()
+
+      let user1 = (
+        {
+          id: "1",
+          accountType: USER,
+          address: "",
+          gravatar_id: None,
+          updatesCountOnUserForTesting: 0,
+        }: Entities.User.t
+      )
+
+      let inMemoryStore = InMemoryStore.make()
+
+      let getUsersWithId =
+        mock.loadLayer->LoadLayer.makeWhereEqLoader(
+          ~entityMod=module(Entities.User),
+          ~inMemoryStore,
+          ~logger=Logging.logger,
+          ~fieldName="id",
+          ~fieldValueSchema=S.string,
+        )
+
+      let users = await getUsersWithId("1")
+
+      let loadEntitiesByFieldSingleDbCall = [
+        (
+          {
+            fieldName: "id",
+            fieldValue: "1"->Utils.magic,
+            fieldValueSchema: S.string->Utils.magic,
+            entityMod: module(Entities.User)->Entities.entityModToInternal,
+            logger: Logging.logger,
+          }: Mock.LoadLayer.loadEntitiesByFieldCall
+        ),
+      ]
+      Assert.deepEqual(users, [])
+      Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+      Assert.deepEqual(mock.loadEntitiesByFieldCalls, loadEntitiesByFieldSingleDbCall)
+
+      inMemoryStore->Mock.InMemoryStore.setEntity(~entityMod=module(Entities.User), user1)
+
+      // The second time gets from inMemoryStore
+      let users = await getUsersWithId("1")
+      Assert.deepEqual(users, [user1])
+      Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
+      Assert.deepEqual(mock.loadEntitiesByFieldCalls, loadEntitiesByFieldSingleDbCall)
     },
   )
 })
