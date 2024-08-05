@@ -1,4 +1,4 @@
-import { mockRawEventRow } from "./helpers/Mocks.gen";
+import { mockRawEventRow } from "./helpers/Mock.gen";
 import { runMigrationsNoLogs, createSql, EventVariants } from "./helpers/utils";
 import chai, { expect } from "chai";
 import chaiAsPromised from "chai-as-promised";
