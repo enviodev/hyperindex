@@ -1,6 +1,6 @@
 open Belt
 module InitApi = {
-  type ecosystem = Evm | Fuel
+  type ecosystem = | @as("evm") Evm | @as("fuel") Fuel
   type body = {
     envioVersion: option<string>,
     envioApiToken: option<string>,
@@ -23,7 +23,7 @@ module InitApi = {
     let rpcNetworks = []
     config.chainMap
     ->ChainMap.values
-    ->Array.forEach(({syncSource, chain}) => {
+    ->Array.forEach(({syncSource, chain}) => {https://github.com/enviodev/hyperindex/pull/103
       switch syncSource {
       | HyperSync(_) => hyperSyncNetworks
       | HyperFuel(_) =>
