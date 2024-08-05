@@ -15,15 +15,19 @@ type syncConfig = {
 }
 
 type hyperSyncConfig = {endpointUrl: string}
-
 type hyperFuelConfig = {endpointUrl: string}
-
 type rpcConfig = {
   provider: Ethers.JsonRpcProvider.t,
   syncConfig: syncConfig,
 }
 
 type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
+
+let usesHyperSync = syncSource =>
+  switch syncSource {
+  | HyperSync(_) | HyperFuel(_) => true
+  | Rpc(_) => false
+  }
 
 type chainConfig = {
   syncSource: syncSource,
@@ -142,7 +146,9 @@ let make = (
     allEventSignatures: Abis.EventSignatures.all,
     events,
     enableRawEvents,
-    entities: entities->(Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>),
+    entities: entities->(
+      Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>
+    ),
   }
 }
 

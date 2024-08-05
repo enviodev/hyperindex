@@ -18,7 +18,10 @@ type configYaml = {
   contracts: dict<contract>,
 }
 
-let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig => {
+let mapChainConfigToConfigYaml = (
+  chainConfig: Config.chainConfig,
+  ~shouldRemoveAddresses=false,
+): configYaml => {
   {
     syncSource: chainConfig.syncSource,
     startBlock: chainConfig.startBlock,
@@ -29,7 +32,7 @@ let mapChainConfigToConfigYaml: Config.chainConfig => configYaml = chainConfig =
           contract.name,
           {
             abi: contract.abi,
-            addresses: contract.addresses,
+            addresses: shouldRemoveAddresses ? [] : contract.addresses,
             events: contract.events->Belt.Array.map(event => {
               let module(Event) = event
               Event.name
