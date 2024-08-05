@@ -286,10 +286,7 @@ module ResponseTypes = {
     v: ?s.field("v", S.option(S.null(S.string))),
     r: ?s.field("r", S.option(S.null(S.string))),
     s: ?s.field("s", S.option(S.null(S.string))),
-    maxPriorityFeePerGas: ?s.field(
-      "max_priority_fee_per_gas",
-      S.option(S.null(BigInt.schema)),
-    ),
+    maxPriorityFeePerGas: ?s.field("max_priority_fee_per_gas", S.option(S.null(BigInt.schema))),
     maxFeePerGas: ?s.field("max_fee_per_gas", S.option(S.null(BigInt.schema))),
     chainId: ?s.field("chain_id", S.option(S.null(S.int))),
     cumulativeGasUsed: ?s.field("cumulative_gas_used", S.option(BigInt.schema)),
@@ -368,7 +365,6 @@ let executeHyperSyncQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBod
     ~method=#POST,
     ~bodyAndSchema=(postQueryBody, QueryTypes.postQueryBodySchema),
     ~responseSchema=ResponseTypes.queryResponseSchema,
-    (),
   )
 }
 
@@ -380,7 +376,6 @@ let getArchiveHeight = {
       ~endpoint=serverUrl ++ "/height",
       ~method=#GET,
       ~responseSchema,
-      (),
     )
   }
 }
