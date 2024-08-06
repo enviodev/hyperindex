@@ -367,12 +367,7 @@ describe("LoadLayer", () => {
 
     let users = await getUsersWithId("1")
 
-    // FIXME: Should register indexes for entities set in the inMemoryStore before the index creation
-    // Assert.deepEqual(users, [user1])
-    // Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
-    // Assert.deepEqual(mock.loadEntitiesByFieldCalls, [])
-
-    Assert.deepEqual(users, [])
+    Assert.deepEqual(users, [user1])
     Assert.deepEqual(mock.loadEntitiesByIdsCalls, [])
     Assert.deepEqual(
       mock.loadEntitiesByFieldCalls,
