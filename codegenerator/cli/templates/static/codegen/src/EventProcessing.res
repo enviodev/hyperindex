@@ -138,11 +138,12 @@ let runEventContractRegister = (
 let runEventLoader = async (
   ~contextEnv,
   ~handler: RegisteredEvents.registeredLoaderHandler<_>,
+  ~inMemoryStore,
   ~loadLayer,
 ) => {
   let {loader} = handler
 
-  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~loadLayer)) {
+  switch await loader(contextEnv->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer)) {
   | exception exn =>
     exn
     ->ErrorHandling.make(
@@ -208,41 +209,23 @@ let updateEventSyncState = (
 
 let runEventHandler = (
   event,
-  //Injection params for testing framework
-  ~executeLoadLayer=LoadLayer.executeLoadLayer,
-  ~asyncGetters=?,
-  //Required params
   ~eventMod: module(Types.InternalEvent),
   ~handler,
   ~inMemoryStore,
   ~logger,
   ~chain,
   ~latestProcessedBlocks,
+  ~loadLayer,
   ~config: Config.t,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
-    let loadLayer = LoadLayer.make(~config)
 
-    let loaderReturnUnawaited = runEventLoader(~contextEnv, ~handler, ~loadLayer)
-
-    switch await loadLayer->executeLoadLayer(~inMemoryStore, ~config) {
-    | exception exn =>
-      exn
-      ->ErrorHandling.make(
-        ~msg="Event Handler failed, please fix the error to keep the indexer running smoothly",
-        ~logger,
-      )
-      ->Error
-      ->propogate
-    | () => ()
-    }
-
-    let loaderReturn = await loaderReturnUnawaited->propogateAsync
+    let loaderReturn = (await runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer))->propogate
 
     switch await handler.handler(
-      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~asyncGetters?),
+      contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~loadLayer),
     ) {
     | exception exn =>
       exn
@@ -274,6 +257,7 @@ let runHandler = (
   ~logger,
   ~chain,
   ~registeredEvents,
+  ~loadLayer,
   ~config,
 ) => {
   switch registeredEvents
@@ -287,6 +271,7 @@ let runHandler = (
       ~logger,
       ~chain,
       ~eventMod,
+      ~loadLayer,
       ~config,
     )
   | None => Ok(latestProcessedBlocks)->Promise.resolve
@@ -373,39 +358,30 @@ let rec registerDynamicContracts = (
 let runLoaders = (
   eventBatch: array<Types.eventBatchQueueItem>,
   ~registeredEvents: RegisteredEvents.t,
+  ~loadLayer,
   ~inMemoryStore,
   ~logger,
-  ~config,
 ) => {
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
-    let loadLayer = LoadLayer.make(~config)
-
-    let loaderReturnsUnawaited = eventBatch->Array.keepMap(({chain, eventMod, event}) => {
-      registeredEvents
-      ->RegisteredEvents.get(eventMod)
-      ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
-      ->Option.map(
-        handler => {
-          let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
-          runEventLoader(~contextEnv, ~handler, ~loadLayer)
-        },
-      )
-    })
-
-    switch await loadLayer->LoadLayer.executeLoadLayer(~inMemoryStore, ~config) {
-    | exception exn =>
-      exn
-      ->ErrorHandling.make(~msg="Load layer failed during execution", ~logger)
-      ->Error
-      ->propogate
-    | () => ()
-    }
-
-    let loaderReturns = await loaderReturnsUnawaited->Promise.all
-    //We don't actually need these returns here but errors will be propogated
-    //here
-    let _unusedReturns = loaderReturns->Utils.mapArrayOfResults->propogate
+    // We don't actually need loader returns,
+    // since we'll need to rerun each loader separately
+    // before the handler, to get the uptodate entities from the in memory store.
+    // Still need to propogate the errors.
+    let _: array<unknown> =
+      await eventBatch
+      ->Array.keepMap(({chain, eventMod, event}) => {
+        registeredEvents
+        ->RegisteredEvents.get(eventMod)
+        ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
+        ->Option.map(
+          handler => {
+            let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
+            runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(propogate)
+          },
+        )
+      })
+      ->Promise.all
     Ok()
   })
 }
@@ -416,6 +392,7 @@ let runHandlers = (
   ~inMemoryStore,
   ~latestProcessedBlocks,
   ~logger,
+  ~loadLayer,
   ~config,
 ) => {
   open ErrorHandling.ResultPropogateEnv
@@ -425,16 +402,19 @@ let runHandlers = (
       let {event, eventMod, chain} = eventBatch->Js.Array2.unsafe_get(i)
 
       latestProcessedBlocks :=
-        await runHandler(
-          event,
-          ~eventMod,
-          ~inMemoryStore,
-          ~logger,
-          ~chain,
-          ~latestProcessedBlocks=latestProcessedBlocks.contents,
-          ~registeredEvents,
-          ~config,
-        )->propogateAsync
+        (
+          await runHandler(
+            event,
+            ~eventMod,
+            ~inMemoryStore,
+            ~logger,
+            ~chain,
+            ~latestProcessedBlocks=latestProcessedBlocks.contents,
+            ~registeredEvents,
+            ~loadLayer,
+            ~config,
+          )
+        )->propogate
     }
     Ok(latestProcessedBlocks.contents)
   })
@@ -471,6 +451,7 @@ let processEventBatch = (
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
   ~registeredEvents: RegisteredEvents.t,
+  ~loadLayer,
   ~config,
 ) => {
   let logger = Logging.createChild(
@@ -500,16 +481,23 @@ let processEventBatch = (
       )
       ->propogate
 
-    await eventsBeforeDynamicRegistrations
-    ->runLoaders(~registeredEvents, ~inMemoryStore, ~logger, ~config)
-    ->propogateAsync
+    (await eventsBeforeDynamicRegistrations
+    ->runLoaders(~registeredEvents, ~loadLayer, ~inMemoryStore,~logger))
+    ->propogate
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let latestProcessedBlocks =
-      await eventsBeforeDynamicRegistrations
-      ->runHandlers(~registeredEvents, ~inMemoryStore, ~latestProcessedBlocks, ~logger, ~config)
-      ->propogateAsync
+      (await eventsBeforeDynamicRegistrations
+      ->runHandlers(
+        ~registeredEvents,
+        ~inMemoryStore,
+        ~latestProcessedBlocks,
+        ~logger,
+        ~loadLayer,
+        ~config,
+      ))
+      ->propogate
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 

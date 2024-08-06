@@ -35,39 +35,6 @@ let mergeSorted = (f: 'a => 'b, xs: array<'a>, ys: array<'a>) => {
   }
 }
 
-type promiseWithHandles<'a> = {
-  pendingPromise: promise<'a>,
-  resolve: 'a => unit,
-  reject: exn => unit,
-}
-
-let createPromiseWithHandles = () => {
-  //Create a placeholder resovle
-  let resolveRef = ref(None)
-  let rejectRef = ref(None)
-
-  let pendingPromise = Promise.make((resolve, reject) => {
-    resolveRef := Some(resolve)
-    rejectRef := Some(reject)
-  })
-
-  let resolve = (val: 'a) => {
-    let res = resolveRef.contents->Belt.Option.getUnsafe
-    res(. val)
-  }
-
-  let reject = (exn: exn) => {
-    let rej = rejectRef.contents->Belt.Option.getUnsafe
-    rej(. exn)
-  }
-
-  {
-    pendingPromise,
-    resolve,
-    reject,
-  }
-}
-
 let mapArrayOfResults = (results: array<result<'a, 'b>>): result<array<'a>, 'b> => {
   let rec loop = (index: int, output: array<'a>): result<array<'a>, 'b> => {
     if index >= Array.length(results) {
@@ -94,9 +61,17 @@ let optionMapNone = (opt: option<'a>, val: 'b): option<'b> => {
 }
 
 module Option = {
-  let flatten = opt => switch opt {
-  | None => None
-  | Some(opt) => opt
+  let flatten = opt =>
+    switch opt {
+    | None => None
+    | Some(opt) => opt
+    }
+
+  let getExn = (opt, message) => {
+    switch opt {
+    | None => Js.Exn.raiseError(message)
+    | Some(v) => v
+    }
   }
 }
 
@@ -104,6 +79,14 @@ module Tuple = {
   /**Access a tuple value by its index*/
   @warning("-27")
   let get = (tuple: 'a, index: int): option<'b> => %raw(`tuple[index]`)
+}
+
+module Dict = {
+  @get_index
+  /**
+    It's the same as `Js.Dict.get` but it doesn't have runtime overhead to check if the key exists.
+   */
+  external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 }
 
 /**
@@ -130,3 +113,5 @@ let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
     await item->fn
   }
 }
+
+external queueMicrotask: (unit => unit) => unit = "queueMicrotask"

@@ -270,48 +270,24 @@ let cloneMockDb = (self: t) => {
   clonedInternalDb->makeWithInMemoryStore
 }
 
-let batchRead = (entity: entityStoreOperations<'entity>) => ids =>
-  ids->Array.keepMap(id => entity.get(id)->(Utils.magic: option<'entity> => option<Entities.internalEntity>))->Promise.resolve
-
-let makeWhereEq = (mockDbTable: InMemoryTable.Entity.t<_>) => async (
-  ~fieldName: string,
-  ~fieldValue: 'fieldValue,
-  ~fieldValueSchema: S.t<'fieldValue>,
-  ~logger=Logging.logger,
-): array<'entityRow> => {
-  let _ = (fieldValueSchema, logger) //unused here
-  mockDbTable->InMemoryTable.Entity.getOnIndex(
-    ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),
-  )
+let getEntityOperations = (mockDb: t, ~entityMod): entityStoreOperations<Entities.internalEntity> => {
+  let module(Entity: Entities.InternalEntity) = entityMod
+  (mockDb.entities->Utils.magic)->Utils.Dict.dangerouslyGetNonOption(Entity.key)->Utils.Option.getExn("Mocked operations for entity " ++ Entity.key ++ " not found")
 }
 
-/**
-Executes a single load layer using the mockDb functions
-*/
-let executeMockDbLoadLayer = async (
-  mockDb: t,
-  loadLayer: LoadLayer.t,
-  ~inMemoryStore: InMemoryStore.t,
-  ~config as _config,
-) => {
-  let hasLoadActions = ref(true)
+let makeLoadEntitiesByIds = (mockDb: t) => {
+  (ids, ~entityMod, ~logger as _=?) => {
+    let operations = mockDb->getEntityOperations(~entityMod)
+    ids->Array.keepMap(id => operations.get(id))->Promise.resolve
+  }
+}
 
-  while hasLoadActions.contents {
-    let hasLoadActionsAll = await [
-      //each of the entities in the load layer
-      {{#each entities as | entity |}}
-      loadLayer->Js.Dict.unsafeGet("{{entity.name.capitalized}}")->LoadLayer.executeLoadActionMap(
-        ~inMemTable=inMemoryStore.{{entity.name.uncapitalized}}->(Utils.magic: InMemoryTable.Entity.t<Entities.{{entity.name.capitalized}}.t> => InMemoryTable.Entity.t<Entities.internalEntity>),
-        ~batchLoadIds=batchRead(mockDb.entities.{{entity.name.uncapitalized}}),
-        ~whereFnComposer=makeWhereEq(mockDb.__dbInternal__.{{entity.name.uncapitalized}}->(Utils.magic: InMemoryTable.Entity.t<Entities.{{entity.name.capitalized}}.t> => InMemoryTable.Entity.t<Entities.internalEntity>)),
-      ),
-      {{/each}}
-    ]->Promise.all
-
-    hasLoadActions :=
-      hasLoadActionsAll->Array.reduce(false, (accum, entityHasLoadActions) => {
-        accum || entityHasLoadActions->LoadLayer.toBool
-      })
+let makeLoadEntitiesByField = (mockDb: t, ~entityMod) => {
+  let mockDbTable = mockDb.__dbInternal__->InMemoryStore.getInMemTable(~entityMod)
+  async (~fieldName, ~fieldValue, ~fieldValueSchema as _, ~logger as _=?) => {
+    mockDbTable->InMemoryTable.Entity.getOnIndex(
+      ~index=TableIndices.Index.makeSingleEq(~fieldName, ~fieldValue),
+    )
   }
 }
 

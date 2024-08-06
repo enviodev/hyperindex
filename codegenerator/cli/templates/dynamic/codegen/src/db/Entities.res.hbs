@@ -25,7 +25,7 @@ type whereOperations<'entity, 'fieldType> = {eq: 'fieldType => promise<array<'en
 
 {{#each entities as |entity|}}
 module {{entity.name.capitalized}} = {
-  let key = "{{entity.name.capitalized}}"
+  let key = "{{entity.name.original}}"
   let name = {{entity.name.capitalized}}
   @genType
   type t = {
@@ -110,6 +110,9 @@ let allTables: array<table> = [
 {{/each}}
 ]
 let schema = Schema.make(allTables)
+
+@get
+external getEntityId: internalEntity => string = "id"
 
 exception UnexpectedIdNotDefinedOnEntity
 let getEntityIdUnsafe = (entity: 'entity): id =>

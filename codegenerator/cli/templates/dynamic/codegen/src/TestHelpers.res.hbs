@@ -90,13 +90,6 @@ module EventFunctions = {
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-      let asyncGetters: ContextEnv.asyncGetters = {
-        {{#each entities as | entity |}}
-        get{{entity.name.capitalized}}: async id =>
-          mockDbClone.entities.{{entity.name.uncapitalized}}.get(id)->Belt.Option.mapWithDefault([], entity => [entity]),
-        {{/each}}
-      }
-
       let registeredEvent = switch RegisteredEvents.global->RegisteredEvents.get(eventMod) {
       | Some(l) => l
       | None =>
@@ -107,6 +100,10 @@ module EventFunctions = {
       }
       //Construct a new instance of an in memory store to run for the given event
       let inMemoryStore = InMemoryStore.make()
+      let loadLayer = LoadLayer.make(
+        ~loadEntitiesByIds=TestHelpers_MockDb.makeLoadEntitiesByIds(mockDbClone),
+        ~makeLoadEntitiesByField=(~entityMod) => TestHelpers_MockDb.makeLoadEntitiesByField(mockDbClone, ~entityMod),
+      )
 
       //No need to check contract is registered or return anything.
       //The only purpose is to test the registerContract function and to
@@ -141,14 +138,13 @@ module EventFunctions = {
       switch registeredEvent.loaderHandler {
       | Some(handler) =>
         switch await event->EventProcessing.runEventHandler(
-          ~executeLoadLayer=TestHelpers_MockDb.executeMockDbLoadLayer(mockDbClone, ...),
           ~inMemoryStore,
+          ~loadLayer,
           ~handler,
           ~eventMod,
           ~chain,
           ~logger,
           ~latestProcessedBlocks,
-          ~asyncGetters,
           ~config,
         ) {
         | Ok(_) => ()

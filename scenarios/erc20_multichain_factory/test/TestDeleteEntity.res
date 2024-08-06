@@ -114,9 +114,11 @@ describe("Unsafe delete test", () => {
       isUnorderedMultichainMode: true,
     }
 
+    let loadLayer = LoadLayer.makeWithDbConnection()
+
     //Setup initial state stub that will be used for both
     //initial chain data and reorg chain data
-    let initState = GlobalState.make(~config, ~chainManager)
+    let initState = GlobalState.make(~config, ~chainManager, ~loadLayer)
     let gsManager = initState->GlobalStateManager.make
     let tasks = ref([])
     let makeStub = ChainDataHelpers.Stubs.make(~gsManager, ~tasks, ...)
