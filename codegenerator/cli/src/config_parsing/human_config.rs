@@ -66,6 +66,7 @@ type NetworkId = u64;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalContract<T> {
+    #[schemars(description = "A unique project-wide name for this contract (no spaces)")]
     pub name: String,
     #[serde(flatten)]
     pub config: T,
@@ -74,7 +75,17 @@ pub struct GlobalContract<T> {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NetworkContract<T> {
+    #[schemars(
+        description = "A unique project-wide name for this contract if events and handler are \
+                       defined OR a reference to the name of contract defined globally at the top \
+                       level"
+    )]
     pub name: String,
+    #[schemars(
+        description = "A single address or a list of addresses to be indexed. This can be left as \
+                       null in the case where this contracts addresses will be registered \
+                       dynamically."
+    )]
     pub address: Addresses,
     #[serde(flatten)]
     //If this is "None" it should be expected that
@@ -356,6 +367,7 @@ pub mod evm {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Network {
+        #[schemars(description = "Public chain/network id")]
         pub id: NetworkId,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
@@ -369,10 +381,17 @@ pub mod evm {
         #[schemars(description = "Optional HyperSync Config for additional fine-tuning")]
         pub hypersync_config: Option<HypersyncConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "The number of blocks from the head that the indexer should account for \
+                           in case of reorgs."
+        )]
         pub confirmed_block_threshold: Option<i32>,
+        #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: i32,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<i32>,
+        #[schemars(description = "All the contracts that should be indexed on the given network")]
         pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
 
@@ -380,14 +399,28 @@ pub mod evm {
     #[serde(deny_unknown_fields)]
     pub struct ContractConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Relative path (from config) to a json abi. If this is used then each \
+                           configured event should simply be referenced by its name"
+        )]
         pub abi_file_path: Option<String>,
+        #[schemars(
+            description = "The relative path to a file where handlers are registered for the \
+                           given contract"
+        )]
         pub handler: String,
+        #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
+        #[schemars(description = "The human readable signature of an event 'eg. \
+                                  Transfer(address indexed from, address indexed to, uint256 \
+                                  value)' OR a reference to the name of an event in a json ABI \
+                                  file defined in your contract config. A provided signature \
+                                  will take precedence over what is defined in the json ABI")]
         pub event: String,
     }
 
