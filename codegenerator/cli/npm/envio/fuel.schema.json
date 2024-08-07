@@ -11,6 +11,21 @@
         "null"
       ]
     },
+    "name": {
+      "description": "Name of the project",
+      "type": "string"
+    },
+    "ecosystem": {
+      "description": "Ecosystem of the project.",
+      "$ref": "#/$defs/EcosystemTag"
+    },
+    "schema": {
+      "description": "Custom path to config file",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "contracts": {
       "description": "Global contract definitions that must contain all definitions except addresses. You can share a single handler/abi/event definitions for contracts across multiple chains.",
       "type": [
@@ -21,27 +36,12 @@
         "$ref": "#/$defs/GlobalContract_for_ContractConfig"
       }
     },
-    "ecosystem": {
-      "description": "Ecosystem of the project.",
-      "$ref": "#/$defs/EcosystemTag"
-    },
-    "name": {
-      "description": "Name of the project",
-      "type": "string"
-    },
     "networks": {
       "description": "Configuration of the blockchain networks that the project is deployed on.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/Network"
       }
-    },
-    "schema": {
-      "description": "Custom path to config file",
-      "type": [
-        "string",
-        "null"
-      ]
     }
   },
   "additionalProperties": false,
@@ -51,6 +51,132 @@
     "networks"
   ],
   "$defs": {
+    "EcosystemTag": {
+      "type": "string",
+      "enum": [
+        "fuel"
+      ]
+    },
+    "GlobalContract_for_ContractConfig": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "A unique project-wide name for this contract (no spaces)",
+          "type": "string"
+        },
+        "abi_file_path": {
+          "description": "Relative path (from config) to a json abi.",
+          "type": "string"
+        },
+        "handler": {
+          "description": "The relative path to a file where handlers are registered for the given contract",
+          "type": "string"
+        },
+        "events": {
+          "description": "A list of events that should be indexed on this contract",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventConfig"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "abi_file_path",
+        "handler",
+        "events"
+      ]
+    },
+    "EventConfig": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "A reference to a struct in the ABI or a unique name for the provided log_id",
+          "type": "string"
+        },
+        "logId": {
+          "description": "A reference to a log_id in the ABI",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "Network": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Public chain/network id",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "start_block": {
+          "description": "The block at which the indexer should start ingesting data",
+          "type": "integer",
+          "format": "int32"
+        },
+        "end_block": {
+          "description": "The block at which the indexer should terminate.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "contracts": {
+          "description": "All the contracts that should be indexed on the given network",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/NetworkContract_for_ContractConfig"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "start_block",
+        "contracts"
+      ]
+    },
+    "NetworkContract_for_ContractConfig": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "A unique project-wide name for this contract if events and handler are defined OR a reference to the name of contract defined globally at the top level",
+          "type": "string"
+        },
+        "address": {
+          "description": "A single address or a list of addresses to be indexed. This can be left as null in the case where this contracts addresses will be registered dynamically.",
+          "$ref": "#/$defs/Addresses"
+        },
+        "abi_file_path": {
+          "description": "Relative path (from config) to a json abi.",
+          "type": "string"
+        },
+        "handler": {
+          "description": "The relative path to a file where handlers are registered for the given contract",
+          "type": "string"
+        },
+        "events": {
+          "description": "A list of events that should be indexed on this contract",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventConfig"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
     "Addresses": {
       "anyOf": [
         {
@@ -80,132 +206,6 @@
             ]
           }
         }
-      ]
-    },
-    "EcosystemTag": {
-      "type": "string",
-      "enum": [
-        "fuel"
-      ]
-    },
-    "EventConfig": {
-      "type": "object",
-      "properties": {
-        "logId": {
-          "description": "A reference to a log_id in the ABI",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "description": "A reference to a struct in the ABI or a unique name for the provided log_id",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name"
-      ]
-    },
-    "GlobalContract_for_ContractConfig": {
-      "type": "object",
-      "properties": {
-        "abi_file_path": {
-          "description": "Relative path (from config) to a json abi.",
-          "type": "string"
-        },
-        "events": {
-          "description": "A list of events that should be indexed on this contract",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/EventConfig"
-          }
-        },
-        "handler": {
-          "description": "The relative path to a file where handlers are registered for the given contract",
-          "type": "string"
-        },
-        "name": {
-          "description": "A unique project-wide name for this contract (no spaces)",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name",
-        "abi_file_path",
-        "handler",
-        "events"
-      ]
-    },
-    "Network": {
-      "type": "object",
-      "properties": {
-        "contracts": {
-          "description": "All the contracts that should be indexed on the given network",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/NetworkContract_for_ContractConfig"
-          }
-        },
-        "end_block": {
-          "description": "The block at which the indexer should terminate.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "int32"
-        },
-        "id": {
-          "description": "Public chain/network id",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "start_block": {
-          "description": "The block at which the indexer should start ingesting data",
-          "type": "integer",
-          "format": "int32"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "start_block",
-        "contracts"
-      ]
-    },
-    "NetworkContract_for_ContractConfig": {
-      "type": "object",
-      "properties": {
-        "abi_file_path": {
-          "description": "Relative path (from config) to a json abi.",
-          "type": "string"
-        },
-        "address": {
-          "description": "A single address or a list of addresses to be indexed. This can be left as null in the case where this contracts addresses will be registered dynamically.",
-          "$ref": "#/$defs/Addresses"
-        },
-        "events": {
-          "description": "A list of events that should be indexed on this contract",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/EventConfig"
-          }
-        },
-        "handler": {
-          "description": "The relative path to a file where handlers are registered for the given contract",
-          "type": "string"
-        },
-        "name": {
-          "description": "A unique project-wide name for this contract if events and handler are defined OR a reference to the name of contract defined globally at the top level",
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "name"
       ]
     }
   }
