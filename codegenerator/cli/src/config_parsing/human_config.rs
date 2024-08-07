@@ -509,26 +509,40 @@ pub mod fuel {
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Network {
+        #[schemars(description = "Public chain/network id")]
         pub id: NetworkId,
+        #[schemars(description = "The block at which the indexer should start ingesting data")]
         pub start_block: i32,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "The block at which the indexer should terminate.")]
         pub end_block: Option<i32>,
+        #[schemars(description = "All the contracts that should be indexed on the given network")]
         pub contracts: Vec<NetworkContract<ContractConfig>>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct ContractConfig {
+        #[schemars(description = "Relative path (from config) to a json abi.")]
         pub abi_file_path: String,
+        #[schemars(
+            description = "The relative path to a file where handlers are registered for the \
+                           given contract"
+        )]
         pub handler: String,
+        #[schemars(description = "A list of events that should be indexed on this contract")]
         pub events: Vec<EventConfig>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
+        #[schemars(
+            description = "A reference to a struct in the ABI or a unique name for the provided log_id"
+        )]
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "A reference to a log_id in the ABI")]
         pub log_id: Option<String>,
     }
 }
