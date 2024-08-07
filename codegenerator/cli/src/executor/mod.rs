@@ -13,7 +13,8 @@ pub mod init;
 mod local;
 
 use anyhow::{Context, Result};
-use schemars::schema_for;
+use clap_markdown::MarkdownOptions;
+use schemars::{schema_for, Schema};
 
 pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
     let global_project_paths = command_line_args.project_paths;
@@ -96,11 +97,15 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
         }
 
         CommandType::PrintCliHelpMd => {
-            clap_markdown::print_help_markdown::<CommandLineArgs>();
+            let options = MarkdownOptions::new()
+                .show_footer(false)
+                .title("Command-Line Help for `envio`".to_string());
+            let md_contents = clap_markdown::help_markdown_custom::<CommandLineArgs>(&options);
+            println!("{}", md_contents);
         }
         CommandType::PrintConfigJsonSchema(json_schema) => match json_schema {
             JsonSchema::Evm => {
-                let schema = schema_for!(human_config::evm::HumanConfig);
+                let schema: Schema = schema_for!(human_config::evm::HumanConfig);
                 println!(
                     "{}",
                     serde_json::to_string_pretty(&schema)
