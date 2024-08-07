@@ -1,6 +1,7 @@
 use crate::constants::project_paths::{DEFAULT_CONFIG_PATH, DEFAULT_GENERATED_PATH};
 
 use clap::{Args, Parser, Subcommand};
+use clap_markdown::MarkdownOptions;
 use strum::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
@@ -13,6 +14,15 @@ pub struct CommandLineArgs {
     pub command: CommandType,
     #[command(flatten)]
     pub project_paths: ProjectPaths,
+}
+
+impl CommandLineArgs {
+    pub fn generate_markdown_help() -> String {
+        let options = MarkdownOptions::new()
+            .show_footer(false)
+            .title("Command-Line Help for `envio`".to_string());
+        clap_markdown::help_markdown_custom::<Self>(&options)
+    }
 }
 
 #[derive(Args, Debug, Clone)]
@@ -337,7 +347,7 @@ mod test {
         let md_current =
             std::fs::read_to_string(md_path).expect("Failed reading CommandLineHelp.md");
 
-        let md_output = clap_markdown::help_markdown::<CommandLineArgs>();
+        let md_output = CommandLineArgs::generate_markdown_help();
 
         //current is trimmed because then print command
         //adds a line at the end of the md file
