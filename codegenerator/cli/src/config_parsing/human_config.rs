@@ -333,26 +333,41 @@ pub mod evm {
 
     #[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    pub struct SyncConfigUnstable {
+    pub struct RpcSyncConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "The starting interval in range of blocks per query")]
         pub initial_block_interval: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "After an RPC error, how much to scale back the number of blocks \
+                           requested at once"
+        )]
         pub backoff_multiplicative: Option<f64>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "Without RPC errors or timeouts, how much to increase the number of \
+                           blocks requested by for the next batch"
+        )]
         pub acceleration_additive: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "Do not further increase the block interval past this limit")]
         pub interval_ceiling: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "After an error, how long to wait before retrying")]
         pub backoff_millis: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(
+            description = "If a fallback RPC is provided, the amount of time in ms to wait before \
+                           kicking off the next provider"
+        )]
         pub fallback_stall_timeout: Option<u32>,
         #[serde(skip_serializing_if = "Option::is_none")]
+        #[schemars(description = "How long to wait before cancelling an RPC request")]
         pub query_timeout_millis: Option<u32>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    #[allow(non_snake_case)] //Stop compiler warning for the double underscore in unstable__sync_config
     pub struct RpcConfig {
         #[schemars(
             description = "URL of the RPC endpoint. Can be a single URL or an array of URLs. If \
@@ -361,7 +376,8 @@ pub mod evm {
         )]
         pub url: SingleOrList<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        pub unstable__sync_config: Option<SyncConfigUnstable>,
+        #[schemars(description = "Config options for RPC syncing")]
+        pub sync_config: Option<RpcSyncConfig>,
     }
 
     #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, JsonSchema)]
@@ -538,7 +554,8 @@ pub mod fuel {
     #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub struct EventConfig {
         #[schemars(
-            description = "A reference to a struct in the ABI or a unique name for the provided log_id"
+            description = "A reference to a struct in the ABI or a unique name for the provided \
+                           log_id"
         )]
         pub name: String,
         #[serde(skip_serializing_if = "Option::is_none")]
