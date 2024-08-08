@@ -243,10 +243,11 @@
             }
           ]
         },
-        "unstable__sync_config": {
+        "sync_config": {
+          "description": "Config options for RPC syncing",
           "anyOf": [
             {
-              "$ref": "#/$defs/SyncConfigUnstable"
+              "$ref": "#/$defs/RpcSyncConfig"
             },
             {
               "type": "null"
@@ -259,10 +260,11 @@
         "url"
       ]
     },
-    "SyncConfigUnstable": {
+    "RpcSyncConfig": {
       "type": "object",
       "properties": {
         "initial_block_interval": {
+          "description": "The starting interval in range of blocks per query",
           "type": [
             "integer",
             "null"
@@ -271,6 +273,7 @@
           "minimum": 0
         },
         "backoff_multiplicative": {
+          "description": "After an RPC error, how much to scale back the number of blocks requested at once",
           "type": [
             "number",
             "null"
@@ -278,6 +281,7 @@
           "format": "double"
         },
         "acceleration_additive": {
+          "description": "Without RPC errors or timeouts, how much to increase the number of blocks requested by for the next batch",
           "type": [
             "integer",
             "null"
@@ -286,6 +290,7 @@
           "minimum": 0
         },
         "interval_ceiling": {
+          "description": "Do not further increase the block interval past this limit",
           "type": [
             "integer",
             "null"
@@ -294,6 +299,7 @@
           "minimum": 0
         },
         "backoff_millis": {
+          "description": "After an error, how long to wait before retrying",
           "type": [
             "integer",
             "null"
@@ -302,6 +308,7 @@
           "minimum": 0
         },
         "fallback_stall_timeout": {
+          "description": "If a fallback RPC is provided, the amount of time in ms to wait before kicking off the next provider",
           "type": [
             "integer",
             "null"
@@ -310,6 +317,7 @@
           "minimum": 0
         },
         "query_timeout_millis": {
+          "description": "How long to wait before cancelling an RPC request",
           "type": [
             "integer",
             "null"
