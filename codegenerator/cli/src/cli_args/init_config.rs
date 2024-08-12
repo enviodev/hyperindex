@@ -15,7 +15,10 @@ pub mod evm {
         config_parsing::{
             contract_import::converters::{NetworkKind, SelectedContract},
             human_config::{
-                evm::{ContractConfig, EventConfig, HumanConfig, Network, RpcConfig},
+                evm::{
+                    ContractConfig, EventConfig, FieldSelection, HumanConfig, Network, RpcConfig,
+                    TransactionField,
+                },
                 GlobalContract, NetworkContract,
             },
         },
@@ -151,7 +154,10 @@ pub mod evm {
                 event_decoder: None,
                 rollback_on_reorg: None,
                 save_full_history: None,
-                field_selection: None,
+                field_selection: Some(FieldSelection {
+                    transaction_fields: Some(vec![TransactionField::Hash]),
+                    block_fields: None,
+                }),
                 raw_events: None,
             })
         }

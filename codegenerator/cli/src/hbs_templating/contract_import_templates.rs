@@ -286,7 +286,7 @@ impl Event {
                 to_string_code
             ),
             false => format!(
-                "`${{{event_var_name}.transactionHash}}_${{{event_var_name}.logIndex{}}}`",
+                "`${{{event_var_name}.transaction.hash}}_${{{event_var_name}.logIndex{}}}`",
                 to_string_code
             ),
         }
