@@ -64,6 +64,7 @@ impl Display for HashString {
 
 #[cfg(test)]
 mod test {
+    use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
     use super::HashString;
@@ -76,7 +77,7 @@ mod test {
         let hash = HashString::from_file_path(config1_path).unwrap();
         assert_eq!(
             hash.inner(),
-            "ee7d4f3ee517e61784134fef559b4091a56fe885c8af9fd77d42000d4cfc6725".to_string()
+            "deae0e280f52f275dc28a0ac1112e1ef99eb026b20e9a16c09265d213bdfda0f".to_string()
         );
     }
     #[test]
@@ -86,7 +87,7 @@ mod test {
         let hash = HashString::from_file_paths(vec![config1_path, config2_path], true).unwrap();
         assert_eq!(
             hash.inner(),
-            "c400e76f48a8485146dd4b186aac53d2672894b62e2bd5b7ebd5cd96ce77266b".to_string()
+            "6a603f030988963175e15a8861c37206747ce0ede1030f7b1598a0a4713470b7".to_string()
         );
     }
 

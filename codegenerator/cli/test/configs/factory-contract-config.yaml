@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../npm/envio/evm.schema.json
 name: uniswap indexer
 description: My Awesome Contract
 networks:

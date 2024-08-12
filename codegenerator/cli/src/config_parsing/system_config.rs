@@ -397,7 +397,7 @@ impl SyncSource {
               hypersync_config: None,
               rpc_config: Some(human_config::evm::RpcConfig {
                 url,
-                unstable__sync_config
+                sync_config
               }),
               ..
           } => {
@@ -409,7 +409,7 @@ impl SyncSource {
             }
             Ok(Self::RpcConfig(RpcConfig {
                 urls,
-                sync_config: match unstable__sync_config {
+                sync_config: match sync_config {
                     None => SyncConfig::default(),
                     Some(c) => {
                       let query_timeout_millis = c
