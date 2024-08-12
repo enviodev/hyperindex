@@ -13,7 +13,7 @@ type sync_config = {
 
 type rpc_config = {
   url: string,
-  sync_config: sync_config,
+  ...sync_config,
 }
 type network_conf = {id: int, rpc_config: rpc_config}
 type config = {networks: array<network_conf>}
@@ -45,42 +45,42 @@ describe("getGeneratedByChainId Test", () => {
 describe("Sync Config Test", () => {
   it("initial_block_interval", () => {
     Assert.deepEqual(
-      firstNetworkConfig.rpc_config.sync_config.initial_block_interval,
+      firstNetworkConfig.rpc_config.initial_block_interval,
       generatedSyncConfig.initialBlockInterval,
     )
   })
   it("backoff_multiplicative", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deepEqual(
-      firstNetworkConfig.rpc_config.sync_config.backoff_multiplicative,
+      firstNetworkConfig.rpc_config.backoff_multiplicative,
       generatedSyncConfig.backoffMultiplicative,
     )
   })
   it("acceleration_additive", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deepEqual(
-      firstNetworkConfig.rpc_config.sync_config.acceleration_additive,
+      firstNetworkConfig.rpc_config.acceleration_additive,
       generatedSyncConfig.accelerationAdditive,
     )
   })
   it("interval_ceiling", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deepEqual(
-      firstNetworkConfig.rpc_config.sync_config.interval_ceiling,
+      firstNetworkConfig.rpc_config.interval_ceiling,
       generatedSyncConfig.intervalCeiling,
     )
   })
   it("backoff_millis", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deepEqual(
-      firstNetworkConfig.rpc_config.sync_config.backoff_millis,
+      firstNetworkConfig.rpc_config.backoff_millis,
       generatedSyncConfig.backoffMillis,
     )
   })
   it("query_timeout_millis", () => {
     let firstNetworkConfig = configYaml.networks[0]
     Assert.deepEqual(
-      firstNetworkConfig.rpc_config.sync_config.query_timeout_millis,
+      firstNetworkConfig.rpc_config.query_timeout_millis,
       generatedSyncConfig.queryTimeoutMillis,
     )
   })

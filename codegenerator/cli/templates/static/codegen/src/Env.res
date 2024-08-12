@@ -107,13 +107,13 @@ module Configurable = {
 
   module SyncConfig = {
     let initialBlockInterval =
-      envSafe->EnvSafe.get("RPC_SYNC_CONFIG_INITIAL_BLOCK_INTERVAL", S.option(S.int))
+      envSafe->EnvSafe.get("ENVIO_RPC_INITIAL_BLOCK_INTERVAL", S.option(S.int))
     let backoffMultiplicative =
-      envSafe->EnvSafe.get("RPC_SYNC_CONFIG_BACKOFF_MULTIPLICATIVE", S.option(S.float))
+      envSafe->EnvSafe.get("ENVIO_RPC_BACKOFF_MULTIPLICATIVE", S.option(S.float))
     let accelerationAdditive =
-      envSafe->EnvSafe.get("RPC_SYNC_CONFIG_ACCELERATION_ADDITIVE", S.option(S.int))
+      envSafe->EnvSafe.get("ENVIO_RPC_ACCELERATION_ADDITIVE", S.option(S.int))
     let intervalCeiling =
-      envSafe->EnvSafe.get("RPC_SYNC_CONFIG_INTERVAL_CEILING", S.option(S.int))
+      envSafe->EnvSafe.get("ENVIO_RPC_INTERVAL_CEILING", S.option(S.int))
   }
 }
 
