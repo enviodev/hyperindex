@@ -87,7 +87,6 @@ module InitApi = {
       PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
 
-    Js.log(body)
     QueryHelpers.executeFetchRequest(
       ~endpoint,
       ~method=#POST,
