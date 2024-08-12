@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../npm/envio/evm.schema.json
 name: config1
 schema: ../schemas/schema.graphql
 contracts:

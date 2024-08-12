@@ -243,26 +243,6 @@
             }
           ]
         },
-        "sync_config": {
-          "description": "Config options for RPC syncing",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RpcSyncConfig"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "url"
-      ]
-    },
-    "RpcSyncConfig": {
-      "type": "object",
-      "properties": {
         "initial_block_interval": {
           "description": "The starting interval in range of blocks per query",
           "type": [
@@ -326,7 +306,10 @@
           "minimum": 0
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
     },
     "HypersyncConfig": {
       "type": "object",

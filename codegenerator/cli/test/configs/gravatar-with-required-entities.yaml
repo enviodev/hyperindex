@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../npm/envio/evm.schema.json
 name: gravatar-with-required-entities
 schema: ../schemas/gravatar-schema.graphql
 description: Gravatar for Ethereum

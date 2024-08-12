@@ -5,9 +5,8 @@ networks:
   - id: 1337
     rpc_config:
       url: http://localhost:8545
-      sync_config:
-        initial_block_interval: 10000
-        interval_ceiling: 10000
+      initial_block_interval: 10000
+      interval_ceiling: 10000
     start_block: 0
     contracts:
       - name: Gravatar

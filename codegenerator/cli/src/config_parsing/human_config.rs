@@ -375,7 +375,7 @@ pub mod evm {
                            RPC endpoint and the rest will be used as fallbacks."
         )]
         pub url: SingleOrList<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
         #[schemars(description = "Config options for RPC syncing")]
         pub sync_config: Option<RpcSyncConfig>,
     }
