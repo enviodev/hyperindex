@@ -123,7 +123,7 @@ module Transaction = {
     {{/each}}
   })
 
-  let querySelection: HyperSyncClient.QueryTypes.transactionFieldSelection = [
+  let querySelection: array<HyperSyncClient.QueryTypes.transactionField> = [
     {{#each field_selection.transaction_fields as | field |}}
     {{field.name.pascal}},
     {{/each}}
@@ -169,7 +169,7 @@ module Block = {
     {{/each}}
     }
 
-  let querySelection: HyperSyncClient.QueryTypes.blockFieldSelection = [
+  let querySelection: array<HyperSyncClient.QueryTypes.blockField> = [
     Number,
     Timestamp,
     Hash,

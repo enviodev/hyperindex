@@ -193,7 +193,7 @@ pub mod evm {
 
     #[subenum(RpcTransactionField)]
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
-    #[serde(rename_all = "snake_case", deny_unknown_fields)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub enum TransactionField {
         #[subenum(RpcTransactionField)]
         TransactionIndex,
@@ -219,35 +219,59 @@ pub mod evm {
         Type,
         Root,
         Status,
-        Sighash,
+        YParity,
+        ChainId,
+        // AccessList, //TODO this should produce an array of AccessList records
+        MaxFeePerBlobGas,
+        BlobVersionedHashes,
+        Kind,
+        L1Fee,
+        L1GasPrice,
+        L1GasUsed,
+        L1FeeScalar,
+        GasUsedForL1,
+        //These values are available by default on the block
+        //so no need to allow users to configure these values
+        // BlockHash,
+        // BlockNumber,
     }
 
     impl From<TransactionField> for RescriptTypeIdent {
-        fn from(value: TransactionField) -> RescriptTypeIdent {
+        fn from(value: TransactionField) -> Self {
             match value {
-                TransactionField::TransactionIndex => RescriptTypeIdent::Int,
-                TransactionField::Hash => RescriptTypeIdent::String,
-                TransactionField::From => RescriptTypeIdent::Address,
-                TransactionField::To => RescriptTypeIdent::Address,
-                TransactionField::Gas => RescriptTypeIdent::BigInt,
-                TransactionField::GasPrice => RescriptTypeIdent::BigInt,
-                TransactionField::MaxPriorityFeePerGas => RescriptTypeIdent::BigInt,
-                TransactionField::MaxFeePerGas => RescriptTypeIdent::BigInt,
-                TransactionField::CumulativeGasUsed => RescriptTypeIdent::BigInt,
-                TransactionField::EffectiveGasPrice => RescriptTypeIdent::BigInt,
-                TransactionField::GasUsed => RescriptTypeIdent::BigInt,
-                TransactionField::Input => RescriptTypeIdent::String,
-                TransactionField::Nonce => RescriptTypeIdent::Int,
-                TransactionField::Value => RescriptTypeIdent::BigInt,
-                TransactionField::V => RescriptTypeIdent::String,
-                TransactionField::R => RescriptTypeIdent::String,
-                TransactionField::S => RescriptTypeIdent::String,
-                TransactionField::ContractAddress => RescriptTypeIdent::Address,
-                TransactionField::LogsBloom => RescriptTypeIdent::String,
-                TransactionField::Type => RescriptTypeIdent::Int,
-                TransactionField::Root => RescriptTypeIdent::String,
-                TransactionField::Status => RescriptTypeIdent::Int,
-                TransactionField::Sighash => RescriptTypeIdent::String,
+                TransactionField::TransactionIndex => Self::Int,
+                TransactionField::Hash => Self::String,
+                TransactionField::From => Self::Address,
+                TransactionField::To => Self::Address,
+                TransactionField::Gas => Self::BigInt,
+                TransactionField::GasPrice => Self::BigInt,
+                TransactionField::MaxPriorityFeePerGas => Self::BigInt,
+                TransactionField::MaxFeePerGas => Self::BigInt,
+                TransactionField::CumulativeGasUsed => Self::BigInt,
+                TransactionField::EffectiveGasPrice => Self::BigInt,
+                TransactionField::GasUsed => Self::BigInt,
+                TransactionField::Input => Self::String,
+                TransactionField::Nonce => Self::BigInt,
+                TransactionField::Value => Self::BigInt,
+                TransactionField::V => Self::String,
+                TransactionField::R => Self::String,
+                TransactionField::S => Self::String,
+                TransactionField::ContractAddress => Self::Address,
+                TransactionField::LogsBloom => Self::String,
+                TransactionField::Type => Self::Int,
+                TransactionField::Root => Self::String,
+                TransactionField::Status => Self::Int,
+                TransactionField::YParity => Self::String,
+                TransactionField::ChainId => Self::Int,
+                // TransactionField::AccessList => todo!(),
+                TransactionField::MaxFeePerBlobGas => Self::BigInt,
+                TransactionField::BlobVersionedHashes => Self::Array(Box::new(Self::String)),
+                TransactionField::Kind => Self::Int,
+                TransactionField::L1Fee => Self::BigInt,
+                TransactionField::L1GasPrice => Self::BigInt,
+                TransactionField::L1GasUsed => Self::BigInt,
+                TransactionField::L1FeeScalar => Self::Float,
+                TransactionField::GasUsedForL1 => Self::BigInt,
             }
         }
     }
