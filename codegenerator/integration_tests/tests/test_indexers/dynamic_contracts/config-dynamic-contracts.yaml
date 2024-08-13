@@ -3,7 +3,7 @@ name: kwenta-factory-example
 field_selection:
   transaction_fields:
     - hash
-    - transaction_index
+    - transactionIndex
 networks:
   - id: 10
     start_block: 4556306

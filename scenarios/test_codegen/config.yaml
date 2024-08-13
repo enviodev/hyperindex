@@ -5,7 +5,7 @@ rollback_on_reorg: true
 save_full_history: false
 field_selection:
   transaction_fields:
-    - transaction_index
+    - transactionIndex
     - hash
 networks:
   - id: 1337
