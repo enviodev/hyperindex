@@ -227,7 +227,7 @@ module HeightQuery = {
   //Used for waiting until there is a new block to index
   let pollForHeightGtOrEq = async (~serverUrl, ~blockNumber, ~logger) => {
     let pollHeight = ref(await getHeightWithRetry(~serverUrl, ~logger))
-    let pollIntervalMillis = 100
+    let pollIntervalMillis = 250
 
     while pollHeight.contents <= blockNumber {
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=pollIntervalMillis)
@@ -312,7 +312,7 @@ module BlockData = {
     if res->Belt.Result.mapWithDefault(0, res => res.nextBlock) <= blockNumber {
       let logger = Logging.createChild(~params={"url": serverUrl})
       logger->Logging.childWarn(
-        `Block #${blockNumber->Belt.Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`
+        `Block #${blockNumber->Belt.Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
       )
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
       await queryBlockData(~serverUrl, ~blockNumber, ~logger)
@@ -337,4 +337,3 @@ let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
 let queryBlockData = BlockData.queryBlockData
 let queryBlockDataMulti = BlockData.queryBlockDataMulti
-
