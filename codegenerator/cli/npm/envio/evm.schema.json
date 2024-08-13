@@ -454,22 +454,30 @@
     "BlockField": {
       "type": "string",
       "enum": [
-        "parent_hash",
+        "parentHash",
         "nonce",
-        "sha3_uncles",
-        "logs_bloom",
-        "transactions_root",
-        "state_root",
-        "receipts_root",
+        "sha3Uncles",
+        "logsBloom",
+        "transactionsRoot",
+        "stateRoot",
+        "receiptsRoot",
         "miner",
         "difficulty",
-        "total_difficulty",
-        "extra_data",
+        "totalDifficulty",
+        "extraData",
         "size",
-        "gas_limit",
-        "gas_used",
+        "gasLimit",
+        "gasUsed",
         "uncles",
-        "base_fee_per_gas"
+        "baseFeePerGas",
+        "blobGasUsed",
+        "excessBlobGas",
+        "parentBeaconBlockRoot",
+        "withdrawalsRoot",
+        "l1BlockNumber",
+        "sendCount",
+        "sendRoot",
+        "mixHash"
       ]
     }
   }

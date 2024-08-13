@@ -254,7 +254,7 @@ pub mod evm {
 
     #[subenum(RpcBlockField)]
     #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone, Display, JsonSchema)]
-    #[serde(rename_all = "snake_case", deny_unknown_fields)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
     pub enum BlockField {
         #[subenum(RpcBlockField)]
         ParentHash,
@@ -281,13 +281,22 @@ pub mod evm {
         Uncles,
         #[subenum(RpcBlockField)]
         BaseFeePerGas,
+        BlobGasUsed,
+        ExcessBlobGas,
+        ParentBeaconBlockRoot,
+        WithdrawalsRoot,
+        // Withdrawals, //TODO: allow this field to be selectable (contains an array of rescript record type)
+        L1BlockNumber,
+        SendCount,
+        SendRoot,
+        MixHash,
     }
 
     impl From<BlockField> for RescriptTypeIdent {
         fn from(value: BlockField) -> RescriptTypeIdent {
             match value {
                 BlockField::ParentHash => RescriptTypeIdent::String,
-                BlockField::Nonce => RescriptTypeIdent::Int,
+                BlockField::Nonce => RescriptTypeIdent::BigInt,
                 BlockField::Sha3Uncles => RescriptTypeIdent::String,
                 BlockField::LogsBloom => RescriptTypeIdent::String,
                 BlockField::TransactionsRoot => RescriptTypeIdent::String,
@@ -297,11 +306,20 @@ pub mod evm {
                 BlockField::Difficulty => RescriptTypeIdent::BigInt,
                 BlockField::TotalDifficulty => RescriptTypeIdent::BigInt,
                 BlockField::ExtraData => RescriptTypeIdent::String,
-                BlockField::Size => RescriptTypeIdent::BigInt,
+                BlockField::Size => RescriptTypeIdent::String,
                 BlockField::GasLimit => RescriptTypeIdent::BigInt,
                 BlockField::GasUsed => RescriptTypeIdent::BigInt,
-                BlockField::Uncles => RescriptTypeIdent::String,
+                BlockField::Uncles => RescriptTypeIdent::Array(Box::new(RescriptTypeIdent::String)),
                 BlockField::BaseFeePerGas => RescriptTypeIdent::BigInt,
+                BlockField::BlobGasUsed => RescriptTypeIdent::BigInt,
+                BlockField::ExcessBlobGas => RescriptTypeIdent::BigInt,
+                BlockField::ParentBeaconBlockRoot => RescriptTypeIdent::String,
+                BlockField::WithdrawalsRoot => RescriptTypeIdent::String,
+                // BlockField::Withdrawals => todo!(), //should be array of withdrawal record
+                BlockField::L1BlockNumber => RescriptTypeIdent::Int,
+                BlockField::SendCount => RescriptTypeIdent::String,
+                BlockField::SendRoot => RescriptTypeIdent::String,
+                BlockField::MixHash => RescriptTypeIdent::String,
             }
         }
     }
