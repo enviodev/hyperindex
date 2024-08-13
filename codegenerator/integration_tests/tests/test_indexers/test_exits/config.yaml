@@ -4,7 +4,7 @@ description: My Awesome Contract # Description of the project
 field_selection:
   transaction_fields:
     - hash
-    - transaction_index
+    - transactionIndex
 contracts:
   - name: SwapContract # User-defined contract name
     handler: src/EventHandler.ts # Location of the file that handles the events emitted by this contract

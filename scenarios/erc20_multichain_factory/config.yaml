@@ -5,9 +5,9 @@ rollback_on_reorg: true
 field_selection:
   transaction_fields:
     - hash
-    - transaction_index
+    - transactionIndex
   block_fields:
-    - gas_used #just an example to test codegen
+    - gasUsed #just an example to test codegen
 contracts:
   - name: ERC20
     handler: src/EventHandlers.bs.js

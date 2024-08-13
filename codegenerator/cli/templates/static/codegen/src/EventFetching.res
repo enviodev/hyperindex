@@ -175,7 +175,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  logs->convertLogs(~config,~blockLoader, ~contractInterfaceManager, ~chain, ~logger)
+  logs->convertLogs(~config, ~blockLoader, ~contractInterfaceManager, ~chain, ~logger)
 }
 
 type eventBatchQuery = {

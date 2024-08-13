@@ -95,7 +95,7 @@ module LogsQuery = {
     ~fromBlock,
     ~toBlockInclusive,
     ~addressesWithTopics: ContractInterfaceManager.contractAddressesAndTopics,
-  ): HyperSyncClient.QueryTypes.postQueryBody => {
+  ): HyperSyncClient.QueryTypes.query => {
     fromBlock,
     toBlockExclusive: toBlockInclusive + 1,
     logs: addressesWithTopics,
@@ -149,7 +149,7 @@ module LogsQuery = {
     }
   }
 
-  let convertResponse = (res: HyperSyncClient.ResponseTypes.response): queryResponse<
+  let convertResponse = (res: HyperSyncClient.ResponseTypes.eventResponse): queryResponse<
     logsQueryPage,
   > => {
     try {
@@ -312,7 +312,7 @@ module BlockData = {
     if res->Belt.Result.mapWithDefault(0, res => res.nextBlock) <= blockNumber {
       let logger = Logging.createChild(~params={"url": serverUrl})
       logger->Logging.childWarn(
-        `Block #${blockNumber->Belt.Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`
+        `Block #${blockNumber->Belt.Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
       )
       await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
       await queryBlockData(~serverUrl, ~blockNumber, ~logger)
@@ -337,4 +337,3 @@ let getHeightWithRetry = HeightQuery.getHeightWithRetry
 let pollForHeightGtOrEq = HeightQuery.pollForHeightGtOrEq
 let queryBlockData = BlockData.queryBlockData
 let queryBlockDataMulti = BlockData.queryBlockDataMulti
-
