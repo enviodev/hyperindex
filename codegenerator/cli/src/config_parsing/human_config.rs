@@ -330,7 +330,7 @@ pub mod evm {
                 BlockField::Difficulty => RescriptTypeIdent::BigInt,
                 BlockField::TotalDifficulty => RescriptTypeIdent::BigInt,
                 BlockField::ExtraData => RescriptTypeIdent::String,
-                BlockField::Size => RescriptTypeIdent::String,
+                BlockField::Size => RescriptTypeIdent::BigInt,
                 BlockField::GasLimit => RescriptTypeIdent::BigInt,
                 BlockField::GasUsed => RescriptTypeIdent::BigInt,
                 BlockField::Uncles => RescriptTypeIdent::Array(Box::new(RescriptTypeIdent::String)),

@@ -271,7 +271,7 @@ module ResponseTypes = {
     difficulty?: bigint,
     totalDifficulty?: bigint,
     extraData?: string,
-    size?: string,
+    size?: bigint,
     gasLimit?: bigint,
     gasUsed?: bigint,
     timestamp?: int,
