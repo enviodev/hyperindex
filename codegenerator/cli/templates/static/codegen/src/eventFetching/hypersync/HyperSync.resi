@@ -30,7 +30,7 @@ let queryLogsPage: (
   ~serverUrl: string,
   ~fromBlock: int,
   ~toBlock: int,
-  ~contractAddressesAndtopics: ContractInterfaceManager.contractAddressesAndTopics,
+  ~logSelections: array<LogSelection.t>,
 ) => promise<queryResponse<logsQueryPage>>
 
 let getHeightWithRetry: (~serverUrl: string, ~logger: Pino.t) => promise<int>
@@ -49,4 +49,3 @@ let queryBlockDataMulti: (
 
 let mapExn: queryResponse<'a> => result<'a, exn>
 let getExn: queryResponse<'a> => 'a
-

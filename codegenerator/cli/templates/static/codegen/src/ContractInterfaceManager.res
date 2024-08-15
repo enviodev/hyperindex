@@ -158,37 +158,37 @@ let getAllTopicsAndAddresses = (self: t): addressesAndTopics => {
   {addresses, topics}
 }
 
-type contractAddressesAndTopics = array<HyperSyncClient.QueryTypes.logSelection>
-let getAllContractTopicsAndAddresses = (self: t): contractAddressesAndTopics => {
-  self.contractAddressMapping.addressesByName
-  ->Js.Dict.keys
-  ->Belt.Array.map(contractName => {
-    let interfaceOpt = self->getInterfaceByName(~contractName)
-    switch interfaceOpt {
-    | None =>
-      let exn = UndefinedInterface(contractName)
-      Logging.errorWithExn(
-        exn,
-        "EE901: Unexpected case. Contract name does not exist in interface mapping.",
-      )
-      exn->raise
-    | Some({interface}) => {
-        let topics = []
-        //Add the topic hash from each event on the interface
-        interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
-          topics->Js.Array2.push(eventFragment.topicHash)->ignore
-        })
+let getLogSelection = (self: t): result<array<LogSelection.t>, exn> => {
+  try {
+    self.contractAddressMapping.addressesByName
+    ->Js.Dict.keys
+    ->Belt.Array.map(contractName => {
+      let interfaceOpt = self->getInterfaceByName(~contractName)
+      switch interfaceOpt {
+      | None => UndefinedInterface(contractName)->raise
+      | Some({interface}) => {
+          let topic0 = []
+          //Add the topic hash from each event on the interface
+          interface->Ethers.Interface.forEachEvent((eventFragment, _i) => {
+            topic0->Js.Array2.push(eventFragment.topicHash)->ignore
+          })
 
-        let addresses = []
-        //Add the addresses for each contract
-        self.contractAddressMapping
-        ->ContractAddressingMap.getAddressesFromContractName(~contractName)
-        ->Belt.Array.forEach(address => addresses->Js.Array2.push(address)->ignore)
+          let topicSelection = LogSelection.makeTopicSelection(~topic0)->Utils.unwrapResultExn
 
-        ({address: addresses, topics: [topics]}: HyperSyncClient.QueryTypes.logSelection)
+          let addresses = []
+          //Add the addresses for each contract
+          self.contractAddressMapping
+          ->ContractAddressingMap.getAddressesFromContractName(~contractName)
+          ->Belt.Array.forEach(address => addresses->Js.Array2.push(address)->ignore)
+
+          LogSelection.make(~addresses, ~topicSelections=[topicSelection])
+        }
       }
-    }
-  })
+    })
+    ->Ok
+  } catch {
+  | exn => exn->Error
+  }
 }
 
 let getContractNameFromAddress = (self: t, ~contractAddress) => {
