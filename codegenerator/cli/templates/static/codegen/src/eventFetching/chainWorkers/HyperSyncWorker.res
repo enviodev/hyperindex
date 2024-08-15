@@ -129,20 +129,19 @@ module Make = (
       ~contractAddressMapping,
     )
 
-    let contractAddressesAndtopics =
-      contractInterfaceManager->ContractInterfaceManager.getAllContractTopicsAndAddresses
+    let logSelections =
+      contractInterfaceManager
+      ->ContractInterfaceManager.getLogSelection
+      ->ErrorHandling.unwrapLogAndRaise(
+        ~logger,
+        ~msg="Failed getting log selection in contract interface manager",
+      )
 
     let startFetchingBatchTimeRef = Hrtime.makeTimer()
 
     //fetch batch
     let pageUnsafe = await Helpers.queryLogsPageWithBackoff(
-      () =>
-        HyperSync.queryLogsPage(
-          ~serverUrl=T.endpointUrl,
-          ~fromBlock,
-          ~toBlock,
-          ~contractAddressesAndtopics,
-        ),
+      () => HyperSync.queryLogsPage(~serverUrl=T.endpointUrl, ~fromBlock, ~toBlock, ~logSelections),
       logger,
     )
 
@@ -389,8 +388,9 @@ module Make = (
   }
 
   let getBlockHashes = (~blockNumbers, ~logger) =>
-    HyperSync.queryBlockDataMulti(~serverUrl=T.endpointUrl, ~blockNumbers, ~logger)->Promise.thenResolve(
-      HyperSync.mapExn,
-    )
+    HyperSync.queryBlockDataMulti(
+      ~serverUrl=T.endpointUrl,
+      ~blockNumbers,
+      ~logger,
+    )->Promise.thenResolve(HyperSync.mapExn)
 }
-

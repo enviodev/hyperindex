@@ -119,6 +119,18 @@ module QueryTypes = {
     log?: array<logField>,
     trace?: array<traceField>,
   }
+  type topicFilter = array<Ethers.EventFilter.topic>
+  type topic0 = topicFilter
+  type topic1 = topicFilter
+  type topic2 = topicFilter
+  type topic3 = topicFilter
+  type topicSelection = (topic0, topic1, topic2, topic3)
+  let makeTopicSelection = (~topic0=[], ~topic1=[], ~topic2=[], ~topic3=[]) => (
+    topic0,
+    topic1,
+    topic2,
+    topic3,
+  )
 
   type logSelection = {
     /**
@@ -130,8 +142,10 @@ module QueryTypes = {
      * Topics to match, each member of the top level array is another array, if the nth topic matches any
      *  topic specified in topics[n] the log will be returned. Empty means match all.
      */
-    topics: array<array<Ethers.EventFilter.topic>>,
+    topics: topicSelection,
   }
+
+  let makeLogSelection = (~address, ~topics) => {address, topics}
 
   type transactionSelection = {
     /**

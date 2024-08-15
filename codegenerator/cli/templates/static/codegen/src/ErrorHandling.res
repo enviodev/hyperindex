@@ -41,6 +41,13 @@ let mkLogAndRaise = (~logger=?, ~msg=?, exn) => {
   exn->raise
 }
 
+let unwrapLogAndRaise = (~logger=?, ~msg=?, result) => {
+  switch result {
+  | Ok(v) => v
+  | Error(exn) => exn->mkLogAndRaise(~logger?, ~msg?)
+  }
+}
+
 let logAndRaise = self => {
   self->log
   self->raiseExn
