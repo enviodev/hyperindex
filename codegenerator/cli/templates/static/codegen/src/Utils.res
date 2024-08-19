@@ -88,13 +88,6 @@ module Dict = {
    */
   external dangerouslyGetNonOption: (dict<'a>, string) => option<'a> = ""
 }
-module List = {
-  let rec getLast = (list, ~head=?) =>
-    switch list {
-    | list{} => head
-    | list{head, ...tail} => tail->getLast(~head)
-    }
-}
 
 module Math = {
   let minOptInt = (a, b) =>

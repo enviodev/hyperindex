@@ -212,7 +212,7 @@ let updateRegister = (
 ) => {
   let firstEventBlockNumber = switch self.firstEventBlockNumber {
   | Some(n) => Some(n)
-  | None => newFetchedEvents->Utils.List.getLast->Option.map(v => v.blockNumber)
+  | None => newFetchedEvents->List.head->Option.map(v => v.blockNumber)
   }
   {
     ...self,
