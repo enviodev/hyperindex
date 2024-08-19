@@ -110,7 +110,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
     let chainConfig = config.defaultChain->Utils.magic
     let mockChainFetcher: ChainFetcher.t = {
       timestampCaughtUpToHeadOrEndblock: None,
-      firstEventBlockNumber: None,
+      dbFirstEventBlockNumber: None,
       latestProcessedBlock: None,
       numEventsProcessed: 0,
       numBatchesFetched: 0,
@@ -302,6 +302,7 @@ describe("determineNextEvent", () => {
       contractAddressMapping: ContractAddressingMap.make(),
       fetchedEventQueue: item->Option.mapWithDefault(list{}, v => list{v}),
       dynamicContracts: FetchState.DynamicContractsMap.empty,
+      firstEventBlockNumber: item->Option.map(v => v.blockNumber),
     }
 
     let makeMockPartitionedFetchState = (
