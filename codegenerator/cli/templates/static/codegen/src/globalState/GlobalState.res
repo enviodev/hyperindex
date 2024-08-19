@@ -411,10 +411,10 @@ let actionReducer = (state: t, action: action) => {
   | BlockRangeResponse(chain, response) => state->handleBlockRangeResponse(~chain, ~response)
   | EventBatchProcessed({
       latestProcessedBlocks,
-      dynamicContractRegistrations: Some({registrationsReversed, unprocessedBatchReversed}),
+      dynamicContractRegistrations: Some({registrations, unprocessedBatch}),
     }) =>
     let updatedArbQueue =
-      unprocessedBatchReversed->List.reverse->FetchState.mergeSortedList(~cmp=(a, b) => {
+      unprocessedBatch->List.fromArray->FetchState.mergeSortedList(~cmp=(a, b) => {
         a->EventUtils.getEventComparatorFromQueueItem <
           b->EventUtils.getEventComparatorFromQueueItem
       }, state.chainManager.arbitraryEventPriorityQueue)
@@ -425,7 +425,7 @@ let actionReducer = (state: t, action: action) => {
       NextQuery(CheckAllChains),
     ]
 
-    let nextState = registrationsReversed->List.reduce(state, (state, registration) => {
+    let nextState = registrations->Array.reduce(state, (state, registration) => {
       let {
         registeringEventBlockNumber,
         registeringEventLogIndex,
