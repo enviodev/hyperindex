@@ -102,7 +102,7 @@ let updateChainMetadataTable = async (cm: ChainManager.t, ~asyncTaskQueue: Async
         blockHeight: cf.currentBlockHeight,
         //optional fields
         endBlock: cf.chainConfig.endBlock, //this is already optional
-        firstEventBlockNumber: cf.firstEventBlockNumber, //this is already optional
+        firstEventBlockNumber: cf->ChainFetcher.getFirstEventBlockNumber,
         latestProcessedBlock: cf.latestProcessedBlock, // this is already optional
         numEventsProcessed: Some(cf.numEventsProcessed),
         poweredByHyperSync: switch cf.chainConfig.syncSource {
@@ -307,11 +307,6 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
       ->Utils.unwrapResultExn
       ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
-    let firstEventBlockNumber = switch parsedQueueItems[0] {
-    | Some(item) if chainFetcher.firstEventBlockNumber->Option.isNone => item.blockNumber->Some
-    | _ => chainFetcher.firstEventBlockNumber
-    }
-
     let hasArbQueueEvents =
       state.chainManager.arbitraryEventPriorityQueue
       ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
@@ -336,7 +331,6 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
     let updatedChainFetcher = {
       ...chainFetcher,
       isFetchingBatch: false,
-      firstEventBlockNumber,
       latestProcessedBlock,
       numBatchesFetched: chainFetcher.numBatchesFetched + 1,
     }

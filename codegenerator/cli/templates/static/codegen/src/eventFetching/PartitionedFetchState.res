@@ -273,3 +273,9 @@ let isFetchingAtHead = ({partitions}: t) => {
     accum && partition.isFetchingAtHead
   })
 }
+
+let getFirstEventBlockNumber = ({partitions}: t) => {
+  partitions->List.reduce(None, (accum, partition) => {
+    Utils.Math.minOptInt(accum, partition.firstEventBlockNumber)
+  })
+}

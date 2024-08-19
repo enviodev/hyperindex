@@ -95,6 +95,7 @@ type rec t = {
   //of a rollback.
   dynamicContracts: DynamicContractsMap.t,
   isFetchingAtHead: bool,
+  firstEventBlockNumber: option<int>,
 }
 and register = RootRegister({endBlock: option<int>}) | DynamicContractRegister(dynamicContractId, t)
 
@@ -162,6 +163,10 @@ let mergeIntoNextRegistered = (self: t) => {
       fetchedEventQueue,
       contractAddressMapping,
       dynamicContracts,
+      firstEventBlockNumber: Utils.Math.minOptInt(
+        self.firstEventBlockNumber,
+        nextRegistered.firstEventBlockNumber,
+      ),
       latestFetchedBlock: {
         blockTimestamp: Pervasives.max(
           self.latestFetchedBlock.blockTimestamp,
@@ -199,11 +204,23 @@ exception UnexpectedRegisterDoesNotExist(id)
 Updates a given register with new latest block values and new fetched
 events.
 */
-let updateRegister = (self: t, ~latestFetchedBlock, ~newFetchedEvents, ~isFetchingAtHead) => {
-  ...self,
-  isFetchingAtHead,
-  latestFetchedBlock,
-  fetchedEventQueue: List.concat(self.fetchedEventQueue, newFetchedEvents),
+let updateRegister = (
+  self: t,
+  ~latestFetchedBlock,
+  ~newFetchedEvents: list<Types.eventBatchQueueItem>,
+  ~isFetchingAtHead,
+) => {
+  let firstEventBlockNumber = switch self.firstEventBlockNumber {
+  | Some(n) => Some(n)
+  | None => newFetchedEvents->Utils.List.getLast->Option.map(v => v.blockNumber)
+  }
+  {
+    ...self,
+    isFetchingAtHead,
+    latestFetchedBlock,
+    firstEventBlockNumber,
+    fetchedEventQueue: List.concat(self.fetchedEventQueue, newFetchedEvents),
+  }
 }
 
 /**
@@ -600,6 +617,7 @@ let makeInternal = (
     contractAddressMapping,
     dynamicContracts,
     fetchedEventQueue: list{},
+    firstEventBlockNumber: None,
   }
 }
 
@@ -640,6 +658,7 @@ let addNewRegisterToHead = (
     contractAddressMapping,
     dynamicContracts,
     fetchedEventQueue: list{},
+    firstEventBlockNumber: None,
   }
 }
 
