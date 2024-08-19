@@ -8,7 +8,7 @@ type t = {
   currentBlockHeight: int,
   isFetchingBatch: bool,
   timestampCaughtUpToHeadOrEndblock: option<Js.Date.t>,
-  firstEventBlockNumber: option<int>,
+  dbFirstEventBlockNumber: option<int>,
   latestProcessedBlock: option<int>,
   numEventsProcessed: int,
   numBatchesFetched: int,
@@ -49,7 +49,7 @@ let make = (
   ~dynamicContractRegistrations,
   ~startBlock,
   ~endBlock,
-  ~firstEventBlockNumber,
+  ~dbFirstEventBlockNumber,
   ~latestProcessedBlock,
   ~logger,
   ~timestampCaughtUpToHeadOrEndblock,
@@ -79,7 +79,7 @@ let make = (
     currentBlockHeight: 0,
     isFetchingBatch: false,
     fetchState,
-    firstEventBlockNumber,
+    dbFirstEventBlockNumber,
     latestProcessedBlock,
     timestampCaughtUpToHeadOrEndblock,
     numEventsProcessed,
@@ -110,7 +110,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartit
     ~startBlock=chainConfig.startBlock,
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
-    ~firstEventBlockNumber=None,
+    ~dbFirstEventBlockNumber=None,
     ~latestProcessedBlock=None,
     ~timestampCaughtUpToHeadOrEndblock=None,
     ~numEventsProcessed=0,
@@ -205,7 +205,7 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~config, ~maxAddrI
     ~startBlock,
     ~endBlock=chainConfig.endBlock,
     ~lastBlockScannedHashes,
-    ~firstEventBlockNumber,
+    ~dbFirstEventBlockNumber=firstEventBlockNumber,
     ~latestProcessedBlock=latestProcessedBlockChainMetadata,
     ~timestampCaughtUpToHeadOrEndblock,
     ~numEventsProcessed=numEventsProcessed->Option.getWithDefault(0),
@@ -375,3 +375,8 @@ let rollbackToLastBlockHashes = (chainFetcher: t, ~rolledBackLastBlockData) => {
 let isFetchingAtHead = (chainFetcher: t) =>
   chainFetcher.fetchState->PartitionedFetchState.isFetchingAtHead
 
+let getFirstEventBlockNumber = (chainFetcher: t) =>
+  Utils.Math.minOptInt(
+    chainFetcher.dbFirstEventBlockNumber,
+    chainFetcher.fetchState->PartitionedFetchState.getFirstEventBlockNumber,
+  )
