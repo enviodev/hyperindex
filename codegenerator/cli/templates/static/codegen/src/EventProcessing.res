@@ -454,7 +454,6 @@ let processEventBatch = (
   ~loadLayer,
   ~config,
 ) => {
-  let eventBatch = List.toArray(eventBatch)
   let logger = Logging.createChild(
     ~params={
       "context": "batch",
