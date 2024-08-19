@@ -180,6 +180,13 @@ module LastBlockScannedHashes: {
 
   type rec trampoline<'a> = Data('a) | Callback(unit => trampoline<'a>)
 
+  /**
+    Trampolines are a method of handling mutual recursions without the risk of hitting stack limits
+
+    Tail Call Optimization is not possible on mutually recursive functions and so this is a manual optizimation
+
+    (note: this implementation of "trampoline" uses a tail call and so TCO tranfsorms it to a while loop in JS)
+  */
   let rec trampoline = value =>
     switch value {
     | Data(v) => v
