@@ -107,17 +107,20 @@ module Make = (
     )
 
     //Instantiate each time to add new registered contract addresses
-    let contractsReceiptQuery = chainConfig.contracts->Belt.Array.map((
-      contract
-    ): HyperFuel.contractReceiptQuery => {
-      {
-        addresses: contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
-          ~contractName=contract.name,
-        ),
-        logIds: contract.events->Js.Array2.map(eventMod => {
-          let module(Event: Types.Event) = eventMod
-          Event.topic0
-        }),
+    let contractsReceiptQuery = chainConfig.contracts->Belt.Array.keepMap((contract): option<
+      HyperFuel.contractReceiptQuery,
+    > => {
+      switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
+        ~contractName=contract.name,
+      ) {
+      | [] => None
+      | addresses => Some({
+          addresses,
+          logIds: contract.events->Js.Array2.map(eventMod => {
+            let module(Event: Types.Event) = eventMod
+            Event.topic0
+          })
+        })
       }
     })
 
@@ -334,6 +337,6 @@ module Make = (
     }
   }
 
-  let getBlockHashes = (~blockNumbers as _) =>
+  let getBlockHashes = (~blockNumbers as _, ~logger as _) =>
     Js.Exn.raiseError("HyperFuel does not support getting block hashes")
 }
