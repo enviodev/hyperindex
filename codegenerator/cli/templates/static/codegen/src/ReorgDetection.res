@@ -178,6 +178,14 @@ module LastBlockScannedHashes: {
     ~confirmedBlockThreshold: int,
   ) => lastBlockScannedData.blockNumber < currentHeight - confirmedBlockThreshold
 
+  type rec trampoline<'a> = Data('a) | Callback(unit => trampoline<'a>)
+
+  let rec trampoline = value =>
+    switch value {
+    | Data(v) => v
+    | Callback(fn) => fn()->trampoline
+    }
+
   //Prunes the back of the unneeded data on the queue
   let rec pruneStaleBlockDataInternal = (
     ~currentHeight,
@@ -190,10 +198,13 @@ module LastBlockScannedHashes: {
     // simply prune the earliest block in the case that the block is
     // outside of the confirmedBlockThreshold
     | None =>
-      lastBlockScannedDataListReversed->pruneEarliestBlockData(
-        ~currentHeight,
-        ~earliestMultiChainTimestampInThreshold,
-        ~confirmedBlockThreshold,
+      Callback(
+        () =>
+          lastBlockScannedDataListReversed->pruneEarliestBlockData(
+            ~currentHeight,
+            ~earliestMultiChainTimestampInThreshold,
+            ~confirmedBlockThreshold,
+          ),
       )
     | Some(timestampThresholdNeeded) =>
       switch lastBlockScannedDataListReversed {
@@ -203,15 +214,18 @@ module LastBlockScannedHashes: {
         // the earliest timestamp across all chains where the lastBlockScannedData is
         // still within the confirmedBlockThreshold)
         if second.blockTimestamp < timestampThresholdNeeded {
-          lastBlockScannedDataListReversed->pruneEarliestBlockData(
-            ~currentHeight,
-            ~earliestMultiChainTimestampInThreshold,
-            ~confirmedBlockThreshold,
+          Callback(
+            () =>
+              lastBlockScannedDataListReversed->pruneEarliestBlockData(
+                ~currentHeight,
+                ~earliestMultiChainTimestampInThreshold,
+                ~confirmedBlockThreshold,
+              ),
           )
         } else {
-          lastBlockScannedDataListReversed
+          Data(lastBlockScannedDataListReversed)
         }
-      | list{_} | list{} => lastBlockScannedDataListReversed
+      | list{_} | list{} => Data(lastBlockScannedDataListReversed)
       }
     }
   }
@@ -227,15 +241,18 @@ module LastBlockScannedHashes: {
       // recurse
       if earliestLastBlockData->blockDataIsPastThreshold(~currentHeight, ~confirmedBlockThreshold) {
         // Recurse to check the next item
-        tail->pruneStaleBlockDataInternal(
-          ~currentHeight,
-          ~earliestMultiChainTimestampInThreshold,
-          ~confirmedBlockThreshold,
+        Callback(
+          () =>
+            tail->pruneStaleBlockDataInternal(
+              ~currentHeight,
+              ~earliestMultiChainTimestampInThreshold,
+              ~confirmedBlockThreshold,
+            ),
         )
       } else {
-        lastBlockScannedDataListReversed
+        Data(lastBlockScannedDataListReversed)
       }
-    | list{} => list{}
+    | list{} => Data(list{})
     }
   }
 
@@ -245,12 +262,14 @@ module LastBlockScannedHashes: {
     ~earliestMultiChainTimestampInThreshold=?,
     {confirmedBlockThreshold, lastBlockScannedDataList}: t,
   ) => {
-    lastBlockScannedDataList
-    ->Belt.List.reverse
-    ->pruneStaleBlockDataInternal(
-      ~confirmedBlockThreshold,
-      ~currentHeight,
-      ~earliestMultiChainTimestampInThreshold,
+    trampoline(
+      lastBlockScannedDataList
+      ->Belt.List.reverse
+      ->pruneStaleBlockDataInternal(
+        ~confirmedBlockThreshold,
+        ~currentHeight,
+        ~earliestMultiChainTimestampInThreshold,
+      ),
     )
     ->Belt.List.reverse
     ->makeWithDataInternal(~confirmedBlockThreshold)
