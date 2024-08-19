@@ -90,7 +90,7 @@ type rec t = {
   registerType: register,
   latestFetchedBlock: blockNumberAndTimestamp,
   contractAddressMapping: ContractAddressingMap.mapping,
-  fetchedEventQueue: list<Types.eventBatchQueueItem>,
+  fetchedEventQueue: array<Types.eventBatchQueueItem>,
   //Used to prune dynamic contract registrations in the event
   //of a rollback.
   dynamicContracts: DynamicContractsMap.t,
@@ -134,8 +134,7 @@ Merges two event queues on a single event fetcher
 
 Pass the shorter list into A for better performance
 */
-let mergeSortedEventList =
-  mergeSortedList(~cmp=eventCmp, ...)
+let mergeSortedEventList = (a, b) => Utils.mergeSorted(eventCmp, a, b)
 
 /**
 Merges a node into its next registered branch. Combines contract address mappings and queues
@@ -207,19 +206,19 @@ events.
 let updateRegister = (
   self: t,
   ~latestFetchedBlock,
-  ~newFetchedEvents: list<Types.eventBatchQueueItem>,
+  ~newFetchedEvents: array<Types.eventBatchQueueItem>,
   ~isFetchingAtHead,
 ) => {
   let firstEventBlockNumber = switch self.firstEventBlockNumber {
   | Some(n) => Some(n)
-  | None => newFetchedEvents->List.head->Option.map(v => v.blockNumber)
+  | None => newFetchedEvents[0]->Option.map(v => v.blockNumber)
   }
   {
     ...self,
     isFetchingAtHead,
     latestFetchedBlock,
     firstEventBlockNumber,
-    fetchedEventQueue: List.concat(self.fetchedEventQueue, newFetchedEvents),
+    fetchedEventQueue: Array.concat(self.fetchedEventQueue, newFetchedEvents),
   }
 }
 
@@ -473,7 +472,9 @@ let makeNoItem = ({latestFetchedBlock}: t) => NoItem(latestFetchedBlock)
 let qItemLt = (a, b) => a->getCmpVal < b->getCmpVal
 
 type earliestEventResponse = {
-  updatedFetchState: t,
+  //make this lazy to prevent extra array duplications
+  //before evaluation of earliestQueueItem
+  getUpdatedFetchState: unit => t,
   earliestQueueItem: queueItem,
 }
 
@@ -482,7 +483,7 @@ Returns queue item WITHOUT the updated fetch state. Used for checking values
 not updating state
 */
 let getEarliestEventInRegister = (self: t) => {
-  switch self.fetchedEventQueue->List.head {
+  switch self.fetchedEventQueue[0] {
   | Some(head) => Item(head)
   | None => makeNoItem(self)
   }
@@ -492,12 +493,15 @@ let getEarliestEventInRegister = (self: t) => {
 Returns queue item WITH the updated fetch state. 
 */
 let getEarliestEventInRegisterWithUpdatedQueue = (self: t) => {
-  let (updatedFetchState, earliestQueueItem) = switch self.fetchedEventQueue {
-  | list{} => (self, makeNoItem(self))
-  | list{head, ...fetchedEventQueue} => ({...self, fetchedEventQueue}, Item(head))
+  let (getUpdatedFetchState, earliestQueueItem) = switch self.fetchedEventQueue[0] {
+  | None => (() => self, makeNoItem(self))
+  | Some(head) => (
+      () => {...self, fetchedEventQueue: self.fetchedEventQueue->Array.sliceToEnd(1)},
+      Item(head),
+    )
   }
 
-  {updatedFetchState, earliestQueueItem}
+  {getUpdatedFetchState, earliestQueueItem}
 }
 
 /**
@@ -531,10 +535,11 @@ contract register
 let getRegisterWithNextResponse = (
   register: t,
   ~dynamicContractId,
-  {updatedFetchState, earliestQueueItem},
+  {getUpdatedFetchState, earliestQueueItem},
 ) => {
   {
-    updatedFetchState: updatedFetchState->addNextRegister(~register, ~dynamicContractId),
+    getUpdatedFetchState: () =>
+      getUpdatedFetchState()->addNextRegister(~register, ~dynamicContractId),
     earliestQueueItem,
   }
 }
@@ -553,7 +558,7 @@ let rec popQItemAtRegisterId = (self: t, ~id) =>
   | DynamicContractRegister(dynamicContractId, nextRegister) =>
     nextRegister
     ->popQItemAtRegisterId(~id)
-    ->Result.map(getRegisterWithNextResponse(self, ~dynamicContractId, ...))
+    ->Result.map(getRegisterWithNextResponse(self, ~dynamicContractId, _))
   | RootRegister(_) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 
@@ -616,7 +621,7 @@ let makeInternal = (
     },
     contractAddressMapping,
     dynamicContracts,
-    fetchedEventQueue: list{},
+    fetchedEventQueue: [],
     firstEventBlockNumber: None,
   }
 }
@@ -657,7 +662,7 @@ let addNewRegisterToHead = (
     },
     contractAddressMapping,
     dynamicContracts,
-    fetchedEventQueue: list{},
+    fetchedEventQueue: [],
     firstEventBlockNumber: None,
   }
 }
@@ -702,19 +707,16 @@ let rec registerDynamicContract = (
   }
 }
 
-let rec queueSizeInternal = (self: t, ~accum) => {
-  let accum = self.fetchedEventQueue->List.size + accum
-  switch self.registerType {
-  | RootRegister(_) => accum
-  | DynamicContractRegister(_, nextRegister) => nextRegister->queueSizeInternal(~accum)
-  }
-}
-
 /**
 Calculates the cummulative queue sizes in all registers
 */
-let queueSize =
-  queueSizeInternal(~accum=0, ...)
+let rec queueSize = (self: t, ~accum=0) => {
+  let accum = self.fetchedEventQueue->Array.length + accum
+  switch self.registerType {
+  | RootRegister(_) => accum
+  | DynamicContractRegister(_, nextRegister) => nextRegister->queueSize(~accum)
+  }
+}
 
 /**
 Check the max queue size of the tip of the tree.
@@ -724,7 +726,7 @@ could be a deadlock. With a very small buffer size of the actively
 fetching registration
 */
 let isReadyForNextQuery = (self: t, ~maxQueueSize) =>
-  self.fetchedEventQueue->List.size < maxQueueSize
+  self.fetchedEventQueue->Array.length < maxQueueSize
 
 let rec getAllAddressesForContract = (~addresses=Set.String.empty, ~contractName, self: t) => {
   let addresses =
@@ -761,14 +763,16 @@ let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractA
 let getLatestFullyFetchedBlock = (self: t) => self.latestFetchedBlock
 
 let rec pruneQueuePastValidBlock = (
-  ~accumRev=list{},
+  queue: array<Types.eventBatchQueueItem>,
+  ~index=0,
+  ~accum=[],
   ~lastKnownValidBlock,
-  queue: list<Types.eventBatchQueueItem>,
 ) => {
-  switch queue {
-  | list{head, ...tail} if head.blockNumber <= lastKnownValidBlock.blockNumber =>
-    tail->pruneQueuePastValidBlock(~lastKnownValidBlock, ~accumRev=accumRev->List.add(head))
-  | _ => accumRev->List.reverse
+  switch queue[index] {
+  | Some(head) if head.blockNumber <= lastKnownValidBlock.blockNumber =>
+    let _ = accum->Js.Array2.push(head)
+    queue->pruneQueuePastValidBlock(~lastKnownValidBlock, ~accum, ~index=index + 1)
+  | _ => accum
   }
 }
 
@@ -867,7 +871,7 @@ module DebugHelpers = {
     }
 
   let rec getQueueSizesInternal = (self: t, ~accum) => {
-    let next = (self.registerType->registerToString, self.fetchedEventQueue->List.size)
+    let next = (self.registerType->registerToString, self.fetchedEventQueue->Array.length)
     let accum = list{next, ...accum}
     switch self.registerType {
     | RootRegister(_) => accum

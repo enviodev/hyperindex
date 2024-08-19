@@ -301,7 +301,7 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
         ~currentBlockHeight,
         ~latestFetchedBlockTimestamp,
         ~latestFetchedBlockNumber=heighestQueriedBlockNumber,
-        ~fetchedEvents=parsedQueueItems->List.fromArray,
+        ~fetchedEvents=parsedQueueItems,
         ~id={fetchStateId: fetchStateRegisterId, partitionId},
       )
       ->Utils.unwrapResultExn

@@ -447,7 +447,7 @@ type batchProcessed = {
   dynamicContractRegistrations: option<dynamicContractRegistrations>,
 }
 let processEventBatch = (
-  ~eventBatch: list<Types.eventBatchQueueItem>,
+  ~eventBatch: array<Types.eventBatchQueueItem>,
   ~inMemoryStore: InMemoryStore.t,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
@@ -455,7 +455,6 @@ let processEventBatch = (
   ~loadLayer,
   ~config,
 ) => {
-  let eventBatch = List.toArray(eventBatch)
   let logger = Logging.createChild(
     ~params={
       "context": "batch",

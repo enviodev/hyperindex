@@ -130,4 +130,12 @@ let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
   }
 }
 
+module Array = {
+  let removeAtIndex = (array, ~index) => {
+    let head = array->Js.Array2.slice(~start=0, ~end_=index + 1)
+    let tail = array->Belt.Array.sliceToEnd(index + 1)
+    [...head, ...tail]
+  }
+}
+
 external queueMicrotask: (unit => unit) => unit = "queueMicrotask"
