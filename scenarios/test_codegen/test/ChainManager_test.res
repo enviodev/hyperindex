@@ -5,7 +5,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
   let config = Config.getGenerated()
   let allEvents = []
 
-  let arbitraryEventPriorityQueue = ref(list{})
+  let arbitraryEventPriorityQueue = ref([])
   let numberOfMockEventsCreated = ref(0)
 
   let chainFetchers = config.chainMap->ChainMap.map(({chain}) => {
@@ -67,7 +67,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         switch queuesToUse {
         | 0 =>
           arbitraryEventPriorityQueue :=
-            list{batchItem}->FetchState.mergeSortedEventList(arbitraryEventPriorityQueue.contents)
+            [batchItem]->FetchState.mergeSortedEventList(arbitraryEventPriorityQueue.contents)
         | 1 =>
           fetchState :=
             fetchState.contents
@@ -77,7 +77,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                 blockNumber: batchItem.blockNumber,
                 blockTimestamp: batchItem.timestamp,
               },
-              ~fetchedEvents=list{batchItem},
+              ~fetchedEvents=[batchItem],
               ~currentBlockHeight=currentBlockNumber.contents,
             )
             ->Result.getExn
@@ -85,7 +85,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
         | _ =>
           if Js.Math.random() < 0.5 {
             arbitraryEventPriorityQueue :=
-              list{batchItem}->FetchState.mergeSortedEventList(arbitraryEventPriorityQueue.contents)
+              [batchItem]->FetchState.mergeSortedEventList(arbitraryEventPriorityQueue.contents)
           } else {
             fetchState :=
               fetchState.contents
@@ -95,7 +95,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
                   blockNumber: batchItem.blockNumber,
                   blockTimestamp: batchItem.timestamp,
                 },
-                ~fetchedEvents=list{batchItem},
+                ~fetchedEvents=[batchItem],
                 ~currentBlockHeight=currentBlockNumber.contents,
               )
               ->Result.getExn
@@ -131,7 +131,7 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
 
   (
     {
-      ChainManager.arbitraryEventPriorityQueue: arbitraryEventPriorityQueue.contents,
+      ChainManager.arbitraryEventQueue: arbitraryEventPriorityQueue.contents,
       chainFetchers,
       isUnorderedMultichainMode: false,
     },
@@ -169,12 +169,13 @@ describe("ChainManager", () => {
           // ensure that the events are ordered correctly
           switch eventsInBlock {
           | None => chainManager
-          | Some({batch, batchSize, fetchStatesMap, arbitraryEventQueue}) =>
-            batch->List.forEach(
+          | Some({batch, fetchStatesMap, arbitraryEventQueue}) =>
+            batch->Belt.Array.forEach(
               i => {
-                allEventsRead->Js.Array2.push(i)
+                let _ = allEventsRead->Js.Array2.push(i)
               },
             )
+            let batchSize = batch->Array.length
             numberOfMockEventsReadFromQueues :=
               numberOfMockEventsReadFromQueues.contents + batchSize
             // Check that events has at least 1 item in it
@@ -184,7 +185,7 @@ describe("ChainManager", () => {
               ~message="if `Some` is returned, the array must have at least 1 item in it.",
             )
 
-            let firstEventInBlock = batch->List.headExn
+            let firstEventInBlock = batch[0]->Option.getExn
 
             Assert.equal(
               firstEventInBlock->ChainManager.ExposedForTesting_Hidden.getComparitorFromItem >
@@ -234,7 +235,7 @@ describe("ChainManager", () => {
 
             let nextChainManager: ChainManager.t = {
               ...chainManager,
-              arbitraryEventPriorityQueue: arbitraryEventQueue,
+              arbitraryEventQueue,
               chainFetchers: nextChainFetchers,
             }
             testThatCreatedEventsAreOrderedCorrectly(nextChainManager, lastEvent)
@@ -248,7 +249,7 @@ describe("ChainManager", () => {
 
         // Test that no events were missed
         let amountStillOnQueues =
-          finalChainManager.arbitraryEventPriorityQueue->List.length +
+          finalChainManager.arbitraryEventQueue->Array.length +
             finalChainManager.chainFetchers
             ->ChainMap.values
             ->Belt.Array.reduce(
@@ -299,7 +300,7 @@ describe("determineNextEvent", () => {
         blockNumber: 0,
       },
       contractAddressMapping: ContractAddressingMap.make(),
-      fetchedEventQueue: item->Option.mapWithDefault(list{}, v => list{v}),
+      fetchedEventQueue: item->Option.mapWithDefault([], v => [v]),
       dynamicContracts: FetchState.DynamicContractsMap.empty,
       firstEventBlockNumber: item->Option.map(v => v.blockNumber),
     }
