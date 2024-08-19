@@ -100,24 +100,6 @@ type rec t = {
 and register = RootRegister({endBlock: option<int>}) | DynamicContractRegister(dynamicContractId, t)
 
 /**
-Merges two sorted/ordered lists. TCO
-
-Pass the shorter list into A for better performance
-*/
-let rec mergeSortedList = (~sortedRev=list{}, ~cmp, a, b) => {
-  switch (a, b) {
-  | (list{aHead, ...aTail}, list{bHead, ...bTail}) =>
-    let (nextA, nextB, nextItem) = if cmp(aHead, bHead) {
-      (aTail, b, aHead)
-    } else {
-      (bTail, a, bHead)
-    }
-    mergeSortedList(nextA, nextB, ~cmp, ~sortedRev=sortedRev->List.add(nextItem))
-  | (rest, list{}) | (list{}, rest) => List.reverseConcat(sortedRev, rest)
-  }
-}
-
-/**
 Comapritor for two events from the same chain. No need for chain id or timestamp
 */
 let getEventCmp = (event: Types.eventBatchQueueItem) => {
