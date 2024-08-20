@@ -9,8 +9,8 @@
     "watch": "rescript -w",
     "format": "rescript format -all",
     "db-up": "node -e 'require(`./src/db/Migrations.bs.js`).runUpMigrations(true)'",
-    "db-down": "node -e 'require(`./src/db/Migrations.bs.js`).runDownMigrations(true, true)'",
-    "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).setupDb(true)'",
+    "db-down": "node -e 'require(`./src/db/Migrations.bs.js`).runDownMigrations(true)'",
+    "db-setup": "node -e 'require(`./src/db/Migrations.bs.js`).setupDb()'",
     "db-track-tables": "node -e 'require(`./db/src/Migrations.bs.js`).trackAllTables()'",
     "start": "node src/Index.bs.js"
   },
