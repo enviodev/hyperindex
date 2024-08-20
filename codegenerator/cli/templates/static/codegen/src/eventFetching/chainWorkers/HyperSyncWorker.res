@@ -3,19 +3,22 @@ open Belt
 
 module Make = (
   T: {
-    let config: Config.t
-    let chainConfig: Config.chainConfig
+    let contracts: array<Config.contract>
+    let chain: ChainMap.Chain.t
     let endpointUrl: string
+    let allEventSignatures: array<string>
+    let shouldUseHypersyncClientDecoder: bool
   },
 ): S => {
   let name = "HyperSync"
-  let chain = T.chainConfig.chain
+  let chain = T.chain
+
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
-  let getHscDecoder = () =>
+  let getHscDecoder = () => {
     switch hscDecoder.contents {
     | Some(decoder) => decoder
     | None =>
-      switch HyperSyncClient.Decoder.fromSignatures(T.config.allEventSignatures) {
+      switch HyperSyncClient.Decoder.fromSignatures(T.allEventSignatures) {
       | exception exn =>
         exn->ErrorHandling.mkLogAndRaise(
           ~msg="Failed to instantiate a decoder from hypersync client, please double check your ABI or try using 'event_decoder: viem' config option",
@@ -25,6 +28,7 @@ module Make = (
         decoder
       }
     }
+  }
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -125,7 +129,7 @@ module Make = (
 
     //Instantiate each time to add new registered contract addresses
     let contractInterfaceManager = ContractInterfaceManager.make(
-      ~chainConfig=T.chainConfig,
+      ~contracts=T.contracts,
       ~contractAddressMapping,
     )
 
@@ -164,6 +168,7 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
+    let config = Config.getGenerated()
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
       let {
@@ -253,7 +258,7 @@ module Make = (
       let parsingTimeRef = Hrtime.makeTimer()
 
       //Parse page items into queue items
-      let parsedQueueItemsPreFilter = if T.config.shouldUseHypersyncClientDecoder {
+      let parsedQueueItemsPreFilter = if T.shouldUseHypersyncClientDecoder {
         //Currently there are still issues with decoder for some cases so
         //this can only be activated with a flag
 
@@ -274,7 +279,7 @@ module Make = (
           let (event, eventMod) = switch event
           ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
           ->Converters.convertHyperSyncEvent(
-            ~config=T.config,
+            ~config,
             ~contractInterfaceManager,
             ~log=item.log,
             ~block,
@@ -305,7 +310,7 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           switch Converters.parseEvent(
             ~log=item.log,
-            ~config=T.config,
+            ~config,
             ~transaction=item.transaction,
             ~block=item.block,
             ~contractInterfaceManager,

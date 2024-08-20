@@ -61,9 +61,11 @@ module type S = {
       let key: string
       let name: string
       let contractName: string
+      let topic0: string
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
+      let decodeHyperFuelData: string => eventArgs
     }
     module type InternalEvent = Event with type eventArgs = internalEventArgs
 
@@ -101,43 +103,6 @@ module type S = {
     }
   }
 
-  module Config: {
-    type contract = {
-      name: string,
-      abi: Ethers.abi,
-      addresses: array<Ethers.ethAddress>,
-      events: array<module(Types.Event)>,
-    }
-
-    type syncConfig = {
-      initialBlockInterval: int,
-      backoffMultiplicative: float,
-      accelerationAdditive: int,
-      intervalCeiling: int,
-      backoffMillis: int,
-      queryTimeoutMillis: int,
-    }
-
-    type hyperSyncConfig = {endpointUrl: string}
-
-    type hyperFuelConfig = {endpointUrl: string}
-
-    type rpcConfig = {
-      provider: Ethers.JsonRpcProvider.t,
-      syncConfig: syncConfig,
-    }
-
-    type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
-
-    type chainConfig = {
-      syncSource: syncSource,
-      startBlock: int,
-      endBlock: option<int>,
-      confirmedBlockThreshold: int,
-      chain: ChainMap.Chain.t,
-      contracts: array<contract>,
-    }
-  }
 
   module ReorgDetection: {
     type blockNumberAndHash = {
@@ -190,6 +155,45 @@ module type S = {
         ~currentBlockHeight: int,
         ~setCurrentBlockHeight: int => unit,
       ) => promise<result<blockRangeFetchResponse, ErrorHandling.t>>
+    }
+  }
+
+  module Config: {
+    type contract = {
+      name: string,
+      abi: Ethers.abi,
+      addresses: array<Ethers.ethAddress>,
+      events: array<module(Types.Event)>,
+    }
+
+    type syncConfig = {
+      initialBlockInterval: int,
+      backoffMultiplicative: float,
+      accelerationAdditive: int,
+      intervalCeiling: int,
+      backoffMillis: int,
+      queryTimeoutMillis: int,
+    }
+
+    type hyperSyncConfig = {endpointUrl: string}
+
+    type hyperFuelConfig = {endpointUrl: string}
+
+    type rpcConfig = {
+      provider: Ethers.JsonRpcProvider.t,
+      syncConfig: syncConfig,
+    }
+
+    type syncSource = HyperSync(hyperSyncConfig) | HyperFuel(hyperFuelConfig) | Rpc(rpcConfig)
+
+    type chainConfig = {
+      syncSource: syncSource,
+      startBlock: int,
+      endBlock: option<int>,
+      confirmedBlockThreshold: int,
+      chain: ChainMap.Chain.t,
+      contracts: array<contract>,
+      chainWorker: module(ChainWorker.S),
     }
   }
 }

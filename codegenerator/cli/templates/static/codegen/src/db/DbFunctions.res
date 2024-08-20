@@ -1,4 +1,15 @@
-let config: Postgres.poolConfig = Config.db
+let config: Postgres.poolConfig = {
+  host: Env.Db.host,
+  port: Env.Db.port,
+  username: Env.Db.user,
+  password: Env.Db.password,
+  database: Env.Db.database,
+  ssl: Env.Db.ssl,
+  // TODO: think how we want to pipe these logs to pino.
+  onnotice: ?(Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(_str => ())),
+  transform: {undefined: Null},
+  max: 2,
+}
 let sql = Postgres.makeSql(~config)
 
 type chainId = int

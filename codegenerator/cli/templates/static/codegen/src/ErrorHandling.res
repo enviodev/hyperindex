@@ -11,7 +11,7 @@ let makeExnType = (exn): exnType => {
   }
 }
 
-let make = (~logger=Logging.logger, ~msg=?, exn) => {
+let make = (exn, ~logger=Logging.logger, ~msg=?) => {
   {logger, msg, exn: exn->makeExnType}
 }
 

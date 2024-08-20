@@ -142,7 +142,7 @@ module Stubs = {
       ~waitForNewBlock=makeWaitForNewBlock(stubData, ...),
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
-          ~getBlockHashes=makeGetBlockHashes(~stubData, ~chainWorker=chainFetcher.chainWorker),
+          ~getBlockHashes=makeGetBlockHashes(~stubData, ~chainWorker=chainFetcher.chainConfig.chainWorker),
         ),
       ~registeredEvents=RegisteredEvents.global,
     )(

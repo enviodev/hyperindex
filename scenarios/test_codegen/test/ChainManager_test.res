@@ -116,9 +116,8 @@ let populateChainQueuesWithRandomEvents = (~runTime=1000, ~maxBlockTime=15, ()) 
       numBatchesFetched: 0,
       fetchState: fetchState.contents,
       logger: Logging.logger,
-      chainConfig: config.defaultChain->Utils.magic,
+      chainConfig,
       // This is quite a hack - but it works!
-      chainWorker: ChainFetcher.makeChainWorker(~config, ~chainConfig),
       lastBlockScannedHashes: ReorgDetection.LastBlockScannedHashes.empty(
         ~confirmedBlockThreshold=200,
       ),

@@ -448,15 +448,18 @@ let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
   if shouldDropRawEvents {
     await deleteAllTables()->Promise.catch(err => {
       exitCode := Failure
-      Logging.errorWithExn(err, "EE804: Error dropping entity tables")->Promise.resolve
+      err
+        ->ErrorHandling.make(~msg="EE804: Error dropping entity tables")
+        ->ErrorHandling.log
+      Promise.resolve()
     })
   } else {
     await deleteAllTablesExceptRawEventsAndDynamicContractRegistry()->Promise.catch(err => {
       exitCode := Failure
-      Logging.errorWithExn(
-        err,
-        "EE805: Error dropping entity tables except for raw events",
-      )->Promise.resolve
+      err
+        ->ErrorHandling.make(~msg="EE805: Error dropping entity tables except for raw events")
+        ->ErrorHandling.log
+      Promise.resolve()
     })
   }
   if shouldExit {
