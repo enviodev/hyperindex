@@ -195,7 +195,6 @@ type earliestQueueItem =
 let rec getFirstArbitraryEventsItemForChain = (
   queue: array<Types.eventBatchQueueItem>,
   ~index=0,
-  ~head=[],
   ~chain,
 ) => {
   switch queue[index] {
@@ -205,8 +204,7 @@ let rec getFirstArbitraryEventsItemForChain = (
     if first.chain == chain {
       Some((first, () => queue->Utils.Array.removeAtIndex(index)))
     } else {
-      let _ = head->Js.Array2.push(first)
-      queue->getFirstArbitraryEventsItemForChain(~chain, ~index=nextIndex, ~head)
+      queue->getFirstArbitraryEventsItemForChain(~chain, ~index=nextIndex)
     }
   }
 }

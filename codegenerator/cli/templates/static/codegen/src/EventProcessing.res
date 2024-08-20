@@ -298,7 +298,6 @@ let rec registerDynamicContracts = (
 ) => {
   switch eventBatch[index] {
   | None => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
-  // | list{eventBatchQueueItem, ...tail} =>
   | Some(eventBatchQueueItem) =>
     let dynamicContractRegistrationsResult = if (
       eventBatchQueueItem.hasRegisteredDynamicContracts->Option.getWithDefault(false)
