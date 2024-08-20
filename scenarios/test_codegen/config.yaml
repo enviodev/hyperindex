@@ -29,6 +29,8 @@ networks:
           - event: "TestEventThatCopiesBigIntViaLinkedEntities(string param_that_should_be_removed_when_issue_1026_is_fixed)"
           - event: "TestEventWithReservedKeyword(string module)"
           - event: "TestEvent"
+          - event: "TestEvent()"
+            name: "TestEventWithCustomName"
           - event: "NewGravatar"
           - event: "UpdatedGravatar"
       - name: NftFactory

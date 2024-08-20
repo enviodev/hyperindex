@@ -54,6 +54,7 @@ pub mod evm {
                     .into_iter()
                     .map(|event| EventConfig {
                         event: EventConfig::event_string_from_abi_event(&event),
+                        name: None,
                     })
                     .collect();
 
@@ -310,6 +311,7 @@ pub mod fuel {
                                     .iter()
                                     .map(|selected_log| human_config::evm::EventConfig {
                                         event: format!("{}()", selected_log.event_name),
+                                        name: None,
                                     })
                                     .collect(),
                             }),

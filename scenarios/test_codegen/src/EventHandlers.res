@@ -107,3 +107,11 @@ Handlers.Gravatar.TestEventThatCopiesBigIntViaLinkedEntities.handler(async ({con
   await copyStringFromGrandchildIfAvailable(aIdWithGrandChildC)
   await copyStringFromGrandchildIfAvailable(aIdWithNoGrandChildC)
 })
+
+// Generates modules for both TestEvent and TestEventWithCustomName
+Handlers.Gravatar.TestEventWithCustomName.handler(async _ => {
+  ()
+})
+Handlers.Gravatar.TestEvent.handler(async _ => {
+  ()
+})
