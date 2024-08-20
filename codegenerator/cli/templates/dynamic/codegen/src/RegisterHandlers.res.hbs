@@ -46,31 +46,34 @@ let registerContractHandlers = (
         {{/each}}
       ]
       let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
+      {{#if chain_config.network_config.rpc_config }}
+      let rpcConfig: Config.rpcConfig = {
+        provider: Ethers.JsonRpcProvider.make(
+          ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
+          ~chainId={{chain_config.network_config.id}},
+          ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
+        ),
+        {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
+        syncConfig: Config.getSyncConfig({
+          initialBlockInterval: {{sync_config.initial_block_interval}},
+          backoffMultiplicative: {{sync_config.backoff_multiplicative}},
+          accelerationAdditive: {{sync_config.acceleration_additive}},
+          intervalCeiling: {{sync_config.interval_ceiling}},
+          backoffMillis: {{sync_config.backoff_millis}},
+          queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+        }),
+        {{/with}}
+      }
+      {{/if}}
       {
         Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
         syncSource: 
           {{#if chain_config.network_config.rpc_config}}
-          Rpc({
-            provider: Ethers.JsonRpcProvider.make(
-              ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
-              ~chainId={{chain_config.network_config.id}},
-              ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
-            ),
-          {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
-            syncConfig: Config.getSyncConfig({
-              initialBlockInterval: {{sync_config.initial_block_interval}},
-              backoffMultiplicative: {{sync_config.backoff_multiplicative}},
-              accelerationAdditive: {{sync_config.acceleration_additive}},
-              intervalCeiling: {{sync_config.interval_ceiling}},
-              backoffMillis: {{sync_config.backoff_millis}},
-              queryTimeoutMillis: {{sync_config.query_timeout_millis}},
-            }),
-          }),
-          {{/with}}
+          Rpc(rpcConfig)
           {{/if}}
           {{#if chain_config.network_config.skar_server_url}}
-          HyperSync({endpointUrl: "{{chain_config.network_config.skar_server_url}}"}),
-          {{/if}}
+          HyperSync({endpointUrl: "{{chain_config.network_config.skar_server_url}}"})
+          {{/if}},
         startBlock: {{chain_config.network_config.start_block}},
         endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
         chain,
@@ -80,23 +83,7 @@ let registerContractHandlers = (
           module(RpcWorker.Make({
             let chain = chain
             let contracts = contracts
-            let rpcConfig: Config.rpcConfig = {
-              provider: Ethers.JsonRpcProvider.make(
-                ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
-                ~chainId={{chain_config.network_config.id}},
-                ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
-              ),
-              {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
-              syncConfig: Config.getSyncConfig({
-                initialBlockInterval: {{sync_config.initial_block_interval}},
-                backoffMultiplicative: {{sync_config.backoff_multiplicative}},
-                accelerationAdditive: {{sync_config.acceleration_additive}},
-                intervalCeiling: {{sync_config.interval_ceiling}},
-                backoffMillis: {{sync_config.backoff_millis}},
-                queryTimeoutMillis: {{sync_config.query_timeout_millis}},
-              }),
-              {{/with}}
-            }
+            let rpcConfig = rpcConfig
           }))
           {{/if}}
           {{#if chain_config.network_config.skar_server_url }}
