@@ -36,3 +36,37 @@ describe("Merge Sorted", () => {
     Assert.strictEqual(right, Utils.mergeSorted((x, y) => x <= y, [], right))
   })
 })
+
+describe("Array removeIndex", () => {
+  it("array of length 1", () => {
+    let arr = [1]
+    Assert.deepEqual(
+      arr->Utils.Array.removeAtIndex(0),
+      [],
+      ~message="Should have removed single value",
+    )
+    Assert.deepEqual(arr, [1], ~message="Original array should not have changed")
+  })
+
+  it("array of length 0", () => {
+    let arr = []
+    Assert.deepEqual(arr->Utils.Array.removeAtIndex(0), [], ~message="Should remain empty")
+    Assert.deepEqual(arr, [], ~message="Original array should not have changed")
+  })
+
+  it("happy case", () => {
+    let arr = [1, 2, 3]
+    Assert.deepEqual(arr->Utils.Array.removeAtIndex(1), [1, 3])
+    Assert.deepEqual(arr, [1, 2, 3], ~message="Original array should not have changed")
+  })
+
+  it("index out of bounds", () => {
+    let arr = [1, 2, 3]
+    Assert.deepEqual(arr->Utils.Array.removeAtIndex(3), [1, 2, 3])
+  })
+
+  it("negative index", () => {
+    let arr = [1, 2, 3]
+    Assert.deepEqual(arr->Utils.Array.removeAtIndex(-2), [1, 2, 3])
+  })
+})

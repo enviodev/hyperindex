@@ -131,10 +131,19 @@ let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
 }
 
 module Array = {
-  let removeAtIndex = (array, ~index) => {
-    let head = array->Js.Array2.slice(~start=0, ~end_=index + 1)
-    let tail = array->Belt.Array.sliceToEnd(index + 1)
-    [...head, ...tail]
+  /**
+  Creates a new array removing the item at the given index
+
+  Index > array length or < 0 results in a copy of the array
+  */
+  let removeAtIndex = (array, index) => {
+    if index < 0 || index >= array->Array.length {
+      array->Array.copy
+    } else {
+      let head = array->Js.Array2.slice(~start=0, ~end_=index)
+      let tail = array->Belt.Array.sliceToEnd(index + 1)
+      [...head, ...tail]
+    }
   }
 }
 

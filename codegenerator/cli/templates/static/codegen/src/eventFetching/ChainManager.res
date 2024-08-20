@@ -203,7 +203,7 @@ let rec getFirstArbitraryEventsItemForChain = (
   | Some(first) =>
     let nextIndex = index + 1
     if first.chain == chain {
-      Some((first, () => queue->Utils.Array.removeAtIndex(~index)))
+      Some((first, () => queue->Utils.Array.removeAtIndex(index)))
     } else {
       let _ = head->Js.Array2.push(first)
       queue->getFirstArbitraryEventsItemForChain(~chain, ~index=nextIndex, ~head)
