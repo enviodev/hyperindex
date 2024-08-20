@@ -51,24 +51,6 @@ let make = () => {
   addressesByName: Js.Dict.empty(),
 }
 
-// Insert the static address into the Contract <-> Address bi-mapping
-let registerStaticAddresses = (mapping, ~chainConfig: Config.chainConfig, ~logger: Pino.t) => {
-  chainConfig.contracts->Belt.Array.forEach(contract => {
-    contract.addresses->Belt.Array.forEach(address => {
-      Logging.childTrace(
-        logger,
-        {
-          "msg": "adding contract address",
-          "contractName": contract.name,
-          "address": address,
-        },
-      )
-
-      mapping->addAddress(~name=contract.name, ~address)
-    })
-  })
-}
-
 let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress): option<
   contractName,
 > => {

@@ -1,16 +1,25 @@
 open ChainWorker
 open Belt
 
+/*
+ Requires following dependencies to be installed:
+  "@fuel-ts/crypto": "0.89.1",
+  "@fuel-ts/errors": "0.89.1",
+  "@fuel-ts/hasher": "0.89.1",
+  "@fuel-ts/math": "0.89.1",
+  "@fuel-ts/utils": "0.89.1",
+  "@fuel-ts/address": "0.89.1",
+  "@envio-dev/hyperfuel-client": "1.1.0",
+ */
 module Make = (
   T: {
-    let config: Config.t
-    let chainConfig: Config.chainConfig
+    let chain: ChainMap.Chain.t
+    let contracts: array<Config.contract>
     let endpointUrl: string
   },
 ): S => {
   let name = "HyperFuel"
-  let chainConfig = T.chainConfig
-  let chain = chainConfig.chain
+  let chain = T.chain
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -107,7 +116,7 @@ module Make = (
     )
 
     //Instantiate each time to add new registered contract addresses
-    let contractsReceiptQuery = chainConfig.contracts->Belt.Array.keepMap((contract): option<
+    let contractsReceiptQuery = T.contracts->Belt.Array.keepMap((contract): option<
       HyperFuel.contractReceiptQuery,
     > => {
       switch contractAddressMapping->ContractAddressingMap.getAddressesFromContractName(
@@ -150,6 +159,7 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
+    let config = Config.getGenerated()
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
       let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
@@ -250,7 +260,7 @@ module Make = (
               | LogData({rb}) => rb
               }
               let eventMod =
-                T.config->Config.getEventModOrThrow(
+                config->Config.getEventModOrThrow(
                   ~contractName,
                   ~topic0=logId->Js.BigInt.toString,
                 )

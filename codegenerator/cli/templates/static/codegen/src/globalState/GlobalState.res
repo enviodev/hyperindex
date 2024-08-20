@@ -658,7 +658,7 @@ let checkAndFetchForChain = (
   ~dispatchAction,
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  let {fetchState, chainWorker, logger, currentBlockHeight, isFetchingBatch} = chainFetcher
+  let {fetchState, chainConfig: {chainWorker}, logger, currentBlockHeight, isFetchingBatch} = chainFetcher
 
   if (
     !isFetchingBatch &&

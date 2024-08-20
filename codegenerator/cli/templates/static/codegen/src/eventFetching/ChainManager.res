@@ -103,7 +103,7 @@ let makeFromConfig = (
   ~config: Config.t,
   ~maxAddrInPartition=Env.maxAddrInPartition,
 ): t => {
-  let chainFetchers = config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~config,~maxAddrInPartition))
+  let chainFetchers = config.chainMap->ChainMap.map(ChainFetcher.makeFromConfig(_, ~maxAddrInPartition))
   {
     chainFetchers,
     arbitraryEventPriorityQueue: list{},
@@ -119,7 +119,7 @@ let makeFromDbState = async (
     await config.chainMap
     ->ChainMap.entries
     ->Array.map(async ((chain, chainConfig)) => {
-      (chain, await chainConfig->ChainFetcher.makeFromDbState(~config, ~maxAddrInPartition))
+      (chain, await chainConfig->ChainFetcher.makeFromDbState(~maxAddrInPartition))
     })
     ->Promise.all
 

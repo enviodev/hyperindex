@@ -11,36 +11,44 @@ type chainConfig = Config.chainConfig
 let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
   let provider = hre->getProvider
 
+  let contracts = [
+    {
+      Config.name: "NftFactory",
+      abi: Abis.nftFactoryAbi->Ethers.makeAbi,
+      addresses: [nftFactoryContractAddress],
+      events: [module(Types.NftFactory.SimpleNftCreated)],
+    },
+    {
+      name: "SimpleNft",
+      abi: Abis.simpleNftAbi->Ethers.makeAbi,
+      addresses: [],
+      events: [module(Types.SimpleNft.Transfer)],
+    },
+  ]
+  let rpcConfig: Config.rpcConfig = {
+    provider,
+    syncConfig: {
+      initialBlockInterval: 10000,
+      backoffMultiplicative: 10000.,
+      accelerationAdditive: 10000,
+      intervalCeiling: 10000,
+      backoffMillis: 10000,
+      queryTimeoutMillis: 10000,
+    },
+  }
+  let chain = MockConfig.chain1337
   {
     confirmedBlockThreshold: 200,
-    syncSource: Rpc({
-      provider,
-      syncConfig: {
-        initialBlockInterval: 10000,
-        backoffMultiplicative: 10000.,
-        accelerationAdditive: 10000,
-        intervalCeiling: 10000,
-        backoffMillis: 10000,
-        queryTimeoutMillis: 10000,
-      },
-    }),
+    syncSource: Rpc(rpcConfig),
     startBlock: 1,
     endBlock: None,
-    chain: MockConfig.chain1337,
-    contracts: [
-      {
-        name: "NftFactory",
-        abi: Abis.nftFactoryAbi->Ethers.makeAbi,
-        addresses: [nftFactoryContractAddress],
-        events: [module(Types.NftFactory.SimpleNftCreated)],
-      },
-      {
-        name: "SimpleNft",
-        abi: Abis.simpleNftAbi->Ethers.makeAbi,
-        addresses: [],
-        events: [module(Types.SimpleNft.Transfer)],
-      },
-    ],
+    chain,
+    contracts,
+    chainWorker: module(RpcWorker.Make({
+      let chain = chain
+      let contracts = contracts
+      let rpcConfig = rpcConfig
+    })),
   }
 }
 

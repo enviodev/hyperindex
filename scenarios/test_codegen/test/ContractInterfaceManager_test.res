@@ -2,14 +2,32 @@ open RescriptMocha
 
 open ContractInterfaceManager
 
+// Insert the static address into the Contract <-> Address bi-mapping
+let registerStaticAddresses = (mapping, ~chainConfig: Config.chainConfig, ~logger: Pino.t) => {
+  chainConfig.contracts->Belt.Array.forEach(contract => {
+    contract.addresses->Belt.Array.forEach(address => {
+      Logging.childTrace(
+        logger,
+        {
+          "msg": "adding contract address",
+          "contractName": contract.name,
+          "address": address,
+        },
+      )
+
+      mapping->ContractAddressingMap.addAddress(~name=contract.name, ~address)
+    })
+  })
+}
+
 describe("Test ContractInterfaceManager", () => {
   it("Full config contractInterfaceManager gets all topics and addresses for filters", () => {
     let logger = Logging.logger
     let chainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
     let contractAddressMapping = ContractAddressingMap.make()
-    contractAddressMapping->ContractAddressingMap.registerStaticAddresses(~chainConfig, ~logger)
+    contractAddressMapping->registerStaticAddresses(~chainConfig, ~logger)
 
-    let contractInterfaceManager = make(~contractAddressMapping, ~chainConfig)
+    let contractInterfaceManager = make(~contractAddressMapping, ~contracts=chainConfig.contracts)
 
     let {topics, addresses} = contractInterfaceManager->getAllTopicsAndAddresses
 

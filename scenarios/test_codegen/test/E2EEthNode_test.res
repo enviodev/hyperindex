@@ -17,8 +17,17 @@ describe("E2E Integration Test", () => {
     await SetupRpcNode.runBasicGravatarTransactions(contracts.gravatar)
     let provider = Hardhat.hardhatProvider
     let localChainConfig: Config.chainConfig = {
-      confirmedBlockThreshold: 200,
-      syncSource: Rpc({
+      let contracts = [
+        {
+          Config.name: "GravatarRegistry",
+          abi: Abis.gravatarAbi->Ethers.makeAbi,
+          addresses: [
+            "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
+          ],
+          events: [module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
+        },
+      ]
+      let rpcConfig: Config.rpcConfig = {
         provider,
         syncConfig: {
           initialBlockInterval: 10000,
@@ -28,20 +37,21 @@ describe("E2E Integration Test", () => {
           backoffMillis: 10000,
           queryTimeoutMillis: 10000,
         },
-      }),
-      startBlock: 0,
-      endBlock: None,
-      chain: MockConfig.chain1337,
-      contracts: [
-        {
-          name: "GravatarRegistry",
-          abi: Abis.gravatarAbi->Ethers.makeAbi,
-          addresses: [
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Ethers.getAddressFromStringUnsafe,
-          ],
-          events: [module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
-        },
-      ],
+      }
+      let chain = MockConfig.chain1337
+      {
+        confirmedBlockThreshold: 200,
+        syncSource: Rpc(rpcConfig),
+        startBlock: 0,
+        endBlock: None,
+        chain,
+        contracts,
+        chainWorker: module(RpcWorker.Make({
+          let chain = chain
+          let contracts = contracts
+          let rpcConfig = rpcConfig
+        })),
+      }
     }
 
     let config = RegisterHandlers.registerAllHandlers()

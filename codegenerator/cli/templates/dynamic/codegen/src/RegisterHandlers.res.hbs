@@ -27,37 +27,10 @@ let registerContractHandlers = (
   let chains = [
     {{#each chain_configs as | chain_config |}}
     {
-      Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
-      syncSource: 
-        {{#if chain_config.network_config.rpc_config}}
-        Rpc({
-          provider: Ethers.JsonRpcProvider.make(
-            ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
-            ~chainId={{chain_config.network_config.id}},
-            ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
-          ),
-        {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
-          syncConfig: Config.getSyncConfig({
-            initialBlockInterval: {{sync_config.initial_block_interval}},
-            backoffMultiplicative: {{sync_config.backoff_multiplicative}},
-            accelerationAdditive: {{sync_config.acceleration_additive}},
-            intervalCeiling: {{sync_config.interval_ceiling}},
-            backoffMillis: {{sync_config.backoff_millis}},
-            queryTimeoutMillis: {{sync_config.query_timeout_millis}},
-          }),
-        }),
-        {{/with}}
-        {{/if}}
-        {{#if chain_config.network_config.skar_server_url}}
-        HyperSync({endpointUrl: "{{chain_config.network_config.skar_server_url}}"}),
-        {{/if}}
-      startBlock: {{chain_config.network_config.start_block}},
-      endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
-      chain: ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}}),
-      contracts: [
-      {{#each chain_config.codegen_contracts as | contract |}}
+      let contracts = [
+        {{#each chain_config.codegen_contracts as | contract |}}
         {
-          name: "{{contract.name.capitalized}}",
+          Config.name: "{{contract.name.capitalized}}",
           abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
           addresses: [
             {{#each contract.addresses as | address |}}
@@ -70,8 +43,81 @@ let registerContractHandlers = (
             {{/each}}
           ],
         },
-      {{/each}}
-      ],
+        {{/each}}
+      ]
+      let chain = ChainMap.Chain.makeUnsafe(~chainId={{chain_config.network_config.id}})
+      {
+        Config.confirmedBlockThreshold: {{chain_config.network_config.confirmed_block_threshold}},
+        syncSource: 
+          {{#if chain_config.network_config.rpc_config}}
+          Rpc({
+            provider: Ethers.JsonRpcProvider.make(
+              ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
+              ~chainId={{chain_config.network_config.id}},
+              ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
+            ),
+          {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
+            syncConfig: Config.getSyncConfig({
+              initialBlockInterval: {{sync_config.initial_block_interval}},
+              backoffMultiplicative: {{sync_config.backoff_multiplicative}},
+              accelerationAdditive: {{sync_config.acceleration_additive}},
+              intervalCeiling: {{sync_config.interval_ceiling}},
+              backoffMillis: {{sync_config.backoff_millis}},
+              queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+            }),
+          }),
+          {{/with}}
+          {{/if}}
+          {{#if chain_config.network_config.skar_server_url}}
+          HyperSync({endpointUrl: "{{chain_config.network_config.skar_server_url}}"}),
+          {{/if}}
+        startBlock: {{chain_config.network_config.start_block}},
+        endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
+        chain,
+        contracts,
+        chainWorker:
+          {{#if chain_config.network_config.rpc_config }}
+          module(RpcWorker.Make({
+            let chain = chain
+            let contracts = contracts
+            let rpcConfig: Config.rpcConfig = {
+              provider: Ethers.JsonRpcProvider.make(
+                ~rpcUrls={{vec_to_array chain_config.network_config.rpc_config.urls}},
+                ~chainId={{chain_config.network_config.id}},
+                ~fallbackStallTimeout={{chain_config.network_config.rpc_config.sync_config.fallback_stall_timeout}},
+              ),
+              {{#with chain_config.network_config.rpc_config.sync_config as | sync_config |}}
+              syncConfig: Config.getSyncConfig({
+                initialBlockInterval: {{sync_config.initial_block_interval}},
+                backoffMultiplicative: {{sync_config.backoff_multiplicative}},
+                accelerationAdditive: {{sync_config.acceleration_additive}},
+                intervalCeiling: {{sync_config.interval_ceiling}},
+                backoffMillis: {{sync_config.backoff_millis}},
+                queryTimeoutMillis: {{sync_config.query_timeout_millis}},
+              }),
+              {{/with}}
+            }
+          }))
+          {{/if}}
+          {{#if chain_config.network_config.skar_server_url }}
+          module(HyperSyncWorker.Make({
+            let chain = chain
+            let contracts = contracts
+            let endpointUrl = "{{chain_config.network_config.skar_server_url}}"
+            let allEventSignatures = Abis.EventSignatures.all
+            /*
+              Determines whether to use HypersyncClient Decoder or Viem for parsing events
+              Default is hypersync client decoder, configurable in config with:
+              ```yaml
+              event_decoder: "viem" || "hypersync-client"
+              ```
+            */
+            let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
+              {{../should_use_hypersync_client_decoder}},
+            )
+          }))
+          {{/if}}
+      }
     },
     {{/each}}
   ]
@@ -79,7 +125,6 @@ let registerContractHandlers = (
   let config = Config.make(
     ~shouldRollbackOnReorg={{should_rollback_on_reorg}},
     ~shouldSaveFullHistory={{should_save_full_history}},
-    ~shouldUseHypersyncClientDecoder={{should_use_hypersync_client_decoder}},
     ~isUnorderedMultichainMode={{is_unordered_multichain_mode}},
     ~chains,
     ~enableRawEvents={{enable_raw_events}},
