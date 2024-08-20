@@ -3,10 +3,7 @@ import { expect } from "chai";
 
 //CODEGEN
 import { registerAllHandlers } from "../generated/src/RegisterHandlers.bs";
-import {
-  runDownMigrations,
-  runUpMigrations,
-} from "../generated/src/db/Migrations.bs";
+import { runDownMigrations } from "../generated/src/db/Migrations.bs";
 
 //HELPERS
 import {
@@ -138,14 +135,8 @@ describe("Raw Events Integration", () => {
     expect(afterRawEventsRows.count).to.be.gt(beforeRawEventsRows.count);
   });
 
-  it.skip("RawEvents table does contains rows after migration keeping raw events table", async function () {
-    await runDownMigrations(false, false);
-    let rawEventsRows = await sql`SELECT * FROM public.raw_events`;
-    expect(rawEventsRows.count).to.be.gt(0);
-  });
-
   it("RawEvents table does not exist after migration dropping raw events table", async function () {
-    await runDownMigrations(false, true);
+    await runDownMigrations(false);
     let rawEventsRows = await sql`
         SELECT EXISTS (
           SELECT FROM information_schema.tables

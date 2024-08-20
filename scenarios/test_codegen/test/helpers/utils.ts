@@ -18,7 +18,7 @@ export const enableConsoleLog = () => {
 };
 
 export const runMigrationsNoExit = async () => {
-  await runDownMigrations(false, true);
+  await runDownMigrations(false);
   await runUpMigrations(false);
 };
 

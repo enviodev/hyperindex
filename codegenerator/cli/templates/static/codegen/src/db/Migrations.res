@@ -345,29 +345,6 @@ let deleteAllTables: unit => promise<unit> = async () => {
   )
 }
 
-let deleteAllTablesExceptRawEventsAndDynamicContractRegistry: unit => promise<unit> = async () => {
-  // NOTE: we can refine the `IF EXISTS` part because this now prints to the terminal if the table doesn't exist (which isn't nice for the developer).
-
-  @warning("-21")
-  await (
-    %raw("sql.unsafe`
-    DO $$ 
-    DECLARE
-        table_name_var text;
-    BEGIN
-        FOR table_name_var IN (SELECT table_name
-                           FROM information_schema.tables
-                           WHERE table_schema = 'public'
-                           AND table_name != 'raw_events'
-                           AND table_name != 'dynamic_contract_registry') 
-        LOOP
-            EXECUTE 'DROP TABLE IF EXISTS ' || table_name_var || ' CASCADE';
-        END LOOP;
-    END $$;
-  `")
-  )
-}
-
 type t
 @module external process: t = "process"
 
@@ -441,39 +418,27 @@ let runUpMigrations = async (~shouldExit) => {
   exitCode.contents
 }
 
-let runDownMigrations = async (~shouldExit, ~shouldDropRawEvents) => {
+let runDownMigrations = async (~shouldExit) => {
   let exitCode = ref(Success)
-
-  // NOTE: For now delete any remaining tables.
-  if shouldDropRawEvents {
-    await deleteAllTables()->Promise.catch(err => {
-      exitCode := Failure
-      err
-        ->ErrorHandling.make(~msg="EE804: Error dropping entity tables")
-        ->ErrorHandling.log
-      Promise.resolve()
-    })
-  } else {
-    await deleteAllTablesExceptRawEventsAndDynamicContractRegistry()->Promise.catch(err => {
-      exitCode := Failure
-      err
-        ->ErrorHandling.make(~msg="EE805: Error dropping entity tables except for raw events")
-        ->ErrorHandling.log
-      Promise.resolve()
-    })
-  }
+  await deleteAllTables()->Promise.catch(err => {
+    exitCode := Failure
+    err
+      ->ErrorHandling.make(~msg="EE804: Error dropping entity tables")
+      ->ErrorHandling.log
+    Promise.resolve()
+  })
   if shouldExit {
     process->exit(exitCode.contents)
   }
   exitCode.contents
 }
 
-let setupDb = async (~shouldDropRawEvents) => {
+let setupDb = async () => {
   Logging.info("Provisioning Database")
   // TODO: we should make a hash of the schema file (that gets stored in the DB) and either drop the tables and create new ones or keep this migration.
   //       for now we always run the down migration.
   // if (process.env.MIGRATE === "force" || hash_of_schema_file !== hash_of_current_schema)
-  let exitCodeDown = await runDownMigrations(~shouldExit=false, ~shouldDropRawEvents)
+  let exitCodeDown = await runDownMigrations(~shouldExit=false)
   // else
   //   await clearDb()
 

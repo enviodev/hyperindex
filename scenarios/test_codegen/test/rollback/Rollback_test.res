@@ -144,10 +144,10 @@ Exposing
   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 }
 
-let setupDb = async (~shouldDropRawEvents) => {
+let setupDb = async () => {
   open Migrations
   Logging.info("Provisioning Database")
-  let _exitCodeDown = await runDownMigrations(~shouldExit=false, ~shouldDropRawEvents)
+  let _exitCodeDown = await runDownMigrations(~shouldExit=false)
   let _exitCodeUp = await runUpMigrations(~shouldExit=false)
 }
 
@@ -211,7 +211,7 @@ describe("Single Chain Simple Rollback", () => {
   })
 
   Async.it("Successfully rolls back single chain indexer to expected values", async () => {
-    await setupDb(~shouldDropRawEvents=true)
+    await setupDb()
 
     let chainManager = {
       ...ChainManager.makeFromConfig(~config),
