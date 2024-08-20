@@ -296,7 +296,7 @@ let rec registerDynamicContracts = (
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>=None,
   ~inMemoryStore,
 ) => {
-  switch eventBatch[0] {
+  switch eventBatch[index] {
   | None => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
   // | list{eventBatchQueueItem, ...tail} =>
   | Some(eventBatchQueueItem) =>
