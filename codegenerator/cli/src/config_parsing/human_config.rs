@@ -153,7 +153,7 @@ pub mod evm {
         #[schemars(
             description = "A flag to indicate if the indexer should save the full history of \
                            events. This is useful for debugging but will increase the size of the \
-                           database (default: false)"
+                           database (default: true)"
         )]
         pub save_full_history: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
