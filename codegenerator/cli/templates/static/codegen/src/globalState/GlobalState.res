@@ -413,7 +413,7 @@ let actionReducer = (state: t, action: action) => {
       latestProcessedBlocks,
       dynamicContractRegistrations: Some({registrations, unprocessedBatch}),
     }) =>
-    let updatedArbQueue = Utils.mergeSorted((a, b) => {
+    let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
       a->EventUtils.getEventComparatorFromQueueItem <= b->EventUtils.getEventComparatorFromQueueItem
     }, unprocessedBatch, state.chainManager.arbitraryEventQueue)
 

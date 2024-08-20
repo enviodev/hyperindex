@@ -428,7 +428,7 @@ let trackAllTables = async () => {
   let _ = await clearHasuraMetadata()
   await [TablesStatic.allTables, Entities.allTables]
   ->Belt.Array.concatMany
-  ->Utils.awaitEach(async ({tableName}) => {
+  ->Utils.Array.awaitEach(async ({tableName}) => {
     await trackTable(~tableName)
     await createSelectPermissions(~tableName)
   })
@@ -438,13 +438,12 @@ let trackAllTables = async () => {
   let _ = await createRawEventsArrayRelationship()
   let _ = await createEntityHistoryFilterObjectRelationship()
 
-  await Entities.allTables
-  ->Utils.awaitEach(async table => {
+  await Entities.allTables->Utils.Array.awaitEach(async table => {
     let {tableName} = table
     //Set array relationships
     await table
     ->Table.getDerivedFromFields
-    ->Utils.awaitEach(async derivedFromField => {
+    ->Utils.Array.awaitEach(async derivedFromField => {
       //determines the actual name of the underlying relational field (if it's an entity mapping then suffixes _id for eg.)
       let relationalFieldName =
         Entities.schema->Schema.getDerivedFromFieldName(derivedFromField)->Utils.unwrapResultExn
@@ -462,7 +461,7 @@ let trackAllTables = async () => {
     //Set object relationships
     await table
     ->Table.getLinkedEntityFields
-    ->Utils.awaitEach(async ((field, linkedEntityName)) => {
+    ->Utils.Array.awaitEach(async ((field, linkedEntityName)) => {
       await createEntityRelationship(
         ~tableName,
         ~relationshipType="object",

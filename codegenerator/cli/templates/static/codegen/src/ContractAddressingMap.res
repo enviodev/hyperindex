@@ -58,7 +58,10 @@ let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress):
 }
 
 let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Utils.magic
-let keyValStringToAddress: array<(string, string)> => array<(Ethers.ethAddress, string)> = Utils.magic
+let keyValStringToAddress: array<(string, string)> => array<(
+  Ethers.ethAddress,
+  string,
+)> = Utils.magic
 
 let getAddressesFromContractName = (mapping, ~contractName) => {
   switch mapping->getAddresses(contractName) {
@@ -98,7 +101,7 @@ let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Ethers.ethAdd
   mapping.nameByAddress
   ->Js.Dict.entries
   ->Belt.Array.keep(((addr, _name)) => {
-    let shouldRemove = addressesToRemove->Utils.arrayIncludes(addr->Utils.magic)
+    let shouldRemove = addressesToRemove->Utils.Array.includes(addr->Utils.magic)
     !shouldRemove
   })
   ->keyValStringToAddress

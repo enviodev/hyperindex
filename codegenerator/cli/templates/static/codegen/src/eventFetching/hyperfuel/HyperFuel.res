@@ -264,8 +264,8 @@ module BlockTimestampQuery = {
               | _ =>
                 let missingParams =
                   [
-                    block.height->Utils.optionMapNone("block.height"),
-                    block.time->Utils.optionMapNone("block.time"),
+                    block.height->Utils.Option.mapNone("block.height"),
+                    block.time->Utils.Option.mapNone("block.time"),
                   ]->Belt.Array.keepMap(p => p)
 
                 Error(
@@ -279,7 +279,7 @@ module BlockTimestampQuery = {
           )
         })
       })
-      ->Utils.mapArrayOfResults
+      ->Utils.Array.transposeResults
       ->Belt.Result.map((items): blockTimestampPage => {
         nextBlock,
         archiveHeight,
@@ -378,8 +378,8 @@ module BlockHashes = {
               | _ =>
                 let missingParams =
                   [
-                    block.height->Utils.optionMapNone("block.height"),
-                    block.id->Utils.optionMapNone("block.id"),
+                    block.height->Utils.Option.mapNone("block.height"),
+                    block.id->Utils.Option.mapNone("block.id"),
                   ]->Belt.Array.keepMap(p => p)
 
                 Error(
@@ -393,7 +393,7 @@ module BlockHashes = {
           )
         })
       })
-      ->Utils.mapArrayOfResults
+      ->Utils.Array.transposeResults
     }
   }
 
@@ -419,7 +419,7 @@ module BlockHashes = {
       ->Belt.Array.map(blockNumber => queryBlockHash(~blockNumber, ~serverUrl))
       ->Promise.all
     res
-    ->Utils.mapArrayOfResults
+    ->Utils.Array.transposeResults
     ->Belt.Result.map(blockHashesNested => blockHashesNested->Belt.Array.concatMany)
   }
 }

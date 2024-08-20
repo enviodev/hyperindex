@@ -273,7 +273,7 @@ describe("Single Chain Simple Rollback", () => {
     let getAllGravatars = async () =>
       (await Sql.getAllRowsInTable("Gravatar"))
       ->Array.map(S.parseWith(_, Entities.Gravatar.schema))
-      ->Utils.mapArrayOfResults
+      ->Utils.Array.transposeResults
       ->Result.getExn
 
     let gravatars = await getAllGravatars()

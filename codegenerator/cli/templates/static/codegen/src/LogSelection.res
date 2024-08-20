@@ -8,7 +8,7 @@ type topicSelection = {
 
 exception MissingRequiredTopic0
 let makeTopicSelection = (~topic0, ~topic1=[], ~topic2=[], ~topic3=[]) =>
-  if topic0->Utils.arrayIsEmpty {
+  if topic0->Utils.Array.isEmpty {
     Error(MissingRequiredTopic0)
   } else {
     {
@@ -26,7 +26,7 @@ type t = {
 
 let make = (~addresses, ~topicSelections) => {addresses, topicSelections}
 
-let isWildCard = ({addresses}: t) => addresses->Utils.arrayIsEmpty
+let isWildCard = ({addresses}: t) => addresses->Utils.Array.isEmpty
 
 let topicSelectionHasFilters = (topicSelection: topicSelection) =>
   switch topicSelection {

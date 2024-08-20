@@ -351,7 +351,7 @@ type t
 type exitCode = | @as(0) Success | @as(1) Failure
 @send external exit: (t, exitCode) => unit = "exit"
 
-let awaitEach = Utils.awaitEach
+let awaitEach = Utils.Array.awaitEach
 
 // TODO: all the migration steps should run as a single transaction
 let runUpMigrations = async (~shouldExit) => {

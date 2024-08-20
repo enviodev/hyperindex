@@ -116,7 +116,7 @@ Merges two event queues on a single event fetcher
 
 Pass the shorter list into A for better performance
 */
-let mergeSortedEventList = (a, b) => Utils.mergeSorted(eventCmp, a, b)
+let mergeSortedEventList = (a, b) => Utils.Array.mergeSorted(eventCmp, a, b)
 
 /**
 Merges a node into its next registered branch. Combines contract address mappings and queues

@@ -343,7 +343,7 @@ module EntityHistory = {
   }
 
   let rollbackDiffResponseArr_decode = (jsonArr: array<Js.Json.t>) => {
-    jsonArr->Belt.Array.map(rollbackDiffResponse_decode)->Utils.mapArrayOfResults
+    jsonArr->Belt.Array.map(rollbackDiffResponse_decode)->Utils.Array.transposeResults
   }
 
   @module("./DbFunctionsImplementation.js")
