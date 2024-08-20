@@ -43,10 +43,8 @@ type dynamicContractRegistration = {
 }
 
 type dynamicContractRegistrations = {
-  //Its better to apply these in reverse so that we register them with
-  //the fetcher from latest to earliest. That way there are less recursions
-  registrationsReversed: list<dynamicContractRegistration>,
-  unprocessedBatchReversed: list<Types.eventBatchQueueItem>,
+  registrations: array<dynamicContractRegistration>,
+  unprocessedBatch: array<Types.eventBatchQueueItem>,
 }
 
 let addToDynamicContractRegistrations = (
@@ -54,16 +52,19 @@ let addToDynamicContractRegistrations = (
   ~dynamicContracts,
   ~registeringEventBlockNumber,
   ~registeringEventLogIndex,
-  ~registrationsReversed,
-  ~unprocessedBatchReversed,
+  ~registrations,
+  ~unprocessedBatch,
 ) => {
   //If there are any dynamic contract registrations, put this item in the unprocessedBatch flagged
   //with "hasRegisteredDynamicContracts" and return the same list of entitiesToLoad without the
   //current item
-  let unprocessedBatchReversed = unprocessedBatchReversed->List.add({
-    ...eventBatchQueueItem,
-    hasRegisteredDynamicContracts: true,
-  })
+  let unprocessedBatch = [
+    ...unprocessedBatch,
+    {
+      ...eventBatchQueueItem,
+      hasRegisteredDynamicContracts: true,
+    },
+  ]
 
   let dynamicContractRegistration = {
     dynamicContracts,
@@ -72,8 +73,8 @@ let addToDynamicContractRegistrations = (
     registeringEventChain: eventBatchQueueItem.chain,
   }
   {
-    unprocessedBatchReversed,
-    registrationsReversed: registrationsReversed->List.add(dynamicContractRegistration),
+    unprocessedBatch,
+    registrations: [...registrations, dynamicContractRegistration],
   }
 }
 
@@ -117,17 +118,13 @@ let runEventContractRegister = (
 
     let val = switch (dynamicContracts, dynamicContractRegistrations) {
     | ([], dynamicContractRegistrations) => dynamicContractRegistrations
-    | (dynamicContracts, Some({registrationsReversed, unprocessedBatchReversed})) =>
-      addToDynamicContractRegistrations(
-        ~dynamicContracts,
-        ~registrationsReversed,
-        ~unprocessedBatchReversed,
-      )->Some
+    | (dynamicContracts, Some({registrations, unprocessedBatch})) =>
+      addToDynamicContractRegistrations(~dynamicContracts, ~registrations, ~unprocessedBatch)->Some
     | (dynamicContracts, None) =>
       addToDynamicContractRegistrations(
         ~dynamicContracts,
-        ~registrationsReversed=list{},
-        ~unprocessedBatchReversed=list{},
+        ~registrations=[],
+        ~unprocessedBatch=[],
       )->Some
     }
 
@@ -222,7 +219,8 @@ let runEventHandler = (
   runAsyncEnv(async () => {
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
 
-    let loaderReturn = (await runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer))->propogate
+    let loaderReturn =
+      (await runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer))->propogate
 
     switch await handler.handler(
       contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~loadLayer),
@@ -284,24 +282,23 @@ let addToUnprocessedBatch = (
 ) => {
   {
     ...dynamicContractRegistrations,
-    unprocessedBatchReversed: dynamicContractRegistrations.unprocessedBatchReversed->List.add(
-      eventBatchQueueItem,
-    ),
+    unprocessedBatch: [...dynamicContractRegistrations.unprocessedBatch, eventBatchQueueItem],
   }
 }
 
 let rec registerDynamicContracts = (
+  eventBatch: array<Types.eventBatchQueueItem>,
+  ~index=0,
   ~registeredEvents: RegisteredEvents.t,
   ~checkContractIsRegistered,
   ~logger,
   ~eventsBeforeDynamicRegistrations=[],
   ~dynamicContractRegistrations: option<dynamicContractRegistrations>=None,
   ~inMemoryStore,
-  eventBatch: list<Types.eventBatchQueueItem>,
 ) => {
-  switch eventBatch {
-  | list{} => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
-  | list{eventBatchQueueItem, ...tail} =>
+  switch eventBatch[index] {
+  | None => (eventsBeforeDynamicRegistrations, dynamicContractRegistrations)->Ok
+  | Some(eventBatchQueueItem) =>
     let dynamicContractRegistrationsResult = if (
       eventBatchQueueItem.hasRegisteredDynamicContracts->Option.getWithDefault(false)
     ) {
@@ -342,7 +339,8 @@ let rec registerDynamicContracts = (
         //Mutate for performance (could otherwise use concat?)
         eventsBeforeDynamicRegistrations->Js.Array2.push(eventBatchQueueItem)->ignore
       }
-      tail->registerDynamicContracts(
+      eventBatch->registerDynamicContracts(
+        ~index=index + 1,
         ~registeredEvents,
         ~checkContractIsRegistered,
         ~logger,
@@ -377,7 +375,9 @@ let runLoaders = (
         ->Option.map(
           handler => {
             let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
-            runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(propogate)
+            runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(
+              propogate,
+            )
           },
         )
       })
@@ -446,7 +446,7 @@ type batchProcessed = {
   dynamicContractRegistrations: option<dynamicContractRegistrations>,
 }
 let processEventBatch = (
-  ~eventBatch: list<Types.eventBatchQueueItem>,
+  ~eventBatch: array<Types.eventBatchQueueItem>,
   ~inMemoryStore: InMemoryStore.t,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
@@ -457,8 +457,8 @@ let processEventBatch = (
   let logger = Logging.createChild(
     ~params={
       "context": "batch",
-      "batch-size": eventBatch->List.length,
-      "first-event-timestamp": eventBatch->List.head->Option.map(v => v.timestamp),
+      "batch-size": eventBatch->Array.length,
+      "first-event-timestamp": eventBatch[0]->Option.map(v => v.timestamp),
     },
   )
 
@@ -482,7 +482,7 @@ let processEventBatch = (
       ->propogate
 
     (await eventsBeforeDynamicRegistrations
-    ->runLoaders(~registeredEvents, ~loadLayer, ~inMemoryStore,~logger))
+    ->runLoaders(~registeredEvents, ~loadLayer, ~inMemoryStore, ~logger))
     ->propogate
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

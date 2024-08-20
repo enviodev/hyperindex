@@ -209,7 +209,7 @@ let rollback = (self: t, ~lastKnownValidBlock) => {
 }
 
 type earliestEventResponse = {
-  updatedPartitionedFetchState: t,
+  getUpdatedPartitionedFetchState: unit => t,
   earliestQueueItem: FetchState.queueItem,
 }
 
@@ -231,11 +231,12 @@ let getEarliestEvent = (self: t) => {
       accum
     }
   })
-  ->Option.map((({earliestQueueItem, updatedFetchState}, partitionId)) => {
+  ->Option.map((({earliestQueueItem, getUpdatedFetchState}, partitionId)) => {
     {
-      updatedPartitionedFetchState: self
-      ->updatePartition(~fetchState=updatedFetchState, ~partitionId)
-      ->Utils.unwrapResultExn,
+      getUpdatedPartitionedFetchState: () =>
+        self
+        ->updatePartition(~fetchState=getUpdatedFetchState(), ~partitionId)
+        ->Utils.unwrapResultExn,
       earliestQueueItem,
     }
   })

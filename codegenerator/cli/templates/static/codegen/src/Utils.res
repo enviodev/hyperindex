@@ -3,7 +3,7 @@ external magic: 'a => 'b = "%identity"
 @val external jsArrayCreate: int => array<'a> = "Array"
 
 /* Given a comaprator and two sorted lists, combine them into a single sorted list */
-let mergeSorted = (f: 'a => 'b, xs: array<'a>, ys: array<'a>) => {
+let mergeSorted = (f: ('a, 'a) => bool, xs: array<'a>, ys: array<'a>) => {
   if Array.length(xs) == 0 {
     ys
   } else if Array.length(ys) == 0 {
@@ -14,7 +14,7 @@ let mergeSorted = (f: 'a => 'b, xs: array<'a>, ys: array<'a>) => {
 
     let rec loop = (i, j, k) => {
       if i < Array.length(xs) && j < Array.length(ys) {
-        if f(xs[i]) <= f(ys[j]) {
+        if f(xs[i], ys[j]) {
           result[k] = xs[i]
           loop(i + 1, j, k + 1)
         } else {
@@ -127,6 +127,23 @@ let awaitEach = async (arr: array<'a>, fn: 'a => promise<unit>) => {
   for i in 0 to arr->Array.length - 1 {
     let item = arr[i]
     await item->fn
+  }
+}
+
+module Array = {
+  /**
+  Creates a new array removing the item at the given index
+
+  Index > array length or < 0 results in a copy of the array
+  */
+  let removeAtIndex = (array, index) => {
+    if index < 0 || index >= array->Array.length {
+      array->Array.copy
+    } else {
+      let head = array->Js.Array2.slice(~start=0, ~end_=index)
+      let tail = array->Belt.Array.sliceToEnd(index + 1)
+      [...head, ...tail]
+    }
   }
 }
 

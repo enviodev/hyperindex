@@ -67,7 +67,7 @@ describe_skip("E2E Db check", () => {
 
     let _ = await EventProcessing.processEventBatch(
       ~inMemoryStore,
-      ~eventBatch=MockEvents.eventBatchItems->List.fromArray,
+      ~eventBatch=MockEvents.eventBatchItems,
       ~checkContractIsRegistered=checkContractIsRegisteredStub,
       ~latestProcessedBlocks=EventProcessing.EventsProcessed.makeEmpty(~config),
       ~registeredEvents=RegisteredEvents.global,
