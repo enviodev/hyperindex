@@ -279,10 +279,10 @@ module Make = (
                     },
                     transaction: %raw(`{}`), // TODO: %raw needed until the transaction fields are not configurable for Fuel separately from evm
                     block: {
-                      number: block.blockNumber,
-                      timestamp: block.timestamp,
-                      hash: block.hash,
-                    },
+                      "number": block.blockNumber,
+                      "timestamp": block.timestamp,
+                      "hash": block.hash,
+                    }->Obj.magic,
                     srcAddress: contractId,
                     logIndex: receiptIndex,
                   }->Types.eventToInternal,
