@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
+use crate::config_parsing::system_config::HyperfuelConfig;
 use crate::rescript_types::RescriptTypeIdent;
 use crate::{
     config_parsing::{
@@ -492,6 +493,7 @@ struct NetworkTemplate {
     pub id: u64,
     rpc_config: Option<RpcConfig>,
     hypersync_config: Option<HypersyncConfig>,
+    hyperfuel_config: Option<HyperfuelConfig>,
     confirmed_block_threshold: i32,
     start_block: i32,
     end_block: Option<i32>,
@@ -508,6 +510,12 @@ impl NetworkTemplate {
             hypersync_config: match &network.sync_source {
                 system_config::SyncSource::HypersyncConfig(hypersync_config) => {
                     Some(hypersync_config.clone())
+                }
+                _ => None,
+            },
+            hyperfuel_config: match &network.sync_source {
+                system_config::SyncSource::HyperfuelConfig(hyperfuel_config) => {
+                    Some(hyperfuel_config.clone())
                 }
                 _ => None,
             },
@@ -778,6 +786,7 @@ mod test {
             id: 1,
             rpc_config: Some(rpc_config1),
             hypersync_config: None,
+            hyperfuel_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -824,6 +833,7 @@ mod test {
             id: 1,
             rpc_config: Some(rpc_config1.clone()),
             hypersync_config: None,
+            hyperfuel_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -841,6 +851,7 @@ mod test {
             id: 2,
             rpc_config: Some(rpc_config2),
             hypersync_config: None,
+            hyperfuel_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -887,6 +898,7 @@ mod test {
                 endpoint_url: "https://eth.hypersync.xyz".to_string(),
                 is_client_decoder: true,
             }),
+            hyperfuel_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -921,6 +933,7 @@ mod test {
                 endpoint_url: "https://myskar.com".to_string(),
                 is_client_decoder: true,
             }),
+            hyperfuel_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -933,6 +946,7 @@ mod test {
                 endpoint_url: "https://goerli.hypersync.xyz".to_string(),
                 is_client_decoder: true,
             }),
+            hyperfuel_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,

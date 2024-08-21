@@ -321,6 +321,11 @@ pub struct HypersyncConfig {
     pub is_client_decoder: bool,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq)]
+pub struct HyperfuelConfig {
+    pub endpoint_url: ServerUrl,
+}
+
 #[derive(Debug, Serialize, PartialEq, Clone)]
 pub struct SyncConfig {
     initial_block_interval: u32,
@@ -357,6 +362,7 @@ pub struct RpcConfig {
 pub enum SyncSource {
     RpcConfig(RpcConfig),
     HypersyncConfig(HypersyncConfig),
+    HyperfuelConfig(HyperfuelConfig),
 }
 
 // Check if the given RPC URL is valid in terms of formatting.

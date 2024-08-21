@@ -73,6 +73,9 @@ let registerContractHandlers = (
           {{/if}}
           {{#if chain_config.network_config.hypersync_config}}
           HyperSync({endpointUrl: "{{chain_config.network_config.hypersync_config.endpoint_url}}"})
+          {{/if}}
+          {{#if chain_config.network_config.hyperfuel_config}}
+          HyperFuel({endpointUrl: "{{chain_config.network_config.hyperfuel_config.endpoint_url}}"})
           {{/if}},
         startBlock: {{chain_config.network_config.start_block}},
         endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
@@ -103,6 +106,15 @@ let registerContractHandlers = (
             let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
               {{hypersync_config.is_client_decoder}},
             )
+          }))
+          {{/with}}
+          {{/if}}
+          {{#if chain_config.network_config.hyperfuel_config }}
+          {{#with chain_config.network_config.hyperfuel_config as | hyperfuel_config |}}
+          module(HyperSyncWorker.Make({
+            let chain = chain
+            let contracts = contracts
+            let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
           }))
           {{/with}}
           {{/if}}
