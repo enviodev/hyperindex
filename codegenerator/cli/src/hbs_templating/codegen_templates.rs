@@ -21,7 +21,6 @@ use crate::{
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
-use ethers::abi::{Event, EventExt};
 use pathdiff::diff_paths;
 use serde::Serialize;
 
@@ -358,14 +357,9 @@ pub struct EventTemplate {
 
 impl EventTemplate {
     pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
-        let name = config_event
-            .get_event()
-            .name
-            .to_owned()
-            .to_capitalized_options();
+        let name = config_event.name.to_capitalized_options();
         let params = config_event
-            .get_event()
-            .inputs
+            .get_event_inputs()
             .iter()
             .map(|input| {
                 let res_type = abi_to_rescript_type(&input.into());
@@ -396,7 +390,7 @@ impl EventTemplate {
             .cloned()
             .collect();
 
-        let topic0 = event_selector(&config_event.get_event());
+        let topic0 = config_event.get_event_topic0();
 
         Ok(EventTemplate {
             name,
@@ -407,12 +401,6 @@ impl EventTemplate {
             topic0,
         })
     }
-}
-
-fn event_selector(event: &Event) -> String {
-    ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
-        event.abi_signature().as_bytes(),
-    ))
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -484,9 +472,9 @@ impl PerNetworkContractTemplate {
             .context("Failed getting contract")?;
 
         let events = contract
-            .get_event_names()
-            .into_iter()
-            .map(|n| PerNetworkContractEventTemplate::new(n))
+            .events
+            .iter()
+            .map(|event| PerNetworkContractEventTemplate::new(event.name.clone()))
             .collect();
 
         Ok(PerNetworkContractTemplate {

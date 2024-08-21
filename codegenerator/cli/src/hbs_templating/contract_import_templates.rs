@@ -298,11 +298,7 @@ impl Event {
         is_fuel: bool,
         language: &Language,
     ) -> String {
-        let event_module = format!(
-            "{}.{}",
-            contract.name.capitalize(),
-            event.get_event().name.capitalize()
-        );
+        let event_module = format!("{}.{}", contract.name.capitalize(), event.name.capitalize());
         match is_fuel {
             true => {
                 let data_code = match language {
@@ -328,18 +324,14 @@ impl Event {
         is_fuel: bool,
         language: &Language,
     ) -> Result<Self> {
-        let abi_event = event.get_event();
-        let params = flatten_event_inputs(abi_event.inputs.clone())
+        let params = flatten_event_inputs(event.get_event_inputs())
             .into_iter()
             .map(|input| Param::from_event_param(input))
             .collect::<Result<_>>()
-            .context(format!(
-                "Failed getting params for event {}",
-                abi_event.name
-            ))?;
+            .context(format!("Failed getting params for event {}", event.name))?;
 
         Ok(Event {
-            name: abi_event.name.to_capitalized_options(),
+            name: event.name.to_capitalized_options(),
             entity_id_from_event_code: Event::get_entity_id_code(
                 "event".to_string(),
                 is_fuel,

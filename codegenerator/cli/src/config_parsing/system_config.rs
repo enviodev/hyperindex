@@ -14,7 +14,7 @@ use crate::{
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
-use ethers::abi::{ethabi::Event as EthAbiEvent, EventParam, HumanReadableParser};
+use ethers::abi::{ethabi::Event as EthAbiEvent, EventExt, EventParam, HumanReadableParser};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -568,13 +568,14 @@ impl Contract {
 
         let mut event_names = Vec::new();
         for event in &events {
+            let event_abi = event.get_event();
             events_abi
                 .events
-                .entry(event.get_event().name.clone())
+                .entry(event_abi.name.clone())
                 .or_default()
-                .push(event.get_event().clone());
+                .push(event_abi.clone());
 
-            event_names.push(event.event.0.name.clone());
+            event_names.push(event.name.clone());
         }
         // Checking that event names do not include any reserved words
         validate_names_not_reserved(&event_names, "Events".to_string())?;
@@ -594,13 +595,6 @@ impl Contract {
         })
     }
 
-    pub fn get_event_names(&self) -> Vec<String> {
-        self.events
-            .iter()
-            .map(|e| e.get_event().name.clone())
-            .collect()
-    }
-
     pub fn get_path_to_handler(&self, project_paths: &ParsedProjectPaths) -> Result<PathBuf> {
         let handler_path = path_utils::get_config_path_relative_to_root(
             project_paths,
@@ -618,6 +612,7 @@ impl Contract {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Event {
     event: NormalizedEthAbiEvent,
+    pub name: String,
     pub is_async: bool,
 }
 
@@ -660,16 +655,28 @@ impl Event {
         human_cfg_event: EventConfig,
         opt_abi: &Option<EvmAbi>,
     ) -> Result<Self> {
-        let event = Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
+        let event: NormalizedEthAbiEvent =
+            Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
 
         Ok(Event {
+            name: human_cfg_event.name.unwrap_or(event.0.name.to_owned()),
             event,
             is_async: false,
         })
     }
 
-    pub fn get_event(&self) -> &EthAbiEvent {
+    fn get_event(&self) -> &EthAbiEvent {
         &self.event.0
+    }
+
+    pub fn get_event_inputs(&self) -> Vec<EventParam> {
+        self.get_event().inputs.clone()
+    }
+
+    pub fn get_event_topic0(&self) -> String {
+        ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
+            self.get_event().abi_signature().as_bytes(),
+        ))
     }
 
     pub fn get_event_signature(&self) -> String {

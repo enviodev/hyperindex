@@ -152,6 +152,13 @@
         "event": {
           "description": "The human readable signature of an event 'eg. Transfer(address indexed from, address indexed to, uint256 value)' OR a reference to the name of an event in a json ABI file defined in your contract config. A provided signature will take precedence over what is defined in the json ABI",
           "type": "string"
+        },
+        "name": {
+          "description": "Name of the event in the HyperIndex generated code. When ommitted, the event field will be used. Should be unique per contract",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,
