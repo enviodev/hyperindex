@@ -25,28 +25,34 @@ type handlerArgs<'eventArgs, 'loaderReturn> = {
 type handler<'eventArgs, 'loaderReturn> = handlerArgs<'eventArgs, 'loaderReturn> => promise<unit>
 
 @genType
-type registeredLoaderHandler<'eventArgs, 'loaderReturn> = {
+type loaderHandler<'eventArgs, 'loaderReturn> = {
   loader: loader<'eventArgs, 'loaderReturn>,
   handler: handler<'eventArgs, 'loaderReturn>,
 }
 
+type eventOptions = {
+  wildcard: bool,
+  topicSelections: array<LogSelection.topicSelection>,
+}
+
 @genType
 type registeredEvent<'eventArgs, 'loaderReturn> = {
-  loaderHandler?: registeredLoaderHandler<'eventArgs, 'loaderReturn>,
+  loaderHandler?: loaderHandler<'eventArgs, 'loaderReturn>,
   contractRegister?: contractRegister<'eventArgs>,
+  eventOptions: eventOptions,
 }
 
 type t
 
 let make: unit => t
-
 let get: (t, module(Types.InternalEvent)) => option<registeredEvent<'eventArgs, 'loadReturn>>
 
 let global: t
+let getWildcardEventKeys: unit => array<EventLookup.eventKey>
 
 module MakeRegister: (E: Types.Event) =>
 {
   let handler: handler<E.eventArgs, unit> => unit
   let contractRegister: contractRegister<E.eventArgs> => unit
-  let handlerWithLoader: registeredLoaderHandler<E.eventArgs, 'loaderReturn> => unit
+  let handlerWithLoader: loaderHandler<E.eventArgs, 'loaderReturn> => unit
 }

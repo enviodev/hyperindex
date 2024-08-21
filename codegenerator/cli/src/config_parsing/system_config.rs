@@ -800,6 +800,20 @@ impl Contract {
 
         Ok(handler_path)
     }
+
+    pub fn get_chain_ids(&self, system_config: &SystemConfig) -> Vec<u64> {
+        system_config
+            .get_networks()
+            .iter()
+            .filter_map(|network| {
+                if network.contracts.iter().any(|c| c.name == self.name) {
+                    Some(network.id)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]

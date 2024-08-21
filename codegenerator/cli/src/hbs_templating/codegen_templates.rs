@@ -460,6 +460,7 @@ pub struct ContractTemplate {
     pub codegen_events: Vec<EventTemplate>,
     pub abi: StringifiedAbi,
     pub event_signatures: Vec<String>,
+    pub chain_ids: Vec<u64>,
     pub handler: HandlerPathsTemplate,
 }
 
@@ -467,6 +468,7 @@ impl ContractTemplate {
     fn from_config_contract(
         contract: &system_config::Contract,
         project_paths: &ParsedProjectPaths,
+        config: &SystemConfig,
     ) -> Result<Self> {
         let name = contract.name.to_capitalized_options();
         let handler = HandlerPathsTemplate::from_contract(contract, project_paths)
@@ -483,12 +485,15 @@ impl ContractTemplate {
             .map(|event| event.get_event_signature())
             .collect();
 
+        let chain_ids = contract.get_chain_ids(config);
+
         Ok(ContractTemplate {
             name,
             handler,
             codegen_events,
             abi: contract.abi.raw.clone(),
             event_signatures,
+            chain_ids,
         })
     }
 }
@@ -708,7 +713,9 @@ impl ProjectTemplate {
         let codegen_contracts: Vec<ContractTemplate> = cfg
             .get_contracts()
             .iter()
-            .map(|cfg_contract| ContractTemplate::from_config_contract(cfg_contract, project_paths))
+            .map(|cfg_contract| {
+                ContractTemplate::from_config_contract(cfg_contract, project_paths, cfg)
+            })
             .collect::<Result<_>>()
             .context("Failed generating contract template types")?;
 

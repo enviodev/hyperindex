@@ -261,7 +261,9 @@ module Make = (
               | LogData({rb}) => rb
               }
               let eventMod =
-                config->Config.getEventModOrThrow(~contractName, ~topic0=logId->Js.BigInt.toString)
+                config.events
+                ->EventLookup.getEventByKey(~contractName, ~topic0=logId->Js.BigInt.toString)
+                ->Option.getExn
               let module(Event) = eventMod
 
               (
