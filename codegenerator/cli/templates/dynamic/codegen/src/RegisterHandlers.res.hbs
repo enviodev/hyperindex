@@ -71,8 +71,8 @@ let registerContractHandlers = (
           {{#if chain_config.network_config.rpc_config}}
           Rpc(rpcConfig)
           {{/if}}
-          {{#if chain_config.network_config.skar_server_url}}
-          HyperSync({endpointUrl: "{{chain_config.network_config.skar_server_url}}"})
+          {{#if chain_config.network_config.hypersync_config}}
+          HyperSync({endpointUrl: "{{chain_config.network_config.hypersync_config.endpoint_url}}"})
           {{/if}},
         startBlock: {{chain_config.network_config.start_block}},
         endBlock: {{#if chain_config.network_config.end_block}} Some({{chain_config.network_config.end_block}}) {{else}} None {{/if}},
@@ -86,11 +86,12 @@ let registerContractHandlers = (
             let rpcConfig = rpcConfig
           }))
           {{/if}}
-          {{#if chain_config.network_config.skar_server_url }}
+          {{#if chain_config.network_config.hypersync_config }}
+          {{#with chain_config.network_config.hypersync_config as | hypersync_config |}}
           module(HyperSyncWorker.Make({
             let chain = chain
             let contracts = contracts
-            let endpointUrl = "{{chain_config.network_config.skar_server_url}}"
+            let endpointUrl = "{{hypersync_config.endpoint_url}}"
             let allEventSignatures = Abis.EventSignatures.all
             /*
               Determines whether to use HypersyncClient Decoder or Viem for parsing events
@@ -100,9 +101,10 @@ let registerContractHandlers = (
               ```
             */
             let shouldUseHypersyncClientDecoder = Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
-              {{../should_use_hypersync_client_decoder}},
+              {{hypersync_config.is_client_decoder}},
             )
           }))
+          {{/with}}
           {{/if}}
       }
     },

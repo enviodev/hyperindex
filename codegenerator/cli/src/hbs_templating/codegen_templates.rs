@@ -7,9 +7,8 @@ use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
         event_parsing::abi_to_rescript_type,
-        human_config::evm::EventDecoder,
         postgres_types,
-        system_config::{self, RpcConfig, SystemConfig},
+        system_config::{self, HypersyncConfig, RpcConfig, SystemConfig},
     },
     constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     persisted_state::{PersistedState, PersistedStateJsonString},
@@ -487,13 +486,12 @@ impl PerNetworkContractTemplate {
 
 type EthAddress = String;
 type StringifiedAbi = String;
-type ServerUrl = String;
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 struct NetworkTemplate {
     pub id: u64,
     rpc_config: Option<RpcConfig>,
-    skar_server_url: Option<ServerUrl>,
+    hypersync_config: Option<HypersyncConfig>,
     confirmed_block_threshold: i32,
     start_block: i32,
     end_block: Option<i32>,
@@ -503,8 +501,16 @@ impl NetworkTemplate {
     fn from_config_network(network: &system_config::Network) -> Self {
         NetworkTemplate {
             id: network.id,
-            rpc_config: network.get_rpc_config().map(|c| c.into()),
-            skar_server_url: network.get_skar_url(),
+            rpc_config: match &network.sync_source {
+                system_config::SyncSource::RpcConfig(rpc_config) => Some(rpc_config.clone()),
+                _ => None,
+            },
+            hypersync_config: match &network.sync_source {
+                system_config::SyncSource::HypersyncConfig(hypersync_config) => {
+                    Some(hypersync_config.clone())
+                }
+                _ => None,
+            },
             confirmed_block_threshold: network.confirmed_block_threshold,
             start_block: network.start_block,
             end_block: network.end_block,
@@ -604,7 +610,6 @@ pub struct ProjectTemplate {
     codegen_out_path: String,
     persisted_state: PersistedStateJsonString,
     is_unordered_multichain_mode: bool,
-    should_use_hypersync_client_decoder: bool,
     should_rollback_on_reorg: bool,
     should_save_full_history: bool,
     enable_raw_events: bool,
@@ -672,8 +677,6 @@ impl ProjectTemplate {
             .map(|contract| contract.codegen_events.len())
             .sum();
         let has_multiple_events = total_number_of_events > 1;
-        let should_use_hypersync_client_decoder =
-            cfg.event_decoder == EventDecoder::HypersyncClient;
 
         //Take the absolute paths of  project root and generated, diff them to get
         //relative path from generated to root and add a trailing dot. So in a default project, if your
@@ -705,7 +708,6 @@ impl ProjectTemplate {
             codegen_out_path: gitignore_path_str,
             persisted_state,
             is_unordered_multichain_mode: cfg.unordered_multichain_mode,
-            should_use_hypersync_client_decoder,
             should_rollback_on_reorg: cfg.rollback_on_reorg,
             should_save_full_history: cfg.save_full_history,
             enable_raw_events: cfg.enable_raw_events,
@@ -775,7 +777,7 @@ mod test {
         let network1 = super::NetworkTemplate {
             id: 1,
             rpc_config: Some(rpc_config1),
-            skar_server_url: None,
+            hypersync_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -821,7 +823,7 @@ mod test {
         let network1 = super::NetworkTemplate {
             id: 1,
             rpc_config: Some(rpc_config1.clone()),
-            skar_server_url: None,
+            hypersync_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -838,7 +840,7 @@ mod test {
         let network2 = super::NetworkTemplate {
             id: 2,
             rpc_config: Some(rpc_config2),
-            skar_server_url: None,
+            hypersync_config: None,
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -881,7 +883,10 @@ mod test {
         let network1 = super::NetworkTemplate {
             id: 1,
             rpc_config: None,
-            skar_server_url: Some("https://eth.hypersync.xyz".to_string()),
+            hypersync_config: Some(HypersyncConfig {
+                endpoint_url: "https://eth.hypersync.xyz".to_string(),
+                is_client_decoder: true,
+            }),
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -912,7 +917,10 @@ mod test {
         let network1 = super::NetworkTemplate {
             id: 1,
             rpc_config: None,
-            skar_server_url: Some("https://myskar.com".to_string()),
+            hypersync_config: Some(HypersyncConfig {
+                endpoint_url: "https://myskar.com".to_string(),
+                is_client_decoder: true,
+            }),
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,
@@ -921,7 +929,10 @@ mod test {
         let network2 = super::NetworkTemplate {
             id: 5,
             rpc_config: None,
-            skar_server_url: Some("https://goerli.hypersync.xyz".to_string()),
+            hypersync_config: Some(HypersyncConfig {
+                endpoint_url: "https://goerli.hypersync.xyz".to_string(),
+                is_client_decoder: true,
+            }),
             start_block: 0,
             end_block: None,
             confirmed_block_threshold: 200,

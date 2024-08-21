@@ -40,7 +40,6 @@ pub struct SystemConfig {
     pub networks: NetworkMap,
     pub contracts: ContractMap,
     pub unordered_multichain_mode: bool,
-    pub event_decoder: EventDecoder,
     pub rollback_on_reorg: bool,
     pub save_full_history: bool,
     pub schema: Schema,
@@ -239,7 +238,8 @@ impl SystemConfig {
                 }
             }
 
-            let sync_source = SyncSource::from_human_config(network.clone())?;
+            let sync_source =
+                SyncSource::from_human_config(network.clone(), human_cfg.event_decoder.clone())?;
 
             let contracts: Vec<NetworkContract> = network
                 .contracts
@@ -283,10 +283,6 @@ impl SystemConfig {
             networks,
             contracts,
             unordered_multichain_mode: human_cfg.unordered_multichain_mode.unwrap_or(false),
-            event_decoder: human_cfg
-                .event_decoder
-                .clone()
-                .unwrap_or(EventDecoder::HypersyncClient),
             rollback_on_reorg: human_cfg.rollback_on_reorg.unwrap_or(true),
             save_full_history: human_cfg.save_full_history.unwrap_or(false),
             schema,
@@ -319,9 +315,10 @@ impl SystemConfig {
 
 type ServerUrl = String;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct HypersyncConfig {
     pub endpoint_url: ServerUrl,
+    pub is_client_decoder: bool,
 }
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
@@ -373,7 +370,14 @@ fn validate_url(url: &str) -> bool {
 }
 
 impl SyncSource {
-    fn from_human_config(network: HumanNetwork) -> Result<Self> {
+    fn from_human_config(
+        network: HumanNetwork,
+        event_decoder: Option<EventDecoder>,
+    ) -> Result<Self> {
+        let is_client_decoder = match event_decoder {
+            Some(EventDecoder::HypersyncClient) | None => true,
+            Some(EventDecoder::Viem) => false,
+        };
         match network {
             human_config::evm::Network {
                 hypersync_config: Some(_),
@@ -391,6 +395,7 @@ impl SyncSource {
                     .context("EE106: Undefined network config, please provide rpc_config, read more in our docs https://docs.envio.dev/docs/configuration-file")?;
                 Ok(Self::HypersyncConfig(HypersyncConfig {
                     endpoint_url: defualt_hypersync_endpoint,
+                    is_client_decoder,
                 }))
             }
             human_config::evm::Network {
@@ -446,7 +451,7 @@ impl SyncSource {
                 if !validate_url(&url) {
                   return Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url));
                 }
-                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: url }))
+                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: url, is_client_decoder }))
             }
         }
     }
@@ -460,24 +465,6 @@ pub struct Network {
     pub end_block: Option<i32>,
     pub confirmed_block_threshold: i32,
     pub contracts: Vec<NetworkContract>,
-}
-
-impl Network {
-    pub fn get_rpc_config(&self) -> Option<RpcConfig> {
-        match &self.sync_source {
-            SyncSource::RpcConfig(cfg) => Some(cfg.clone()),
-            _ => None,
-        }
-    }
-
-    pub fn get_skar_url(&self) -> Option<ServerUrl> {
-        match &self.sync_source {
-            SyncSource::HypersyncConfig(HypersyncConfig { endpoint_url }) => {
-                Some(endpoint_url.clone())
-            }
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1040,7 +1027,8 @@ mod test {
         assert!(cfg.networks[0].rpc_config.is_some());
         assert!(cfg.networks[0].hypersync_config.is_some());
 
-        let error = SyncSource::from_human_config(cfg.networks[0].clone()).unwrap_err();
+        let error =
+            SyncSource::from_human_config(cfg.networks[0].clone(), cfg.event_decoder).unwrap_err();
 
         assert_eq!(error.to_string(), "EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file");
     }
