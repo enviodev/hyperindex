@@ -39,7 +39,7 @@ describe("Test ContractInterfaceManager", () => {
 
     Assert.equal(
       topics->Array.length,
-      8,
+      9,
       ~message="Expected same amount of topics as number of events in config",
     )
   })
@@ -69,7 +69,7 @@ describe("Test ContractInterfaceManager", () => {
 
     Assert.equal(
       topics->Array.length,
-      7,
+      8,
       ~message="Expected same amount of topics as number of events in config",
     )
   })
