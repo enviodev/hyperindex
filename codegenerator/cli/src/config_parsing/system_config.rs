@@ -6,7 +6,7 @@ use super::{
         evm::{EventConfig, EventDecoder, HumanConfig, Network as HumanNetwork},
     },
     hypersync_endpoints,
-    validation::validate_names_not_reserved,
+    validation::validate_names_valid_rescript,
 };
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
@@ -559,7 +559,7 @@ pub struct Contract {
 
 impl Contract {
     pub fn new(
-        name: ContractNameKey,
+        name: String,
         handler_path: String,
         events: Vec<Event>,
         abi_from_file: Option<EvmAbi>,
@@ -577,8 +577,7 @@ impl Contract {
 
             event_names.push(event.name.clone());
         }
-        // Checking that event names do not include any reserved words
-        validate_names_not_reserved(&event_names, "Events".to_string())?;
+        validate_names_valid_rescript(&event_names, "event".to_string())?;
 
         let events_abi_raw = serde_json::to_string(&events_abi)
             .context("Failed serializing ABI with filtered events")?;
@@ -1031,7 +1030,7 @@ mod test {
     #[test]
     fn deserializes_contract_config_with_multiple_sync_sources() {
         let config_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("test/configs/invalid-multiple-sync-config6.yaml");
+            .join("test/configs/invalid-multiple-sync-config.yaml");
 
         let file_str = std::fs::read_to_string(config_path).unwrap();
 

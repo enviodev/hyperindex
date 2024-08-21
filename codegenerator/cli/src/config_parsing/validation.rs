@@ -37,7 +37,7 @@ fn are_contract_names_unique(contract_names: &[String]) -> bool {
 
 // Check for reserved words in a string, to be applied for schema and config.
 // Words from config and schema are used in the codegen and eventually in eventHandlers for the user, thus cannot contain any reserved words.
-fn check_reserved_words(input_string: &str) -> Vec<String> {
+fn check_reserved_words(words: &Vec<String>) -> Vec<String> {
     let mut flagged_words = Vec::new();
     // Creating a deduplicated set of reserved words from javascript, typescript and rescript
     let mut set = HashSet::new();
@@ -47,10 +47,8 @@ fn check_reserved_words(input_string: &str) -> Vec<String> {
 
     let words_set: Vec<&str> = set.into_iter().cloned().collect();
 
-    let re = Regex::new(r"\b\w+\b").unwrap();
-
     // Find all alphanumeric words in the YAML string
-    for word in re.find_iter(input_string) {
+    for word in words {
         let word = word.as_str();
         if words_set.contains(&word) {
             flagged_words.push(word.to_string());
@@ -60,20 +58,58 @@ fn check_reserved_words(input_string: &str) -> Vec<String> {
     flagged_words
 }
 
+fn is_valid_identifier(s: &String) -> bool {
+    // Check if the string is empty
+    if s.is_empty() {
+        return false;
+    }
+
+    // Check the first character to ensure it's not a digit
+    let first_char = s.chars().next().unwrap();
+    match first_char {
+        '0'..='9' => return false,
+        _ => (),
+    }
+
+    // Check that all characters are either alphanumeric or an underscore
+    for c in s.chars() {
+        match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => (),
+            _ => return false,
+        }
+    }
+
+    true
+}
+
 // Check if all names in the config file are valid.
-pub fn validate_names_not_reserved(
-    names_from_config: &[String],
+pub fn validate_names_valid_rescript(
+    names_from_config: &Vec<String>,
     part_of_config: String,
 ) -> anyhow::Result<()> {
-    let detected_reserved_words = check_reserved_words(&names_from_config.join(" "));
+    let detected_reserved_words = check_reserved_words(names_from_config);
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "EE102: The config file cannot contain any reserved words. Reserved words are: {:?} \
-             in {}.",
-            detected_reserved_words.join(" "),
-            part_of_config
+            "EE102: The config contains reserved words for {} names: {}. They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
+            part_of_config,
+            detected_reserved_words.iter().map(|w| format!("\"{}\"", w)).collect::<Vec<_>>().join(", "),
         ));
     }
+
+    let mut invalid_names = Vec::new();
+    for name in names_from_config {
+        if !is_valid_identifier(&name) {
+            invalid_names.push(name.to_string());
+        }
+    }
+    if !invalid_names.is_empty() {
+        return Err(anyhow!(
+            "EE111: The config contains invalid characters for {} names: {}. They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
+             part_of_config,
+             invalid_names.iter().map(|w| format!("\"{}\"", w)).collect::<Vec<_>>().join(", "),
+        ));
+    }
+
     Ok(())
 }
 
@@ -145,8 +181,7 @@ pub fn validate_deserialized_config_yaml(
         ));
     }
 
-    // Checking that contract names do not include any reserved words
-    validate_names_not_reserved(&contract_names, "Contracts".to_string())?;
+    validate_names_valid_rescript(&contract_names, "contract".to_string())?;
 
     Ok(())
 }
@@ -187,6 +222,8 @@ pub fn check_schema_enums_are_valid_postgres(enum_names: &Vec<String>) -> Vec<St
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     #[test]
     fn valid_postgres_db_name() {
         let valid_name = "_helloPotter";
@@ -263,9 +300,27 @@ mod tests {
 
     #[test]
     fn test_check_reserved_words() {
-        let yaml_string = "This is a YAML string with reserved words like break, import and \
-                           symbol plus unreserved word like match.";
-        let flagged_words = super::check_reserved_words(yaml_string);
+        let words = vec![
+            "This".to_string(),
+            "is".to_string(),
+            "a".to_string(),
+            "YAML".to_string(),
+            "string".to_string(),
+            "with".to_string(),
+            "reserved".to_string(),
+            "words".to_string(),
+            "like".to_string(),
+            "break".to_string(),
+            "import".to_string(),
+            "and".to_string(),
+            "symbol".to_string(),
+            "plus".to_string(),
+            "unreserved".to_string(),
+            "word".to_string(),
+            "like".to_string(),
+            "match.".to_string(),
+        ];
+        let flagged_words = super::check_reserved_words(&words);
         assert_eq!(
             flagged_words,
             vec!["string", "with", "break", "import", "and", "symbol"]
@@ -274,9 +329,23 @@ mod tests {
 
     #[test]
     fn test_check_no_reserved_words() {
-        let yaml_string =
-            "This is a YAML without reserved words but has words like avocado plus mayo.";
-        let flagged_words = super::check_reserved_words(yaml_string);
+        let words = vec![
+            "This".to_string(),
+            "is".to_string(),
+            "a".to_string(),
+            "YAML".to_string(),
+            "without".to_string(),
+            "reserved".to_string(),
+            "words".to_string(),
+            "but".to_string(),
+            "has".to_string(),
+            "words".to_string(),
+            "like".to_string(),
+            "avocado".to_string(),
+            "plus".to_string(),
+            "mayo.".to_string(),
+        ];
+        let flagged_words = super::check_reserved_words(&words);
         let empty_vec: Vec<String> = Vec::new();
         assert_eq!(flagged_words, empty_vec);
     }
@@ -289,5 +358,49 @@ mod tests {
             .collect();
         let flagged_words = super::check_names_from_schema_for_reserved_words(names_from_schema);
         assert_eq!(flagged_words, vec!["lazy", "open", "catch"]);
+    }
+
+    #[test]
+    fn test_contract_names_validation() {
+        let valid_result = super::validate_names_valid_rescript(
+            &vec![
+                "foo".to_string(),
+                "MyContract".to_string(),
+                "_Bar".to_string(),
+            ],
+            "contract".to_string(),
+        );
+        assert!(valid_result.is_ok());
+
+        let reserved_names = super::validate_names_valid_rescript(
+            &vec![
+                "foo".to_string(),
+                "MyContract".to_string(),
+                "_Bar".to_string(),
+                "Let".to_string(),
+                "module".to_string(),
+                "this".to_string(),
+                "1".to_string(),
+            ],
+            "contract".to_string(),
+        );
+        assert_eq!(reserved_names.unwrap_err().to_string(), "EE102: The config contains reserved words for contract names: \"module\", \"this\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.");
+
+        let invalid_names = super::validate_names_valid_rescript(
+            &vec![
+                "foo".to_string(),
+                "MyContract".to_string(),
+                "_Bar".to_string(),
+                "Let".to_string(),
+                "1StartsWithNumber".to_string(),
+                "Has1Number".to_string(),
+                "Has-Hyphen".to_string(),
+                "Has.Dot".to_string(),
+                "Has Space".to_string(),
+                "Has\"Quote".to_string(),
+            ],
+            "contract".to_string(),
+        );
+        assert_eq!(invalid_names.unwrap_err().to_string(), "EE111: The config contains invalid characters for contract names: \"1StartsWithNumber\", \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.");
     }
 }
