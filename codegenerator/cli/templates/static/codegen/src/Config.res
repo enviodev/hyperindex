@@ -36,24 +36,13 @@ type chainConfig = {
   confirmedBlockThreshold: int,
   chain: ChainMap.Chain.t,
   contracts: array<contract>,
+  chainWorker: module(ChainWorker.S),
 }
 
 type historyFlag = FullHistory | MinHistory
 type rollbackFlag = RollbackOnReorg | NoRollback
 type historyConfig = {rollbackFlag: rollbackFlag, historyFlag: historyFlag}
 
-let db: Postgres.poolConfig = {
-  host: Env.Db.host,
-  port: Env.Db.port,
-  username: Env.Db.user,
-  password: Env.Db.password,
-  database: Env.Db.database,
-  ssl: Env.Db.ssl,
-  // TODO: think how we want to pipe these logs to pino.
-  onnotice: ?(Env.userLogLevel == #warn || Env.userLogLevel == #error ? None : Some(_str => ())),
-  transform: {undefined: Null},
-  max: 2,
-}
 
 let getSyncConfig = ({
   initialBlockInterval,
@@ -86,19 +75,10 @@ let getSyncConfig = ({
 
 type t = {
   historyConfig: historyConfig,
-  /*
-  Determines whether to use HypersyncClient Decoder or Viem for parsing events
-  Default is hypersync client decoder, configurable in config with:
-  ```yaml
-  event_decoder: "viem" || "hypersync-client"
-  ```
- */
-  shouldUseHypersyncClientDecoder: bool,
   isUnorderedMultichainMode: bool,
   chainMap: ChainMap.t<chainConfig>,
   defaultChain: option<chainConfig>,
   events: dict<module(Types.InternalEvent)>,
-  allEventSignatures: array<string>,
   enableRawEvents: bool,
   entities: array<module(Entities.InternalEntity)>,
 }
@@ -106,7 +86,6 @@ type t = {
 let make = (
   ~shouldRollbackOnReorg=true,
   ~shouldSaveFullHistory=false,
-  ~shouldUseHypersyncClientDecoder=true,
   ~isUnorderedMultichainMode=false,
   ~chains=[],
   ~enableRawEvents=false,
@@ -129,9 +108,6 @@ let make = (
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
       historyFlag: shouldSaveFullHistory ? FullHistory : MinHistory,
     },
-    shouldUseHypersyncClientDecoder: Env.Configurable.shouldUseHypersyncClientDecoder->Belt.Option.getWithDefault(
-      shouldUseHypersyncClientDecoder,
-    ),
     isUnorderedMultichainMode: Env.Configurable.isUnorderedMultichainMode->Belt.Option.getWithDefault(
       Env.Configurable.unstable__temp_unordered_head_mode->Belt.Option.getWithDefault(
         isUnorderedMultichainMode,
@@ -143,7 +119,6 @@ let make = (
     })
     ->ChainMap.fromArrayUnsafe,
     defaultChain: chains->Belt.Array.get(0),
-    allEventSignatures: Abis.EventSignatures.all,
     events,
     enableRawEvents,
     entities: entities->(

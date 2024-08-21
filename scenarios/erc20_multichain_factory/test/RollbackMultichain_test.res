@@ -212,10 +212,10 @@ module Sql = {
     ->Option.map(a => a.balance)
   }
 }
-let setupDb = async (~shouldDropRawEvents) => {
+let setupDb = async () => {
   open Migrations
   Logging.info("Provisioning Database")
-  let _exitCodeDown = await runDownMigrations(~shouldExit=false, ~shouldDropRawEvents)
+  let _exitCodeDown = await runDownMigrations(~shouldExit=false)
   let _exitCodeUp = await runUpMigrations(~shouldExit=false)
 }
 
@@ -610,6 +610,6 @@ describe("Multichain rollback test", () => {
     //Todo assertions
     //Assert new balances
 
-    await setupDb(~shouldDropRawEvents=true)
+    await setupDb()
   })
 })

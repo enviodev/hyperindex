@@ -101,7 +101,7 @@ type rec t = {
     ~logger: Pino.t=?,
   ) => promise<array<Entities.internalEntity>>,
   makeLoadEntitiesByField: (
-    . ~entityMod: module(Entities.InternalEntity),
+    ~entityMod: module(Entities.InternalEntity),
   ) => (
     ~fieldName: string,
     ~fieldValue: fieldValue,
@@ -176,7 +176,7 @@ let executeLoadEntitiesByIndex = async (
     let loadEntitiesByField = loadLayer.makeLoadEntitiesByField(~entityMod)
     //Do not do these queries concurrently. They are cpu expensive for
     //postgres
-    await lookupIndexesNotInMemory->Utils.awaitEach(async ({
+    await lookupIndexesNotInMemory->Utils.Array.awaitEach(async ({
       fieldName,
       fieldValue,
       fieldValueSchema,

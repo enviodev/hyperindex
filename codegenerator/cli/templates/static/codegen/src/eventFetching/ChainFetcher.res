@@ -3,7 +3,6 @@ type t = {
   logger: Pino.t,
   fetchState: PartitionedFetchState.t,
   chainConfig: Config.chainConfig,
-  chainWorker: module(ChainWorker.S),
   //The latest known block of the chain
   currentBlockHeight: int,
   isFetchingBatch: bool,
@@ -18,32 +17,9 @@ type t = {
   eventFilters: option<FetchState.eventFilters>,
 }
 
-let makeChainWorker = (~config, ~chainConfig: Config.chainConfig) => {
-  switch chainConfig.syncSource {
-  | HyperSync({endpointUrl})
-  | HyperFuel({endpointUrl}) =>
-    module(
-      HyperSyncWorker.Make({
-        let config = config
-        let chainConfig = chainConfig
-        let endpointUrl = endpointUrl
-      }): ChainWorker.S
-    )
-  | Rpc(rpcConfig) =>
-    module(
-      RpcWorker.Make({
-        let config = config
-        let chainConfig = chainConfig
-        let rpcConfig = rpcConfig
-      }): ChainWorker.S
-    )
-  }
-}
-
 //CONSTRUCTION
 let make = (
-  ~config,
-  ~chainConfig,
+  ~chainConfig: Config.chainConfig,
   ~lastBlockScannedHashes,
   ~staticContracts,
   ~dynamicContractRegistrations,
@@ -58,8 +34,7 @@ let make = (
   ~eventFilters,
   ~maxAddrInPartition,
 ): t => {
-  let chainWorker = makeChainWorker(~config, ~chainConfig)
-  let module(ChainWorker) = chainWorker
+  let module(ChainWorker) = chainConfig.chainWorker
   logger->Logging.childInfo("Initializing ChainFetcher with " ++ ChainWorker.name ++ " worker")
 
   let fetchState = PartitionedFetchState.make(
@@ -74,7 +49,6 @@ let make = (
   {
     logger,
     chainConfig,
-    chainWorker,
     lastBlockScannedHashes,
     currentBlockHeight: 0,
     isFetchingBatch: false,
@@ -96,7 +70,7 @@ let getStaticContracts = (chainConfig: Config.chainConfig) => {
   })
 }
 
-let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartition) => {
+let makeFromConfig = (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let lastBlockScannedHashes = ReorgDetection.LastBlockScannedHashes.empty(
@@ -104,7 +78,6 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartit
   )
 
   make(
-    ~config,
     ~staticContracts,
     ~chainConfig,
     ~startBlock=chainConfig.startBlock,
@@ -125,7 +98,7 @@ let makeFromConfig = (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartit
 /**
  * This function allows a chain fetcher to be created from metadata, in particular this is useful for restarting an indexer and making sure it fetches blocks from the same place.
  */
-let makeFromDbState = async (chainConfig: Config.chainConfig, ~config, ~maxAddrInPartition) => {
+let makeFromDbState = async (chainConfig: Config.chainConfig, ~maxAddrInPartition) => {
   let logger = Logging.createChild(~params={"chainId": chainConfig.chain->ChainMap.Chain.toChainId})
   let staticContracts = chainConfig->getStaticContracts
   let chainId = chainConfig.chain->ChainMap.Chain.toChainId
@@ -198,7 +171,6 @@ let makeFromDbState = async (chainConfig: Config.chainConfig, ~config, ~maxAddrI
     )
 
   make(
-    ~config,
     ~staticContracts,
     ~dynamicContractRegistrations,
     ~chainConfig,
@@ -326,7 +298,7 @@ let rollbackLastBlockHashesToReorgLocation = async (
   let blockNumbers =
     chainFetcher.lastBlockScannedHashes->ReorgDetection.LastBlockScannedHashes.getAllBlockNumbers
 
-  let module(ChainWorker) = chainFetcher.chainWorker
+  let module(ChainWorker) = chainFetcher.chainConfig.chainWorker
 
   let getBlockHashes = switch getBlockHashesMock {
   | Some(getBlockHashes) => getBlockHashes

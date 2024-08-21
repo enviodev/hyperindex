@@ -3,8 +3,9 @@ import {
   runUpMigrations,
 } from "../../generated/src/db/Migrations.bs";
 import Postgres from "postgres";
-import { db } from "../../generated/src/Config.bs";
-export const createSql = () => Postgres(db);
+import { config } from "../../generated/src/db/DbFunctions.bs";
+
+export const createSql = () => Postgres(config);
 
 const originalConsoleLog = console.log;
 
@@ -17,7 +18,7 @@ export const enableConsoleLog = () => {
 };
 
 export const runMigrationsNoExit = async () => {
-  await runDownMigrations(false, true);
+  await runDownMigrations(false);
   await runUpMigrations(false);
 };
 

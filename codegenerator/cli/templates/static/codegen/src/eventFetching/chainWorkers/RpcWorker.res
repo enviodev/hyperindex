@@ -3,23 +3,20 @@ open ChainWorker
 
 module Make = (
   T: {
-    let config: Config.t
     let rpcConfig: Config.rpcConfig
-    let chainConfig: Config.chainConfig
+    let chain: ChainMap.Chain.t
+    let contracts: array<Config.contract>
   },
 ): S => {
   let name = "RPC"
-  let config = T.config
-  let rpcConfig = T.rpcConfig
-  let chainConfig = T.chainConfig
-  let chain = chainConfig.chain
+  let chain = T.chain
 
   let blockIntervals = Js.Dict.empty()
 
   let blockLoader = LazyLoader.make(
     ~loaderFn=blockNumber =>
       EventFetching.getUnwrappedBlockWithBackoff(
-        ~provider=rpcConfig.provider,
+        ~provider=T.rpcConfig.provider,
         ~backoffMsOnFailure=1000,
         ~blockNumber,
       ),
@@ -73,6 +70,7 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
+    let config = Config.getGenerated()
     try {
       let {
         fromBlock,
@@ -107,8 +105,8 @@ module Make = (
 
       //Needs to be run on every loop in case of new registrations
       let contractInterfaceManager = ContractInterfaceManager.make(
+        ~contracts=T.contracts,
         ~contractAddressMapping,
-        ~chainConfig,
       )
 
       let {
@@ -153,7 +151,7 @@ module Make = (
         parsedQueueItemsPreFilter->Array.keep(item => item->FetchState.applyFilters(~eventFilters))
       }
 
-      let sc = rpcConfig.syncConfig
+      let sc = T.rpcConfig.syncConfig
 
       // Increase batch size going forward, but do not increase past a configured maximum
       // See: https://en.wikipedia.org/wiki/Additive_increase/multiplicative_decrease

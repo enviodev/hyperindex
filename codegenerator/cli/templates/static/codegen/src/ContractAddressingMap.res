@@ -51,24 +51,6 @@ let make = () => {
   addressesByName: Js.Dict.empty(),
 }
 
-// Insert the static address into the Contract <-> Address bi-mapping
-let registerStaticAddresses = (mapping, ~chainConfig: Config.chainConfig, ~logger: Pino.t) => {
-  chainConfig.contracts->Belt.Array.forEach(contract => {
-    contract.addresses->Belt.Array.forEach(address => {
-      Logging.childTrace(
-        logger,
-        {
-          "msg": "adding contract address",
-          "contractName": contract.name,
-          "address": address,
-        },
-      )
-
-      mapping->addAddress(~name=contract.name, ~address)
-    })
-  })
-}
-
 let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress): option<
   contractName,
 > => {
@@ -76,7 +58,10 @@ let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress):
 }
 
 let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Utils.magic
-let keyValStringToAddress: array<(string, string)> => array<(Ethers.ethAddress, string)> = Utils.magic
+let keyValStringToAddress: array<(string, string)> => array<(
+  Ethers.ethAddress,
+  string,
+)> = Utils.magic
 
 let getAddressesFromContractName = (mapping, ~contractName) => {
   switch mapping->getAddresses(contractName) {
@@ -116,7 +101,7 @@ let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Ethers.ethAdd
   mapping.nameByAddress
   ->Js.Dict.entries
   ->Belt.Array.keep(((addr, _name)) => {
-    let shouldRemove = addressesToRemove->Utils.arrayIncludes(addr->Utils.magic)
+    let shouldRemove = addressesToRemove->Utils.Array.includes(addr->Utils.magic)
     !shouldRemove
   })
   ->keyValStringToAddress

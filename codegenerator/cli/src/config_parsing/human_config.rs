@@ -146,7 +146,7 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "A flag to indicate if the indexer should rollback to the last known \
-                           valid block on a reorg (default: false)"
+                           valid block on a reorg (default: true)"
         )]
         pub rollback_on_reorg: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -480,6 +480,11 @@ pub mod evm {
                                   file defined in your contract config. A provided signature \
                                   will take precedence over what is defined in the json ABI")]
         pub event: String,
+        #[schemars(
+            description = "Name of the event in the HyperIndex generated code. When ommitted, the event field will be used. Should be unique per contract"
+        )]
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub name: Option<String>,
     }
 
     impl EventConfig {

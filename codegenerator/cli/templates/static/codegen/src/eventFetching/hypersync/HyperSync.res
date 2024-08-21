@@ -112,7 +112,7 @@ module LogsQuery = {
       returnedObj
       ->(Utils.magic: 'a => Js.Dict.t<unknown>)
       ->Js.Dict.get(fieldName)
-      ->Utils.optionMapNone(prefix ++ "." ++ fieldName)
+      ->Utils.Option.mapNone(prefix ++ "." ++ fieldName)
     })
   }
 
@@ -282,9 +282,9 @@ module BlockData = {
               | _ =>
                 let missingParams =
                   [
-                    block.number->Utils.optionMapNone("block.number"),
-                    block.timestamp->Utils.optionMapNone("block.timestamp"),
-                    block.hash->Utils.optionMapNone("block.hash"),
+                    block.number->Utils.Option.mapNone("block.number"),
+                    block.timestamp->Utils.Option.mapNone("block.timestamp"),
+                    block.hash->Utils.Option.mapNone("block.hash"),
                   ]->Array.keepMap(p => p)
 
                 Error(
@@ -298,7 +298,7 @@ module BlockData = {
           )
         })
       })
-      ->Utils.mapArrayOfResults
+      ->Utils.Array.transposeResults
     }
   }
 
@@ -335,7 +335,7 @@ module BlockData = {
       ->Array.map(blockNumber => queryBlockData(~blockNumber, ~serverUrl, ~logger))
       ->Promise.all
     res
-    ->Utils.mapArrayOfResults
+    ->Utils.Array.transposeResults
     ->Result.map(Array.keepMap(_, v => v))
   }
 }

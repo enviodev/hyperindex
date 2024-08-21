@@ -14,12 +14,12 @@ type t = {
 }
 
 let make = (
-  ~chainConfig: Config.chainConfig,
+  ~contracts: array<Config.contract>,
   ~contractAddressMapping: ContractAddressingMap.mapping,
 ): t => {
   let contractNameInterfaceMapping = Js.Dict.empty()
 
-  chainConfig.contracts->Belt.Array.forEach(contract => {
+  contracts->Belt.Array.forEach(contract => {
     let {name, abi} = contract
     let interface = Ethers.Interface.make(~abi)
     contractNameInterfaceMapping->Js.Dict.set(name, {interface, abi})

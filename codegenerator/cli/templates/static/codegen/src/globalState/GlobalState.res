@@ -48,7 +48,7 @@ let isRollingBack = state =>
   | _ => false
   }
 
-type arbitraryEventQueue = list<Types.eventBatchQueueItem>
+type arbitraryEventQueue = array<Types.eventBatchQueueItem>
 
 type shouldExit = ExitWithSuccess | NoExit
 type action =
@@ -192,7 +192,7 @@ let checkAndSetSyncedChains = (~nextQueueItemIsKnownNone=false, chainManager: Ch
         //All events have been processed on the chain fetchers queue
         //Other chains may be busy syncing
         let hasArbQueueEvents =
-          chainManager.arbitraryEventPriorityQueue
+          chainManager.arbitraryEventQueue
           ->ChainManager.getFirstArbitraryEventsItemForChain(~chain=cf.chainConfig.chain)
           ->Option.isSome //TODO this is more expensive than it needs to be
         let queueSize = cf.fetchState->PartitionedFetchState.queueSize
@@ -231,7 +231,7 @@ let updateLatestProcessedBlocks = (
       let {numEventsProcessed, latestProcessedBlock} = latestProcessedBlocks->ChainMap.get(chain)
 
       let hasArbQueueEvents =
-        state.chainManager.arbitraryEventPriorityQueue
+        state.chainManager.arbitraryEventQueue
         ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
         ->Option.isSome //TODO this is more expensive than it needs to be
       let queueSize = fetchState->PartitionedFetchState.queueSize
@@ -301,14 +301,14 @@ let handleBlockRangeResponse = (state, ~chain, ~response: ChainWorker.blockRange
         ~currentBlockHeight,
         ~latestFetchedBlockTimestamp,
         ~latestFetchedBlockNumber=heighestQueriedBlockNumber,
-        ~fetchedEvents=parsedQueueItems->List.fromArray,
+        ~fetchedEvents=parsedQueueItems,
         ~id={fetchStateId: fetchStateRegisterId, partitionId},
       )
       ->Utils.unwrapResultExn
       ->updateChainFetcherCurrentBlockHeight(~currentBlockHeight)
 
     let hasArbQueueEvents =
-      state.chainManager.arbitraryEventPriorityQueue
+      state.chainManager.arbitraryEventQueue
       ->ChainManager.getFirstArbitraryEventsItemForChain(~chain)
       ->Option.isSome //TODO this is more expensive than it needs to be
     let queueSize = chainFetcher.fetchState->PartitionedFetchState.queueSize
@@ -411,13 +411,11 @@ let actionReducer = (state: t, action: action) => {
   | BlockRangeResponse(chain, response) => state->handleBlockRangeResponse(~chain, ~response)
   | EventBatchProcessed({
       latestProcessedBlocks,
-      dynamicContractRegistrations: Some({registrationsReversed, unprocessedBatchReversed}),
+      dynamicContractRegistrations: Some({registrations, unprocessedBatch}),
     }) =>
-    let updatedArbQueue =
-      unprocessedBatchReversed->List.reverse->FetchState.mergeSortedList(~cmp=(a, b) => {
-        a->EventUtils.getEventComparatorFromQueueItem <
-          b->EventUtils.getEventComparatorFromQueueItem
-      }, state.chainManager.arbitraryEventPriorityQueue)
+    let updatedArbQueue = Utils.Array.mergeSorted((a, b) => {
+      a->EventUtils.getEventComparatorFromQueueItem <= b->EventUtils.getEventComparatorFromQueueItem
+    }, unprocessedBatch, state.chainManager.arbitraryEventQueue)
 
     let nextTasks = [
       UpdateChainMetaDataAndCheckForExit(NoExit),
@@ -425,7 +423,7 @@ let actionReducer = (state: t, action: action) => {
       NextQuery(CheckAllChains),
     ]
 
-    let nextState = registrationsReversed->List.reduce(state, (state, registration) => {
+    let nextState = registrations->Array.reduce(state, (state, registration) => {
       let {
         registeringEventBlockNumber,
         registeringEventLogIndex,
@@ -497,7 +495,7 @@ let actionReducer = (state: t, action: action) => {
       let updatedChainManager: ChainManager.t = {
         ...state.chainManager,
         chainFetchers: updatedChainFetchers,
-        arbitraryEventPriorityQueue: updatedArbQueue,
+        arbitraryEventQueue: updatedArbQueue,
       }
 
       {
@@ -549,7 +547,7 @@ let actionReducer = (state: t, action: action) => {
         [UpdateChainMetaDataAndCheckForExit(shouldExit)],
       )
     }
-  | UpdateQueues(fetchStatesMap, arbitraryEventPriorityQueue) =>
+  | UpdateQueues(fetchStatesMap, arbitraryEventQueue) =>
     let chainFetchers = state.chainManager.chainFetchers->ChainMap.mapWithKey((chain, cf) => {
       {
         ...cf,
@@ -560,7 +558,7 @@ let actionReducer = (state: t, action: action) => {
     let chainManager = {
       ...state.chainManager,
       chainFetchers,
-      arbitraryEventPriorityQueue,
+      arbitraryEventQueue,
     }
 
     (
@@ -658,7 +656,7 @@ let checkAndFetchForChain = (
   ~dispatchAction,
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  let {fetchState, chainWorker, logger, currentBlockHeight, isFetchingBatch} = chainFetcher
+  let {fetchState, chainConfig: {chainWorker}, logger, currentBlockHeight, isFetchingBatch} = chainFetcher
 
   if (
     !isFetchingBatch &&
