@@ -1,7 +1,7 @@
 open Belt
 open RescriptMocha
 
-let config = Config.getGenerated()
+let config = RegisterHandlers.registerAllHandlers()
 
 module Mock = {
   /*

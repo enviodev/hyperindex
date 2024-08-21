@@ -132,6 +132,14 @@ Helper to check if a value exists in an array
       [...head, ...tail]
     }
   }
+
+  let rec find = (arr, fn, ~index=0) => {
+    open Belt
+    switch arr[index] {
+    | Some(item) => item->fn ? item->Some : arr->find(fn, ~index=index + 1)
+    | None => None
+    }
+  }
 }
 
 /**

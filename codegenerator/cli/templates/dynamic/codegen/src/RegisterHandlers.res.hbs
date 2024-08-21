@@ -135,7 +135,6 @@ let registerContractHandlers = (
     {{/each}}
     ],
   )
-  Config.setGenerated(config)
 )
 
 let registerAllHandlers = () => {
@@ -146,5 +145,21 @@ let registerAllHandlers = () => {
     ~handlerPathRelativeToConfig="{{contract.handler.relative_to_config}}",
   )
 {{/each}}
+
+  //Get all wildcard events from registered events and set them to wildcard in the config
+  //so that it can be looked up by wildcard if need be
+  RegisteredEvents.getWildcardEventKeys()->Belt.Array.forEach(({contractName, topic0}) => {
+    config.events
+    ->EventLookup.setEventToWildcard(~contractName, ~topic0)
+    //This should never fail, during registration of the event, we should have already checked for wildcard collisions
+    ->EventLookup.unwrapAddEventResponse(
+      ~context="Wildcard event registered",
+      ~contractName,
+      ~eventName=topic0,
+    )
+  })
+
+  Config.setGenerated(config)
+
   config
 }

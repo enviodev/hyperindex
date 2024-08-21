@@ -123,12 +123,13 @@ module Make = (
         ~contractName=contract.name,
       ) {
       | [] => None
-      | addresses => Some({
+      | addresses =>
+        Some({
           addresses,
           logIds: contract.events->Js.Array2.map(eventMod => {
             let module(Event: Types.Event) = eventMod
             Event.topic0
-          })
+          }),
         })
       }
     })
@@ -260,10 +261,9 @@ module Make = (
               | LogData({rb}) => rb
               }
               let eventMod =
-                config->Config.getEventModOrThrow(
-                  ~contractName,
-                  ~topic0=logId->Js.BigInt.toString,
-                )
+                config.events
+                ->EventLookup.getEventByKey(~contractName, ~topic0=logId->Js.BigInt.toString)
+                ->Option.getExn
               let module(Event) = eventMod
 
               (

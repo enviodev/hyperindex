@@ -209,6 +209,11 @@ module Make = (Indexer: Indexer.S) => {
     eventKeys: array<string>,
   }
 
+  let getEventKey = (eventMod: module(Types.InternalEvent)) => {
+    let module(Event) = eventMod
+    Event.contractName ++ "_" ++ Event.topic0
+  }
+
   let getLogsFromBlocks = (
     blocks: array<block>,
     ~addressesAndEventNames: array<contractAddressesAndEventNames>,
@@ -219,10 +224,7 @@ module Make = (Indexer: Indexer.S) => {
           false,
           (prev, {addresses, eventKeys}) => {
             prev ||
-            (addresses->arrayHas(l.srcAddress) && {
-                let module(Event) = l.eventMod
-                eventKeys->arrayHas(Event.key)
-              })
+            (addresses->arrayHas(l.srcAddress) && eventKeys->arrayHas(getEventKey(l.eventMod)))
           },
         )
         if isLogInConfig {
@@ -234,7 +236,10 @@ module Make = (Indexer: Indexer.S) => {
     )
   }
 
-  let executeQuery = (self: t, query: FetchState.nextQuery): ChainWorker.blockRangeFetchResponse => {
+  let executeQuery = (
+    self: t,
+    query: FetchState.nextQuery,
+  ): ChainWorker.blockRangeFetchResponse => {
     let unfilteredBlocks = self->getBlocks(~fromBlock=query.fromBlock, ~toBlock=query.toBlock)
     let heighstBlock = unfilteredBlocks->getLast->Option.getExn
     let firstBlockParentNumberAndHash =
@@ -251,8 +256,7 @@ module Make = (Indexer: Indexer.S) => {
       {
         addresses,
         eventKeys: c.events->Belt.Array.map(event => {
-          let module(Event) = event
-          Event.key
+          event->(Utils.magic: module(Types.Event) => module(Types.InternalEvent))->getEventKey
         }),
       }
     })

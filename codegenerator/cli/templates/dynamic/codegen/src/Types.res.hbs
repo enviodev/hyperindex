@@ -205,10 +205,10 @@ type eventLog<'a> = {
 type internalEventArgs
 
 module type Event = {
-  let key: string
+  let topic0: string // Or rb for Fuel receipts
   let name: string
   let contractName: string
-  let topic0: string // Or rb for Fuel receipts
+  let chains: array<ChainMap.Chain.t>
 
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
@@ -223,12 +223,18 @@ external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent
 
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
+  let contractName = "{{contract.name.capitalized}}"
+  let chains = [
+{{#each contract.chain_ids as | chain_id |}}
+  {{chain_id}},
+{{/each}}
+    ]->Belt.Array.map(chainId => ChainMap.Chain.makeUnsafe(~chainId))
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
-    let key = "{{contract.name.capitalized}}_{{event.topic0}}"
-    let name = "{{event.name.capitalized}}"
-    let contractName = "{{contract.name.capitalized}}"
     let topic0 = "{{event.topic0}}"
+    let name = "{{event.name.capitalized}}"
+    let contractName = contractName
+    let chains = chains
 
     {{#if event.params}}
     @genType

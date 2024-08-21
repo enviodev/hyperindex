@@ -280,11 +280,11 @@ module Make = (
           ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
           ->Converters.convertHyperSyncEvent(
             ~config,
-            ~contractInterfaceManager,
+            ~contractAddressMapping,
             ~log=item.log,
             ~block,
             ~transaction,
-            ~chainId,
+            ~chain,
           ) {
           | Ok(v) => v
           | Error(exn) =>
@@ -314,7 +314,7 @@ module Make = (
             ~transaction=item.transaction,
             ~block=item.block,
             ~contractInterfaceManager,
-            ~chainId,
+            ~chain,
           ) {
           | Ok((event, eventMod)) =>
             (

@@ -21,7 +21,8 @@ type config = {networks: array<network_conf>}
 let configYaml: config = ConfigUtils.loadConfigYaml(~codegenConfigPath=configPathString)
 let firstNetworkConfig = configYaml.networks[0]
 
-let generatedChainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
+let generatedChainConfig =
+  RegisterHandlers.registerAllHandlers().chainMap->ChainMap.get(MockConfig.chain1337)
 let generatedSyncConfig = switch generatedChainConfig.syncSource {
 | Rpc({syncConfig}) => syncConfig
 | _ => Js.Exn.raiseError("Expected an rpc config")
