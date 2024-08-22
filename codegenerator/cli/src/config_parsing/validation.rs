@@ -113,8 +113,8 @@ pub fn validate_names_valid_rescript(
     Ok(())
 }
 
-pub fn validate_deserialized_config_yaml(deserialized_yaml: &HumanConfig) -> anyhow::Result<()> {
-    if !is_valid_postgres_db_name(&deserialized_yaml.name) {
+pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Result<()> {
+    if !is_valid_postgres_db_name(&evm_config.name) {
         return Err(anyhow!(
             "EE108: The 'name' field in your config file must have the following pattern: It \
              must start with a letter or underscore. It can contain letters, numbers, and \
@@ -125,13 +125,13 @@ pub fn validate_deserialized_config_yaml(deserialized_yaml: &HumanConfig) -> any
 
     let mut contract_names = Vec::new();
 
-    if let Some(global_contracts) = &deserialized_yaml.contracts {
+    if let Some(global_contracts) = &evm_config.contracts {
         for global_contract in global_contracts {
             contract_names.push(global_contract.name.clone());
         }
     }
 
-    for network in &deserialized_yaml.networks {
+    for network in &evm_config.networks {
         // validate endblock is a greater than the startblock
         if let Some(&network_endblock) = network.end_block.as_ref() {
             if network_endblock < network.start_block {

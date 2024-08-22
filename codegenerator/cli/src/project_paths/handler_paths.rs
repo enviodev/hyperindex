@@ -62,10 +62,7 @@ impl HandlerPathsTemplate {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        config_parsing::{entity_parsing::Schema, human_config, system_config::SystemConfig},
-        project_paths::ParsedProjectPaths,
-    };
+    use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths};
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
 
@@ -78,13 +75,9 @@ mod tests {
         let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
-        let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
-        let yaml_cfg = human_config::deserialize_config_from_yaml(human_config_string)
-            .expect("Failed deserializing config");
-
-        let config = SystemConfig::from_evm_config(yaml_cfg, Schema::empty(), &project_paths)
-            .expect("Failed parsing config");
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
 
         let expected_schema_path = test_dir_path_buf.join(PathBuf::from("schemas/schema.graphql"));
 
@@ -120,14 +113,9 @@ mod tests {
         let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
-        println!("project_paths: {:#?}", project_paths);
-        let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
-        let yaml_cfg = human_config::deserialize_config_from_yaml(human_config_string)
-            .expect("Failed deserializing config");
-
-        let config = SystemConfig::from_evm_config(yaml_cfg, Schema::empty(), &project_paths)
-            .expect("Failed parsing config");
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
 

@@ -1,9 +1,4 @@
-use super::validation;
-use crate::{
-    constants::links,
-    utils::normalized_list::{NormalizedList, SingleOrList},
-};
-use anyhow::Context;
+use crate::utils::normalized_list::{NormalizedList, SingleOrList};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -616,31 +611,6 @@ pub mod fuel {
     }
 }
 
-fn strip_to_letters(string: &str) -> String {
-    let mut pg_friendly_name = String::new();
-    for c in string.chars() {
-        if c.is_alphabetic() {
-            pg_friendly_name.push(c);
-        }
-    }
-    pg_friendly_name
-}
-
-pub fn deserialize_config_from_yaml(config: String) -> anyhow::Result<evm::HumanConfig> {
-    let mut deserialized_yaml: evm::HumanConfig =
-        serde_yaml::from_str(&config).context(format!(
-            "EE105: Failed to deserialize config. Visit the docs for more information {}",
-            links::DOC_CONFIGURATION_FILE
-        ))?;
-
-    deserialized_yaml.name = strip_to_letters(&deserialized_yaml.name);
-
-    // Validating the config file
-    validation::validate_deserialized_config_yaml(&deserialized_yaml)?;
-
-    Ok(deserialized_yaml)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -791,19 +761,6 @@ address: ["0x2E645469f354BB4F5c8a05B3b30A929361cf77eC"]
             deserialized,
             NormalizedList::from(vec!["0x123".to_string(), "0x456".to_string()])
         );
-    }
-
-    #[test]
-    fn valid_name_conversion() {
-        let name_with_space = super::strip_to_letters("My too lit to quit indexer");
-        let expected_name_with_space = "Mytoolittoquitindexer";
-        let name_with_special_chars = super::strip_to_letters("Myto@littoq$itindexer");
-        let expected_name_with_special_chars = "Mytolittoqitindexer";
-        let name_with_numbers = super::strip_to_letters("yes0123456789okay");
-        let expected_name_with_numbers = "yesokay";
-        assert_eq!(name_with_space, expected_name_with_space);
-        assert_eq!(name_with_special_chars, expected_name_with_special_chars);
-        assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
 
     #[test]
