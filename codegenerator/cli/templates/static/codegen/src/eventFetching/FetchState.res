@@ -217,25 +217,38 @@ Updates node at the given id with the values passed.
 Errors if the node can't be found.
 */
 let rec updateInternal = (
+  register: t,
   ~id,
   ~latestFetchedBlock,
   ~newFetchedEvents,
   ~isFetchingAtHead,
-  register: t,
+  ~parentRegister=?,
 ): result<t, exn> => {
+  let handleUpdate = (updated: t) => {
+    switch parentRegister {
+    | Some((parentRegister, dynamicContractId)) =>
+      updated->addNextRegister(~register=parentRegister, ~dynamicContractId)->Ok
+    | None => updated->Ok
+    }
+  }
+
   switch (register.registerType, id) {
   | (RootRegister(_), Root) =>
     register
     ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
-    ->Ok
+    ->handleUpdate
   | (DynamicContractRegister(id, _nextRegistered), DynamicContract(targetId)) if id == targetId =>
     register
     ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
-    ->Ok
+    ->handleUpdate
   | (DynamicContractRegister(dynamicContractId, nextRegistered), id) =>
-    nextRegistered
-    ->updateInternal(~newFetchedEvents, ~id, ~latestFetchedBlock, ~isFetchingAtHead)
-    ->Result.map(s => s->addNextRegister(~register, ~dynamicContractId))
+    nextRegistered->updateInternal(
+      ~id,
+      ~latestFetchedBlock,
+      ~newFetchedEvents,
+      ~isFetchingAtHead,
+      ~parentRegister=(register, dynamicContractId),
+    )
   | (RootRegister(_), DynamicContract(_)) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 }
