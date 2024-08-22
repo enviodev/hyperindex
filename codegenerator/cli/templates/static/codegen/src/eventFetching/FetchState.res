@@ -541,17 +541,21 @@ fetch state with that item.
 
 Recurses through registers and Errors if ID does not exist
 */
-let rec popQItemAtRegisterId = (self: t, ~id) =>
+let rec popQItemAtRegisterId = (self: t, ~id, ~prev=?) => {
   switch self.registerType {
   | RootRegister(_)
   | DynamicContractRegister(_) if id == self->getRegisterId =>
-    self->getEarliestEventInRegisterWithUpdatedQueue->Ok
+    let updated = self->getEarliestEventInRegisterWithUpdatedQueue
+    switch prev {
+    | Some((parentRegister, dynamicContractId)) =>
+      parentRegister->getRegisterWithNextResponse(~dynamicContractId, updated)->Ok
+    | None => Ok(updated)
+    }
   | DynamicContractRegister(dynamicContractId, nextRegister) =>
-    nextRegister
-    ->popQItemAtRegisterId(~id)
-    ->Result.map(getRegisterWithNextResponse(self, ~dynamicContractId, _))
+    nextRegister->popQItemAtRegisterId(~id, ~prev=(self, dynamicContractId))
   | RootRegister(_) => Error(UnexpectedRegisterDoesNotExist(id))
   }
+}
 
 /**
 Gets the earliest queueItem from thgetNodeEarliestEventWithUpdatedQueue.
