@@ -118,7 +118,7 @@ pub mod evm {
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: Option<EcosystemTag>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to config file")]
+        #[schemars(description = "Custom path to schema.yaml file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
@@ -536,7 +536,7 @@ pub mod fuel {
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: EcosystemTag,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to config file")]
+        #[schemars(description = "Custom path to schema.yaml file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(

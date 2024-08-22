@@ -3,7 +3,7 @@ use super::{
     entity_parsing::{Entity, GraphQLEnum, Schema},
     human_config::{
         self,
-        evm::{EventConfig, EventDecoder, HumanConfig, Network as HumanNetwork},
+        evm::{EventConfig, EventDecoder, HumanConfig as EvmConfig, Network as EvmNetwork},
     },
     hypersync_endpoints,
     validation::validate_names_valid_rescript,
@@ -152,7 +152,7 @@ impl SystemConfig {
 //Parse methods for system config
 impl SystemConfig {
     pub fn parse_from_human_cfg_with_schema(
-        human_cfg: HumanConfig,
+        human_cfg: EvmConfig,
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
@@ -238,8 +238,10 @@ impl SystemConfig {
                 }
             }
 
-            let sync_source =
-                SyncSource::from_human_config(network.clone(), human_cfg.event_decoder.clone())?;
+            let sync_source = SyncSource::from_evm_network_config(
+                network.clone(),
+                human_cfg.event_decoder.clone(),
+            )?;
 
             let contracts: Vec<NetworkContract> = network
                 .contracts
@@ -292,7 +294,7 @@ impl SystemConfig {
     }
 
     pub fn parse_from_human_config(
-        human_cfg: HumanConfig,
+        human_cfg: EvmConfig,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
         let relative_schema_path_from_config = human_cfg
@@ -376,8 +378,8 @@ fn validate_url(url: &str) -> bool {
 }
 
 impl SyncSource {
-    fn from_human_config(
-        network: HumanNetwork,
+    fn from_evm_network_config(
+        network: EvmNetwork,
         event_decoder: Option<EventDecoder>,
     ) -> Result<Self> {
         let is_client_decoder = match event_decoder {
@@ -800,7 +802,7 @@ mod test {
         config_parsing::{
             self,
             entity_parsing::Schema,
-            human_config::evm::HumanConfig,
+            human_config::evm::HumanConfig as EvmConfig,
             system_config::{Event, SyncConfig, SyncSource},
         },
         project_paths::ParsedProjectPaths,
@@ -1027,14 +1029,14 @@ mod test {
 
         let file_str = std::fs::read_to_string(config_path).unwrap();
 
-        let cfg: HumanConfig = serde_yaml::from_str(&file_str).unwrap();
+        let cfg: EvmConfig = serde_yaml::from_str(&file_str).unwrap();
 
         // Both hypersync and rpc config should be present
         assert!(cfg.networks[0].rpc_config.is_some());
         assert!(cfg.networks[0].hypersync_config.is_some());
 
-        let error =
-            SyncSource::from_human_config(cfg.networks[0].clone(), cfg.event_decoder).unwrap_err();
+        let error = SyncSource::from_evm_network_config(cfg.networks[0].clone(), cfg.event_decoder)
+            .unwrap_err();
 
         assert_eq!(error.to_string(), "EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file");
     }

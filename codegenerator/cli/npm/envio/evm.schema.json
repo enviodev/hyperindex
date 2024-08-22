@@ -27,7 +27,7 @@
       ]
     },
     "schema": {
-      "description": "Custom path to config file",
+      "description": "Custom path to schema.yaml file",
       "type": [
         "string",
         "null"
