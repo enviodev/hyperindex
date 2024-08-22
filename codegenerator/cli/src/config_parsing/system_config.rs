@@ -293,10 +293,19 @@ impl SystemConfig {
         })
     }
 
-    pub fn parse_from_human_config(
-        human_cfg: EvmConfig,
-        project_paths: &ParsedProjectPaths,
-    ) -> Result<Self> {
+    pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
+        let human_config_string =
+            std::fs::read_to_string(&project_paths.config).context(format!(
+          "EE104: Failed to resolve config path {0}. Make sure you're in the correct directory and \
+           that a config file with the name {0} exists",
+          &project_paths.config
+              .to_str()
+              .unwrap_or("{unknown}"),
+        ))?;
+
+        let human_cfg = human_config::deserialize_config_from_yaml(human_config_string)
+            .expect("Config should be deserializeable");
+
         let relative_schema_path_from_config = human_cfg
             .schema
             .clone()
@@ -852,9 +861,10 @@ mod test {
         let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
+        let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
         let human_cfg =
-            config_parsing::human_config::deserialize_config_from_yaml(&project_paths.config)
+            config_parsing::human_config::deserialize_config_from_yaml(human_config_string)
                 .expect("Failed deserializing config");
 
         let config = SystemConfig::parse_from_human_cfg_with_schema(

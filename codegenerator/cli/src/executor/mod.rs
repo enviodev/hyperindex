@@ -61,13 +61,8 @@ pub async fn execute(command_line_args: CommandLineArgs) -> Result<()> {
             };
 
             if start_args.restart {
-                let yaml_config =
-                    human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
-                        .context("Failed deserializing config")?;
-
-                let config =
-                    SystemConfig::parse_from_human_config(yaml_config, &parsed_project_paths)
-                        .context("Failed parsing config")?;
+                let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
+                    .context("Failed parsing config")?;
 
                 let persisted_state = PersistedState::get_current_state(&config)
                     .context("Failed constructing persisted state")?;

@@ -5,7 +5,7 @@ use crate::constants::reserved_keywords::{
 };
 use anyhow::anyhow;
 use regex::Regex;
-use std::{collections::HashSet, path::Path};
+use std::collections::HashSet;
 
 // It must start with a letter or underscore.
 // It can contain letters, numbers, and underscores.
@@ -113,18 +113,12 @@ pub fn validate_names_valid_rescript(
     Ok(())
 }
 
-pub fn validate_deserialized_config_yaml(
-    config_path: &Path,
-    deserialized_yaml: &HumanConfig,
-) -> anyhow::Result<()> {
+pub fn validate_deserialized_config_yaml(deserialized_yaml: &HumanConfig) -> anyhow::Result<()> {
     if !is_valid_postgres_db_name(&deserialized_yaml.name) {
         return Err(anyhow!(
-            "EE108: The 'name' field in your config file ({}) must have the following pattern: It \
+            "EE108: The 'name' field in your config file must have the following pattern: It \
              must start with a letter or underscore. It can contain letters, numbers, and \
              underscores (no spaces). It must have a maximum length of 63 characters",
-            &config_path
-                .to_str()
-                .unwrap_or("unknown config file name path")
         )
         .into());
     }
@@ -142,11 +136,8 @@ pub fn validate_deserialized_config_yaml(
         if let Some(&network_endblock) = network.end_block.as_ref() {
             if network_endblock < network.start_block {
                 return Err(anyhow!(
-                    "EE110: The config file ({}) has an endBlock that is less than the startBlock \
+                    "EE110: The config file has an endBlock that is less than the startBlock \
                      for network id: {}. The endBlock must be greater than the startBlock.",
-                    &config_path
-                        .to_str()
-                        .unwrap_or("unknown config file name path"),
                     &network.id.to_string()
                 ));
             }
@@ -161,10 +152,7 @@ pub fn validate_deserialized_config_yaml(
             for contract_address in contract.address.clone().into_iter() {
                 if !is_valid_ethereum_address(&contract_address) {
                     return Err(anyhow!(
-                        "EE100: One of the contract addresses in the config file ({}) isn't valid",
-                        &config_path
-                            .to_str()
-                            .unwrap_or("unknown config file name path")
+                        "EE100: One of the contract addresses in the config file isn't valid",
                     ));
                 }
             }
@@ -173,11 +161,8 @@ pub fn validate_deserialized_config_yaml(
     // Checking that contract names are non-unique
     if !are_contract_names_unique(&contract_names) {
         return Err(anyhow!(
-            "EE101: The config file ({}) cannot have duplicate contract names. All contract names \
+            "EE101: The config file cannot have duplicate contract names. All contract names \
              need to be unique, regardless of network. Contract names are not case-sensitive.",
-            &config_path
-                .to_str()
-                .unwrap_or("unknown config file name path")
         ));
     }
 

@@ -733,10 +733,7 @@ mod test {
 
     use super::*;
     use crate::{
-        config_parsing::{
-            human_config,
-            system_config::{RpcConfig, SystemConfig},
-        },
+        config_parsing::system_config::{RpcConfig, SystemConfig},
         project_paths::ParsedProjectPaths,
         utils::text::Capitalize,
     };
@@ -762,10 +759,7 @@ mod test {
         let project_paths =
             ParsedProjectPaths::new(&project_root, generated, &config).expect("Parsed paths");
 
-        let yaml_config = human_config::deserialize_config_from_yaml(&project_paths.config)
-            .expect("Config should be deserializeable");
-
-        let config = SystemConfig::parse_from_human_config(yaml_config, &project_paths)
+        let config = SystemConfig::parse_from_project_files(&project_paths)
             .expect("Deserialized yml config should be parseable");
 
         let project_template = super::ProjectTemplate::from_config(&config, &project_paths)

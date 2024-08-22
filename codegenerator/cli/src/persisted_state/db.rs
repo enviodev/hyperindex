@@ -124,9 +124,10 @@ mod test {
         let root = format!("{}/test/configs", env!("CARGO_MANIFEST_DIR"));
         let path = format!("{}/config1.yaml", &root);
         let config_path = PathBuf::from(path);
+        let human_config_string = std::fs::read_to_string(&config_path).unwrap();
 
         let human_cfg =
-            human_config::deserialize_config_from_yaml(&config_path).context("human cfg")?;
+            human_config::deserialize_config_from_yaml(human_config_string).context("human cfg")?;
         let system_cfg = SystemConfig::parse_from_human_cfg_with_schema(
             human_cfg,
             Schema::empty(),

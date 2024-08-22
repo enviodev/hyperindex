@@ -6,9 +6,7 @@ use crate::{
     },
     commands,
     config_parsing::{
-        entity_parsing::Schema,
-        graph_migration::generate_config_from_subgraph_id,
-        human_config::{self},
+        entity_parsing::Schema, graph_migration::generate_config_from_subgraph_id,
         system_config::SystemConfig,
     },
     hbs_templating::{
@@ -286,11 +284,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             commands::codegen::npx_codegen(envio_version, &parsed_project_paths).await?
         }
         Ecosystem::Evm { .. } => {
-            let yaml_config =
-                human_config::deserialize_config_from_yaml(&parsed_project_paths.config)
-                    .context("Failed deserializing config")?;
-
-            let config = SystemConfig::parse_from_human_config(yaml_config, &parsed_project_paths)
+            let config = SystemConfig::parse_from_project_files(&parsed_project_paths)
                 .context("Failed parsing config")?;
 
             commands::codegen::run_codegen(&config, &parsed_project_paths).await?;

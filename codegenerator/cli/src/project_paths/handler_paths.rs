@@ -80,8 +80,9 @@ mod tests {
         let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
+        let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
-        let yaml_cfg = human_config::deserialize_config_from_yaml(&project_paths.config)
+        let yaml_cfg = human_config::deserialize_config_from_yaml(human_config_string)
             .expect("Failed deserializing config");
 
         let config = SystemConfig::parse_from_human_cfg_with_schema(
@@ -126,8 +127,9 @@ mod tests {
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
         println!("project_paths: {:#?}", project_paths);
+        let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
-        let yaml_cfg = human_config::deserialize_config_from_yaml(&project_paths.config)
+        let yaml_cfg = human_config::deserialize_config_from_yaml(human_config_string)
             .expect("Failed deserializing config");
 
         let config = SystemConfig::parse_from_human_cfg_with_schema(
