@@ -192,12 +192,11 @@ pub mod fuel {
 
     use crate::{
         config_parsing::human_config::{
-            self,
             fuel::{ContractConfig, EcosystemTag, EventConfig, HumanConfig, Network},
             NetworkContract,
         },
         fuel::{
-            abi::{Abi, FuelLog},
+            abi::{FuelAbi, FuelLog},
             address::Address,
         },
     };
@@ -213,7 +212,7 @@ pub mod fuel {
     pub struct SelectedContract {
         pub name: String,
         pub addresses: Vec<Address>,
-        pub abi: Abi,
+        pub abi: FuelAbi,
         pub selected_logs: Vec<FuelLog>,
     }
 
@@ -260,58 +259,6 @@ pub mod fuel {
                                     .map(|selected_log| EventConfig {
                                         name: selected_log.event_name.clone(),
                                         log_id: selected_log.id.clone().into(),
-                                    })
-                                    .collect(),
-                            }),
-                        })
-                        .collect(),
-                }],
-            }
-        }
-
-        pub fn to_evm_human_config(
-            self: &Self,
-            init_config: &InitConfig,
-        ) -> human_config::evm::HumanConfig {
-            human_config::evm::HumanConfig {
-                name: init_config.name.clone(),
-                description: None,
-                ecosystem: None,
-                schema: None,
-                unordered_multichain_mode: None,
-                event_decoder: None,
-                rollback_on_reorg: None,
-                save_full_history: None,
-                contracts: None,
-                field_selection: None,
-                raw_events: None,
-                networks: vec![human_config::evm::Network {
-                    id: 1,
-                    start_block: 0,
-                    hypersync_config: None,
-                    rpc_config: None,
-                    confirmed_block_threshold: None,
-                    end_block: None,
-                    contracts: self
-                        .contracts
-                        .iter()
-                        .map(|selected_contract| NetworkContract {
-                            name: selected_contract.name.clone(),
-                            address: selected_contract
-                                .addresses
-                                .iter()
-                                .map(|a| a.to_string())
-                                .collect::<Vec<String>>()
-                                .into(),
-                            config: Some(human_config::evm::ContractConfig {
-                                abi_file_path: None,
-                                handler: init_config.language.get_event_handler_directory(),
-                                events: selected_contract
-                                    .selected_logs
-                                    .iter()
-                                    .map(|selected_log| human_config::evm::EventConfig {
-                                        event: format!("{}()", selected_log.event_name),
-                                        name: None,
                                     })
                                     .collect(),
                             }),

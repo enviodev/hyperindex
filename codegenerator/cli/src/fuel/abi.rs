@@ -55,7 +55,7 @@ pub struct FuelLog {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Abi {
+pub struct FuelAbi {
     pub path_buf: PathBuf,
     pub path: String,
     pub raw: String,
@@ -64,7 +64,7 @@ pub struct Abi {
     types: HashMap<usize, FuelType>,
 }
 
-impl Abi {
+impl FuelAbi {
     fn decode_program(raw: &String) -> Result<ProgramABI> {
         let program: ProgramABI = serde_json::from_str(&raw)?;
         Ok(program)

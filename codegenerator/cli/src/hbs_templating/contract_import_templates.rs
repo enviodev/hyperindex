@@ -192,7 +192,7 @@ use crate::{
     cli_args::init_config::Language,
     config_parsing::{
         entity_parsing::{Entity, Field, FieldType, Schema},
-        system_config::{self, SystemConfig},
+        system_config::{self, Ecosystem, SystemConfig},
     },
     constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     template_dirs::TemplateDirs,
@@ -416,14 +416,19 @@ impl Into<Field> for Param {
 impl AutoSchemaHandlerTemplate {
     pub fn try_from(
         config: SystemConfig,
-        is_fuel: bool,
         language: &Language,
         envio_api_token: Option<String>,
     ) -> Result<Self> {
         let imported_contracts = config
             .get_contracts()
             .iter()
-            .map(|contract| Contract::from_config_contract(contract, is_fuel, &language))
+            .map(|contract| {
+                Contract::from_config_contract(
+                    contract,
+                    config.ecosystem == Ecosystem::Fuel,
+                    &language,
+                )
+            })
             .collect::<Result<_>>()?;
         Ok(AutoSchemaHandlerTemplate {
             imported_contracts,

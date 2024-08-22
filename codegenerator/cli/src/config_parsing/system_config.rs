@@ -4,13 +4,14 @@ use super::{
     human_config::{
         self,
         evm::{EventConfig, EventDecoder, HumanConfig as EvmConfig, Network as EvmNetwork},
+        fuel::HumanConfig as FuelConfig,
     },
     hypersync_endpoints,
     validation::validate_names_valid_rescript,
 };
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
-    constants::project_paths::DEFAULT_SCHEMA_PATH,
+    constants::{project_paths::DEFAULT_SCHEMA_PATH, DEFAULT_CONFIRMED_BLOCK_THRESHOLD},
     project_paths::{path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
@@ -33,7 +34,7 @@ type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Ecosystem {
     Evm,
     Fuel,
@@ -42,6 +43,7 @@ pub enum Ecosystem {
 #[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
+    pub ecosystem: Ecosystem,
     pub schema_path: String,
     pub parsed_project_paths: ParsedProjectPaths,
     pub networks: NetworkMap,
@@ -177,7 +179,7 @@ impl SystemConfig {
                     .events
                     .iter()
                     .cloned()
-                    .map(|e| Event::try_from_config_event(e, &abi_from_file))
+                    .map(|e| Event::from_evm_event_config(e, &abi_from_file))
                     .collect::<Result<Vec<_>>>()
                     .context(format!(
                         "Failed parsing abi types for events in global contract {}",
@@ -211,7 +213,7 @@ impl SystemConfig {
                             .events
                             .iter()
                             .cloned()
-                            .map(|e| Event::try_from_config_event(e, &abi_from_file))
+                            .map(|e| Event::from_evm_event_config(e, &abi_from_file))
                             .collect::<Result<Vec<_>>>()?;
 
                         let contract =
@@ -284,6 +286,7 @@ impl SystemConfig {
 
         Ok(SystemConfig {
             name: evm_config.name.clone(),
+            ecosystem: Ecosystem::Evm,
             parsed_project_paths: project_paths.clone(),
             schema_path: evm_config
                 .schema
@@ -297,6 +300,158 @@ impl SystemConfig {
             schema,
             field_selection,
             enable_raw_events: evm_config.raw_events.unwrap_or(false),
+        })
+    }
+
+    pub fn from_fuel_config(
+        fuel_config: FuelConfig,
+        schema: Schema,
+        project_paths: &ParsedProjectPaths,
+    ) -> Result<Self> {
+        let mut networks: NetworkMap = HashMap::new();
+        let mut contracts: ContractMap = HashMap::new();
+
+        //Add all global contracts
+        if let Some(global_contracts) = &fuel_config.contracts {
+            for g_contract in global_contracts {
+                // let abi_path = path_utils::get_config_path_relative_to_root(
+                //     project_paths,
+                //     PathBuf::from(&g_contract.config.abi_file_path),
+                // )
+                // .context("Failed to get path to ABI relative to the root of the project")?;
+                // let fuel_abi = FuelAbi::parse(abi_path).context(format!(
+                //     "Failed to parse ABI for the contract {}",
+                //     g_contract.name
+                // ))?;
+                let events = g_contract
+                    .config
+                    .events
+                    .iter()
+                    .cloned()
+                    .map(|e| {
+                        Event::from_evm_event_config(
+                            EventConfig {
+                                event: format!("{}()", e.name),
+                                name: None,
+                            },
+                            &None,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()
+                    .context(format!(
+                        "Failed parsing abi types for events in global contract {}",
+                        g_contract.name,
+                    ))?;
+
+                let contract = Contract::new(
+                    g_contract.name.clone(),
+                    g_contract.config.handler.clone(),
+                    events,
+                    None,
+                )?;
+
+                //Check if contract exists
+                unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
+                    .context("Failed inserting globally defined contract")?;
+            }
+        }
+
+        for network in &fuel_config.networks {
+            for contract in network.contracts.clone() {
+                //Add values for local contract
+                match contract.config {
+                    Some(l_contract) => {
+                        // let abi_path = path_utils::get_config_path_relative_to_root(
+                        //     project_paths,
+                        //     PathBuf::from(&l_contract.abi_file_path),
+                        // )?;
+                        // let fuel_abi = FuelAbi::parse(abi_path).context(format!(
+                        //     "Failed to parse ABI for the contract {}",
+                        //     contract.name
+                        // ))?;
+
+                        let events = l_contract
+                            .events
+                            .iter()
+                            .cloned()
+                            .map(|e| {
+                                Event::from_evm_event_config(
+                                    EventConfig {
+                                        event: format!("{}()", e.name),
+                                        name: None,
+                                    },
+                                    &None,
+                                )
+                            })
+                            .collect::<Result<Vec<_>>>()?;
+
+                        // FIXME: Support Fuel for contract
+                        let contract =
+                            Contract::new(contract.name.clone(), l_contract.handler, events, None)?;
+
+                        //Check if contract exists
+                        unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
+                            .context(format!(
+                                "Failed inserting locally defined network contract at network id \
+                               {}",
+                                network.id,
+                            ))?;
+                    }
+                    None => {
+                        //Validate that there is a global contract for the given contract if
+                        //there is no local_contract_config
+                        if !contracts.get(&contract.name).is_some() {
+                            Err(anyhow!(
+                                "Expected a local network config definition or a global definition"
+                            ))?;
+                        }
+                    }
+                }
+            }
+
+            let sync_source = SyncSource::HyperfuelConfig(HyperfuelConfig {
+                endpoint_url: "https://fuel-testnet.hypersync.xyz".to_string(),
+            });
+
+            let contracts: Vec<NetworkContract> = network
+                .contracts
+                .iter()
+                .cloned()
+                .map(|c| NetworkContract {
+                    name: c.name,
+                    addresses: c.address.into(),
+                })
+                .collect();
+
+            let network = Network {
+                id: network.id as u64,
+                start_block: network.start_block,
+                end_block: network.end_block,
+                confirmed_block_threshold: DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+                sync_source,
+                contracts,
+            };
+
+            unique_hashmap::try_insert(&mut networks, network.id.clone(), network)
+                .context("Failed inserting network at networks map")?;
+        }
+
+        Ok(SystemConfig {
+            name: fuel_config.name.clone(),
+            ecosystem: Ecosystem::Fuel,
+            parsed_project_paths: project_paths.clone(),
+            schema_path: fuel_config
+                .schema
+                .clone()
+                .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
+            networks,
+            contracts,
+            unordered_multichain_mode: false,
+            rollback_on_reorg: false,
+            save_full_history: false,
+            schema,
+            field_selection: FieldSelection::empty(),
+            enable_raw_events: false,
         })
     }
 
@@ -668,7 +823,7 @@ impl Event {
         }
     }
 
-    pub fn try_from_config_event(
+    pub fn from_evm_event_config(
         human_cfg_event: EventConfig,
         opt_abi: &Option<EvmAbi>,
     ) -> Result<Self> {
