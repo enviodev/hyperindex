@@ -257,20 +257,16 @@ let rec updateInternal = (
 If a fetchState register has caught up to its next regisered node. Merge them and recurse.
 If no merging happens, None is returned
 */
-let rec pruneAndMergeNextRegistered = (self: t) => {
+let rec pruneAndMergeNextRegistered = (self: t, ~previous=?) => {
   switch self.registerType {
-  | RootRegister(_) => None
+  | RootRegister(_) => previous
   | DynamicContractRegister(_, nextRegister)
-    if self.latestFetchedBlock.blockNumber < nextRegister.latestFetchedBlock.blockNumber =>
-    None
+    if self.latestFetchedBlock.blockNumber < nextRegister.latestFetchedBlock.blockNumber => previous
   | DynamicContractRegister(_) =>
     let mergedSelf = self->mergeIntoNextRegistered
 
     // Recursively look for other merges, if they affect the state, return that merged state otherwise, return the `mergedSelf`
-    switch mergedSelf->pruneAndMergeNextRegistered {
-    | Some(mergedNext) => Some(mergedNext)
-    | None => Some(mergedSelf)
-    }
+    mergedSelf->pruneAndMergeNextRegistered
   }
 }
 
