@@ -33,6 +33,12 @@ pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
 
 #[derive(Debug)]
+pub enum Ecosystem {
+    Evm,
+    Fuel,
+}
+
+#[derive(Debug)]
 pub struct SystemConfig {
     pub name: String,
     pub schema_path: String,
@@ -303,24 +309,45 @@ impl SystemConfig {
               .unwrap_or("{unknown}"),
         ))?;
 
-        let human_cfg = human_config::deserialize_config_from_yaml(human_config_string)
-            .expect("Config should be deserializeable");
+        let config_discriminant: human_config::ConfigDiscriminant =
+          serde_yaml::from_str(&human_config_string)
+                .context("EE105: Failed to deserialize config. The config.yaml file is either not a valid yaml or the \"ecosystem\" field is not a string.")?;
 
-        let relative_schema_path_from_config = human_cfg
-            .schema
-            .clone()
-            .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string());
+        let ecosystem = match config_discriminant.ecosystem {
+            Some(ecosystem) if ecosystem == "evm" => Ecosystem::Evm,
+            Some(ecosystem) if ecosystem == "fuel" => Ecosystem::Fuel,
+            Some(ecosystem) => {
+                return Err(anyhow!(
+                    "EE105: Failed to deserialize config. The ecosystem \"{}\" is not supported.",
+                    ecosystem
+                ))
+            }
+            None => Ecosystem::Evm,
+        };
 
-        let schema_path = path_utils::get_config_path_relative_to_root(
-            project_paths,
-            PathBuf::from(relative_schema_path_from_config.clone()),
-        )
-        .context("Failed creating a relative path to schema")?;
+        match ecosystem {
+            Ecosystem::Evm => {
+                let human_cfg = human_config::deserialize_config_from_yaml(human_config_string)
+                    .expect("Config should be deserializeable");
 
-        let schema =
-            Schema::parse_from_file(&schema_path).context("Parsing schema file for config")?;
+                let relative_schema_path_from_config = human_cfg
+                    .schema
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string());
 
-        Self::parse_from_human_cfg_with_schema(human_cfg, schema, project_paths)
+                let schema_path = path_utils::get_config_path_relative_to_root(
+                    project_paths,
+                    PathBuf::from(relative_schema_path_from_config.clone()),
+                )
+                .context("Failed creating a relative path to schema")?;
+
+                let schema = Schema::parse_from_file(&schema_path)
+                    .context("Parsing schema file for config")?;
+
+                Self::parse_from_human_cfg_with_schema(human_cfg, schema, project_paths)
+            }
+            Ecosystem::Fuel => return Err(anyhow!("EE105: Failed to deserialize config. It's not supported with the main envio package yet, please install the envio@fuel version.")),
+        }
     }
 }
 

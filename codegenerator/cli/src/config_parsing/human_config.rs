@@ -93,6 +93,11 @@ pub struct NetworkContract<T> {
     pub config: Option<T>,
 }
 
+#[derive(Deserialize)]
+pub struct ConfigDiscriminant {
+    pub ecosystem: Option<String>,
+}
+
 pub mod evm {
     use super::{GlobalContract, NetworkContract, NetworkId};
     use crate::{rescript_types::RescriptTypeIdent, utils::normalized_list::SingleOrList};
