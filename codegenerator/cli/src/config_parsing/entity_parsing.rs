@@ -6,7 +6,9 @@ use super::{
     },
 };
 use crate::{
+    constants::project_paths::DEFAULT_SCHEMA_PATH,
     hbs_templating::codegen_templates::DerivedFieldTemplate,
+    project_paths::{path_utils, ParsedProjectPaths},
     rescript_types::RescriptTypeIdent,
     utils::{text::Capitalize, unique_hashmap},
 };
@@ -91,11 +93,25 @@ impl Schema {
         Self::new(entities, enums)
     }
 
-    pub fn parse_from_file(path_to_schema: &PathBuf) -> anyhow::Result<Self> {
-        let schema_string = std::fs::read_to_string(&path_to_schema).context(format!(
+    pub fn parse_from_file(
+        project_paths: &ParsedProjectPaths,
+        maybe_custom_path: &Option<String>,
+    ) -> anyhow::Result<Self> {
+        let relative_schema_path_from_config = match maybe_custom_path {
+            Some(custom_path) => custom_path.clone(),
+            None => DEFAULT_SCHEMA_PATH.to_string(),
+        };
+
+        let schema_path = path_utils::get_config_path_relative_to_root(
+            project_paths,
+            PathBuf::from(relative_schema_path_from_config),
+        )
+        .context("Failed creating a relative path to schema")?;
+
+        let schema_string = std::fs::read_to_string(&schema_path).context(format!(
             "EE200: Failed to read schema file at {}. Please ensure that the schema file is \
              placed correctly in the directory.",
-            &path_to_schema.to_str().unwrap_or_else(|| "bad file path"),
+            &schema_path.to_str().unwrap_or_else(|| "bad file path"),
         ))?;
 
         let schema_doc = graphql_parser::parse_schema::<String>(&schema_string)

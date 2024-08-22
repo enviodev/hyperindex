@@ -94,7 +94,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
             .await
             .context("Failed generating config from subgraph")?;
 
-            let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
+            let parsed_config = SystemConfig::from_evm_config(
                 yaml_config,
                 Schema::empty(),
                 &parsed_project_paths,
@@ -150,7 +150,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
             //Use an empty schema config to generate auto_schema_handler_template
             //After it's been generated, the schema exists and codegen can parse it/use it
-            let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
+            let parsed_config = SystemConfig::from_evm_config(
                 evm_yaml_config,
                 Schema::empty(),
                 &parsed_project_paths,
@@ -204,7 +204,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
 
             //Use an empty schema config to generate auto_schema_handler_template
             //After it's been generated, the schema exists and codegen can parse it/use it
-            let parsed_config = SystemConfig::parse_from_human_cfg_with_schema(
+            let parsed_config = SystemConfig::from_evm_config(
                 yaml_config,
                 Schema::empty(),
                 &parsed_project_paths,

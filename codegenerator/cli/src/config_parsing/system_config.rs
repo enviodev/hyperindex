@@ -10,7 +10,8 @@ use super::{
 };
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
-    project_paths::{handler_paths::DEFAULT_SCHEMA_PATH, path_utils, ParsedProjectPaths},
+    constants::project_paths::DEFAULT_SCHEMA_PATH,
+    project_paths::{path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
@@ -157,8 +158,8 @@ impl SystemConfig {
 
 //Parse methods for system config
 impl SystemConfig {
-    pub fn parse_from_human_cfg_with_schema(
-        human_cfg: EvmConfig,
+    pub fn from_evm_config(
+        evm_config: EvmConfig,
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
@@ -166,7 +167,7 @@ impl SystemConfig {
         let mut contracts: ContractMap = HashMap::new();
 
         //Add all global contracts
-        if let Some(global_contracts) = human_cfg.contracts {
+        if let Some(global_contracts) = evm_config.contracts {
             for g_contract in global_contracts {
                 let abi_from_file =
                     EvmAbi::from_file(&g_contract.config.abi_file_path, project_paths)?;
@@ -197,7 +198,7 @@ impl SystemConfig {
             }
         }
 
-        for network in human_cfg.networks {
+        for network in evm_config.networks {
             for contract in network.contracts.clone() {
                 //Add values for local contract
                 match contract.config {
@@ -246,7 +247,7 @@ impl SystemConfig {
 
             let sync_source = SyncSource::from_evm_network_config(
                 network.clone(),
-                human_cfg.event_decoder.clone(),
+                evm_config.event_decoder.clone(),
             )?;
 
             let contracts: Vec<NetworkContract> = network
@@ -275,27 +276,27 @@ impl SystemConfig {
         }
 
         let field_selection =
-            human_cfg
+            evm_config
                 .field_selection
                 .map_or(Ok(FieldSelection::empty()), |field_selection| {
                     FieldSelection::try_from_config_field_selection(field_selection, &networks)
                 })?;
 
         Ok(SystemConfig {
-            name: human_cfg.name.clone(),
+            name: evm_config.name.clone(),
             parsed_project_paths: project_paths.clone(),
-            schema_path: human_cfg
+            schema_path: evm_config
                 .schema
                 .clone()
                 .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string()),
             networks,
             contracts,
-            unordered_multichain_mode: human_cfg.unordered_multichain_mode.unwrap_or(false),
-            rollback_on_reorg: human_cfg.rollback_on_reorg.unwrap_or(true),
-            save_full_history: human_cfg.save_full_history.unwrap_or(false),
+            unordered_multichain_mode: evm_config.unordered_multichain_mode.unwrap_or(false),
+            rollback_on_reorg: evm_config.rollback_on_reorg.unwrap_or(true),
+            save_full_history: evm_config.save_full_history.unwrap_or(false),
             schema,
             field_selection,
-            enable_raw_events: human_cfg.raw_events.unwrap_or(false),
+            enable_raw_events: evm_config.raw_events.unwrap_or(false),
         })
     }
 
@@ -327,24 +328,10 @@ impl SystemConfig {
 
         match ecosystem {
             Ecosystem::Evm => {
-                let human_cfg = human_config::deserialize_config_from_yaml(human_config_string)
-                    .expect("Config should be deserializeable");
-
-                let relative_schema_path_from_config = human_cfg
-                    .schema
-                    .clone()
-                    .unwrap_or_else(|| DEFAULT_SCHEMA_PATH.to_string());
-
-                let schema_path = path_utils::get_config_path_relative_to_root(
-                    project_paths,
-                    PathBuf::from(relative_schema_path_from_config.clone()),
-                )
-                .context("Failed creating a relative path to schema")?;
-
-                let schema = Schema::parse_from_file(&schema_path)
+                let evm_config = human_config::deserialize_config_from_yaml(human_config_string)?;
+                let schema = Schema::parse_from_file(&project_paths, &evm_config.schema)
                     .context("Parsing schema file for config")?;
-
-                Self::parse_from_human_cfg_with_schema(human_cfg, schema, project_paths)
+                Self::from_evm_config(evm_config, schema, project_paths)
             }
             Ecosystem::Fuel => return Err(anyhow!("EE105: Failed to deserialize config. It's not supported with the main envio package yet, please install the envio@fuel version.")),
         }
@@ -890,16 +877,12 @@ mod test {
             .expect("Failed creating parsed_paths");
         let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
-        let human_cfg =
+        let evm_config =
             config_parsing::human_config::deserialize_config_from_yaml(human_config_string)
                 .expect("Failed deserializing config");
 
-        let config = SystemConfig::parse_from_human_cfg_with_schema(
-            human_cfg,
-            Schema::empty(),
-            &project_paths,
-        )
-        .expect("Failed parsing config");
+        let config = SystemConfig::from_evm_config(evm_config, Schema::empty(), &project_paths)
+            .expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
 

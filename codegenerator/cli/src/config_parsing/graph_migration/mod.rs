@@ -7,7 +7,7 @@ use crate::{
             NetworkContract,
         },
     },
-    project_paths::handler_paths::DEFAULT_SCHEMA_PATH,
+    constants::project_paths::DEFAULT_SCHEMA_PATH,
 };
 use anyhow::{anyhow, Context};
 use regex::Regex;
