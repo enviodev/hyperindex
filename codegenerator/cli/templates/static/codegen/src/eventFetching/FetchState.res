@@ -673,18 +673,27 @@ let rec registerDynamicContract = (
   ~registeringEventBlockNumber,
   ~registeringEventLogIndex,
   ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+  ~prev=?,
 ) => {
-  let latestFetchedBlockNumber = registeringEventBlockNumber - 1
+  let handlePrev = updated =>
+    switch prev {
+    | Some((parentRegister, dynamicContractId)) =>
+      updated->addNextRegister(~register=parentRegister, ~dynamicContractId)
+    | None => updated
+    }
 
-  let addToHead =
-    addNewRegisterToHead(
+  let addToHead = updated =>
+    updated
+    ->addNewRegisterToHead(
       ~contractAddressMapping=dynamicContractRegistrations
       ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
       ->ContractAddressingMap.fromArray,
       ~registeringEventLogIndex,
       ~registeringEventBlockNumber,
-      ...
     )
+    ->handlePrev
+
+  let latestFetchedBlockNumber = registeringEventBlockNumber - 1
 
   switch register.registerType {
   | RootRegister(_) => register->addToHead
@@ -692,13 +701,12 @@ let rec registerDynamicContract = (
     if latestFetchedBlockNumber <= register.latestFetchedBlock.blockNumber =>
     register->addToHead
   | DynamicContractRegister(dynamicContractId, nextRegister) =>
-    nextRegister
-    ->registerDynamicContract(
+    nextRegister->registerDynamicContract(
       ~registeringEventBlockNumber,
       ~registeringEventLogIndex,
       ~dynamicContractRegistrations,
+      ~prev=(register, dynamicContractId),
     )
-    ->addNextRegister(~register, ~dynamicContractId)
   }
 }
 
