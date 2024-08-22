@@ -797,19 +797,27 @@ let pruneDynamicContractAddressesPastValidBlock = (~lastKnownValidBlock, registe
 /**
 Rolls back registers to the given valid block
 */
-let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
+let rec rollback = (self: t, ~lastKnownValidBlock: blockNumberAndTimestamp, ~prev=?) => {
+  let handleUpdated = updated =>
+    switch prev {
+    | Some((parentRegister, dynamicContractId)) => {
+        ...parentRegister,
+        registerType: DynamicContractRegister(dynamicContractId, updated),
+      }
+    | None => updated
+    }
+
   switch self.registerType {
   //Case 1 Root register that has only fetched up to a confirmed valid block number
   //Should just return itself unchanged
-  | RootRegister(_)
-    if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber => self
+  | RootRegister(_) if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber =>
+    self->handleUpdated
   //Case 2 Dynamic register that has only fetched up to a confirmed valid block number
   //Should just return itself, with the next register rolled back recursively
   | DynamicContractRegister(id, nextRegister)
-    if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber => {
-      ...self,
-      registerType: DynamicContractRegister(id, nextRegister->rollback(~lastKnownValidBlock)),
-    }
+    if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber =>
+    nextRegister->rollback(~lastKnownValidBlock, ~prev=(self, id))
+
   //Case 3 Root register that has fetched further than the confirmed valid block number
   //Should prune its queue and set its latest fetched block data to the latest known confirmed block
   | RootRegister(_) =>
@@ -817,7 +825,9 @@ let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
       ...self,
       fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
       latestFetchedBlock: lastKnownValidBlock,
-    }->pruneDynamicContractAddressesPastValidBlock(~lastKnownValidBlock)
+    }
+    ->pruneDynamicContractAddressesPastValidBlock(~lastKnownValidBlock)
+    ->handleUpdated
   //Case 4 DynamicContract register that has fetched further than the confirmed valid block number
   //Should prune its queue, set its latest fetched blockdata + pruned queue
   //And recursivle prune the nextRegister
@@ -832,12 +842,12 @@ let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
     } else {
       //If there are still values in the contractAddressMapping, we should keep the register but
       //prune queues and next register
-      {
+      let parentRegister = {
         ...updatedWithRemovedDynamicContracts,
         fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
         latestFetchedBlock: lastKnownValidBlock,
-        registerType: DynamicContractRegister(id, nextRegister->rollback(~lastKnownValidBlock)),
       }
+      nextRegister->rollback(~lastKnownValidBlock, ~prev=(parentRegister, id))
     }
   }
 }
