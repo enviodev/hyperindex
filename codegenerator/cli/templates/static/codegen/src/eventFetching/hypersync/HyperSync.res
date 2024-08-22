@@ -215,16 +215,17 @@ module HeightQuery = {
 
     //Retry if the heigth is 0 (expect height to be greater)
     while height.contents <= 0 {
-      let res = await HyperSyncJsonApi.getArchiveHeight(~serverUrl)
-      switch res {
-      | Ok(h) => height := h
-      | Error(e) =>
-        logger->Logging.childWarn({
-          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
-          "error": e,
-        })
-        await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
-        retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
+      try {
+        height := await HyperSyncJsonApi.getArchiveHeight->Rest.fetch(serverUrl, ())
+      } catch {
+      | e => {
+          logger->Logging.childWarn({
+            "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
+            "error": e,
+          })
+          await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
+          retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
+        }
       }
     }
 
@@ -256,50 +257,46 @@ module BlockData = {
     includeAllBlocks: true,
   }
 
-  let convertResponse = (
-    res: result<HyperSyncJsonApi.ResponseTypes.queryResponse, QueryHelpers.queryError>,
-  ): queryResponse<array<ReorgDetection.blockData>> => {
-    switch res {
-    | Error(e) => Error(QueryError(e))
-    | Ok(successRes) =>
-      successRes.data
-      ->Array.flatMap(item => {
-        item.blocks->Option.mapWithDefault([], blocks => {
-          blocks->Array.map(
-            block => {
-              switch block {
-              | {number: blockNumber, timestamp, hash: blockHash} =>
-                let blockTimestamp = timestamp->BigInt.toInt->Option.getExn
-                Ok(
-                  (
-                    {
-                      blockTimestamp,
-                      blockNumber,
-                      blockHash,
-                    }: ReorgDetection.blockData
-                  ),
-                )
-              | _ =>
-                let missingParams =
-                  [
-                    block.number->Utils.Option.mapNone("block.number"),
-                    block.timestamp->Utils.Option.mapNone("block.timestamp"),
-                    block.hash->Utils.Option.mapNone("block.hash"),
-                  ]->Array.keepMap(p => p)
+  let convertResponse = (res: HyperSyncJsonApi.ResponseTypes.queryResponse): queryResponse<
+    array<ReorgDetection.blockData>,
+  > => {
+    res.data
+    ->Array.flatMap(item => {
+      item.blocks->Option.mapWithDefault([], blocks => {
+        blocks->Array.map(
+          block => {
+            switch block {
+            | {number: blockNumber, timestamp, hash: blockHash} =>
+              let blockTimestamp = timestamp->BigInt.toInt->Option.getExn
+              Ok(
+                (
+                  {
+                    blockTimestamp,
+                    blockNumber,
+                    blockHash,
+                  }: ReorgDetection.blockData
+                ),
+              )
+            | _ =>
+              let missingParams =
+                [
+                  block.number->Utils.Option.mapNone("block.number"),
+                  block.timestamp->Utils.Option.mapNone("block.timestamp"),
+                  block.hash->Utils.Option.mapNone("block.hash"),
+                ]->Array.keepMap(p => p)
 
-                Error(
-                  UnexpectedMissingParams({
-                    queryName: "query block data HyperSync",
-                    missingParams,
-                  }),
-                )
-              }
-            },
-          )
-        })
+              Error(
+                UnexpectedMissingParams({
+                  queryName: "query block data HyperSync",
+                  missingParams,
+                }),
+              )
+            }
+          },
+        )
       })
-      ->Utils.Array.transposeResults
-    }
+    })
+    ->Utils.Array.transposeResults
   }
 
   let rec queryBlockData = async (~serverUrl, ~blockNumber, ~logger): queryResponse<
@@ -307,25 +304,31 @@ module BlockData = {
   > => {
     let body = makeRequestBody(~blockNumber)
 
-    let executeQuery = () => HyperSyncJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
+    let executeQuery = () => HyperSyncJsonApi.executeHyperSyncQuery->Rest.fetch(serverUrl, body)
 
     let logger = Logging.createChildFrom(
       ~logger,
       ~params={"logType": "hypersync get blockhash query", "blockNumber": blockNumber},
     )
 
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+    let maybeSuccessfulRes = switch await executeQuery->Time.retryAsyncWithExponentialBackOff(
+      ~logger=Some(logger),
+    ) {
+    | exception _ => None
+    | res if res.nextBlock <= blockNumber => None
+    | res => Some(res)
+    }
 
-    // If the block is not found, retry the query. This can occur since replicas of hypersync might not hack caught up yet
-    if res->Result.mapWithDefault(0, res => res.nextBlock) <= blockNumber {
-      let logger = Logging.createChild(~params={"url": serverUrl})
-      logger->Logging.childWarn(
-        `Block #${blockNumber->Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
-      )
-      await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
-      await queryBlockData(~serverUrl, ~blockNumber, ~logger)
-    } else {
-      res->convertResponse->Result.map(res => res->Array.get(0))
+    switch maybeSuccessfulRes {
+    | None => {
+        let logger = Logging.createChild(~params={"url": serverUrl})
+        logger->Logging.childWarn(
+          `Block #${blockNumber->Int.toString} not found in hypersync. HyperSync runs multiple instances of hypersync and it is possible that they drift independently slightly from the head. Retrying query in 100ms.`,
+        )
+        await Time.resolvePromiseAfterDelay(~delayMilliseconds=100)
+        await queryBlockData(~serverUrl, ~blockNumber, ~logger)
+      }
+    | Some(res) => res->convertResponse->Result.map(res => res->Array.get(0))
     }
   }
 

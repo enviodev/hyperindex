@@ -248,67 +248,26 @@ module ResponseTypes = {
   type heightResponse = {height: int}
 }
 
-module Query = {
-  exception FailedToFetch(exn)
-  exception FailedToParseJson(exn)
+let executeHyperSyncQuery = Rest.route(() => {
+  path: "/query",
+  method: Post,
+  variables: s => s.body(S.unknown->(Utils.magic: S.t<unknown> => S.t<postQueryBody>)),
+  responses: [
+    s => {
+      s.status(#200)
+      s.data(S.unknown->(Utils.magic: S.t<unknown> => S.t<ResponseTypes.queryResponse>))
+    },
+  ],
+})
 
-  type queryError = FailedToFetch(exn) | FailedToParseJson(exn) | Other(exn)
-
-  let executeFetchRequest = async (
-    ~endpoint,
-    ~method: Fetch.method,
-    ~rawBody: option<QueryTypes.postQueryBody>=?,
-    (),
-  ): result<'b, queryError> => {
-    try {
-      open Fetch
-
-      let body =
-        rawBody->Belt.Option.map(body =>
-          body->Js.Json.stringifyAny->Belt.Option.getExn->Body.string
-        )
-
-      let res = await fetch(
-        endpoint,
-        {
-          method,
-          headers: Headers.fromObject({"Content-type": "application/json"}),
-          ?body,
-        },
-      )->Promise.catch(e => Promise.reject(FailedToFetch(e)))
-
-      let data =
-        await res
-        ->Response.json
-        ->Promise.catch(e => {
-          Js.log("unable to decode")
-          Js.log(e)
-          Promise.reject(FailedToParseJson(e))
-        })
-
-      Ok(data->Utils.magic)
-    } catch {
-    | FailedToFetch(exn) => Error(FailedToFetch(exn))
-    | FailedToParseJson(exn) => Error(FailedToParseJson(exn))
-    | exn => Error(Other(exn))
-    }
-  }
-}
-let executeHyperSyncQuery = (~serverUrl, ~postQueryBody: QueryTypes.postQueryBody): promise<
-  result<ResponseTypes.queryResponse, Query.queryError>,
-> => {
-  Logging.debug({"msg": "Executing HyperSync query", "body": postQueryBody})
-  Query.executeFetchRequest(
-    ~endpoint=serverUrl ++ "/query",
-    ~method=#POST,
-    ~rawBody=postQueryBody,
-    (),
-  )
-}
-
-type heightResponse = {height: int}
-
-let getArchiveHeight = async (~serverUrl): result<heightResponse, Query.queryError> => {
-  let res = await Query.executeFetchRequest(~endpoint=serverUrl ++ "/height", ~method=#GET, ())
-  res
-}
+let getArchiveHeight = Rest.route(() => {
+  path: "/height",
+  method: Get,
+  variables: _ => (),
+  responses: [
+    s => {
+      s.status(#200)
+      s.field("height", S.int)
+    },
+  ],
+})

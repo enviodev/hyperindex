@@ -1,3 +1,4 @@
+open Belt
 //Manage clients in cache so we don't need to reinstantiate each time
 //Ideally client should be passed in as a param to the functions but
 //we are still sharing the same signature with eth archive query builder
@@ -310,17 +311,17 @@ module HeightQuery = {
 
     //Retry if the heigth is 0 (expect height to be greater)
     while height.contents <= 0 {
-      let res = await HyperFuelJsonApi.getArchiveHeight(~serverUrl)
-      Logging.debug({"msg": "querying height", "response": res})
-      switch res {
-      | Ok({height: newHeight}) => height := newHeight
-      | Error(e) =>
-        logger->Logging.childWarn({
-          "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Belt.Int.toString}ms...`,
-          "error": e,
-        })
-        await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
-        retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
+      try {
+        height := await HyperSyncJsonApi.getArchiveHeight->Rest.fetch(serverUrl, ())
+      } catch {
+      | e => {
+          logger->Logging.childWarn({
+            "message": `Failed to get height from endpoint. Retrying in ${retryIntervalMillis.contents->Int.toString}ms...`,
+            "error": e,
+          })
+          await Time.resolvePromiseAfterDelay(~delayMilliseconds=retryIntervalMillis.contents)
+          retryIntervalMillis := retryIntervalMillis.contents * backOffMultiplicative
+        }
       }
     }
 
