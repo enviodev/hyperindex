@@ -452,7 +452,6 @@
         "s",
         "contractAddress",
         "logsBloom",
-        "type",
         "root",
         "status",
         "yParity",
