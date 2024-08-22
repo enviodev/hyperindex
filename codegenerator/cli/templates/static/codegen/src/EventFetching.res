@@ -88,7 +88,9 @@ let getTxFieldFromEthersLog = (log: Ethers.log, txField: string, ~logger): txFie
   }
 
 let transactionFieldsFromLog = (log, ~logger): Types.Transaction.t => {
-  Types.Transaction.fieldNames
+  //Note: if we implement all transaction fields, we will need all
+  //field names not just non optional ones
+  Types.Transaction.nonOptionalFieldNames
   ->Belt.Array.map(name => (name, getTxFieldFromEthersLog(log, name, ~logger)))
   ->Js.Dict.fromArray
   ->(Utils.magic: Js.Dict.t<txFieldVal> => Types.Transaction.t)
