@@ -590,6 +590,7 @@ struct SelectableField {
     res_type: RescriptTypeIdent,
     res_schema_code: String,
     default_value_rescript: String,
+    is_optional: bool,
 }
 
 impl SelectableField {
@@ -599,11 +600,13 @@ impl SelectableField {
     {
         let name = value.to_string().into();
         let res_type: RescriptTypeIdent = value.into();
+        let is_optional = res_type.is_option();
         Self {
             name,
             res_schema_code: res_type.to_rescript_schema(),
             default_value_rescript: res_type.get_default_value_rescript(),
             res_type,
+            is_optional,
         }
     }
 }

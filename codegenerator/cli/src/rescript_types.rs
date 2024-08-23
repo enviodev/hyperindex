@@ -487,6 +487,13 @@ impl RescriptTypeIdent {
             }
         }
     }
+
+    pub fn is_option(&self) -> bool {
+        match self {
+            RescriptTypeIdent::Option(_) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Display for RescriptTypeIdent {
