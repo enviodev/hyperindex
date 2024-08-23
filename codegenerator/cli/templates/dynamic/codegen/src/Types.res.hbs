@@ -129,9 +129,11 @@ module Transaction = {
     {{/each}}
   ]
 
-  let fieldNames: array<string> = [
+  let nonOptionalFieldNames: array<string> = [
     {{#each field_selection.transaction_fields as | field |}}
+    {{#unless field.is_optional}}
     "{{field.name.camel}}",
+    {{/unless}}
     {{/each}}
   ]
 }
@@ -178,12 +180,14 @@ module Block = {
     {{/each}}
   ]
 
-  let fieldNames: array<string> = [
+  let nonOptionalFieldNames: array<string> = [
     "number",
     "timestamp",
     "hash",
     {{#each field_selection.block_fields as | field |}}
+    {{#unless field.is_optional}}
     "{{field.name.camel}}",
+    {{/unless}}
     {{/each}}
   ]
 }
