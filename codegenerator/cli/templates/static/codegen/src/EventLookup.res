@@ -65,7 +65,7 @@ let getEvent = (eventLookup: t<'a>, ~topic0, ~contractAddress, ~contractAddressM
     | None =>
       events
       ->Js.Dict.values
-      ->Utils.Array.find(event =>
+      ->Js.Array2.find(event =>
         event.isWildcard && event.contract.chains->Utils.Array.includes(chain)
       )
       ->Option.map(v => v.event)
