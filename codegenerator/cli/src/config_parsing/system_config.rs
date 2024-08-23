@@ -361,15 +361,6 @@ impl SystemConfig {
                 //Add values for local contract
                 match contract.config {
                     Some(l_contract) => {
-                        // let abi_path = path_utils::get_config_path_relative_to_root(
-                        //     project_paths,
-                        //     PathBuf::from(&l_contract.abi_file_path),
-                        // )?;
-                        // let fuel_abi = FuelAbi::parse(abi_path).context(format!(
-                        //     "Failed to parse ABI for the contract {}",
-                        //     contract.name
-                        // ))?;
-
                         let events = l_contract
                             .events
                             .iter()
