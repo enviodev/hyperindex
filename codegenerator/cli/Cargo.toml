@@ -41,7 +41,7 @@ sqlx = { version = "0.7.2", features = [
   "postgres",
 ] }
 thiserror = "1.0.50"
-fuel-abi-types = "0.5.2"
+fuel-abi-types = "0.7.0"
 schemars = { version = "1.0.0-alpha.2", features = ["preserve_order"] }
 convert_case = "0.6.0"
 # TODO: replace ethers with alloy and foundry-block-explorers since these are actively maintained

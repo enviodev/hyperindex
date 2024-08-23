@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
-use fuel_abi_types::abi::program::ProgramABI;
+use fuel_abi_types::abi::program::{ConcreteTypeId, MetadataTypeId, TypeId};
+use fuel_abi_types::abi::unified_program::{UnifiedProgramABI, UnifiedTypeApplication};
 use itertools::Itertools;
 use std::{collections::HashMap, fs, path::PathBuf};
 
@@ -10,7 +11,7 @@ use crate::rescript_types::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FuelType {
-    pub id: usize,
+    pub id: TypeId,
     pub rescript_type_decl: RescriptTypeDecl,
     pub abi_type_field: String,
 }
@@ -59,47 +60,25 @@ pub struct Abi {
     pub path_buf: PathBuf,
     pub path: String,
     pub raw: String,
-    program: ProgramABI,
+    program: UnifiedProgramABI,
     logs: HashMap<String, FuelLog>,
-    types: HashMap<usize, FuelType>,
+    types: HashMap<TypeId, FuelType>,
 }
 
 impl Abi {
-    fn decode_program(raw: &String) -> Result<ProgramABI> {
-        let program: ProgramABI = serde_json::from_str(&raw)?;
-        Ok(program)
+    fn decode_program(raw: &String) -> Result<UnifiedProgramABI> {
+        Ok(UnifiedProgramABI::from_json_abi(raw)?)
     }
 
-    fn decode_types(program: &ProgramABI) -> Result<HashMap<usize, FuelType>> {
-        let mut types_map: HashMap<usize, FuelType> = HashMap::new();
+    fn decode_types(program: &UnifiedProgramABI) -> Result<HashMap<TypeId, FuelType>> {
+        let mut types_map: HashMap<TypeId, FuelType> = HashMap::new();
 
-        //eg "generic T" returns "T" for keyword "generic"
-        fn extract_value_after_keyword(keyword: &str, input: &str) -> Option<String> {
-            if let Some(start) = input.find(keyword) {
-                // Calculate the start position of the value after "keyword"
-                let value_start = start + keyword.len();
-                // Extract the value and trim any leading/trailing whitespace
-                let value = input[value_start..].trim();
-                if !value.is_empty() {
-                    return Some(value.to_string());
-                }
+        fn mk_type_id_name(type_id: &TypeId) -> String {
+            match type_id {
+                TypeId::Concrete(ConcreteTypeId(id)) => format!("concrete_type_id_{}", id),
+                TypeId::Metadata(MetadataTypeId(id)) => format!("metadata_type_id_{}", id),
             }
-            None
         }
-
-        fn mk_type_id_name(type_id: &usize) -> String {
-            format!("type_id_{}", type_id)
-        }
-
-        let generic_param_name_map = program
-            .types
-            .iter()
-            .filter_map(|type_decl| {
-                let generic_param_name =
-                    extract_value_after_keyword("generic", &type_decl.type_field)?;
-                Some((type_decl.type_id, generic_param_name))
-            })
-            .collect::<HashMap<usize, String>>();
 
         let get_unknown_res_type_ident = |type_field: &str| {
             println!("Unhandled type_field \"{}\" in abi", type_field);
@@ -112,214 +91,165 @@ impl Abi {
         let get_unknown_res_type_expr =
             |type_field| RescriptTypeExpr::Identifier(get_unknown_res_type_ident(type_field));
 
-        program
-            .types
-            .iter()
-            .map(|abi_type_decl| {
-                if abi_type_decl.type_field.starts_with("generic") {
-                    //Generic fields are simple the name of the parameter
-                    //like "T", they should not be declared as types in resript
-                    return Ok(None);
+        for type_decl in &program.types {
+            if type_decl.type_field.starts_with("generic") {
+                continue;
+            }
+
+            let type_id = TypeId::Metadata(MetadataTypeId(type_decl.type_id));
+            let name = mk_type_id_name(&type_id);
+
+            let get_first_type_param = || match &type_decl.type_parameters {
+                Some(args) if args.len() == 1 => {
+                    Ok(mk_type_id_name(&TypeId::Metadata(MetadataTypeId(args[0]))))
                 }
-                let name = mk_type_id_name(&abi_type_decl.type_id);
+                Some(args) => Err(anyhow!("Expected single type param but got {}", args.len())),
+                None => Err(anyhow!("Expected type parameters, but found None")),
+            };
 
-                let get_first_type_param = || match abi_type_decl
-                    .type_parameters
-                    .clone()
-                    .unwrap_or(vec![])
-                    .as_slice()
-                {
-                    [type_id] => generic_param_name_map.get(type_id).cloned().ok_or(anyhow!(
-                        "type_id '{type_id}' should exist in generic_param_name_map"
-                    )),
-                    params => Err(anyhow!(
-                        "Expected single type param but got {}",
-                        params.len()
-                    )),
-                };
-
-                let get_components_name_and_type_ident = || {
-                    abi_type_decl
-                        .components
-                        .clone()
-                        .ok_or(anyhow!(
-                            "Expected type_id '{}' components to be 'Some'",
-                            abi_type_decl.type_id
-                        ))?
-                        .iter()
-                        .map(|comp| {
-                            let name = comp.name.clone();
-                            let type_ident_name = mk_type_id_name(&comp.type_id);
-                            let type_ident = match &comp.type_arguments {
-                                //When there are no type arguments it is a named type or a generic param
-                                None => generic_param_name_map.get(&comp.type_id).cloned().map_or(
-                                    //If the type_id is not a defined generic type it is
-                                    //a named type
-                                    RescriptTypeIdent::TypeApplication {
-                                        name: type_ident_name,
-                                        type_params: vec![],
-                                    },
-                                    //if the type_id is in the generic_param_name_map
-                                    //it is a generic param
-                                    |generic_name| RescriptTypeIdent::GenericParam(generic_name),
-                                ),
-                                //When there are type arguments it is a generic type
-                                Some(typ_args) => {
-                                    let type_params = typ_args
-                                        .iter()
-                                        .map(|ta| {
-                                            generic_param_name_map.get(&ta.type_id).cloned().map_or(
-                                                //If the type_id is not a defined generic type it is
-                                                //a named type
-                                                RescriptTypeIdent::TypeApplication {
-                                                    name: mk_type_id_name(&ta.type_id),
-                                                    type_params: vec![],
-                                                },
-                                                //if the type_id is in the generic_param_name_map
-                                                //it is a generic param
-                                                |generic_name| {
-                                                    RescriptTypeIdent::GenericParam(generic_name)
-                                                },
-                                            )
-                                        })
-                                        .collect();
-                                    RescriptTypeIdent::TypeApplication {
-                                        name: type_ident_name,
-                                        type_params,
-                                    }
-                                }
-                            };
-                            Ok((name, type_ident))
-                        })
-                        .collect::<Result<Vec<_>>>()
-                };
-
-                let type_expr: Result<RescriptTypeExpr> = {
-                    use RescriptTypeIdent::*;
-                    match abi_type_decl.type_field.as_str() {
-                        "()" => Unit.to_ok_expr(),
-                        "bool" => Bool.to_ok_expr(), //Note this is represented as 0 or 1
-                        //NOTE: its possible when doing rescript int operations you can
-                        //overflow with u32 but its a rare case and likely user will do operation
-                        //int ts/js
-                        "u8" | "u16" | "u32" => Int.to_ok_expr(),
-                        "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.to_ok_expr(),
-                        "b256" | "address" => String.to_ok_expr(),
-                        "str" => String.to_ok_expr(),
-                        type_field if type_field.starts_with("str[") => String.to_ok_expr(),
-                        "struct Vec" => Array(Box::new(GenericParam(
-                            get_first_type_param()
-                                .context("Failed getting param for struct Vec")?,
-                        )))
-                        .to_ok_expr(),
-                        //TODO: handle nested option since this would need to be flattened to
-                        //single level rescript option.
-                        "enum Option" => Option(Box::new(GenericParam(
-                            get_first_type_param()
-                                .context("Failed getting param for enum Option")?,
-                        )))
-                        .to_ok_expr(),
-                        type_field if type_field.starts_with("struct ") => {
-                            let record_fields = get_components_name_and_type_ident()
-                                .context(format!(
-                                    "Failed getting name and identifier from components for \
-                                     {type_field}",
-                                ))?
-                                .into_iter()
-                                .map(|(name, type_ident)| {
-                                    RescriptRecordField::new(name, type_ident)
-                                })
-                                .collect();
-                            Ok(RescriptTypeExpr::Record(record_fields))
-                        }
-                        type_field if type_field.starts_with("enum ") => {
-                            let constructors = get_components_name_and_type_ident()
-                                .context(format!(
-                                    "Failed getting name and identifier from components for \
-                                     {type_field}",
-                                ))?
-                                .into_iter()
-                                .map(|(name, type_ident)| {
-                                    RescriptVariantConstr::new(name, type_ident)
-                                })
-                                .collect();
-                            Ok(RescriptTypeExpr::Variant(constructors))
-                        }
-                        type_field if type_field.starts_with("(_,") => {
-                            let tuple_types = get_components_name_and_type_ident()
-                                .context(format!(
-                                    "Failed getting name and identifier from components for tuple \
-                                     {type_field}",
-                                ))?
-                                .into_iter()
-                                .map(|(_name, type_ident)| type_ident)
-                                .collect();
-
-                            RescriptTypeIdent::Tuple(tuple_types).to_ok_expr()
-                        }
-                        type_field if type_field.starts_with("[_;") => {
-                            let components =
-                                get_components_name_and_type_ident().context(format!(
-                                    "Failed getting name and identifier from components for \
-                                     {type_field}",
-                                ))?;
-                            let element_name_and_type_ident = components
-                                .first()
-                                .ok_or(anyhow!("Missing array element type component"))?;
-                            Array(Box::new(element_name_and_type_ident.1.clone())).to_ok_expr()
-                        }
-                        type_field => {
-                            //Unknown
-                            Ok(get_unknown_res_type_expr(type_field))
-                        }
-                    }
-                };
-
-                let type_params = abi_type_decl
-                    .type_parameters
+            let get_components_name_and_type_ident = || {
+                type_decl
+                    .components
                     .as_ref()
-                    .map_or(Ok(vec![]), |tps| {
-                        tps.iter()
-                            .map(|tp| {
-                                generic_param_name_map
-                                    .get(tp)
-                                    .ok_or(anyhow!(
-                                        "param name for type_id {tp} should exist in \
-                                         generic_param_name_map"
-                                    ))
-                                    .cloned()
-                            })
-                            .collect::<Result<Vec<_>>>()
+                    .ok_or(anyhow!(
+                        "Expected type_id '{:?}' components to be 'Some'",
+                        type_id
+                    ))?
+                    .iter()
+                    .map(|comp| {
+                        let name = comp.name.clone();
+                        let type_ident_name =
+                            mk_type_id_name(&TypeId::Metadata(MetadataTypeId(comp.type_id)));
+                        let type_ident = match &comp.type_arguments {
+                            None => RescriptTypeIdent::TypeApplication {
+                                name: type_ident_name,
+                                type_params: vec![],
+                            },
+                            Some(typ_args) => {
+                                let type_params = typ_args
+                                    .iter()
+                                    .map(|ta| RescriptTypeIdent::TypeApplication {
+                                        name: mk_type_id_name(&TypeId::Metadata(MetadataTypeId(
+                                            ta.type_id,
+                                        ))),
+                                        type_params: vec![],
+                                    })
+                                    .collect();
+                                RescriptTypeIdent::TypeApplication {
+                                    name: type_ident_name,
+                                    type_params,
+                                }
+                            }
+                        };
+                        Ok((name, type_ident))
                     })
-                    .context(format!(
-                        "Failed getting type paramater names for type_id '{}'",
-                        abi_type_decl.type_id
-                    ))?;
+                    .collect::<Result<Vec<_>>>()
+            };
 
-                Ok(Some(FuelType {
-                    id: abi_type_decl.type_id,
-                    abi_type_field: abi_type_decl.type_field.clone(),
+            let type_expr: Result<RescriptTypeExpr> = {
+                use RescriptTypeIdent::*;
+                match type_decl.type_field.as_str() {
+                    "()" => Unit.to_ok_expr(),
+                    "bool" => Bool.to_ok_expr(), //Note this is represented as 0 or 1
+                    //NOTE: its possible when doing rescript int operations you can
+                    //overflow with u32 but its a rare case and likely user will do operation
+                    //int ts/js
+                    "u8" | "u16" | "u32" => Int.to_ok_expr(),
+                    "u64" | "u128" | "u256" | "raw untyped ptr" => BigInt.to_ok_expr(),
+                    "b256" | "address" => String.to_ok_expr(),
+                    "str" => String.to_ok_expr(),
+                    type_field if type_field.starts_with("str[") => String.to_ok_expr(),
+                    "struct Vec" => Array(Box::new(GenericParam(
+                        get_first_type_param().context("Failed getting param for struct Vec")?,
+                    )))
+                    .to_ok_expr(),
+                    "enum Option" => Option(Box::new(GenericParam(
+                        get_first_type_param().context("Failed getting param for enum Option")?,
+                    )))
+                    .to_ok_expr(),
+                    type_field if type_field.starts_with("struct ") => {
+                        let record_fields = get_components_name_and_type_ident()
+                            .context(format!(
+                                "Failed getting name and identifier from components for \
+                                 {type_field}",
+                            ))?
+                            .into_iter()
+                            .map(|(name, type_ident)| RescriptRecordField::new(name, type_ident))
+                            .collect();
+                        Ok(RescriptTypeExpr::Record(record_fields))
+                    }
+                    type_field if type_field.starts_with("enum ") => {
+                        let constructors = get_components_name_and_type_ident()
+                            .context(format!(
+                                "Failed getting name and identifier from components for \
+                                 {type_field}",
+                            ))?
+                            .into_iter()
+                            .map(|(name, type_ident)| RescriptVariantConstr::new(name, type_ident))
+                            .collect();
+                        Ok(RescriptTypeExpr::Variant(constructors))
+                    }
+                    type_field if type_field.starts_with("(_,") => {
+                        let tuple_types = get_components_name_and_type_ident()
+                            .context(format!(
+                                "Failed getting name and identifier from components for tuple \
+                                 {type_field}",
+                            ))?
+                            .into_iter()
+                            .map(|(_name, type_ident)| type_ident)
+                            .collect();
+
+                        RescriptTypeIdent::Tuple(tuple_types).to_ok_expr()
+                    }
+                    type_field if type_field.starts_with("[_;") => {
+                        let components = get_components_name_and_type_ident().context(format!(
+                            "Failed getting name and identifier from components for \
+                                 {type_field}",
+                        ))?;
+                        let element_name_and_type_ident = components
+                            .first()
+                            .ok_or(anyhow!("Missing array element type component"))?;
+                        Array(Box::new(element_name_and_type_ident.1.clone())).to_ok_expr()
+                    }
+                    type_field => {
+                        //Unknown
+                        Ok(get_unknown_res_type_expr(type_field))
+                    }
+                }
+            };
+
+            let type_params = type_decl
+                .type_parameters
+                .as_ref()
+                .map_or(Ok(vec![]), |tps| {
+                    tps.iter()
+                        .map(|tp| Ok(mk_type_id_name(&TypeId::Metadata(MetadataTypeId(*tp)))))
+                        .collect::<Result<Vec<_>>>()
+                })
+                .context(format!(
+                    "Failed getting type parameter names for type_id '{:?}'",
+                    type_id
+                ))?;
+
+            types_map.insert(
+                type_id.clone(),
+                FuelType {
+                    id: type_id.clone(),
+                    abi_type_field: type_decl.type_field.clone(),
                     rescript_type_decl: RescriptTypeDecl::new(name, type_expr?, type_params),
-                }))
-            })
-            .collect::<Result<Vec<Option<FuelType>>>>()
-            .context("Failed getting type declarations from fuel abi")?
-            .into_iter()
-            //Filter out None values since these are declarations we don't want (ie generics)
-            .filter_map(|x| x)
-            .for_each(|v| {
-                types_map.insert(v.id, v);
-            });
+                },
+            );
+        }
 
         Ok(types_map)
     }
 
     fn get_type_application(
-        abi_application: &fuel_abi_types::abi::program::TypeApplication,
-        types: &HashMap<usize, FuelType>,
+        abi_application: &UnifiedTypeApplication,
+        types: &HashMap<TypeId, FuelType>,
     ) -> Result<RescriptTypeIdent> {
         let fuel_type = types
-            .get(&abi_application.type_id)
+            .get(&TypeId::Metadata(MetadataTypeId(abi_application.type_id)))
             .context("Failed to get logged type")?;
         Ok(RescriptTypeIdent::TypeApplication {
             name: fuel_type.rescript_type_decl.name.clone(),
@@ -334,8 +264,8 @@ impl Abi {
     }
 
     fn decode_logs(
-        program: &ProgramABI,
-        types: &HashMap<usize, FuelType>,
+        program: &UnifiedProgramABI,
+        types: &HashMap<TypeId, FuelType>,
     ) -> Result<HashMap<String, FuelLog>> {
         let mut logs_map: HashMap<String, FuelLog> = HashMap::new();
         let mut names_count: HashMap<String, u8> = HashMap::new();
@@ -343,7 +273,7 @@ impl Abi {
         if let Some(logged_types) = &program.logged_types {
             for abi_log in logged_types.iter() {
                 let id = abi_log.log_id.clone();
-                let type_id = abi_log.application.type_id;
+                let type_id = TypeId::Metadata(MetadataTypeId(abi_log.application.type_id));
                 let logged_type = types.get(&type_id).context("Failed to get logged type")?;
 
                 let event_name = {
@@ -363,14 +293,14 @@ impl Abi {
                     id.clone(),
                     FuelLog {
                         id,
-                        event_name: event_name,
+                        event_name,
                         data_type: Self::get_type_application(&abi_log.application, types)?,
                         logged_type: logged_type.clone(),
                     },
                 );
             }
         } else {
-            Err(anyhow!("ABI doesn't contained defined logged types"))?
+            Err(anyhow!("ABI doesn't contain defined logged types"))?
         }
 
         Ok(logs_map)
@@ -423,7 +353,7 @@ impl Abi {
         {
             Some(t) => self
                 .types
-                .get(&t.type_id)
+                .get(&TypeId::Metadata(MetadataTypeId(t.type_id)))
                 .cloned()
                 .context(format!("Couldn't find decoded type for id {}", t.type_id)),
             None => Err(anyhow!(
@@ -432,12 +362,12 @@ impl Abi {
         }
     }
 
-    pub fn get_log_by_type(&self, type_id: usize) -> Result<FuelLog> {
+    pub fn get_log_by_type(&self, type_id: TypeId) -> Result<FuelLog> {
         self.logs
             .values()
             .find(|&log| log.logged_type.id == type_id)
             .cloned()
-            .ok_or(anyhow!("Failed to find log by type id {type_id}"))
+            .ok_or(anyhow!("Failed to find log by type id {type_id:?}"))
     }
 
     pub fn get_logs(&self) -> Vec<FuelLog> {
@@ -448,7 +378,10 @@ impl Abi {
         let type_declerations = self
             .types
             .values()
-            .sorted_by_key(|t| t.id)
+            .sorted_by_key(|t| match &t.id {
+                TypeId::Concrete(ConcreteTypeId(id)) => id.clone(),
+                TypeId::Metadata(MetadataTypeId(id)) => id.to_string(),
+            })
             .map(|t| t.rescript_type_decl.clone())
             .collect();
 

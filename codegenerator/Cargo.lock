@@ -1461,9 +1461,9 @@ checksum = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
 
 [[package]]
 name = "fuel-abi-types"
-version = "0.5.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0e7e87f94417ff1a5d60e496906033c58bfe5367546621f131fe8cdabaa2671"
+checksum = "bce44ac13b1971be7cea024a2003cf944522093dafec454fea9ff792f0ff2577"
 dependencies = [
  "itertools 0.10.5",
  "lazy_static",
