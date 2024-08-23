@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Context;
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, path::PathBuf};
+use std::borrow::Cow;
 
 impl<T: Clone + JsonSchema> JsonSchema for SingleOrList<T> {
     fn schema_name() -> Cow<'static, str> {
@@ -93,6 +93,11 @@ pub struct NetworkContract<T> {
     pub config: Option<T>,
 }
 
+#[derive(Deserialize)]
+pub struct ConfigDiscriminant {
+    pub ecosystem: Option<String>,
+}
+
 pub mod evm {
     use super::{GlobalContract, NetworkContract, NetworkId};
     use crate::{rescript_types::RescriptTypeIdent, utils::normalized_list::SingleOrList};
@@ -118,7 +123,7 @@ pub mod evm {
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: Option<EcosystemTag>,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to config file")]
+        #[schemars(description = "Custom path to schema.yaml file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
@@ -536,7 +541,7 @@ pub mod fuel {
         #[schemars(description = "Ecosystem of the project.")]
         pub ecosystem: EcosystemTag,
         #[serde(skip_serializing_if = "Option::is_none")]
-        #[schemars(description = "Custom path to config file")]
+        #[schemars(description = "Custom path to schema.yaml file")]
         pub schema: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
@@ -621,15 +626,7 @@ fn strip_to_letters(string: &str) -> String {
     pg_friendly_name
 }
 
-pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<evm::HumanConfig> {
-    let config = std::fs::read_to_string(config_path).context(format!(
-        "EE104: Failed to resolve config path {0}. Make sure you're in the correct directory and \
-         that a config file with the name {0} exists",
-        &config_path
-            .to_str()
-            .unwrap_or("unknown config file name path"),
-    ))?;
-
+pub fn deserialize_config_from_yaml(config: String) -> anyhow::Result<evm::HumanConfig> {
     let mut deserialized_yaml: evm::HumanConfig =
         serde_yaml::from_str(&config).context(format!(
             "EE105: Failed to deserialize config. Visit the docs for more information {}",
@@ -639,7 +636,7 @@ pub fn deserialize_config_from_yaml(config_path: &PathBuf) -> anyhow::Result<evm
     deserialized_yaml.name = strip_to_letters(&deserialized_yaml.name);
 
     // Validating the config file
-    validation::validate_deserialized_config_yaml(config_path, &deserialized_yaml)?;
+    validation::validate_deserialized_config_yaml(&deserialized_yaml)?;
 
     Ok(deserialized_yaml)
 }

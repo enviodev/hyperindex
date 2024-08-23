@@ -1,6 +1,6 @@
 use crate::{
     commands,
-    config_parsing::{human_config, system_config::SystemConfig},
+    config_parsing::system_config::SystemConfig,
     persisted_state::{self, PersistedState, PersistedStateExists, CURRENT_CRATE_VERSION},
     project_paths::ParsedProjectPaths,
     service_health::{self, EndpointHealth},
@@ -8,11 +8,8 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 
 pub async fn run_dev(project_paths: ParsedProjectPaths) -> Result<()> {
-    let human_config = human_config::deserialize_config_from_yaml(&project_paths.config)
-        .context("Failed deserializing config")?;
-
-    let config = SystemConfig::parse_from_human_config(human_config, &project_paths)
-        .context("Failed parsing config")?;
+    let config =
+        SystemConfig::parse_from_project_files(&project_paths).context("Failed parsing config")?;
 
     let current_state = PersistedState::get_current_state(&config)
         .context("Failed getting current indexer state")?;

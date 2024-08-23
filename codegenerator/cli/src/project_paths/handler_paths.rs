@@ -5,8 +5,6 @@ use pathdiff::diff_paths;
 use serde::Serialize;
 use std::path::PathBuf;
 
-pub const DEFAULT_SCHEMA_PATH: &str = "schema.graphql";
-
 #[derive(Serialize, Debug, Eq, PartialEq, Clone)]
 pub struct HandlerPathsTemplate {
     absolute: String,
@@ -80,16 +78,13 @@ mod tests {
         let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
+        let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
-        let yaml_cfg = human_config::deserialize_config_from_yaml(&project_paths.config)
+        let yaml_cfg = human_config::deserialize_config_from_yaml(human_config_string)
             .expect("Failed deserializing config");
 
-        let config = SystemConfig::parse_from_human_cfg_with_schema(
-            yaml_cfg,
-            Schema::empty(),
-            &project_paths,
-        )
-        .expect("Failed parsing config");
+        let config = SystemConfig::from_evm_config(yaml_cfg, Schema::empty(), &project_paths)
+            .expect("Failed parsing config");
 
         let expected_schema_path = test_dir_path_buf.join(PathBuf::from("schemas/schema.graphql"));
 
@@ -126,16 +121,13 @@ mod tests {
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
         println!("project_paths: {:#?}", project_paths);
+        let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
-        let yaml_cfg = human_config::deserialize_config_from_yaml(&project_paths.config)
+        let yaml_cfg = human_config::deserialize_config_from_yaml(human_config_string)
             .expect("Failed deserializing config");
 
-        let config = SystemConfig::parse_from_human_cfg_with_schema(
-            yaml_cfg,
-            Schema::empty(),
-            &project_paths,
-        )
-        .expect("Failed parsing config");
+        let config = SystemConfig::from_evm_config(yaml_cfg, Schema::empty(), &project_paths)
+            .expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
 

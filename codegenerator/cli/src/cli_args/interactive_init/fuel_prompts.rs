@@ -5,7 +5,7 @@ use crate::{
         ContractImportArgs, InitFlow as ClapInitFlow, LocalImportArgs, LocalOrExplorerImport,
         TemplateArgs,
     },
-    fuel::abi::{Abi, FuelLog},
+    fuel::abi::{FuelAbi, FuelLog},
     init_config::fuel::{ContractImportSelection, InitFlow, SelectedContract, Template},
 };
 use anyhow::{Context, Result};
@@ -59,7 +59,7 @@ fn get_abi_path_string(local_import_args: &LocalImportArgs) -> Result<String> {
     match &local_import_args.abi_file {
         Some(p) => Ok(p.clone()),
         None => prompt_abi_file_path(|path| {
-            let maybe_parsed_abi = Abi::parse(PathBuf::from(&path));
+            let maybe_parsed_abi = FuelAbi::parse(PathBuf::from(&path));
             match maybe_parsed_abi {
                 Ok(_) => Validation::Valid,
                 Err(e) => Validation::Invalid(e.into()),
@@ -118,7 +118,7 @@ async fn get_contract_import_selection(args: ContractImportArgs) -> Result<Selec
 
     let abi_path_string =
         get_abi_path_string(&local_import_args).context("Failed getting Fuel ABI path")?;
-    let abi = Abi::parse(PathBuf::from(&abi_path_string)).context("Failed parsing Fuel ABI")?;
+    let abi = FuelAbi::parse(PathBuf::from(&abi_path_string)).context("Failed parsing Fuel ABI")?;
 
     let mut selected_logs = abi.get_logs();
     if !args.all_events {

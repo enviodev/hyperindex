@@ -1,7 +1,7 @@
 use crate::{
     cli_args::clap_definitions::{DbMigrateSubcommands, LocalCommandTypes, LocalDockerSubcommands},
     commands,
-    config_parsing::{human_config, system_config::SystemConfig},
+    config_parsing::system_config::SystemConfig,
     persisted_state::PersistedState,
     project_paths::ParsedProjectPaths,
 };
@@ -23,10 +23,7 @@ pub async fn run_local(
         LocalCommandTypes::DbMigrate(subcommand) => {
             //Use a closure just so running local dow doesn't need to construct persisted state
             let get_persisted_state = || -> Result<PersistedState> {
-                let yaml_config = human_config::deserialize_config_from_yaml(&project_paths.config)
-                    .context("Failed deserializing config")?;
-
-                let config = SystemConfig::parse_from_human_config(yaml_config, &project_paths)
+                let config = SystemConfig::parse_from_project_files(&project_paths)
                     .context("Failed parsing config")?;
 
                 let persisted_state = PersistedState::get_current_state(&config)

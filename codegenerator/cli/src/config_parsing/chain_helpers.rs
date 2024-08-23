@@ -329,7 +329,7 @@ impl Network {
             | Network::Amoy
             | Network::Crab
             | Network::Darwinia
-            | Network::Cyber => 200,
+            | Network::Cyber => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
     }
 }
