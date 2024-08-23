@@ -278,10 +278,17 @@ impl Abi {
 
                 let event_name = {
                     // Since Event name doesn't consider the type children, there might be duplications.
-                    // Prevent it by adding a postfix when an even_name appears more than one time
+                    // Prevent it by adding a postfix when an event_name appears more than one time
                     let mut event_name = logged_type.get_event_name();
+                    // Extract only the last segment of the event name - NOTE: we can
+                    event_name = event_name
+                        .split("::")
+                        .last()
+                        .unwrap_or(&event_name)
+                        .to_string();
                     let event_name_count = names_count.get(&event_name).unwrap_or(&0);
                     let event_name_count = event_name_count + 1;
+                    // TODO: since we now have the namespace of these sway structs, we wouldn't need to append numbers at the end in future versions (we can use the namespace to differentiate them)
                     if event_name_count > 1 {
                         event_name = format!("{event_name}{}", event_name_count)
                     }
