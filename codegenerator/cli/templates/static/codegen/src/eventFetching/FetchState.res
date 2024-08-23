@@ -212,30 +212,48 @@ let addNextRegister = (nextRegister: t, ~register: t, ~dynamicContractId) => {
   registerType: DynamicContractRegister(dynamicContractId, nextRegister),
 }
 
+type parentRegister = {
+  register: t,
+  dynamicContractId: dynamicContractId,
+}
+
 /**
 Updates node at the given id with the values passed.
 Errors if the node can't be found.
 */
 let rec updateInternal = (
+  register: t,
   ~id,
   ~latestFetchedBlock,
   ~newFetchedEvents,
   ~isFetchingAtHead,
-  register: t,
+  ~parentRegister=?,
 ): result<t, exn> => {
+  let handleParent = (updated: t) => {
+    switch parentRegister {
+    | Some({register, dynamicContractId}) =>
+      updated->addNextRegister(~register, ~dynamicContractId)->Ok
+    | None => updated->Ok
+    }
+  }
+
   switch (register.registerType, id) {
   | (RootRegister(_), Root) =>
     register
     ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
-    ->Ok
+    ->handleParent
   | (DynamicContractRegister(id, _nextRegistered), DynamicContract(targetId)) if id == targetId =>
     register
     ->updateRegister(~newFetchedEvents, ~latestFetchedBlock, ~isFetchingAtHead)
-    ->Ok
+    ->handleParent
   | (DynamicContractRegister(dynamicContractId, nextRegistered), id) =>
-    nextRegistered
-    ->updateInternal(~newFetchedEvents, ~id, ~latestFetchedBlock, ~isFetchingAtHead)
-    ->Result.map(s => s->addNextRegister(~register, ~dynamicContractId))
+    nextRegistered->updateInternal(
+      ~id,
+      ~latestFetchedBlock,
+      ~newFetchedEvents,
+      ~isFetchingAtHead,
+      ~parentRegister={register, dynamicContractId},
+    )
   | (RootRegister(_), DynamicContract(_)) => Error(UnexpectedRegisterDoesNotExist(id))
   }
 }
@@ -244,20 +262,15 @@ let rec updateInternal = (
 If a fetchState register has caught up to its next regisered node. Merge them and recurse.
 If no merging happens, None is returned
 */
-let rec pruneAndMergeNextRegistered = (self: t) => {
+let rec pruneAndMergeNextRegistered = (self: t, ~isMerged=false) => {
+  let merged = isMerged ? Some(self) : None
   switch self.registerType {
-  | RootRegister(_) => None
+  | RootRegister(_) => merged
   | DynamicContractRegister(_, nextRegister)
-    if self.latestFetchedBlock.blockNumber < nextRegister.latestFetchedBlock.blockNumber =>
-    None
+    if self.latestFetchedBlock.blockNumber < nextRegister.latestFetchedBlock.blockNumber => merged
   | DynamicContractRegister(_) =>
-    let mergedSelf = self->mergeIntoNextRegistered
-
-    // Recursively look for other merges, if they affect the state, return that merged state otherwise, return the `mergedSelf`
-    switch mergedSelf->pruneAndMergeNextRegistered {
-    | Some(mergedNext) => Some(mergedNext)
-    | None => Some(mergedSelf)
-    }
+    // Recursively look for other merges
+    self->mergeIntoNextRegistered->pruneAndMergeNextRegistered(~isMerged=true)
   }
 }
 
@@ -532,17 +545,21 @@ fetch state with that item.
 
 Recurses through registers and Errors if ID does not exist
 */
-let rec popQItemAtRegisterId = (self: t, ~id) =>
+let rec popQItemAtRegisterId = (self: t, ~id, ~parentRegister=?) => {
   switch self.registerType {
   | RootRegister(_)
   | DynamicContractRegister(_) if id == self->getRegisterId =>
-    self->getEarliestEventInRegisterWithUpdatedQueue->Ok
+    let updated = self->getEarliestEventInRegisterWithUpdatedQueue
+    switch parentRegister {
+    | Some({register, dynamicContractId}) =>
+      register->getRegisterWithNextResponse(~dynamicContractId, updated)->Ok
+    | None => Ok(updated)
+    }
   | DynamicContractRegister(dynamicContractId, nextRegister) =>
-    nextRegister
-    ->popQItemAtRegisterId(~id)
-    ->Result.map(getRegisterWithNextResponse(self, ~dynamicContractId, _))
+    nextRegister->popQItemAtRegisterId(~id, ~parentRegister={register: self, dynamicContractId})
   | RootRegister(_) => Error(UnexpectedRegisterDoesNotExist(id))
   }
+}
 
 /**
 Gets the earliest queueItem from thgetNodeEarliestEventWithUpdatedQueue.
@@ -660,18 +677,26 @@ let rec registerDynamicContract = (
   ~registeringEventBlockNumber,
   ~registeringEventLogIndex,
   ~dynamicContractRegistrations: array<TablesStatic.DynamicContractRegistry.t>,
+  ~parentRegister=?,
 ) => {
-  let latestFetchedBlockNumber = registeringEventBlockNumber - 1
+  let handleParent = updated =>
+    switch parentRegister {
+    | Some({register, dynamicContractId}) => updated->addNextRegister(~register, ~dynamicContractId)
+    | None => updated
+    }
 
-  let addToHead =
-    addNewRegisterToHead(
+  let addToHead = updated =>
+    updated
+    ->addNewRegisterToHead(
       ~contractAddressMapping=dynamicContractRegistrations
       ->Array.map(d => (d.contractAddress, (d.contractType :> string)))
       ->ContractAddressingMap.fromArray,
       ~registeringEventLogIndex,
       ~registeringEventBlockNumber,
-      ...
     )
+    ->handleParent
+
+  let latestFetchedBlockNumber = registeringEventBlockNumber - 1
 
   switch register.registerType {
   | RootRegister(_) => register->addToHead
@@ -679,13 +704,12 @@ let rec registerDynamicContract = (
     if latestFetchedBlockNumber <= register.latestFetchedBlock.blockNumber =>
     register->addToHead
   | DynamicContractRegister(dynamicContractId, nextRegister) =>
-    nextRegister
-    ->registerDynamicContract(
+    nextRegister->registerDynamicContract(
       ~registeringEventBlockNumber,
       ~registeringEventLogIndex,
       ~dynamicContractRegistrations,
+      ~parentRegister={register, dynamicContractId},
     )
-    ->addNextRegister(~register, ~dynamicContractId)
   }
 }
 
@@ -776,19 +800,30 @@ let pruneDynamicContractAddressesPastValidBlock = (~lastKnownValidBlock, registe
 /**
 Rolls back registers to the given valid block
 */
-let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
+let rec rollback = (self: t, ~lastKnownValidBlock: blockNumberAndTimestamp, ~parentRegister=?) => {
+  let handleParent = updated =>
+    switch parentRegister {
+    | Some({register, dynamicContractId}) => {
+        ...register,
+        registerType: DynamicContractRegister(dynamicContractId, updated),
+      }
+    | None => updated
+    }
+
   switch self.registerType {
   //Case 1 Root register that has only fetched up to a confirmed valid block number
   //Should just return itself unchanged
-  | RootRegister(_)
-    if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber => self
+  | RootRegister(_) if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber =>
+    self->handleParent
   //Case 2 Dynamic register that has only fetched up to a confirmed valid block number
   //Should just return itself, with the next register rolled back recursively
   | DynamicContractRegister(id, nextRegister)
-    if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber => {
-      ...self,
-      registerType: DynamicContractRegister(id, nextRegister->rollback(~lastKnownValidBlock)),
-    }
+    if self.latestFetchedBlock.blockNumber <= lastKnownValidBlock.blockNumber =>
+    nextRegister->rollback(
+      ~lastKnownValidBlock,
+      ~parentRegister={register: self, dynamicContractId: id},
+    )
+
   //Case 3 Root register that has fetched further than the confirmed valid block number
   //Should prune its queue and set its latest fetched block data to the latest known confirmed block
   | RootRegister(_) =>
@@ -796,7 +831,9 @@ let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
       ...self,
       fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
       latestFetchedBlock: lastKnownValidBlock,
-    }->pruneDynamicContractAddressesPastValidBlock(~lastKnownValidBlock)
+    }
+    ->pruneDynamicContractAddressesPastValidBlock(~lastKnownValidBlock)
+    ->handleParent
   //Case 4 DynamicContract register that has fetched further than the confirmed valid block number
   //Should prune its queue, set its latest fetched blockdata + pruned queue
   //And recursivle prune the nextRegister
@@ -811,12 +848,15 @@ let rec rollback = (~lastKnownValidBlock: blockNumberAndTimestamp, self: t) => {
     } else {
       //If there are still values in the contractAddressMapping, we should keep the register but
       //prune queues and next register
-      {
-        ...updatedWithRemovedDynamicContracts,
-        fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
-        latestFetchedBlock: lastKnownValidBlock,
-        registerType: DynamicContractRegister(id, nextRegister->rollback(~lastKnownValidBlock)),
+      let parentRegister = {
+        register: {
+          ...updatedWithRemovedDynamicContracts,
+          fetchedEventQueue: self.fetchedEventQueue->pruneQueuePastValidBlock(~lastKnownValidBlock),
+          latestFetchedBlock: lastKnownValidBlock,
+        },
+        dynamicContractId: id,
       }
+      nextRegister->rollback(~lastKnownValidBlock, ~parentRegister)
     }
   }
 }
