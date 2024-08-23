@@ -469,9 +469,9 @@ impl SystemConfig {
           serde_yaml::from_str(&human_config_string)
                 .context("EE105: Failed to deserialize config. The config.yaml file is either not a valid yaml or the \"ecosystem\" field is not a string.")?;
 
-        let ecosystem = match config_discriminant.ecosystem {
-            Some(ecosystem) if ecosystem == "evm" => Ecosystem::Evm,
-            Some(ecosystem) if ecosystem == "fuel" => Ecosystem::Fuel,
+        let ecosystem = match config_discriminant.ecosystem.as_ref() {
+            Some("evm") => Ecosystem::Evm,
+            Some("fuel") => Ecosystem::Fuel,
             Some(ecosystem) => {
                 return Err(anyhow!(
                     "EE105: Failed to deserialize config. The ecosystem \"{}\" is not supported.",
