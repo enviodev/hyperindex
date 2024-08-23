@@ -410,14 +410,17 @@ impl FuelAbi {
     }
 
     pub fn get_type_by_struct_name(&self, struct_name: String) -> Result<FuelType> {
-        let type_name_struct = format!("struct {struct_name}");
-        let type_name_enum = format!("enum {struct_name}");
         match self
             .program
             .types
             .iter()
-            .find(|t| t.type_field == type_name_struct || t.type_field == type_name_enum)
-        {
+            .find(|t| match t.type_field.strip_prefix("struct ") {
+                Some(path) => path.split("::").last() == Some(struct_name.as_str()),
+                None => match t.type_field.strip_prefix("enum ") {
+                    Some(path) => path.split("::").last() == Some(struct_name.as_str()),
+                    None => false,
+                },
+            }) {
             Some(t) => self
                 .types
                 .get(&t.type_id)
