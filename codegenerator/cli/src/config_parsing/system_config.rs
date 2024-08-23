@@ -314,15 +314,6 @@ impl SystemConfig {
         //Add all global contracts
         if let Some(global_contracts) = &fuel_config.contracts {
             for g_contract in global_contracts {
-                // let abi_path = path_utils::get_config_path_relative_to_root(
-                //     project_paths,
-                //     PathBuf::from(&g_contract.config.abi_file_path),
-                // )
-                // .context("Failed to get path to ABI relative to the root of the project")?;
-                // let fuel_abi = FuelAbi::parse(abi_path).context(format!(
-                //     "Failed to parse ABI for the contract {}",
-                //     g_contract.name
-                // ))?;
                 let events = g_contract
                     .config
                     .events
