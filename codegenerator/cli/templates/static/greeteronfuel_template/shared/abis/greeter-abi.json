@@ -1,127 +1,133 @@
 {
-  "encoding": "1",
-  "types": [
+  "programType": "contract",
+  "specVersion": "1",
+  "encodingVersion": "1",
+  "concreteTypes": [
     {
-      "typeId": 0,
       "type": "()",
-      "components": [],
-      "typeParameters": null
+      "concreteTypeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
     },
     {
-      "typeId": 1,
-      "type": "b256",
-      "components": null,
-      "typeParameters": null
-    },
-    {
-      "typeId": 2,
       "type": "enum Error",
+      "concreteTypeId": "4ed298ed0be3fc65895c5d5263885191731caa9f79ff63e56d98b449e5ba4b3f",
+      "metadataTypeId": 1
+    },
+    {
+      "type": "enum std::option::Option<struct Greeting>",
+      "concreteTypeId": "6131325e56e0a740b11c011fd2f7e67e7104a223cad4ddd4c4033d9fe1fe9768",
+      "metadataTypeId": 2,
+      "typeArguments": [
+        "270fc75adb9a9c47c2092f42f632ea79d1f5e558793ff90fcde067ff3a899ccf"
+      ]
+    },
+    {
+      "type": "str[8]",
+      "concreteTypeId": "fd59cdd2c531ab3564f4fcc13eb876860d4d7cd4d12aa1f042a5aeceacde951f"
+    },
+    {
+      "type": "struct ClearGreeting",
+      "concreteTypeId": "3e3ffd83393027a4af2a81a6fd031daba84882b4117a89be43a798f807322e98",
+      "metadataTypeId": 4
+    },
+    {
+      "type": "struct Greeting",
+      "concreteTypeId": "270fc75adb9a9c47c2092f42f632ea79d1f5e558793ff90fcde067ff3a899ccf",
+      "metadataTypeId": 5
+    },
+    {
+      "type": "struct NewGreeting",
+      "concreteTypeId": "4d8812009a01dfce9ead2049933d9eb736fadce2d22525e8f451c3f5c00fc4fe",
+      "metadataTypeId": 6
+    }
+  ],
+  "metadataTypes": [
+    {
+      "type": "b256",
+      "metadataTypeId": 0
+    },
+    {
+      "type": "enum Error",
+      "metadataTypeId": 1,
       "components": [
         {
           "name": "InvalidContractSender",
-          "type": 0,
-          "typeArguments": null
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
         },
         {
           "name": "ToThrow",
-          "type": 0,
-          "typeArguments": null
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
         }
-      ],
-      "typeParameters": null
+      ]
     },
     {
-      "typeId": 3,
-      "type": "enum Option",
+      "type": "enum std::option::Option",
+      "metadataTypeId": 2,
       "components": [
         {
           "name": "None",
-          "type": 0,
-          "typeArguments": null
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
         },
         {
           "name": "Some",
-          "type": 4,
-          "typeArguments": null
+          "typeId": 3
         }
       ],
-      "typeParameters": [4]
+      "typeParameters": [3]
     },
     {
-      "typeId": 4,
       "type": "generic T",
-      "components": null,
-      "typeParameters": null
+      "metadataTypeId": 3
     },
     {
-      "typeId": 5,
-      "type": "str[8]",
-      "components": null,
-      "typeParameters": null
-    },
-    {
-      "typeId": 6,
-      "type": "struct Address",
-      "components": [
-        {
-          "name": "bits",
-          "type": 1,
-          "typeArguments": null
-        }
-      ],
-      "typeParameters": null
-    },
-    {
-      "typeId": 7,
       "type": "struct ClearGreeting",
+      "metadataTypeId": 4,
       "components": [
         {
           "name": "user",
-          "type": 6,
-          "typeArguments": null
+          "typeId": 7
         }
-      ],
-      "typeParameters": null
+      ]
     },
     {
-      "typeId": 8,
       "type": "struct Greeting",
+      "metadataTypeId": 5,
       "components": [
         {
           "name": "value",
-          "type": 5,
-          "typeArguments": null
+          "typeId": "fd59cdd2c531ab3564f4fcc13eb876860d4d7cd4d12aa1f042a5aeceacde951f"
         }
-      ],
-      "typeParameters": null
+      ]
     },
     {
-      "typeId": 9,
       "type": "struct NewGreeting",
+      "metadataTypeId": 6,
       "components": [
         {
           "name": "user",
-          "type": 6,
-          "typeArguments": null
+          "typeId": 7
         },
         {
           "name": "greeting",
-          "type": 8,
-          "typeArguments": null
+          "typeId": 5
         }
-      ],
-      "typeParameters": null
+      ]
+    },
+    {
+      "type": "struct std::address::Address",
+      "metadataTypeId": 7,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
     }
   ],
   "functions": [
     {
       "inputs": [],
       "name": "clear_greeting",
-      "output": {
-        "name": "",
-        "type": 0,
-        "typeArguments": null
-      },
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
       "attributes": [
         {
           "name": "storage",
@@ -132,17 +138,7 @@
     {
       "inputs": [],
       "name": "current_greeting",
-      "output": {
-        "name": "",
-        "type": 3,
-        "typeArguments": [
-          {
-            "name": "",
-            "type": 8,
-            "typeArguments": null
-          }
-        ]
-      },
+      "output": "6131325e56e0a740b11c011fd2f7e67e7104a223cad4ddd4c4033d9fe1fe9768",
       "attributes": [
         {
           "name": "storage",
@@ -154,16 +150,11 @@
       "inputs": [
         {
           "name": "greeting",
-          "type": 5,
-          "typeArguments": null
+          "concreteTypeId": "fd59cdd2c531ab3564f4fcc13eb876860d4d7cd4d12aa1f042a5aeceacde951f"
         }
       ],
       "name": "set_greeting",
-      "output": {
-        "name": "",
-        "type": 0,
-        "typeArguments": null
-      },
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
       "attributes": [
         {
           "name": "storage",
@@ -174,38 +165,22 @@
     {
       "inputs": [],
       "name": "throw_error",
-      "output": {
-        "name": "",
-        "type": 0,
-        "typeArguments": null
-      },
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
       "attributes": null
     }
   ],
   "loggedTypes": [
     {
       "logId": "4485582493926303652",
-      "loggedType": {
-        "name": "",
-        "type": 7,
-        "typeArguments": []
-      }
+      "concreteTypeId": "3e3ffd83393027a4af2a81a6fd031daba84882b4117a89be43a798f807322e98"
     },
     {
       "logId": "5679770223941778533",
-      "loggedType": {
-        "name": "",
-        "type": 2,
-        "typeArguments": []
-      }
+      "concreteTypeId": "4ed298ed0be3fc65895c5d5263885191731caa9f79ff63e56d98b449e5ba4b3f"
     },
     {
       "logId": "5586735131546214350",
-      "loggedType": {
-        "name": "",
-        "type": 9,
-        "typeArguments": []
-      }
+      "concreteTypeId": "4d8812009a01dfce9ead2049933d9eb736fadce2d22525e8f451c3f5c00fc4fe"
     }
   ],
   "messagesTypes": [],
