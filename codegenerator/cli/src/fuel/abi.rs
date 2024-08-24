@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use fuel_abi_types::abi::program::ProgramABI;
+use fuel_abi_types::abi::unified_program::{UnifiedProgramABI, UnifiedTypeApplication};
 use itertools::Itertools;
 use std::{collections::HashMap, fs, path::PathBuf};
 
@@ -34,9 +34,11 @@ impl FuelType {
             "enum Option" => "OptionLog",
             type_field if type_field.starts_with("struct ") => type_field
                 .strip_prefix("struct ")
+                .and_then(|s| s.split("::").last())
                 .unwrap_or_else(|| "StructLog"),
             type_field if type_field.starts_with("enum ") => type_field
                 .strip_prefix("enum ")
+                .and_then(|s| s.split("::").last())
                 .unwrap_or_else(|| "EnumLog"),
             type_field if type_field.starts_with("(_,") => "TupleLog",
             type_field if type_field.starts_with("[_;") => "ArrayLog",
@@ -59,18 +61,17 @@ pub struct FuelAbi {
     pub path_buf: PathBuf,
     pub path: String,
     pub raw: String,
-    program: ProgramABI,
+    program: UnifiedProgramABI,
     logs: HashMap<String, FuelLog>,
     types: HashMap<usize, FuelType>,
 }
 
 impl FuelAbi {
-    fn decode_program(raw: &String) -> Result<ProgramABI> {
-        let program: ProgramABI = serde_json::from_str(&raw)?;
-        Ok(program)
+    fn decode_program(raw: &String) -> Result<UnifiedProgramABI> {
+        Ok(UnifiedProgramABI::from_json_abi(raw)?)
     }
 
-    fn decode_types(program: &ProgramABI) -> Result<HashMap<usize, FuelType>> {
+    fn decode_types(program: &UnifiedProgramABI) -> Result<HashMap<usize, FuelType>> {
         let mut types_map: HashMap<usize, FuelType> = HashMap::new();
 
         //eg "generic T" returns "T" for keyword "generic"
@@ -156,8 +157,8 @@ impl FuelAbi {
                                     //If the type_id is not a defined generic type it is
                                     //a named type
                                     RescriptTypeIdent::TypeApplication {
-                                        name: type_ident_name,
-                                        type_params: vec![],
+                                      name: type_ident_name,
+                                      type_params: vec![]
                                     },
                                     //if the type_id is in the generic_param_name_map
                                     //it is a generic param
@@ -172,8 +173,8 @@ impl FuelAbi {
                                                 //If the type_id is not a defined generic type it is
                                                 //a named type
                                                 RescriptTypeIdent::TypeApplication {
-                                                    name: mk_type_id_name(&ta.type_id),
-                                                    type_params: vec![],
+                                                  name:mk_type_id_name(&ta.type_id),
+                                                  type_params: vec![]
                                                 },
                                                 //if the type_id is in the generic_param_name_map
                                                 //it is a generic param
@@ -222,8 +223,7 @@ impl FuelAbi {
                         type_field if type_field.starts_with("struct ") => {
                             let record_fields = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for \
-                                     {type_field}",
+                                    "Failed getting name and identifier from components for {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(name, type_ident)| {
@@ -235,8 +235,7 @@ impl FuelAbi {
                         type_field if type_field.starts_with("enum ") => {
                             let constructors = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for \
-                                     {type_field}",
+                                    "Failed getting name and identifier from components for {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(name, type_ident)| {
@@ -248,8 +247,7 @@ impl FuelAbi {
                         type_field if type_field.starts_with("(_,") => {
                             let tuple_types = get_components_name_and_type_ident()
                                 .context(format!(
-                                    "Failed getting name and identifier from components for tuple \
-                                     {type_field}",
+                                    "Failed getting name and identifier from components for tuple {type_field}",
                                 ))?
                                 .into_iter()
                                 .map(|(_name, type_ident)| type_ident)
@@ -258,15 +256,14 @@ impl FuelAbi {
                             RescriptTypeIdent::Tuple(tuple_types).to_ok_expr()
                         }
                         type_field if type_field.starts_with("[_;") => {
-                            let components =
-                                get_components_name_and_type_ident().context(format!(
-                                    "Failed getting name and identifier from components for \
-                                     {type_field}",
-                                ))?;
-                            let element_name_and_type_ident = components
-                                .first()
-                                .ok_or(anyhow!("Missing array element type component"))?;
-                            Array(Box::new(element_name_and_type_ident.1.clone())).to_ok_expr()
+                            let components = get_components_name_and_type_ident().context(format!(
+                              "Failed getting name and identifier from components for {type_field}",
+                            ))?;
+                            let element_name_and_type_ident = components.first().ok_or(anyhow!("Missing array element type component"))?;
+                            Array(Box::new(
+                                element_name_and_type_ident.1.clone(),
+                            ))
+                            .to_ok_expr()
                         }
                         type_field => {
                             //Unknown
@@ -285,7 +282,7 @@ impl FuelAbi {
                                     .get(tp)
                                     .ok_or(anyhow!(
                                         "param name for type_id {tp} should exist in \
-                                         generic_param_name_map"
+                                       generic_param_name_map"
                                     ))
                                     .cloned()
                             })
@@ -315,7 +312,7 @@ impl FuelAbi {
     }
 
     fn get_type_application(
-        abi_application: &fuel_abi_types::abi::program::TypeApplication,
+        abi_application: &UnifiedTypeApplication,
         types: &HashMap<usize, FuelType>,
     ) -> Result<RescriptTypeIdent> {
         let fuel_type = types
@@ -334,7 +331,7 @@ impl FuelAbi {
     }
 
     fn decode_logs(
-        program: &ProgramABI,
+        program: &UnifiedProgramABI,
         types: &HashMap<usize, FuelType>,
     ) -> Result<HashMap<String, FuelLog>> {
         let mut logs_map: HashMap<String, FuelLog> = HashMap::new();
@@ -384,7 +381,7 @@ impl FuelAbi {
         let raw = fs::read_to_string(&path_buf)
             .context(format!("Failed to read Fuel ABI file at \"{}\"", path))?;
         let program = Self::decode_program(&raw).context(format!(
-            "Failed to decode program of Fuel ABI file at \"{}\"",
+            "Failed to decode Fuel ABI file at \"{}\". Make sure you built your program with the forc v0.33.0 or higher.",
             path
         ))?;
         let types = Self::decode_types(&program).context(format!(
@@ -413,14 +410,17 @@ impl FuelAbi {
     }
 
     pub fn get_type_by_struct_name(&self, struct_name: String) -> Result<FuelType> {
-        let type_name_struct = format!("struct {struct_name}");
-        let type_name_enum = format!("enum {struct_name}");
         match self
             .program
             .types
             .iter()
-            .find(|t| t.type_field == type_name_struct || t.type_field == type_name_enum)
-        {
+            .find(|t| match t.type_field.strip_prefix("struct ") {
+                Some(path) => path.split("::").last() == Some(struct_name.as_str()),
+                None => match t.type_field.strip_prefix("enum ") {
+                    Some(path) => path.split("::").last() == Some(struct_name.as_str()),
+                    None => false,
+                },
+            }) {
             Some(t) => self
                 .types
                 .get(&t.type_id)
