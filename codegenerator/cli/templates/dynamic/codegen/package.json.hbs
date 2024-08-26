@@ -20,8 +20,19 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@elastic/ecs-pino-format": "1.4.0",
+    {{#if is_evm_ecosystem}}
     "@envio-dev/hypersync-client": "0.6.2",
+    {{/if}}
+    {{#if is_fuel_ecosystem}}
+    "@fuel-ts/crypto": "0.94.1",
+    "@fuel-ts/errors": "0.94.1",
+    "@fuel-ts/hasher": "0.94.1",
+    "@fuel-ts/math": "0.94.1",
+    "@fuel-ts/utils": "0.94.1",
+    "@fuel-ts/address": "0.94.1",
+    "@envio-dev/hyperfuel-client": "1.1.0",
+    {{/if}}
+    "@elastic/ecs-pino-format": "1.4.0",
     "@glennsl/rescript-fetch": "0.2.0",
     "@rescript/react": "0.12.1",
     "@ryyppy/rescript-promise": "2.1.0",
