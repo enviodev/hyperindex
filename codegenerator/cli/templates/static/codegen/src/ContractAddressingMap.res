@@ -1,7 +1,7 @@
 type contractName = string
 
 exception UndefinedContractName(contractName, Types.chainId)
-exception UndefinedContractAddress(Ethers.ethAddress)
+exception UndefinedContractAddress(Address.t)
 
 // Currently this mapping append only, so we don't need to worry about
 // protecting static addresses from de-registration.
@@ -11,7 +11,7 @@ type mapping = {
   addressesByName: dict<Belt.Set.String.t>,
 }
 
-let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
+let addAddress = (map: mapping, ~name: string, ~address: Address.t) => {
   let address = address->Ethers.formatEthAddress
   map.nameByAddress->Js.Dict.set(address->Ethers.ethAddressToString, name)
 
@@ -22,7 +22,7 @@ let addAddress = (map: mapping, ~name: string, ~address: Ethers.ethAddress) => {
 }
 
 /// This adds the address if it doesn't exist and returns a boolean to say if it already existed.
-let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Ethers.ethAddress): bool => {
+let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Address.t): bool => {
   let address = address->Ethers.formatEthAddress
   let addressIsNew =
     map.nameByAddress
@@ -51,15 +51,15 @@ let make = () => {
   addressesByName: Js.Dict.empty(),
 }
 
-let getContractNameFromAddress = (mapping, ~contractAddress: Ethers.ethAddress): option<
+let getContractNameFromAddress = (mapping, ~contractAddress: Address.t): option<
   contractName,
 > => {
   mapping->getName(contractAddress->Ethers.ethAddressToString)
 }
 
-let stringsToAddresses: array<string> => array<Ethers.ethAddress> = Utils.magic
+let stringsToAddresses: array<string> => array<Address.t> = Utils.magic
 let keyValStringToAddress: array<(string, string)> => array<(
-  Ethers.ethAddress,
+  Address.t,
   string,
 )> = Utils.magic
 
@@ -88,7 +88,7 @@ let combine = (a, b) => {
   m
 }
 
-let fromArray = (nameAddrTuples: array<(Ethers.ethAddress, string)>) => {
+let fromArray = (nameAddrTuples: array<(Address.t, string)>) => {
   let m = make()
   nameAddrTuples->Belt.Array.forEach(((address, name)) => m->addAddress(~name, ~address))
   m
@@ -97,7 +97,7 @@ let fromArray = (nameAddrTuples: array<(Ethers.ethAddress, string)>) => {
 /**
 Creates a new mapping from the previous without the addresses passed in as "addressesToRemove"
 */
-let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Ethers.ethAddress>) => {
+let removeAddresses = (mapping: mapping, ~addressesToRemove: array<Address.t>) => {
   mapping.nameByAddress
   ->Js.Dict.entries
   ->Belt.Array.keep(((addr, _name)) => {

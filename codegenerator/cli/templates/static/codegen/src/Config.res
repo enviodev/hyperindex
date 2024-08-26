@@ -1,7 +1,7 @@
 type contract = {
   name: string,
   abi: Ethers.abi,
-  addresses: array<Ethers.ethAddress>,
+  addresses: array<Address.t>,
   events: array<module(Types.Event)>,
 }
 

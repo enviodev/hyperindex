@@ -96,8 +96,8 @@ module QueryTypes = {
   }
 
   type transactionParams = {
-    from?: array<Ethers.ethAddress>,
-    @as("to") to_?: array<Ethers.ethAddress>,
+    from?: array<Address.t>,
+    @as("to") to_?: array<Address.t>,
     sighash?: array<string>,
   }
 

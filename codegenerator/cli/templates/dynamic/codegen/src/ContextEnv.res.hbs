@@ -57,7 +57,7 @@ let getAddedDynamicContractRegistrations = (contextEnv: t<'eventArgs>) =>
   contextEnv.addedDynamicContractRegistrations
 
 let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, ~inMemoryStore) => (
-  contractAddress: Ethers.ethAddress,
+  contractAddress: Address.t,
 ) => {
   let {event, chain, addedDynamicContractRegistrations} = contextEnv
 

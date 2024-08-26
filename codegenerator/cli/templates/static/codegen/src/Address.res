@@ -1,1 +1,2 @@
-type t = Ethers.ethAddress
+@genType.import(("./OpaqueTypes.ts", "Address"))
+type t

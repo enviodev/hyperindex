@@ -1,5 +1,5 @@
 @genType.import(("./OpaqueTypes.ts", "EthersAddress"))
-type fuelAddress = Ethers.ethAddress
+type fuelAddress = Address.t
 
 module Address = {
   type t = fuelAddress

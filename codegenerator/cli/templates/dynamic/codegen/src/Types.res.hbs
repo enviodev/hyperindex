@@ -8,7 +8,7 @@ type id = string
 type contractRegistrations = {
   //TODO only add contracts we've registered for the event in the config
   {{#each codegen_contracts as |contract| }}
-  add{{contract.name.capitalized}}: (Ethers.ethAddress) => unit,
+  add{{contract.name.capitalized}}: (Address.t) => unit,
   {{/each}}
 }
 
@@ -196,7 +196,7 @@ module Block = {
 type eventLog<'a> = {
   params: 'a,
   chainId: int,
-  srcAddress: Ethers.ethAddress,
+  srcAddress: Address.t,
   logIndex: int,
   transaction: Transaction.t,
   block: Block.t,

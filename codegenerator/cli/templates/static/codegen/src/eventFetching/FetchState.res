@@ -26,11 +26,11 @@ module DynamicContractsMap = {
 
   let empty: t = Belt.Map.make(~id=module(IdCmp))
 
-  let add = (self, id, addressesArr: array<Ethers.ethAddress>) => {
+  let add = (self, id, addressesArr: array<Address.t>) => {
     self->Belt.Map.set(id, addressesArr->Utils.magic->Belt.Set.String.fromArray)
   }
 
-  let addAddress = (self: t, id, address: Ethers.ethAddress) => {
+  let addAddress = (self: t, id, address: Address.t) => {
     let addressStr = address->Ethers.ethAddressToString
     self->Belt.Map.update(id, optCurrentVal => {
       switch optCurrentVal {

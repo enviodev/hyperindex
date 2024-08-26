@@ -38,7 +38,7 @@ module Make = (Indexer: Indexer.S) => {
   open Indexer
   type log = {
     eventBatchQueueItem: Types.eventBatchQueueItem,
-    srcAddress: Ethers.ethAddress,
+    srcAddress: Address.t,
     transactionHash: string,
     eventMod: module(Types.InternalEvent),
   }
@@ -49,7 +49,7 @@ module Make = (Indexer: Indexer.S) => {
     transactionHash: string,
     makeEvent: makeEvent,
     logIndex: int,
-    srcAddress: Ethers.ethAddress,
+    srcAddress: Address.t,
     eventMod: module(Types.InternalEvent),
   }
 
@@ -205,7 +205,7 @@ module Make = (Indexer: Indexer.S) => {
   let arrayHas = (arr, v) => arr->Js.Array2.find(item => item == v)->Option.isSome
 
   type contractAddressesAndEventNames = {
-    addresses: array<Ethers.ethAddress>,
+    addresses: array<Address.t>,
     eventKeys: array<string>,
   }
 

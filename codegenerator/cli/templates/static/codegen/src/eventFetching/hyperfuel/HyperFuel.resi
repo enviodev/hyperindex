@@ -17,7 +17,7 @@ type item = {
   receiptType: Fuel.receiptType,
   receiptIndex: int,
   block: block,
-  txOrigin: option<Ethers.ethAddress>,
+  txOrigin: option<Address.t>,
 }
 
 type blockNumberAndTimestamp = {

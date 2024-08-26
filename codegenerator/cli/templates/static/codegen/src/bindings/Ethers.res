@@ -17,8 +17,9 @@ let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Utils.mag
 
 let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
 
-@genType.import(("./OpaqueTypes.ts", "EthersAddress"))
-type ethAddress
+// TODO: Remove in v3
+@genType.import(("./OpaqueTypes.ts", "Address"))
+type ethAddress = Address.t
 
 @module("ethers") @scope("ethers")
 external getAddressFromStringUnsafe: string => ethAddress = "getAddress"

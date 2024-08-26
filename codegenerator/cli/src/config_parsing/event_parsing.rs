@@ -133,14 +133,11 @@ mod tests {
         let tuple_bool_string_res_type = abi_to_rescript_type(tuple_bool_string);
         let bytes_arr_res_type = abi_to_rescript_type(bytes_arr);
 
-        assert_eq!(
-            user_address_res_type.to_string(),
-            "Ethers.ethAddress".to_string()
-        );
+        assert_eq!(user_address_res_type.to_string(), "Address.t".to_string());
         assert_eq!(amount_uint256_res_type.to_string(), "bigint".to_string());
         assert_eq!(
             tuple_bool_string_res_type.to_string(),
-            "(bool, Ethers.ethAddress)".to_string()
+            "(bool, Address.t)".to_string()
         );
         assert_eq!(bytes_arr_res_type.to_string(), "array<string>".to_string());
 

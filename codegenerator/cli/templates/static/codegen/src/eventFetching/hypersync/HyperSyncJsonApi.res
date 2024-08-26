@@ -155,7 +155,7 @@ module QueryTypes = {
   })
 
   type logParams = {
-    address?: array<Ethers.ethAddress>,
+    address?: array<Address.t>,
     topics: array<array<Ethers.EventFilter.topic>>,
   }
 
@@ -165,8 +165,8 @@ module QueryTypes = {
   })
 
   type transactionParams = {
-    from?: array<Ethers.ethAddress>,
-    to?: array<Ethers.ethAddress>,
+    from?: array<Address.t>,
+    to?: array<Address.t>,
     sighash?: array<string>,
   }
 
