@@ -192,7 +192,7 @@ use crate::{
     cli_args::init_config::Language,
     config_parsing::{
         entity_parsing::{Entity, Field, FieldType, Schema},
-        system_config::{self, Ecosystem, SystemConfig},
+        system_config::{self, Ecosystem, EventPayload, SystemConfig},
     },
     constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     template_dirs::TemplateDirs,
@@ -324,7 +324,8 @@ impl Event {
         is_fuel: bool,
         language: &Language,
     ) -> Result<Self> {
-        let params = flatten_event_inputs(event.get_event_inputs())
+        let EventPayload::Params(params) = &event.payload;
+        let params = flatten_event_inputs(params.clone())
             .into_iter()
             .map(|input| Param::from_event_param(input))
             .collect::<Result<_>>()

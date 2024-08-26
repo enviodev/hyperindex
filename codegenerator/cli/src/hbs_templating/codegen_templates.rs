@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::config_parsing::system_config::{Ecosystem, HyperfuelConfig};
+use crate::config_parsing::system_config::{Ecosystem, EventPayload, HyperfuelConfig};
 use crate::rescript_types::RescriptTypeIdent;
 use crate::{
     config_parsing::{
@@ -357,8 +357,8 @@ pub struct EventTemplate {
 impl EventTemplate {
     pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
         let name = config_event.name.to_capitalized_options();
-        let params = config_event
-            .get_event_inputs()
+        let EventPayload::Params(params) = &config_event.payload;
+        let params = params
             .iter()
             .map(|input| {
                 let res_type = abi_to_rescript_type(&input.into());

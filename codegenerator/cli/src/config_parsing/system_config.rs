@@ -798,8 +798,15 @@ impl Contract {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum EventPayload {
+    Params(Vec<EventParam>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Event {
+    // TODO: Remove EthAbiEvent from Event struct
     event: NormalizedEthAbiEvent,
+    pub payload: EventPayload,
     pub name: String,
     pub topic0: String,
 }
@@ -851,6 +858,7 @@ impl Event {
 
         Ok(Event {
             name: event_config.name.unwrap_or(event.0.name.to_owned()),
+            payload: EventPayload::Params(event.0.inputs.clone()),
             event,
             topic0,
         })
@@ -878,16 +886,13 @@ impl Event {
         Ok(Event {
             name: event_config.name,
             event,
+            payload: EventPayload::Params(vec![]),
             topic0: log.id,
         })
     }
 
     fn get_event(&self) -> &EthAbiEvent {
         &self.event.0
-    }
-
-    pub fn get_event_inputs(&self) -> Vec<EventParam> {
-        self.get_event().inputs.clone()
     }
 
     pub fn get_event_signature(&self) -> String {
