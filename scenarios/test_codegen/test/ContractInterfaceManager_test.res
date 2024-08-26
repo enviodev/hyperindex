@@ -47,7 +47,7 @@ describe("Test ContractInterfaceManager", () => {
   it("Single address config gets all topics and addresses for filters", () => {
     let chainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
     let contractAddress =
-      "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe
+      "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow
 
     let singleContractIM = makeFromSingleContract(
       ~contractAddress,
@@ -77,7 +77,7 @@ describe("Test ContractInterfaceManager", () => {
   it("Combined Interface Manager matches the values from single Interface Managers", () => {
     let chainConfig = Config.getGenerated().chainMap->ChainMap.get(MockConfig.chain1337)
     let gravatarAddress =
-      "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Ethers.getAddressFromStringUnsafe
+      "0x2B2f78c5BF6D9C12Ee1225D5F374aa91204580c3"->Address.Evm.fromStringOrThrow
 
     let gravatarIM = makeFromSingleContract(
       ~contractAddress=gravatarAddress,
@@ -88,7 +88,7 @@ describe("Test ContractInterfaceManager", () => {
       gravatarIM->getAllTopicsAndAddresses
 
     let nftFactoryAddress =
-      "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Ethers.getAddressFromStringUnsafe
+      "0xa2F6E6029638cCb484A2ccb6414499aD3e825CaC"->Address.Evm.fromStringOrThrow
 
     let nftFactoryIM = makeFromSingleContract(
       ~contractAddress=nftFactoryAddress,

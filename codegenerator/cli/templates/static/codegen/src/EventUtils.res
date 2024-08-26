@@ -88,7 +88,7 @@ let getEventIdKeyString = (~chainId: int, ~eventId: string) => {
 
 let getContractAddressKeyString = (~chainId: int, ~contractAddress: Address.t) => {
   let chainIdStr = chainId->Belt.Int.toString
-  let key = chainIdStr ++ "_" ++ contractAddress->Ethers.ethAddressToString
+  let key = chainIdStr ++ "_" ++ contractAddress->Address.toString
 
   key
 }

@@ -197,8 +197,8 @@ module Sql = {
   let getAllRowsInTable = tableName => query(`SELECT * FROM public."${tableName}";`)
 
   let getAccountTokenBalance = async (~tokenAddress, ~accountAddress) => {
-    let tokenAddress = tokenAddress->Ethers.ethAddressToString
-    let account_id = accountAddress->Ethers.ethAddressToString
+    let tokenAddress = tokenAddress->Address.toString
+    let account_id = accountAddress->Address.toString
     let accountTokenId = EventHandlers.makeAccountTokenId(~tokenAddress, ~account_id)
     let res = await query(
       `

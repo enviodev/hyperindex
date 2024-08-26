@@ -13,7 +13,7 @@ describe("Greeter template tests", () => {
     // Creating a mock event
     let mockNewGreetingEvent = TestHelpers.Greeter.NewGreeting.mockData({
       greeting: {value: greeting},
-      user: {bits: userAddress->Ethers.ethAddressToString},
+      user: {bits: userAddress->Address.toString},
     })
 
     // Processing the mock event on the mock database
@@ -24,7 +24,7 @@ describe("Greeter template tests", () => {
 
     // Expected entity that should be created
     let expectedUserEntity: Types.user = {
-      id: userAddress->Ethers.ethAddressToString,
+      id: userAddress->Address.toString,
       latestGreeting: greeting,
       numberOfGreetings: 1,
       greetings: [greeting],
@@ -32,7 +32,7 @@ describe("Greeter template tests", () => {
 
     // Getting the entity from the mock database
     let actualUserEntity =
-      updatedMockDb.entities.user.get(userAddress->Ethers.ethAddressToString)->Option.getExn
+      updatedMockDb.entities.user.get(userAddress->Address.toString)->Option.getExn
 
     // Asserting that the entity in the mock database is the same as the expected entity
     Assert.deepEqual(expectedUserEntity, actualUserEntity)
@@ -52,13 +52,13 @@ describe("Greeter template tests", () => {
       // Creating a mock event
       let mockNewGreetingEvent = TestHelpers.Greeter.NewGreeting.mockData({
         greeting: {value: greeting},
-        user: {bits: userAddress->Ethers.ethAddressToString},
+        user: {bits: userAddress->Address.toString},
       })
 
       // Creating a mock event
       let mockNewGreetingEvent2 = TestHelpers.Greeter.NewGreeting.mockData({
         greeting: {value: greetingAgain},
-        user: {bits: userAddress->Ethers.ethAddressToString},
+        user: {bits: userAddress->Address.toString},
       })
 
       // Processing the mock event on the mock database
@@ -77,7 +77,7 @@ describe("Greeter template tests", () => {
 
       // Getting the entity from the mock database
       let actualUserEntity =
-        updatedMockDb2.entities.user.get(userAddress->Ethers.ethAddressToString)->Option.getExn
+        updatedMockDb2.entities.user.get(userAddress->Address.toString)->Option.getExn
 
       // Asserting that the field value of the entity in the mock database is the same as the expected field value
       Assert.equal(actualUserEntity.numberOfGreetings, expectedGreetingCount)
@@ -98,13 +98,13 @@ describe("Greeter template tests", () => {
       // Creating a mock event
       let mockNewGreetingEvent = TestHelpers.Greeter.NewGreeting.mockData({
         greeting: {value: greeting},
-        user: {bits: userAddress->Ethers.ethAddressToString},
+        user: {bits: userAddress->Address.toString},
       })
 
       // Creating a mock event
       let mockNewGreetingEvent2 = TestHelpers.Greeter.NewGreeting.mockData({
         greeting: {value: greetingAgain},
-        user: {bits: userAddress->Ethers.ethAddressToString},
+        user: {bits: userAddress->Address.toString},
       })
 
       // Processing the mock event on the mock database
@@ -121,7 +121,7 @@ describe("Greeter template tests", () => {
 
       // Getting the entity from the mock database
       let actualUserEntity =
-        updatedMockDb2.entities.user.get(userAddress->Ethers.ethAddressToString)->Option.getExn
+        updatedMockDb2.entities.user.get(userAddress->Address.toString)->Option.getExn
 
       let expectedGreeting = greetingAgain
 

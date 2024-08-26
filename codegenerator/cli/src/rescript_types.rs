@@ -301,7 +301,7 @@ impl RescriptTypeIdent {
             RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.schema".to_string(),
             RescriptTypeIdent::BigInt => "BigInt.schema".to_string(),
             RescriptTypeIdent::BigDecimal => "BigDecimal.schema".to_string(),
-            RescriptTypeIdent::Address => "Ethers.ethAddressSchema".to_string(),
+            RescriptTypeIdent::Address => "Address.schema".to_string(),
             RescriptTypeIdent::String => "S.string".to_string(),
             RescriptTypeIdent::ID => "S.string".to_string(),
             RescriptTypeIdent::Bool => "S.bool".to_string(),

@@ -155,7 +155,7 @@ module DynamicContractRegistry = {
     chainId: s.field("chain_id", S.int),
     eventId: s.field("event_id", BigInt.schema),
     blockTimestamp: s.field("block_timestamp", S.int),
-    contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
+    contractAddress: s.field("contract_address", Address.schema),
     contractType: s.field("contract_type", Enums.ContractType.schema),
   })
 

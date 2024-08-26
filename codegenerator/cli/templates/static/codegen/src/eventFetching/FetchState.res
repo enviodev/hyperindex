@@ -31,7 +31,7 @@ module DynamicContractsMap = {
   }
 
   let addAddress = (self: t, id, address: Address.t) => {
-    let addressStr = address->Ethers.ethAddressToString
+    let addressStr = address->Address.toString
     self->Belt.Map.update(id, optCurrentVal => {
       switch optCurrentVal {
       | None => Belt.Set.String.fromArray([addressStr])
@@ -387,7 +387,7 @@ let getQueryLogger = (
     addr,
   ) => {
     if currentDisplay->Array.length < 3 {
-      (Array.concat(currentDisplay, [addr->Ethers.ethAddressToString]), restCount)
+      (Array.concat(currentDisplay, [addr->Address.toString]), restCount)
     } else {
       (currentDisplay, restCount + 1)
     }
@@ -802,8 +802,8 @@ let checkContainsRegisteredContractAddress = (self: t, ~contractName, ~contractA
   allAddr->Set.String.has(
     contractAddress
     ->//run formatEthAddress to be sure that the address is checksummed
-    Ethers.formatEthAddress
-    ->Ethers.ethAddressToString,
+    Address.Evm.checksum
+    ->Address.toString,
   )
 }
 

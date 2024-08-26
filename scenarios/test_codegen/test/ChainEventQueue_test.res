@@ -19,7 +19,7 @@ let eventMock1: Types.eventLog<Types.internalEventArgs> = {
   chainId: 54321,
   logIndex: 0,
   params: MockEvents.newGravatar1,
-  srcAddress: "0x1234512345123451234512345123451234512345"->Ethers.getAddressFromStringUnsafe,
+  srcAddress: "0x1234512345123451234512345123451234512345"->Address.Evm.fromStringOrThrow,
   transaction: {
     hash: "0xabc",
     transactionIndex: 987,
@@ -44,7 +44,7 @@ let eventMock2: Types.eventLog<Types.internalEventArgs> = {
   chainId: 54321,
   logIndex: 1,
   params: MockEvents.newGravatar2,
-  srcAddress: "0x1234512345123451234512345123451234512346"->Ethers.getAddressFromStringUnsafe,
+  srcAddress: "0x1234512345123451234512345123451234512346"->Address.Evm.fromStringOrThrow,
   transaction: {
     hash: "0xdef",
     transactionIndex: 988,
