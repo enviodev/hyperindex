@@ -63,17 +63,13 @@ describe("FetchState.fetchState", () => {
   })
 
   it("dynamic contract registration", () => {
-    let root = {
-      registerType: RootRegister({endBlock: None}),
-      latestFetchedBlock: getBlockData(~blockNumber=10_000),
-      contractAddressMapping: ContractAddressingMap.fromArray([
-        (mockAddress1, (Gravatar :> string)),
-      ]),
-      isFetchingAtHead: false,
-      firstEventBlockNumber: None,
-      dynamicContracts: DynamicContractsMap.empty,
-      fetchedEventQueue: [],
-    }
+    let root = makeRoot(~endBlock=None)(
+      ~startBlock=10_000,
+      ~staticContracts=[((Gravatar :> string), mockAddress1)],
+      ~dynamicContractRegistrations=[],
+      ~isFetchingAtHead=false,
+      ~logger=Logging.logger,
+    )
 
     let dc1 = makeDynContractRegistration(~contractAddress=mockAddress2, ~blockNumber=50)
     let dcId1 = getDynContractId(dc1)
@@ -249,7 +245,7 @@ describe("FetchState.fetchState", () => {
       mockEvent(~blockNumber=1, ~logIndex=2),
       mockEvent(~blockNumber=4),
     ]
-    let fetchState = {
+    let root = {
       latestFetchedBlock: getBlockData(~blockNumber=500),
       contractAddressMapping: ContractAddressingMap.fromArray([
         (mockAddress1, (Gravatar :> string)),
@@ -266,8 +262,8 @@ describe("FetchState.fetchState", () => {
       mockEvent(~blockNumber=6, ~logIndex=1),
       mockEvent(~blockNumber=6, ~logIndex=2),
     ]
-    let updated =
-      fetchState
+    let updated1 =
+      root
       ->update(
         ~id=Root,
         ~latestFetchedBlock=getBlockData(~blockNumber=600),
@@ -276,14 +272,87 @@ describe("FetchState.fetchState", () => {
       )
       ->Utils.unwrapResultExn
 
-    let expected = {
-      ...fetchState,
+    let expected1 = {
+      ...root,
       latestFetchedBlock: getBlockData(~blockNumber=600),
       isFetchingAtHead: true,
       fetchedEventQueue: Array.concat(currentEvents, newEvents),
     }
 
-    Assert.deepEqual(updated, expected)
+    Assert.deepEqual(expected1, updated1)
+
+    let dcId1: dynamicContractId = {blockNumber: 100, logIndex: 0}
+    let fetchState1 = {
+      latestFetchedBlock: getBlockData(~blockNumber=500),
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress2, (Gravatar :> string)),
+      ]),
+      isFetchingAtHead: false,
+      firstEventBlockNumber: None,
+      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId1, [mockAddress2]),
+      fetchedEventQueue: [],
+      registerType: DynamicContractRegister(dcId1, root),
+    }
+
+    let updated2 =
+      fetchState1
+      ->update(
+        ~id=DynamicContract(dcId1),
+        ~latestFetchedBlock=getBlockData(~blockNumber=500),
+        ~currentBlockHeight=600,
+        ~fetchedEvents=newEvents,
+      )
+      ->Utils.unwrapResultExn
+
+    let expected2 = {
+      ...expected1,
+      isFetchingAtHead: false,
+      latestFetchedBlock: getBlockData(~blockNumber=500),
+      dynamicContracts: fetchState1.dynamicContracts,
+      contractAddressMapping: fetchState1.contractAddressMapping->ContractAddressingMap.combine(
+        root.contractAddressMapping,
+      ),
+    }
+
+    Assert.deepEqual(expected2, updated2)
+
+    let dcId2: dynamicContractId = {blockNumber: 99, logIndex: 0}
+    let fetchState2 = {
+      latestFetchedBlock: getBlockData(~blockNumber=300),
+      contractAddressMapping: ContractAddressingMap.fromArray([
+        (mockAddress3, (Gravatar :> string)),
+      ]),
+      isFetchingAtHead: false,
+      firstEventBlockNumber: None,
+      dynamicContracts: DynamicContractsMap.empty->DynamicContractsMap.add(dcId2, [mockAddress3]),
+      fetchedEventQueue: [],
+      registerType: DynamicContractRegister(dcId2, fetchState1),
+    }
+
+    let updated3 =
+      fetchState2
+      ->update(
+        ~id=DynamicContract(dcId1),
+        ~latestFetchedBlock=getBlockData(~blockNumber=500),
+        ~currentBlockHeight=600,
+        ~fetchedEvents=newEvents,
+      )
+      ->Utils.unwrapResultExn
+
+    let expected3 = {
+      ...fetchState2,
+      registerType: DynamicContractRegister(
+        dcId2,
+        {
+          ...fetchState1,
+          fetchedEventQueue: Array.concat(fetchState1.fetchedEventQueue, newEvents),
+          firstEventBlockNumber: Some(5),
+          registerType: DynamicContractRegister(dcId1, root),
+        },
+      ),
+    }
+
+    Assert.deepEqual(expected3, updated3)
   })
 
   it("getEarliest event", () => {
@@ -362,6 +431,21 @@ describe("FetchState.fetchState", () => {
         eventFilters: Utils.magic(%raw(`undefined`)), //assertions fail if this is not explicitly set to undefined
       }),
     )
+    let (nextQuery, _optUpdatedRoot) =
+      root->getNextQuery(~partitionId, ~currentBlockHeight=500)->Utils.unwrapResultExn
+
+    Assert.deepEqual(nextQuery, WaitForNewBlock)
+
+    let endblockCase = {
+      ...root,
+      fetchedEventQueue: [],
+      registerType: RootRegister({endBlock: Some(500)}),
+    }
+
+    let (nextQuery, _optUpdatedRoot) =
+      endblockCase->getNextQuery(~partitionId, ~currentBlockHeight=600)->Utils.unwrapResultExn
+
+    Assert.deepEqual(Done, nextQuery)
   })
 
   it("check contains contract address", () => {
@@ -424,6 +508,7 @@ describe("FetchState.fetchState", () => {
     }
 
     case1->isActivelyIndexing->Assert.equal(true)
+    case1->getEndBlock->Assert.equal(Some(150))
 
     let case2 = {
       ...case1,
@@ -438,6 +523,7 @@ describe("FetchState.fetchState", () => {
     }
 
     case3->isActivelyIndexing->Assert.equal(true)
+    case3->getEndBlock->Assert.equal(Some(150))
 
     let case4 = {
       ...case1,
@@ -445,6 +531,7 @@ describe("FetchState.fetchState", () => {
     }
 
     case4->isActivelyIndexing->Assert.equal(true)
+    case4->getEndBlock->Assert.equal(Some(151))
 
     let case5 = {
       ...case1,
@@ -452,6 +539,7 @@ describe("FetchState.fetchState", () => {
     }
 
     case5->isActivelyIndexing->Assert.equal(true)
+    case5->getEndBlock->Assert.equal(None)
   })
 
   it("rolls back", () => {
