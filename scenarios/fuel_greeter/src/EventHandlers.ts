@@ -1,27 +1,15 @@
 import { Greeter, User } from "generated";
 
 /**
-Registers a loader that loads any values from your database that your
-NewGreeting event handler might need on the Greeter contract.
-*/
-Greeter.NewGreeting.loader(({ event, context }) => {
-  //The id for the "User" entity derived from params of the NewGreeting event
-  const userId = event.data.user.bits;
-  //Try load in in a "User" entity with id of the user param on the
-  //NewGreeting event
-  context.User.load(userId);
-});
-
-/**
 Registers a handler that handles any values from the
 NewGreeting event on the Greeter contract and index these values into
 the DB.
 */
 Greeter.NewGreeting.handler(async ({ event, context }) => {
   //The id for the "User" entity
-  const userId = event.data.user.bits;
+  const userId = event.params.user.bits;
   //The greeting string that was added.
-  const latestGreeting = event.data.greeting.value;
+  const latestGreeting = event.params.greeting.value;
 
   //The optional User entity that may exist already at "userId"
   //This value would be undefined in the case that it was not loaded in the
@@ -54,25 +42,13 @@ Greeter.NewGreeting.handler(async ({ event, context }) => {
 });
 
 /**
-Registers a loader that loads any values from your database that your
-ClearGreeting event handler might need on the Greeter contract.
-*/
-Greeter.ClearGreeting.loader(({ event, context }) => {
-  //The id for the "User" entity derived from params of the ClearGreeting event
-  const userId = event.data.user.bits;
-  //Try load in in a "User" entity with id of the user param on the
-  //ClearGreeting event
-  context.User.load(userId);
-});
-
-/**
 Registers a handler that handles any values from the
 ClearGreeting event on the Greeter contract and index these values into
 the DB.
 */
 Greeter.ClearGreeting.handler(async ({ event, context }) => {
   //The id for the "User" entity derived from params of the ClearGreeting event
-  const userId = event.data.user.bits;
+  const userId = event.params.user.bits;
   //The optional User entity that may exist already at "userId"
   //This value would be "undefined" in the case that it was not loaded in the
   //loader function above OR in the case where it never existed in the db
