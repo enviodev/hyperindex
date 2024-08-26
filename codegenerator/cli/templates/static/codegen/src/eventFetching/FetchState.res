@@ -269,14 +269,6 @@ let updateRegister = (
 }
 
 /**
-Links next register to a dynamic contract register
-*/
-let addNextRegister = (register: t, ~nextRegister: t, ~dynamicContractId) => {
-  ...register,
-  registerType: DynamicContractRegister(dynamicContractId, nextRegister),
-}
-
-/**
 Updates node at the given id with the values passed.
 Errors if the node can't be found.
 */
