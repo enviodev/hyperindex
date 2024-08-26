@@ -19,7 +19,7 @@ type missingParams = {
   queryName: string,
   missingParams: array<string>,
 }
-type queryError = UnexpectedMissingParams(missingParams) | QueryError(QueryHelpers.queryError)
+type queryError = UnexpectedMissingParams(missingParams)
 
 exception HyperSyncQueryError(queryError)
 
@@ -30,32 +30,10 @@ let queryErrorToExn = queryError => {
 exception UnexpectedMissingParamsExn(missingParams)
 
 let queryErrorToMsq = (e: queryError): string => {
-  let getMsgFromExn = (exn: exn) =>
-    exn
-    ->Js.Exn.asJsExn
-    ->Option.flatMap(exn => exn->Js.Exn.message)
-    ->Option.getWithDefault("No message on exception")
   switch e {
   | UnexpectedMissingParams({queryName, missingParams}) =>
     `${queryName} query failed due to unexpected missing params on response:
       ${missingParams->Js.Array2.joinWith(", ")}`
-  | QueryError(e) =>
-    switch e {
-    | Deserialize(data, e) =>
-      `Failed to deserialize response at ${e.path->S.Path.toString}: ${e->S.Error.reason}
-  JSON data:
-    ${data->Js.Json.stringify}`
-    | FailedToFetch(e) =>
-      let msg = e->getMsgFromExn
-
-      `Failed during fetch query: ${msg}`
-    | FailedToParseJson(e) =>
-      let msg = e->getMsgFromExn
-      `Failed during parse of json: ${msg}`
-    | Other(e) =>
-      let msg = e->getMsgFromExn
-      `Failed for unknown reason during query: ${msg}`
-    }
   }
 }
 
@@ -122,7 +100,11 @@ module LogsQuery = {
       [
         getMissingFields(Types.Log.fieldNames, event.log, ~prefix="log"),
         getMissingFields(Types.Block.nonOptionalFieldNames, event.block, ~prefix="block"),
-        getMissingFields(Types.Transaction.nonOptionalFieldNames, event.transaction, ~prefix="transaction"),
+        getMissingFields(
+          Types.Transaction.nonOptionalFieldNames,
+          event.transaction,
+          ~prefix="transaction",
+        ),
       ]->Array.concatMany
 
     if missingParams->Array.length > 0 {
@@ -304,14 +286,13 @@ module BlockData = {
   > => {
     let body = makeRequestBody(~blockNumber)
 
-    let executeQuery = () => HyperSyncJsonApi.executeHyperSyncQuery->Rest.fetch(serverUrl, body)
-
     let logger = Logging.createChildFrom(
       ~logger,
       ~params={"logType": "hypersync get blockhash query", "blockNumber": blockNumber},
     )
 
-    let maybeSuccessfulRes = switch await executeQuery->Time.retryAsyncWithExponentialBackOff(
+    let maybeSuccessfulRes = switch await Time.retryAsyncWithExponentialBackOff(
+      () => HyperSyncJsonApi.executeHyperSyncQuery->Rest.fetch(serverUrl, body),
       ~logger=Some(logger),
     ) {
     | exception _ => None

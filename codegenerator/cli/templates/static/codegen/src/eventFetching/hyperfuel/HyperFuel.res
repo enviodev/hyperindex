@@ -61,34 +61,20 @@ type missingParams = {
   queryName: string,
   missingParams: array<string>,
 }
-type queryError =
-  UnexpectedMissingParams(missingParams) | QueryError(HyperFuelJsonApi.Query.queryError)
+type queryError = UnexpectedMissingParams(missingParams) | QueryError(exn)
 
 exception UnexpectedMissingParamsExn(missingParams)
 
 let queryErrorToMsq = (e: queryError): string => {
-  let getMsgFromExn = (exn: exn) =>
-    exn
-    ->Js.Exn.asJsExn
-    ->Belt.Option.flatMap(exn => exn->Js.Exn.message)
-    ->Belt.Option.getWithDefault("No message on exception")
   switch e {
   | UnexpectedMissingParams({queryName, missingParams}) =>
     `${queryName} query failed due to unexpected missing params on response:
       ${missingParams->Js.Array2.joinWith(", ")}`
-  | QueryError(e) =>
-    switch e {
-    | FailedToFetch(e) =>
-      let msg = e->getMsgFromExn
-
-      `Failed during fetch query: ${msg}`
-    | FailedToParseJson(e) =>
-      let msg = e->getMsgFromExn
-      `Failed during parse of json: ${msg}`
-    | Other(e) =>
-      let msg = e->getMsgFromExn
-      `Failed for unknown reason during query: ${msg}`
-    }
+  | QueryError(exn) =>
+    exn
+    ->Js.Exn.asJsExn
+    ->Option.flatMap(exn => exn->Js.Exn.message)
+    ->Option.getWithDefault("No message on exception")
   }
 }
 
@@ -218,9 +204,12 @@ module LogsQuery = {
 
     let executeQuery = () => hyperFuelClient->HyperFuelClient.getSelectedData(query)
 
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
-
-    res->convertResponse
+    try {
+      let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
+      res->convertResponse
+    } catch {
+    | exn => Error(QueryError(exn))
+    }
   }
 }
 
@@ -238,55 +227,51 @@ module BlockTimestampQuery = {
     // includeAllBlocks: true,
   }
 
-  let convertResponse = (
-    res: result<HyperFuelJsonApi.ResponseTypes.queryResponse, HyperFuelJsonApi.Query.queryError>,
-  ): queryResponse<blockTimestampPage> => {
-    switch res {
-    | Error(e) => Error(QueryError(e))
-    | Ok(successRes) =>
-      let {nextBlock, archiveHeight, data} = successRes
+  let convertResponse = (res: HyperFuelJsonApi.ResponseTypes.queryResponse): queryResponse<
+    blockTimestampPage,
+  > => {
+    let {nextBlock, archiveHeight, data} = res
 
-      data
-      ->Belt.Array.flatMap(item => {
-        item.blocks->Belt.Option.mapWithDefault([], blocks => {
-          blocks->Belt.Array.map(
-            block => {
-              switch (block.height, block.time) {
-              | (Some(blockNumber), Some(blockTimestamp)) =>
-                let timestamp = blockTimestamp
-                Ok(
-                  (
-                    {
-                      timestamp,
-                      blockNumber,
-                    }: blockNumberAndTimestamp
-                  ),
-                )
-              | _ =>
-                let missingParams =
-                  [
-                    block.height->Utils.Option.mapNone("block.height"),
-                    block.time->Utils.Option.mapNone("block.time"),
-                  ]->Belt.Array.keepMap(p => p)
+    data
+    ->Belt.Array.flatMap(item => {
+      item.blocks->Belt.Option.mapWithDefault([], blocks => {
+        blocks->Belt.Array.map(
+          block => {
+            switch (block.height, block.time) {
+            | (Some(blockNumber), Some(blockTimestamp)) =>
+              let timestamp = blockTimestamp
+              Ok(
+                (
+                  {
+                    timestamp,
+                    blockNumber,
+                  }: blockNumberAndTimestamp
+                ),
+              )
+            | _ =>
+              let missingParams =
+                [
+                  block.height->Utils.Option.mapNone("block.height"),
+                  block.time->Utils.Option.mapNone("block.time"),
+                ]->Belt.Array.keepMap(p => p)
 
-                Error(
-                  UnexpectedMissingParams({
-                    queryName: "queryBlockTimestampsPage HyperSync",
-                    missingParams,
-                  }),
-                )
-              }
-            },
-          )
-        })
+              Error(
+                UnexpectedMissingParams({
+                  queryName: "queryBlockTimestampsPage HyperSync",
+                  missingParams,
+                }),
+              )
+            }
+          },
+        )
       })
-      ->Utils.Array.transposeResults
-      ->Belt.Result.map((items): blockTimestampPage => {
-        nextBlock,
-        archiveHeight,
-        items,
-      })
-    }
+    })
+    ->Utils.Array.transposeResults
+    ->Belt.Result.map((items): blockTimestampPage => {
+      nextBlock,
+      archiveHeight,
+      items,
+    })
   }
 
   let queryBlockTimestampsPage = async (~serverUrl, ~fromBlock, ~toBlock): queryResponse<
@@ -294,9 +279,12 @@ module BlockTimestampQuery = {
   > => {
     let body = makeRequestBody(~fromBlock, ~toBlockInclusive=toBlock)
 
-    let res = await HyperFuelJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
-
-    res->convertResponse
+    try {
+      let res = await HyperFuelJsonApi.executeHyperSyncQuery->Rest.fetch(serverUrl, body)
+      res->convertResponse
+    } catch {
+    | exn => Error(QueryError(exn))
+    }
   }
 }
 
@@ -355,47 +343,43 @@ module BlockHashes = {
     // includeAllBlocks: true,
   }
 
-  let convertResponse = (
-    res: result<HyperFuelJsonApi.ResponseTypes.queryResponse, HyperFuelJsonApi.Query.queryError>,
-  ): queryResponse<array<blockNumberAndHash>> => {
-    switch res {
-    | Error(e) => Error(QueryError(e))
-    | Ok(successRes) =>
-      successRes.data
-      ->Belt.Array.flatMap(item => {
-        item.blocks->Belt.Option.mapWithDefault([], blocks => {
-          blocks->Belt.Array.map(
-            block => {
-              switch (block.height, block.id) {
-              | (Some(blockNumber), Some(hash)) =>
-                Ok(
-                  (
-                    {
-                      blockNumber,
-                      hash,
-                    }: blockNumberAndHash
-                  ),
-                )
-              | _ =>
-                let missingParams =
-                  [
-                    block.height->Utils.Option.mapNone("block.height"),
-                    block.id->Utils.Option.mapNone("block.id"),
-                  ]->Belt.Array.keepMap(p => p)
+  let convertResponse = (res: HyperFuelJsonApi.ResponseTypes.queryResponse): queryResponse<
+    array<blockNumberAndHash>,
+  > => {
+    res.data
+    ->Belt.Array.flatMap(item => {
+      item.blocks->Belt.Option.mapWithDefault([], blocks => {
+        blocks->Belt.Array.map(
+          block => {
+            switch (block.height, block.id) {
+            | (Some(blockNumber), Some(hash)) =>
+              Ok(
+                (
+                  {
+                    blockNumber,
+                    hash,
+                  }: blockNumberAndHash
+                ),
+              )
+            | _ =>
+              let missingParams =
+                [
+                  block.height->Utils.Option.mapNone("block.height"),
+                  block.id->Utils.Option.mapNone("block.id"),
+                ]->Belt.Array.keepMap(p => p)
 
-                Error(
-                  UnexpectedMissingParams({
-                    queryName: "query block hash HyperSync",
-                    missingParams,
-                  }),
-                )
-              }
-            },
-          )
-        })
+              Error(
+                UnexpectedMissingParams({
+                  queryName: "query block hash HyperSync",
+                  missingParams,
+                }),
+              )
+            }
+          },
+        )
       })
-      ->Utils.Array.transposeResults
-    }
+    })
+    ->Utils.Array.transposeResults
   }
 
   let queryBlockHash = async (~serverUrl, ~blockNumber): queryResponse<
@@ -403,15 +387,19 @@ module BlockHashes = {
   > => {
     let body = makeRequestBody(~blockNumber)
 
-    let executeQuery = () => HyperFuelJsonApi.executeHyperSyncQuery(~postQueryBody=body, ~serverUrl)
-
     let logger = Logging.createChild(
       ~params={"type": "hypersync get blockhash query", "blockNumber": blockNumber},
     )
 
-    let res = await executeQuery->Time.retryAsyncWithExponentialBackOff(~logger=Some(logger))
-
-    res->convertResponse
+    try {
+      let res = await Time.retryAsyncWithExponentialBackOff(
+        () => HyperFuelJsonApi.executeHyperSyncQuery->Rest.fetch(serverUrl, body),
+        ~logger=Some(logger),
+      )
+      res->convertResponse
+    } catch {
+    | exn => Error(QueryError(exn))
+    }
   }
 
   let queryBlockHashes = async (~serverUrl, ~blockNumbers) => {

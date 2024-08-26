@@ -251,7 +251,7 @@ module ResponseTypes = {
 let executeHyperSyncQuery = Rest.route(() => {
   path: "/query",
   method: Post,
-  variables: s => s.body(S.unknown->(Utils.magic: S.t<unknown> => S.t<postQueryBody>)),
+  variables: s => s.body(S.unknown->(Utils.magic: S.t<unknown> => S.t<QueryTypes.postQueryBody>)),
   responses: [
     s => {
       s.status(#200)
