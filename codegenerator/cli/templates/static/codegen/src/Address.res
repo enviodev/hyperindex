@@ -6,6 +6,8 @@ let schema =
 
 external toString: t => string = "%identity"
 
+external unsafeFromString: string => t = "%identity"
+
 module Evm = {
   @module("ethers") @scope("ethers")
   external fromStringOrThrow: string => t = "getAddress"

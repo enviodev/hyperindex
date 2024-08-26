@@ -103,13 +103,13 @@ module QueryTypes = {
   type outputSelection
 
   type receiptSelection = {
-    rootContractId?: array<Fuel.fuelAddress>,
+    rootContractId?: array<Address.t>,
     toAddress?: array<string>,
     assetId?: array<string>,
     receiptType?: array<Fuel.receiptType>,
     sender?: array<string>,
     recipient?: array<string>,
-    contractId?: array<Fuel.fuelAddress>,
+    contractId?: array<Address.t>,
     ra?: array<bigint>,
     rb?: array<string>,
     rc?: array<bigint>,
@@ -246,7 +246,7 @@ module FuelTypes = {
     /** Index of the receipt in the block */
     receiptIndex: int,
     /** Contract that produced the receipt */
-    rootContractId?: Fuel.Address.t,
+    rootContractId?: Address.t,
     /** transaction that this receipt originated from */
     txId: string,
     /** The status type of the transaction this receipt originated from */
@@ -304,7 +304,7 @@ module FuelTypes = {
     /** The nonce value for a message. */
     nonce?: string,
     /** Current context if in an internal context. null otherwise */
-    contractId?: Fuel.Address.t,
+    contractId?: Address.t,
     /** The sub id. */
     subId?: string,
   }

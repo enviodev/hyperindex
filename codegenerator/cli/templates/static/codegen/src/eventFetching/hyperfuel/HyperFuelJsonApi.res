@@ -90,8 +90,8 @@ module QueryTypes = {
   }
 
   type receiptParams = {
-    root_contract_id?: array<Fuel.fuelAddress>,
-    contract_id?: array<Fuel.fuelAddress>,
+    root_contract_id?: array<Address.t>,
+    contract_id?: array<Address.t>,
     receipt_type?: array<Fuel.receiptType>,
   }
 
@@ -159,7 +159,7 @@ module FuelTypes = {
   }
 
   type receipt = {
-    @as("root_contract_id") rootContractId?: Fuel.fuelAddress,
+    @as("root_contract_id") rootContractId?: Address.t,
     @as("tx_id") txId?: string,
     @as("tx_status") txStatus?: int,
     @as("block_height") blockHeight?: int,
@@ -188,7 +188,7 @@ module FuelTypes = {
     sender?: string,
     recipient?: string,
     nonce?: int,
-    @as("contract_id") contractId?: Fuel.fuelAddress,
+    @as("contract_id") contractId?: Address.t,
     @as("sub_id") subId?: string,
   }
 

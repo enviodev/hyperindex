@@ -12,7 +12,7 @@ type block = {
 
 type item = {
   transactionId: string,
-  contractId: Fuel.fuelAddress,
+  contractId: Address.t,
   receipt: Fuel.Receipt.t,
   receiptType: Fuel.receiptType,
   receiptIndex: int,
@@ -34,7 +34,7 @@ type blockTimestampPage = hyperSyncPage<blockNumberAndTimestamp>
 type logsQueryPage = hyperSyncPage<item>
 
 type contractReceiptQuery = {
-  addresses: array<Fuel.fuelAddress>,
+  addresses: array<Address.t>,
   logIds: array<string>,
 }
 
