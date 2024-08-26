@@ -889,7 +889,7 @@ let rec rollback = (
     if updatedWithRemovedDynamicContracts.contractAddressMapping->ContractAddressingMap.isEmpty {
       //If the contractAddressMapping is empty after pruning dynamic contracts, then this
       //is a dead register. Simly return its next register rolled back
-      nextRegister->rollback(~lastKnownValidBlock)
+      nextRegister->rollback(~lastKnownValidBlock, ~parent?)
     } else {
       //If there are still values in the contractAddressMapping, we should keep the register but
       //prune queues and next register
