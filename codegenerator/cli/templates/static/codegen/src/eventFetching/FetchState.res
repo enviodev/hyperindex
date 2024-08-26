@@ -924,7 +924,13 @@ let isActivelyIndexing = fetchState => {
   }
 }
 
-let getNumContracts = (self: t) => self.contractAddressMapping->ContractAddressingMap.addressCount
+let rec getNumContracts = (self: t, ~accum=0) => {
+  let accum = accum + self.contractAddressMapping->ContractAddressingMap.addressCount
+  switch self.registerType {
+  | RootRegister(_) => accum
+  | DynamicContractRegister(_, nextRegister) => nextRegister->getNumContracts(~accum)
+  }
+}
 
 /**
 Helper functions for debugging and printing
