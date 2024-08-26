@@ -6,7 +6,7 @@ type id = string
 
 @genType
 type contractRegistrations = {
-  //TODO only add contracts we've registered for the event in the config
+  // TODO: only add contracts we've registered for the event in the config
   {{#each codegen_contracts as |contract| }}
   add{{contract.name.capitalized}}: (Address.t) => unit,
   {{/each}}

@@ -389,14 +389,12 @@ impl EventTemplate {
             .cloned()
             .collect();
 
-        let topic0 = config_event.get_event_topic0();
-
         Ok(EventTemplate {
             name,
             params,
             body_params,
             indexed_params,
-            topic0,
+            topic0: config_event.topic0.to_string(),
         })
     }
 }
