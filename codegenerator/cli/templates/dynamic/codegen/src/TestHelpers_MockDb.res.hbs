@@ -140,6 +140,7 @@ let makeStoreOperatorEntity = (
         ~entityId,
         ~eventIdentifier={chainId: -1, blockNumber: -1, blockTimestamp: 0, logIndex: -1},
       ),
+      ~shouldRollbackOnReorg=RegisterHandlers.getConfig()->Config.shouldRollbackOnReorg,
     )
 
     updateEntityIndicesMockDb(~mockDbTable=table, ~entity, ~entityId)

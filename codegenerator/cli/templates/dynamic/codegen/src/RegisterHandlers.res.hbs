@@ -24,6 +24,7 @@ let registerContractHandlers = (
 
 // TODO: Start using only config returned by registerAllHandlers instead of Config.getGenerated and Config.setGenerated
 %%private(
+  let eventLookup = EventLookup.empty()
   let chains = [
     {{#each chain_configs as | chain_config |}}
     {
@@ -87,6 +88,7 @@ let registerContractHandlers = (
             let chain = chain
             let contracts = contracts
             let rpcConfig = rpcConfig
+            let eventLookup = eventLookup
           }))
           {{/if}}
           {{#if chain_config.network_config.hypersync_config }}
@@ -96,6 +98,7 @@ let registerContractHandlers = (
             let contracts = contracts
             let endpointUrl = "{{hypersync_config.endpoint_url}}"
             let allEventSignatures = Abis.EventSignatures.all
+            let eventLookup = eventLookup
             /*
               Determines whether to use HypersyncClient Decoder or Viem for parsing events
               Default is hypersync client decoder, configurable in config with:
@@ -115,6 +118,7 @@ let registerContractHandlers = (
             let chain = chain
             let contracts = contracts
             let endpointUrl = "{{hyperfuel_config.endpoint_url}}"
+            let eventLookup = eventLookup
           }))
           {{/with}}
           {{/if}}
@@ -134,7 +138,10 @@ let registerContractHandlers = (
       module(Entities.{{entity.name.capitalized}}),
     {{/each}}
     ],
+    ~eventLookup,
   )
+
+  let hasRunRegisterAllHandlers = ref(false)
 )
 
 let registerAllHandlers = () => {
@@ -146,20 +153,15 @@ let registerAllHandlers = () => {
   )
 {{/each}}
 
-  //Get all wildcard events from registered events and set them to wildcard in the config
-  //so that it can be looked up by wildcard if need be
-  RegisteredEvents.getWildcardEventKeys()->Belt.Array.forEach(({contractName, topic0}) => {
-    config.events
-    ->EventLookup.setEventToWildcard(~contractName, ~topic0)
-    //This should never fail, during registration of the event, we should have already checked for wildcard collisions
-    ->EventLookup.unwrapAddEventResponse(
-      ~context="Wildcard event registered",
-      ~contractName,
-      ~eventName=topic0,
-    )
-  })
-
-  Config.setGenerated(config)
+  hasRunRegisterAllHandlers := true
 
   config
+}
+
+let getConfig = () => {
+  if !hasRunRegisterAllHandlers.contents {
+    registerAllHandlers()
+  } else {
+    config
+  }
 }

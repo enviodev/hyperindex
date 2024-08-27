@@ -79,7 +79,7 @@ let addToDynamicContractRegistrations = (
 }
 
 let runEventContractRegister = (
-  contractRegister: RegisteredEvents.args<_> => unit,
+  contractRegister: Types.Handlers.args<_> => unit,
   ~event,
   ~eventBatchQueueItem: Types.eventBatchQueueItem,
   ~logger,
@@ -134,12 +134,10 @@ let runEventContractRegister = (
 
 let runEventLoader = async (
   ~contextEnv,
-  ~handler: RegisteredEvents.loaderHandler<_>,
+  ~loader: Types.Handlers.loader<_>,
   ~inMemoryStore,
   ~loadLayer,
 ) => {
-  let {loader} = handler
-
   switch await loader(contextEnv->ContextEnv.getLoaderArgs(~inMemoryStore, ~loadLayer)) {
   | exception exn =>
     exn
@@ -207,7 +205,7 @@ let updateEventSyncState = (
 let runEventHandler = (
   event,
   ~eventMod: module(Types.InternalEvent),
-  ~handler,
+  ~loaderHandler: Types.Handlers.loaderHandler<_>,
   ~inMemoryStore,
   ~logger,
   ~chain,
@@ -218,11 +216,12 @@ let runEventHandler = (
   open ErrorHandling.ResultPropogateEnv
   runAsyncEnv(async () => {
     let contextEnv = ContextEnv.make(~event, ~chain, ~logger, ~eventMod)
+    let {loader, handler} = loaderHandler
 
     let loaderReturn =
-      (await runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer))->propogate
+      (await runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer))->propogate
 
-    switch await handler.handler(
+    switch await handler(
       contextEnv->ContextEnv.getHandlerArgs(~loaderReturn, ~inMemoryStore, ~loadLayer),
     ) {
     | exception exn =>
@@ -247,6 +246,11 @@ let runEventHandler = (
   })
 }
 
+let getHandlerRegistration = (eventMod: module(Types.InternalEvent)) => {
+  let module(Event) = eventMod
+  Event.handlerRegister
+}
+
 let runHandler = (
   event: Types.eventLog<'eventArgs>,
   ~eventMod: module(Types.InternalEvent),
@@ -254,16 +258,15 @@ let runHandler = (
   ~inMemoryStore,
   ~logger,
   ~chain,
-  ~registeredEvents,
   ~loadLayer,
   ~config,
 ) => {
-  switch registeredEvents
-  ->RegisteredEvents.get(eventMod)
-  ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler) {
-  | Some(handler) =>
+  switch eventMod
+  ->getHandlerRegistration
+  ->Types.Handlers.Register.getLoaderHandler {
+  | Some(loaderHandler) =>
     event->runEventHandler(
-      ~handler,
+      ~loaderHandler,
       ~latestProcessedBlocks,
       ~inMemoryStore,
       ~logger,
@@ -289,7 +292,6 @@ let addToUnprocessedBatch = (
 let rec registerDynamicContracts = (
   eventBatch: array<Types.eventBatchQueueItem>,
   ~index=0,
-  ~registeredEvents: RegisteredEvents.t,
   ~checkContractIsRegistered,
   ~logger,
   ~eventsBeforeDynamicRegistrations=[],
@@ -312,9 +314,7 @@ let rec registerDynamicContracts = (
     } else {
       let {eventMod, event} = eventBatchQueueItem
 
-      switch registeredEvents
-      ->RegisteredEvents.get(eventMod)
-      ->Option.flatMap(v => v.contractRegister) {
+      switch eventMod->getHandlerRegistration->Types.Handlers.Register.getContractRegister {
       | Some(handler) =>
         handler->runEventContractRegister(
           ~event,
@@ -341,7 +341,6 @@ let rec registerDynamicContracts = (
       }
       eventBatch->registerDynamicContracts(
         ~index=index + 1,
-        ~registeredEvents,
         ~checkContractIsRegistered,
         ~logger,
         ~eventsBeforeDynamicRegistrations,
@@ -355,7 +354,6 @@ let rec registerDynamicContracts = (
 
 let runLoaders = (
   eventBatch: array<Types.eventBatchQueueItem>,
-  ~registeredEvents: RegisteredEvents.t,
   ~loadLayer,
   ~inMemoryStore,
   ~logger,
@@ -369,13 +367,13 @@ let runLoaders = (
     let _: array<unknown> =
       await eventBatch
       ->Array.keepMap(({chain, eventMod, event}) => {
-        registeredEvents
-        ->RegisteredEvents.get(eventMod)
-        ->Option.flatMap(registeredEvent => registeredEvent.loaderHandler)
+        eventMod
+        ->getHandlerRegistration
+        ->Types.Handlers.Register.getLoaderHandler
         ->Option.map(
-          handler => {
+          ({loader}) => {
             let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
-            runEventLoader(~contextEnv, ~handler, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(
+            runEventLoader(~contextEnv, ~loader, ~inMemoryStore, ~loadLayer)->Promise.thenResolve(
               propogate,
             )
           },
@@ -388,7 +386,6 @@ let runLoaders = (
 
 let runHandlers = (
   eventBatch: array<Types.eventBatchQueueItem>,
-  ~registeredEvents,
   ~inMemoryStore,
   ~latestProcessedBlocks,
   ~logger,
@@ -410,7 +407,6 @@ let runHandlers = (
             ~logger,
             ~chain,
             ~latestProcessedBlocks=latestProcessedBlocks.contents,
-            ~registeredEvents,
             ~loadLayer,
             ~config,
           )
@@ -450,7 +446,6 @@ let processEventBatch = (
   ~inMemoryStore: InMemoryStore.t,
   ~latestProcessedBlocks: EventsProcessed.t,
   ~checkContractIsRegistered,
-  ~registeredEvents: RegisteredEvents.t,
   ~loadLayer,
   ~config,
 ) => {
@@ -473,30 +468,18 @@ let processEventBatch = (
       dynamicContractRegistrations,
     ) =
       eventBatch
-      ->registerDynamicContracts(
-        ~registeredEvents,
-        ~checkContractIsRegistered,
-        ~logger,
-        ~inMemoryStore,
-      )
+      ->registerDynamicContracts(~checkContractIsRegistered, ~logger, ~inMemoryStore)
       ->propogate
 
     (await eventsBeforeDynamicRegistrations
-    ->runLoaders(~registeredEvents, ~loadLayer, ~inMemoryStore, ~logger))
+    ->runLoaders(~loadLayer, ~inMemoryStore, ~logger))
     ->propogate
 
     let elapsedAfterLoad = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis
 
     let latestProcessedBlocks =
       (await eventsBeforeDynamicRegistrations
-      ->runHandlers(
-        ~registeredEvents,
-        ~inMemoryStore,
-        ~latestProcessedBlocks,
-        ~logger,
-        ~loadLayer,
-        ~config,
-      ))
+      ->runHandlers(~inMemoryStore, ~latestProcessedBlocks, ~logger, ~loadLayer, ~config))
       ->propogate
 
     let elapsedTimeAfterProcess = timeRef->Hrtime.timeSince->Hrtime.toMillis->Hrtime.intFromMillis

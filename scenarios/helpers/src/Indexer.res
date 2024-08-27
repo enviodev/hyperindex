@@ -57,6 +57,12 @@ module type S = {
       block: Block.t,
     }
 
+    module Handlers: {
+      module Register: {
+        type t<'eventArgs>
+      }
+    }
+
     module type Event = {
       let topic0: string
       let name: string
@@ -66,6 +72,7 @@ module type S = {
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
       let decodeHyperFuelData: string => eventArgs
+      let handlerRegister: Handlers.Register.t<eventArgs>
     }
     module type InternalEvent = Event with type eventArgs = internalEventArgs
 

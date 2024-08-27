@@ -8,10 +8,12 @@ module Make = (
     let endpointUrl: string
     let allEventSignatures: array<string>
     let shouldUseHypersyncClientDecoder: bool
+    let eventLookup: EventLookup.t<EventLookup.eventMod>
   },
 ): S => {
   let name = "HyperSync"
   let chain = T.chain
+  let eventLookup = T.eventLookup
 
   let hscDecoder: ref<option<HyperSyncClient.Decoder.t>> = ref(None)
   let getHscDecoder = () => {
@@ -168,7 +170,6 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
-    let config = Config.getGenerated()
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
       let {
@@ -279,7 +280,7 @@ module Make = (
           let (event, eventMod) = switch event
           ->getNullableExn(~msg="Event was unexpectedly parsed as undefined", ~logger)
           ->Converters.convertHyperSyncEvent(
-            ~config,
+            ~eventLookup,
             ~contractAddressMapping,
             ~log=item.log,
             ~block,
@@ -310,7 +311,7 @@ module Make = (
           let chainId = chain->ChainMap.Chain.toChainId
           switch Converters.parseEvent(
             ~log=item.log,
-            ~config,
+            ~eventLookup,
             ~transaction=item.transaction,
             ~block=item.block,
             ~contractInterfaceManager,

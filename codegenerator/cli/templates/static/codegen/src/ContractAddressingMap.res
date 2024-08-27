@@ -1,8 +1,5 @@
 type contractName = string
 
-exception UndefinedContractName(contractName, Types.chainId)
-exception UndefinedContractAddress(Ethers.ethAddress)
-
 // Currently this mapping append only, so we don't need to worry about
 // protecting static addresses from de-registration.
 

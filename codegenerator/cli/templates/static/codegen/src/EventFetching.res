@@ -109,7 +109,7 @@ let ethersLogToLog: Ethers.log => Types.Log.t = ({address, data, topics, logInde
 
 let convertLogs = (
   logs: array<Ethers.log>,
-  ~config,
+  ~eventLookup,
   ~blockLoader: LazyLoader.asyncMap<Ethers.JsonRpcProvider.block>,
   ~contractInterfaceManager: ContractInterfaceManager.t,
   ~chain,
@@ -125,7 +125,7 @@ let convertLogs = (
     let (event, eventMod) = switch Converters.parseEvent(
       ~log=log->ethersLogToLog,
       ~block,
-      ~config,
+      ~eventLookup,
       ~contractInterfaceManager,
       ~chain,
       ~transaction=log->transactionFieldsFromLog(~logger),
@@ -160,7 +160,7 @@ let queryEventsWithCombinedFilter = async (
   ~provider,
   ~chain,
   ~logger: Pino.t,
-  ~config,
+  ~eventLookup,
 ): array<eventBatchPromise> => {
   let combinedFilterRes = await makeCombinedEventFilterQuery(
     ~provider,
@@ -177,7 +177,7 @@ let queryEventsWithCombinedFilter = async (
     })
   })
 
-  logs->convertLogs(~config, ~blockLoader, ~contractInterfaceManager, ~chain, ~logger)
+  logs->convertLogs(~eventLookup, ~blockLoader, ~contractInterfaceManager, ~chain, ~logger)
 }
 
 type eventBatchQuery = {
@@ -195,7 +195,7 @@ let getContractEventsOnFilters = async (
   ~rpcConfig: Config.rpcConfig,
   ~blockLoader,
   ~logger,
-  ~config,
+  ~eventLookup,
 ): eventBatchQuery => {
   let sc = rpcConfig.syncConfig
 
@@ -229,7 +229,7 @@ let getContractEventsOnFilters = async (
           ~blockLoader,
           ~chain,
           ~logger,
-          ~config,
+          ~eventLookup,
         )->Promise.thenResolve(events => (events, nextToBlock - fromBlockRef.contents + 1))
 
       [queryTimoutPromise, eventsPromise]

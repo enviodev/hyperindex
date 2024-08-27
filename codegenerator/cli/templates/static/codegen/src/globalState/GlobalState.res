@@ -656,7 +656,13 @@ let checkAndFetchForChain = (
   ~dispatchAction,
 ) => async chain => {
   let chainFetcher = state.chainManager.chainFetchers->ChainMap.get(chain)
-  let {fetchState, chainConfig: {chainWorker}, logger, currentBlockHeight, isFetchingBatch} = chainFetcher
+  let {
+    fetchState,
+    chainConfig: {chainWorker},
+    logger,
+    currentBlockHeight,
+    isFetchingBatch,
+  } = chainFetcher
 
   if (
     !isFetchingBatch &&
@@ -702,7 +708,6 @@ let injectedTaskReducer = (
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation,
-  ~registeredEvents,
 ) => async (
   //required args
   state: t,
@@ -811,7 +816,6 @@ let injectedTaskReducer = (
           ~inMemoryStore,
           ~checkContractIsRegistered,
           ~latestProcessedBlocks,
-          ~registeredEvents,
           ~loadLayer=state.loadLayer,
           ~config=state.config,
         ) {
@@ -906,5 +910,4 @@ let taskReducer = injectedTaskReducer(
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
-  ~registeredEvents=RegisteredEvents.global,
 )

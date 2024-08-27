@@ -1,8 +1,6 @@
-open Types
-
 Handlers.Gravatar.NewGravatar.handler(async ({event, context}) => {
   let gravatarSize: Enums.GravatarSize.t = SMALL
-  let gravatarObject: gravatar = {
+  let gravatarObject: Types.gravatar = {
     id: event.params.id->BigInt.toString,
     owner_id: event.params.owner->Ethers.ethAddressToString,
     displayName: event.params.displayName,

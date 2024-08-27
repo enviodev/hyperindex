@@ -112,7 +112,6 @@ module Stubs = {
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
           ~getBlockHashes=getBlockHashes(mockChainData),
         ),
-      ~registeredEvents=RegisteredEvents.global,
     )(
       ~dispatchAction=action => dispatchAction(gsManager, action),
       gsManager->GlobalStateManager.getState,
