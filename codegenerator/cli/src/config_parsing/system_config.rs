@@ -767,7 +767,6 @@ impl Contract {
 pub struct Event {
     event: NormalizedEthAbiEvent,
     pub name: String,
-    pub is_async: bool,
 }
 
 impl Event {
@@ -815,7 +814,6 @@ impl Event {
         Ok(Event {
             name: human_cfg_event.name.unwrap_or(event.0.name.to_owned()),
             event,
-            is_async: false,
         })
     }
 
