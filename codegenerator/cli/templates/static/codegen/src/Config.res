@@ -92,8 +92,8 @@ let make = (
   ~chains=[],
   ~enableRawEvents=false,
   ~entities=[],
+  ~eventLookup: EventLookup.t<EventLookup.eventMod>,
 ) => {
-  let events: eventModLookup = EventLookup.empty()
   chains->Js.Array2.forEach(chainConfig => {
     chainConfig.contracts->Js.Array2.forEach(contract => {
       contract.events->Js.Array2.forEach(
@@ -102,7 +102,7 @@ let make = (
           //ignore the result, we don't care if it's already in the lookup
           //multiple contracts can have the same event in config so just ignore the
           //duplicates here
-          events->EventLookup.addEvent(eventMod, ~eventMod)->ignore
+          eventLookup->EventLookup.addEvent(eventMod, ~eventMod)->ignore
         },
       )
     })
@@ -123,24 +123,12 @@ let make = (
     })
     ->ChainMap.fromArrayUnsafe,
     defaultChain: chains->Array.get(0),
-    events,
+    events: eventLookup,
     enableRawEvents,
     entities: entities->(
       Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>
     ),
   }
-}
-
-%%private(let generatedConfigRef = ref(None))
-
-let getGenerated = () =>
-  switch generatedConfigRef.contents {
-  | Some(c) => c
-  | None => Js.Exn.raiseError("Config not yet generated")
-  }
-
-let setGenerated = (config: t) => {
-  generatedConfigRef := Some(config)
 }
 
 let shouldRollbackOnReorg = config =>

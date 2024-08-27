@@ -97,15 +97,18 @@ let makeEntityHandlerContext = (
   ~loadLayer,
 ): entityHandlerContext<entity> => {
   let inMemTable = inMemoryStore->InMemoryStore.getInMemTable(~entityMod)
+  let shouldRollbackOnReorg = RegisterHandlers.getConfig()->Config.shouldRollbackOnReorg
   {
     set: entity => {
       inMemTable->InMemoryTable.Entity.set(
         Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId=getKey(entity)),
+        ~shouldRollbackOnReorg,
       )
     },
     deleteUnsafe: entityId => {
       inMemTable->InMemoryTable.Entity.set(
         Delete->Types.mkEntityUpdate(~eventIdentifier, ~entityId),
+        ~shouldRollbackOnReorg,
       )
     },
     get: loadLayer->LoadLayer.makeLoader(~entityMod, ~logger, ~inMemoryStore),
@@ -166,17 +169,17 @@ let getHandlerContext = (context, ~inMemoryStore: InMemoryStore.t, ~loadLayer) =
 }
 
 let getContractRegisterArgs = (contextEnv, ~inMemoryStore) => {
-  RegisteredEvents.event: contextEnv.event,
+  Types.Handlers.event: contextEnv.event,
   context: contextEnv->getContractRegisterContext(~inMemoryStore),
 }
 
 let getLoaderArgs = (contextEnv, ~inMemoryStore, ~loadLayer) => {
-  RegisteredEvents.event: contextEnv.event,
+  Types.Handlers.event: contextEnv.event,
   context: contextEnv->getLoaderContext(~inMemoryStore, ~loadLayer),
 }
 
 let getHandlerArgs = (contextEnv, ~inMemoryStore, ~loaderReturn, ~loadLayer) => {
-  RegisteredEvents.event: contextEnv.event,
+  Types.Handlers.event: contextEnv.event,
   context: contextEnv->getHandlerContext(~inMemoryStore, ~loadLayer),
   loaderReturn,
 }

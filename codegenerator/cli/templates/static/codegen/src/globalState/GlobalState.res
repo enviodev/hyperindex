@@ -707,7 +707,6 @@ let injectedTaskReducer = (
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation,
-  ~registeredEvents,
 ) => async (
   //required args
   state: t,
@@ -816,7 +815,6 @@ let injectedTaskReducer = (
           ~inMemoryStore,
           ~checkContractIsRegistered,
           ~latestProcessedBlocks,
-          ~registeredEvents,
           ~loadLayer=state.loadLayer,
           ~config=state.config,
         ) {
@@ -911,5 +909,4 @@ let taskReducer = injectedTaskReducer(
   ~waitForNewBlock,
   ~executeNextQuery,
   ~rollbackLastBlockHashesToReorgLocation=ChainFetcher.rollbackLastBlockHashesToReorgLocation(_),
-  ~registeredEvents=RegisteredEvents.global,
 )

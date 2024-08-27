@@ -38,13 +38,13 @@ module Addresses = {
   include TestHelpers_MockAddresses
 }
 
-
 module EventFunctions = {
+  //Note these are made into a record to make operate in the same way
+  //for Res, JS and TS.
+
   /**
   The arguements that get passed to a "processEvent" helper function
   */
-  //Note these are made into a record to make operate in the same way
-  //for Res, JS and TS.
   @genType
   type eventProcessorArgs<'eventArgs> = {
     event: Types.eventLog<'eventArgs>,
@@ -55,24 +55,27 @@ module EventFunctions = {
   /**
   A function composer to help create individual processEvent functions
   */
-  let makeEventProcessor = (
-    ~eventMod: module(Types.Event with type eventArgs = 'eventArgs),
-  ) => {
-    async (args) => {
+  let makeEventProcessor = (~eventMod: module(Types.Event with type eventArgs = 'eventArgs)) => {
+    async args => {
       let eventMod = eventMod->Types.eventModToInternal
-      let {event, mockDb, ?chainId} = args->(Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>)
+      let {event, mockDb, ?chainId} =
+        args->(
+          Utils.magic: eventProcessorArgs<'eventArgs> => eventProcessorArgs<Types.internalEventArgs>
+        )
       let module(Event) = eventMod
-      let config = RegisterHandlers.registerAllHandlers()
+      let config = RegisterHandlers.getConfig()
 
       // The user can specify a chainId of an event or leave it off
       // and it will default to the first chain in the config
       let chain = switch chainId {
-        | Some(chainId) => {
-          config->Config.getChain(~chainId)
-        }
-        | None => switch config.defaultChain {
-          | Some(chainConfig) => chainConfig.chain
-          | None => Js.Exn.raiseError("No default chain Id found, please add at least 1 chain to your config.yaml")
+      | Some(chainId) => config->Config.getChain(~chainId)
+      | None =>
+        switch config.defaultChain {
+        | Some(chainConfig) => chainConfig.chain
+        | None =>
+          Js.Exn.raiseError(
+            "No default chain Id found, please add at least 1 chain to your config.yaml",
+          )
         }
       }
 
@@ -90,9 +93,7 @@ module EventFunctions = {
       //steps
       let mockDbClone = mockDb->TestHelpers_MockDb.cloneMockDb
 
-      let registeredEvent = switch RegisteredEvents.global->RegisteredEvents.get(eventMod) {
-      | Some(l) => l
-      | None =>
+      if !(Event.handlerRegister->Types.Handlers.Register.hasRegistration) {
         Not_found->ErrorHandling.mkLogAndRaise(
           ~logger,
           ~msg=`No registered handler found for "${Event.name}" on contract "${Event.contractName}"`,
@@ -102,14 +103,15 @@ module EventFunctions = {
       let inMemoryStore = InMemoryStore.make()
       let loadLayer = LoadLayer.make(
         ~loadEntitiesByIds=TestHelpers_MockDb.makeLoadEntitiesByIds(mockDbClone),
-        ~makeLoadEntitiesByField=(~entityMod) => TestHelpers_MockDb.makeLoadEntitiesByField(mockDbClone, ~entityMod),
+        ~makeLoadEntitiesByField=(~entityMod) =>
+          TestHelpers_MockDb.makeLoadEntitiesByField(mockDbClone, ~entityMod),
       )
 
       //No need to check contract is registered or return anything.
       //The only purpose is to test the registerContract function and to
       //add the entity to the in memory store for asserting registrations
 
-      switch registeredEvent.contractRegister {
+      switch Event.handlerRegister->Types.Handlers.Register.getContractRegister {
       | Some(contractRegister) =>
         switch contractRegister->EventProcessing.runEventContractRegister(
           ~logger,
@@ -135,12 +137,12 @@ module EventFunctions = {
 
       let latestProcessedBlocks = EventProcessing.EventsProcessed.makeEmpty(~config)
 
-      switch registeredEvent.loaderHandler {
-      | Some(handler) =>
+      switch Event.handlerRegister->Types.Handlers.Register.getLoaderHandler {
+      | Some(loaderHandler) =>
         switch await event->EventProcessing.runEventHandler(
           ~inMemoryStore,
           ~loadLayer,
-          ~handler,
+          ~loaderHandler,
           ~eventMod,
           ~chain,
           ~logger,
@@ -150,7 +152,7 @@ module EventFunctions = {
         | Ok(_) => ()
         | Error(e) => e->ErrorHandling.logAndRaise
         }
-      | None => ()//No need to run loaders or handlers
+      | None => () //No need to run handler
       }
 
       //In mem store can still contatin raw events and dynamic contracts for the

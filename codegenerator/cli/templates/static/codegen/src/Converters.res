@@ -27,14 +27,14 @@ exception EventModuleNotFound(eventLookup)
 
 let convertHyperSyncEvent = (
   event: HyperSyncClient.Decoder.decodedEvent,
-  ~config,
   ~contractAddressMapping,
   ~log: Types.Log.t,
   ~block,
   ~chain,
   ~transaction,
+  ~eventLookup: EventLookup.t<EventLookup.eventMod>,
 ): result<(Types.eventLog<Types.internalEventArgs>, module(Types.InternalEvent)), _> => {
-  switch config.Config.events->EventLookup.getEvent(
+  switch eventLookup->EventLookup.getEvent(
     ~topic0=log.topics[0],
     ~chain,
     ~contractAddressMapping,
@@ -60,7 +60,7 @@ let convertHyperSyncEvent = (
 
 let parseEvent = (
   ~log: Types.Log.t,
-  ~config,
+  ~eventLookup: EventLookup.t<EventLookup.eventMod>,
   ~block,
   ~contractInterfaceManager,
   ~chain,
@@ -75,7 +75,7 @@ let parseEvent = (
     }->Error
 
   | Ok(decodedEvent) =>
-    switch config.Config.events->EventLookup.getEvent(
+    switch eventLookup->EventLookup.getEvent(
       ~topic0=log.topics[0],
       ~chain,
       ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,

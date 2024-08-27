@@ -43,6 +43,6 @@ let mapChainConfigToConfigYaml = (chainConfig: Config.chainConfig): configYaml =
 
 @genType
 let getGeneratedByChainId: int => configYaml = chainId => {
-  let config = Config.getGenerated()
+  let config = RegisterHandlers.getConfig()
   config.chainMap->ChainMap.get(config->Config.getChain(~chainId))->mapChainConfigToConfigYaml
 }

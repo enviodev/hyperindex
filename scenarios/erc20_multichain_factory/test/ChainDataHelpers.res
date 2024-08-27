@@ -1,7 +1,7 @@
 open Belt
 
 let getDefaultAddress = (chain, contractName) => {
-  let chainConfig = Config.getGenerated().chainMap->ChainMap.get(chain)
+  let chainConfig = RegisterHandlers.getConfig().chainMap->ChainMap.get(chain)
   let contract = chainConfig.contracts->Js.Array2.find(c => c.name == contractName)->Option.getExn
   let defaultAddress = contract.addresses[0]->Option.getExn
   defaultAddress
@@ -142,9 +142,11 @@ module Stubs = {
       ~waitForNewBlock=makeWaitForNewBlock(stubData, ...),
       ~rollbackLastBlockHashesToReorgLocation=chainFetcher =>
         chainFetcher->ChainFetcher.rollbackLastBlockHashesToReorgLocation(
-          ~getBlockHashes=makeGetBlockHashes(~stubData, ~chainWorker=chainFetcher.chainConfig.chainWorker),
+          ~getBlockHashes=makeGetBlockHashes(
+            ~stubData,
+            ~chainWorker=chainFetcher.chainConfig.chainWorker,
+          ),
         ),
-      ~registeredEvents=RegisteredEvents.global,
     )(
       ~dispatchAction=makeDispatchAction(stubData, _),
       stubData.gsManager->GlobalStateManager.getState,

@@ -40,24 +40,26 @@ let mockChainConfig: Config.chainConfig = {
   endBlock: None,
   chain: chain1337,
   contracts,
-  chainWorker: module(RpcWorker.Make({
-    let chain = chain1337
-    let contracts = contracts
-    let rpcConfig: Config.rpcConfig = {
-      provider: Ethers.JsonRpcProvider.make(
-        ~rpcUrls=["http://localhost:8545"],
-        ~chainId=1337,
-        ~fallbackStallTimeout=3,
-      ),
-      syncConfig: Config.getSyncConfig({
-        initialBlockInterval: 10000,
-        backoffMultiplicative: 10000.0,
-        accelerationAdditive: 10000,
-        intervalCeiling: 10000,
-        backoffMillis: 10000,
-        queryTimeoutMillis: 10000,
-      }),
-    }
-  })),
-
+  chainWorker: module(
+    RpcWorker.Make({
+      let chain = chain1337
+      let contracts = contracts
+      let rpcConfig: Config.rpcConfig = {
+        provider: Ethers.JsonRpcProvider.make(
+          ~rpcUrls=["http://localhost:8545"],
+          ~chainId=1337,
+          ~fallbackStallTimeout=3,
+        ),
+        syncConfig: Config.getSyncConfig({
+          initialBlockInterval: 10000,
+          backoffMultiplicative: 10000.0,
+          accelerationAdditive: 10000,
+          intervalCeiling: 10000,
+          backoffMillis: 10000,
+          queryTimeoutMillis: 10000,
+        }),
+      }
+      let eventLookup = EventLookup.empty()
+    })
+  ),
 }

@@ -46,11 +46,14 @@ describe("E2E Integration Test", () => {
         endBlock: None,
         chain,
         contracts,
-        chainWorker: module(RpcWorker.Make({
-          let chain = chain
-          let contracts = contracts
-          let rpcConfig = rpcConfig
-        })),
+        chainWorker: module(
+          RpcWorker.Make({
+            let chain = chain
+            let contracts = contracts
+            let rpcConfig = rpcConfig
+            let eventLookup = EventLookup.empty()
+          })
+        ),
       }
     }
 

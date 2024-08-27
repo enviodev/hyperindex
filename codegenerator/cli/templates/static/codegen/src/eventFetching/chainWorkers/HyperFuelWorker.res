@@ -16,10 +16,12 @@ module Make = (
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
     let endpointUrl: string
+    let eventLookup: EventLookup.t<EventLookup.eventMod>
   },
 ): S => {
   let name = "HyperFuel"
   let chain = T.chain
+  let eventLookup = T.eventLookup
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -160,7 +162,6 @@ module Make = (
     ~currentBlockHeight,
     ~setCurrentBlockHeight,
   ) => {
-    let config = Config.getGenerated()
     let mkLogAndRaise = ErrorHandling.mkLogAndRaise(~logger, ...)
     try {
       let {fetchStateRegisterId, partitionId, fromBlock, contractAddressMapping, toBlock} = query
@@ -261,7 +262,7 @@ module Make = (
               | LogData({rb}) => rb
               }
               let eventMod =
-                config.events
+                eventLookup
                 ->EventLookup.getEventByKey(~contractName, ~topic0=logId->Js.BigInt.toString)
                 ->Option.getExn
               let module(Event) = eventMod
