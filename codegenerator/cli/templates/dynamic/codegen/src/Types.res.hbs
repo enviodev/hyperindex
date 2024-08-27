@@ -229,30 +229,11 @@ module {{contract.name.capitalized}} = {
     let name = "{{event.name.capitalized}}"
     let contractName = "{{contract.name.capitalized}}"
     let topic0 = "{{event.topic0}}"
-
-    {{#if event.params}}
     @genType
     type eventArgs = {{data_type}}
-
-    let eventArgsSchema = S.object(s => {
-    {{#each event.params as | param |}}
-      {{param.res_name}}: s.field("{{param.res_name}}", {{param.res_schema_code}}),
-    {{/each}}
-    })
-
+    let eventArgsSchema = {{data_schema_code}}
     let convertHyperSyncEventArgs = {{convert_hyper_sync_event_args_code}}
-
     let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
-    {{else}}
-    @genType
-    type eventArgs = unit
-
-    let eventArgsSchema = S.literal(%raw(`null`))->S.variant((. _) => ())
-
-    external convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs = "%identity"
-
-    let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
-    {{/if}}
   }
 
 {{/each}}

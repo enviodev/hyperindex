@@ -29,11 +29,9 @@ pub struct EventParamTypeTemplate {
     pub res_name: String,
     pub js_name: String,
     pub res_type: String,
-    pub res_schema_code: String,
     pub default_value_rescript: String,
     pub default_value_non_rescript: String,
     pub is_eth_address: bool,
-    pub is_indexed: bool,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -343,9 +341,13 @@ pub struct EventTemplate {
     pub decode_hyper_fuel_data_code: String,
     pub convert_hyper_sync_event_args_code: String,
     pub data_type: String,
+    pub data_schema_code: String,
 }
 
 impl EventTemplate {
+    const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
+        "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
+
     pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
         let indexed_params = params
             .iter()
@@ -386,44 +388,57 @@ impl EventTemplate {
             EventPayload::Params(params) => params,
             EventPayload::Data(_) => todo!("Event data payload not yet supported"),
         };
-        let template_params = params
-            .iter()
-            .map(|input| {
-                let res_type = abi_to_rescript_type(&input.into());
-                let js_name = input.name.to_string();
-                EventParamTypeTemplate {
-                    res_name: RescriptRecordField::to_valid_res_name(&js_name),
-                    js_name,
-                    default_value_rescript: res_type.get_default_value_rescript(),
-                    default_value_non_rescript: res_type.get_default_value_non_rescript(),
-                    res_type: res_type.to_string(),
-                    res_schema_code: res_type.to_rescript_schema(),
-                    is_eth_address: res_type == RescriptTypeIdent::Address,
-                    is_indexed: input.indexed,
-                }
+        if params.is_empty() {
+            Ok(EventTemplate {
+                name,
+                params: vec![],
+                data_type: "unit".to_string(),
+                data_schema_code: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
+                topic0: config_event.topic0.to_string(),
+                convert_hyper_sync_event_args_code:
+                    "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string(),
+                decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
             })
-            .collect::<Vec<_>>();
-
-        let data_type_expr = RescriptTypeExpr::Record(
-            params
+        } else {
+            let template_params = params
                 .iter()
-                .map(|p| {
-                    RescriptRecordField::new(p.name.to_string(), abi_to_rescript_type(&p.into()))
+                .map(|input| {
+                    let res_type = abi_to_rescript_type(&input.into());
+                    let js_name = input.name.to_string();
+                    EventParamTypeTemplate {
+                        res_name: RescriptRecordField::to_valid_res_name(&js_name),
+                        js_name,
+                        default_value_rescript: res_type.get_default_value_rescript(),
+                        default_value_non_rescript: res_type.get_default_value_non_rescript(),
+                        res_type: res_type.to_string(),
+                        is_eth_address: res_type == RescriptTypeIdent::Address,
+                    }
                 })
-                .collect(),
-        );
+                .collect::<Vec<_>>();
 
-        Ok(EventTemplate {
-            name,
-            params: template_params,
-            data_type: data_type_expr.to_string(),
-            topic0: config_event.topic0.to_string(),
-            convert_hyper_sync_event_args_code: Self::generate_convert_hyper_sync_event_args_code(
-                params,
-            ),
-            decode_hyper_fuel_data_code:
-                "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),
-        })
+            let data_type_expr = RescriptTypeExpr::Record(
+                params
+                    .iter()
+                    .map(|p| {
+                        RescriptRecordField::new(
+                            p.name.to_string(),
+                            abi_to_rescript_type(&p.into()),
+                        )
+                    })
+                    .collect(),
+            );
+
+            Ok(EventTemplate {
+                name,
+                params: template_params,
+                data_type: data_type_expr.to_string(),
+                data_schema_code: data_type_expr.to_rescript_schema(),
+                topic0: config_event.topic0.to_string(),
+                convert_hyper_sync_event_args_code:
+                    Self::generate_convert_hyper_sync_event_args_code(params),
+                decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+            })
+        }
     }
 }
 
@@ -1011,11 +1026,9 @@ mod test {
                 res_name: RescriptRecordField::to_valid_res_name(&js_name),
                 js_name,
                 res_type: res_type.to_string(),
-                res_schema_code: res_type.to_rescript_schema(),
                 default_value_rescript: res_type.get_default_value_rescript(),
                 default_value_non_rescript: res_type.get_default_value_non_rescript(),
                 is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,
-                is_indexed: false,
             }
         }
     }
@@ -1036,6 +1049,7 @@ mod test {
             convert_hyper_sync_event_args_code: "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n        id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n      }\n    }".to_string(),
             decode_hyper_fuel_data_code:
                 "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),
+            data_schema_code: "S.object(s => {id: s.field(\"id\", BigInt.schema), owner: s.field(\"owner\", Address.schema), displayName: s.field(\"displayName\", S.string), imageUrl: s.field(\"imageUrl\", S.string)})".to_string(),
         }
     }
 

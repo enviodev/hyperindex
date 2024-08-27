@@ -148,6 +148,37 @@ impl RescriptTypeExpr {
                 .join(" "),
         }
     }
+
+    pub fn to_rescript_schema(&self) -> String {
+        match self {
+            Self::Identifier(type_ident) => type_ident.to_rescript_schema(),
+            Self::Variant(_) => {
+                todo!("Generation of rescript-schema for variant types is not yet implemented")
+            }
+            Self::Record(fields) => {
+                if fields.is_empty() {
+                    "S.object(_ => {})".to_string()
+                } else {
+                    let inner_str = fields
+                        .iter()
+                        .map(|field| {
+                            format!(
+                                "{}: s.field(\"{}\", {})",
+                                field.name,
+                                // For raw events we keep the ReScript name,
+                                // if we need to serialize to the original name,
+                                // then it'll require a flag in the args
+                                field.name,
+                                field.type_ident.to_rescript_schema()
+                            )
+                        })
+                        .collect::<Vec<String>>()
+                        .join(", ");
+                    format!("S.object(s => {{{}}})", inner_str)
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -248,22 +279,22 @@ impl RescriptTypeIdent {
 
     fn to_string(&self) -> String {
         match self {
-            RescriptTypeIdent::Unit => "unit".to_string(),
-            RescriptTypeIdent::Int => "int".to_string(),
-            RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.t".to_string(),
-            RescriptTypeIdent::BigInt => "bigint".to_string(),
-            RescriptTypeIdent::BigDecimal => "BigDecimal.t".to_string(),
-            RescriptTypeIdent::Address => "Address.t".to_string(),
-            RescriptTypeIdent::String => "string".to_string(),
-            RescriptTypeIdent::ID => "id".to_string(),
-            RescriptTypeIdent::Bool => "bool".to_string(),
-            RescriptTypeIdent::Array(inner_type) => {
+            Self::Unit => "unit".to_string(),
+            Self::Int => "int".to_string(),
+            Self::Float => "GqlDbCustomTypes.Float.t".to_string(),
+            Self::BigInt => "bigint".to_string(),
+            Self::BigDecimal => "BigDecimal.t".to_string(),
+            Self::Address => "Address.t".to_string(),
+            Self::String => "string".to_string(),
+            Self::ID => "id".to_string(),
+            Self::Bool => "bool".to_string(),
+            Self::Array(inner_type) => {
                 format!("array<{}>", inner_type.to_string())
             }
-            RescriptTypeIdent::Option(inner_type) => {
+            Self::Option(inner_type) => {
                 format!("option<{}>", inner_type.to_string())
             }
-            RescriptTypeIdent::Tuple(inner_types) => {
+            Self::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
                     .map(|inner_type| inner_type.to_string())
@@ -271,12 +302,12 @@ impl RescriptTypeIdent {
                     .join(", ");
                 format!("({})", inner_types_str)
             }
-            RescriptTypeIdent::SchemaEnum(enum_name) => {
+            Self::SchemaEnum(enum_name) => {
                 format!("Enums.{}.t", &enum_name.capitalized)
             }
             // Lowercase generic params because of the issue https://github.com/rescript-lang/rescript-compiler/issues/6759
-            RescriptTypeIdent::GenericParam(name) => format!("'{}", name.to_lowercase()),
-            RescriptTypeIdent::TypeApplication {
+            Self::GenericParam(name) => format!("'{}", name.to_lowercase()),
+            Self::TypeApplication {
                 name,
                 type_params: params,
             } => {
@@ -295,22 +326,22 @@ impl RescriptTypeIdent {
 
     pub fn to_rescript_schema(&self) -> String {
         match self {
-            RescriptTypeIdent::Unit => "S.unit".to_string(),
-            RescriptTypeIdent::Int => "S.int".to_string(),
-            RescriptTypeIdent::Float => "GqlDbCustomTypes.Float.schema".to_string(),
-            RescriptTypeIdent::BigInt => "BigInt.schema".to_string(),
-            RescriptTypeIdent::BigDecimal => "BigDecimal.schema".to_string(),
-            RescriptTypeIdent::Address => "Address.schema".to_string(),
-            RescriptTypeIdent::String => "S.string".to_string(),
-            RescriptTypeIdent::ID => "S.string".to_string(),
-            RescriptTypeIdent::Bool => "S.bool".to_string(),
-            RescriptTypeIdent::Array(inner_type) => {
+            Self::Unit => "S.unit".to_string(),
+            Self::Int => "S.int".to_string(),
+            Self::Float => "GqlDbCustomTypes.Float.schema".to_string(),
+            Self::BigInt => "BigInt.schema".to_string(),
+            Self::BigDecimal => "BigDecimal.schema".to_string(),
+            Self::Address => "Address.schema".to_string(),
+            Self::String => "S.string".to_string(),
+            Self::ID => "S.string".to_string(),
+            Self::Bool => "S.bool".to_string(),
+            Self::Array(inner_type) => {
                 format!("S.array({})", inner_type.to_rescript_schema())
             }
-            RescriptTypeIdent::Option(inner_type) => {
+            Self::Option(inner_type) => {
                 format!("S.null({})", inner_type.to_rescript_schema())
             }
-            RescriptTypeIdent::Tuple(inner_types) => {
+            Self::Tuple(inner_types) => {
                 let inner_str = inner_types
                     .iter()
                     .enumerate()
@@ -321,24 +352,24 @@ impl RescriptTypeIdent {
                     .join(", ");
                 format!("S.tuple(s => ({}))", inner_str)
             }
-            RescriptTypeIdent::SchemaEnum(enum_name) => {
+            Self::SchemaEnum(enum_name) => {
                 format!("Enums.{}.schema", &enum_name.capitalized)
             }
             // TODO: ensure these are defined
-            RescriptTypeIdent::GenericParam(name) => {
+            Self::GenericParam(name) => {
                 format!("{name}Schema")
             }
-            RescriptTypeIdent::TypeApplication { name, type_params } if type_params.is_empty() => {
+            Self::TypeApplication { name, type_params } if type_params.is_empty() => {
                 format!("{name}Schema")
             }
-            RescriptTypeIdent::TypeApplication {
+            Self::TypeApplication {
                 name,
                 type_params: params,
             } => {
                 let generic_params = params
                     .iter()
                     .filter_map(|p| {
-                        if let RescriptTypeIdent::GenericParam(_) = p {
+                        if let Self::GenericParam(_) = p {
                             Some(p.to_rescript_schema())
                         } else {
                             None
@@ -362,21 +393,21 @@ impl RescriptTypeIdent {
 
     pub fn get_default_value_rescript(&self) -> String {
         match self {
-            RescriptTypeIdent::Unit => "()".to_string(),
-            RescriptTypeIdent::Int => "0".to_string(),
-            RescriptTypeIdent::Float => "0.0".to_string(),
-            RescriptTypeIdent::BigInt => "0n".to_string(),
-            RescriptTypeIdent::BigDecimal => "BigDecimal.zero".to_string(),
-            RescriptTypeIdent::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
-            RescriptTypeIdent::String => "\"foo\"".to_string(),
-            RescriptTypeIdent::ID => "\"my_id\"".to_string(),
-            RescriptTypeIdent::Bool => "false".to_string(),
-            RescriptTypeIdent::Array(_) => "[]".to_string(),
-            RescriptTypeIdent::Option(_) => "None".to_string(),
-            RescriptTypeIdent::SchemaEnum(enum_name) => {
+            Self::Unit => "()".to_string(),
+            Self::Int => "0".to_string(),
+            Self::Float => "0.0".to_string(),
+            Self::BigInt => "0n".to_string(),
+            Self::BigDecimal => "BigDecimal.zero".to_string(),
+            Self::Address => "TestHelpers_MockAddresses.defaultAddress".to_string(),
+            Self::String => "\"foo\"".to_string(),
+            Self::ID => "\"my_id\"".to_string(),
+            Self::Bool => "false".to_string(),
+            Self::Array(_) => "[]".to_string(),
+            Self::Option(_) => "None".to_string(),
+            Self::SchemaEnum(enum_name) => {
                 format!("Enums.{}.default", &enum_name.capitalized)
             }
-            RescriptTypeIdent::Tuple(inner_types) => {
+            Self::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
                     .map(|inner_type| inner_type.get_default_value_rescript())
@@ -386,20 +417,20 @@ impl RescriptTypeIdent {
                 format!("({})", inner_types_str)
             }
             // TODO: ensure these are defined
-            RescriptTypeIdent::GenericParam(name) => {
+            Self::GenericParam(name) => {
                 format!("{name}Default")
             }
-            RescriptTypeIdent::TypeApplication { name, type_params } if type_params.is_empty() => {
+            Self::TypeApplication { name, type_params } if type_params.is_empty() => {
                 format!("{name}Default")
             }
-            RescriptTypeIdent::TypeApplication {
+            Self::TypeApplication {
                 name,
                 type_params: params,
             } => {
                 let generics_defaults = params
                     .iter()
                     .filter_map(|p| {
-                        if let RescriptTypeIdent::GenericParam(_) = p {
+                        if let Self::GenericParam(_) = p {
                             Some(p.get_default_value_rescript())
                         } else {
                             None
@@ -426,22 +457,22 @@ impl RescriptTypeIdent {
 
     pub fn get_default_value_non_rescript(&self) -> String {
         match self {
-            RescriptTypeIdent::Unit => "undefined".to_string(),
-            RescriptTypeIdent::Int | RescriptTypeIdent::Float => "0".to_string(),
-            RescriptTypeIdent::BigInt => "0n".to_string(),
-            RescriptTypeIdent::BigDecimal => "// default value not required since BigDecimal \
+            Self::Unit => "undefined".to_string(),
+            Self::Int | Self::Float => "0".to_string(),
+            Self::BigInt => "0n".to_string(),
+            Self::BigDecimal => "// default value not required since BigDecimal \
                                               doesn't exist on contracts for contract import"
                 .to_string(),
-            RescriptTypeIdent::Address => "Addresses.defaultAddress".to_string(),
-            RescriptTypeIdent::String => "\"foo\"".to_string(),
-            RescriptTypeIdent::ID => "\"my_id\"".to_string(),
-            RescriptTypeIdent::Bool => "false".to_string(),
-            RescriptTypeIdent::Array(_) => "[]".to_string(),
-            RescriptTypeIdent::Option(_) => "null".to_string(),
-            RescriptTypeIdent::SchemaEnum(enum_name) => {
+            Self::Address => "Addresses.defaultAddress".to_string(),
+            Self::String => "\"foo\"".to_string(),
+            Self::ID => "\"my_id\"".to_string(),
+            Self::Bool => "false".to_string(),
+            Self::Array(_) => "[]".to_string(),
+            Self::Option(_) => "null".to_string(),
+            Self::SchemaEnum(enum_name) => {
                 format!("{}Default", &enum_name.uncapitalized)
             }
-            RescriptTypeIdent::Tuple(inner_types) => {
+            Self::Tuple(inner_types) => {
                 let inner_types_str = inner_types
                     .iter()
                     .map(|inner_type| inner_type.get_default_value_non_rescript())
@@ -449,20 +480,20 @@ impl RescriptTypeIdent {
                 format!("[{}]", inner_types_str)
             }
             // TODO: ensure these are defined
-            RescriptTypeIdent::GenericParam(name) => {
+            Self::GenericParam(name) => {
                 format!("{name}Default")
             }
-            RescriptTypeIdent::TypeApplication { name, type_params } if type_params.is_empty() => {
+            Self::TypeApplication { name, type_params } if type_params.is_empty() => {
                 format!("{name}Default")
             }
-            RescriptTypeIdent::TypeApplication {
+            Self::TypeApplication {
                 name,
                 type_params: params,
             } => {
                 let generics_defaults = params
                     .iter()
                     .filter_map(|p| {
-                        if let RescriptTypeIdent::GenericParam(_) = p {
+                        if let Self::GenericParam(_) = p {
                             Some(p.get_default_value_non_rescript())
                         } else {
                             None
@@ -489,7 +520,7 @@ impl RescriptTypeIdent {
 
     pub fn is_option(&self) -> bool {
         match self {
-            RescriptTypeIdent::Option(_) => true,
+            Self::Option(_) => true,
             _ => false,
         }
     }
@@ -519,6 +550,85 @@ mod tests {
 
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn test_to_rescript_schema() {
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Bool).to_rescript_schema(),
+            "S.bool".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Int).to_rescript_schema(),
+            "S.int".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Float).to_rescript_schema(),
+            "GqlDbCustomTypes.Float.schema".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigInt).to_rescript_schema(),
+            "BigInt.schema".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::BigDecimal).to_rescript_schema(),
+            "BigDecimal.schema".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Address).to_rescript_schema(),
+            "Address.schema".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::String).to_rescript_schema(),
+            "S.string".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::ID).to_rescript_schema(),
+            "S.string".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Array(Box::new(
+                RescriptTypeIdent::Int
+            )))
+            .to_rescript_schema(),
+            "S.array(S.int)".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Option(Box::new(
+                RescriptTypeIdent::Int
+            )))
+            .to_rescript_schema(),
+            "S.null(S.int)".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Tuple(vec![
+                RescriptTypeIdent::Int,
+                RescriptTypeIdent::Bool
+            ]))
+            .to_rescript_schema(),
+            "S.tuple(s => (s.item(0, S.int), s.item(1, S.bool)))".to_string()
+        );
+        // assert_eq!(
+        //     RescriptTypeExpr::Variant(vec![
+        //         RescriptVariantConstr::new("ConstrA".to_string(), RescriptTypeIdent::Int),
+        //         RescriptVariantConstr::new("ConstrB".to_string(), RescriptTypeIdent::Bool),
+        //     ])
+        //     .to_rescript_schema(),
+        //     "S.variant([@as(\"ConstrA\") S.int, @as(\"ConstrB\") S.bool])".to_string()
+        // );
+        assert_eq!(
+            RescriptTypeExpr::Record(vec![
+                RescriptRecordField::new("fieldA".to_string(), RescriptTypeIdent::Int),
+                RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
+            ])
+            .to_rescript_schema(),
+            "S.object(s => {fieldA: s.field(\"fieldA\", S.int), fieldB: s.field(\"fieldB\", S.bool)})"
+                .to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Record(vec![]).to_rescript_schema(),
+            "S.object(_ => {})".to_string()
+        );
+    }
 
     #[test]
     fn type_decl_to_string_primitive() {
