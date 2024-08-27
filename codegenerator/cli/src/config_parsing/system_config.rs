@@ -17,6 +17,7 @@ use crate::{
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH, DEFAULT_CONFIRMED_BLOCK_THRESHOLD},
     fuel::abi::FuelAbi,
     project_paths::{path_utils, ParsedProjectPaths},
+    rescript_types::RescriptTypeIdent,
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
@@ -800,6 +801,7 @@ impl Contract {
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventPayload {
     Params(Vec<EventParam>),
+    Data(RescriptTypeIdent),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -886,7 +888,7 @@ impl Event {
         Ok(Event {
             name: event_config.name,
             event,
-            payload: EventPayload::Params(vec![]),
+            payload: EventPayload::Data(log.data_type),
             topic0: log.id,
         })
     }

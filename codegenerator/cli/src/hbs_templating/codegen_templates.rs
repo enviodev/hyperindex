@@ -21,6 +21,7 @@ use crate::{
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
+use ethers::abi::EventParam;
 use pathdiff::diff_paths;
 use serde::Serialize;
 
@@ -349,16 +350,53 @@ impl EntityRecordTypeTemplate {
 pub struct EventTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EventParamTypeTemplate>,
-    pub indexed_params: Vec<EventParamTypeTemplate>,
-    pub body_params: Vec<EventParamTypeTemplate>,
     pub topic0: String,
+    pub decode_hyper_fuel_data_code: String,
+    pub convert_hyper_sync_event_args_code: String,
 }
 
 impl EventTemplate {
+    pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
+        let indexed_params = params
+            .iter()
+            .filter(|param| param.indexed)
+            .collect::<Vec<_>>();
+
+        let body_params = params
+            .iter()
+            .filter(|param| !param.indexed)
+            .collect::<Vec<_>>();
+
+        let mut code = String::from(
+            "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n",
+        );
+
+        for (index, param) in indexed_params.into_iter().enumerate() {
+            code.push_str(&format!(
+              "        {}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n",
+              make_res_name(&param.name), index
+          ));
+        }
+
+        for (index, param) in body_params.into_iter().enumerate() {
+            code.push_str(&format!(
+              "        {}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n",
+              make_res_name(&param.name), index
+          ));
+        }
+
+        code.push_str("      }\n    }");
+
+        code
+    }
+
     pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
         let name = config_event.name.to_capitalized_options();
-        let EventPayload::Params(params) = &config_event.payload;
-        let params = params
+        let params = match &config_event.payload {
+            EventPayload::Params(params) => params,
+            EventPayload::Data(_) => todo!("Event data payload not yet supported"),
+        };
+        let template_params = params
             .iter()
             .map(|input| {
                 let res_type = abi_to_rescript_type(&input.into());
@@ -377,24 +415,15 @@ impl EventTemplate {
             })
             .collect::<Vec<_>>();
 
-        let indexed_params = params
-            .iter()
-            .filter(|param| param.is_indexed)
-            .cloned()
-            .collect();
-
-        let body_params = params
-            .iter()
-            .filter(|param| !param.is_indexed)
-            .cloned()
-            .collect();
-
         Ok(EventTemplate {
             name,
-            params,
-            body_params,
-            indexed_params,
+            params: template_params,
             topic0: config_event.topic0.to_string(),
+            convert_hyper_sync_event_args_code: Self::generate_convert_hyper_sync_event_args_code(
+                params,
+            ),
+            decode_hyper_fuel_data_code:
+                "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),
         })
     }
 }
@@ -1004,9 +1033,10 @@ mod test {
         EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
             topic0,
-            body_params: params.clone(),
             params,
-            indexed_params: vec![],
+            convert_hyper_sync_event_args_code: "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n        id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n      }\n    }".to_string(),
+            decode_hyper_fuel_data_code:
+                "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),
         }
     }
 

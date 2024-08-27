@@ -324,7 +324,10 @@ impl Event {
         is_fuel: bool,
         language: &Language,
     ) -> Result<Self> {
-        let EventPayload::Params(params) = &event.payload;
+        let params = match &event.payload {
+            EventPayload::Params(params) => params,
+            EventPayload::Data(_) => todo!("Event data payload not yet supported"),
+        };
         let params = flatten_event_inputs(params.clone())
             .into_iter()
             .map(|input| Param::from_event_param(input))

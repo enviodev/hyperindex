@@ -245,18 +245,9 @@ module {{contract.name.capitalized}} = {
     {{/each}}
     })
 
-    let convertHyperSyncEventArgs = (decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {
-      {
-        {{#each event.indexed_params as | param index |}}
-        {{param.res_name}}: decodedEvent.indexed->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
-        {{/each}}
-        {{#each event.body_params as | param index |}}
-        {{param.res_name}}: decodedEvent.body->Js.Array2.unsafe_get({{index}})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,
-        {{/each}}
-      }
-    }
+    let convertHyperSyncEventArgs = {{convert_hyper_sync_event_args_code}}
 
-    let decodeHyperFuelData = (_) => Js.Exn.raiseError("HyperFuel decoder not implemented")
+    let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
     {{else}}
     @genType
     type eventArgs = unit
@@ -265,7 +256,7 @@ module {{contract.name.capitalized}} = {
 
     external convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs = "%identity"
 
-    let decodeHyperFuelData = (_) => Js.Exn.raiseError("HyperFuel decoder not implemented")
+    let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
     {{/if}}
   }
 
