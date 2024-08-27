@@ -1,5 +1,5 @@
 exception ParseError(Ethers.Interface.parseLogError)
-exception UnregisteredContract(Ethers.ethAddress)
+exception UnregisteredContract(Address.t)
 
 let makeEventLog = (
   params: 'args,

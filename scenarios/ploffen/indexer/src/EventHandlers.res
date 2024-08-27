@@ -11,7 +11,7 @@ Handlers.PloffenContract.CreatePloffen.loader((~event, ~context) => {
 Handlers.PloffenContract.CreatePloffen.handler((~event, ~context) => {
   let ploffenObject: ploffengameEntity = {
     id: "MASTER_GAME",
-    gameToken: event.params.tokenGameAddress->Ethers.ethAddressToString,
+    gameToken: event.params.tokenGameAddress->Address.toString,
     seedAmount: BigInt.fromInt(0),
     gameStartTime: 0,
     status: "Created",
@@ -58,7 +58,7 @@ Handlers.PloffenContract.StartPloffen.handler((~event, ~context) => {
 Handlers.PloffenContract.registerPlayPloffenLoadEntities((~event, ~context) => {
   ()
   context.ploffengame.startedPloffenLoad("MASTER_GAME")
-  context.user.userLoad(event.params.player->Ethers.ethAddressToString)
+  context.user.userLoad(event.params.player->Address.toString)
 })
 
 Handlers.PloffenContract.registerPlayPloffenHandler((~event, ~context) => {
@@ -87,8 +87,8 @@ Handlers.PloffenContract.registerPlayPloffenHandler((~event, ~context) => {
 
     | None => {
         let userObject: userEntity = {
-          id: event.params.player->Ethers.ethAddressToString,
-          userAddress: event.params.player->Ethers.ethAddressToString,
+          id: event.params.player->Address.toString,
+          userAddress: event.params.player->Address.toString,
           numberOfTimesPlayed: 1,
           totalContributed: event.params.amount,
         }
@@ -126,7 +126,7 @@ Handlers.PloffenContract.registerWinPloffenHandler((~event, ~context) => {
     let ploffenObject: ploffengameEntity = {
       ...ploffen,
       status: "Ended",
-      winner: Some(event.params.winner->Ethers.ethAddressToString),
+      winner: Some(event.params.winner->Address.toString),
     }
     context.ploffengame.set(ploffenObject)
   | None => Js.log("Trying to win a non-existing ploffen game")

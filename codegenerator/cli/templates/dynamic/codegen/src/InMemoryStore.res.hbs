@@ -11,7 +11,7 @@ let hashRawEventsKey = (key: rawEventsKey) =>
 @genType
 type dynamicContractRegistryKey = {
   chainId: int,
-  contractAddress: Ethers.ethAddress,
+  contractAddress: Address.t,
 }
 
 let hashDynamicContractRegistryKey = ({chainId, contractAddress}) =>

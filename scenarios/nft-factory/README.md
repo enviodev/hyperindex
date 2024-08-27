@@ -115,7 +115,7 @@ Handlers.GravatarContract.registerUpdatedGravatarHandler((event, context) => {
 
   let gravatar: gravatarEntity = {
     id: event.params.id->BigInt.toString,
-    owner: event.params.owner->Ethers.ethAddressToString,
+    owner: event.params.owner->Address.toString,
     displayName: event.params.displayName,
     imageUrl: event.params.imageUrl,
     updatesCount,

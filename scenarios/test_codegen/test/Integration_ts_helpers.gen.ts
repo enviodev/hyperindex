@@ -5,13 +5,13 @@
 
 const Integration_ts_helpersJS = require('./Integration_ts_helpers.bs.js');
 
-import type {ethAddress as Ethers_ethAddress} from 'generated/src/bindings/Ethers.gen';
+import type {t as Address_t} from 'generated/src/Address.gen';
 
 export abstract class chainConfig { protected opaque!: any }; /* simulate opaque types */
 
 export abstract class chainManager { protected opaque!: any }; /* simulate opaque types */
 
-export const getLocalChainConfig: (nftFactoryContractAddress:Ethers_ethAddress) => chainConfig = Integration_ts_helpersJS.getLocalChainConfig as any;
+export const getLocalChainConfig: (nftFactoryContractAddress:Address_t) => chainConfig = Integration_ts_helpersJS.getLocalChainConfig as any;
 
 export const makeChainManager: (cfg:chainConfig) => chainManager = Integration_ts_helpersJS.makeChainManager as any;
 

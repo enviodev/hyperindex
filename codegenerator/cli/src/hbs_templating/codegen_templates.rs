@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::config_parsing::system_config::HyperfuelConfig;
+use crate::config_parsing::system_config::{Ecosystem, HyperfuelConfig};
 use crate::rescript_types::RescriptTypeIdent;
 use crate::{
     config_parsing::{
@@ -622,10 +622,12 @@ pub struct ProjectTemplate {
     should_rollback_on_reorg: bool,
     should_save_full_history: bool,
     enable_raw_events: bool,
-    //Used for the package.json reference to handlers in generated
-    relative_path_to_root_from_generated: String,
     has_multiple_events: bool,
     field_selection: FieldSelection,
+    is_evm_ecosystem: bool,
+    is_fuel_ecosystem: bool,
+    //Used for the package.json reference to handlers in generated
+    relative_path_to_root_from_generated: String,
 }
 
 impl ProjectTemplate {
@@ -720,10 +722,12 @@ impl ProjectTemplate {
             should_rollback_on_reorg: cfg.rollback_on_reorg,
             should_save_full_history: cfg.save_full_history,
             enable_raw_events: cfg.enable_raw_events,
-            //Used for the package.json reference to handlers in generated
-            relative_path_to_root_from_generated,
             has_multiple_events,
             field_selection,
+            is_evm_ecosystem: cfg.ecosystem == Ecosystem::Evm,
+            is_fuel_ecosystem: cfg.ecosystem == Ecosystem::Fuel,
+            //Used for the package.json reference to handlers in generated
+            relative_path_to_root_from_generated,
         })
     }
 }

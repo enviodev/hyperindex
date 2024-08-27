@@ -138,7 +138,7 @@ module RawEvents = {
     ~chainId: chainId,
     ~eventId: bigint,
     ~limit: int,
-    ~contractAddresses: array<Ethers.ethAddress>,
+    ~contractAddresses: array<Address.t>,
   ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageGtOrEqEventId"
 
   @module("./DbFunctionsImplementation.js")
@@ -148,7 +148,7 @@ module RawEvents = {
     ~fromEventIdInclusive: bigint,
     ~toEventIdInclusive: bigint,
     ~limit: int,
-    ~contractAddresses: array<Ethers.ethAddress>,
+    ~contractAddresses: array<Address.t>,
   ) => promise<array<TablesStatic.RawEvents.t>> = "getRawEventsPageWithinEventIdRangeInclusive"
 
   ///Returns an array with 1 block number (the highest processed on the given chainId)
@@ -172,7 +172,7 @@ module RawEvents = {
 }
 
 module DynamicContractRegistry = {
-  type contractAddress = Ethers.ethAddress
+  type contractAddress = Address.t
   type dynamicContractRegistryRowId = (chainId, contractAddress)
   @module("./DbFunctionsImplementation.js")
   external batchSet: (

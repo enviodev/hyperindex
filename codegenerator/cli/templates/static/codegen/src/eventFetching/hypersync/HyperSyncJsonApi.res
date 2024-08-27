@@ -155,24 +155,24 @@ module QueryTypes = {
   })
 
   type logParams = {
-    address?: array<Ethers.ethAddress>,
+    address?: array<Address.t>,
     topics: array<array<Ethers.EventFilter.topic>>,
   }
 
   let logParamsSchema = S.object(s => {
-    address: ?s.field("address", S.option(S.array(Ethers.ethAddressSchema))),
+    address: ?s.field("address", S.option(S.array(Address.schema))),
     topics: s.field("topics", S.array(S.array(S.string))),
   })
 
   type transactionParams = {
-    from?: array<Ethers.ethAddress>,
-    to?: array<Ethers.ethAddress>,
+    from?: array<Address.t>,
+    to?: array<Address.t>,
     sighash?: array<string>,
   }
 
   let transactionParamsSchema = S.object(s => {
-    from: ?s.field("from", S.option(S.array(Ethers.ethAddressSchema))),
-    to: ?s.field("to", S.option(S.array(Ethers.ethAddressSchema))),
+    from: ?s.field("from", S.option(S.array(Address.schema))),
+    to: ?s.field("to", S.option(S.array(Address.schema))),
     sighash: ?s.field("sighash", S.option(S.array(S.string))),
   })
 

@@ -7,13 +7,13 @@ describe("Transfers", () => {
   let userAddress1 = Ethers.Addresses.mockAddresses[0]->Option.getUnsafe
   let userAddress2 = Ethers.Addresses.mockAddresses[1]->Option.getUnsafe
 
-  let account_id = userAddress1->Ethers.ethAddressToString
+  let account_id = userAddress1->Address.toString
   //Make a mock entity to set the initial state of the mock db
   let mockAccountEntity: Entities.Account.t = {
     id: account_id,
   }
 
-  let tokenAddress = Ethers.Addresses.defaultAddress->Ethers.ethAddressToString
+  let tokenAddress = Ethers.Addresses.defaultAddress->Address.toString
   let mockAccountTokenEntity = EventHandlers.makeAccountToken(
     ~account_id,
     ~tokenAddress,
@@ -61,7 +61,7 @@ describe("Transfers", () => {
       let account2Balance =
         mockDbAfterTransfer.entities.accountToken.get(
           EventHandlers.makeAccountTokenId(
-            ~account_id=userAddress2->Ethers.ethAddressToString,
+            ~account_id=userAddress2->Address.toString,
             ~tokenAddress,
           ),
         )->Option.map(a => a.balance)

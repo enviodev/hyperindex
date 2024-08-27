@@ -15,7 +15,7 @@ Handlers.{{contract.name.capitalized}}.{{event.name.capitalized}}.handler(async 
       {{/each}}
     {{/if}}
     {{#if param.is_eth_address}}
-      ->Ethers.ethAddressToString
+      ->Address.toString
     {{/if~}}
     ,
     {{/each}}

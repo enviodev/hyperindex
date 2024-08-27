@@ -34,7 +34,11 @@ let registerContractHandlers = (
           abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
           addresses: [
             {{#each contract.addresses as | address |}}
-            "{{address}}"->Ethers.getAddressFromStringUnsafe,
+            {{#if is_evm_ecosystem}}
+            "{{address}}"->Address.Evm.fromStringOrThrow
+            {{else}}
+            "{{address}}"->Address.unsafeFromString
+            {{/if}},
             {{/each}}
           ],
           events: [
@@ -111,7 +115,7 @@ let registerContractHandlers = (
           {{/if}}
           {{#if chain_config.network_config.hyperfuel_config }}
           {{#with chain_config.network_config.hyperfuel_config as | hyperfuel_config |}}
-          module(HyperSyncWorker.Make({
+          module(HyperFuelWorker.Make({
             let chain = chain
             let contracts = contracts
             let endpointUrl = "{{hyperfuel_config.endpoint_url}}"

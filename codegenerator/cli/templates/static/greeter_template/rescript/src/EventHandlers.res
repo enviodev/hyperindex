@@ -2,7 +2,7 @@ open Types
 
 // Handler for the NewGreeting event
 Handlers.Greeter.NewGreeting.handler(async ({event, context}) => {
-  let userId = event.params.user->Ethers.ethAddressToString // The id for the User entity
+  let userId = event.params.user->Address.toString // The id for the User entity
   let latestGreeting = event.params.greeting // The greeting string that was added
   let maybeCurrentUserEntity = await context.user.get(userId) // Optional User entity that may already exist
 
@@ -27,7 +27,7 @@ Handlers.Greeter.NewGreeting.handler(async ({event, context}) => {
 
 // Handler for the ClearGreeting event
 Handlers.Greeter.ClearGreeting.handler(async ({event, context}) => {
-  let userId = event.params.user->Ethers.ethAddressToString // The id for the User entity
+  let userId = event.params.user->Address.toString // The id for the User entity
   let maybeCurrentUserEntity = await context.user.get(userId) // Optional User entity that may already exist
 
   switch maybeCurrentUserEntity {

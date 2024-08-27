@@ -94,7 +94,7 @@ Each event handler requires two functions to be registered in order to enable fu
 
 ```rescript
 Handlers.Greeter.registerNewGreetingLoadEntities((~event, ~context) => {
-  context.greeting.greetingWithChangesLoad(event.params.user->Ethers.ethAddressToString)
+  context.greeting.greetingWithChangesLoad(event.params.user->Address.toString)
 })
 ```
 
@@ -123,7 +123,7 @@ Handlers.Greeter.registerNewGreetingHandler((~event, ~context) => {
   switch currentGreeterOpt {
   | Some(existingGreeter) => {
       let greetingObject: greetingEntity = {
-        id: event.params.user->Ethers.ethAddressToString,
+        id: event.params.user->Address.toString,
         latestGreeting: event.params.greeting,
         numberOfGreetings: existingGreeter.numberOfGreetings + 1,
       }
@@ -133,7 +133,7 @@ Handlers.Greeter.registerNewGreetingHandler((~event, ~context) => {
 
   | None =>
     let greetingObject: greetingEntity = {
-      id: event.params.user->Ethers.ethAddressToString,
+      id: event.params.user->Address.toString,
       latestGreeting: event.params.greeting,
       numberOfGreetings: 1,
     }

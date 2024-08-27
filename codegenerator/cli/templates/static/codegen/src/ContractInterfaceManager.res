@@ -120,7 +120,7 @@ let combineInterfaceManagers = (managers: array<t>): t => {
 }
 
 type addressesAndTopics = {
-  addresses: array<Ethers.ethAddress>,
+  addresses: array<Address.t>,
   topics: array<Ethers.EventFilter.topic>,
 }
 
@@ -214,7 +214,7 @@ let getCombinedEthersFilter = (
   }
 }
 
-type parseError = ParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Ethers.ethAddress)
+type parseError = ParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Address.t)
 
 let parseLogViem = (self: t, ~log: Types.Log.t) => {
   let abiOpt =

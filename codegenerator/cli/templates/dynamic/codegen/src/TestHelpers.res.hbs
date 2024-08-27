@@ -203,7 +203,7 @@ module EventFunctions = {
   @genType
   type mockEventData = {
     chainId?: int,
-    srcAddress?: Ethers.ethAddress,
+    srcAddress?: Address.t,
     logIndex?: int,
     block?: MockBlock.t,
     transaction?: MockTransaction.t,

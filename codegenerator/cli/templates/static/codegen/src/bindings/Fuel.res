@@ -1,13 +1,3 @@
-@genType.import(("./OpaqueTypes.ts", "EthersAddress"))
-type fuelAddress = Ethers.ethAddress
-
-module Address = {
-  type t = fuelAddress
-
-  let toString: fuelAddress => string = address => address->Utils.magic
-  let fromString: string => fuelAddress = addressStr => addressStr->Utils.magic
-}
-
 @genType
 type receiptType = | @as(6) LogData
 type fuelBytes256 = string

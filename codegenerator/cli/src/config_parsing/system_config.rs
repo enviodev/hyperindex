@@ -7,11 +7,11 @@ use super::{
         fuel::HumanConfig as FuelConfig,
     },
     hypersync_endpoints,
-    validation::validate_names_valid_rescript,
+    validation::{self, validate_names_valid_rescript},
 };
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
-    constants::{project_paths::DEFAULT_SCHEMA_PATH, DEFAULT_CONFIRMED_BLOCK_THRESHOLD},
+    constants::{links, project_paths::DEFAULT_SCHEMA_PATH, DEFAULT_CONFIRMED_BLOCK_THRESHOLD},
     project_paths::{path_utils, ParsedProjectPaths},
     utils::unique_hashmap,
 };
@@ -33,6 +33,16 @@ type NetworkMap = HashMap<NetworkIdKey, Network>;
 type ContractMap = HashMap<ContractNameKey, Contract>;
 pub type EntityMap = HashMap<EntityKey, Entity>;
 pub type GraphQlEnumMap = HashMap<GraphqlEnumKey, GraphQLEnum>;
+
+fn strip_to_letters(string: &str) -> String {
+    let mut pg_friendly_name = String::new();
+    for c in string.chars() {
+        if c.is_alphabetic() {
+            pg_friendly_name.push(c);
+        }
+    }
+    pg_friendly_name
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Ecosystem {
@@ -165,6 +175,8 @@ impl SystemConfig {
         schema: Schema,
         project_paths: &ParsedProjectPaths,
     ) -> Result<Self> {
+        validation::validate_deserialized_config_yaml(&evm_config)?;
+
         let mut networks: NetworkMap = HashMap::new();
         let mut contracts: ContractMap = HashMap::new();
 
@@ -465,12 +477,28 @@ impl SystemConfig {
 
         match ecosystem {
             Ecosystem::Evm => {
-                let evm_config = human_config::deserialize_config_from_yaml(human_config_string)?;
+                let mut evm_config: EvmConfig = serde_yaml::from_str(&human_config_string)
+                    .context(format!(
+                    "EE105: Failed to deserialize config. Visit the docs for more information {}",
+                    links::DOC_CONFIGURATION_FILE
+                ))?;
+                evm_config.name = strip_to_letters(&evm_config.name);
                 let schema = Schema::parse_from_file(&project_paths, &evm_config.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_evm_config(evm_config, schema, project_paths)
             }
-            Ecosystem::Fuel => return Err(anyhow!("EE105: Failed to deserialize config. It's not supported with the main envio package yet, please install the envio@fuel version.")),
+            Ecosystem::Fuel => {
+                return Err(anyhow!("EE105: Failed to deserialize config. It's not supported with the main envio package yet, please install the envio@fuel version."));
+                // let mut fuel_config: FuelConfig = serde_yaml::from_str(&human_config_string)
+                //     .context(format!(
+                //     "EE105: Failed to deserialize config. Visit the docs for more information {}",
+                //     links::DOC_CONFIGURATION_FILE
+                // ))?;
+                // fuel_config.name = strip_to_letters(&fuel_config.name);
+                // let schema = Schema::parse_from_file(&project_paths, &fuel_config.schema)
+                //     .context("Parsing schema file for config")?;
+                // Self::from_fuel_config(fuel_config, schema, project_paths)
+            }
         }
     }
 }
@@ -958,8 +986,6 @@ mod test {
     use super::SystemConfig;
     use crate::{
         config_parsing::{
-            self,
-            entity_parsing::Schema,
             human_config::evm::HumanConfig as EvmConfig,
             system_config::{Event, SyncConfig, SyncSource},
         },
@@ -1010,14 +1036,9 @@ mod test {
         let generated = "generated/";
         let project_paths = ParsedProjectPaths::new(project_root, generated, config_dir)
             .expect("Failed creating parsed_paths");
-        let human_config_string = std::fs::read_to_string(&project_paths.config).unwrap();
 
-        let evm_config =
-            config_parsing::human_config::deserialize_config_from_yaml(human_config_string)
-                .expect("Failed deserializing config");
-
-        let config = SystemConfig::from_evm_config(evm_config, Schema::empty(), &project_paths)
-            .expect("Failed parsing config");
+        let config =
+            SystemConfig::parse_from_project_files(&project_paths).expect("Failed parsing config");
 
         let contract_name = "Contract1".to_string();
 
@@ -1194,5 +1215,18 @@ mod test {
             .unwrap_err();
 
         assert_eq!(error.to_string(), "EE106: Cannot define both rpc_config and hypersync_config for the same network, please choose only one of them, read more in our docs https://docs.envio.dev/docs/configuration-file");
+    }
+
+    #[test]
+    fn valid_name_conversion() {
+        let name_with_space = super::strip_to_letters("My too lit to quit indexer");
+        let expected_name_with_space = "Mytoolittoquitindexer";
+        let name_with_special_chars = super::strip_to_letters("Myto@littoq$itindexer");
+        let expected_name_with_special_chars = "Mytolittoqitindexer";
+        let name_with_numbers = super::strip_to_letters("yes0123456789okay");
+        let expected_name_with_numbers = "yesokay";
+        assert_eq!(name_with_space, expected_name_with_space);
+        assert_eq!(name_with_special_chars, expected_name_with_special_chars);
+        assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
 }

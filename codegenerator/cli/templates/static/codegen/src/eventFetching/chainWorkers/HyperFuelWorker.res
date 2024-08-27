@@ -252,7 +252,7 @@ module Make = (
           let {contractId, receipt, block, receiptIndex} = item
           try {
             switch contractAddressMapping->ContractAddressingMap.getName(
-              contractId->Ethers.ethAddressToString,
+              contractId->Address.toString,
             ) {
             | None => raise(Converters.UnregisteredContract(contractId))
             | Some(contractName) =>

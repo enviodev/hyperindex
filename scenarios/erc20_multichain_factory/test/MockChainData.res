@@ -1,6 +1,7 @@
 module Indexer = {
   module Pino = Pino
   module ErrorHandling = ErrorHandling
+  module Address = Address
   module Types = Types
   module Config = Config
   module Ethers = Ethers

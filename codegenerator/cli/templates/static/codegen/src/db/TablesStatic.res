@@ -113,7 +113,7 @@ module RawEvents = {
     @as("contract_name") contractName: string,
     @as("block_number") blockNumber: int,
     @as("log_index") logIndex: int,
-    @as("src_address") srcAddress: Ethers.ethAddress,
+    @as("src_address") srcAddress: Address.t,
     @as("block_hash") blockHash: string,
     @as("block_timestamp") blockTimestamp: int,
     @as("block_fields") blockFields: Js.Json.t,
@@ -147,7 +147,7 @@ module DynamicContractRegistry = {
     @as("chain_id") chainId: int,
     @as("event_id") eventId: bigint,
     @as("block_timestamp") blockTimestamp: int,
-    @as("contract_address") contractAddress: Ethers.ethAddress,
+    @as("contract_address") contractAddress: Address.t,
     @as("contract_type") contractType: Enums.ContractType.t,
   }
 
@@ -155,7 +155,7 @@ module DynamicContractRegistry = {
     chainId: s.field("chain_id", S.int),
     eventId: s.field("event_id", BigInt.schema),
     blockTimestamp: s.field("block_timestamp", S.int),
-    contractAddress: s.field("contract_address", Ethers.ethAddressSchema),
+    contractAddress: s.field("contract_address", Address.schema),
     contractType: s.field("contract_type", Enums.ContractType.schema),
   })
 

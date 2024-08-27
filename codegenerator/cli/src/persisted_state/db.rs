@@ -108,12 +108,8 @@ impl PersistedStateExists {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{
-        config_parsing::{entity_parsing::Schema, human_config, system_config::SystemConfig},
-        project_paths::ParsedProjectPaths,
-    };
+    use crate::{config_parsing::system_config::SystemConfig, project_paths::ParsedProjectPaths};
     use anyhow::{Context, Result};
-    use std::path::PathBuf;
 
     #[tokio::test]
     #[ignore]
@@ -122,17 +118,12 @@ mod test {
             "This test only works if the db migrations have been run and the db is up and running"
         );
         let root = format!("{}/test/configs", env!("CARGO_MANIFEST_DIR"));
-        let path = format!("{}/config1.yaml", &root);
-        let config_path = PathBuf::from(path);
-        let human_config_string = std::fs::read_to_string(&config_path).unwrap();
 
-        let evm_config =
-            human_config::deserialize_config_from_yaml(human_config_string).context("human cfg")?;
-        let system_cfg = SystemConfig::from_evm_config(
-            evm_config,
-            Schema::empty(),
-            &ParsedProjectPaths::new(&root, "generated", "config1.yaml")?,
-        )
+        let system_cfg = SystemConfig::parse_from_project_files(&ParsedProjectPaths::new(
+            &root,
+            "generated",
+            "config1.yaml",
+        )?)
         .context("system_cfg")?;
         let persisted_state =
             PersistedState::get_current_state(&system_cfg).context("persisted_state")?;

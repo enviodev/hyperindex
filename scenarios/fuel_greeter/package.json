@@ -6,13 +6,13 @@
     "build": "tsc --build",
     "watch": "tsc --watch",
     "mocha": "ts-mocha test/**/*.ts",
-    "codegen": "envio codegen",
-    "dev": "envio dev",
+    "codegen": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- codegen",
+    "dev": "cargo run --manifest-path ../../codegenerator/cli/Cargo.toml -- dev",
     "test": "pnpm mocha",
     "start": "ts-node generated/src/Index.bs.js"
   },
   "devDependencies": {
-    "@types/chai": "^4.3.11",    
+    "@types/chai": "^4.3.11",
     "@types/mocha": "10.0.6",
     "@types/node": "20.8.8",
     "ts-mocha": "^10.0.0",

@@ -15,7 +15,7 @@ describe("Transfers", () => {
 
       //Make a mock entity to set the initial state of the mock db
       let mockAccountEntity: Entities.Account.t = {
-        id: userAddress1->Ethers.ethAddressToString,
+        id: userAddress1->Address.toString,
         balance: BigInt.fromInt(5),
       }
 
@@ -42,7 +42,7 @@ describe("Transfers", () => {
       //Get the balance of userAddress1 after the transfer
       let account1Balance =
         mockDbAfterTransfer.entities.account.get(
-          userAddress1->Ethers.ethAddressToString,
+          userAddress1->Address.toString,
         )->Option.map(a => a.balance)
 
       //Assert the expected balance
@@ -55,7 +55,7 @@ describe("Transfers", () => {
       //Get the balance of userAddress2 after the transfer
       let account2Balance =
         mockDbAfterTransfer.entities.account.get(
-          userAddress2->Ethers.ethAddressToString,
+          userAddress2->Address.toString,
         )->Option.map(a => a.balance)
       //Assert the expected balance
       Assert.equal(

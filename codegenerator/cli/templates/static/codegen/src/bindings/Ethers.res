@@ -17,25 +17,13 @@ let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Utils.mag
 
 let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
 
-@genType.import(("./OpaqueTypes.ts", "EthersAddress"))
-type ethAddress
-
-@module("ethers") @scope("ethers")
-external getAddressFromStringUnsafe: string => ethAddress = "getAddress"
-/**
-Same binding as getAddress from string 
-but used when we receive and address that's not necessarily checksummed
-*/
-@module("ethers")
-@scope("ethers")
-external formatEthAddress: ethAddress => ethAddress = "getAddress"
-let getAddressFromString = str => Misc.unsafeToOption(() => str->getAddressFromStringUnsafe)
-external ethAddressToString: ethAddress => string = "%identity"
-let ethAddressToStringLower = (address: ethAddress): string =>
-  address->ethAddressToString->Js.String2.toLowerCase
-
-let ethAddressSchema =
-  S.string->S.setName("ethAddress")->(Utils.magic: S.t<string> => S.t<ethAddress>)
+// TODO: Remove in v3
+@genType.import(("./OpaqueTypes.ts", "Address"))
+type ethAddress = Address.t
+let getAddressFromStringUnsafe = Address.Evm.fromStringOrThrow
+let formatEthAddress = Address.Evm.checksum
+let ethAddressToString = Address.toString
+let ethAddressSchema = Address.schema
 
 type txHash = string
 

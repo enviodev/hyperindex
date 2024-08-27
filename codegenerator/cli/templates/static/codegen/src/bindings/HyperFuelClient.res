@@ -103,13 +103,13 @@ module QueryTypes = {
   type outputSelection
 
   type receiptSelection = {
-    rootContractId?: array<Fuel.fuelAddress>,
+    rootContractId?: array<Address.t>,
     toAddress?: array<string>,
     assetId?: array<string>,
     receiptType?: array<Fuel.receiptType>,
     sender?: array<string>,
     recipient?: array<string>,
-    contractId?: array<Fuel.fuelAddress>,
+    contractId?: array<Address.t>,
     ra?: array<bigint>,
     rb?: array<string>,
     rc?: array<bigint>,
@@ -246,7 +246,7 @@ module FuelTypes = {
     /** Index of the receipt in the block */
     receiptIndex: int,
     /** Contract that produced the receipt */
-    rootContractId?: Fuel.Address.t,
+    rootContractId?: Address.t,
     /** transaction that this receipt originated from */
     txId: string,
     /** The status type of the transaction this receipt originated from */
@@ -304,7 +304,7 @@ module FuelTypes = {
     /** The nonce value for a message. */
     nonce?: string,
     /** Current context if in an internal context. null otherwise */
-    contractId?: Fuel.Address.t,
+    contractId?: Address.t,
     /** The sub id. */
     subId?: string,
   }
@@ -406,92 +406,3 @@ let make = (cfg: cfg) => {
 
 @send
 external getSelectedData: (t, QueryTypes.query) => promise<queryResponseTyped> = "getSelectedData"
-
-// module Decoder = {
-//   type abiMapping = Js.Dict.t<Ethers.abi>
-
-//   type constructor
-//   @module("@envio-dev/hypersync-client") external constructor: constructor = "Decoder"
-
-//   type t
-
-//   @send external new: (constructor, abiMapping) => t = "new"
-//   @send external enableChecksummedAddresses: t => unit = "enableChecksummedAddresses"
-
-//   let make = abiMapping => {
-//     let t = constructor->new(abiMapping)
-//     t->enableChecksummedAddresses
-//     t
-//   }
-//   /*
-//   Note! Usinging opaque definitions here since unboxed doesn't yet support bigint!
-
-//   type rec decodedSolType<'a> = {val: 'a}
-
-//   @unboxed
-//   type rec decodedRaw =
-//     | DecodedBool(bool)
-//     | DecodedStr(string)
-//     | DecodedNum(Js.Bigint.t)
-//     | DecodedVal(decodedSolType<decodedRaw>)
-//     | DecodedArr(array<decodedRaw>)
-
-//   @unboxed
-//   type rec decodedUnderlying =
-//     | Bool(bool)
-//     | Str(string)
-//     | Num(Js.Bigint.t)
-//     | Arr(array<decodedUnderlying>)
-
-//   let rec toUnderlying = (d: decodedRaw): decodedUnderlying => {
-//     switch d {
-//     | DecodedVal(v) => v.val->toUnderlying
-//     | DecodedBool(v) => Bool(v)
-//     | DecodedStr(v) => Str(v)
-//     | DecodedNum(v) => Num(v)
-//     | DecodedArr(v) => v->Belt.Array.map(toUnderlying)->Arr
-//     }
-//   }
-// */
-
-//   type decodedRaw
-//   type decodedUnderlying
-//   /**
-//   See the commented code above. This should be possible with unboxed
-//   rescript types but since there is not support yet for bigint I've just
-//   copied the rescript generated code (using int instead of bigint) and swapped
-//   it out int for bigint.
-//   */
-//   let toUnderlying: decodedRaw => decodedUnderlying = %raw(`
-//     function toUnderlying(_d) {
-//       while(true) {
-//         var d = _d;
-//         if (Array.isArray(d)) {
-//           return d.map(toUnderlying);
-//         }
-//         switch (typeof d) {
-//           case "boolean" :
-//               return d;
-//           case "string" :
-//               return d;
-//           case "bigint" :
-//               return d;
-//           case "object" :
-//               _d = d.val;
-//               continue ;
-//           default:
-//             throw new Error("Unsupported type encountered: " + typeof d);
-//         }
-//       };
-//     }
-//   `)
-
-//   type decodedEvent = {
-//     indexed: array<decodedRaw>,
-//     body: array<decodedRaw>,
-//   }
-
-//   @send
-//   external decodeEvents: (t, array<ResponseTypes.event>) => promise<array<option<decodedEvent>>> =
-//     "decodeEvents"
-// }

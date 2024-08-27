@@ -7,12 +7,15 @@ module type S = {
     type t
   }
 
+  module Address: {
+    type t
+  }
+
   module Viem: {
     type decodedEvent<'a>
   }
 
   module Ethers: {
-    type ethAddress
     type abi
     module JsonRpcProvider: {
       type t
@@ -51,7 +54,7 @@ module type S = {
     type eventLog<'a> = {
       params: 'a,
       chainId: int,
-      srcAddress: Ethers.ethAddress,
+      srcAddress: Address.t,
       logIndex: int,
       transaction: Transaction.t,
       block: Block.t,
@@ -85,8 +88,8 @@ module type S = {
 
   module ContractAddressingMap: {
     type mapping
-    let getAllAddresses: mapping => array<Ethers.ethAddress>
-    let getAddressesFromContractName: (mapping, ~contractName: string) => array<Ethers.ethAddress>
+    let getAllAddresses: mapping => array<Address.t>
+    let getAddressesFromContractName: (mapping, ~contractName: string) => array<Address.t>
   }
 
   module FetchState: {
@@ -162,7 +165,7 @@ module type S = {
     type contract = {
       name: string,
       abi: Ethers.abi,
-      addresses: array<Ethers.ethAddress>,
+      addresses: array<Address.t>,
       events: array<module(Types.Event)>,
     }
 

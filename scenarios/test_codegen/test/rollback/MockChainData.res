@@ -1,5 +1,6 @@
 module Indexer = {
   module Pino = Pino
+  module Address = Address
   module ErrorHandling = ErrorHandling
   module Enums = Enums
   module Types = Types
