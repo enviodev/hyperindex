@@ -202,7 +202,7 @@ use anyhow::{Context, Result};
 use ethers::abi::ParamType;
 use nested_params::{flatten_event_inputs, FlattenedEventParam, ParamIndex};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{path::PathBuf, vec};
 
 ///The struct that houses all the details of each contract necessary for
 ///populating the contract import templates
@@ -324,9 +324,10 @@ impl Event {
         is_fuel: bool,
         language: &Language,
     ) -> Result<Self> {
+        let empty_params = vec![];
         let params = match &event.payload {
             EventPayload::Params(params) => params,
-            EventPayload::Data(_) => todo!("Event data payload not yet supported"),
+            EventPayload::Data(_) => &empty_params,
         };
         let params = flatten_event_inputs(params.clone())
             .into_iter()
