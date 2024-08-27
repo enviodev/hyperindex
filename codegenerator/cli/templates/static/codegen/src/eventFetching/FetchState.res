@@ -269,14 +269,6 @@ let updateRegister = (
 }
 
 /**
-Links next register to a dynamic contract register
-*/
-let addNextRegister = (register: t, ~nextRegister: t, ~dynamicContractId) => {
-  ...register,
-  registerType: DynamicContractRegister(dynamicContractId, nextRegister),
-}
-
-/**
 Updates node at the given id with the values passed.
 Errors if the node can't be found.
 */
@@ -889,7 +881,7 @@ let rec rollback = (
     if updatedWithRemovedDynamicContracts.contractAddressMapping->ContractAddressingMap.isEmpty {
       //If the contractAddressMapping is empty after pruning dynamic contracts, then this
       //is a dead register. Simly return its next register rolled back
-      nextRegister->rollback(~lastKnownValidBlock)
+      nextRegister->rollback(~lastKnownValidBlock, ~parent?)
     } else {
       //If there are still values in the contractAddressMapping, we should keep the register but
       //prune queues and next register
@@ -924,7 +916,13 @@ let isActivelyIndexing = fetchState => {
   }
 }
 
-let getNumContracts = (self: t) => self.contractAddressMapping->ContractAddressingMap.addressCount
+let rec getNumContracts = (self: t, ~accum=0) => {
+  let accum = accum + self.contractAddressMapping->ContractAddressingMap.addressCount
+  switch self.registerType {
+  | RootRegister(_) => accum
+  | DynamicContractRegister(_, nextRegister) => nextRegister->getNumContracts(~accum)
+  }
+}
 
 /**
 Helper functions for debugging and printing
