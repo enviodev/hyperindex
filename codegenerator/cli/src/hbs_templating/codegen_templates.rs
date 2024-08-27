@@ -351,7 +351,6 @@ pub struct EventTemplate {
     pub params: Vec<EventParamTypeTemplate>,
     pub indexed_params: Vec<EventParamTypeTemplate>,
     pub body_params: Vec<EventParamTypeTemplate>,
-    pub is_async: bool,
     pub topic0: String,
 }
 
@@ -395,7 +394,6 @@ impl EventTemplate {
         Ok(EventTemplate {
             name,
             params,
-            is_async: config_event.is_async,
             body_params,
             indexed_params,
             topic0,
@@ -1011,7 +1009,6 @@ mod test {
             body_params: params.clone(),
             params,
             indexed_params: vec![],
-            is_async: false,
         }
     }
 
