@@ -1,4 +1,7 @@
-use crate::utils::text::{Capitalize, CapitalizedOptions};
+use crate::{
+    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
+    utils::text::{Capitalize, CapitalizedOptions},
+};
 use anyhow::{anyhow, Result};
 use core::fmt;
 use itertools::Itertools;
@@ -155,11 +158,30 @@ pub struct RescriptRecordField {
 }
 
 impl RescriptRecordField {
+    pub fn to_valid_res_name(s: &String) -> String {
+        if s.is_empty() {
+            return "_".to_string();
+        }
+
+        let first_char = s.chars().next().unwrap();
+        match first_char {
+            '0'..='9' => return format!("_{}", s),
+            _ => (),
+        }
+
+        let uncapitalized = s.uncapitalize();
+        if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
+            format!("{}_", uncapitalized)
+        } else {
+            uncapitalized
+        }
+    }
+
     pub fn new(name: String, type_ident: RescriptTypeIdent) -> Self {
-        // TODO: validate name and add as_name if reserved
+        let res_name = Self::to_valid_res_name(&name);
         Self {
-            name,
-            as_name: None,
+            as_name: if res_name == name { None } else { Some(name) },
+            name: res_name,
             type_ident,
         }
     }
@@ -222,29 +244,6 @@ impl RescriptTypeIdent {
     //Simply an ergonomic shorthand
     pub fn to_ok_expr(self) -> anyhow::Result<RescriptTypeExpr> {
         Ok(self.to_expr())
-    }
-
-    pub fn to_string_decoded_skar(&self) -> String {
-        match self {
-            RescriptTypeIdent::Array(inner_type) => format!(
-                "array<HyperSyncClient.Decoder.decodedSolType<{}>>",
-                inner_type.to_string_decoded_skar()
-            ),
-            RescriptTypeIdent::Tuple(inner_types) => {
-                let inner_types_str = inner_types
-                    .iter()
-                    .map(|inner_type| inner_type.to_string_decoded_skar())
-                    .collect::<Vec<String>>()
-                    .join(", ");
-                format!(
-                    "HyperSyncClient.Decoder.decodedSolType<({})>",
-                    inner_types_str
-                )
-            }
-            v => {
-                format!("HyperSyncClient.Decoder.decodedSolType<{}>", v.to_string())
-            }
-        }
     }
 
     fn to_string(&self) -> String {
@@ -572,6 +571,26 @@ mod tests {
         );
 
         let expected = r#"type myRecord = {@as("reservedWord") reservedWord_: myCustomType, myOptBool: option<bool>}"#.to_string();
+
+        assert_eq!(type_decl.to_string(), expected);
+    }
+
+    #[test]
+    fn type_decl_with_invalid_rescript_field_names_to_string_record() {
+        let type_decl = RescriptTypeDecl::new(
+            "myRecord".to_string(),
+            RescriptTypeExpr::Record(vec![
+                RescriptRecordField::new("module".to_string(), RescriptTypeIdent::Bool),
+                RescriptRecordField::new("".to_string(), RescriptTypeIdent::Bool),
+                RescriptRecordField::new("1".to_string(), RescriptTypeIdent::Bool),
+                RescriptRecordField::new("Capitalized".to_string(), RescriptTypeIdent::Bool),
+                // Invalid characters in the middle are not handled correctly. Still keep the test to pin the behaviour.
+                RescriptRecordField::new("dashed-field".to_string(), RescriptTypeIdent::Bool),
+            ]),
+            vec![],
+        );
+
+        let expected = r#"type myRecord = {@as("module") module_: bool, @as("") _: bool, @as("1") _1: bool, @as("Capitalized") capitalized: bool, dashed-field: bool}"#.to_string();
 
         assert_eq!(type_decl.to_string(), expected);
     }

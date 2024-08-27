@@ -232,12 +232,7 @@ module {{contract.name.capitalized}} = {
 
     {{#if event.params}}
     @genType
-    type eventArgs = {
-      {{#each event.params as | param |}}
-      @as("{{param.js_name}}")
-      {{param.res_name}}: {{param.res_type}},
-      {{/each}}
-    }
+    type eventArgs = {{data_type}}
 
     let eventArgsSchema = S.object(s => {
     {{#each event.params as | param |}}

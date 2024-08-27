@@ -3,7 +3,7 @@ use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
 use crate::config_parsing::system_config::{Ecosystem, EventPayload, HyperfuelConfig};
-use crate::rescript_types::RescriptTypeIdent;
+use crate::rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent};
 use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
@@ -11,7 +11,6 @@ use crate::{
         postgres_types,
         system_config::{self, HypersyncConfig, RpcConfig, SystemConfig},
     },
-    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
         handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
@@ -25,15 +24,6 @@ use ethers::abi::EventParam;
 use pathdiff::diff_paths;
 use serde::Serialize;
 
-fn make_res_name(js_name: &String) -> String {
-    let uncapitalized = js_name.uncapitalize();
-    if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
-        format!("{}_", uncapitalized)
-    } else {
-        uncapitalized
-    }
-}
-
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
     pub res_name: String,
@@ -43,7 +33,6 @@ pub struct EventParamTypeTemplate {
     pub default_value_rescript: String,
     pub default_value_non_rescript: String,
     pub is_eth_address: bool,
-    pub type_rescript_skar_decoded_param: String,
     pub is_indexed: bool,
 }
 
@@ -353,6 +342,7 @@ pub struct EventTemplate {
     pub topic0: String,
     pub decode_hyper_fuel_data_code: String,
     pub convert_hyper_sync_event_args_code: String,
+    pub data_type: String,
 }
 
 impl EventTemplate {
@@ -374,14 +364,14 @@ impl EventTemplate {
         for (index, param) in indexed_params.into_iter().enumerate() {
             code.push_str(&format!(
               "        {}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n",
-              make_res_name(&param.name), index
+              RescriptRecordField::to_valid_res_name(&param.name), index
           ));
         }
 
         for (index, param) in body_params.into_iter().enumerate() {
             code.push_str(&format!(
               "        {}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n",
-              make_res_name(&param.name), index
+              RescriptRecordField::to_valid_res_name(&param.name), index
           ));
         }
 
@@ -402,7 +392,7 @@ impl EventTemplate {
                 let res_type = abi_to_rescript_type(&input.into());
                 let js_name = input.name.to_string();
                 EventParamTypeTemplate {
-                    res_name: make_res_name(&js_name),
+                    res_name: RescriptRecordField::to_valid_res_name(&js_name),
                     js_name,
                     default_value_rescript: res_type.get_default_value_rescript(),
                     default_value_non_rescript: res_type.get_default_value_non_rescript(),
@@ -410,14 +400,23 @@ impl EventTemplate {
                     res_schema_code: res_type.to_rescript_schema(),
                     is_eth_address: res_type == RescriptTypeIdent::Address,
                     is_indexed: input.indexed,
-                    type_rescript_skar_decoded_param: res_type.to_string_decoded_skar(),
                 }
             })
             .collect::<Vec<_>>();
 
+        let data_type_expr = RescriptTypeExpr::Record(
+            params
+                .iter()
+                .map(|p| {
+                    RescriptRecordField::new(p.name.to_string(), abi_to_rescript_type(&p.into()))
+                })
+                .collect(),
+        );
+
         Ok(EventTemplate {
             name,
             params: template_params,
+            data_type: data_type_expr.to_string(),
             topic0: config_event.topic0.to_string(),
             convert_hyper_sync_event_args_code: Self::generate_convert_hyper_sync_event_args_code(
                 params,
@@ -1009,7 +1008,7 @@ mod test {
         fn new(name: &str, res_type: RescriptTypeIdent) -> Self {
             let js_name = name.to_string();
             Self {
-                res_name: make_res_name(&js_name),
+                res_name: RescriptRecordField::to_valid_res_name(&js_name),
                 js_name,
                 res_type: res_type.to_string(),
                 res_schema_code: res_type.to_rescript_schema(),
@@ -1017,7 +1016,6 @@ mod test {
                 default_value_non_rescript: res_type.get_default_value_non_rescript(),
                 is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,
                 is_indexed: false,
-                type_rescript_skar_decoded_param: res_type.to_string_decoded_skar(),
             }
         }
     }
@@ -1034,6 +1032,7 @@ mod test {
             name: "NewGravatar".to_string().to_capitalized_options(),
             topic0,
             params,
+            data_type: "{id: bigint, owner: Address.t, displayName: string, imageUrl: string}".to_string(),
             convert_hyper_sync_event_args_code: "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n        id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n      }\n    }".to_string(),
             decode_hyper_fuel_data_code:
                 "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),

@@ -194,7 +194,7 @@ use crate::{
         entity_parsing::{Entity, Field, FieldType, Schema},
         system_config::{self, Ecosystem, EventPayload, SystemConfig},
     },
-    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
+    rescript_types::RescriptRecordField,
     template_dirs::TemplateDirs,
     utils::text::{Capitalize, CapitalizedOptions},
 };
@@ -380,18 +380,9 @@ pub struct Param {
 }
 
 impl Param {
-    fn make_res_name(js_name: &String) -> String {
-        let uncapitalized = js_name.uncapitalize();
-        if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
-            format!("{}_", uncapitalized)
-        } else {
-            uncapitalized
-        }
-    }
-
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
         let js_name = flattened_event_param.event_param.name.to_string();
-        let res_name = Self::make_res_name(&js_name);
+        let res_name = RescriptRecordField::to_valid_res_name(&js_name);
         Ok(Param {
             res_name,
             js_name,
