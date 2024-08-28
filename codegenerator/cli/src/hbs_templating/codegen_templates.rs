@@ -337,7 +337,7 @@ impl EntityRecordTypeTemplate {
 pub struct EventTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EventParamTypeTemplate>,
-    pub topic0: String,
+    pub sighash: String,
     pub decode_hyper_fuel_data_code: String,
     pub convert_hyper_sync_event_args_code: String,
     pub data_type: String,
@@ -426,7 +426,7 @@ impl EventTemplate {
                     params: template_params,
                     data_type: data_type_expr.to_string(),
                     data_schema_code: data_type_expr.to_rescript_schema(),
-                    topic0: config_event.topic0.to_string(),
+                    sighash: config_event.sighash.to_string(),
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
@@ -437,7 +437,7 @@ impl EventTemplate {
                 params: vec![],
                 data_type: type_indent.to_string(),
                 data_schema_code: type_indent.to_rescript_schema(),
-                topic0: config_event.topic0.to_string(),
+                sighash: config_event.sighash.to_string(),
                 convert_hyper_sync_event_args_code:
                     "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string(),
                 decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
@@ -1040,7 +1040,7 @@ mod test {
         }
     }
 
-    fn make_expected_event_template(topic0: String) -> EventTemplate {
+    fn make_expected_event_template(sighash: String) -> EventTemplate {
         let params = vec![
             EventParamTypeTemplate::new("id", RESCRIPT_BIG_INT_TYPE),
             EventParamTypeTemplate::new("owner", RESCRIPT_ADDRESS_TYPE),
@@ -1050,7 +1050,7 @@ mod test {
 
         EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
-            topic0,
+            sighash,
             params,
             data_type: "{id: bigint, owner: Address.t, displayName: string, imageUrl: string}".to_string(),
             convert_hyper_sync_event_args_code: "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n        id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n      }\n    }".to_string(),
@@ -1078,7 +1078,7 @@ mod test {
             event_template,
             EventTemplate {
                 name: "NewGravatar".to_string().to_capitalized_options(),
-                topic0: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
                     .to_string(),
                 params: vec![],
                 data_type: "unit".to_string(),
@@ -1099,7 +1099,7 @@ mod test {
             project_template.codegen_contracts[0].codegen_events[0].clone();
 
         let expected_event_template =
-            make_expected_event_template(new_gavatar_event_template.topic0.clone());
+            make_expected_event_template(new_gavatar_event_template.sighash.clone());
 
         assert_eq!(expected_event_template, new_gavatar_event_template);
     }
@@ -1110,7 +1110,7 @@ mod test {
 
         let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
         let expected_event_template =
-            make_expected_event_template(new_gavatar_event_template.topic0.clone());
+            make_expected_event_template(new_gavatar_event_template.sighash.clone());
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }

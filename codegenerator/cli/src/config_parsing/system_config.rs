@@ -810,7 +810,7 @@ pub struct Event {
     event: NormalizedEthAbiEvent,
     pub payload: EventPayload,
     pub name: String,
-    pub topic0: String,
+    pub sighash: String,
 }
 
 impl Event {
@@ -854,7 +854,7 @@ impl Event {
     ) -> Result<Self> {
         let event: NormalizedEthAbiEvent =
             Event::get_abi_event(&event_config.event, opt_abi)?.into();
-        let topic0 = ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
+        let sighash = ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
             event.0.abi_signature().as_bytes(),
         ));
 
@@ -862,7 +862,7 @@ impl Event {
             name: event_config.name.unwrap_or(event.0.name.to_owned()),
             payload: EventPayload::Params(event.0.inputs.clone()),
             event,
-            topic0,
+            sighash,
         })
     }
 
@@ -889,7 +889,7 @@ impl Event {
             name: event_config.name,
             event,
             payload: EventPayload::Data(log.data_type),
-            topic0: log.id,
+            sighash: log.id,
         })
     }
 

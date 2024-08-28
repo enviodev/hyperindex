@@ -208,7 +208,7 @@ module type Event = {
   let key: string
   let name: string
   let contractName: string
-  let topic0: string // Or rb for Fuel receipts
+  let sighash: string // topic0 for Evm and rb for Fuel receipts
 
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
@@ -225,10 +225,10 @@ external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent
 module {{contract.name.capitalized}} = {
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
-    let key = "{{contract.name.capitalized}}_{{event.topic0}}"
+    let key = "{{contract.name.capitalized}}_{{event.sighash}}"
     let name = "{{event.name.capitalized}}"
     let contractName = "{{contract.name.capitalized}}"
-    let topic0 = "{{event.topic0}}"
+    let sighash = "{{event.sighash}}"
     @genType
     type eventArgs = {{data_type}}
     let eventArgsSchema = {{data_schema_code}}
