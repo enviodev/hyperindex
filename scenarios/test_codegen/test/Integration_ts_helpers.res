@@ -49,7 +49,10 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
         let chain = chain
         let contracts = contracts
         let rpcConfig = rpcConfig
-        let eventLookup = EventLookup.empty()
+        let eventModLookup =
+          contracts
+          ->Belt.Array.flatMap(contract => contract.events)
+          ->EventModLookup.fromArrayOrThrow(~chain)
       })
     ),
   }
@@ -61,13 +64,7 @@ type chainManager = ChainManager.t
 @genType
 let makeChainManager = (cfg: chainConfig): chainManager => {
   // FIXME: Should fork from the main ChainMap?
-  ChainManager.makeFromConfig(
-    ~config=Config.make(
-      ~isUnorderedMultichainMode=true,
-      ~chains=[cfg],
-      ~eventLookup=EventLookup.empty(),
-    ),
-  )
+  ChainManager.makeFromConfig(~config=Config.make(~isUnorderedMultichainMode=true, ~chains=[cfg]))
 }
 
 @genType
