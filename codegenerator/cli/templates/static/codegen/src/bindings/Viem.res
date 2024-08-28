@@ -21,11 +21,3 @@ let decodeEventLog: eventLog => result<
   } catch {
   | exn => Error(ParseError(exn))
   }
-
-@module("viem") external getAddressUnsafe: string => Address.t = "getAddress"
-
-let getAddress = s =>
-  switch getAddressUnsafe(s) {
-  | exception exn => Error(exn)
-  | addr => Ok(addr)
-  }

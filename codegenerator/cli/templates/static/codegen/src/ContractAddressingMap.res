@@ -1,8 +1,5 @@
 type contractName = string
 
-exception UndefinedContractName(contractName, Types.chainId)
-exception UndefinedContractAddress(Address.t)
-
 // Currently this mapping append only, so we don't need to worry about
 // protecting static addresses from de-registration.
 
@@ -12,30 +9,12 @@ type mapping = {
 }
 
 let addAddress = (map: mapping, ~name: string, ~address: Address.t) => {
-  let address = address->Address.Evm.checksum
   map.nameByAddress->Js.Dict.set(address->Address.toString, name)
 
   let oldAddresses =
     map.addressesByName->Js.Dict.get(name)->Belt.Option.getWithDefault(Belt.Set.String.empty)
   let newAddresses = oldAddresses->Belt.Set.String.add(address->Address.toString)
   map.addressesByName->Js.Dict.set(name, newAddresses)
-}
-
-/// This adds the address if it doesn't exist and returns a boolean to say if it already existed.
-let addAddressIfNotExists = (map: mapping, ~name: string, ~address: Address.t): bool => {
-  let address = address->Address.Evm.checksum
-  let addressIsNew =
-    map.nameByAddress
-    ->Js.Dict.get(address->Address.toString)
-    ->Belt.Option.mapWithDefault(true, expectedName => expectedName != name)
-
-  /* check the name, since differently named contracts can have the same address */
-
-  if addressIsNew {
-    addAddress(map, ~name, ~address)
-  }
-
-  addressIsNew
 }
 
 let getAddresses = (map: mapping, name: string) => {
@@ -51,17 +30,12 @@ let make = () => {
   addressesByName: Js.Dict.empty(),
 }
 
-let getContractNameFromAddress = (mapping, ~contractAddress: Address.t): option<
-  contractName,
-> => {
+let getContractNameFromAddress = (mapping, ~contractAddress: Address.t): option<contractName> => {
   mapping->getName(contractAddress->Address.toString)
 }
 
 let stringsToAddresses: array<string> => array<Address.t> = Utils.magic
-let keyValStringToAddress: array<(string, string)> => array<(
-  Address.t,
-  string,
-)> = Utils.magic
+let keyValStringToAddress: array<(string, string)> => array<(Address.t, string)> = Utils.magic
 
 let getAddressesFromContractName = (mapping, ~contractName) => {
   switch mapping->getAddresses(contractName) {

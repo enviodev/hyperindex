@@ -21,7 +21,6 @@ let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
 @genType.import(("./OpaqueTypes.ts", "Address"))
 type ethAddress = Address.t
 let getAddressFromStringUnsafe = Address.Evm.fromStringOrThrow
-let formatEthAddress = Address.Evm.checksum
 let ethAddressToString = Address.toString
 let ethAddressSchema = Address.schema
 

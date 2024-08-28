@@ -41,15 +41,12 @@
     "ts-mocha": "^10.0.0",
     "ts-node": "10.9.1",
     "typescript": "5.2.2",
+    "chai": "4.3.10",
   {{/if}}    
     "mocha": "10.2.0"
   },
   "dependencies": {
-    {{#if is_typescript}}
-    "chai": "4.3.10",
-    {{/if}}    
-    "envio": "{{envio_version}}",
-    "ethers": "6.8.0"
+    "envio": "{{envio_version}}"
   },
   "optionalDependencies": {
     "generated": "{{relative_path_from_root_to_generated}}"
