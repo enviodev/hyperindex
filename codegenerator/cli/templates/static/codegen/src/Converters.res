@@ -17,13 +17,13 @@ let makeEventLog = (
     logIndex: log.logIndex,
   }->Types.eventToInternal
 
-type eventLookup = {
-  topic0: string,
+type eventModLookup = {
+  sighash: string,
   contractAddress: Address.t,
   chainId: int,
 }
 
-exception EventModuleNotFound(eventLookup)
+exception EventModuleNotFound(eventModLookup)
 
 let convertHyperSyncEvent = (
   event: HyperSyncClient.Decoder.decodedEvent,
@@ -32,18 +32,17 @@ let convertHyperSyncEvent = (
   ~block,
   ~chain,
   ~transaction,
-  ~eventLookup: EventLookup.t<EventLookup.eventMod>,
+  ~eventModLookup: EventModLookup.t,
 ): result<(Types.eventLog<Types.internalEventArgs>, module(Types.InternalEvent)), _> => {
-  switch eventLookup->EventLookup.getEvent(
-    ~topic0=log.topics[0],
-    ~chain,
+  switch eventModLookup->EventModLookup.get(
+    ~sighash=log.topics[0],
     ~contractAddressMapping,
     ~contractAddress=log.address,
   ) {
   | None =>
     Error(
       EventModuleNotFound({
-        topic0: log.topics[0],
+        sighash: log.topics[0],
         contractAddress: log.address,
         chainId: chain->ChainMap.Chain.toChainId,
       }),
@@ -60,7 +59,7 @@ let convertHyperSyncEvent = (
 
 let parseEvent = (
   ~log: Types.Log.t,
-  ~eventLookup: EventLookup.t<EventLookup.eventMod>,
+  ~eventModLookup: EventModLookup.t,
   ~block,
   ~contractInterfaceManager,
   ~chain,
@@ -75,16 +74,15 @@ let parseEvent = (
     }->Error
 
   | Ok(decodedEvent) =>
-    switch eventLookup->EventLookup.getEvent(
-      ~topic0=log.topics[0],
-      ~chain,
+    switch eventModLookup->EventModLookup.get(
+      ~sighash=log.topics[0],
       ~contractAddressMapping=contractInterfaceManager.contractAddressMapping,
       ~contractAddress=log.address,
     ) {
     | None =>
       Error(
         EventModuleNotFound({
-          topic0: log.topics[0],
+          sighash: log.topics[0],
           contractAddress: log.address,
           chainId: chain->ChainMap.Chain.toChainId,
         }),

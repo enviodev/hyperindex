@@ -16,12 +16,12 @@ module Make = (
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
     let endpointUrl: string
-    let eventLookup: EventLookup.t<EventLookup.eventMod>
+    let eventModLookup: EventModLookup.t
   },
 ): S => {
   let name = "HyperFuel"
   let chain = T.chain
-  let eventLookup = T.eventLookup
+  let eventModLookup = T.eventModLookup
 
   module Helpers = {
     let rec queryLogsPageWithBackoff = async (
@@ -262,8 +262,8 @@ module Make = (
               | LogData({rb}) => rb
               }
               let eventMod =
-                eventLookup
-                ->EventLookup.getEventByKey(~contractName, ~topic0=logId->Js.BigInt.toString)
+                eventModLookup
+                ->EventModLookup.getByKey(~contractName, ~sighash=logId->Js.BigInt.toString)
                 ->Option.getExn
               let module(Event) = eventMod
 

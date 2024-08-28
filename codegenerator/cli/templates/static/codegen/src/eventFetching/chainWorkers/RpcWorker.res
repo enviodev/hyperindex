@@ -6,12 +6,12 @@ module Make = (
     let rpcConfig: Config.rpcConfig
     let chain: ChainMap.Chain.t
     let contracts: array<Config.contract>
-    let eventLookup: EventLookup.t<EventLookup.eventMod>
+    let eventModLookup: EventModLookup.t
   },
 ): S => {
   let name = "RPC"
   let chain = T.chain
-  let eventLookup = T.eventLookup
+  let eventModLookup = T.eventModLookup
 
   let blockIntervals = Js.Dict.empty()
 
@@ -123,7 +123,7 @@ module Make = (
         ~chain,
         ~blockLoader,
         ~logger,
-        ~eventLookup,
+        ~eventModLookup,
       )
 
       let eventBatches = await eventBatchPromises->Promise.all

@@ -73,14 +73,11 @@ let getSyncConfig = ({
   queryTimeoutMillis,
 }
 
-type eventModLookup = EventLookup.t<EventLookup.eventMod>
-
 type t = {
   historyConfig: historyConfig,
   isUnorderedMultichainMode: bool,
   chainMap: ChainMap.t<chainConfig>,
   defaultChain: option<chainConfig>,
-  events: EventLookup.t<EventLookup.eventMod>,
   enableRawEvents: bool,
   entities: array<module(Entities.InternalEntity)>,
 }
@@ -92,21 +89,7 @@ let make = (
   ~chains=[],
   ~enableRawEvents=false,
   ~entities=[],
-  ~eventLookup: EventLookup.t<EventLookup.eventMod>,
 ) => {
-  chains->Js.Array2.forEach(chainConfig => {
-    chainConfig.contracts->Js.Array2.forEach(contract => {
-      contract.events->Js.Array2.forEach(
-        eventMod => {
-          let eventMod = eventMod->Types.eventModWithoutArgTypeToInternal
-          //ignore the result, we don't care if it's already in the lookup
-          //multiple contracts can have the same event in config so just ignore the
-          //duplicates here
-          eventLookup->EventLookup.addEvent(eventMod, ~eventMod)->ignore
-        },
-      )
-    })
-  })
   {
     historyConfig: {
       rollbackFlag: shouldRollbackOnReorg ? RollbackOnReorg : NoRollback,
@@ -123,7 +106,6 @@ let make = (
     })
     ->ChainMap.fromArrayUnsafe,
     defaultChain: chains->Array.get(0),
-    events: eventLookup,
     enableRawEvents,
     entities: entities->(
       Utils.magic: array<module(Entities.Entity)> => array<module(Entities.InternalEntity)>
