@@ -34,7 +34,7 @@ let registerContractHandlers = (
           abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
           addresses: [
             {{#each contract.addresses as | address |}}
-            {{#if is_evm_ecosystem}}
+            {{#if ../../../is_evm_ecosystem}}
             "{{address}}"->Address.Evm.fromStringOrThrow
             {{else}}
             "{{address}}"->Address.unsafeFromString
