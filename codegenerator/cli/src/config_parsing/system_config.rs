@@ -163,7 +163,7 @@ impl SystemConfig {
         let mut filtered_unique_abi_files = self
             .get_contracts()
             .into_iter()
-            .filter_map(|c| c.abi.path.clone())
+            .filter_map(|c| c.abi.get_path())
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
@@ -744,10 +744,32 @@ impl EvmAbi {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum Abi {
+    Evm(EvmAbi),
+    Fuel(FuelAbi),
+}
+
+impl Abi {
+    fn get_path(&self) -> Option<PathBuf> {
+        match self {
+            Abi::Evm(abi) => abi.path.clone(),
+            Abi::Fuel(abi) => Some(abi.path_buf.clone()),
+        }
+    }
+
+    pub fn get_raw(&self) -> String {
+        match self {
+            Abi::Evm(abi) => abi.raw.clone(),
+            Abi::Fuel(abi) => abi.raw.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Contract {
     pub name: ContractNameKey,
     pub handler_path: String,
-    pub abi: EvmAbi,
+    pub abi: Abi,
     pub events: Vec<Event>,
 }
 
@@ -780,11 +802,11 @@ impl Contract {
             name,
             events,
             handler_path,
-            abi: EvmAbi {
+            abi: Abi::Evm(EvmAbi {
                 path: abi_from_file.and_then(|abi| abi.path),
                 raw: events_abi_raw,
                 typed: events_abi,
-            },
+            }),
         })
     }
 
@@ -1101,12 +1123,14 @@ mod test {
 
         let contract_name = "Contract1".to_string();
 
-        let contract_abi = config
+        let contract_abi = match &config
             .get_contract(&contract_name)
             .expect("Failed getting contract")
             .abi
-            .typed
-            .clone();
+        {
+            super::Abi::Evm(abi) => abi.typed.clone(),
+            super::Abi::Fuel(_) => panic!("Fuel abi should not be parsed"),
+        };
 
         let expected_abi_string = r#"
                 [

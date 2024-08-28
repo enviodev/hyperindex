@@ -491,7 +491,7 @@ impl ContractTemplate {
             name,
             handler,
             codegen_events,
-            abi: contract.abi.raw.clone(),
+            abi: contract.abi.get_raw(),
             event_signatures,
             chain_ids,
         })
