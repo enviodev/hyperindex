@@ -71,10 +71,16 @@ mod test {
 
     #[test]
     fn convert_address_to_checksum_string() {
-        let address_str = "0x6B175474E89094C44Da98b954EedeAC495271d0F";
+        let address_str = "0x85149247691df622eaf1a8bd0cafd40bc45154a9";
         let address = Address::new(address_str).unwrap();
-        assert_eq!(address_str, address.to_string());
-        assert_eq!(address_str, address.to_checksum_hex_string()); //same as above
+        assert_eq!(
+            address.to_string(),
+            "0x85149247691df622eaF1a8Bd0CaFd40BC45154a9"
+        );
+        assert_eq!(
+            address.to_checksum_hex_string(),
+            "0x85149247691df622eaF1a8Bd0CaFd40BC45154a9"
+        ); //same as to_string
     }
 
     #[test]
