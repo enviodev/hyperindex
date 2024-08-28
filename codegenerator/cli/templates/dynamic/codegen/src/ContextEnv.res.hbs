@@ -61,8 +61,7 @@ let makeDynamicContractRegisterFn = (~contextEnv: t<'eventArgs>, ~contractName, 
 ) => {
   // Even though it's the Address.t on ReScript side, for TS side it's a string.
   // So we need to ensure that it's a valid checksummed address.
-  let contractAddress = contractAddress->Address.Evm.fromAddressOrThrow
-
+  let contractAddress = Address.Evm.sanitizeOrThrow(contractAddress)
   let {event, chain, addedDynamicContractRegistrations} = contextEnv
 
   let eventId = event->getEventId
