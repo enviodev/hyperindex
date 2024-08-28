@@ -64,7 +64,7 @@ module type S = {
       let key: string
       let name: string
       let contractName: string
-      let topic0: string
+      let sighash: string
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs

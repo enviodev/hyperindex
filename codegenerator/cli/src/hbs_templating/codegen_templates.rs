@@ -2,8 +2,8 @@ use std::path::PathBuf;
 use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::config_parsing::system_config::{Ecosystem, HyperfuelConfig};
-use crate::rescript_types::RescriptTypeIdent;
+use crate::config_parsing::system_config::{Ecosystem, EventPayload, HyperfuelConfig};
+use crate::rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent};
 use crate::{
     config_parsing::{
         entity_parsing::{Entity, Field, GraphQLEnum, MultiFieldIndex, Schema},
@@ -11,7 +11,6 @@ use crate::{
         postgres_types,
         system_config::{self, HypersyncConfig, RpcConfig, SystemConfig},
     },
-    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
     persisted_state::{PersistedState, PersistedStateJsonString},
     project_paths::{
         handler_paths::HandlerPathsTemplate, path_utils::add_trailing_relative_dot,
@@ -21,29 +20,18 @@ use crate::{
     utils::text::{Capitalize, CapitalizedOptions, CaseOptions},
 };
 use anyhow::{anyhow, Context, Result};
+use ethers::abi::EventParam;
 use pathdiff::diff_paths;
 use serde::Serialize;
-
-fn make_res_name(js_name: &String) -> String {
-    let uncapitalized = js_name.uncapitalize();
-    if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
-        format!("{}_", uncapitalized)
-    } else {
-        uncapitalized
-    }
-}
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
 pub struct EventParamTypeTemplate {
     pub res_name: String,
     pub js_name: String,
     pub res_type: String,
-    pub res_schema_code: String,
     pub default_value_rescript: String,
     pub default_value_non_rescript: String,
     pub is_eth_address: bool,
-    pub type_rescript_skar_decoded_param: String,
-    pub is_indexed: bool,
 }
 
 #[derive(Serialize, Debug, PartialEq, Clone)]
@@ -349,55 +337,112 @@ impl EntityRecordTypeTemplate {
 pub struct EventTemplate {
     pub name: CapitalizedOptions,
     pub params: Vec<EventParamTypeTemplate>,
-    pub indexed_params: Vec<EventParamTypeTemplate>,
-    pub body_params: Vec<EventParamTypeTemplate>,
-    pub topic0: String,
+    pub sighash: String,
+    pub decode_hyper_fuel_data_code: String,
+    pub convert_hyper_sync_event_args_code: String,
+    pub data_type: String,
+    pub data_schema_code: String,
 }
 
 impl EventTemplate {
-    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
-        let name = config_event.name.to_capitalized_options();
-        let params = config_event
-            .get_event_inputs()
-            .iter()
-            .map(|input| {
-                let res_type = abi_to_rescript_type(&input.into());
-                let js_name = input.name.to_string();
-                EventParamTypeTemplate {
-                    res_name: make_res_name(&js_name),
-                    js_name,
-                    default_value_rescript: res_type.get_default_value_rescript(),
-                    default_value_non_rescript: res_type.get_default_value_non_rescript(),
-                    res_type: res_type.to_string(),
-                    res_schema_code: res_type.to_rescript_schema(),
-                    is_eth_address: res_type == RescriptTypeIdent::Address,
-                    is_indexed: input.indexed,
-                    type_rescript_skar_decoded_param: res_type.to_string_decoded_skar(),
-                }
-            })
-            .collect::<Vec<_>>();
+    const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
+        "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
 
+    pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
+        if params.is_empty() {
+            return "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string();
+        }
         let indexed_params = params
             .iter()
-            .filter(|param| param.is_indexed)
-            .cloned()
-            .collect();
+            .filter(|param| param.indexed)
+            .collect::<Vec<_>>();
 
         let body_params = params
             .iter()
-            .filter(|param| !param.is_indexed)
-            .cloned()
-            .collect();
+            .filter(|param| !param.indexed)
+            .collect::<Vec<_>>();
 
-        let topic0 = config_event.get_event_topic0();
+        let mut code = String::from(
+            "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n",
+        );
 
-        Ok(EventTemplate {
-            name,
-            params,
-            body_params,
-            indexed_params,
-            topic0,
-        })
+        for (index, param) in indexed_params.into_iter().enumerate() {
+            code.push_str(&format!(
+              "        {}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n",
+              RescriptRecordField::to_valid_res_name(&param.name), index
+          ));
+        }
+
+        for (index, param) in body_params.into_iter().enumerate() {
+            code.push_str(&format!(
+              "        {}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n",
+              RescriptRecordField::to_valid_res_name(&param.name), index
+          ));
+        }
+
+        code.push_str("      }\n    }");
+
+        code
+    }
+
+    pub fn from_config_event(config_event: &system_config::Event) -> Result<Self> {
+        let name = config_event.name.to_capitalized_options();
+        match &config_event.payload {
+            EventPayload::Params(params) => {
+                let template_params = params
+                    .iter()
+                    .map(|input| {
+                        let res_type = abi_to_rescript_type(&input.into());
+                        let js_name = input.name.to_string();
+                        EventParamTypeTemplate {
+                            res_name: RescriptRecordField::to_valid_res_name(&js_name),
+                            js_name,
+                            default_value_rescript: res_type.get_default_value_rescript(),
+                            default_value_non_rescript: res_type.get_default_value_non_rescript(),
+                            res_type: res_type.to_string(),
+                            is_eth_address: res_type == RescriptTypeIdent::Address,
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                let data_type_expr = if params.is_empty() {
+                    RescriptTypeExpr::Identifier(RescriptTypeIdent::Unit)
+                } else {
+                    RescriptTypeExpr::Record(
+                        params
+                            .iter()
+                            .map(|p| {
+                                RescriptRecordField::new(
+                                    p.name.to_string(),
+                                    abi_to_rescript_type(&p.into()),
+                                )
+                            })
+                            .collect(),
+                    )
+                };
+
+                Ok(EventTemplate {
+                    name,
+                    params: template_params,
+                    data_type: data_type_expr.to_string(),
+                    data_schema_code: data_type_expr.to_rescript_schema(),
+                    sighash: config_event.sighash.to_string(),
+                    convert_hyper_sync_event_args_code:
+                        Self::generate_convert_hyper_sync_event_args_code(params),
+                    decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+                })
+            }
+            EventPayload::Data(type_indent) => Ok(EventTemplate {
+                name,
+                params: vec![],
+                data_type: type_indent.to_string(),
+                data_schema_code: type_indent.to_rescript_schema(),
+                sighash: config_event.sighash.to_string(),
+                convert_hyper_sync_event_args_code:
+                    "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string(),
+                decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+            }),
+        }
     }
 }
 
@@ -738,7 +783,10 @@ mod test {
 
     use super::*;
     use crate::{
-        config_parsing::system_config::{RpcConfig, SystemConfig},
+        config_parsing::{
+            human_config,
+            system_config::{RpcConfig, SystemConfig},
+        },
         project_paths::ParsedProjectPaths,
         utils::text::Capitalize,
     };
@@ -982,20 +1030,17 @@ mod test {
         fn new(name: &str, res_type: RescriptTypeIdent) -> Self {
             let js_name = name.to_string();
             Self {
-                res_name: make_res_name(&js_name),
+                res_name: RescriptRecordField::to_valid_res_name(&js_name),
                 js_name,
                 res_type: res_type.to_string(),
-                res_schema_code: res_type.to_rescript_schema(),
                 default_value_rescript: res_type.get_default_value_rescript(),
                 default_value_non_rescript: res_type.get_default_value_non_rescript(),
                 is_eth_address: res_type == RESCRIPT_ADDRESS_TYPE,
-                is_indexed: false,
-                type_rescript_skar_decoded_param: res_type.to_string_decoded_skar(),
             }
         }
     }
 
-    fn make_expected_event_template(topic0: String) -> EventTemplate {
+    fn make_expected_event_template(sighash: String) -> EventTemplate {
         let params = vec![
             EventParamTypeTemplate::new("id", RESCRIPT_BIG_INT_TYPE),
             EventParamTypeTemplate::new("owner", RESCRIPT_ADDRESS_TYPE),
@@ -1005,11 +1050,45 @@ mod test {
 
         EventTemplate {
             name: "NewGravatar".to_string().to_capitalized_options(),
-            topic0,
-            body_params: params.clone(),
+            sighash,
             params,
-            indexed_params: vec![],
+            data_type: "{id: bigint, owner: Address.t, displayName: string, imageUrl: string}".to_string(),
+            convert_hyper_sync_event_args_code: "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n        id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n      }\n    }".to_string(),
+            decode_hyper_fuel_data_code:
+                "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),
+            data_schema_code: "S.object(s => {id: s.field(\"id\", BigInt.schema), owner: s.field(\"owner\", Address.schema), displayName: s.field(\"displayName\", S.string), imageUrl: s.field(\"imageUrl\", S.string)})".to_string(),
         }
+    }
+
+    #[test]
+    fn event_template_with_empty_params() {
+        let event_template = EventTemplate::from_config_event(
+            &system_config::Event::from_evm_event_config(
+                human_config::evm::EventConfig {
+                    event: "NewGravatar()".to_string(),
+                    name: None,
+                },
+                &None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            event_template,
+            EventTemplate {
+                name: "NewGravatar".to_string().to_capitalized_options(),
+                sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                    .to_string(),
+                params: vec![],
+                data_type: "unit".to_string(),
+                convert_hyper_sync_event_args_code:
+                    "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string(),
+                decode_hyper_fuel_data_code:
+                    "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),
+                data_schema_code: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -1020,7 +1099,7 @@ mod test {
             project_template.codegen_contracts[0].codegen_events[0].clone();
 
         let expected_event_template =
-            make_expected_event_template(new_gavatar_event_template.topic0.clone());
+            make_expected_event_template(new_gavatar_event_template.sighash.clone());
 
         assert_eq!(expected_event_template, new_gavatar_event_template);
     }
@@ -1031,7 +1110,7 @@ mod test {
 
         let new_gavatar_event_template = &project_template.codegen_contracts[0].codegen_events[0];
         let expected_event_template =
-            make_expected_event_template(new_gavatar_event_template.topic0.clone());
+            make_expected_event_template(new_gavatar_event_template.sighash.clone());
 
         assert_eq!(&expected_event_template, new_gavatar_event_template);
     }

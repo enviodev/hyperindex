@@ -3,8 +3,11 @@ use super::{
     entity_parsing::{Entity, GraphQLEnum, Schema},
     human_config::{
         self,
-        evm::{EventConfig, EventDecoder, HumanConfig as EvmConfig, Network as EvmNetwork},
-        fuel::HumanConfig as FuelConfig,
+        evm::{
+            EventConfig as EvmEventConfig, EventDecoder, HumanConfig as EvmConfig,
+            Network as EvmNetwork,
+        },
+        fuel::{EventConfig as FuelEventConfig, HumanConfig as FuelConfig},
     },
     hypersync_endpoints,
     validation::{self, validate_names_valid_rescript},
@@ -12,7 +15,9 @@ use super::{
 use crate::{
     config_parsing::human_config::evm::{RpcBlockField, RpcTransactionField},
     constants::{links, project_paths::DEFAULT_SCHEMA_PATH, DEFAULT_CONFIRMED_BLOCK_THRESHOLD},
+    fuel::abi::FuelAbi,
     project_paths::{path_utils, ParsedProjectPaths},
+    rescript_types::RescriptTypeIdent,
     utils::unique_hashmap,
 };
 use anyhow::{anyhow, Context, Result};
@@ -326,20 +331,21 @@ impl SystemConfig {
         //Add all global contracts
         if let Some(global_contracts) = &fuel_config.contracts {
             for g_contract in global_contracts {
+                let abi_path = path_utils::get_config_path_relative_to_root(
+                    project_paths,
+                    PathBuf::from(&g_contract.config.abi_file_path),
+                )
+                .context("Failed to get path to ABI relative to the root of the project")?;
+                let fuel_abi = FuelAbi::parse(abi_path).context(format!(
+                    "Failed to parse ABI for the contract {}",
+                    g_contract.name
+                ))?;
                 let events = g_contract
                     .config
                     .events
                     .iter()
                     .cloned()
-                    .map(|e| {
-                        Event::from_evm_event_config(
-                            EventConfig {
-                                event: format!("{}()", e.name),
-                                name: None,
-                            },
-                            &None,
-                        )
-                    })
+                    .map(|e| Event::from_fuel_event_config(e, &fuel_abi))
                     .collect::<Result<Vec<_>>>()
                     .context(format!(
                         "Failed parsing abi types for events in global contract {}",
@@ -364,19 +370,20 @@ impl SystemConfig {
                 //Add values for local contract
                 match contract.config {
                     Some(l_contract) => {
+                        let abi_path = path_utils::get_config_path_relative_to_root(
+                            project_paths,
+                            PathBuf::from(&l_contract.abi_file_path),
+                        )
+                        .context("Failed to get path to ABI relative to the root of the project")?;
+                        let fuel_abi = FuelAbi::parse(abi_path).context(format!(
+                            "Failed to parse ABI for the contract {}",
+                            contract.name
+                        ))?;
                         let events = l_contract
                             .events
                             .iter()
                             .cloned()
-                            .map(|e| {
-                                Event::from_evm_event_config(
-                                    EventConfig {
-                                        event: format!("{}()", e.name),
-                                        name: None,
-                                    },
-                                    &None,
-                                )
-                            })
+                            .map(|e| Event::from_fuel_event_config(e, &fuel_abi))
                             .collect::<Result<Vec<_>>>()?;
 
                         // FIXME: Support Fuel for contract
@@ -792,9 +799,18 @@ impl Contract {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum EventPayload {
+    Params(Vec<EventParam>),
+    Data(RescriptTypeIdent),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Event {
+    // TODO: Remove EthAbiEvent from Event struct
     event: NormalizedEthAbiEvent,
+    pub payload: EventPayload,
     pub name: String,
+    pub sighash: String,
 }
 
 impl Event {
@@ -833,15 +849,47 @@ impl Event {
     }
 
     pub fn from_evm_event_config(
-        human_cfg_event: EventConfig,
+        event_config: EvmEventConfig,
         opt_abi: &Option<EvmAbi>,
     ) -> Result<Self> {
         let event: NormalizedEthAbiEvent =
-            Event::get_abi_event(&human_cfg_event.event, opt_abi)?.into();
+            Event::get_abi_event(&event_config.event, opt_abi)?.into();
+        let sighash = ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
+            event.0.abi_signature().as_bytes(),
+        ));
 
         Ok(Event {
-            name: human_cfg_event.name.unwrap_or(event.0.name.to_owned()),
+            name: event_config.name.unwrap_or(event.0.name.to_owned()),
+            payload: EventPayload::Params(event.0.inputs.clone()),
             event,
+            sighash,
+        })
+    }
+
+    // TODO: Validatate that all event names are unique
+    // TODO: Validatate that event names are not reserved
+    pub fn from_fuel_event_config(
+        event_config: FuelEventConfig,
+        fuel_abi: &FuelAbi,
+    ) -> Result<Self> {
+        let event: NormalizedEthAbiEvent =
+            Event::get_abi_event(&format!("{}()", event_config.name), &None)?.into();
+
+        let log = match event_config.log_id {
+            None => {
+                let logged_type = fuel_abi.get_type_by_struct_name(event_config.name.clone()).context(
+                  "Failed to derive log ids from the event name. Use the lodId field to set it explicitely."
+                )?;
+                fuel_abi.get_log_by_type(logged_type.id)?
+            }
+            Some(log_id) => fuel_abi.get_log(&log_id)?,
+        };
+
+        Ok(Event {
+            name: event_config.name,
+            event,
+            payload: EventPayload::Data(log.data_type),
+            sighash: log.id,
         })
     }
 
@@ -849,18 +897,8 @@ impl Event {
         &self.event.0
     }
 
-    pub fn get_event_inputs(&self) -> Vec<EventParam> {
-        self.get_event().inputs.clone()
-    }
-
-    pub fn get_event_topic0(&self) -> String {
-        ethers::core::utils::hex::encode_prefixed(ethers::utils::keccak256(
-            self.get_event().abi_signature().as_bytes(),
-        ))
-    }
-
     pub fn get_event_signature(&self) -> String {
-        EventConfig::event_string_from_abi_event(&self.event.0)
+        EvmEventConfig::event_string_from_abi_event(&self.event.0)
     }
 }
 

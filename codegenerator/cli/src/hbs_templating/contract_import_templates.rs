@@ -192,9 +192,9 @@ use crate::{
     cli_args::init_config::Language,
     config_parsing::{
         entity_parsing::{Entity, Field, FieldType, Schema},
-        system_config::{self, Ecosystem, SystemConfig},
+        system_config::{self, Ecosystem, EventPayload, SystemConfig},
     },
-    constants::reserved_keywords::RESCRIPT_RESERVED_WORDS,
+    rescript_types::RescriptRecordField,
     template_dirs::TemplateDirs,
     utils::text::{Capitalize, CapitalizedOptions},
 };
@@ -202,7 +202,7 @@ use anyhow::{Context, Result};
 use ethers::abi::ParamType;
 use nested_params::{flatten_event_inputs, FlattenedEventParam, ParamIndex};
 use serde::Serialize;
-use std::path::PathBuf;
+use std::{path::PathBuf, vec};
 
 ///The struct that houses all the details of each contract necessary for
 ///populating the contract import templates
@@ -324,7 +324,12 @@ impl Event {
         is_fuel: bool,
         language: &Language,
     ) -> Result<Self> {
-        let params = flatten_event_inputs(event.get_event_inputs())
+        let empty_params = vec![];
+        let params = match &event.payload {
+            EventPayload::Params(params) => params,
+            EventPayload::Data(_) => &empty_params,
+        };
+        let params = flatten_event_inputs(params.clone())
             .into_iter()
             .map(|input| Param::from_event_param(input))
             .collect::<Result<_>>()
@@ -376,18 +381,9 @@ pub struct Param {
 }
 
 impl Param {
-    fn make_res_name(js_name: &String) -> String {
-        let uncapitalized = js_name.uncapitalize();
-        if RESCRIPT_RESERVED_WORDS.contains(&uncapitalized.as_str()) {
-            format!("{}_", uncapitalized)
-        } else {
-            uncapitalized
-        }
-    }
-
     fn from_event_param(flattened_event_param: FlattenedEventParam) -> Result<Self> {
         let js_name = flattened_event_param.event_param.name.to_string();
-        let res_name = Self::make_res_name(&js_name);
+        let res_name = RescriptRecordField::to_valid_res_name(&js_name);
         Ok(Param {
             res_name,
             js_name,
