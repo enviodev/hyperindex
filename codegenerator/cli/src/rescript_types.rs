@@ -326,7 +326,7 @@ impl RescriptTypeIdent {
 
     pub fn to_rescript_schema(&self) -> String {
         match self {
-            Self::Unit => "S.unit".to_string(),
+            Self::Unit => "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
             Self::Int => "S.int".to_string(),
             Self::Float => "GqlDbCustomTypes.Float.schema".to_string(),
             Self::BigInt => "BigInt.schema".to_string(),
@@ -564,6 +564,10 @@ mod tests {
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::Float).to_rescript_schema(),
             "GqlDbCustomTypes.Float.schema".to_string()
+        );
+        assert_eq!(
+            RescriptTypeExpr::Identifier(RescriptTypeIdent::Unit).to_rescript_schema(),
+            "S.literal(%raw(`null`))->S.variant(_ => ())".to_string()
         );
         assert_eq!(
             RescriptTypeExpr::Identifier(RescriptTypeIdent::BigInt).to_rescript_schema(),

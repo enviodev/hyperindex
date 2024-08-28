@@ -349,6 +349,9 @@ impl EventTemplate {
         "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
 
     pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
+        if params.is_empty() {
+            return "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string();
+        }
         let indexed_params = params
             .iter()
             .filter(|param| param.indexed)
@@ -386,37 +389,26 @@ impl EventTemplate {
         let name = config_event.name.to_capitalized_options();
         match &config_event.payload {
             EventPayload::Params(params) => {
-                if params.is_empty() {
-                    Ok(EventTemplate {
-                        name,
-                        params: vec![],
-                        data_type: "unit".to_string(),
-                        data_schema_code: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
-                        topic0: config_event.topic0.to_string(),
-                        convert_hyper_sync_event_args_code:
-                            "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)"
-                                .to_string(),
-                        decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+                let template_params = params
+                    .iter()
+                    .map(|input| {
+                        let res_type = abi_to_rescript_type(&input.into());
+                        let js_name = input.name.to_string();
+                        EventParamTypeTemplate {
+                            res_name: RescriptRecordField::to_valid_res_name(&js_name),
+                            js_name,
+                            default_value_rescript: res_type.get_default_value_rescript(),
+                            default_value_non_rescript: res_type.get_default_value_non_rescript(),
+                            res_type: res_type.to_string(),
+                            is_eth_address: res_type == RescriptTypeIdent::Address,
+                        }
                     })
-                } else {
-                    let template_params = params
-                        .iter()
-                        .map(|input| {
-                            let res_type = abi_to_rescript_type(&input.into());
-                            let js_name = input.name.to_string();
-                            EventParamTypeTemplate {
-                                res_name: RescriptRecordField::to_valid_res_name(&js_name),
-                                js_name,
-                                default_value_rescript: res_type.get_default_value_rescript(),
-                                default_value_non_rescript: res_type
-                                    .get_default_value_non_rescript(),
-                                res_type: res_type.to_string(),
-                                is_eth_address: res_type == RescriptTypeIdent::Address,
-                            }
-                        })
-                        .collect::<Vec<_>>();
+                    .collect::<Vec<_>>();
 
-                    let data_type_expr = RescriptTypeExpr::Record(
+                let data_type_expr = if params.is_empty() {
+                    RescriptTypeExpr::Identifier(RescriptTypeIdent::Unit)
+                } else {
+                    RescriptTypeExpr::Record(
                         params
                             .iter()
                             .map(|p| {
@@ -426,19 +418,19 @@ impl EventTemplate {
                                 )
                             })
                             .collect(),
-                    );
+                    )
+                };
 
-                    Ok(EventTemplate {
-                        name,
-                        params: template_params,
-                        data_type: data_type_expr.to_string(),
-                        data_schema_code: data_type_expr.to_rescript_schema(),
-                        topic0: config_event.topic0.to_string(),
-                        convert_hyper_sync_event_args_code:
-                            Self::generate_convert_hyper_sync_event_args_code(params),
-                        decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
-                    })
-                }
+                Ok(EventTemplate {
+                    name,
+                    params: template_params,
+                    data_type: data_type_expr.to_string(),
+                    data_schema_code: data_type_expr.to_rescript_schema(),
+                    topic0: config_event.topic0.to_string(),
+                    convert_hyper_sync_event_args_code:
+                        Self::generate_convert_hyper_sync_event_args_code(params),
+                    decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+                })
             }
             EventPayload::Data(type_indent) => Ok(EventTemplate {
                 name,
