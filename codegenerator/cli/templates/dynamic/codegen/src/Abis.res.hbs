@@ -15,8 +15,7 @@ let all = [
 }
 
 {{#each codegen_contracts as |contract|}}
-let
-{{contract.name.uncapitalized}}Abi = `
+let {{contract.name.uncapitalized}}Abi: Js.Json.t = %raw(`
 {{contract.abi}}
-`->Js.Json.parseExn
+`)
 {{/each}}
