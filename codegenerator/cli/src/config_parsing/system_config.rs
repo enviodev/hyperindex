@@ -772,13 +772,6 @@ impl Abi {
             Abi::Fuel(abi) => Some(abi.path_buf.clone()),
         }
     }
-
-    pub fn get_raw(&self) -> String {
-        match self {
-            Abi::Evm(abi) => abi.raw.clone(),
-            Abi::Fuel(abi) => abi.raw.clone(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
