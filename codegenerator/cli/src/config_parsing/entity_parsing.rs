@@ -1225,6 +1225,8 @@ pub enum GqlScalar {
     #[subenum(AdditionalGqlScalar)]
     BigDecimal,
     #[subenum(AdditionalGqlScalar)]
+    Timestamp,
+    #[subenum(AdditionalGqlScalar)]
     Bytes,
     Custom(String),
 }
@@ -1259,6 +1261,7 @@ impl GqlScalar {
             "Boolean" => GqlScalar::Boolean,
             "BigInt" => GqlScalar::BigInt, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
             "BigDecimal" => GqlScalar::BigDecimal,
+            "Timestamp" => GqlScalar::Timestamp,
             "Bytes" => GqlScalar::Bytes,
             name => GqlScalar::Custom(name.to_string()),
         }
@@ -1273,6 +1276,7 @@ impl GqlScalar {
             GqlScalar::Bytes => "text",
             GqlScalar::BigInt => "numeric", // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
             GqlScalar::BigDecimal => "numeric",
+            GqlScalar::Timestamp => "timestamp",
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => "text",
                 TypeDef::Enum => name.as_str(),
@@ -1291,6 +1295,7 @@ impl GqlScalar {
             GqlScalar::Bytes => PGPrimitive::Text,
             GqlScalar::BigInt => PGPrimitive::Numeric, // NOTE: we aren't setting precision and scale - see (8.1.2) https://www.postgresql.org/docs/current/datatype-numeric.html
             GqlScalar::BigDecimal => PGPrimitive::Numeric, //   also not setting precision here.
+            GqlScalar::Timestamp => PGPrimitive::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => PGPrimitive::Text,
                 TypeDef::Enum => PGPrimitive::Enum(name.clone()),
@@ -1309,6 +1314,7 @@ impl GqlScalar {
             GqlScalar::Float => RescriptTypeIdent::Float,
             GqlScalar::Bytes => RescriptTypeIdent::String,
             GqlScalar::Boolean => RescriptTypeIdent::Bool,
+            GqlScalar::Timestamp => RescriptTypeIdent::Timestamp,
             GqlScalar::Custom(name) => match schema.try_get_type_def(name)? {
                 TypeDef::Entity(_) => RescriptTypeIdent::ID,
                 TypeDef::Enum => RescriptTypeIdent::SchemaEnum(name.to_capitalized_options()),
