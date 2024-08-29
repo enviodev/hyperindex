@@ -156,13 +156,6 @@ type logDescription<'a> = {
   topic: string,
 }
 
-module PreparedTopicFilter = {
-  /** The type returend by contract.filters.\<Event>() */
-  type t
-
-  @get @scope("fragment") external getTopicHash: t => EventFilter.topic = "topicHash"
-}
-
 module Network = {
   type t
 
@@ -279,11 +272,4 @@ module EventFragment = {
     anonymous: bool,
     topicHash: EventFilter.topic,
   }
-}
-
-module Interface = {
-  type t
-  @module("ethers") @scope("ethers") @new external make: (~abi: abi) => t = "Interface"
-
-  @send external forEachEvent: (t, (EventFragment.t, int) => unit) => unit = "forEachEvent"
 }
