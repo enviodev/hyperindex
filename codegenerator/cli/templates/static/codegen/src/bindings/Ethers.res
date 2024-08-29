@@ -1,34 +1,22 @@
-type t
-@module("ethers") external ethersCheck: t = "ethers"
-
-module Misc = {
-  let unsafeToOption: (unit => 'a) => option<'a> = unsafeFunc => {
-    try {
-      unsafeFunc()->Some
-    } catch {
-    | Js.Exn.Error(_obj) => None
-    }
-  }
-}
-
 type abi
-
-let makeHumanReadableAbi = (abiArray: array<string>): abi => abiArray->Utils.magic
 
 let makeAbi = (abi: Js.Json.t): abi => abi->Utils.magic
 
-// TODO: Remove in v3
 @genType.import(("./OpaqueTypes.ts", "Address"))
+@deprecated("Use Address.t instead. The type will be removed in v3")
 type ethAddress = Address.t
+@deprecated("Use Address.Evm.fromStringOrThrow instead. The function will be removed in v3")
 let getAddressFromStringUnsafe = Address.Evm.fromStringOrThrow
+@deprecated("Use Address.toString instead. The function will be removed in v3")
 let ethAddressToString = Address.toString
+@deprecated("Use Address.schema instead. The function will be removed in v3")
 let ethAddressSchema = Address.schema
 
 type txHash = string
 
 module Constants = {
   @module("ethers") @scope("ethers") external zeroHash: string = "ZeroHash"
-  @module("ethers") @scope("ethers") external zeroAddress: ethAddress = "ZeroAddress"
+  @module("ethers") @scope("ethers") external zeroAddress: Address.t = "ZeroAddress"
 }
 
 module Addresses = {
@@ -86,7 +74,7 @@ module BlockTag = {
 module EventFilter = {
   type topic = string
   type t = {
-    address: ethAddress,
+    address: Address.t,
     topics: array<topic>,
   }
 }
@@ -96,7 +84,7 @@ module Filter = {
   //This can be used as a filter but should not assume all filters  are the same type
   //address could be an array of addresses like in combined filter
   type filterRecord = {
-    address: ethAddress,
+    address: Address.t,
     topics: array<EventFilter.topic>,
     fromBlock: BlockTag.t,
     toBlock: BlockTag.t,
@@ -107,7 +95,7 @@ module Filter = {
 
 module CombinedFilter = {
   type combinedFilterRecord = {
-    address: array<ethAddress>,
+    address: array<Address.t>,
     //The second element of the tuple is the
     topics: array<array<EventFilter.topic>>,
     fromBlock: BlockTag.t,
@@ -146,7 +134,7 @@ type log = {
   blockHash: string,
   removed: option<bool>,
   //Note: this is the index of the log in the transaction and should be used whenever we use "logIndex"
-  address: ethAddress,
+  address: Address.t,
   data: string,
   topics: array<EventFilter.topic>,
   transactionHash: txHash,
@@ -268,16 +256,16 @@ module JsonRpcProvider = {
   type block = {
     _difficulty: bigint,
     difficulty: int,
-    extraData: ethAddress,
+    extraData: Address.t,
     gasLimit: bigint,
     gasUsed: bigint,
     hash: string,
-    miner: ethAddress,
+    miner: Address.t,
     nonce: int,
     number: int,
-    parentHash: ethAddress,
+    parentHash: Address.t,
     timestamp: int,
-    transactions: array<ethAddress>,
+    transactions: array<Address.t>,
   }
 
   @send
@@ -296,50 +284,6 @@ module EventFragment = {
 module Interface = {
   type t
   @module("ethers") @scope("ethers") @new external make: (~abi: abi) => t = "Interface"
-  @send
-  external parseLogUnsafe: (t, ~log: minimumParseableLogData) => Js.Nullable.t<logDescription<'a>> =
-    "parseLog"
-
-  type parseLogError = EventNotFound | ParseError(exn)
-
-  let parseLog = (interface: t, ~log: log): Belt.Result.t<logDescription<'a>, parseLogError> => {
-    try {
-      let parsed = interface->parseLogUnsafe(~log=log->logToMinimumParseableLogData)
-      switch parsed->Js.Nullable.toOption {
-      | Some(val) => Ok(val)
-      | None => Error(EventNotFound)
-      }
-    } catch {
-    | e => Error(ParseError(e))
-    }
-  }
-
-  @send external parseLogJson: (t, ~log: log) => logDescription<Js.Json.t> = "parseLog"
 
   @send external forEachEvent: (t, (EventFragment.t, int) => unit) => unit = "forEachEvent"
-}
-
-module Contract = {
-  type t
-  @module("ethers") @scope("ethers") @new
-  external make: (~address: ethAddress, ~abi: abi, ~provider: JsonRpcProvider.t) => t = "Contract"
-
-  @get external getEthAddress: t => ethAddress = "target"
-  @get external getInterface: t => Interface.t = "interface"
-
-  @ocaml.warning("-27")
-  let getPreparedTopicFilter = (contract: t, ~eventName: string): option<PreparedTopicFilter.t> =>
-    Misc.unsafeToOption(() => %raw("contract.filters[eventName]()"))
-
-  let getEventFilter = (contract: t, ~eventName: string): EventFilter.t => {
-    let address = contract->getEthAddress
-    let topics =
-      contract
-      ->getPreparedTopicFilter(~eventName)
-      ->Belt.Option.mapWithDefault([], preparedTopicFilter => [
-        preparedTopicFilter->PreparedTopicFilter.getTopicHash,
-      ])
-
-    {address, topics}
-  }
 }

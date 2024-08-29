@@ -214,7 +214,7 @@ let getCombinedEthersFilter = (
   }
 }
 
-type parseError = ParseError(Ethers.Interface.parseLogError) | UndefinedInterface(Address.t)
+type parseError = ParseError(Viem.decodeEventLogError) | UndefinedInterface(Address.t)
 
 let parseLogViem = (self: t, ~log: Types.Log.t) => {
   let abiOpt =
