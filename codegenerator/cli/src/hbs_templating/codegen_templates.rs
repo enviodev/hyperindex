@@ -492,7 +492,17 @@ impl ContractTemplate {
                         .join(", ")
                 )
             }
-            Abi::Fuel(_) => "".to_string(),
+            Abi::Fuel(abi) => {
+                let abi_res_type_declarations = abi
+                    .to_rescript_type_decl_multi()
+                    .context(format!(
+                        "Failed getting types from the '{}' contract ABI",
+                        contract.name
+                    ))?
+                    .to_string();
+
+                format!("let abi = %raw(`null`)\n{}", abi_res_type_declarations)
+            }
         };
 
         let chain_ids = contract.get_chain_ids(config);
@@ -806,10 +816,7 @@ mod test {
 
     use super::*;
     use crate::{
-        config_parsing::{
-            human_config,
-            system_config::{RpcConfig, SystemConfig},
-        },
+        config_parsing::system_config::{RpcConfig, SystemConfig},
         project_paths::ParsedProjectPaths,
         utils::text::Capitalize,
     };
@@ -1106,16 +1113,12 @@ mod test {
 
     #[test]
     fn event_template_with_empty_params() {
-        let event_template = EventTemplate::from_config_event(
-            &system_config::Event::from_evm_event_config(
-                human_config::evm::EventConfig {
-                    event: "NewGravatar()".to_string(),
-                    name: None,
-                },
-                &None,
-            )
-            .unwrap(),
-        )
+        let event_template = EventTemplate::from_config_event(&system_config::Event {
+            name: "NewGravatar".to_string(),
+            payload: system_config::EventPayload::Params(vec![]),
+            sighash: "0x50f7d27e90d1a5a38aeed4ceced2e8ec1ff185737aca96d15791b470d3f17363"
+                .to_string(),
+        })
         .unwrap();
 
         assert_eq!(
