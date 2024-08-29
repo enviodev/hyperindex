@@ -146,7 +146,9 @@ pub mod evm {
         #[serde(skip_serializing_if = "Option::is_none")]
         #[schemars(
             description = "A flag to indicate if the indexer should rollback to the last known \
-                           valid block on a reorg (default: true)"
+                           valid block on a reorg. This currently incurs a performance hit on \
+                           historical sync and is recommended to turn this off while developing \
+                           (default: true)"
         )]
         pub rollback_on_reorg: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
