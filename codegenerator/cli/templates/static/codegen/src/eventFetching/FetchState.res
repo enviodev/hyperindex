@@ -544,13 +544,6 @@ let makeNoItem = ({latestFetchedBlock}: t) => NoItem(latestFetchedBlock)
 
 let qItemLt = (a, b) => a->getCmpVal < b->getCmpVal
 
-type earliestEventResponse = {
-  //make this lazy to prevent extra array duplications
-  //before evaluation of earliestQueueItem
-  updateFetchStateMut: unit => unit,
-  earliestQueueItem: queueItem,
-}
-
 /**
 Returns queue item WITHOUT the updated fetch state. Used for checking values
 not updating state
@@ -562,16 +555,6 @@ let getEarliestEventInRegister = (self: t) => {
   | None => makeNoItem(self)
   }
 }
-
-/**
-Returns queue item WITH the updated fetch state. 
-*/
-let getEarliestEventInRegisterWithUpdatedQueue = (self: t) =>
-  switch self.fetchedEventQueue->Utils.Array.last {
-  | None => makeNoItem(self)
-  | Some(head) =>
-    Item({item: head, popItemOffQueue: () => self.fetchedEventQueue->Js.Array2.pop->ignore})
-  }
 
 /**
 Recurses through all registers and finds the register with the earliest queue item,
@@ -607,7 +590,7 @@ let rec popQItemAtRegisterId = (self: t, ~id) => {
   switch self.registerType {
   | RootRegister(_)
   | DynamicContractRegister(_) if id == self->getRegisterId =>
-    self->getEarliestEventInRegisterWithUpdatedQueue->Ok
+    self->getEarliestEventInRegister->Ok
   | DynamicContractRegister(_, nextRegister) => nextRegister->popQItemAtRegisterId(~id)
   | RootRegister(_) => Error(UnexpectedRegisterDoesNotExist(id))
   }
