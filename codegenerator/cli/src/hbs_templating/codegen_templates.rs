@@ -368,16 +368,22 @@ impl EventTemplate {
 
         for (index, param) in indexed_params.into_iter().enumerate() {
             code.push_str(&format!(
-              "        {}: decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n",
-              RescriptRecordField::to_valid_res_name(&param.name), index
-          ));
+                "        {}: \
+                 decodedEvent.indexed->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
+                 toUnderlying->Utils.magic,\n",
+                RescriptRecordField::to_valid_res_name(&param.name),
+                index
+            ));
         }
 
         for (index, param) in body_params.into_iter().enumerate() {
             code.push_str(&format!(
-              "        {}: decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n",
-              RescriptRecordField::to_valid_res_name(&param.name), index
-          ));
+                "        {}: \
+                 decodedEvent.body->Js.Array2.unsafe_get({})->HyperSyncClient.Decoder.\
+                 toUnderlying->Utils.magic,\n",
+                RescriptRecordField::to_valid_res_name(&param.name),
+                index
+            ));
         }
 
         code.push_str("      }\n    }");
@@ -438,8 +444,10 @@ impl EventTemplate {
                 data_type: type_indent.to_string(),
                 data_schema_code: type_indent.to_rescript_schema(),
                 sighash: config_event.sighash.to_string(),
-                convert_hyper_sync_event_args_code:
-                    "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string(),
+                convert_hyper_sync_event_args_code: "(Utils.magic: \
+                                                     HyperSyncClient.Decoder.decodedEvent => \
+                                                     eventArgs)"
+                    .to_string(),
                 decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
             }),
         }
@@ -1052,11 +1060,32 @@ mod test {
             name: "NewGravatar".to_string().to_capitalized_options(),
             sighash,
             params,
-            data_type: "{id: bigint, owner: Address.t, displayName: string, imageUrl: string}".to_string(),
-            convert_hyper_sync_event_args_code: "(decodedEvent: HyperSyncClient.Decoder.decodedEvent): eventArgs => {\n      {\n        id: decodedEvent.body->Js.Array2.unsafe_get(0)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        owner: decodedEvent.body->Js.Array2.unsafe_get(1)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        displayName: decodedEvent.body->Js.Array2.unsafe_get(2)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n        imageUrl: decodedEvent.body->Js.Array2.unsafe_get(3)->HyperSyncClient.Decoder.toUnderlying->Utils.magic,\n      }\n    }".to_string(),
-            decode_hyper_fuel_data_code:
-                "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),
-            data_schema_code: "S.object(s => {id: s.field(\"id\", BigInt.schema), owner: s.field(\"owner\", Address.schema), displayName: s.field(\"displayName\", S.string), imageUrl: s.field(\"imageUrl\", S.string)})".to_string(),
+            data_type: "{id: bigint, owner: Address.t, displayName: string, imageUrl: string}"
+                .to_string(),
+            convert_hyper_sync_event_args_code: "(decodedEvent: \
+                                                 HyperSyncClient.Decoder.decodedEvent): eventArgs \
+                                                 => {\n      {\n        id: \
+                                                 decodedEvent.body->Js.Array2.\
+                                                 unsafe_get(0)->HyperSyncClient.Decoder.\
+                                                 toUnderlying->Utils.magic,\n        owner: \
+                                                 decodedEvent.body->Js.Array2.\
+                                                 unsafe_get(1)->HyperSyncClient.Decoder.\
+                                                 toUnderlying->Utils.magic,\n        displayName: \
+                                                 decodedEvent.body->Js.Array2.\
+                                                 unsafe_get(2)->HyperSyncClient.Decoder.\
+                                                 toUnderlying->Utils.magic,\n        imageUrl: \
+                                                 decodedEvent.body->Js.Array2.\
+                                                 unsafe_get(3)->HyperSyncClient.Decoder.\
+                                                 toUnderlying->Utils.magic,\n      }\n    }"
+                .to_string(),
+            decode_hyper_fuel_data_code: "(_) => Js.Exn.raiseError(\"HyperFuel decoder not \
+                                          implemented\")"
+                .to_string(),
+            data_schema_code: "S.object(s => {id: s.field(\"id\", BigInt.schema), owner: \
+                               s.field(\"owner\", Address.schema), displayName: \
+                               s.field(\"displayName\", S.string), imageUrl: \
+                               s.field(\"imageUrl\", S.string)})"
+                .to_string(),
         }
     }
 
@@ -1082,10 +1111,13 @@ mod test {
                     .to_string(),
                 params: vec![],
                 data_type: "unit".to_string(),
-                convert_hyper_sync_event_args_code:
-                    "(Utils.magic: HyperSyncClient.Decoder.decodedEvent => eventArgs)".to_string(),
-                decode_hyper_fuel_data_code:
-                    "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")".to_string(),
+                convert_hyper_sync_event_args_code: "(Utils.magic: \
+                                                     HyperSyncClient.Decoder.decodedEvent => \
+                                                     eventArgs)"
+                    .to_string(),
+                decode_hyper_fuel_data_code: "(_) => Js.Exn.raiseError(\"HyperFuel decoder not \
+                                              implemented\")"
+                    .to_string(),
                 data_schema_code: "S.literal(%raw(`null`))->S.variant(_ => ())".to_string(),
             }
         );

@@ -460,8 +460,8 @@ impl RescriptTypeIdent {
             Self::Unit => "undefined".to_string(),
             Self::Int | Self::Float => "0".to_string(),
             Self::BigInt => "0n".to_string(),
-            Self::BigDecimal => "// default value not required since BigDecimal \
-                                              doesn't exist on contracts for contract import"
+            Self::BigDecimal => "// default value not required since BigDecimal doesn't exist on \
+                                 contracts for contract import"
                 .to_string(),
             Self::Address => "Addresses.defaultAddress".to_string(),
             Self::String => "\"foo\"".to_string(),
@@ -625,7 +625,8 @@ mod tests {
                 RescriptRecordField::new("fieldB".to_string(), RescriptTypeIdent::Bool),
             ])
             .to_rescript_schema(),
-            "S.object(s => {fieldA: s.field(\"fieldA\", S.int), fieldB: s.field(\"fieldB\", S.bool)})"
+            "S.object(s => {fieldA: s.field(\"fieldA\", S.int), fieldB: s.field(\"fieldB\", \
+             S.bool)})"
                 .to_string()
         );
         assert_eq!(

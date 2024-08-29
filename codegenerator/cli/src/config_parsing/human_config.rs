@@ -483,7 +483,8 @@ pub mod evm {
                                   will take precedence over what is defined in the json ABI")]
         pub event: String,
         #[schemars(
-            description = "Name of the event in the HyperIndex generated code. When ommitted, the event field will be used. Should be unique per contract"
+            description = "Name of the event in the HyperIndex generated code. When ommitted, the \
+                           event field will be used. Should be unique per contract"
         )]
         #[serde(skip_serializing_if = "Option::is_none")]
         pub name: Option<String>,
