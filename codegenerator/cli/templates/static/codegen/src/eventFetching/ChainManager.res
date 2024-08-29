@@ -63,7 +63,6 @@ type noItemsInArray = NoItemsInArray
 
 let determineNextEvent = (
   fetchStatesMap: ChainMap.t<PartitionedFetchState.t>,
-  // ~maybeArbItem
   ~isUnorderedMultichainMode: bool,
 ): result<multiChainEventComparitor, noItemsInArray> => {
   let comparitorFunction = if isUnorderedMultichainMode {
