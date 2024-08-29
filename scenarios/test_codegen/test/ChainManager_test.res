@@ -292,6 +292,7 @@ describe("determineNextEvent", () => {
         event: "SINGLE TEST EVENT"->Utils.magic,
       }
     }
+
     let makeMockFetchState = (~latestFetchedBlockTimestamp, ~item): FetchState.t => {
       isFetchingAtHead: false,
       registerType: RootRegister({endBlock: None}),
@@ -337,20 +338,18 @@ describe("determineNextEvent", () => {
             },
         )
 
-        let {earliestEventResponse: {earliestQueueItem}} =
-          determineNextEvent_unordered(fetchStatesMap)->Result.getExn
+        let {earliestEvent} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
-          earliestQueueItem,
-          Item(singleItem),
+          earliestEvent->FetchState_test.getItem,
+          Some(singleItem),
           ~message="Should have taken the single item",
         )
 
-        let {earliestEventResponse: {earliestQueueItem}} =
-          determineNextEvent_ordered(fetchStatesMap)->Result.getExn
+        let {earliestEvent} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
-          earliestQueueItem,
+          earliestEvent,
           earliestItem,
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )
@@ -394,20 +393,18 @@ describe("determineNextEvent", () => {
         //   NoItem(655 /* later timestamp than the test event */, {id:1}),
         // ]
 
-        let {earliestEventResponse: {earliestQueueItem}} =
-          determineNextEvent_unordered(fetchStatesMap)->Result.getExn
+        let {earliestEvent} = determineNextEvent_unordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
-          earliestQueueItem,
-          Item(singleItem),
+          earliestEvent->FetchState_test.getItem,
+          Some(singleItem),
           ~message="Should have taken the single item",
         )
 
-        let {earliestEventResponse: {earliestQueueItem}} =
-          determineNextEvent_ordered(fetchStatesMap)->Result.getExn
+        let {earliestEvent} = determineNextEvent_ordered(fetchStatesMap)->Result.getExn
 
         Assert.deepEqual(
-          earliestQueueItem,
+          earliestEvent,
           makeNoItem(earliestItemTimestamp),
           ~message="Should return the `NoItem` that is earliest since it is earlier than the `Item`",
         )

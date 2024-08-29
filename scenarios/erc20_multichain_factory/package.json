@@ -16,7 +16,7 @@
     "ethers": "6.8.0",
     "helpers": "../helpers",
     "mocha": "10.2.0",
-    "rescript": "11.1.0",
+    "rescript": "11.1.3",
     "rescript-schema": "8.0.0"
   },
   "optionalDependencies": {
