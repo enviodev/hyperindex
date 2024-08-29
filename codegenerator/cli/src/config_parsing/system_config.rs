@@ -394,7 +394,7 @@ impl SystemConfig {
                         unique_hashmap::try_insert(&mut contracts, contract.name.clone(), contract)
                             .context(format!(
                                 "Failed inserting locally defined network contract at network id \
-                               {}",
+                                 {}",
                                 network.id,
                             ))?;
                     }
@@ -459,16 +459,16 @@ impl SystemConfig {
     pub fn parse_from_project_files(project_paths: &ParsedProjectPaths) -> Result<Self> {
         let human_config_string =
             std::fs::read_to_string(&project_paths.config).context(format!(
-          "EE104: Failed to resolve config path {0}. Make sure you're in the correct directory and \
-           that a config file with the name {0} exists",
-          &project_paths.config
-              .to_str()
-              .unwrap_or("{unknown}"),
-        ))?;
+                "EE104: Failed to resolve config path {0}. Make sure you're in the correct \
+                 directory and that a config file with the name {0} exists",
+                &project_paths.config.to_str().unwrap_or("{unknown}"),
+            ))?;
 
         let config_discriminant: human_config::ConfigDiscriminant =
-          serde_yaml::from_str(&human_config_string)
-                .context("EE105: Failed to deserialize config. The config.yaml file is either not a valid yaml or the \"ecosystem\" field is not a string.")?;
+            serde_yaml::from_str(&human_config_string).context(
+                "EE105: Failed to deserialize config. The config.yaml file is either not a valid \
+                 yaml or the \"ecosystem\" field is not a string.",
+            )?;
 
         let ecosystem = match config_discriminant.ecosystem.as_deref() {
             Some("evm") => Ecosystem::Evm,
@@ -486,16 +486,20 @@ impl SystemConfig {
             Ecosystem::Evm => {
                 let mut evm_config: EvmConfig = serde_yaml::from_str(&human_config_string)
                     .context(format!(
-                    "EE105: Failed to deserialize config. Visit the docs for more information {}",
-                    links::DOC_CONFIGURATION_FILE
-                ))?;
+                        "EE105: Failed to deserialize config. Visit the docs for more information \
+                         {}",
+                        links::DOC_CONFIGURATION_FILE
+                    ))?;
                 evm_config.name = strip_to_letters(&evm_config.name);
                 let schema = Schema::parse_from_file(&project_paths, &evm_config.schema)
                     .context("Parsing schema file for config")?;
                 Self::from_evm_config(evm_config, schema, project_paths)
             }
             Ecosystem::Fuel => {
-                return Err(anyhow!("EE105: Failed to deserialize config. It's not supported with the main envio package yet, please install the envio@fuel version."));
+                return Err(anyhow!(
+                    "EE105: Failed to deserialize config. It's not supported with the main envio \
+                     package yet, please install the envio@fuel version."
+                ));
                 // let mut fuel_config: FuelConfig = serde_yaml::from_str(&human_config_string)
                 //     .context(format!(
                 //     "EE105: Failed to deserialize config. Visit the docs for more information {}",
@@ -877,9 +881,12 @@ impl Event {
 
         let log = match event_config.log_id {
             None => {
-                let logged_type = fuel_abi.get_type_by_struct_name(event_config.name.clone()).context(
-                  "Failed to derive log ids from the event name. Use the lodId field to set it explicitely."
-                )?;
+                let logged_type = fuel_abi
+                    .get_type_by_struct_name(event_config.name.clone())
+                    .context(
+                        "Failed to derive log ids from the event name. Use the lodId field to set \
+                         it explicitely.",
+                    )?;
                 fuel_abi.get_log_by_type(logged_type.id)?
             }
             Some(log_id) => fuel_abi.get_log(&log_id)?,

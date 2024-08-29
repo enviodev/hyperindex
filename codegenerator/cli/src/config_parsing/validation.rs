@@ -90,9 +90,15 @@ pub fn validate_names_valid_rescript(
     let detected_reserved_words = check_reserved_words(names_from_config);
     if !detected_reserved_words.is_empty() {
         return Err(anyhow!(
-            "EE102: The config contains reserved words for {} names: {}. They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
+            "EE102: The config contains reserved words for {} names: {}. They are used for the \
+             generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores.",
             part_of_config,
-            detected_reserved_words.iter().map(|w| format!("\"{}\"", w)).collect::<Vec<_>>().join(", "),
+            detected_reserved_words
+                .iter()
+                .map(|w| format!("\"{}\"", w))
+                .collect::<Vec<_>>()
+                .join(", "),
         ));
     }
 
@@ -104,9 +110,15 @@ pub fn validate_names_valid_rescript(
     }
     if !invalid_names.is_empty() {
         return Err(anyhow!(
-            "EE111: The config contains invalid characters for {} names: {}. They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.",
-             part_of_config,
-             invalid_names.iter().map(|w| format!("\"{}\"", w)).collect::<Vec<_>>().join(", "),
+            "EE111: The config contains invalid characters for {} names: {}. They are used for \
+             the generated code and must be valid identifiers, containing only alphanumeric \
+             characters and underscores.",
+            part_of_config,
+            invalid_names
+                .iter()
+                .map(|w| format!("\"{}\"", w))
+                .collect::<Vec<_>>()
+                .join(", "),
         ));
     }
 
@@ -116,9 +128,9 @@ pub fn validate_names_valid_rescript(
 pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Result<()> {
     if !is_valid_postgres_db_name(&evm_config.name) {
         return Err(anyhow!(
-            "EE108: The 'name' field in your config file must have the following pattern: It \
-             must start with a letter or underscore. It can contain letters, numbers, and \
-             underscores (no spaces). It must have a maximum length of 63 characters",
+            "EE108: The 'name' field in your config file must have the following pattern: It must \
+             start with a letter or underscore. It can contain letters, numbers, and underscores \
+             (no spaces). It must have a maximum length of 63 characters",
         )
         .into());
     }
@@ -136,8 +148,8 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
         if let Some(&network_endblock) = network.end_block.as_ref() {
             if network_endblock < network.start_block {
                 return Err(anyhow!(
-                    "EE110: The config file has an endBlock that is less than the startBlock \
-                     for network id: {}. The endBlock must be greater than the startBlock.",
+                    "EE110: The config file has an endBlock that is less than the startBlock for \
+                     network id: {}. The endBlock must be greater than the startBlock.",
                     &network.id.to_string()
                 ));
             }
@@ -161,8 +173,8 @@ pub fn validate_deserialized_config_yaml(evm_config: &HumanConfig) -> anyhow::Re
     // Checking that contract names are non-unique
     if !are_contract_names_unique(&contract_names) {
         return Err(anyhow!(
-            "EE101: The config file cannot have duplicate contract names. All contract names \
-             need to be unique, regardless of network. Contract names are not case-sensitive.",
+            "EE101: The config file cannot have duplicate contract names. All contract names need \
+             to be unique, regardless of network. Contract names are not case-sensitive.",
         ));
     }
 
@@ -369,7 +381,12 @@ mod tests {
             ],
             "contract".to_string(),
         );
-        assert_eq!(reserved_names.unwrap_err().to_string(), "EE102: The config contains reserved words for contract names: \"module\", \"this\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.");
+        assert_eq!(
+            reserved_names.unwrap_err().to_string(),
+            "EE102: The config contains reserved words for contract names: \"module\", \"this\". \
+             They are used for the generated code and must be valid identifiers, containing only \
+             alphanumeric characters and underscores."
+        );
 
         let invalid_names = super::validate_names_valid_rescript(
             &vec![
@@ -386,6 +403,12 @@ mod tests {
             ],
             "contract".to_string(),
         );
-        assert_eq!(invalid_names.unwrap_err().to_string(), "EE111: The config contains invalid characters for contract names: \"1StartsWithNumber\", \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". They are used for the generated code and must be valid identifiers, containing only alphanumeric characters and underscores.");
+        assert_eq!(
+            invalid_names.unwrap_err().to_string(),
+            "EE111: The config contains invalid characters for contract names: \
+             \"1StartsWithNumber\", \"Has-Hyphen\", \"Has.Dot\", \"Has Space\", \"Has\"Quote\". \
+             They are used for the generated code and must be valid identifiers, containing only \
+             alphanumeric characters and underscores."
+        );
     }
 }
