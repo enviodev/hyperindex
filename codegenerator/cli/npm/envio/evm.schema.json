@@ -69,7 +69,7 @@
       ]
     },
     "rollback_on_reorg": {
-      "description": "A flag to indicate if the indexer should rollback to the last known valid block on a reorg (default: true)",
+      "description": "A flag to indicate if the indexer should rollback to the last known valid block on a reorg. This currently incurs a performance hit on historical sync and is recommended to turn this off while developing (default: true)",
       "type": [
         "boolean",
         "null"

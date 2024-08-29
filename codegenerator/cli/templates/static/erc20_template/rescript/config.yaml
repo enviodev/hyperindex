@@ -11,3 +11,6 @@ networks:
         events:
           - event: "Approval(address indexed owner, address indexed spender, uint256 value)"
           - event: "Transfer(address indexed from, address indexed to, uint256 value)"
+# Rollback on reorg mode currently incurs a performance hit on historical sync
+# while developing an indexer we recommend setting this to false
+rollback_on_reorg: false
