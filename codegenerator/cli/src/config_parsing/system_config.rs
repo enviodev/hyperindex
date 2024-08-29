@@ -700,6 +700,37 @@ pub struct EvmAbi {
 }
 
 impl EvmAbi {
+    pub fn event_signature_from_abi_event(abi_event: &ethers::abi::Event) -> String {
+        format!(
+            "{}({}){}",
+            abi_event.name,
+            abi_event
+                .inputs
+                .iter()
+                .map(|input| {
+                    let param_type = input.kind.to_string();
+                    let indexed_keyword = if input.indexed { " indexed " } else { " " };
+                    let param_name = input.name.clone();
+
+                    format!("{}{}{}", param_type, indexed_keyword, param_name)
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            if abi_event.anonymous {
+                " anonymous"
+            } else {
+                ""
+            },
+        )
+    }
+
+    pub fn get_event_signatures(&self) -> Vec<String> {
+        self.typed
+            .events()
+            .map(|event| Self::event_signature_from_abi_event(event))
+            .collect()
+    }
+
     pub fn from_file(
         abi_file_path: &Option<String>,
         project_paths: &ParsedProjectPaths,
@@ -938,10 +969,6 @@ impl Event {
 
     fn get_event(&self) -> &EthAbiEvent {
         &self.event.0
-    }
-
-    pub fn get_event_signature(&self) -> String {
-        EvmEventConfig::event_string_from_abi_event(&self.event.0)
     }
 }
 

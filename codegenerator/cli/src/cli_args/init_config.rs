@@ -18,6 +18,7 @@ pub mod evm {
                 evm::{ContractConfig, EventConfig, HumanConfig, Network, RpcConfig},
                 GlobalContract, NetworkContract,
             },
+            system_config::EvmAbi,
         },
         utils::unique_hashmap,
     };
@@ -53,7 +54,7 @@ pub mod evm {
                     .events
                     .into_iter()
                     .map(|event| EventConfig {
-                        event: EventConfig::event_string_from_abi_event(&event),
+                        event: EvmAbi::event_signature_from_abi_event(&event),
                         name: None,
                     })
                     .collect();

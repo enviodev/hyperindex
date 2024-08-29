@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::{collections::HashMap, fmt::Display};
 
 use super::hbs_dir_generator::HandleBarsDirGenerator;
-use crate::config_parsing::system_config::{Ecosystem, EventPayload, HyperfuelConfig};
+use crate::config_parsing::system_config::{Abi, Ecosystem, EventPayload, HyperfuelConfig};
 use crate::rescript_types::{RescriptRecordField, RescriptTypeExpr, RescriptTypeIdent};
 use crate::{
     config_parsing::{
@@ -458,9 +458,8 @@ impl EventTemplate {
 pub struct ContractTemplate {
     pub name: CapitalizedOptions,
     pub codegen_events: Vec<EventTemplate>,
-    pub abi: StringifiedAbi,
-    pub event_signatures: Vec<String>,
     pub chain_ids: Vec<u64>,
+    pub module_code: String,
     pub handler: HandlerPathsTemplate,
 }
 
@@ -479,11 +478,22 @@ impl ContractTemplate {
             .map(|event| EventTemplate::from_config_event(event))
             .collect::<Result<_>>()?;
 
-        let event_signatures = contract
-            .events
-            .iter()
-            .map(|event| event.get_event_signature())
-            .collect();
+        let module_code = match &contract.abi {
+            Abi::Evm(abi) => {
+                let signatures = abi.get_event_signatures();
+
+                format!(
+                    "let abi = Ethers.makeAbi((%raw(`{}`): Js.Json.t))\nlet eventSignatures = [{}]",
+                    abi.raw,
+                    signatures
+                        .iter()
+                        .map(|w| format!("\"{}\"", w))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+            Abi::Fuel(_) => "".to_string(),
+        };
 
         let chain_ids = contract.get_chain_ids(config);
 
@@ -491,9 +501,8 @@ impl ContractTemplate {
             name,
             handler,
             codegen_events,
-            abi: contract.abi.get_raw(),
-            event_signatures,
             chain_ids,
+            module_code,
         })
     }
 }
@@ -542,7 +551,6 @@ impl PerNetworkContractTemplate {
 }
 
 type EthAddress = String;
-type StringifiedAbi = String;
 
 #[derive(Debug, Serialize, PartialEq, Clone)]
 struct NetworkTemplate {

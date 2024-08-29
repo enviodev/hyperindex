@@ -31,7 +31,7 @@ let registerContractHandlers = (
           {{#each chain_config.codegen_contracts as | contract |}}
           {
             Config.name: "{{contract.name.capitalized}}",
-            abi: Abis.{{contract.name.uncapitalized}}Abi->Ethers.makeAbi,
+            abi: Types.{{contract.name.capitalized}}.abi,
             addresses: [
               {{#each contract.addresses as | address |}}
               {{#if ../../../is_evm_ecosystem}}
