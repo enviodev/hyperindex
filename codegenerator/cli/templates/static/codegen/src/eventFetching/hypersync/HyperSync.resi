@@ -19,7 +19,7 @@ type missingParams = {
   missingParams: array<string>,
 }
 
-type queryError = UnexpectedMissingParams(missingParams) | QueryError(QueryHelpers.queryError)
+type queryError = UnexpectedMissingParams(missingParams)
 
 exception UnexpectedMissingParamsExn(missingParams)
 

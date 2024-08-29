@@ -79,20 +79,25 @@ module InitApi = {
 
   let responseSchema = S.object(s => s.field("messages", S.array(messageSchema)))
 
-  let serverUrl = "https://envio.dev/api"
-  let endpoint = serverUrl ++ "/hyperindex/init"
+  let envioApiClient = Rest.client(~baseUrl="https://envio.dev/api")
+
+  let getMessages = Rest.route(() => {
+    path: "/hyperindex/init",
+    method: Post,
+    variables: s => s.body(bodySchema),
+    responses: [
+      s => {
+        s.status(#200)
+        s.data(responseSchema)
+      },
+    ],
+  })
 
   let getMessages = (~config) => {
     let envioVersion =
       PersistedState.getPersistedState()->Result.mapWithDefault(None, p => Some(p.envioVersion))
     let body = makeBody(~envioVersion, ~envioApiToken=Env.envioApiToken, ~config)
-
-    QueryHelpers.executeFetchRequest(
-      ~endpoint,
-      ~method=#POST,
-      ~bodyAndSchema=(body, bodySchema),
-      ~responseSchema,
-    )
+    envioApiClient.call(getMessages, body)
   }
 }
 
@@ -102,14 +107,12 @@ let useMessages = (~config) => {
   let (request, setRequest) = React.useState(_ => Loading)
   React.useEffect0(() => {
     InitApi.getMessages(~config)
-    ->Promise.thenResolve(res =>
-      switch res {
-      | Ok(data) => setRequest(_ => Data(data))
-      | Error(e) =>
-        Logging.error({"msg": "Failed to load messages from envio server", "err": e})
-        setRequest(_ => Err(e))
-      }
-    )
+    ->Promise.thenResolve(data => setRequest(_ => Data(data)))
+    ->Promise.catch(e => {
+      Logging.error({"msg": "Failed to load messages from envio server", "err": e})
+      setRequest(_ => Err(e))
+      Promise.resolve()
+    })
     ->ignore
     None
   })

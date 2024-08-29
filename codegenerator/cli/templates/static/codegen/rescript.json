@@ -31,7 +31,8 @@
     "rescript-schema",
     "rescript-express",
     "@glennsl/rescript-fetch",
-    "@rescript/react"
+    "@rescript/react",
+    "rescript-rest"
   ],
   "bsc-flags": ["-open RescriptSchema"]
 }

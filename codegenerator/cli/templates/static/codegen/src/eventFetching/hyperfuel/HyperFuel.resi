@@ -42,8 +42,7 @@ type missingParams = {
   queryName: string,
   missingParams: array<string>,
 }
-type queryError =
-  UnexpectedMissingParams(missingParams) | QueryError(HyperFuelJsonApi.Query.queryError)
+type queryError = UnexpectedMissingParams(missingParams) | QueryError(exn)
 
 exception UnexpectedMissingParamsExn(missingParams)
 
