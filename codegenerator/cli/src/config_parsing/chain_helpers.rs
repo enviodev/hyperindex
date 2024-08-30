@@ -249,6 +249,10 @@ pub enum Network {
     // Still syncing
     // #[subenum(HypersyncNetwork)]
     // Saakuru = 7225878,
+    // #[subenum(HypersyncNetwork)]
+    // CitreaDevnet = 62298,
+    // #[subenum(HypersyncNetwork)]
+    // MorphTestnet = 2810,
 }
 
 impl Network {
