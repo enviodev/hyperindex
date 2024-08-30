@@ -137,9 +137,10 @@ let executeDbFunctionsEntity = (
 }
 
 let executeBatch = async (sql, ~inMemoryStore: InMemoryStore.t) => {
-  let entityDbExecutionComposer = Config.getGenerated()->Config.shouldRollbackOnReorg
-    ? executeSetEntityWithHistory
-    : executeDbFunctionsEntity
+  let entityDbExecutionComposer =
+    RegisterHandlers.getConfig()->Config.shouldRollbackOnReorg
+      ? executeSetEntityWithHistory
+      : executeDbFunctionsEntity
 
   let setEventSyncState = executeSet(
     _,
@@ -222,6 +223,8 @@ module RollBack = {
 
     let inMemStore = InMemoryStore.makeWithRollBackEventIdentifier(Some(rollBackEventIdentifier))
 
+    let shouldRollbackOnReorg = RegisterHandlers.getConfig()->Config.shouldRollbackOnReorg
+
     reorgData->Belt.Array.forEach(e => {
       switch e {
       //Where previousEntity is Some, 
@@ -230,6 +233,7 @@ module RollBack = {
       | {previousEntity: Some({entity: {{entity.name.capitalized}}(entity), eventIdentifier}), entityId} =>
         inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
           Set(entity)->Types.mkEntityUpdate(~eventIdentifier, ~entityId, ~shouldSaveHistory=false),
+          ~shouldRollbackOnReorg,
         )
       {{/each}}
       //Where previousEntity is None, 
@@ -238,6 +242,7 @@ module RollBack = {
       | {previousEntity: None, entityType: {{entity.name.capitalized}}, entityId} =>
         inMemStore.{{entity.name.uncapitalized}}->InMemoryTable.Entity.set(
           Delete->Types.mkEntityUpdate(~eventIdentifier=rollBackEventIdentifier, ~entityId, ~shouldSaveHistory=false),
+          ~shouldRollbackOnReorg,
         )
       {{/each}}
       }

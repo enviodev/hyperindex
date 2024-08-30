@@ -44,11 +44,17 @@ let getLocalChainConfig = (nftFactoryContractAddress): chainConfig => {
     endBlock: None,
     chain,
     contracts,
-    chainWorker: module(RpcWorker.Make({
-      let chain = chain
-      let contracts = contracts
-      let rpcConfig = rpcConfig
-    })),
+    chainWorker: module(
+      RpcWorker.Make({
+        let chain = chain
+        let contracts = contracts
+        let rpcConfig = rpcConfig
+        let eventModLookup =
+          contracts
+          ->Belt.Array.flatMap(contract => contract.events)
+          ->EventModLookup.fromArrayOrThrow(~chain)
+      })
+    ),
   }
 }
 

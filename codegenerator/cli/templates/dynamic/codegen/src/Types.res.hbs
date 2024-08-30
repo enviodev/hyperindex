@@ -202,6 +202,174 @@ type eventLog<'a> = {
   block: Block.t,
 }
 
+@genType
+module Handlers = {
+  type args<'eventArgs, 'context> = {
+    event: eventLog<'eventArgs>,
+    context: 'context,
+  }
+
+  type contractRegisterArgs<'eventArgs> = args<'eventArgs, contractRegistrations>
+  type contractRegister<'eventArgs> = contractRegisterArgs<'eventArgs> => unit
+
+  type loaderArgs<'eventArgs> = args<'eventArgs, loaderContext>
+  type loader<'eventArgs, 'loaderReturn> = loaderArgs<'eventArgs> => promise<'loaderReturn>
+
+  type handlerArgs<'eventArgs, 'loaderReturn> = {
+    event: eventLog<'eventArgs>,
+    context: handlerContext,
+    loaderReturn: 'loaderReturn,
+  }
+
+  type handler<'eventArgs, 'loaderReturn> = handlerArgs<'eventArgs, 'loaderReturn> => promise<unit>
+
+  type loaderHandler<'eventArgs, 'loaderReturn> = {
+    loader: loader<'eventArgs, 'loaderReturn>,
+    handler: handler<'eventArgs, 'loaderReturn>,
+  }
+
+  type eventOptions = {
+    wildcard: bool,
+    topicSelections: array<LogSelection.topicSelection>,
+  }
+
+  let getDefaultEventOptions = (~topic0) => {
+    wildcard: false,
+    topicSelections: [LogSelection.makeTopicSelection(~topic0=[topic0])->Utils.unwrapResultExn],
+  }
+
+  type registeredEvent<'eventArgs, 'loaderReturn> = {
+    loaderHandler?: loaderHandler<'eventArgs, 'loaderReturn>,
+    contractRegister?: contractRegister<'eventArgs>,
+    eventOptions: eventOptions,
+  }
+
+  module Register: {
+    type t<'eventArgs>
+    let make: (~topic0: string, ~contractName: string, ~eventName: string) => t<'eventArgs>
+    let setLoaderHandler: (
+      t<'eventArgs>,
+      loaderHandler<'eventArgs, 'loaderReturn>,
+      ~eventOptions: option<eventOptions>,
+      ~logger: Pino.t=?,
+    ) => unit
+    let setContractRegister: (
+      t<'eventArgs>,
+      contractRegister<'eventArgs>,
+      ~eventOptions: option<eventOptions>,
+      ~logger: Pino.t=?,
+    ) => unit
+    let getLoaderHandler: t<'eventArgs> => option<loaderHandler<'eventArgs, 'loaderReturn>>
+    let getContractRegister: t<'eventArgs> => option<contractRegister<'eventArgs>>
+    let getEventOptions: t<'eventArgs> => eventOptions
+    let hasRegistration: t<'eventArgs> => bool
+  } = {
+    type loaderReturn
+
+    type t<'eventArgs> = {
+      contractName: string,
+      eventName: string,
+      topic0: string,
+      mutable loaderHandler: option<loaderHandler<'eventArgs, loaderReturn>>,
+      mutable contractRegister: option<contractRegister<'eventArgs>>,
+      mutable eventOptions: option<eventOptions>,
+    }
+
+    let getLoaderHandler = (t: t<'eventArgs>): option<loaderHandler<'eventArgs, 'loaderReturn>> =>
+      t.loaderHandler->(
+        Utils.magic: option<loaderHandler<'eventArgs, loaderReturn>> => option<
+          loaderHandler<'eventArgs, 'loaderReturn>,
+        >
+      )
+
+    let getContractRegister = (t: t<'eventArgs>): option<contractRegister<'eventArgs>> =>
+      t.contractRegister
+
+    let getEventOptions = ({eventOptions, topic0}: t<'eventArgs>): eventOptions =>
+      switch eventOptions {
+      | Some(eventOptions) => eventOptions
+      | None => getDefaultEventOptions(~topic0)
+      }
+
+    let hasRegistration = ({loaderHandler, contractRegister}) =>
+      loaderHandler->Belt.Option.isSome || contractRegister->Belt.Option.isSome
+
+    let make = (~topic0, ~contractName, ~eventName) => {
+      contractName,
+      eventName,
+      topic0,
+      loaderHandler: None,
+      contractRegister: None,
+      eventOptions: None,
+    }
+
+    type eventNamespace = {contractName: string, eventName: string}
+    exception DuplicateEventRegistration(eventNamespace)
+
+    let setEventOptions = (t: t<'eventArgs>, value: eventOptions, ~logger=Logging.logger) => {
+      switch t.eventOptions {
+      | None => t.eventOptions = Some(value)
+      | Some(_) =>
+        let eventNamespace = {contractName: t.contractName, eventName: t.eventName}
+        DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
+          ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
+          ~msg="Duplicate eventOptions in handlers not allowed",
+        )
+      }
+    }
+
+    let setLoaderHandler = (
+      t: t<'eventArgs>,
+      value: loaderHandler<'eventArgs, 'loaderReturn>,
+      ~eventOptions,
+      ~logger=Logging.logger,
+    ) => {
+      switch t.loaderHandler {
+      | None =>
+        t.loaderHandler =
+          value
+          ->(Utils.magic: loaderHandler<'eventArgs, 'loaderReturn> => loaderHandler<
+            'eventArgs,
+            loaderReturn,
+          >)
+          ->Some
+      | Some(_) =>
+        let eventNamespace = {contractName: t.contractName, eventName: t.eventName}
+        DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
+          ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
+          ~msg="Duplicate registration of event handlers not allowed",
+        )
+      }
+
+      switch eventOptions {
+      | Some(eventOptions) => t->setEventOptions(eventOptions, ~logger)
+      | None => ()
+      }
+    }
+
+    let setContractRegister = (
+      t: t<'eventArgs>,
+      value: contractRegister<'eventArgs>,
+      ~eventOptions,
+      ~logger=Logging.logger,
+    ) => {
+      switch t.contractRegister {
+      | None => t.contractRegister = Some(value)
+      | Some(_) =>
+        let eventNamespace = {contractName: t.contractName, eventName: t.eventName}
+        DuplicateEventRegistration(eventNamespace)->ErrorHandling.mkLogAndRaise(
+          ~logger=Logging.createChildFrom(~logger, ~params=eventNamespace),
+          ~msg="Duplicate contractRegister handlers not allowed",
+        )
+      }
+      switch eventOptions {
+      | Some(eventOptions) => t->setEventOptions(eventOptions, ~logger)
+      | None => ()
+      }
+    }
+  }
+}
+
 type internalEventArgs
 
 module type Event = {
@@ -214,12 +382,33 @@ module type Event = {
   let eventArgsSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
   let decodeHyperFuelData: string => eventArgs
+  let handlerRegister: Handlers.Register.t<eventArgs>
 }
 module type InternalEvent = Event with type eventArgs = internalEventArgs
 
 external eventToInternal: eventLog<'a> => eventLog<internalEventArgs> = "%identity"
 external eventModToInternal: module(Event with type eventArgs = 'a) => module(InternalEvent) = "%identity"
 external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent) = "%identity"
+
+module MakeRegister = (Event: Event) => {
+  let handler = handler =>
+    Event.handlerRegister->Handlers.Register.setLoaderHandler(
+      {
+        loader: _ => Promise.resolve(),
+        handler,
+      },
+      ~eventOptions=None,
+    )
+
+  let contractRegister: Handlers.contractRegister<Event.eventArgs> => unit = contractRegister =>
+    Event.handlerRegister->Handlers.Register.setContractRegister(
+      contractRegister,
+      ~eventOptions=None,
+    )
+
+  let handlerWithLoader: Handlers.loaderHandler<Event.eventArgs, 'loaderReturn> => unit = args =>
+    Event.handlerRegister->Handlers.Register.setLoaderHandler(args, ~eventOptions=None)
+}
 
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
@@ -241,6 +430,13 @@ module {{contract.name.capitalized}} = {
     let eventArgsSchema = {{data_schema_code}}
     let convertHyperSyncEventArgs = {{convert_hyper_sync_event_args_code}}
     let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
+
+    let handlerRegister: Handlers.Register.t<eventArgs> = Handlers.Register.make(
+      ~topic0=sighash,
+      ~contractName,
+      ~eventName=name,
+    )
+
   }
 
 {{/each}}

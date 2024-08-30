@@ -21,9 +21,7 @@ describe("E2E Integration Test", () => {
         {
           Config.name: "GravatarRegistry",
           abi: Abis.gravatarAbi->Ethers.makeAbi,
-          addresses: [
-            "0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow,
-          ],
+          addresses: ["0x5FbDB2315678afecb367f032d93F642f64180aa3"->Address.Evm.fromStringOrThrow],
           events: [module(Types.Gravatar.NewGravatar), module(Types.Gravatar.UpdatedGravatar)],
         },
       ]
@@ -46,11 +44,17 @@ describe("E2E Integration Test", () => {
         endBlock: None,
         chain,
         contracts,
-        chainWorker: module(RpcWorker.Make({
-          let chain = chain
-          let contracts = contracts
-          let rpcConfig = rpcConfig
-        })),
+        chainWorker: module(
+          RpcWorker.Make({
+            let chain = chain
+            let contracts = contracts
+            let rpcConfig = rpcConfig
+            let eventModLookup =
+              contracts
+              ->Belt.Array.flatMap(contract => contract.events)
+              ->EventModLookup.fromArrayOrThrow(~chain)
+          })
+        ),
       }
     }
 
