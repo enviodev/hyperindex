@@ -6,7 +6,6 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
     match network {
         HypersyncNetwork::EthereumMainnet => "https://eth.hypersync.xyz".to_string(),
         HypersyncNetwork::Polygon => "https://polygon.hypersync.xyz".to_string(),
-        HypersyncNetwork::Mumbai => "https://mumbai.hypersync.xyz".to_string(),
         HypersyncNetwork::Gnosis => "https://gnosis.hypersync.xyz".to_string(),
         HypersyncNetwork::Bsc => "https://bsc.hypersync.xyz".to_string(),
         HypersyncNetwork::Goerli => "https://goerli.hypersync.xyz".to_string(),
@@ -20,7 +19,6 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::BaseSepolia => "https://base-sepolia.hypersync.xyz".to_string(),
         HypersyncNetwork::Scroll => "https://scroll.hypersync.xyz".to_string(),
         HypersyncNetwork::Metis => "https://metis.hypersync.xyz".to_string(),
-        HypersyncNetwork::TaikoJolnr => "https://taiko-jolnr.hypersync.xyz".to_string(),
         HypersyncNetwork::Manta => "https://manta.hypersync.xyz".to_string(),
         HypersyncNetwork::PolygonZkevm => "https://polygon-zkevm.hypersync.xyz".to_string(),
         HypersyncNetwork::Kroma => "https://kroma.hypersync.xyz".to_string(),
@@ -35,8 +33,6 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::GnosisChiado => "https://gnosis-chiado.hypersync.xyz".to_string(),
         HypersyncNetwork::XLayerTestnet => "https://x-layer-testnet.hypersync.xyz".to_string(),
         HypersyncNetwork::XLayer => "https://x-layer.hypersync.xyz".to_string(),
-        HypersyncNetwork::A1Milkomeda => "https://a1-milkomeda.hypersync.xyz".to_string(),
-        HypersyncNetwork::PublicGoods => "https://publicgoods.hypersync.xyz".to_string(),
         HypersyncNetwork::Zora => "https://zora.hypersync.xyz".to_string(),
         HypersyncNetwork::Fantom => "https://fantom.hypersync.xyz".to_string(),
         HypersyncNetwork::ArbitrumNova => "https://arbitrum-nova.hypersync.xyz".to_string(),
@@ -47,7 +43,6 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::Mantle => "https://mantle.hypersync.xyz".to_string(),
         HypersyncNetwork::Zeta => "https://zeta.hypersync.xyz".to_string(),
         HypersyncNetwork::Rsk => "https://rsk.hypersync.xyz".to_string(),
-        HypersyncNetwork::BerachainArtio => "https://berachain-artio.hypersync.xyz".to_string(),
         HypersyncNetwork::NeonEvm => "https://neon-evm.hypersync.xyz".to_string(),
         HypersyncNetwork::ShimmerEvm => "https://shimmer-evm.hypersync.xyz".to_string(),
         HypersyncNetwork::Blast => "https://blast.hypersync.xyz".to_string(),
@@ -57,6 +52,10 @@ pub fn network_to_skar_url(network: &HypersyncNetwork) -> String {
         HypersyncNetwork::Crab => "https://crab.hypersync.xyz".to_string(),
         HypersyncNetwork::Darwinia => "https://darwinia.hypersync.xyz".to_string(),
         HypersyncNetwork::Cyber => "https://cyber.hypersync.xyz".to_string(),
+        _ => {
+            let chain_id = *network as u64;
+            format!("https://{}.hypersync.xyz", chain_id)
+        }
     }
 }
 

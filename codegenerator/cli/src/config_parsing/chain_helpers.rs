@@ -6,6 +6,7 @@ use clap::ValueEnum;
 use ethers::etherscan;
 use serde::{Deserialize, Serialize};
 use strum::FromRepr;
+use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
@@ -52,8 +53,8 @@ pub enum Network {
     Bsc = 56,
     #[subenum(GraphNetwork)]
     PoaSokol = 77,
-    #[subenum(GraphNetwork)]
-    Chapel = 97,
+    #[subenum(HypersyncNetwork, GraphNetwork)]
+    BscTestnet = 97,
     #[subenum(GraphNetwork)]
     PoaCore = 99,
     #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
@@ -104,8 +105,6 @@ pub enum Network {
     Avalanche = 43114,
     #[subenum(GraphNetwork)]
     CeloAlfajores = 44787,
-    #[subenum(HypersyncNetwork, NetworkWithExplorer, GraphNetwork)]
-    Mumbai = 80001,
     #[subenum(HypersyncNetwork, GraphNetwork)]
     // Blockscout: https://explorer.aurora.dev/
     Aurora = 1313161554,
@@ -143,10 +142,6 @@ pub enum Network {
     // blockscout: https://pacific-explorer.manta.network/
     // w3w.ai: https://manta.socialscan.io/
     Manta = 169,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // blockscout: https://explorer.jolnir.taiko.xyz/
-    TaikoJolnr = 167007,
     #[subenum(HypersyncNetwork, NetworkWithExplorer)]
     Kroma = 255,
     #[subenum(HypersyncNetwork)]
@@ -174,14 +169,6 @@ pub enum Network {
     Zora = 7777777,
     #[subenum(HypersyncNetwork)]
     // Explorers:
-    // https://explorer.publicgoods.network/
-    PublicGoods = 424,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // Blockscout: https://explorer-mainnet-algorand-rollup.a1.milkomeda.com/
-    A1Milkomeda = 2002,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
     // Blockscout: https://explorer-mainnet-cardano-evm.c1.milkomeda.com/
     C1Milkomeda = 2001,
     #[subenum(HypersyncNetwork)]
@@ -199,10 +186,6 @@ pub enum Network {
     // https://explorer.zetachain.com/
     // https://zetachain.explorers.guru/
     Zeta = 7000,
-    #[subenum(HypersyncNetwork)]
-    // Explorers:
-    // https://artio.beratrail.io/
-    BerachainArtio = 80085,
     #[subenum(HypersyncNetwork)]
     // Explorers:
     // https://neonscan.org/
@@ -245,6 +228,25 @@ pub enum Network {
     // // Explorers:
     // // https://explorer.degen.tips/
     // Degen = 666666666,
+    #[subenum(HypersyncNetwork)]
+    Chiliz = 8888,
+    #[subenum(HypersyncNetwork)]
+    IncoGentryTestnet = 9090,
+    #[subenum(HypersyncNetwork)]
+    Zircuit = 48900,
+    #[subenum(HypersyncNetwork)]
+    MevCommit = 17864,
+    #[subenum(HypersyncNetwork)]
+    GaladrialDevnet = 696969,
+    #[subenum(HypersyncNetwork)]
+    SophonTestnet = 531050104,
+    #[subenum(HypersyncNetwork)]
+    KakarotSepolia = 1802203764,
+    #[subenum(HypersyncNetwork)]
+    BerachainBartio = 80084,
+    /// Still syncing
+    // #[subenum(HypersyncNetwork)]
+    // Saakuru = 7225878,
 }
 
 impl Network {
@@ -260,77 +262,23 @@ impl Network {
     //TODO: research a sufficient threshold for all chain (some should be 0)
     pub fn get_confirmed_block_threshold(&self) -> i32 {
         match self {
-            Network::EthereumMainnet
-            | Network::Goerli
-            | Network::Optimism
-            | Network::Base
-            | Network::BaseSepolia
-            | Network::Bsc
-            | Network::PoaSokol
-            | Network::Chapel
-            | Network::PoaCore
-            | Network::Gnosis
-            | Network::Fuse
-            | Network::Fantom
-            | Network::Polygon
-            | Network::Boba
-            | Network::OptimismGoerli
+            Network::OptimismGoerli
             | Network::OptimismSepolia
-            | Network::Clover
-            | Network::Moonbeam
-            | Network::Moonriver
-            | Network::Mbase
-            | Network::FantomTestnet
+            | Network::Optimism
             | Network::ArbitrumOne
             | Network::ArbitrumNova
             | Network::ArbitrumGoerli
-            | Network::ArbitrumSepolia
-            | Network::Celo
-            | Network::Fuji
-            | Network::Avalanche
-            | Network::CeloAlfajores
-            | Network::Mumbai
-            | Network::Aurora
-            | Network::AuroraTestnet
-            | Network::Harmony
-            | Network::BaseGoerli
-            | Network::ZksyncEra
-            | Network::Sepolia
-            | Network::Linea
-            | Network::Rinkeby
-            | Network::ZksyncEraTestnet
-            | Network::PolygonZkevmTestnet
-            | Network::PolygonZkevm
-            | Network::ScrollSepolia
-            | Network::Scroll
-            | Network::Metis
-            | Network::Manta
-            | Network::TaikoJolnr
-            | Network::Kroma
-            | Network::Lukso
-            | Network::XLayerTestnet
-            | Network::XLayer
-            | Network::Holesky
-            | Network::GnosisChiado
-            | Network::Zora
-            | Network::PublicGoods
-            | Network::A1Milkomeda
-            | Network::C1Milkomeda
-            | Network::Flare
-            | Network::Mantle
-            | Network::Zeta
-            | Network::BerachainArtio
-            | Network::NeonEvm
-            | Network::Rsk
-            | Network::ShimmerEvm
-            | Network::Blast
-            | Network::BlastSepolia
-            | Network::FhenixTestnet
-            | Network::Amoy
-            | Network::Crab
-            | Network::Darwinia
-            | Network::Cyber => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
+            | Network::ArbitrumSepolia => 0,
+
+            _ => DEFAULT_CONFIRMED_BLOCK_THRESHOLD,
         }
+    }
+}
+
+impl HypersyncNetwork {
+    // This is a custom iterator that returns all the HypersyncNetwork enums that is made public accross crates (for convenience)
+    pub fn iter_hypersync_networks() -> impl Iterator<Item = HypersyncNetwork> {
+        HypersyncNetwork::iter()
     }
 }
 
@@ -510,7 +458,6 @@ mod test {
         "poa-sokol",
         "gnosis",
         "matic",
-        "mumbai",
         "fantom",
         "fantom-testnet",
         "bsc",
