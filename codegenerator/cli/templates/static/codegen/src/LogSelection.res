@@ -1,3 +1,4 @@
+open Belt
 type hexString = string
 type topicSelection = {
   topic0: array<hexString>,
@@ -34,7 +35,7 @@ let topicSelectionHasFilters = (topicSelection: topicSelection) =>
   | _ => true
   }
 
-let hasTopicFilters = ({topicSelections}: t) =>
-  topicSelections->Belt.Array.reduce(false, (accum, item) => {
-    accum || item->topicSelectionHasFilters
-  })
+let topicSelectionsHaveFilters = (topicSelections: array<topicSelection>) =>
+  topicSelections->Array.some(topicSelectionHasFilters)
+
+let hasTopicFilters = ({topicSelections}: t) => topicSelections->topicSelectionsHaveFilters

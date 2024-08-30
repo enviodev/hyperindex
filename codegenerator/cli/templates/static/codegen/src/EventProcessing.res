@@ -134,7 +134,7 @@ let runEventContractRegister = (
 
 let runEventLoader = async (
   ~contextEnv,
-  ~handler: RegisteredEvents.registeredLoaderHandler<_>,
+  ~handler: RegisteredEvents.loaderHandler<_>,
   ~inMemoryStore,
   ~loadLayer,
 ) => {

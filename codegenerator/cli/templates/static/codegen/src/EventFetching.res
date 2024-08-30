@@ -127,7 +127,7 @@ let convertLogs = (
       ~block,
       ~config,
       ~contractInterfaceManager,
-      ~chainId=chain->ChainMap.Chain.toChainId,
+      ~chain,
       ~transaction=log->transactionFieldsFromLog(~logger),
     ) {
     | Error(exn) =>

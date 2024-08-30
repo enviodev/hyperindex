@@ -61,10 +61,10 @@ module type S = {
     }
 
     module type Event = {
-      let key: string
+      let sighash: string
       let name: string
       let contractName: string
-      let sighash: string
+      let chains: array<ChainMap.Chain.t>
       type eventArgs
       let eventArgsSchema: RescriptSchema.S.schema<eventArgs>
       let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
@@ -105,7 +105,6 @@ module type S = {
       eventFilters?: eventFilters,
     }
   }
-
 
   module ReorgDetection: {
     type blockNumberAndHash = {
