@@ -12,7 +12,7 @@ let make = (~hash): t<'key, 'val> => {dict: Js.Dict.empty(), hash}
 
 let set = (self: t<'key, 'val>, key, value) => self.dict->Js.Dict.set(key->self.hash, value)
 
-let get = (self: t<'key, 'val>, key: 'key) => self.dict->Js.Dict.get(key->self.hash)
+let get = (self: t<'key, 'val>, key: 'key) => self.dict->Utils.Dict.dangerouslyGetNonOption(key->self.hash)
 
 let values = (self: t<'key, 'val>) => self.dict->Js.Dict.values
 
@@ -63,7 +63,7 @@ module Entity = {
       let fieldValue =
         entity
         ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-        ->Js.Dict.get(fieldName)
+        ->Utils.Dict.dangerouslyGetNonOption(fieldName)
         ->Option.getUnsafe
       if !(index->TableIndices.Index.evaluate(~fieldName, ~fieldValue)) {
         entityIndices->StdSet.delete(index)->ignore
@@ -76,8 +76,8 @@ module Entity = {
       switch (
         entity
         ->(Utils.magic: 'entity => dict<TableIndices.FieldValue.t>)
-        ->Js.Dict.get(fieldName),
-        self.fieldNameIndices.dict->Js.Dict.get(fieldName),
+        ->Utils.Dict.dangerouslyGetNonOption(fieldName),
+        self.fieldNameIndices.dict->Utils.Dict.dangerouslyGetNonOption(fieldName),
       ) {
       | (Some(fieldValue), Some(indices)) =>
         indices
@@ -118,7 +118,7 @@ module Entity = {
   ) => {
     let shouldWriteEntity =
       allowOverWriteEntity ||
-      inMemTable.table.dict->Js.Dict.get(key->inMemTable.table.hash)->Option.isNone
+      inMemTable.table.dict->Utils.Dict.dangerouslyGetNonOption(key->inMemTable.table.hash)->Option.isNone
 
     //Only initialize a row in the case where it is none
     //or if allowOverWriteEntity is true (used for mockDb in test helpers)
