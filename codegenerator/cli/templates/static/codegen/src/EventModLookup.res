@@ -5,32 +5,37 @@ type errorKind = WildcardSighashCollision | Duplicate
 type eventError = {eventMod: eventMod, errorKind: errorKind}
 module ContractEventMods = {
   type t = {
+    mutable wildcard: option<eventMod>,
     all: array<eventMod>,
     byContractName: dict<eventMod>,
   }
 
   let empty = () => {
+    wildcard: None,
     all: [],
     byContractName: Js.Dict.empty(),
   }
 
   let isWildcard = (eventMod: eventMod) => {
     let module(Event) = eventMod
-    Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions->(v => v.Types.HandlerTypes.wildcard)
+    Event.handlerRegister
+    ->Types.HandlerTypes.Register.getEventOptions
+    ->(v => v.Types.HandlerTypes.wildcard)
   }
 
-  let hasWildcardCollision = (eventModA, eventModB) => {
-    eventModA->isWildcard || eventModB->isWildcard
-  }
-
-  let set = ({all, byContractName}: t, eventMod: eventMod) => {
+  let set = (t: t, eventMod: eventMod) => {
+    let {all, byContractName} = t
     let module(Event) = eventMod
     switch byContractName->Utils.Dict.dangerouslyGetNonOption(Event.contractName) {
     | Some(_) => Error({eventMod, errorKind: Duplicate})
     | None =>
-      if all->Array.some(hasWildcardCollision(_, eventMod)) {
+      let isWildcard = eventMod->isWildcard
+      if isWildcard && t.wildcard->Option.isSome {
         Error({eventMod, errorKind: WildcardSighashCollision})
       } else {
+        if isWildcard {
+          t.wildcard = Some(eventMod)
+        }
         all->Js.Array2.push(eventMod)->ignore
         byContractName->Js.Dict.set(Event.contractName, eventMod)
         Ok()
@@ -38,12 +43,21 @@ module ContractEventMods = {
     }
   }
 
+  let get = (t: t, ~contractAddress, ~contractAddressMapping) =>
+    switch t {
+    | {all: [eventMod]} => Some(eventMod)
+    | {all: []} => None
+    | {wildcard, byContractName} =>
+      switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
+        ~contractAddress,
+      ) {
+      | Some(contractName) => byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
+      | None => wildcard
+      }
+    }
+
   let getByContractName = ({byContractName}, ~contractName) => {
     byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
-  }
-
-  let findWildcard = ({all}) => {
-    all->Js.Array2.find(event => event->isWildcard)
   }
 }
 type t = dict<ContractEventMods.t>
@@ -63,17 +77,9 @@ let set = (eventModLookup: t, eventMod: eventMod) => {
 }
 
 let get = (eventModLookup: t, ~sighash, ~contractAddress, ~contractAddressMapping) =>
-  switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(sighash) {
-  | Some({all: [eventMod]}) => Some(eventMod)
-  | Some({all: []}) | None => None
-  | Some(eventsByContract) =>
-    switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
-      ~contractAddress,
-    ) {
-    | Some(contractName) => eventsByContract->ContractEventMods.getByContractName(~contractName)
-    | None => eventsByContract->ContractEventMods.findWildcard
-    }
-  }
+  eventModLookup
+  ->Utils.Dict.dangerouslyGetNonOption(sighash)
+  ->Option.flatMap(ContractEventMods.get(_, ~contractAddress, ~contractAddressMapping))
 
 let getByKey = (eventModLookup: t, ~sighash, ~contractName) =>
   eventModLookup
