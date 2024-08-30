@@ -612,53 +612,56 @@ impl SyncSource {
                 sync_config
               }),
               ..
-          } => {
-            let urls: Vec<String> = url.into();
-            for url in urls.iter() {
-              if !validate_url(url) {
-                return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+            } => {
+              let urls: Vec<String> = url.into();
+              for url in urls.iter() {
+                if !validate_url(url) {
+                  return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+                }
               }
-            }
-            Ok(Self::RpcConfig(RpcConfig {
-                urls,
-                sync_config: match sync_config {
-                    None => SyncConfig::default(),
-                    Some(c) => {
-                      let query_timeout_millis = c
-                        .query_timeout_millis
-                        .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
-                      SyncConfig {
-                        acceleration_additive: c
-                            .acceleration_additive
-                            .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
-                        backoff_millis: c
-                            .backoff_millis
-                            .unwrap_or_else(|| SyncConfig::default().backoff_millis),
-                        backoff_multiplicative: c
-                            .backoff_multiplicative
-                            .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
-                        initial_block_interval: c
-                            .initial_block_interval
-                            .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
-                        interval_ceiling: c
-                            .interval_ceiling
-                            .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
-                        query_timeout_millis,
-                        fallback_stall_timeout: c
-                            .fallback_stall_timeout
-                            .unwrap_or_else(|| query_timeout_millis / 2),
-                    }},
-                },
-            }))},
+              Ok(Self::RpcConfig(RpcConfig {
+                  urls,
+                  sync_config: match sync_config {
+                      None => SyncConfig::default(),
+                      Some(c) => {
+                        let query_timeout_millis = c
+                          .query_timeout_millis
+                          .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
+                        SyncConfig {
+                          acceleration_additive: c
+                              .acceleration_additive
+                              .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
+                          backoff_millis: c
+                              .backoff_millis
+                              .unwrap_or_else(|| SyncConfig::default().backoff_millis),
+                          backoff_multiplicative: c
+                              .backoff_multiplicative
+                              .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
+                          initial_block_interval: c
+                              .initial_block_interval
+                              .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
+                          interval_ceiling: c
+                              .interval_ceiling
+                              .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
+                          query_timeout_millis,
+                          fallback_stall_timeout: c
+                              .fallback_stall_timeout
+                              .unwrap_or_else(|| query_timeout_millis / 2),
+                      }},
+                  },
+              }))
+            },
             human_config::evm::Network {
               hypersync_config: Some(human_config::evm::HypersyncConfig { url }),
               rpc_config: None,
               ..
-          } => {
-                if !validate_url(&url) {
-                  return Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url));
-                }
-                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: url, is_client_decoder }))
+            } => {
+              if !validate_url(&url) {
+                return Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url));
+              }
+              // Trim any trailing slashes from the URL
+              let trimmed_url = url.trim_end_matches('/').to_string();
+              Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: trimmed_url, is_client_decoder }))
             }
         }
     }
