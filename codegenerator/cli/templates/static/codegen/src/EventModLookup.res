@@ -46,7 +46,6 @@ module ContractEventMods = {
   let get = (t: t, ~contractAddress, ~contractAddressMapping) =>
     switch t {
     | {all: [eventMod]} => Some(eventMod)
-    | {all: []} => None
     | {wildcard, byContractName} =>
       switch contractAddressMapping->ContractAddressingMap.getContractNameFromAddress(
         ~contractAddress,
