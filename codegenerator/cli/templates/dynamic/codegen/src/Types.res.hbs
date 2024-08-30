@@ -203,7 +203,7 @@ type eventLog<'a> = {
 }
 
 @genType
-module Handlers = {
+module HandlerTypes = {
   type args<'eventArgs, 'context> = {
     event: eventLog<'eventArgs>,
     context: 'context,
@@ -382,7 +382,7 @@ module type Event = {
   let eventArgsSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
   let decodeHyperFuelData: string => eventArgs
-  let handlerRegister: Handlers.Register.t<eventArgs>
+  let handlerRegister: HandlerTypes.Register.t<eventArgs>
 }
 module type InternalEvent = Event with type eventArgs = internalEventArgs
 
@@ -392,7 +392,7 @@ external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent
 
 module MakeRegister = (Event: Event) => {
   let handler = handler =>
-    Event.handlerRegister->Handlers.Register.setLoaderHandler(
+    Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
       {
         loader: _ => Promise.resolve(),
         handler,
@@ -400,14 +400,14 @@ module MakeRegister = (Event: Event) => {
       ~eventOptions=None,
     )
 
-  let contractRegister: Handlers.contractRegister<Event.eventArgs> => unit = contractRegister =>
-    Event.handlerRegister->Handlers.Register.setContractRegister(
+  let contractRegister: HandlerTypes.contractRegister<Event.eventArgs> => unit = contractRegister =>
+    Event.handlerRegister->HandlerTypes.Register.setContractRegister(
       contractRegister,
       ~eventOptions=None,
     )
 
-  let handlerWithLoader: Handlers.loaderHandler<Event.eventArgs, 'loaderReturn> => unit = args =>
-    Event.handlerRegister->Handlers.Register.setLoaderHandler(args, ~eventOptions=None)
+  let handlerWithLoader: HandlerTypes.loaderHandler<Event.eventArgs, 'loaderReturn> => unit = args =>
+    Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(args, ~eventOptions=None)
 }
 
 {{#each codegen_contracts as | contract |}}
@@ -431,7 +431,7 @@ module {{contract.name.capitalized}} = {
     let convertHyperSyncEventArgs = {{convert_hyper_sync_event_args_code}}
     let decodeHyperFuelData = {{decode_hyper_fuel_data_code}}
 
-    let handlerRegister: Handlers.Register.t<eventArgs> = Handlers.Register.make(
+    let handlerRegister: HandlerTypes.Register.t<eventArgs> = HandlerTypes.Register.make(
       ~topic0=sighash,
       ~contractName,
       ~eventName=name,
