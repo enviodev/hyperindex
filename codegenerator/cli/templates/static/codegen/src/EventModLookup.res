@@ -16,7 +16,7 @@ module ContractEventMods = {
 
   let isWildcard = (eventMod: eventMod) => {
     let module(Event) = eventMod
-    Event.handlerRegister->Types.Handlers.Register.getEventOptions->(v => v.Types.Handlers.wildcard)
+    Event.handlerRegister->Types.HandlerTypes.Register.getEventOptions->(v => v.Types.HandlerTypes.wildcard)
   }
 
   let hasWildcardCollision = (eventModA, eventModB) => {
