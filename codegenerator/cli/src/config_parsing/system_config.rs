@@ -1277,4 +1277,30 @@ mod test {
         assert_eq!(name_with_special_chars, expected_name_with_special_chars);
         assert_eq!(name_with_numbers, expected_name_with_numbers);
     }
+
+    #[test]
+    fn test_hypersync_url_trailing_slash_trimming() {
+        use crate::config_parsing::human_config::evm::{HypersyncConfig, Network as EvmNetwork};
+
+        let network = EvmNetwork {
+            id: 1,
+            hypersync_config: Some(HypersyncConfig {
+                url: "https://somechain.hypersync.xyz//".to_string(),
+            }),
+            rpc_config: None,
+            start_block: 0,
+            end_block: None,
+            confirmed_block_threshold: None,
+            contracts: vec![],
+        };
+
+        let sync_source = SyncSource::from_evm_network_config(network, None).unwrap();
+
+        match sync_source {
+            SyncSource::HypersyncConfig(config) => {
+                assert_eq!(config.endpoint_url, "https://somechain.hypersync.xyz");
+            }
+            _ => panic!("Expected HypersyncConfig"),
+        }
+    }
 }
