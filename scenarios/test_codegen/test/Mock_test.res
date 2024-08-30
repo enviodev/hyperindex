@@ -18,7 +18,7 @@ describe("E2E Mock Event Batch", () => {
     ) => {
       let eventMod = eventMod->Types.eventModToInternal
       let module(Event) = eventMod
-      switch Event.handlerRegister->Types.Handlers.Register.getLoaderHandler {
+      switch Event.handlerRegister->Types.HandlerTypes.Register.getLoaderHandler {
       | Some(loaderHandler) =>
         await event->EventProcessing.runEventHandler(
           ~loaderHandler,
