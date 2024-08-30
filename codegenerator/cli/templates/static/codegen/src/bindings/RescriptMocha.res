@@ -20,7 +20,7 @@ module Assert = {
   @module("assert") external ifError: 'a => unit = "ifError"
 
   @module("assert")
-  external throws: (unit => 'a, ~error: Js.Exn.t, ~message: string=?) => unit = "throws"
+  external throws: (unit => 'a, ~error: Js.Exn.t=?, ~message: string=?) => unit = "throws"
   @module("assert")
   external doesNotThrow: (unit => 'a, ~error: Js.Exn.t, ~message: string=?) => unit = "doesNotThrow"
 

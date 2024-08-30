@@ -64,7 +64,7 @@ type t = dict<ContractEventMods.t>
 
 let empty = () => Js.Dict.empty()
 
-let set = (eventModLookup: t, eventMod: eventMod) => {
+let set = (eventModLookup: t, eventMod: module(Types.Event)) => {
   let module(Event) = eventMod
   let events = switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(Event.sighash) {
   | None =>
@@ -73,7 +73,9 @@ let set = (eventModLookup: t, eventMod: eventMod) => {
     events
   | Some(events) => events
   }
-  events->ContractEventMods.set(eventMod)
+  events->ContractEventMods.set(
+    eventMod->(Utils.magic: module(Types.Event) => module(Types.InternalEvent)),
+  )
 }
 
 let get = (eventModLookup: t, ~sighash, ~contractAddress, ~contractAddressMapping) =>
@@ -108,7 +110,7 @@ let fromArrayOrThrow = (eventMods: array<module(Types.Event)>, ~chain): t => {
   let t = empty()
   eventMods->Belt.Array.forEach(eventMod => {
     t
-    ->set(eventMod->(Utils.magic: module(Types.Event) => module(Types.InternalEvent)))
+    ->set(eventMod)
     ->unwrapAddEventResponse(~chain)
   })
   t
