@@ -536,7 +536,6 @@ mod test {
         "fantom",
         "fantom-testnet",
         "bsc",
-        "chapel",
         "clover",
         "avalanche",
         "fuji",
