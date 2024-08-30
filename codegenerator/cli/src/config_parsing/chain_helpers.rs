@@ -6,6 +6,7 @@ use clap::ValueEnum;
 use ethers::etherscan;
 use serde::{Deserialize, Serialize};
 use strum::FromRepr;
+use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter, EnumString};
 use subenum::subenum;
 
@@ -343,6 +344,13 @@ impl Network {
     }
 }
 
+impl HypersyncNetwork {
+    // This is a custom iterator that returns all the HypersyncNetwork enums that is made public accross crates (for convenience)
+    pub fn iter_hypersync_networks() -> impl Iterator<Item = HypersyncNetwork> {
+        HypersyncNetwork::iter()
+    }
+}
+
 pub enum BlockExplorerApi {
     DefaultEthers,
     Custom {
@@ -521,7 +529,6 @@ mod test {
         "poa-sokol",
         "gnosis",
         "matic",
-        "mumbai",
         "fantom",
         "fantom-testnet",
         "bsc",
