@@ -235,6 +235,11 @@ module HandlerTypes = {
     handler: handler<'eventArgs, 'loaderReturn>,
   }
 
+  type eventConfig<'eventFilter> = {
+    wildcard?: bool,
+    eventFilters?: array<'eventFilter>,
+  }
+
   type eventOptions = {
     wildcard: bool,
     topicSelections: array<LogSelection.topicSelection>,
@@ -383,13 +388,15 @@ module type Event = {
   let sighash: string // topic0 for Evm and rb for Fuel receipts
   let name: string
   let contractName: string
-  let chains: array<ChainMap.Chain.t>
 
   type eventArgs
   let eventArgsSchema: S.schema<eventArgs>
   let convertHyperSyncEventArgs: HyperSyncClient.Decoder.decodedEvent => eventArgs
   let decodeHyperFuelData: string => eventArgs
   let handlerRegister: HandlerTypes.Register.t<eventArgs>
+
+  type eventFilter
+  let getTopicSelection: eventFilter => LogSelection.topicSelection
 }
 module type InternalEvent = Event with type eventArgs = internalEventArgs
 
@@ -397,41 +404,54 @@ external eventToInternal: eventLog<'a> => eventLog<internalEventArgs> = "%identi
 external eventModToInternal: module(Event with type eventArgs = 'a) => module(InternalEvent) = "%identity"
 external eventModWithoutArgTypeToInternal: module(Event) => module(InternalEvent) = "%identity"
 
+let makeEventOptions = (
+  type eventFilter,
+  eventConfig: option<HandlerTypes.eventConfig<eventFilter>>,
+  eventMod: module(Event with type eventFilter = eventFilter),
+) => {
+  let module(Event) = eventMod
+  open Belt
+  eventConfig->Option.map(({?wildcard, ?eventFilters}) => {
+    HandlerTypes.wildcard: wildcard->Option.getWithDefault(false),
+    topicSelections: eventFilters->Option.mapWithDefault(
+      [LogSelection.makeTopicSelection(~topic0=[Event.sighash])->Utils.unwrapResultExn],
+      v => v->Belt.Array.map(Event.getTopicSelection),
+    ),
+  })
+}
+
 module MakeRegister = (Event: Event) => {
-  let handler = handler =>
+  let handler = (handler, ~eventConfig=?) =>
     Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
       {
         loader: _ => Promise.resolve(),
         handler,
       },
-      ~eventOptions=None,
+      ~eventOptions=makeEventOptions(eventConfig, module(Event)),
     )
 
-  let contractRegister: HandlerTypes.contractRegister<Event.eventArgs> => unit = contractRegister =>
+  let contractRegister = (contractRegister, ~eventConfig=?) =>
     Event.handlerRegister->HandlerTypes.Register.setContractRegister(
       contractRegister,
-      ~eventOptions=None,
+      ~eventOptions=makeEventOptions(eventConfig, module(Event)),
     )
 
-  let handlerWithLoader: HandlerTypes.loaderHandler<Event.eventArgs, 'loaderReturn> => unit = args =>
-    Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(args, ~eventOptions=None)
+  let handlerWithLoader = (args, ~eventConfig=?) =>
+    Event.handlerRegister->HandlerTypes.Register.setLoaderHandler(
+      args,
+      ~eventOptions=makeEventOptions(eventConfig, module(Event)),
+    )
 }
 
 {{#each codegen_contracts as | contract |}}
 module {{contract.name.capitalized}} = {
 {{contract.module_code}}
   let contractName = "{{contract.name.capitalized}}"
-  let chains = [
-{{#each contract.chain_ids as | chain_id |}}
-  {{chain_id}},
-{{/each}}
-  ]->Belt.Array.map(chainId => ChainMap.Chain.makeUnsafe(~chainId))
 {{#each contract.codegen_events as | event |}}
   module {{event.name.capitalized}} = {
     let sighash = "{{event.sighash}}"
     let name = "{{event.name.capitalized}}"
     let contractName = contractName
-    let chains = chains
 
     @genType
     type eventArgs = {{data_type}}
@@ -445,6 +465,9 @@ module {{contract.name.capitalized}} = {
       ~eventName=name,
     )
 
+    @genType
+    type eventFilter = {{event_filter_type}}
+    let getTopicSelection = {{get_topic_selection_code}}
   }
   {{/each}}
 }

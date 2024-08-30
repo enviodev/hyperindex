@@ -342,11 +342,24 @@ pub struct EventTemplate {
     pub convert_hyper_sync_event_args_code: String,
     pub data_type: String,
     pub data_schema_code: String,
+    pub get_topic_selection_code: String,
+    pub event_filter_type: String,
 }
 
 impl EventTemplate {
     const DECODE_HYPER_FUEL_DATA_CODE: &'static str =
         "(_) => Js.Exn.raiseError(\"HyperFuel decoder not implemented\")";
+
+    const GET_TOPIC_SELECTION_CODE_STUB: &'static str = r#"eventFilter =>
+      LogSelection.makeTopicSelection(
+        ~topic0=[sighash],
+        ~topic1=eventFilter.owner->Belt.Array.map(Viem.TopicFilter.fromAddress),
+        ~topic2=eventFilter.spender->Belt.Array.map(Viem.TopicFilter.fromAddress),
+      )->Utils.unwrapResultExn
+    "#;
+
+    const EVENT_FILTER_TYPE_STUB: &'static str =
+        "{owner: array<Address.t>, spender: array<Address.t>}";
 
     pub fn generate_convert_hyper_sync_event_args_code(params: &Vec<EventParam>) -> String {
         if params.is_empty() {
@@ -436,6 +449,8 @@ impl EventTemplate {
                     convert_hyper_sync_event_args_code:
                         Self::generate_convert_hyper_sync_event_args_code(params),
                     decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+                    event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
+                    get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
                 })
             }
             EventPayload::Data(type_indent) => Ok(EventTemplate {
@@ -449,6 +464,8 @@ impl EventTemplate {
                                                      eventArgs)"
                     .to_string(),
                 decode_hyper_fuel_data_code: Self::DECODE_HYPER_FUEL_DATA_CODE.to_string(),
+                event_filter_type: Self::EVENT_FILTER_TYPE_STUB.to_string(),
+                get_topic_selection_code: Self::GET_TOPIC_SELECTION_CODE_STUB.to_string(),
             }),
         }
     }
