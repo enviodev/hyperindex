@@ -228,7 +228,7 @@ pub async fn run_init_args(init_args: InitArgs, project_paths: &ProjectPaths) ->
     }
 
     let envio_version = match init_config.ecosystem {
-        Ecosystem::Fuel { .. } => "2.2.2-fuel".to_string(),
+        Ecosystem::Fuel { .. } => "2.2.3-fuel".to_string(),
         Ecosystem::Evm { .. } => {
             let crate_version = env!("CARGO_PKG_VERSION");
             if is_valid_release_version_number(crate_version) {
