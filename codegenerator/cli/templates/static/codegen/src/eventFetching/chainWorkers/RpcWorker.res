@@ -92,7 +92,7 @@ module Make = (
 
       let currentBlockInterval =
         blockIntervals
-        ->Js.Dict.get(partitionId->Belt.Int.toString)
+        ->Utils.Dict.dangerouslyGetNonOption(partitionId->Belt.Int.toString)
         ->Belt.Option.getWithDefault(T.rpcConfig.syncConfig.initialBlockInterval)
 
       let targetBlock = Pervasives.min(toBlock, fromBlock + currentBlockInterval - 1)

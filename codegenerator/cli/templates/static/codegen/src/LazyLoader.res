@@ -72,7 +72,7 @@ let rec loadNext = async (am: asyncMap<'a>, k: int) => {
   let awaitTaskPromiseAndLoadNextWithTimeout = async () => {
     let val = await Promise.race([am.loaderFn(k), timeoutAfter(am._timeoutMillis)])
     // Resolve the external promise
-    am.resolvers->Js.Dict.get(key)->Belt.Option.map(r => r(. val))->ignore
+    am.resolvers->Utils.Dict.dangerouslyGetNonOption(key)->Belt.Option.map(r => r(. val))->ignore
 
     // Track that it is no longer in progress
     am.inProgress->Belt.MutableSet.Int.remove(k)
@@ -113,7 +113,7 @@ let rec loadNext = async (am: asyncMap<'a>, k: int) => {
 
 let get = (am: asyncMap<'a>, k: int): promise<'a> => {
   let key = k->Belt.Int.toString
-  switch am.externalPromises->Js.Dict.get(key) {
+  switch am.externalPromises->Utils.Dict.dangerouslyGetNonOption(key) {
   | Some(x) => x
   | None => {
       // Create a promise to deliver the eventual value asynchronously

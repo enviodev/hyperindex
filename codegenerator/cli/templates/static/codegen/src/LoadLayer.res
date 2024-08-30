@@ -135,7 +135,7 @@ let executeLoadEntitiesById = async (
       inMemTable->InMemoryTable.Entity.initValue(
         ~allowOverWriteEntity=false,
         ~key=entityId,
-        ~entity=entitiesMap->Js.Dict.get(entityId),
+        ~entity=entitiesMap->Utils.Dict.dangerouslyGetNonOption(entityId),
       )
 
       // Can use unsafeGet here safely since batchQueue is snapshotted at the point and won't change

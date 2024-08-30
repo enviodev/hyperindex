@@ -8,7 +8,7 @@ let make = (tables: array<Table.table>) => {
 exception UndefinedEntity(Table.derivedFromField)
 exception UndefinedFieldInEntity(Table.derivedFromField)
 let getDerivedFromFieldName = (schema: t, derivedFromField: Table.derivedFromField) =>
-  switch schema->Js.Dict.get(derivedFromField.derivedFromEntity) {
+  switch schema->Utils.Dict.dangerouslyGetNonOption(derivedFromField.derivedFromEntity) {
   | Some(entity) =>
     switch entity->Table.getFieldByName(derivedFromField.derivedFromField) {
     | Some(field) => field->Table.getFieldName->Ok

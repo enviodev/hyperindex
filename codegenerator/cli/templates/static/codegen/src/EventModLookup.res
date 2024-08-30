@@ -25,7 +25,7 @@ module ContractEventMods = {
 
   let set = ({all, byContractName}: t, eventMod: eventMod) => {
     let module(Event) = eventMod
-    switch byContractName->Js.Dict.get(Event.contractName) {
+    switch byContractName->Utils.Dict.dangerouslyGetNonOption(Event.contractName) {
     | Some(_) => Error({eventMod, errorKind: Duplicate})
     | None =>
       if all->Array.some(hasWildcardCollision(_, eventMod)) {
@@ -39,7 +39,7 @@ module ContractEventMods = {
   }
 
   let getByContractName = ({byContractName}, ~contractName) => {
-    byContractName->Js.Dict.get(contractName)
+    byContractName->Utils.Dict.dangerouslyGetNonOption(contractName)
   }
 
   let findWildcard = ({all}) => {
@@ -52,7 +52,7 @@ let empty = () => Js.Dict.empty()
 
 let set = (eventModLookup: t, eventMod: eventMod) => {
   let module(Event) = eventMod
-  let events = switch eventModLookup->Js.Dict.get(Event.sighash) {
+  let events = switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(Event.sighash) {
   | None =>
     let events = ContractEventMods.empty()
     eventModLookup->Js.Dict.set(Event.sighash, events)
@@ -63,7 +63,7 @@ let set = (eventModLookup: t, eventMod: eventMod) => {
 }
 
 let get = (eventModLookup: t, ~sighash, ~contractAddress, ~contractAddressMapping) =>
-  switch eventModLookup->Js.Dict.get(sighash) {
+  switch eventModLookup->Utils.Dict.dangerouslyGetNonOption(sighash) {
   | Some({all: [eventMod]}) => Some(eventMod)
   | Some({all: []}) | None => None
   | Some(eventsByContract) =>
@@ -77,7 +77,7 @@ let get = (eventModLookup: t, ~sighash, ~contractAddress, ~contractAddressMappin
 
 let getByKey = (eventModLookup: t, ~sighash, ~contractName) =>
   eventModLookup
-  ->Js.Dict.get(sighash)
+  ->Utils.Dict.dangerouslyGetNonOption(sighash)
   ->Option.flatMap(eventsByContractName =>
     eventsByContractName->ContractEventMods.getByContractName(~contractName)
   )
