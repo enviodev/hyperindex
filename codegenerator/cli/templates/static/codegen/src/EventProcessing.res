@@ -79,7 +79,7 @@ let addToDynamicContractRegistrations = (
 }
 
 let runEventContractRegister = (
-  contractRegister: Types.Handlers.args<_> => unit,
+  contractRegister: Types.HandlerTypes.args<_> => unit,
   ~event,
   ~eventBatchQueueItem: Types.eventBatchQueueItem,
   ~logger,
@@ -134,7 +134,7 @@ let runEventContractRegister = (
 
 let runEventLoader = async (
   ~contextEnv,
-  ~loader: Types.Handlers.loader<_>,
+  ~loader: Types.HandlerTypes.loader<_>,
   ~inMemoryStore,
   ~loadLayer,
 ) => {
@@ -205,7 +205,7 @@ let updateEventSyncState = (
 let runEventHandler = (
   event,
   ~eventMod: module(Types.InternalEvent),
-  ~loaderHandler: Types.Handlers.loaderHandler<_>,
+  ~loaderHandler: Types.HandlerTypes.loaderHandler<_>,
   ~inMemoryStore,
   ~logger,
   ~chain,
@@ -263,7 +263,7 @@ let runHandler = (
 ) => {
   switch eventMod
   ->getHandlerRegistration
-  ->Types.Handlers.Register.getLoaderHandler {
+  ->Types.HandlerTypes.Register.getLoaderHandler {
   | Some(loaderHandler) =>
     event->runEventHandler(
       ~loaderHandler,
@@ -314,7 +314,7 @@ let rec registerDynamicContracts = (
     } else {
       let {eventMod, event} = eventBatchQueueItem
 
-      switch eventMod->getHandlerRegistration->Types.Handlers.Register.getContractRegister {
+      switch eventMod->getHandlerRegistration->Types.HandlerTypes.Register.getContractRegister {
       | Some(handler) =>
         handler->runEventContractRegister(
           ~event,
@@ -369,7 +369,7 @@ let runLoaders = (
       ->Array.keepMap(({chain, eventMod, event}) => {
         eventMod
         ->getHandlerRegistration
-        ->Types.Handlers.Register.getLoaderHandler
+        ->Types.HandlerTypes.Register.getLoaderHandler
         ->Option.map(
           ({loader}) => {
             let contextEnv = ContextEnv.make(~chain, ~eventMod, ~event, ~logger)
