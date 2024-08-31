@@ -46,6 +46,11 @@ let registerContractHandlers = (
               module(Types.{{contract.name.capitalized}}.{{event.name.capitalized}}),
               {{/each}}
             ],
+            sighashes: [
+              {{#each contract.events as | event |}}
+              Types.{{contract.name.capitalized}}.{{event.name.capitalized}}.sighash,
+              {{/each}}
+            ],
           },
           {{/each}}
         ]
@@ -103,7 +108,11 @@ let registerContractHandlers = (
               let chain = chain
               let contracts = contracts
               let endpointUrl = "{{hypersync_config.endpoint_url}}"
-              let allEventSignatures = Abis.EventSignatures.all
+              let allEventSignatures = [
+                {{#each ../codegen_contracts as |contract|}}
+                Types.{{contract.name.capitalized}}.eventSignatures,
+                {{/each}}
+              ]->Belt.Array.concatMany
               let eventModLookup =
                 contracts
                 ->Belt.Array.flatMap(contract => contract.events)
