@@ -551,14 +551,15 @@ pub enum SyncSource {
     HyperfuelConfig(HyperfuelConfig),
 }
 
-// Check if the given RPC URL is valid in terms of formatting.
-// For now, we only check if it starts with http:// or https://
-fn validate_url(url: &str) -> bool {
+// Check if the given URL is valid in terms of formatting
+fn parse_url(url: &str) -> Option<String> {
     // Check URL format
     if !url.starts_with("http://") && !url.starts_with("https://") {
-        return false;
+        return None;
     }
-    true
+    // Trim any trailing slashes from the URL
+    let trimmed_url = url.trim_end_matches('/').to_string();
+    Some(trimmed_url)
 }
 
 impl SyncSource {
@@ -597,53 +598,56 @@ impl SyncSource {
                 sync_config
               }),
               ..
-          } => {
-            let urls: Vec<String> = url.into();
-            for url in urls.iter() {
-              if !validate_url(url) {
-                return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url));
+            } => {
+              let config_urls: Vec<String> = url.into();
+              let mut urls = vec![];
+              for url in config_urls.iter() {
+                match parse_url(url) {
+                    None => return Err(anyhow!("EE109: The RPC url \"{}\" is incorrect format. The RPC url needs to start with either http:// or https://", url)),
+                    Some(endpoint_url) => urls.push(endpoint_url)
+                }
               }
-            }
-            Ok(Self::RpcConfig(RpcConfig {
-                urls,
-                sync_config: match sync_config {
-                    None => SyncConfig::default(),
-                    Some(c) => {
-                      let query_timeout_millis = c
-                        .query_timeout_millis
-                        .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
-                      SyncConfig {
-                        acceleration_additive: c
-                            .acceleration_additive
-                            .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
-                        backoff_millis: c
-                            .backoff_millis
-                            .unwrap_or_else(|| SyncConfig::default().backoff_millis),
-                        backoff_multiplicative: c
-                            .backoff_multiplicative
-                            .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
-                        initial_block_interval: c
-                            .initial_block_interval
-                            .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
-                        interval_ceiling: c
-                            .interval_ceiling
-                            .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
-                        query_timeout_millis,
-                        fallback_stall_timeout: c
-                            .fallback_stall_timeout
-                            .unwrap_or_else(|| query_timeout_millis / 2),
-                    }},
-                },
-            }))},
+              Ok(Self::RpcConfig(RpcConfig {
+                  urls,
+                  sync_config: match sync_config {
+                      None => SyncConfig::default(),
+                      Some(c) => {
+                        let query_timeout_millis = c
+                          .query_timeout_millis
+                          .unwrap_or_else(|| SyncConfig::default().query_timeout_millis);
+                        SyncConfig {
+                          acceleration_additive: c
+                              .acceleration_additive
+                              .unwrap_or_else(|| SyncConfig::default().acceleration_additive),
+                          backoff_millis: c
+                              .backoff_millis
+                              .unwrap_or_else(|| SyncConfig::default().backoff_millis),
+                          backoff_multiplicative: c
+                              .backoff_multiplicative
+                              .unwrap_or_else(|| SyncConfig::default().backoff_multiplicative),
+                          initial_block_interval: c
+                              .initial_block_interval
+                              .unwrap_or_else(|| SyncConfig::default().initial_block_interval),
+                          interval_ceiling: c
+                              .interval_ceiling
+                              .unwrap_or_else(|| SyncConfig::default().interval_ceiling),
+                          query_timeout_millis,
+                          fallback_stall_timeout: c
+                              .fallback_stall_timeout
+                              .unwrap_or_else(|| query_timeout_millis / 2),
+                      }},
+                  },
+              }))
+            },
             human_config::evm::Network {
               hypersync_config: Some(human_config::evm::HypersyncConfig { url }),
               rpc_config: None,
               ..
-          } => {
-                if !validate_url(&url) {
-                  return Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url));
-                }
-                Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url: url, is_client_decoder }))
+            } => {
+              match parse_url(&url) {
+                  None => Err(anyhow!("EE106: The HyperSync url \"{}\" is incorrect format. The HyperSync url needs to start with either http:// or https://", url)),
+                  Some(endpoint_url) => Ok(Self::HypersyncConfig(HypersyncConfig { endpoint_url, is_client_decoder }))
+              }
             }
         }
     }
@@ -1256,26 +1260,28 @@ mod test {
     }
 
     #[test]
-    fn test_valid_urls() {
+    fn test_parse_url() {
         let valid_url_1 = "https://eth-mainnet.g.alchemy.com/v2/T7uPV59s7knYTOUardPPX0hq7n7_rQwv";
         let valid_url_2 = "http://api.example.org:8080";
         let valid_url_3 = "https://eth.com/rpc-endpoint";
-        let is_valid_url_1 = super::validate_url(valid_url_1);
-        let is_valid_url_2 = super::validate_url(valid_url_2);
-        let is_valid_url_3 = super::validate_url(valid_url_3);
-        assert!(is_valid_url_1);
-        assert!(is_valid_url_2);
-        assert!(is_valid_url_3);
-    }
+        assert_eq!(super::parse_url(valid_url_1), Some(valid_url_1.to_string()));
+        assert_eq!(super::parse_url(valid_url_2), Some(valid_url_2.to_string()));
+        assert_eq!(super::parse_url(valid_url_3), Some(valid_url_3.to_string()));
 
-    #[test]
-    fn test_invalid_urls() {
         let invalid_url_missing_slash = "http:/example.com";
         let invalid_url_other_protocol = "ftp://example.com";
-        let is_invalid_missing_slash = super::validate_url(invalid_url_missing_slash);
-        let is_invalid_other_protocol = super::validate_url(invalid_url_other_protocol);
-        assert!(!is_invalid_missing_slash);
-        assert!(!is_invalid_other_protocol);
+        assert_eq!(super::parse_url(invalid_url_missing_slash), None);
+        assert_eq!(super::parse_url(invalid_url_other_protocol), None);
+
+        // With trailing slashes
+        assert_eq!(
+            super::parse_url("https://somechain.hypersync.xyz/"),
+            Some("https://somechain.hypersync.xyz".to_string())
+        );
+        assert_eq!(
+            super::parse_url("https://somechain.hypersync.xyz//"),
+            Some("https://somechain.hypersync.xyz".to_string())
+        );
     }
 
     #[test]
@@ -1308,5 +1314,31 @@ mod test {
         assert_eq!(name_with_space, expected_name_with_space);
         assert_eq!(name_with_special_chars, expected_name_with_special_chars);
         assert_eq!(name_with_numbers, expected_name_with_numbers);
+    }
+
+    #[test]
+    fn test_hypersync_url_trailing_slash_trimming() {
+        use crate::config_parsing::human_config::evm::{HypersyncConfig, Network as EvmNetwork};
+
+        let network = EvmNetwork {
+            id: 1,
+            hypersync_config: Some(HypersyncConfig {
+                url: "https://somechain.hypersync.xyz//".to_string(),
+            }),
+            rpc_config: None,
+            start_block: 0,
+            end_block: None,
+            confirmed_block_threshold: None,
+            contracts: vec![],
+        };
+
+        let sync_source = SyncSource::from_evm_network_config(network, None).unwrap();
+
+        match sync_source {
+            SyncSource::HypersyncConfig(config) => {
+                assert_eq!(config.endpoint_url, "https://somechain.hypersync.xyz");
+            }
+            _ => panic!("Expected HypersyncConfig"),
+        }
     }
 }
